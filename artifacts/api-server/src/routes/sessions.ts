@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, sessionsTable, sessionEnrollmentsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
+import { getSessionMembership, canAccessSession } from "../lib/membership";
 import { broadcastSessionStatus, resetRoomPresence } from "../ws/classroomHub";
 import { ensureDailyRoom } from "../lib/daily";
 
@@ -34,17 +35,28 @@ router.get("/sessions", async (req, res): Promise<void> => {
 
   if (status === "live") {
     // Ghost/bot-generated "live" sessions (e.g. from seed data) never get moved to
-    // "completed" by a real teacher action. Lazily auto-expire any "live" session whose
-    // scheduled end time (date + duration + grace) has already passed, so the Sessions
-    // tab and Live Now section only ever show genuinely active classes.
+    // "completed" by a real teacher action. Lazily auto-expire them so the Sessions tab and
+    // Live Now section only ever show genuinely active classes.
+    //
+    // Staleness is judged from `startedAt` — when the teacher actually began — and only falls
+    // back to the scheduled `date` for rows that predate that column. Using the scheduled slot
+    // meant a class started even slightly late was already "expired": the next client to load
+    // the live list would complete it and broadcast an end-of-session to everyone in it. A
+    // student opening their own sessions tab was enough to kill the teacher's class.
     const staleLive = await db
-      .select({ id: sessionsTable.id, date: sessionsTable.date, duration: sessionsTable.duration })
+      .select({
+        id: sessionsTable.id,
+        date: sessionsTable.date,
+        startedAt: sessionsTable.startedAt,
+        duration: sessionsTable.duration,
+      })
       .from(sessionsTable)
       .where(eq(sessionsTable.status, "live"));
 
     const staleIds = staleLive
       .filter((s) => {
-        const endMs = new Date(s.date).getTime() + (s.duration + 15) * 60 * 1000;
+        const begunAt = s.startedAt ?? s.date;
+        const endMs = new Date(begunAt).getTime() + (s.duration + 15) * 60 * 1000;
         return endMs < Date.now();
       })
       .map((s) => s.id);
@@ -92,8 +104,28 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
     duration?: number; maxStudents?: number; price?: number;
   };
 
-  if (!subject || !topic || !date) {
-    res.status(400).json({ error: "subject, topic, and date are required" });
+  // Validated here as well as in the form: the form is a convenience, this is the rule.
+  const errors: string[] = [];
+  if (!subject?.trim()) errors.push("Subject is required.");
+  if (!topic?.trim()) errors.push("Topic is required.");
+
+  const when = date ? new Date(date) : null;
+  if (!date || !when || Number.isNaN(when.getTime())) errors.push("A valid date and time is required.");
+
+  if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0)) {
+    errors.push("Duration must be greater than zero.");
+  }
+  if (maxStudents !== undefined && (!Number.isFinite(maxStudents) || maxStudents <= 0)) {
+    errors.push("Maximum students must be greater than zero.");
+  }
+  // Amount is mandatory and must be a real charge — 0 was being accepted, which quietly
+  // created free classes on a paid platform.
+  if (price === undefined || price === null || !Number.isFinite(price) || price <= 0) {
+    errors.push("Amount is required and must be greater than zero.");
+  }
+
+  if (errors.length > 0) {
+    res.status(400).json({ error: errors.join(" ") });
     return;
   }
 
@@ -102,13 +134,13 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
   const [session] = await db.insert(sessionsTable).values({
     teacherId: user.userId,
     teacherName: userRow?.name ?? "Unknown",
-    subject,
-    topic,
-    date: new Date(date),
+    subject: subject!.trim(),
+    topic: topic!.trim(),
+    date: when!,
     duration: duration ?? 60,
     maxStudents: maxStudents ?? 20,
     enrolledCount: 0,
-    price: price ?? 0,
+    price: price!,
     status: "upcoming",
   }).returning();
 
@@ -150,6 +182,15 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
   const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
 
+  // The room URL is the key to the live video. Handing it to anyone logged in let an
+  // unenrolled student watch a class they never paid for — the whiteboard socket refused
+  // them, so they saw the "not enrolled" banner while the video played behind it.
+  const membership = await getSessionMembership(id, req.user!.userId);
+  if (!canAccessSession(membership)) {
+    res.status(403).json({ error: "You must be enrolled in this session to join it." });
+    return;
+  }
+
   try {
     const roomUrl = await ensureDailyRoom(id);
     res.json({ roomUrl });
@@ -180,6 +221,9 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       return;
     }
     updates.status = status;
+    // Stamp the real start time so the stale-session sweep above measures from when the
+    // class actually began rather than the slot it was booked into.
+    if (status === "live") updates.startedAt = new Date();
   }
   if (topic !== undefined) updates.topic = topic;
 
@@ -256,10 +300,12 @@ router.post("/sessions/:id/enroll", requireAuth, async (req, res): Promise<void>
     return;
   }
 
+  // A free class has nothing to pay for, so it is settled on enrolment. A paid one starts
+  // "pending" and only becomes joinable once payment is confirmed below.
   const [enrollment] = await db.insert(sessionEnrollmentsTable).values({
     sessionId: id,
     studentId: user.userId,
-    paymentStatus: "pending",
+    paymentStatus: session.price > 0 ? "pending" : "paid",
     paymentMethod: paymentMethod ?? null,
   }).returning();
 
@@ -272,6 +318,64 @@ router.post("/sessions/:id/enroll", requireAuth, async (req, res): Promise<void>
     .where(eq(teacherProfilesTable.userId, session.teacherId));
 
   res.status(201).json(enrollment);
+});
+
+/**
+ * Marks an enrolment as paid.
+ *
+ * ⚠️ PLACEHOLDER. This trusts the caller, because eSewa and Khalti are not actually wired up —
+ * the app only picks a method and shows a sheet. Before taking real money this MUST become a
+ * server-to-server verification: the gateway's callback, or a lookup of the transaction id
+ * against the gateway's API. As written, a student could call it directly and skip paying.
+ * It exists so the "enrolled but unpaid cannot join" rule has something to switch on.
+ */
+router.post("/sessions/:id/payment/confirm", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const user = req.user!;
+  const { transactionId } = req.body as { transactionId?: string };
+
+  const [enrollment] = await db
+    .select({ id: sessionEnrollmentsTable.id })
+    .from(sessionEnrollmentsTable)
+    .where(and(eq(sessionEnrollmentsTable.sessionId, id), eq(sessionEnrollmentsTable.studentId, user.userId)));
+
+  if (!enrollment) {
+    res.status(404).json({ error: "You are not enrolled in this session." });
+    return;
+  }
+
+  const [updated] = await db
+    .update(sessionEnrollmentsTable)
+    .set({ paymentStatus: "paid", ...(transactionId ? { paymentMethod: transactionId } : {}) })
+    .where(eq(sessionEnrollmentsTable.id, enrollment.id))
+    .returning();
+
+  req.log.info({ sessionId: id, studentId: user.userId }, "enrolment marked paid");
+  res.json(updated);
+});
+
+/**
+ * Tells the app whether this user may join, so the UI can show "Enroll" instead of an
+ * enabled "Join Live Class" it cannot honour. The server still enforces the same rule on
+ * /room and on the websocket — this endpoint only exists so the button can tell the truth.
+ */
+router.get("/sessions/:id/access", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const membership = await getSessionMembership(id, req.user!.userId);
+  if (!membership) { res.status(404).json({ error: "Session not found" }); return; }
+
+  res.json({
+    canJoin: canAccessSession(membership),
+    isTeacher: membership.isSessionTeacher,
+    isEnrolled: membership.isEnrolledStudent,
+    hasPaid: membership.hasPaid,
+  });
 });
 
 export default router;

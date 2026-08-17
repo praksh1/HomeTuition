@@ -57,23 +57,41 @@ export default function SessionCreate() {
 
   const effectiveSubject = isCustomSubject ? customSubject.trim() : subject;
 
+  /**
+   * Every field marked with * on this form, actually enforced.
+   *
+   * `needsSchedule` is false for "Create & Go Live Now", which starts the class immediately
+   * and so has no scheduled date to supply — the only starred field it legitimately skips.
+   */
+  const validate = (needsSchedule: boolean): string | null => {
+    if (!effectiveSubject) return "Please choose or enter a subject.";
+    if (!topic.trim()) return "Please enter a session topic.";
+    if (needsSchedule) {
+      if (!date.trim() || !time.trim()) return "Please choose the session date and time.";
+      if (isNaN(new Date(`${date}T${time}:00`).getTime())) {
+        return "That date and time could not be read. Use YYYY-MM-DD and HH:MM.";
+      }
+    }
+    if (!Number.isFinite(duration) || duration <= 0) return "Duration must be more than zero minutes.";
+    if (!Number.isFinite(maxStudents) || maxStudents <= 0) return "Maximum students must be at least one.";
+
+    // Amount previously fell back to 500 whenever it was blank or zero, inventing a price the
+    // teacher never chose. It is mandatory, and it has to be a real charge.
+    const amount = Number(price);
+    if (!price.trim() || !Number.isFinite(amount)) return "Please enter the session amount.";
+    if (amount <= 0) return "Amount must be greater than zero.";
+    return null;
+  };
+
+  const reportInvalid = (message: string) => {
+    if (Platform.OS === "web") window.alert(`Missing Info\n\n${message}`);
+    else Alert.alert("Missing Info", message);
+  };
+
   const handleCreate = async () => {
-    if (!effectiveSubject) {
-      if (Platform.OS === "web") window.alert("Missing Info\n\nPlease enter a custom subject name.");
-      else Alert.alert("Missing Info", "Please enter a custom subject name.");
-      return;
-    }
-    if (!topic.trim() || !date.trim() || !time.trim()) {
-      if (Platform.OS === "web") window.alert("Missing Info\n\nPlease fill in topic, date, and time.");
-      else Alert.alert("Missing Info", "Please fill in topic, date, and time.");
-      return;
-    }
+    const problem = validate(true);
+    if (problem) { reportInvalid(problem); return; }
     const parsed = new Date(`${date}T${time}:00`);
-    if (isNaN(parsed.getTime())) {
-      if (Platform.OS === "web") window.alert("Invalid Date/Time\n\nUse YYYY-MM-DD for date and HH:MM for time.");
-      else Alert.alert("Invalid Date/Time", "Use YYYY-MM-DD for date and HH:MM for time.");
-      return;
-    }
     setSaving(true);
     try {
       const newSession = await apiPost<{ id: number; topic: string; date: string }>("/sessions", {
@@ -83,7 +101,7 @@ export default function SessionCreate() {
         date: parsed.toISOString(),
         duration,
         maxStudents,
-        price: parseInt(price) || 500,
+        price: Number(price),
       });
       try { await scheduleSessionReminder({ id: String(newSession.id), topic: newSession.topic, date: newSession.date }); } catch {}
       try { await refreshNotifs(); } catch {}
@@ -107,16 +125,9 @@ export default function SessionCreate() {
   };
 
   const handleGoLive = async () => {
-    if (!topic.trim()) {
-      if (Platform.OS === "web") window.alert("Missing Info\n\nPlease enter a session topic to go live.");
-      else Alert.alert("Missing Info", "Please enter a session topic to go live.");
-      return;
-    }
-    if (!effectiveSubject) {
-      if (Platform.OS === "web") window.alert("Missing Info\n\nPlease enter a custom subject name.");
-      else Alert.alert("Missing Info", "Please enter a custom subject name.");
-      return;
-    }
+    // Same rules, minus the scheduled date — this class starts now.
+    const problem = validate(false);
+    if (problem) { reportInvalid(problem); return; }
     setSaving(true);
     let createdId: number | null = null;
     try {
@@ -127,7 +138,7 @@ export default function SessionCreate() {
         date: new Date().toISOString(),
         duration,
         maxStudents,
-        price: parseInt(price) || 500,
+        price: Number(price),
       });
       createdId = newSession.id;
       await apiPatch(`/sessions/${newSession.id}`, { status: "live" });

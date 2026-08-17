@@ -1,12 +1,24 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, reviewsTable, sessionEnrollmentsTable, sessionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 
 const router: IRouter = Router();
 
-const RATING_WINDOW_DAYS = 15;
+const RATING_WINDOW_DAYS = 7;
 
+/**
+ * Finds a session that entitles this student to review this teacher: one they enrolled in,
+ * that has finished, that finished within the last RATING_WINDOW_DAYS, and that they have
+ * not already reviewed.
+ *
+ * The unreviewed condition is what makes each review cost a session attended. Without it a
+ * student could post unlimited reviews for the same teacher, each one recomputing the
+ * teacher's average — a rating-manipulation vector, since ratings drive discovery.
+ *
+ * The window is measured from when the session ENDED (start + duration), not when it was
+ * scheduled to start, so a long class does not eat into the reviewing period.
+ */
 async function findRatableSession(studentId: number, teacherId: number) {
   const cutoff = new Date(Date.now() - RATING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
 
@@ -14,11 +26,22 @@ async function findRatableSession(studentId: number, teacherId: number) {
     .select({ sessionId: sessionsTable.id, date: sessionsTable.date })
     .from(sessionEnrollmentsTable)
     .innerJoin(sessionsTable, eq(sessionEnrollmentsTable.sessionId, sessionsTable.id))
+    .leftJoin(
+      reviewsTable,
+      and(
+        eq(reviewsTable.sessionId, sessionsTable.id),
+        eq(reviewsTable.studentId, studentId),
+      ),
+    )
     .where(and(
       eq(sessionEnrollmentsTable.studentId, studentId),
       eq(sessionsTable.teacherId, teacherId),
       eq(sessionsTable.status, "completed"),
-      gte(sessionsTable.date, cutoff),
+      isNull(reviewsTable.id),
+      gte(
+        sql`${sessionsTable.date} + (${sessionsTable.duration} * interval '1 minute')`,
+        cutoff,
+      ),
     ))
     .orderBy(desc(sessionsTable.date))
     .limit(1);
@@ -56,7 +79,7 @@ router.post("/reviews", requireAuth, async (req, res): Promise<void> => {
   const ratableSession = await findRatableSession(user.userId, teacherId);
   if (!ratableSession) {
     res.status(403).json({
-      error: "You can only rate a teacher after attending a completed session with them, within 15 days of that session.",
+      error: `You can only review a teacher after attending a session with them, within ${RATING_WINDOW_DAYS} days of that session ending, and only once per session.`,
     });
     return;
   }
@@ -64,13 +87,25 @@ router.post("/reviews", requireAuth, async (req, res): Promise<void> => {
   const [studentUser] = await db.select({ name: usersTable.name })
     .from(usersTable).where(eq(usersTable.id, user.userId));
 
-  const [review] = await db.insert(reviewsTable).values({
-    teacherId,
-    studentId: user.userId,
-    studentName: studentUser?.name ?? "Anonymous",
-    rating,
-    comment: comment ?? "",
-  }).returning();
+  let review;
+  try {
+    [review] = await db.insert(reviewsTable).values({
+      teacherId,
+      studentId: user.userId,
+      sessionId: ratableSession.sessionId,
+      studentName: studentUser?.name ?? "Anonymous",
+      rating,
+      comment: comment ?? "",
+    }).returning();
+  } catch (err) {
+    // Unique violation: a concurrent request already reviewed this session. The check above
+    // cannot prevent that on its own, so the constraint is what actually holds the line.
+    if ((err as { code?: string }).code === "23505") {
+      res.status(409).json({ error: "You have already reviewed this session." });
+      return;
+    }
+    throw err;
+  }
 
   const [{ avgRating, count }] = await db
     .select({

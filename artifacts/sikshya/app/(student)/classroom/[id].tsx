@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -77,7 +77,7 @@ export default function StudentClassroom() {
 
   const studentName = student.name ?? "Student";
 
-  const { connected, presenceCount, messages, remotePaths, material, sessionStatus, sendChat } =
+  const { connected, accessDenied, presenceCount, messages, remotePaths, material, sessionStatus, sendChat, boardSize } =
     useClassroomSocket({ sessionId: id ?? "", name: studentName, role: "student" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -120,6 +120,10 @@ export default function StudentClassroom() {
 
   useEffect(() => {
     if (sessionStatus === "completed" || sessionStatus === "cancelled") {
+      // Clear the room first: DailyEmbed releases the camera and microphone in its effect
+      // cleanup, and dropping the URL runs that immediately rather than waiting for this
+      // screen to unmount, which a navigation stack may never do.
+      setRoomUrl(null);
       const msg = "The teacher has ended this session.";
       if (Platform.OS === "web") {
         window.alert(`Session Ended\n\n${msg}`);
@@ -154,16 +158,21 @@ export default function StudentClassroom() {
   // Called when the student clicks Daily's native Leave button — no confirmation needed
   // since the user already made an explicit in-call gesture. Redirect instantly.
   const handleDailyLeft = useCallback(() => {
+    setRoomUrl(null); // release camera/mic before navigating away
     router.back();
   }, []);
 
   const leaveSession = () => {
+    const doLeave = () => {
+      setRoomUrl(null); // release camera/mic before navigating away
+      router.back();
+    };
     if (Platform.OS === "web") {
-      if (window.confirm("Leave Session?\n\nAre you sure?")) router.back();
+      if (window.confirm("Leave Session?\n\nAre you sure?")) doLeave();
     } else {
       Alert.alert("Leave Session", "Are you sure you want to leave?", [
         { text: "Stay", style: "cancel" },
-        { text: "Leave", style: "destructive", onPress: () => router.back() },
+        { text: "Leave", style: "destructive", onPress: doLeave },
       ]);
     }
   };
@@ -172,6 +181,20 @@ export default function StudentClassroom() {
   // don't fall back to enrolledCount before the socket connects, or a ghost count/avatar
   // shows up for a class nobody has actually joined yet.
   const livePresenceCount = connected ? presenceCount : 0;
+
+  // The session timer re-renders this screen once a second. Without memoising, that threw
+  // away and re-decoded the shared material and every stroke on every tick.
+  const materialLayer = useMemo(() => {
+    if (material?.kind === "image") {
+      return <Image source={{ uri: material.dataUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" />;
+    }
+    if (material?.kind === "pdf") {
+      return <PdfViewer uri={material.dataUrl} style={StyleSheet.absoluteFill} />;
+    }
+    return null;
+  }, [material?.kind, material?.dataUrl]);
+
+  const boardPaths = useMemo(() => remotePaths.map((p, i) => renderShape(p, i)), [remotePaths]);
 
   const notifyTeacherLeft = () => {
     const msg = "The teacher has disconnected. They may rejoin shortly — you can wait here or leave the session.";
@@ -222,6 +245,16 @@ export default function StudentClassroom() {
           </View>
         </View>
 
+        {accessDenied && (
+          <View style={s.deniedBar}>
+            <Feather name="lock" size={15} color="#FCA5A5" />
+            <Text style={s.deniedText}>
+              You're not enrolled in this class, so the whiteboard and chat are unavailable. Enrol
+              from the session page to join.
+            </Text>
+          </View>
+        )}
+
         {/* Mode tabs */}
         <View style={s.modeSwitcher}>
           {(["board", "chat"] as Mode[]).map((m) => (
@@ -268,14 +301,20 @@ export default function StudentClassroom() {
         {/* Board — live whiteboard from teacher */}
         {mode === "board" && (
           <View style={s.boardArea}>
-            {material?.kind === "image" && (
-              <Image source={{ uri: material.dataUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-            )}
-            {material?.kind === "pdf" && (
-              <PdfViewer uri={material.dataUrl} style={StyleSheet.absoluteFill} />
-            )}
-            <Svg style={StyleSheet.absoluteFill}>
-              {remotePaths.map((p, i) => renderShape(p, i))}
+            {materialLayer}
+            {/* The teacher's strokes are recorded against their own canvas, which is a
+                different size from this one. A viewBox in that space makes SVG map every
+                coordinate onto this screen, and "meet" letterboxes it exactly the way the
+                material image is letterboxed — so ink stays on the part of the document it
+                was drawn on, whatever device is watching. Without this, a stroke near the
+                right edge of a laptop was painted off the side of a phone. */}
+            <Svg
+              style={StyleSheet.absoluteFill}
+              {...(boardSize
+                ? { viewBox: `0 0 ${boardSize.width} ${boardSize.height}`, preserveAspectRatio: "xMidYMid meet" }
+                : null)}
+            >
+              {boardPaths}
             </Svg>
             {remotePaths.length === 0 && !material && (
               <View style={s.boardEmpty}>
@@ -343,6 +382,8 @@ const s = StyleSheet.create({
   onlineRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   onlineDot: { width: 8, height: 8, borderRadius: 4 },
   onlineText: { fontSize: 11, fontFamily: "Inter_500Medium" },
+  deniedBar: { flexDirection: "row", alignItems: "center", gap: 9, marginHorizontal: 14, marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: "#2A1416", borderWidth: 1, borderColor: "#7F1D1D" },
+  deniedText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCA5A5", lineHeight: 17 },
   modeSwitcher: { flexDirection: "row", paddingHorizontal: 14, paddingVertical: 8, gap: 8 },
   modeTab: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 20, paddingHorizontal: 13, paddingVertical: 7, backgroundColor: "#1A1A1A" },
   modeTabActive: { backgroundColor: "#2A2A2A" },

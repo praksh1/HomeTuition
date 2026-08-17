@@ -3,6 +3,11 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 export const TOKEN_KEY = "@sikshya_token";
 
 function getApiBase(): string {
+  // Explicit API origin, e.g. http://localhost:8080. Needed whenever the app and the API are
+  // not served from a single origin — Replit's router merged them, a local dev setup does not,
+  // and on iOS/Android a relative "/api" path is not a usable URL at all.
+  const explicit = process.env.EXPO_PUBLIC_API_URL;
+  if (explicit) return `${explicit.replace(/\/+$/, "")}/api`;
   const domain = process.env.EXPO_PUBLIC_DOMAIN;
   if (domain) return `https://${domain}/api`;
   return "/api";

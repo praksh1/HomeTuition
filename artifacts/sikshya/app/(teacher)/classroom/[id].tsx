@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -18,6 +18,7 @@ import {
   TouchableOpacity,
   View,
   type GestureResponderEvent,
+  type LayoutChangeEvent,
 } from "react-native";
 import Svg, { Path, Line, Circle, Text as SvgText, Polygon } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -31,6 +32,9 @@ import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { Image } from "react-native";
 import PdfViewer from "@/components/PdfViewer";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import type { ErrorFallbackProps } from "@/components/ErrorFallback";
+import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "whiteboard" | "participants" | "chat";
@@ -91,6 +95,37 @@ const ZOOM_MIN = 1;
 const ZOOM_MAX = 3;
 const ZOOM_STEP = 0.25;
 
+function WhiteboardFallback({ resetError }: ErrorFallbackProps) {
+  return (
+    <View style={s.boardFallback}>
+      <Feather name="alert-triangle" size={30} color="#F5A623" />
+      <Text style={s.boardFallbackTitle}>The whiteboard stopped responding</Text>
+      <Text style={s.boardFallbackBody}>
+        Your video call is still running. Reload the board to keep teaching — if it happens again,
+        try a smaller image.
+      </Text>
+      <TouchableOpacity style={s.boardFallbackBtn} onPress={resetError} activeOpacity={0.8}>
+        <Text style={s.boardFallbackBtnText}>Reload Board</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+interface Point { x: number; y: number }
+
+/**
+ * Keeps the scaled board covering the viewport. With `transformOrigin: 0 0` the content
+ * spans [pan, pan + size * zoom], so pan must stay within [size * (1 - zoom), 0].
+ */
+function clampPan(pan: Point, zoom: number, viewport: { w: number; h: number }): Point {
+  const minX = Math.min(0, viewport.w * (1 - zoom));
+  const minY = Math.min(0, viewport.h * (1 - zoom));
+  return {
+    x: Math.min(0, Math.max(minX, pan.x)),
+    y: Math.min(0, Math.max(minY, pan.y)),
+  };
+}
+
 export default function Classroom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
@@ -101,7 +136,7 @@ export default function Classroom() {
 
   const teacherName = teacher.name ?? "Teacher";
 
-  const { connected, presenceCount, messages, material, sendChat, sendDrawCommit, sendBoardClear, sendMaterial, clearMaterial } =
+  const { connected, accessDenied, presenceCount, messages, material, sendChat, sendDrawCommit, sendBoardClear, sendMaterial, clearMaterial, sendBoardSize } =
     useClassroomSocket({ sessionId: id ?? "", name: teacherName, role: "teacher" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -122,7 +157,14 @@ export default function Classroom() {
   const [chatMsg, setChatMsg] = useState("");
   const [isLandscape, setIsLandscape] = useState(false);
   const [videoExpanded, setVideoExpanded] = useState(false);
+  /** Upload options stay folded away until asked for — they are occasional actions, and as
+   * two permanent full-width buttons they were consuming screen the video should have. */
+  const [materialMenuOpen, setMaterialMenuOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
+  const [isPanMode, setIsPanMode] = useState(false);
+  const [viewport, setViewport] = useState({ w: 0, h: 0 });
+  const [uploadError, setUploadError] = useState<string | null>(null);
   // Native-only: stores a local file:// URI for a PDF picked via DocumentPicker.
   // Kept separate from `material` (which is broadcast over the socket) because
   // file:// paths are device-local and meaningless on other participants' devices.
@@ -131,7 +173,24 @@ export default function Classroom() {
   const [roomError, setRoomError] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatScrollRef = useRef<ScrollView>(null);
-  const canvasRef = useRef<View>(null);
+
+  // The canvas exposes both PanResponder handlers and raw onTouch* handlers so that mouse
+  // and touch input both work. Both fire for the same touch on native, which would process
+  // every gesture twice — the first handler to fire claims the gesture and the other is
+  // ignored until it ends.
+  const gestureOwnerRef = useRef<"responder" | "touch" | null>(null);
+  const panDragRef = useRef<{ from: Point; pan: Point } | null>(null);
+
+  // Gesture callbacks read view transform state through refs so an in-flight drag always
+  // sees the latest values, never a value captured by an earlier render's closure.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const panRef = useRef(pan);
+  panRef.current = pan;
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+  const isPanModeRef = useRef(isPanMode);
+  isPanModeRef.current = isPanMode;
 
   useEffect(() => {
     loadSession();
@@ -236,21 +295,83 @@ export default function Classroom() {
     startPoint.current = null;
   }, [tool, currentPath, isEraser, penColor, penSize, previewShape, sendDrawCommit]);
 
+  /**
+   * Gestures land on an unscaled overlay, so their coordinates are in viewport space while
+   * drawings live in unscaled board space. Undoing the pan/zoom transform here keeps strokes
+   * under the teacher's finger at every zoom level.
+   */
+  const toBoardPoint = useCallback((vx: number, vy: number): Point => {
+    const z = zoomRef.current || 1;
+    const p = panRef.current;
+    return { x: (vx - p.x) / z, y: (vy - p.y) / z };
+  }, []);
+
+  const beginGesture = useCallback(
+    (owner: "responder" | "touch", vx: number, vy: number) => {
+      // A cancelled gesture can leave an owner behind. A fresh start from that same source
+      // means the old one is stale, so reclaim it rather than locking the board forever.
+      if (gestureOwnerRef.current !== null && gestureOwnerRef.current !== owner) return;
+      gestureOwnerRef.current = owner;
+      panDragRef.current = null;
+      if (isPanModeRef.current) {
+        panDragRef.current = { from: { x: vx, y: vy }, pan: panRef.current };
+        return;
+      }
+      const pt = toBoardPoint(vx, vy);
+      handleGestureStart(pt.x, pt.y);
+    },
+    [handleGestureStart, toBoardPoint],
+  );
+
+  const moveGesture = useCallback(
+    (owner: "responder" | "touch", vx: number, vy: number) => {
+      if (gestureOwnerRef.current !== owner) return;
+      const drag = panDragRef.current;
+      if (drag) {
+        setPan(
+          clampPan(
+            { x: drag.pan.x + (vx - drag.from.x), y: drag.pan.y + (vy - drag.from.y) },
+            zoomRef.current,
+            viewportRef.current,
+          ),
+        );
+        return;
+      }
+      const pt = toBoardPoint(vx, vy);
+      handleGestureMove(pt.x, pt.y);
+    },
+    [handleGestureMove, toBoardPoint],
+  );
+
+  const endGesture = useCallback(
+    (owner: "responder" | "touch") => {
+      if (gestureOwnerRef.current !== owner) return;
+      gestureOwnerRef.current = null;
+      if (panDragRef.current) {
+        panDragRef.current = null;
+        return;
+      }
+      handleGestureEnd();
+    },
+    [handleGestureEnd],
+  );
+
   const panResponder = PanResponder.create({
     onStartShouldSetPanResponder: () => true,
     onMoveShouldSetPanResponder: () => true,
     onPanResponderGrant: (e) => {
       const { locationX, locationY } = e.nativeEvent;
-      handleGestureStart(locationX, locationY);
+      beginGesture("responder", locationX, locationY);
     },
     onPanResponderMove: (e) => {
       const { locationX, locationY } = e.nativeEvent;
-      handleGestureMove(locationX, locationY);
+      moveGesture("responder", locationX, locationY);
     },
-    onPanResponderRelease: handleGestureEnd,
+    onPanResponderRelease: () => endGesture("responder"),
+    onPanResponderTerminate: () => endGesture("responder"),
   });
 
-  const extractTouchPoint = (e: GestureResponderEvent): { x: number; y: number } | null => {
+  const extractTouchPoint = (e: GestureResponderEvent): Point | null => {
     const touch = e.nativeEvent.touches?.[0] ?? e.nativeEvent;
     if (touch == null) return null;
     return { x: touch.locationX, y: touch.locationY };
@@ -258,13 +379,51 @@ export default function Classroom() {
 
   const onTouchStart = (e: GestureResponderEvent) => {
     const pt = extractTouchPoint(e);
-    if (pt) handleGestureStart(pt.x, pt.y);
+    if (pt) beginGesture("touch", pt.x, pt.y);
   };
   const onTouchMove = (e: GestureResponderEvent) => {
     const pt = extractTouchPoint(e);
-    if (pt) handleGestureMove(pt.x, pt.y);
+    if (pt) moveGesture("touch", pt.x, pt.y);
   };
-  const onTouchEnd = () => handleGestureEnd();
+  const onTouchEnd = () => endGesture("touch");
+
+  const applyZoom = useCallback((next: number) => {
+    const prev = zoomRef.current;
+    const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +next.toFixed(2)));
+    if (clamped === prev) return;
+    const vp = viewportRef.current;
+    const p = panRef.current;
+    // Anchor on the viewport centre so zooming keeps the currently visible part of the
+    // material in view instead of drifting toward the top-left corner.
+    const cx = vp.w / 2;
+    const cy = vp.h / 2;
+    const nextPan =
+      clamped === ZOOM_MIN
+        ? { x: 0, y: 0 }
+        : clampPan(
+            { x: cx - ((cx - p.x) * clamped) / prev, y: cy - ((cy - p.y) * clamped) / prev },
+            clamped,
+            vp,
+          );
+    setZoom(clamped);
+    setPan(nextPan);
+    if (clamped === ZOOM_MIN) setIsPanMode(false);
+  }, []);
+
+  const resetView = useCallback(() => {
+    setZoom(ZOOM_MIN);
+    setPan({ x: 0, y: 0 });
+    setIsPanMode(false);
+  }, []);
+
+  const onCanvasLayout = useCallback((e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setViewport((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
+    // Publish the space strokes are recorded in. Students draw into a canvas of a different
+    // size, so this is what lets them map the teacher's coordinates onto their own screen
+    // instead of painting a stroke meant for a laptop's right edge off the side of a phone.
+    sendBoardSize(width, height);
+  }, [sendBoardSize]);
 
   const confirmTextShape = () => {
     const point = pendingTextPoint.current;
@@ -302,17 +461,42 @@ export default function Classroom() {
       }
       return;
     }
+    resetView();
     sendMaterial(dataUrl, kind);
   };
 
-  const handleWebFileSelected = (file: File) => {
-    const kind: "image" | "pdf" = file.type === "application/pdf" ? "pdf" : "image";
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      applyUploadedFile(dataUrl, kind);
-    };
-    reader.readAsDataURL(file);
+  /** PDFs are passed through untouched, so they need their own ceiling. */
+  const MAX_PDF_BYTES = 8_000_000;
+
+  const reportUploadError = (message: string) => {
+    setUploadError(message);
+    if (Platform.OS === "web") window.alert(message);
+    else Alert.alert("Upload Failed", message);
+  };
+
+  const handleWebFileSelected = async (file: File) => {
+    setUploadError(null);
+    try {
+      if (file.type === "application/pdf") {
+        if (file.size > MAX_PDF_BYTES) {
+          reportUploadError("This PDF is too large to share on the board. Please use one under 8 MB.");
+          return;
+        }
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("Could not read that PDF."));
+          reader.readAsDataURL(file);
+        });
+        applyUploadedFile(dataUrl, "pdf");
+        return;
+      }
+      applyUploadedFile(await prepareBoardImage({ platform: "web", file }), "image");
+    } catch (err) {
+      reportUploadError(
+        err instanceof BoardImageError ? err.message : "Could not upload that file. Please try again.",
+      );
+    }
   };
 
   // Split into two distinct pickers: iOS's WKWebView file input only offers the Photo
@@ -337,20 +521,26 @@ export default function Classroom() {
     // document picker — on iOS, DocumentPicker's "image" file type still routes through
     // the Files app browser rather than the Photo Library, which is not what users expect
     // from an "Upload Photo" button. expo-image-picker opens the actual Photo Library.
+    setUploadError(null);
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
         Alert.alert("Permission Needed", "Photo Library access is required to upload a photo.");
         return;
       }
+      // base64 is required, not just convenient: the picker's `file://` URI only resolves on
+      // this device, so broadcasting it would leave every student with a broken image.
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
+        quality: NATIVE_PICKER_QUALITY,
+        base64: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
-      applyUploadedFile(result.assets[0].uri, "image");
-    } catch {
-      Alert.alert("Upload Failed", "Could not upload the photo. Please try again.");
+      applyUploadedFile(await prepareBoardImage({ platform: "native", asset: result.assets[0] }), "image");
+    } catch (err) {
+      reportUploadError(
+        err instanceof BoardImageError ? err.message : "Could not upload the photo. Please try again.",
+      );
     }
   };
 
@@ -393,12 +583,18 @@ export default function Classroom() {
   // here — the user already made an explicit in-call gesture, so we just clean up
   // immediately: mark the session completed and return to the dashboard.
   const handleDailyLeft = useCallback(async () => {
+    // Drop the room URL before navigating. DailyEmbed tears the call down in its effect
+    // cleanup, and clearing the URL makes that run immediately instead of waiting for the
+    // screen to unmount — a navigation stack may keep this screen alive, and until the frame
+    // is destroyed the camera and microphone stay on with the recording light lit.
+    setRoomUrl(null);
     try { await apiPatch(`/sessions/${id}`, { status: "completed" }); } catch {}
     router.back();
   }, [id]);
 
   const endSession = async () => {
     const doEnd = async () => {
+      setRoomUrl(null); // release camera/mic before leaving — see handleDailyLeft above
       try { await apiPatch(`/sessions/${id}`, { status: "completed" }); } catch {}
       router.back();
     };
@@ -424,6 +620,22 @@ export default function Classroom() {
   // "ghost" entries on start). Falling back to enrolledCount before the socket connects
   // caused a stale avatar/count to render even when nobody is actually present.
   const participantCount = connected ? presenceCount : 0;
+
+  // The material image and every committed stroke are memoised so that changing zoom, pan or
+  // the active tool re-renders only the transform wrapper. Without this, each zoom tap threw
+  // away and rebuilt the decoded image plus every SVG path, which is what exhausted memory
+  // and took the video call down with the app.
+  const materialUri = material?.kind === "image" ? material.dataUrl : null;
+  const materialLayer = useMemo(
+    () =>
+      materialUri ? (
+        <Image source={{ uri: materialUri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+      ) : null,
+    [materialUri],
+  );
+  const committedPaths = useMemo(() => paths.map((p, i) => renderShape(p, i)), [paths]);
+
+  const canPan = zoom > ZOOM_MIN;
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: "#0A0A0A" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -473,6 +685,16 @@ export default function Classroom() {
           </View>
         )}
 
+        {accessDenied && (
+          <View style={s.deniedBar}>
+            <Feather name="lock" size={15} color="#FCA5A5" />
+            <Text style={s.deniedText}>
+              The live board couldn't be opened for this class. It may belong to another teacher
+              account — check you're signed in as the teacher who created it.
+            </Text>
+          </View>
+        )}
+
         {/* Mode tabs */}
         <View style={s.modeSwitcher}>
           {(["whiteboard", "participants", "chat"] as Mode[]).map((m) => (
@@ -498,7 +720,7 @@ export default function Classroom() {
             is the only reliable way to keep it from clashing with the chat tab. */}
         <View style={[s.videoArea, videoExpanded && s.videoAreaExpanded, mode === "chat" && s.videoAreaHidden]}>
           {roomUrl ? (
-            <DailyEmbed roomUrl={roomUrl} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} />
+            <DailyEmbed roomUrl={roomUrl} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
           ) : (
             <View style={[StyleSheet.absoluteFill, s.permissionGate]}>
               <ActivityIndicator color="#fff" />
@@ -513,82 +735,100 @@ export default function Classroom() {
         </View>
         {!videoExpanded && (
         <View style={s.boardArea}>
-        {/* Whiteboard */}
+        {/* Whiteboard. Scoped to its own boundary so a board rendering failure shows a
+            recoverable message here instead of unmounting the app — which would also tear
+            down the video call the class is running on. */}
         {mode === "whiteboard" && (
+          <ErrorBoundary FallbackComponent={WhiteboardFallback}>
           <View style={s.whiteboardArea}>
-            {/* Permanently docked upload button — always visible above the canvas, above the toolbar */}
+            {/* Material controls. Collapsed to a single slim row by default: uploading happens
+                once or twice a lesson, so it does not deserve permanent space that the video
+                and the board itself need. Tapping it reveals the actual upload options. */}
             <View style={s.uploadDock}>
-              {Platform.OS === "web" ? (
-                <>
-                  <View style={s.uploadDockBtnWrap}>
-                    <Feather name="image" size={16} color="#fff" style={s.uploadDockIcon} pointerEvents="none" />
-                    <Text style={s.uploadDockBtnText} pointerEvents="none">Upload Photo</Text>
-                    {React.createElement("input", {
-                      type: "file",
-                      accept: "image/*",
-                      onChange: (e: any) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        handleWebFileSelected(file);
-                        e.target.value = "";
-                      },
-                      style: {
-                        position: "absolute",
-                        inset: 0,
-                        width: "100%",
-                        height: "100%",
-                        opacity: 0,
-                        cursor: "pointer",
-                        zIndex: 9999,
-                      },
-                    })}
-                  </View>
-                  <View style={s.uploadDockBtnWrap}>
-                    <Feather name="file-text" size={16} color="#fff" style={s.uploadDockIcon} pointerEvents="none" />
-                    <Text style={s.uploadDockBtnText} pointerEvents="none">Upload PDF</Text>
-                    {React.createElement("input", {
-                      type: "file",
-                      accept: "application/pdf",
-                      onChange: (e: any) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        handleWebFileSelected(file);
-                        e.target.value = "";
-                      },
-                      style: {
-                        position: "absolute",
-                        inset: 0,
-                        width: "100%",
-                        height: "100%",
-                        opacity: 0,
-                        cursor: "pointer",
-                        zIndex: 9999,
-                      },
-                    })}
-                  </View>
-                </>
-              ) : (
-                <>
-                  <TouchableOpacity style={s.uploadDockBtnWrap} onPress={handleUploadPhoto} activeOpacity={0.8}>
-                    <Feather name="image" size={16} color="#fff" style={s.uploadDockIcon} />
-                    <Text style={s.uploadDockBtnText}>Upload Photo</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.uploadDockBtnWrap} onPress={handleUploadPdf} activeOpacity={0.8}>
-                    <Feather name="file-text" size={16} color="#fff" style={s.uploadDockIcon} />
-                    <Text style={s.uploadDockBtnText}>Upload PDF</Text>
-                  </TouchableOpacity>
-                </>
-              )}
+              <TouchableOpacity
+                style={[s.materialToggle, materialMenuOpen && s.materialToggleOpen]}
+                onPress={() => setMaterialMenuOpen((v) => !v)}
+                activeOpacity={0.75}
+              >
+                <Feather name="paperclip" size={13} color={materialMenuOpen ? "#fff" : "#B9B9B9"} />
+                <Text style={[s.materialToggleText, materialMenuOpen && s.materialToggleTextOpen]}>
+                  {material || localPdfUri ? "Material" : "Add material"}
+                </Text>
+                <Feather name={materialMenuOpen ? "chevron-up" : "chevron-down"} size={13} color="#777" />
+              </TouchableOpacity>
+
               {(material || localPdfUri) && (
                 <TouchableOpacity
                   style={s.uploadDockClear}
-                  onPress={() => { clearMaterial(); setLocalPdfUri(null); }}
+                  onPress={() => { clearMaterial(); setLocalPdfUri(null); setUploadError(null); resetView(); setMaterialMenuOpen(false); }}
                   activeOpacity={0.7}
                 >
-                  <Feather name="x-circle" size={18} color="#EF4444" />
+                  <Feather name="x-circle" size={16} color="#EF4444" />
                 </TouchableOpacity>
               )}
             </View>
+
+            {materialMenuOpen && (
+              <View style={s.materialMenu}>
+                {Platform.OS === "web" ? (
+                  <>
+                    <View style={s.materialBtn}>
+                      <Feather name="image" size={14} color="#fff" pointerEvents="none" />
+                      <Text style={s.materialBtnText} pointerEvents="none">Photo</Text>
+                      {React.createElement("input", {
+                        type: "file",
+                        accept: "image/*",
+                        onChange: (e: any) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          handleWebFileSelected(file);
+                          e.target.value = "";
+                          setMaterialMenuOpen(false);
+                        },
+                        style: { position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", zIndex: 9999 },
+                      })}
+                    </View>
+                    <View style={s.materialBtn}>
+                      <Feather name="file-text" size={14} color="#fff" pointerEvents="none" />
+                      <Text style={s.materialBtnText} pointerEvents="none">PDF</Text>
+                      {React.createElement("input", {
+                        type: "file",
+                        accept: "application/pdf",
+                        onChange: (e: any) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          handleWebFileSelected(file);
+                          e.target.value = "";
+                          setMaterialMenuOpen(false);
+                        },
+                        style: { position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", zIndex: 9999 },
+                      })}
+                    </View>
+                  </>
+                ) : (
+                  <>
+                    <TouchableOpacity style={s.materialBtn} onPress={() => { setMaterialMenuOpen(false); handleUploadPhoto(); }} activeOpacity={0.8}>
+                      <Feather name="image" size={14} color="#fff" />
+                      <Text style={s.materialBtnText}>Photo</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={s.materialBtn} onPress={() => { setMaterialMenuOpen(false); handleUploadPdf(); }} activeOpacity={0.8}>
+                      <Feather name="file-text" size={14} color="#fff" />
+                      <Text style={s.materialBtnText}>PDF</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            )}
+
+            {uploadError && (
+              <View style={s.uploadErrorBar}>
+                <Feather name="alert-circle" size={15} color="#FCA5A5" />
+                <Text style={s.uploadErrorText}>{uploadError}</Text>
+                <TouchableOpacity onPress={() => setUploadError(null)} activeOpacity={0.7}>
+                  <Feather name="x" size={15} color="#FCA5A5" />
+                </TouchableOpacity>
+              </View>
+            )}
 
             <View style={s.canvasScrollWrap}>
               {/* PDF mode: render the document in the platform's native PDF viewer.
@@ -614,25 +854,37 @@ export default function Classroom() {
               ) : (
                 /* Drawing canvas — shown when material is an image overlay or board is blank */
                 <>
+                  {/* Content layer: transformed, but never the touch target. Keeping gestures
+                      off the scaled subtree means pointer coordinates stay in plain viewport
+                      space on both web and native. */}
                   <View
-                    ref={canvasRef}
-                    style={[s.canvas, { transform: [{ scale: zoom }] }]}
-                    {...panResponder.panHandlers}
-                    onTouchStart={onTouchStart}
-                    onTouchMove={onTouchMove}
-                    onTouchEnd={onTouchEnd}
+                    style={[
+                      s.canvas,
+                      { transform: [{ translateX: pan.x }, { translateY: pan.y }, { scale: zoom }] },
+                    ]}
+                    pointerEvents="none"
                   >
-                    {material?.kind === "image" && (
-                      <Image source={{ uri: material.dataUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-                    )}
+                    {materialLayer}
                     <Svg style={StyleSheet.absoluteFill}>
-                      {paths.map((p, i) => renderShape(p, i))}
+                      {committedPaths}
                       {currentPath ? (
                         <Path d={currentPath} stroke={isEraser ? "#FFFFFF" : penColor} strokeWidth={isEraser ? 24 : penSize} fill="none" strokeLinecap="round" strokeLinejoin="round" />
                       ) : null}
                       {previewShape ? renderShape(previewShape, -1) : null}
                     </Svg>
                   </View>
+
+                  {/* Gesture layer: unscaled and untranslated, so locationX/locationY are
+                      viewport coordinates that toBoardPoint can invert exactly. */}
+                  <View
+                    style={StyleSheet.absoluteFill}
+                    onLayout={onCanvasLayout}
+                    {...panResponder.panHandlers}
+                    onTouchStart={onTouchStart}
+                    onTouchMove={onTouchMove}
+                    onTouchEnd={onTouchEnd}
+                    onTouchCancel={onTouchEnd}
+                  />
 
                   {/* Floating "island" toolbar — modern Miro/Freeform-style pill overlay.
                       Hidden in PDF mode since drawing on top of a document isn't supported. */}
@@ -661,12 +913,25 @@ export default function Classroom() {
                         <Feather name="trash-2" size={16} color="#333" />
                       </TouchableOpacity>
                       <View style={s.islandDivider} />
-                      <TouchableOpacity style={s.islandBtn} onPress={() => setZoom((z) => Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2)))} activeOpacity={0.7}>
-                        <Feather name="zoom-out" size={16} color="#333" />
+                      <TouchableOpacity style={s.islandBtn} onPress={() => applyZoom(zoom - ZOOM_STEP)} activeOpacity={0.7}>
+                        <Feather name="zoom-out" size={16} color={zoom > ZOOM_MIN ? "#333" : "#BBB"} />
                       </TouchableOpacity>
                       <Text style={s.islandZoomText}>{Math.round(zoom * 100)}%</Text>
-                      <TouchableOpacity style={s.islandBtn} onPress={() => setZoom((z) => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2)))} activeOpacity={0.7}>
-                        <Feather name="zoom-in" size={16} color="#333" />
+                      <TouchableOpacity style={s.islandBtn} onPress={() => applyZoom(zoom + ZOOM_STEP)} activeOpacity={0.7}>
+                        <Feather name="zoom-in" size={16} color={zoom < ZOOM_MAX ? "#333" : "#BBB"} />
+                      </TouchableOpacity>
+                      {/* Zoom is useless without a way to reach the rest of the material, so
+                          panning is offered as an explicit mode — a plain drag has to stay
+                          reserved for drawing. */}
+                      <TouchableOpacity
+                        style={[s.islandBtn, isPanMode && { backgroundColor: colors.primary }]}
+                        onPress={() => setIsPanMode((v) => canPan && !v)}
+                        activeOpacity={0.7}
+                      >
+                        <Feather name="move" size={16} color={isPanMode ? "#fff" : canPan ? "#333" : "#BBB"} />
+                      </TouchableOpacity>
+                      <TouchableOpacity style={s.islandBtn} onPress={resetView} activeOpacity={0.7}>
+                        <Feather name="maximize" size={16} color="#333" />
                       </TouchableOpacity>
                     </ScrollView>
                   </View>
@@ -674,6 +939,7 @@ export default function Classroom() {
               )}
             </View>
           </View>
+          </ErrorBoundary>
         )}
 
         {/* Text tool input modal */}
@@ -779,6 +1045,8 @@ const s = StyleSheet.create({
   miniAvatar: { width: 26, height: 26, borderRadius: 13, justifyContent: "center", alignItems: "center", borderWidth: 2, borderColor: "#0A0A0A" },
   miniAvatarText: { fontSize: 10, fontFamily: "Inter_700Bold", color: "#fff" },
   presenceText: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#888" },
+  deniedBar: { flexDirection: "row", alignItems: "center", gap: 9, marginHorizontal: 14, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: "#2A1416", borderWidth: 1, borderColor: "#7F1D1D" },
+  deniedText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCA5A5", lineHeight: 17 },
   modeSwitcher: { flexDirection: "row", paddingHorizontal: 14, paddingBottom: 8, gap: 6 },
   modeTab: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: "#1A1A1A" },
   modeTabActive: { backgroundColor: "#2A2A2A" },
@@ -787,15 +1055,28 @@ const s = StyleSheet.create({
   whiteboardArea: { flex: 1 },
   canvasScrollWrap: {
     flex: 1, marginHorizontal: 12, marginTop: 4, borderRadius: 12,
-    backgroundColor: "#FFFFFF", overflow: Platform.OS === "web" ? ("auto" as any) : "hidden",
+    backgroundColor: "#FFFFFF", overflow: "hidden",
     position: "relative",
   },
   canvas: { flex: 1, width: "100%", height: "100%", transformOrigin: "0 0" } as object,
-  uploadDock: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingTop: 6, paddingBottom: 4, zIndex: 50, position: "relative" },
-  uploadDockBtnWrap: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, backgroundColor: "#C41E3A", paddingVertical: 14, shadowColor: "#C41E3A", shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 6, position: "relative", overflow: "hidden", zIndex: 50, borderWidth: 1, borderColor: "#FF6B81" },
-  uploadDockIcon: { zIndex: 51 },
-  uploadDockBtnText: { fontSize: 13, fontFamily: "Inter_700Bold", color: "#fff", zIndex: 51 },
-  uploadDockClear: { width: 40, height: 40, borderRadius: 12, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
+  uploadDock: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 3, zIndex: 50, position: "relative" },
+  // Slim, quiet control. The previous pair of full-width scarlet buttons read as the most
+  // important thing on screen when they are in fact an occasional action.
+  materialToggle: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: "#1A1A1A", borderWidth: 1, borderColor: "#2A2A2A" },
+  materialToggleOpen: { backgroundColor: "#C41E3A", borderColor: "#FF6B81" },
+  materialToggleText: { fontSize: 12, fontFamily: "Inter_500Medium", color: "#B9B9B9" },
+  materialToggleTextOpen: { color: "#fff" },
+  materialMenu: { flexDirection: "row", gap: 6, paddingHorizontal: 12, paddingBottom: 4, zIndex: 50 },
+  materialBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, backgroundColor: "#C41E3A", paddingVertical: 9, position: "relative", overflow: "hidden", zIndex: 50 },
+  materialBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
+  uploadDockClear: { width: 30, height: 30, borderRadius: 8, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
+  uploadErrorBar: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 12, marginTop: 4, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, backgroundColor: "#2A1416", borderWidth: 1, borderColor: "#7F1D1D" },
+  uploadErrorText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCA5A5", lineHeight: 17 },
+  boardFallback: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12, paddingHorizontal: 28 },
+  boardFallbackTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff", textAlign: "center" },
+  boardFallbackBody: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#999", textAlign: "center", lineHeight: 19 },
+  boardFallbackBtn: { marginTop: 4, paddingHorizontal: 20, paddingVertical: 11, borderRadius: 10, backgroundColor: "#C41E3A" },
+  boardFallbackBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#fff" },
   island: {
     position: "absolute", left: 12, right: 12, bottom: 12, alignItems: "center", zIndex: 40,
   },
@@ -837,8 +1118,12 @@ const s = StyleSheet.create({
   chatInputField: { flex: 1, backgroundColor: "#1A1A1A", borderRadius: 24, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, fontFamily: "Inter_400Regular", color: "#fff", outlineStyle: "none" } as object,
   sendBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
   contentArea: { flex: 1, flexDirection: "column" },
+  // Video carries the lesson, so it takes roughly two thirds of the content area; the board
+  // gets the remaining third and can still be pushed to full screen with the expand control.
+  // Previously both were flex:1 — an even split that left the video a thin strip once the
+  // upload dock had taken its share.
   videoArea: {
-    flex: 1, backgroundColor: "#000", position: "relative",
+    flex: 2.2, backgroundColor: "#000", position: "relative",
     overflow: "hidden", borderBottomWidth: 1, borderBottomColor: "#1A1A1A",
   },
   videoAreaExpanded: { flex: 1 },

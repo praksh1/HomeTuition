@@ -18,6 +18,12 @@ export const sessionsTable = pgTable("sessions", {
   enrolledCount: integer("enrolled_count").notNull().default(0),
   price: integer("price").notNull().default(0),
   status: text("status").notNull().default("upcoming"), // upcoming | live | completed | cancelled
+  /**
+   * When the teacher actually started the class, which is often not when it was scheduled.
+   * Staleness must be judged from this: a teacher who starts a 12:30 class at 15:00 is still
+   * teaching, and expiring it against the scheduled slot would eject the whole class.
+   */
+  startedAt: timestamp("started_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

@@ -201,8 +201,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const mapped = mapApiUserToUser(profile);
         setUser(mapped);
       }
-    } catch (_e) {
-      await clearToken();
+    } catch (err) {
+      // Only a rejected token means the login is actually invalid. Clearing on *any* failure
+      // logged people out whenever the request merely failed to arrive — a dropped packet, a
+      // sleeping phone, the dev server restarting — which on a phone over wi-fi is common.
+      // The saved token is kept in that case so the next launch can try again.
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        await clearToken();
+      }
     } finally {
       setIsLoading(false);
     }

@@ -8,6 +8,9 @@ interface Props {
   onWatchedParticipantLeft?: () => void;
   /** Unused on web — accepted so parent can pass StyleSheet.absoluteFill without TS error. */
   style?: unknown;
+  /** Unused on web: Daily Prebuilt renders its own screen-share button in the iframe. Only
+   * the native build has to supply one, since it has no prebuilt UI. */
+  canScreenShare?: boolean;
 }
 
 /**
@@ -25,6 +28,28 @@ interface Props {
  */
 let _activeFrame: any = null;
 let _pendingDestroy: Promise<void> = Promise.resolve();
+
+/**
+ * Daily rejects with a plain object (`{action:'error', errorMsg:'…'}`), not an Error, so the
+ * obvious `String(err)` renders a useless "[object Object]" where the actual reason should be.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const o = err as Record<string, unknown>;
+    for (const key of ["errorMsg", "message", "error", "reason"]) {
+      const v = o[key];
+      if (typeof v === "string" && v) return v;
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return "Unknown error";
+    }
+  }
+  return String(err);
+}
 
 /** Fire-and-forget: clears _activeFrame and records the destroy promise. */
 function scheduleDestroy() {
@@ -97,8 +122,8 @@ export default function DailyEmbed({
         await callFrame.join({ url: roomUrl, userName: displayName });
       } catch (err: unknown) {
         if (!cancelled) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error("[DailyEmbed] failed:", msg);
+          const msg = describeError(err);
+          console.error("[DailyEmbed] failed:", msg, err);
           setJoinError(msg);
         }
       }

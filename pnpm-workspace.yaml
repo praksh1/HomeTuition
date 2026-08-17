@@ -68,6 +68,15 @@ catalog:
 
 autoInstallPeers: false
 
+# NOTE: `nodeLinker: hoisted` was tried here to shorten paths for the Android native build and
+# had to be reverted. Flattening the tree collapses each package's private dependency copies
+# into one shared version, which conflicts with the exact `@react-navigation/native` pin in
+# artifacts/sikshya and leaves React null inside expo-router's ContextNavigator — the app dies
+# at startup on BOTH web and native with "Invalid hook call … reading 'useRef' of null".
+#
+# The long-path problem it was working around is solved properly instead: ninja was upgraded
+# to 1.13.2, which honours Windows' LongPathsEnabled. See the android-build notes.
+
 onlyBuiltDependencies:
   - '@swc/core'
   - esbuild
@@ -75,7 +84,9 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
-  # replit uses linux-x64 only, we can exclude all other platforms
+  # Deployment targets linux-x64, so binaries for other platforms are excluded to keep the
+  # store small. win32 is deliberately NOT excluded — the project is also developed on
+  # Windows, and stripping those packages leaves esbuild/rollup unable to run there.
   "esbuild>@esbuild/darwin-arm64": "-"
   "esbuild>@esbuild/darwin-x64": "-"
   "esbuild>@esbuild/freebsd-arm64": "-"
@@ -93,9 +104,6 @@ overrides:
   "esbuild>@esbuild/openbsd-arm64": "-"
   "esbuild>@esbuild/openbsd-x64": "-"
   "esbuild>@esbuild/sunos-x64": "-"
-  "esbuild>@esbuild/win32-arm64": "-"
-  "esbuild>@esbuild/win32-ia32": "-"
-  "esbuild>@esbuild/win32-x64": "-"
   "esbuild>@esbuild/aix-ppc64": '-'
   "esbuild>@esbuild/android-arm": '-'
   "esbuild>@esbuild/android-arm64": '-'
@@ -109,8 +117,6 @@ overrides:
   "lightningcss>lightningcss-linux-arm64-gnu": "-"
   "lightningcss>lightningcss-linux-arm64-musl": "-"
   "lightningcss>lightningcss-linux-x64-musl": "-"
-  "lightningcss>lightningcss-win32-arm64-msvc": "-"
-  "lightningcss>lightningcss-win32-x64-msvc": "-"
   "@tailwindcss/oxide>@tailwindcss/oxide-android-arm64": "-"
   "@tailwindcss/oxide>@tailwindcss/oxide-darwin-arm64": "-"
   "@tailwindcss/oxide>@tailwindcss/oxide-darwin-x64": "-"
@@ -118,8 +124,6 @@ overrides:
   "@tailwindcss/oxide>@tailwindcss/oxide-linux-arm-gnueabihf": "-"
   "@tailwindcss/oxide>@tailwindcss/oxide-linux-arm64-gnu": "-"
   "@tailwindcss/oxide>@tailwindcss/oxide-linux-arm64-musl": "-"
-  "@tailwindcss/oxide>@tailwindcss/oxide-win32-arm64-msvc": "-"
-  "@tailwindcss/oxide>@tailwindcss/oxide-win32-x64-msvc": "-"
   "@tailwindcss/oxide>@tailwindcss/oxide-linux-x64-musl": "-"
   "rollup>@rollup/rollup-android-arm-eabi": "-"
   "rollup>@rollup/rollup-android-arm64": "-"
@@ -141,10 +145,6 @@ overrides:
   "rollup>@rollup/rollup-linux-x64-musl": "-"
   "rollup>@rollup/rollup-openbsd-x64": "-"
   "rollup>@rollup/rollup-openharmony-arm64": "-"
-  "rollup>@rollup/rollup-win32-arm64-msvc": "-"
-  "rollup>@rollup/rollup-win32-ia32-msvc": "-"
-  "rollup>@rollup/rollup-win32-x64-gnu": "-"
-  "rollup>@rollup/rollup-win32-x64-msvc": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-darwin-arm64": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-darwin-x64": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-freebsd-ia32": "-"
@@ -153,8 +153,12 @@ overrides:
   "@expo/ngrok-bin>@expo/ngrok-bin-linux-arm": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-linux-ia32": "-"
   "@expo/ngrok-bin>@expo/ngrok-bin-sunos-x64": "-"
-  "@expo/ngrok-bin>@expo/ngrok-bin-win32-ia32": "-"
-  "@expo/ngrok-bin>@expo/ngrok-bin-win32-x64": "-"
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   esbuild: "0.27.3"
+
+allowBuilds:
+  # esbuild's install script links the prebuilt binary for the current platform; without it
+  # the API server cannot be bundled. Already declared in onlyBuiltDependencies above, and
+  # pinned to an exact version in overrides — this just restates that intent for pnpm 11.
+  esbuild: true

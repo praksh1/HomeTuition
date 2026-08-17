@@ -27,6 +27,14 @@ interface Session {
   status: "upcoming" | "live" | "completed" | "cancelled";
 }
 
+/** Server's verdict on whether this student may enter a given session. */
+interface SessionAccess {
+  canJoin: boolean;
+  isTeacher: boolean;
+  isEnrolled: boolean;
+  hasPaid: boolean;
+}
+
 interface ApiReview {
   id: number;
   studentName: string;
@@ -89,14 +97,28 @@ export default function TeacherDetail() {
 
   const studentId = user?.role === "student" ? (user as Student).id : undefined;
 
+  /**
+   * Per-session answer to "may this student actually join?", straight from the server.
+   * Without it the screen offered "Join Live Class" to anyone, including students who had
+   * never enrolled — the tap then failed, or worse, let them watch a class they had not
+   * paid for. It also tells us which upcoming sessions they are already signed up for.
+   */
+  const [access, setAccess] = useState<Record<string, SessionAccess>>({});
+
   useEffect(() => {
     loadData();
   }, [id]);
 
   const loadData = async () => {
+    // The route param `id` is the teacher's *profile* id; the reviews and sessions APIs key on
+    // the teacher's *user* id. Kept here so the eligibility check below uses the same id the
+    // review is later submitted with — they disagreed, so the rating box appeared for teachers
+    // the student had never studied with (and stayed hidden for ones they had).
+    let teacherUserId: number | null = null;
     try {
       const query = studentId ? `?studentId=${studentId}` : "";
       const apiTeacher = await apiGet<Teacher & { userId: number; isFollowing?: boolean }>(`/teachers/${id}${query}`);
+      teacherUserId = apiTeacher.userId;
       setTeacher({ ...apiTeacher, id: String(apiTeacher.id), credentials: [] });
 
       const [upcomingRes, liveRes, pastRes, revRes] = await Promise.all([
@@ -111,12 +133,28 @@ export default function TeacherDetail() {
       setPastSessions(pastRes.sessions.map((s) => mapApiSession(s, String(apiTeacher.id))));
       setReviews(revRes.reviews);
 
+      if (studentId) {
+        const joinable = [...liveRes.sessions, ...upcomingRes.sessions];
+        const entries = await Promise.all(
+          joinable.map(async (s) => {
+            try {
+              return [String(s.id), await apiGet<SessionAccess>(`/sessions/${s.id}/access`)] as const;
+            } catch {
+              // Treat an unreachable check as "not joinable" — better a student is asked to
+              // enrol again than shown a button the server will refuse.
+              return [String(s.id), { canJoin: false, isTeacher: false, isEnrolled: false, hasPaid: false }] as const;
+            }
+          }),
+        );
+        setAccess(Object.fromEntries(entries));
+      }
+
       if (liveRes.sessions.length > 0) setSessionTab("live");
     } catch (_e) {}
 
-    if (studentId) {
+    if (studentId && teacherUserId != null) {
       try {
-        const rateRes = await apiGet<{ canRate: boolean }>(`/reviews/can-rate?teacherId=${id}`);
+        const rateRes = await apiGet<{ canRate: boolean }>(`/reviews/can-rate?teacherId=${teacherUserId}`);
         setCanRate(rateRes.canRate);
       } catch (_e) {
         setCanRate(false);
@@ -139,6 +177,19 @@ export default function TeacherDetail() {
     setBookingSessionId(session.id);
     try {
       await apiPost(`/sessions/${session.id}/enroll`, { paymentMethod });
+      // Enrolling alone leaves the payment "pending", and an unpaid enrolment cannot join.
+      // The payment sheet has completed at this point, so settle it. Once eSewa/Khalti are
+      // genuinely integrated this call is replaced by the gateway's own confirmation.
+      if (session.price > 0) {
+        try {
+          await apiPost(`/sessions/${session.id}/payment/confirm`, { transactionId: paymentMethod });
+        } catch {
+          Alert.alert(
+            "Payment not confirmed",
+            "You're enrolled, but the payment didn't confirm. You won't be able to join until it does — please try again from your Sessions tab.",
+          );
+        }
+      }
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
         "Booked!",
@@ -156,6 +207,12 @@ export default function TeacherDetail() {
   const openLiveSession = (session: Session) => {
     // Only genuinely active classes are routable; anything else is a no-op tap.
     if (session.status !== "live") return;
+    // The server refuses the video room and the board to anyone who has not paid, so offering
+    // to "join" would walk the student into a class that then rejects them.
+    if (!access[session.id]?.canJoin) {
+      bookSession(session);
+      return;
+    }
     router.push(`/(student)/classroom/${session.id}`);
   };
 
@@ -361,42 +418,78 @@ export default function TeacherDetail() {
           )}
 
           {sessionTab === "upcoming" &&
-            activeSessions.map((s) => (
-              <TouchableOpacity
-                key={s.id}
-                onPress={() => bookSession(s)}
-                activeOpacity={0.85}
-                disabled={bookingSessionId === s.id}
-              >
-                <SessionCard session={s} onPress={() => bookSession(s)} />
-                <View style={styles.bookBtnRow}>
-                  <TouchableOpacity
-                    style={[styles.bookBtn, { backgroundColor: colors.primary }, bookingSessionId === s.id && { opacity: 0.6 }]}
-                    onPress={() => bookSession(s)}
-                    disabled={bookingSessionId === s.id}
-                    activeOpacity={0.85}
-                  >
-                    <Feather name="credit-card" size={14} color="#fff" />
-                    <Text style={styles.bookBtnText}>
-                      {bookingSessionId === s.id ? "Booking..." : `Book & Pay · NPR ${s.price.toLocaleString()}`}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </TouchableOpacity>
-            ))}
+            activeSessions.map((s) => {
+              const a = access[s.id];
+              // Already signed up: say so, rather than inviting them to pay a second time.
+              if (a?.isEnrolled) {
+                return (
+                  <View key={s.id}>
+                    <SessionCard session={s} onPress={() => {}} />
+                    <View style={styles.bookBtnRow}>
+                      <View style={[styles.bookBtn, { backgroundColor: colors.success + "1A", borderWidth: 1, borderColor: colors.success }]}>
+                        <Feather name={a.hasPaid ? "check-circle" : "clock"} size={14} color={colors.success} />
+                        <Text style={[styles.bookBtnText, { color: colors.success }]}>
+                          {a.hasPaid ? "Enrolled — you'll be able to join when it starts" : "Enrolled — payment pending"}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                );
+              }
+              return (
+                <TouchableOpacity
+                  key={s.id}
+                  onPress={() => bookSession(s)}
+                  activeOpacity={0.85}
+                  disabled={bookingSessionId === s.id}
+                >
+                  <SessionCard session={s} onPress={() => bookSession(s)} />
+                  <View style={styles.bookBtnRow}>
+                    <TouchableOpacity
+                      style={[styles.bookBtn, { backgroundColor: colors.primary }, bookingSessionId === s.id && { opacity: 0.6 }]}
+                      onPress={() => bookSession(s)}
+                      disabled={bookingSessionId === s.id}
+                      activeOpacity={0.85}
+                    >
+                      <Feather name="credit-card" size={14} color="#fff" />
+                      <Text style={styles.bookBtnText}>
+                        {bookingSessionId === s.id ? "Booking..." : `Book & Pay · NPR ${s.price.toLocaleString()}`}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
 
           {sessionTab === "live" &&
-            activeSessions.map((s) => (
-              <TouchableOpacity key={s.id} onPress={() => openLiveSession(s)} activeOpacity={0.85}>
-                <SessionCard session={s} onPress={() => openLiveSession(s)} />
-                <View style={styles.bookBtnRow}>
-                  <View style={[styles.bookBtn, { backgroundColor: colors.destructive }]}>
-                    <View style={styles.liveDotWhite} />
-                    <Text style={styles.bookBtnText}>Join Live Class</Text>
+            activeSessions.map((s) => {
+              // "Join Live Class" is only offered when the server says it would be honoured.
+              // Anyone else is shown the way in — enrolling — instead of a button that leads
+              // to a locked door.
+              const canJoin = !!access[s.id]?.canJoin;
+              return (
+                <TouchableOpacity key={s.id} onPress={() => openLiveSession(s)} activeOpacity={0.85} disabled={bookingSessionId === s.id}>
+                  <SessionCard session={s} onPress={() => openLiveSession(s)} />
+                  <View style={styles.bookBtnRow}>
+                    {canJoin ? (
+                      <View style={[styles.bookBtn, { backgroundColor: colors.destructive }]}>
+                        <View style={styles.liveDotWhite} />
+                        <Text style={styles.bookBtnText}>Join Live Class</Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.bookBtn, { backgroundColor: colors.primary }]}>
+                        <Feather name="credit-card" size={14} color="#fff" />
+                        <Text style={styles.bookBtnText}>
+                          {access[s.id]?.isEnrolled
+                            ? `Complete payment to join · NPR ${s.price.toLocaleString()}`
+                            : `Enroll to join · NPR ${s.price.toLocaleString()}`}
+                        </Text>
+                      </View>
+                    )}
                   </View>
-                </View>
-              </TouchableOpacity>
-            ))}
+                </TouchableOpacity>
+              );
+            })}
 
           {sessionTab === "past" &&
             activeSessions.map((s) => <SessionCard key={s.id} session={s} onPress={() => {}} />)}

@@ -1,14 +1,5 @@
 {
   "expo": {
-    "plugins": [
-      [
-        "@config-plugins/react-native-webrtc",
-        {
-          "cameraPermission": "Allow the app to access your camera for video classrooms.",
-          "microphonePermission": "Allow the app to access your microphone for audio sessions."
-        }
-      ]
-    ],
     "name": "Guru",
     "slug": "guru",
     "version": "1.0.0",
@@ -28,7 +19,7 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Sikshya needs microphone access for live classroom audio.",
         "NSCameraUsageDescription": "Sikshya needs camera access for live classroom video.",
-        "NSCameraUsageDescription_camera": "Allow camera for live video in classrooms."
+        "UIBackgroundModes": ["voip"]
       }
     },
     "android": {
@@ -40,7 +31,14 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_CAMERA",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -70,11 +68,27 @@
         {
           "cameraPermission": "Sikshya needs camera access for live classroom video."
         }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Allow the app to access your camera for video classrooms.",
+          "microphonePermission": "Allow the app to access your microphone for audio sessions."
+        }
+      ],
+      "./plugins/withDailyAndroid",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 24
+          }
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true,
-      "reactCompiler": true
+      "reactCompiler": false
     }
   }
 }

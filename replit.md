@@ -4,8 +4,13 @@ A mobile app (iOS/Android via Expo) connecting Nepali teachers and students with
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — API server (port 8080, proxied at `/api`)
-- `pnpm --filter @workspace/sikshya run dev` — Expo mobile app
+Local (non-Replit) setup is documented in `LOCAL_SETUP.md`. Env vars come from a `.env` file
+at the repo root; on Replit they were injected into the environment instead.
+
+- `pnpm run dev:api` — API server (port 8080)
+- `pnpm run dev:app` — Expo app on web (port 8081)
+- `pnpm run db:push` / `pnpm run seed` — shortcuts for the two commands below
+- `pnpm --filter @workspace/sikshya run dev:replit` — Expo with Replit's proxy env vars
 - `pnpm --filter @workspace/scripts run seed` — seed 200+ teachers, 1500+ sessions, 9000+ reviews
 - `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate Zod schemas + React Query hooks

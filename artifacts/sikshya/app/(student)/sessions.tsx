@@ -24,6 +24,9 @@ interface Session {
   status: "upcoming" | "live" | "completed" | "cancelled";
 }
 
+/** How often the session list re-checks for classes going live while the screen is open. */
+const SESSION_POLL_MS = 15000;
+
 export default function StudentSessions() {
   const { user } = useAuth();
   const colors = useColors();
@@ -31,9 +34,15 @@ export default function StudentSessions() {
   const student = user as Student;
   const [sessions, setSessions] = useState<Session[]>([]);
 
+  // Sessions go live on the teacher's schedule, not the student's navigation. Loading only
+  // on focus meant a class that started while this screen was open never appeared as live —
+  // the student saw "come back at that time to join" with no way in until a manual refresh.
+  // Re-fetching on an interval keeps the Join button honest.
   useFocusEffect(
     useCallback(() => {
       loadSessions();
+      const timer = setInterval(loadSessions, SESSION_POLL_MS);
+      return () => clearInterval(timer);
     }, [student?.userId])
   );
 
@@ -72,32 +81,62 @@ export default function StudentSessions() {
     } catch (_e) {}
   };
 
-  const joinSession = (session: Session) => {
-    if (session.status === "upcoming") {
+  const notify = (title: string, msg: string) => {
+    if (Platform.OS === "web") window.alert(`${title}\n\n${msg}`);
+    else Alert.alert(title, msg, [{ text: "OK" }]);
+  };
+
+  const joinSession = async (session: Session) => {
+    if (session.status === "completed" || session.status === "cancelled") {
+      notify("Session Ended", "This session has already ended.");
+      return;
+    }
+
+    // Never refuse entry based on the copy of the session held in this list. A teacher can
+    // start a class at any moment, and a student who tapped a card that was fetched moments
+    // earlier was told "come back at [time]" while the class was already running.
+    let status: Session["status"] = session.status;
+    try {
+      const fresh = await apiGet<{ status: string }>(`/sessions/${session.id}`);
+      status = fresh.status as Session["status"];
+      if (status !== session.status) {
+        setSessions((prev) => prev.map((s) => (s.id === session.id ? { ...s, status } : s)));
+      }
+    } catch {
+      // Offline or the server is unreachable — fall through on what we last knew.
+    }
+
+    if (status === "upcoming") {
       const sessionDate = new Date(session.date);
       const timeStr = sessionDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       const dateStr = sessionDate.toLocaleDateString("en-NP", { weekday: "short", month: "short", day: "numeric" });
-      const msg = `"${session.topic}" starts on ${dateStr} at ${timeStr}.\n\nYou're enrolled! Come back at that time to join.`;
-      if (Platform.OS === "web") window.alert(`Session Upcoming\n\n${msg}`);
-      else Alert.alert("Session Upcoming", msg, [{ text: "Got it" }]);
+      notify("Session Upcoming", `"${session.topic}" starts on ${dateStr} at ${timeStr}.\n\nYou're enrolled — this page will update by itself once the teacher starts the class.`);
       return;
     }
-    if (session.status === "completed" || session.status === "cancelled") {
-      if (Platform.OS === "web") window.alert("This session has already ended.");
-      else Alert.alert("Session Ended", "This session has already ended.");
+    if (status !== "live") {
+      notify("Session Ended", "This session has already ended.");
       return;
     }
-    const msg = `Join "${session.topic}" by ${session.teacherName}?\n\nNPR ${session.price.toLocaleString()} will be charged via your enrolled payment method.`;
-    if (Platform.OS === "web") {
-      if (window.confirm(`Join Live Session\n\n${msg}`)) {
-        router.push(`/(student)/classroom/${session.id}`);
+
+    // The server refuses the video and the board unless the enrolment is paid up, so ask
+    // before walking the student into a class that would then reject them.
+    try {
+      const access = await apiGet<{ canJoin: boolean; isEnrolled: boolean }>(`/sessions/${session.id}/access`);
+      if (!access.canJoin) {
+        notify(
+          access.isEnrolled ? "Payment Pending" : "Not Enrolled",
+          access.isEnrolled
+            ? "Your enrolment hasn't been paid yet, so you can't join this class."
+            : "You need to enrol in this class before you can join.",
+        );
+        return;
       }
-    } else {
-      Alert.alert("Join Live Session", msg, [
-        { text: "Cancel", style: "cancel" },
-        { text: "Join Now", onPress: () => router.push(`/(student)/classroom/${session.id}`) },
-      ]);
+    } catch {
+      notify("Couldn't Check", "We couldn't confirm your access to this class. Please try again.");
+      return;
     }
+
+    router.push(`/(student)/classroom/${session.id}`);
   };
 
   const liveSessions = sessions.filter((s) => s.status === "live");

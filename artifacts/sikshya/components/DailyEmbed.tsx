@@ -1,81 +1,82 @@
-import React, { useCallback, useRef } from "react";
-import { StyleSheet, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  PermissionsAndroid,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
-import { WebView } from "react-native-webview";
+import Daily, {
+  DailyMediaView,
+  type DailyCall,
+  type DailyParticipant,
+} from "@daily-co/react-native-daily-js";
 
 interface Props {
   roomUrl: string;
   displayName: string;
   style?: StyleProp<ViewStyle>;
-  /** Called the instant the local user exits the Daily call (native Leave button or otherwise). */
+  /** Called the instant the local user exits the call. */
   onLeft?: () => void;
   /** If set, fires `onWatchedParticipantLeft` when a remote participant with this
    * display name leaves the call — used to notify students if the teacher drops. */
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
+  /** Screen sharing is a presenter action; only the teacher gets the control. */
+  canScreenShare?: boolean;
 }
 
-// Injected once after the WebView loads. Responsibilities:
-//   1. Apply Paathshala dark-theme CSS overrides to the Daily Prebuilt shell.
-//   2. Poll for the Daily call instance and, once found, attach event listeners
-//      that relay 'participant-left' and 'left-meeting' to React Native via postMessage.
-//
-// CSS variables targeting Daily Prebuilt's documented custom-property API are set on :root
-// so they cascade into any sub-frames that Daily renders inside the Prebuilt page.
-const BRIDGE_JS = `
-(function () {
-  var s = document.createElement('style');
-  s.textContent = [
-    ':root{',
-    '  --daily-color-bg:#111111;',
-    '  --daily-color-bg-mid:#1a1a1a;',
-    '  --daily-color-accent:#E11D48;',
-    '  --daily-color-accent-text:#ffffff;',
-    '  --daily-color-base-text:#ffffff;',
-    '  --daily-color-border:transparent;',
-    '}',
-    'body,#app,.DailyApp{background:#111111!important;}',
-  ].join('');
-  (document.head || document.documentElement).appendChild(s);
+/**
+ * Native video call built directly on Daily's React Native SDK.
+ *
+ * This deliberately does NOT use Daily Prebuilt in a WebView, which is what the web build
+ * still does. A WebView cannot capture the device screen — iOS and Android only expose screen
+ * capture to native code — so presenting from a phone is impossible through that route no
+ * matter how it is configured. The cost of using the SDK is that Daily's ready-made call
+ * interface disappears and every control below has to be provided by us.
+ */
 
-  function post(type, payload) {
-    if (window.ReactNativeWebView) {
-      window.ReactNativeWebView.postMessage(JSON.stringify({ type: type, payload: payload }));
+type ScreenShareState = "idle" | "starting" | "sharing";
+
+/** Pulls the playable track off a participant, tolerating the not-yet-playable case. */
+function trackOf(p: DailyParticipant | undefined, kind: "video" | "audio" | "screenVideo") {
+  const state = p?.tracks?.[kind];
+  return state?.persistentTrack ?? null;
+}
+
+function isSharingScreen(p: DailyParticipant): boolean {
+  return p.tracks?.screenVideo?.state === "playable" || !!p.tracks?.screenVideo?.persistentTrack;
+}
+
+/**
+ * Android needs camera and microphone granted before joining; the SDK will otherwise join
+ * muted with no obvious explanation. POST_NOTIFICATIONS is requested because the in-call
+ * foreground service posts a notification on Android 13+.
+ */
+async function ensureAndroidPermissions(): Promise<boolean> {
+  if (Platform.OS !== "android") return true;
+  try {
+    const wanted = [
+      PermissionsAndroid.PERMISSIONS.CAMERA,
+      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+    ];
+    if (Number(Platform.Version) >= 33 && PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS) {
+      wanted.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
     }
+    const result = await PermissionsAndroid.requestMultiple(wanted);
+    return (
+      result[PermissionsAndroid.PERMISSIONS.CAMERA] === "granted" &&
+      result[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === "granted"
+    );
+  } catch {
+    return false;
   }
-
-  function attach() {
-    try {
-      var frame =
-        (window.callFrame) ||
-        (window.DailyIframe &&
-          window.DailyIframe.getCallInstance &&
-          window.DailyIframe.getCallInstance());
-      if (frame && frame.on && !frame.__sikshyaBridged) {
-        frame.__sikshyaBridged = true;
-
-        frame.on('participant-left', function (event) {
-          post('participant-left', {
-            userName: event && event.participant && event.participant.user_name,
-          });
-        });
-
-        // 'left-meeting' fires the instant the local user exits — whether they tapped
-        // Daily's native red Leave button or the session ended. Relay it so the app
-        // can clean up state and redirect in a single step, no double-press required.
-        frame.on('left-meeting', function () {
-          post('left-meeting', {});
-        });
-
-        return;
-      }
-    } catch (e) {}
-    setTimeout(attach, 500);
-  }
-  attach();
-  true;
-})();
-`;
+}
 
 export default function DailyEmbed({
   roomUrl,
@@ -84,63 +85,280 @@ export default function DailyEmbed({
   onLeft,
   watchUserName,
   onWatchedParticipantLeft,
+  canScreenShare = false,
 }: Props) {
-  // Stable ref: event callbacks always see current props without being stale closures,
-  // and without triggering a WebView remount when props change.
+  const [participants, setParticipants] = useState<DailyParticipant[]>([]);
+  const [joining, setJoining] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [micOn, setMicOn] = useState(true);
+  const [camOn, setCamOn] = useState(true);
+  const [screenShare, setScreenShare] = useState<ScreenShareState>("idle");
+
+  const callRef = useRef<DailyCall | null>(null);
+
+  // Event handlers read callbacks through a ref so they never capture a stale closure and
+  // never force the call to be torn down and rejoined when a parent re-renders.
   const cbRef = useRef({ onLeft, watchUserName, onWatchedParticipantLeft });
   cbRef.current = { onLeft, watchUserName, onWatchedParticipantLeft };
 
-  const handleMessage = useCallback((event: { nativeEvent: { data: string } }) => {
-    try {
-      const msg = JSON.parse(event.nativeEvent.data);
-      if (msg.type === "participant-left") {
-        const { watchUserName: watched, onWatchedParticipantLeft: cb } = cbRef.current;
-        if (watched && msg.payload?.userName === watched) cb?.();
-      } else if (msg.type === "left-meeting") {
-        cbRef.current.onLeft?.();
+  useEffect(() => {
+    if (!roomUrl) return;
+    let cancelled = false;
+    let call: DailyCall | null = null;
+
+    const sync = () => {
+      if (cancelled || !call) return;
+      setParticipants(Object.values(call.participants()) as DailyParticipant[]);
+    };
+
+    (async () => {
+      const granted = await ensureAndroidPermissions();
+      if (cancelled) return;
+      if (!granted) {
+        setError("Camera and microphone access are needed to join the class.");
+        setJoining(false);
+        return;
       }
-    } catch {}
+
+      try {
+        call = Daily.createCallObject();
+        callRef.current = call;
+
+        call.on("joined-meeting", () => {
+          if (cancelled) return;
+          setJoining(false);
+          sync();
+        });
+        call.on("participant-joined", sync);
+        call.on("participant-updated", sync);
+        call.on("participant-left", (ev) => {
+          sync();
+          const { watchUserName: watched, onWatchedParticipantLeft: cb } = cbRef.current;
+          if (watched && ev?.participant?.user_name === watched) cb?.();
+        });
+        call.on("left-meeting", () => {
+          if (cancelled) return;
+          cbRef.current.onLeft?.();
+        });
+        call.on("local-screen-share-started", () => !cancelled && setScreenShare("sharing"));
+        call.on("local-screen-share-stopped", () => !cancelled && setScreenShare("idle"));
+        call.on("local-screen-share-canceled", () => !cancelled && setScreenShare("idle"));
+        call.on("error", (ev) => {
+          if (cancelled) return;
+          setError(ev?.errorMsg ?? "The video call ran into a problem.");
+          setJoining(false);
+        });
+        call.on("camera-error", () => {
+          if (cancelled) return;
+          setError("Could not start the camera. Another app may be using it.");
+        });
+
+        await call.join({ url: roomUrl, userName: displayName });
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Could not join the video room.");
+        setJoining(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      const c = callRef.current;
+      callRef.current = null;
+      // destroy() releases the camera and microphone. Leaving it out strands the devices
+      // and the next join fails with the hardware already in use.
+      if (c) {
+        c.leave()
+          .catch(() => {})
+          .finally(() => {
+            c.destroy().catch(() => {});
+          });
+      }
+    };
+  }, [roomUrl, displayName]);
+
+  const toggleMic = useCallback(() => {
+    const c = callRef.current;
+    if (!c) return;
+    const next = !c.localAudio();
+    c.setLocalAudio(next);
+    setMicOn(next);
   }, []);
+
+  const toggleCam = useCallback(() => {
+    const c = callRef.current;
+    if (!c) return;
+    const next = !c.localVideo();
+    c.setLocalVideo(next);
+    setCamOn(next);
+  }, []);
+
+  const toggleScreenShare = useCallback(() => {
+    const c = callRef.current;
+    if (!c) return;
+    if (screenShare === "sharing") {
+      c.stopScreenShare();
+      setScreenShare("idle");
+      return;
+    }
+    // The OS now shows its own capture consent prompt. "starting" holds until Daily reports
+    // back, so the button cannot be double-fired while that dialog is up.
+    setScreenShare("starting");
+    c.startScreenShare();
+  }, [screenShare]);
+
+  const leave = useCallback(() => {
+    const c = callRef.current;
+    if (!c) {
+      cbRef.current.onLeft?.();
+      return;
+    }
+    c.leave().catch(() => cbRef.current.onLeft?.());
+  }, []);
+
+  const local = participants.find((p) => p.local);
+  const remotes = participants.filter((p) => !p.local);
+  const presenter = participants.find(isSharingScreen);
 
   if (!roomUrl) return null;
 
-  const url = new URL(roomUrl);
-  url.searchParams.set("userName", displayName);
+  if (error) {
+    return (
+      <View style={[style, s.container, s.centre]}>
+        <Feather name="video-off" size={28} color="#EF4444" />
+        <Text style={s.errorText}>{error}</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={[style, styles.container]}>
-      <WebView
-        source={{ uri: url.toString() }}
-        style={styles.webview}
-        injectedJavaScript={BRIDGE_JS}
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        mediaCapturePermissionGrantType="grant"
-        javaScriptEnabled
-        domStorageEnabled
-        originWhitelist={["*"]}
-        allowsProtectedMedia
-        onMessage={handleMessage}
-        {...({
-          onPermissionRequest: (e: any) =>
-            e.nativeEvent.request.grant(e.nativeEvent.resources),
-        } as any)}
-      />
+    <View style={[style, s.container]}>
+      {joining ? (
+        <View style={[StyleSheet.absoluteFill, s.centre]}>
+          <ActivityIndicator color="#fff" />
+          <Text style={s.hint}>Joining the class…</Text>
+        </View>
+      ) : (
+        <>
+          {presenter ? (
+            // Someone is presenting: their screen takes the stage and faces move to a strip.
+            <View style={s.stage}>
+              <DailyMediaView
+                videoTrack={trackOf(presenter, "screenVideo")}
+                audioTrack={null}
+                objectFit="contain"
+                style={s.stageVideo}
+              />
+              <View style={s.presenterTag}>
+                <Feather name="monitor" size={11} color="#fff" />
+                <Text style={s.presenterTagText}>
+                  {presenter.local ? "You are sharing" : `${presenter.user_name || "Teacher"} is sharing`}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={s.stage}>
+              {remotes.length > 0 ? (
+                <DailyMediaView
+                  videoTrack={trackOf(remotes[0], "video")}
+                  audioTrack={trackOf(remotes[0], "audio")}
+                  objectFit="cover"
+                  style={s.stageVideo}
+                />
+              ) : (
+                <View style={[StyleSheet.absoluteFill, s.centre]}>
+                  <Feather name="users" size={26} color="#555" />
+                  <Text style={s.hint}>Waiting for others to join…</Text>
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Face strip: everyone's camera, including the presenter's own. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={s.strip}
+            contentContainerStyle={s.stripInner}
+          >
+            {[local, ...remotes].filter(Boolean).map((p) => {
+              const person = p as DailyParticipant;
+              return (
+                <View key={person.session_id} style={s.tile}>
+                  <DailyMediaView
+                    videoTrack={trackOf(person, "video")}
+                    // Local audio is never played back — it would echo.
+                    audioTrack={person.local ? null : trackOf(person, "audio")}
+                    mirror={person.local}
+                    objectFit="cover"
+                    style={s.tileVideo}
+                  />
+                  <Text style={s.tileName} numberOfLines={1}>
+                    {person.local ? "You" : person.user_name || "Guest"}
+                  </Text>
+                </View>
+              );
+            })}
+          </ScrollView>
+
+          {/* Controls — every one of these came free with Daily Prebuilt on web. */}
+          <View style={s.bar}>
+            <TouchableOpacity style={[s.btn, !micOn && s.btnOff]} onPress={toggleMic} activeOpacity={0.8}>
+              <Feather name={micOn ? "mic" : "mic-off"} size={18} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={[s.btn, !camOn && s.btnOff]} onPress={toggleCam} activeOpacity={0.8}>
+              <Feather name={camOn ? "video" : "video-off"} size={18} color="#fff" />
+            </TouchableOpacity>
+            {canScreenShare && (
+              <TouchableOpacity
+                style={[s.btn, screenShare === "sharing" && s.btnActive]}
+                onPress={toggleScreenShare}
+                activeOpacity={0.8}
+                disabled={screenShare === "starting"}
+              >
+                {screenShare === "starting" ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Feather name="monitor" size={18} color="#fff" />
+                )}
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={[s.btn, s.btnLeave]} onPress={leave} activeOpacity={0.8}>
+              <Feather name="phone-off" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: "100%",
-    height: "100%",
-    backgroundColor: "#111111",
+const s = StyleSheet.create({
+  container: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: "#111" },
+  centre: { alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
+  hint: { color: "#999", fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
+  errorText: { color: "#ccc", fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
+  stage: { flex: 1, backgroundColor: "#000", position: "relative" },
+  stageVideo: { flex: 1, backgroundColor: "#000" },
+  presenterTag: {
+    position: "absolute", top: 8, left: 8, flexDirection: "row", alignItems: "center", gap: 5,
+    backgroundColor: "rgba(0,0,0,0.65)", borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4,
   },
-  webview: {
-    flex: 1,
-    backgroundColor: "#111111",
+  presenterTagText: { color: "#fff", fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  strip: { maxHeight: 78, flexGrow: 0 },
+  stripInner: { gap: 6, paddingHorizontal: 8, paddingVertical: 6, alignItems: "center" },
+  tile: { width: 92, height: 66, borderRadius: 8, overflow: "hidden", backgroundColor: "#1A1A1A" },
+  tileVideo: { width: "100%", height: "100%" },
+  tileName: {
+    position: "absolute", bottom: 2, left: 4, right: 4, color: "#fff", fontSize: 9,
+    fontFamily: "Inter_500Medium", textShadowColor: "#000", textShadowRadius: 3,
   },
+  bar: {
+    flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 12,
+    paddingVertical: 10, backgroundColor: "#0A0A0A", borderTopWidth: 1, borderTopColor: "#1E1E1E",
+  },
+  btn: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#2A2A2A", alignItems: "center", justifyContent: "center" },
+  btnOff: { backgroundColor: "#5A1F1F" },
+  btnActive: { backgroundColor: "#16A34A" },
+  btnLeave: { backgroundColor: "#C41E3A" },
 });

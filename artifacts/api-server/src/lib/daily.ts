@@ -51,10 +51,26 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
       name: roomName,
       privacy: "public",
       properties: {
+        // Chat, hand raising and reactions are deliberately left to the app, not Daily.
+        //
+        // Daily's versions live only in its web Prebuilt UI. Android and iOS use the native
+        // SDK with our own call interface (a WebView cannot capture the screen), which has no
+        // Prebuilt and therefore none of those panels. Turning Daily's chat on would split
+        // one classroom into two conversations — web students talking inside the iframe,
+        // phone students talking in the app, neither able to see the other. The app's
+        // WebSocket already carries chat and reactions to every platform equally.
         enable_chat: false,
+        enable_hand_raising: false,
+        enable_emoji_reactions: false,
+        // These are safe: they only describe the call itself, so they degrade to "absent"
+        // rather than "half the class cannot see it".
+        enable_people_ui: true,
+        enable_network_ui: true,
+        enable_noise_cancellation_ui: true,
         enable_screenshare: true,
         start_video_off: false,
         start_audio_off: false,
+        // Rooms are torn down 6h after creation; a class running longer than that would drop.
         exp: Math.floor(Date.now() / 1000) + 60 * 60 * 6,
       },
     }),

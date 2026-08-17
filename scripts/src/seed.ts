@@ -1,8 +1,27 @@
 import crypto from "crypto";
+import path from "path";
+import { fileURLToPath } from "url";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 import * as schema from "@workspace/db/schema";
 import { sql } from "drizzle-orm";
+
+// Replit injected DATABASE_URL into the environment automatically. Running anywhere else,
+// it comes from the .env file at the repo root instead.
+if (!process.env.DATABASE_URL) {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  try {
+    process.loadEnvFile(path.join(here, "../../.env"));
+  } catch {
+    // No .env file — the clearer error below covers it.
+  }
+}
+
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is not set. Create a .env file at the repo root containing DATABASE_URL=...",
+  );
+}
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle(pool, { schema });
