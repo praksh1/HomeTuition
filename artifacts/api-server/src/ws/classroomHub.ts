@@ -128,6 +128,8 @@ function sanitizeDrawCommit(msg: Record<string, unknown>): Record<string, unknow
     x1: msg.x1, y1: msg.y1, x2: msg.x2, y2: msg.y2,
     cx: msg.cx, cy: msg.cy, r: msg.r,
     text: msg.text, x: msg.x, y: msg.y,
+    // Translucency for highlighter strokes; anything outside (0,1] is treated as solid.
+    opacity: typeof msg.opacity === "number" && msg.opacity > 0 && msg.opacity <= 1 ? msg.opacity : 1,
   };
 }
 

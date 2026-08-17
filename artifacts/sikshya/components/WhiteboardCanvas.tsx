@@ -20,10 +20,13 @@ interface Props {
   /** Students render the same board but cannot draw on it. */
   readOnly?: boolean;
 
-  tool: DrawPath["tool"] | "highlighter";
+  tool: DrawPath["tool"];
+  /** Which drawing instrument the freehand tool is currently using. */
+  instrument: Instrument;
   color: string;
   strokeWidth: number;
   isEraser: boolean;
+  eraserWidth: number;
 
   zoom: number;
   pan: Point;
@@ -35,7 +38,24 @@ interface Props {
 
 /** Eraser paints in the board's own background colour rather than truly removing ink. */
 const ERASER_COLOR = "#FFFFFF";
-const ERASER_WIDTH = 24;
+
+/**
+ * How each instrument behaves. Real whiteboards differ by more than colour: a marker lays
+ * down a thick opaque line, a highlighter is wide and translucent so text stays readable
+ * underneath, a pencil is thin and slightly grey. Width is a multiplier on the chosen size
+ * so the size buttons still mean something for every instrument.
+ */
+export const INSTRUMENTS = {
+  pen: { widthScale: 1, opacity: 1, cap: "round" as const },
+  marker: { widthScale: 2.6, opacity: 0.95, cap: "round" as const },
+  highlighter: { widthScale: 6, opacity: 0.32, cap: "butt" as const },
+  pencil: { widthScale: 0.7, opacity: 0.75, cap: "round" as const },
+} as const;
+
+export type Instrument = keyof typeof INSTRUMENTS;
+
+/** Eraser sizes, in board pixels. */
+export const ERASER_SIZES = [16, 32, 64] as const;
 
 /**
  * A pointer-driven drawing surface.
@@ -56,9 +76,11 @@ export default function WhiteboardCanvas({
   onSurfaceLayout,
   readOnly = false,
   tool,
+  instrument,
   color,
   strokeWidth,
   isEraser,
+  eraserWidth,
   zoom,
   pan,
   panMode,
@@ -80,8 +102,15 @@ export default function WhiteboardCanvas({
   const panDragRef = useRef<{ from: Point; pan: Point } | null>(null);
   const drawingRef = useRef(false);
 
-  const settings = useRef({ tool, color, strokeWidth, isEraser });
-  settings.current = { tool, color, strokeWidth, isEraser };
+  const settings = useRef({ tool, instrument, color, strokeWidth, isEraser, eraserWidth });
+  settings.current = { tool, instrument, color, strokeWidth, isEraser, eraserWidth };
+
+  // The DOM listeners are bound once; these keep them pointed at the latest callbacks.
+  const beginRef = useRef<(x: number, y: number, p: number) => void>(() => {});
+  const moveRef = useRef<(x: number, y: number) => void>(() => {});
+  const endRef = useRef<() => void>(() => {});
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
 
   /** Viewport point -> board point, undoing the current pan and zoom. */
   const toBoard = useCallback((vx: number, vy: number): Point => {
@@ -92,9 +121,13 @@ export default function WhiteboardCanvas({
 
   const strokeStyle = useCallback(() => {
     const s = settings.current;
-    if (s.isEraser) return { color: ERASER_COLOR, width: ERASER_WIDTH };
-    if (s.tool === "highlighter") return { color: s.color, width: Math.max(12, s.strokeWidth * 5) };
-    return { color: s.color, width: s.strokeWidth };
+    if (s.isEraser) return { color: ERASER_COLOR, width: s.eraserWidth, opacity: 1 };
+    const inst = INSTRUMENTS[s.instrument] ?? INSTRUMENTS.pen;
+    return {
+      color: s.color,
+      width: Math.max(1, s.strokeWidth * inst.widthScale),
+      opacity: inst.opacity,
+    };
   }, []);
 
   const begin = useCallback(
@@ -114,7 +147,7 @@ export default function WhiteboardCanvas({
         onRequestText?.(pt);
         return;
       }
-      if (s.tool === "pen" || s.tool === "highlighter" || s.isEraser) {
+      if (s.tool === "pen" || s.isEraser) {
         setCurrentPath(`M${pt.x.toFixed(1)},${pt.y.toFixed(1)}`);
         return;
       }
@@ -143,7 +176,7 @@ export default function WhiteboardCanvas({
       const pt = toBoard(vx, vy);
       const s = settings.current;
 
-      if (s.tool === "pen" || s.tool === "highlighter" || s.isEraser) {
+      if (s.tool === "pen" || s.isEraser) {
         setCurrentPath((p) => (p ? `${p} L${pt.x.toFixed(1)},${pt.y.toFixed(1)}` : p));
         return;
       }
@@ -163,15 +196,15 @@ export default function WhiteboardCanvas({
     panDragRef.current = null;
     if (readOnly) return;
     const s = settings.current;
-    const { color: c, width } = strokeStyle();
+    const { color: c, width, opacity: op } = strokeStyle();
 
     if (currentPath) {
       onCommit?.({
-        // Highlighter travels the wire as a pen stroke so older clients still render it.
         tool: "pen",
         d: currentPath,
         color: c,
         width,
+        opacity: op,
       });
       setCurrentPath(null);
     } else if (preview) {
@@ -182,6 +215,10 @@ export default function WhiteboardCanvas({
     drawingRef.current = false;
     void s;
   }, [readOnly, currentPath, preview, onCommit, strokeStyle]);
+
+  beginRef.current = begin;
+  moveRef.current = move;
+  endRef.current = end;
 
   // Native input. Web goes through pointer events below, which cover mouse, touch and pen.
   const panResponder = useMemo(
@@ -199,29 +236,56 @@ export default function WhiteboardCanvas({
 
   const surfaceRef = useRef<unknown>(null);
 
-  const pointerHandlers =
-    Platform.OS === "web"
-      ? ({
-          onPointerDown: (e: any) => {
-            // Capture keeps the stroke alive if the pointer leaves the element mid-draw,
-            // which otherwise ends strokes early near the edges of the board.
-            try { e.currentTarget?.setPointerCapture?.(e.pointerId); } catch {}
-            const r = e.currentTarget?.getBoundingClientRect?.();
-            begin(e.clientX - (r?.left ?? 0), e.clientY - (r?.top ?? 0), e.pressure ?? 0.5);
-          },
-          onPointerMove: (e: any) => {
-            const r = e.currentTarget?.getBoundingClientRect?.();
-            move(e.clientX - (r?.left ?? 0), e.clientY - (r?.top ?? 0));
-          },
-          onPointerUp: (e: any) => {
-            try { e.currentTarget?.releasePointerCapture?.(e.pointerId); } catch {}
-            end();
-          },
-          onPointerCancel: end,
-          // Stops the browser panning/zooming the page while drawing with a finger.
-          style: { touchAction: "none" },
-        } as object)
-      : panResponder.panHandlers;
+  /**
+   * Web input is bound with real DOM listeners rather than React props.
+   *
+   * react-native-web lists onPointerDown/Move/Up among the props it forwards, and they do
+   * reach the element — but React never actually invokes them, so every stroke was silently
+   * dropped. Verified by calling the same handlers directly, which drew perfectly. Binding
+   * the events on the node itself removes that layer of doubt entirely, works for mouse,
+   * touch and stylus alike, and avoids a React synthetic event per pointermove during a
+   * fast stroke.
+   */
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const node = surfaceRef.current as HTMLElement | null;
+    if (!node || typeof node.addEventListener !== "function") return;
+
+    const local = (e: PointerEvent) => {
+      const r = node.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (readOnlyRef.current) return;
+      // Capture keeps the stroke alive when the pointer leaves the board mid-line, which
+      // otherwise clips strokes drawn towards the edges.
+      try { node.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault();
+      const p = local(e);
+      beginRef.current(p.x, p.y, e.pressure || 0.5);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (readOnlyRef.current) return;
+      const p = local(e);
+      moveRef.current(p.x, p.y);
+    };
+    const onUp = (e: PointerEvent) => {
+      try { node.releasePointerCapture(e.pointerId); } catch {}
+      endRef.current();
+    };
+
+    node.addEventListener("pointerdown", onDown);
+    node.addEventListener("pointermove", onMove);
+    node.addEventListener("pointerup", onUp);
+    node.addEventListener("pointercancel", onUp);
+    return () => {
+      node.removeEventListener("pointerdown", onDown);
+      node.removeEventListener("pointermove", onMove);
+      node.removeEventListener("pointerup", onUp);
+      node.removeEventListener("pointercancel", onUp);
+    };
+  }, []);
 
   const handleLayout = useCallback(
     (e: LayoutChangeEvent) => {
@@ -243,16 +307,19 @@ export default function WhiteboardCanvas({
         pointerEvents="none"
       >
         {materialLayer}
-        <Svg style={StyleSheet.absoluteFill}>
+        {/* width/height must be explicit. An <svg> with no dimensions falls back to the HTML
+            default of 300x150 and CLIPS everything outside it — strokes were being recorded
+            correctly across the whole board but only the top-left corner was ever visible. */}
+        <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
           {committed}
           {currentPath ? (
             <Path
               d={currentPath}
               stroke={live.color}
               strokeWidth={live.width}
-              strokeOpacity={tool === "highlighter" && !isEraser ? 0.4 : 1}
+              strokeOpacity={live.opacity}
               fill="none"
-              strokeLinecap="round"
+              strokeLinecap={isEraser ? "round" : INSTRUMENTS[instrument].cap}
               strokeLinejoin="round"
             />
           ) : null}
@@ -265,9 +332,13 @@ export default function WhiteboardCanvas({
           toolbar instead of the board — the reason drawing only worked in some areas. */}
       <View
         ref={surfaceRef as never}
-        style={StyleSheet.absoluteFill}
+        // The handler spread must not carry a `style` key: spreading it after `style` would
+        // silently replace absoluteFill, leaving an element with no position and no height —
+        // a surface that looks present but cannot be drawn on by any input device.
+        // `touchAction: none` belongs in the style array, not in the spread.
+        style={[StyleSheet.absoluteFill, Platform.OS === "web" ? ({ touchAction: "none" } as object) : null]}
         onLayout={handleLayout}
-        {...pointerHandlers}
+        {...(Platform.OS === "web" ? null : panResponder.panHandlers)}
       />
     </View>
   );
@@ -314,7 +385,18 @@ export function renderShape(p: DrawPath, i: number) {
       // A remote client can send a tool this build does not know; without a `d` there is
       // nothing to draw, and rendering an empty Path would throw.
       if (!p.d) return null;
-      return <Path key={key} d={p.d} stroke={p.color} strokeWidth={p.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />;
+      return (
+        <Path
+          key={key}
+          d={p.d}
+          stroke={p.color}
+          strokeWidth={p.width}
+          strokeOpacity={p.opacity ?? 1}
+          fill="none"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      );
   }
 }
 

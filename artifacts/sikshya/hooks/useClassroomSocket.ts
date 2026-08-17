@@ -28,6 +28,8 @@ export interface DrawPath {
   text?: string;
   x?: number;
   y?: number;
+  /** Below 1 for translucent instruments such as the highlighter. */
+  opacity?: number;
 }
 
 export interface FloatingReaction {
@@ -101,6 +103,7 @@ function toDrawPath(raw: Record<string, unknown>): DrawPath | null {
     text: raw.text as string | undefined,
     x: raw.x as number | undefined,
     y: raw.y as number | undefined,
+    opacity: typeof raw.opacity === "number" && raw.opacity > 0 && raw.opacity <= 1 ? raw.opacity : 1,
   };
 }
 

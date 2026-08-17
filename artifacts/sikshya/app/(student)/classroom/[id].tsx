@@ -310,6 +310,8 @@ export default function StudentClassroom() {
                 right edge of a laptop was painted off the side of a phone. */}
             <Svg
               style={StyleSheet.absoluteFill}
+              width="100%"
+              height="100%"
               {...(boardSize
                 ? { viewBox: `0 0 ${boardSize.width} ${boardSize.height}`, preserveAspectRatio: "xMidYMid meet" }
                 : null)}
