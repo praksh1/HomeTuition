@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 
 interface Props {
   roomUrl: string;
+  /** Daily meeting token. Carries owner rights for the session's teacher, so they can mute
+   * or remove participants; students get a plain token or none at all. */
+  meetingToken?: string | null;
   displayName: string;
   onLeft?: () => void;
   watchUserName?: string;
@@ -62,6 +65,7 @@ function scheduleDestroy() {
 
 export default function DailyEmbed({
   roomUrl,
+  meetingToken,
   displayName,
   onLeft,
   watchUserName,
@@ -119,7 +123,7 @@ export default function DailyEmbed({
           cbRef.current.onLeft?.();
         });
 
-        await callFrame.join({ url: roomUrl, userName: displayName });
+        await callFrame.join({ url: roomUrl, userName: displayName, ...(meetingToken ? { token: meetingToken } : null) });
       } catch (err: unknown) {
         if (!cancelled) {
           const msg = describeError(err);
@@ -133,7 +137,7 @@ export default function DailyEmbed({
       cancelled = true;
       scheduleDestroy(); // synchronous: clears _activeFrame, stores destroy promise
     };
-  }, [roomUrl, displayName]);
+  }, [roomUrl, displayName, meetingToken]);
 
   if (joinError) {
     return React.createElement(

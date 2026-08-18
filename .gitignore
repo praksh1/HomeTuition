@@ -58,3 +58,6 @@ artifacts/sikshya/ios/
 .env.local
 *.env
 !.env.example
+
+# Production web export
+artifacts/sikshya/web-build/

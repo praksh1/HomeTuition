@@ -19,6 +19,8 @@ import Daily, {
 
 interface Props {
   roomUrl: string;
+  /** Daily meeting token; owner rights for the session's teacher. */
+  meetingToken?: string | null;
   displayName: string;
   style?: StyleProp<ViewStyle>;
   /** Called the instant the local user exits the call. */
@@ -80,6 +82,7 @@ async function ensureAndroidPermissions(): Promise<boolean> {
 
 export default function DailyEmbed({
   roomUrl,
+  meetingToken,
   displayName,
   style,
   onLeft,
@@ -153,7 +156,7 @@ export default function DailyEmbed({
           setError("Could not start the camera. Another app may be using it.");
         });
 
-        await call.join({ url: roomUrl, userName: displayName });
+        await call.join({ url: roomUrl, userName: displayName, ...(meetingToken ? { token: meetingToken } : null) });
       } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Could not join the video room.");
@@ -175,7 +178,7 @@ export default function DailyEmbed({
           });
       }
     };
-  }, [roomUrl, displayName]);
+  }, [roomUrl, displayName, meetingToken]);
 
   const toggleMic = useCallback(() => {
     const c = callRef.current;

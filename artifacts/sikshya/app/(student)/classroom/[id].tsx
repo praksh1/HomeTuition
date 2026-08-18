@@ -87,6 +87,7 @@ export default function StudentClassroom() {
   const [videoExpanded, setVideoExpanded] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
+  const [meetingToken, setMeetingToken] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -110,8 +111,9 @@ export default function StudentClassroom() {
   // own "start session" call has run, since the room is created idempotently either way.
   const loadRoom = async () => {
     try {
-      const { roomUrl: url } = await apiGet<{ roomUrl: string }>(`/sessions/${id}/room`);
+      const { roomUrl: url, token } = await apiGet<{ roomUrl: string; token?: string | null }>(`/sessions/${id}/room`);
       setRoomUrl(url);
+      setMeetingToken(token ?? null);
       setRoomError(false);
     } catch {
       setRoomError(true);
@@ -124,6 +126,7 @@ export default function StudentClassroom() {
       // cleanup, and dropping the URL runs that immediately rather than waiting for this
       // screen to unmount, which a navigation stack may never do.
       setRoomUrl(null);
+    setMeetingToken(null);
       const msg = "The teacher has ended this session.";
       if (Platform.OS === "web") {
         window.alert(`Session Ended\n\n${msg}`);
@@ -158,13 +161,15 @@ export default function StudentClassroom() {
   // Called when the student clicks Daily's native Leave button — no confirmation needed
   // since the user already made an explicit in-call gesture. Redirect instantly.
   const handleDailyLeft = useCallback(() => {
-    setRoomUrl(null); // release camera/mic before navigating away
+    setRoomUrl(null);
+    setMeetingToken(null); // release camera/mic before navigating away
     router.back();
   }, []);
 
   const leaveSession = () => {
     const doLeave = () => {
-      setRoomUrl(null); // release camera/mic before navigating away
+      setRoomUrl(null);
+    setMeetingToken(null); // release camera/mic before navigating away
       router.back();
     };
     if (Platform.OS === "web") {
@@ -257,7 +262,7 @@ export default function StudentClassroom() {
 
         {/* Mode tabs */}
         <View style={s.modeSwitcher}>
-          {(["board", "chat"] as Mode[]).map((m) => (
+          {(["board"] as Mode[]).map((m) => (
             <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
               <Feather name={m === "board" ? "monitor" : "message-circle"} size={13} color={mode === m ? "#fff" : "#666"} />
               <Text style={[s.modeText, mode === m && s.modeTextActive]}>
@@ -278,6 +283,7 @@ export default function StudentClassroom() {
           {roomUrl ? (
             <DailyEmbed
               roomUrl={roomUrl}
+              meetingToken={meetingToken}
               displayName={studentName}
               style={StyleSheet.absoluteFill}
               onLeft={handleDailyLeft}

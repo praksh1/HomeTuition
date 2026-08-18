@@ -4,7 +4,7 @@ import { db, sessionsTable, sessionEnrollmentsTable, teacherProfilesTable, users
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
 import { broadcastSessionStatus, resetRoomPresence } from "../ws/classroomHub";
-import { ensureDailyRoom } from "../lib/daily";
+import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 
 const router: IRouter = Router();
 
@@ -193,7 +193,17 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
 
   try {
     const roomUrl = await ensureDailyRoom(id);
-    res.json({ roomUrl });
+    // Only this session's teacher gets an owner token, and only the server can mint one, so
+    // moderator powers cannot be granted by anything the client says about itself.
+    const [userRow] = await db
+      .select({ name: usersTable.name })
+      .from(usersTable)
+      .where(eq(usersTable.id, req.user!.userId));
+    const token = await createMeetingToken(id, {
+      isOwner: membership!.isSessionTeacher,
+      userName: userRow?.name ?? "Guest",
+    });
+    res.json({ roomUrl, token, isOwner: membership!.isSessionTeacher });
   } catch (err) {
     req.log.error({ err, sessionId: id }, "Failed to ensure Daily room");
     res.status(502).json({ error: "Failed to set up video room" });

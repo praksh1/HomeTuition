@@ -6,6 +6,55 @@ export function sanitizeRoomName(rawId: string): string {
   return "sikshya" + rawId.replace(/[^a-zA-Z0-9]/g, "");
 }
 
+export interface MeetingTokenOptions {
+  /** Owners can mute and eject others; only the session's own teacher should get this. */
+  isOwner: boolean;
+  userName: string;
+}
+
+/**
+ * Mints a Daily meeting token.
+ *
+ * Without a token everyone joins as an ordinary participant, so nobody can mute anyone —
+ * "mute everyone" is not a UI we can build, it is a permission Daily grants to a room owner.
+ * The token is created server-side precisely so a student cannot mint themselves one.
+ *
+ * Returns null when no API key is configured, or if minting fails; the caller then joins
+ * without a token, which still works but without moderator powers.
+ */
+export async function createMeetingToken(
+  sessionId: string | number,
+  { isOwner, userName }: MeetingTokenOptions,
+): Promise<string | null> {
+  const apiKey = process.env.DAILY_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(`${DAILY_API_BASE}/meeting-tokens`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        properties: {
+          room_name: sanitizeRoomName(String(sessionId)),
+          is_owner: isOwner,
+          user_name: userName,
+          // Tokens outlive a long class but not the day.
+          exp: Math.floor(Date.now() / 1000) + 60 * 60 * 8,
+        },
+      }),
+    });
+    if (!res.ok) {
+      logger.error({ status: res.status, body: await res.text() }, "Failed to mint Daily meeting token");
+      return null;
+    }
+    const data = (await res.json()) as { token?: string };
+    return data.token ?? null;
+  } catch (err) {
+    logger.error({ err }, "Error minting Daily meeting token");
+    return null;
+  }
+}
+
 /**
  * Ensures a Daily.co room exists for the given session, creating it via the REST API
  * if it doesn't already exist. Daily rooms are NOT created automatically just by
@@ -51,19 +100,18 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
       name: roomName,
       privacy: "public",
       properties: {
-        // Chat, hand raising and reactions are deliberately left to the app, not Daily.
+        // Chat, hand raising and reactions come from Daily Prebuilt.
         //
-        // Daily's versions live only in its web Prebuilt UI. Android and iOS use the native
-        // SDK with our own call interface (a WebView cannot capture the screen), which has no
-        // Prebuilt and therefore none of those panels. Turning Daily's chat on would split
-        // one classroom into two conversations — web students talking inside the iframe,
-        // phone students talking in the app, neither able to see the other. The app's
-        // WebSocket already carries chat and reactions to every platform equally.
-        enable_chat: false,
-        enable_hand_raising: false,
-        enable_emoji_reactions: false,
-        // These are safe: they only describe the call itself, so they degrade to "absent"
-        // rather than "half the class cannot see it".
+        // Caveat worth remembering: Prebuilt is the *web* experience. The installed
+        // Android/iOS app uses Daily's native SDK behind our own call interface (a WebView
+        // cannot capture the screen for screen sharing), and that has no Prebuilt panels, so
+        // it does not get these. Browsers on a phone do — they run the web build. Until the
+        // native app grows its own chat, a class mixing installed-app and browser users would
+        // have two separate conversations.
+        enable_chat: true,
+        enable_advanced_chat: true,
+        enable_hand_raising: true,
+        enable_emoji_reactions: true,
         enable_people_ui: true,
         enable_network_ui: true,
         enable_noise_cancellation_ui: true,

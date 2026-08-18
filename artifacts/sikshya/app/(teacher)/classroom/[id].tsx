@@ -196,6 +196,7 @@ export default function Classroom() {
   // file:// paths are device-local and meaningless on other participants' devices.
   const [localPdfUri, setLocalPdfUri] = useState<string | null>(null);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
+  const [meetingToken, setMeetingToken] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatScrollRef = useRef<ScrollView>(null);
@@ -236,8 +237,9 @@ export default function Classroom() {
   // join them — the client can no longer just guess a room URL and connect to it.
   const loadRoom = async () => {
     try {
-      const { roomUrl: url } = await apiGet<{ roomUrl: string }>(`/sessions/${id}/room`);
+      const { roomUrl: url, token } = await apiGet<{ roomUrl: string; token?: string | null }>(`/sessions/${id}/room`);
       setRoomUrl(url);
+      setMeetingToken(token ?? null);
       setRoomError(false);
     } catch {
       setRoomError(true);
@@ -517,13 +519,15 @@ export default function Classroom() {
     // screen to unmount — a navigation stack may keep this screen alive, and until the frame
     // is destroyed the camera and microphone stay on with the recording light lit.
     setRoomUrl(null);
+    setMeetingToken(null);
     try { await apiPatch(`/sessions/${id}`, { status: "completed" }); } catch {}
     router.back();
   }, [id]);
 
   const endSession = async () => {
     const doEnd = async () => {
-      setRoomUrl(null); // release camera/mic before leaving — see handleDailyLeft above
+      setRoomUrl(null);
+    setMeetingToken(null); // release camera/mic before leaving — see handleDailyLeft above
       try { await apiPatch(`/sessions/${id}`, { status: "completed" }); } catch {}
       router.back();
     };
@@ -625,7 +629,11 @@ export default function Classroom() {
 
         {/* Mode tabs */}
         <View style={s.modeSwitcher}>
-          {(["whiteboard", "participants", "chat"] as Mode[]).map((m) => (
+          {/* Chat and participants come from Daily Prebuilt now, inside the call itself, so the
+              app no longer offers its own dated versions alongside them. The panels below are
+              left in place but unreachable; remove them once the native app has its own chat,
+              since the native SDK has no Prebuilt and so no chat of its own. */}
+          {(["whiteboard"] as Mode[]).map((m) => (
             <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
               <Feather
                 name={m === "whiteboard" ? "edit-3" : m === "participants" ? "users" : "message-circle"}
@@ -648,7 +656,7 @@ export default function Classroom() {
             is the only reliable way to keep it from clashing with the chat tab. */}
         <View style={[s.videoArea, sideBySide && s.videoAreaSide, videoExpanded && s.videoAreaExpanded, mode === "chat" && s.videoAreaHidden]}>
           {roomUrl ? (
-            <DailyEmbed roomUrl={roomUrl} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
+            <DailyEmbed roomUrl={roomUrl} meetingToken={meetingToken} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
           ) : (
             <View style={[StyleSheet.absoluteFill, s.permissionGate]}>
               <ActivityIndicator color="#fff" />
