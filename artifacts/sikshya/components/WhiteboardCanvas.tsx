@@ -14,7 +14,8 @@ interface Props {
   /** Rendered beneath the ink — the uploaded photo/PDF page, if any. */
   materialLayer?: React.ReactNode;
   /** Fired once per finished stroke so the parent can persist and broadcast it. */
-  onCommit?: (shape: DrawPath) => void;
+  /** `points` carries the raw stroke geometry for freehand pen strokes only. */
+  onCommit?: (shape: DrawPath, points?: Point[]) => void;
   /** Reports the drawing surface size so the parent can publish the coordinate space. */
   onSurfaceLayout?: (width: number, height: number) => void;
   /** Students render the same board but cannot draw on it. */
@@ -99,6 +100,8 @@ export default function WhiteboardCanvas({
   panModeRef.current = panMode;
 
   const startRef = useRef<Point | null>(null);
+  /** Raw board-space points of the freehand stroke in progress. */
+  const strokePointsRef = useRef<Point[]>([]);
   const panDragRef = useRef<{ from: Point; pan: Point } | null>(null);
   const drawingRef = useRef(false);
 
@@ -148,6 +151,8 @@ export default function WhiteboardCanvas({
         return;
       }
       if (s.tool === "pen" || s.isEraser) {
+        // The path string is for drawing; the point list is what the shape recogniser reads.
+        strokePointsRef.current = [pt];
         setCurrentPath(`M${pt.x.toFixed(1)},${pt.y.toFixed(1)}`);
         return;
       }
@@ -177,6 +182,7 @@ export default function WhiteboardCanvas({
       const s = settings.current;
 
       if (s.tool === "pen" || s.isEraser) {
+        strokePointsRef.current.push(pt);
         setCurrentPath((p) => (p ? `${p} L${pt.x.toFixed(1)},${pt.y.toFixed(1)}` : p));
         return;
       }
@@ -199,13 +205,19 @@ export default function WhiteboardCanvas({
     const { color: c, width, opacity: op } = strokeStyle();
 
     if (currentPath) {
-      onCommit?.({
-        tool: "pen",
-        d: currentPath,
-        color: c,
-        width,
-        opacity: op,
-      });
+      onCommit?.(
+        {
+          tool: "pen",
+          d: currentPath,
+          color: c,
+          width,
+          opacity: op,
+        },
+        // Handed over so the caller can offer to convert the stroke into a clean shape. An
+        // eraser stroke is never a shape, so it is not offered for recognition.
+        s.isEraser ? undefined : strokePointsRef.current.slice(),
+      );
+      strokePointsRef.current = [];
       setCurrentPath(null);
     } else if (preview) {
       onCommit?.(preview);

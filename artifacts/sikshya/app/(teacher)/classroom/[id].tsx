@@ -38,6 +38,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ErrorFallbackProps } from "@/components/ErrorFallback";
 import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
 import { cancelSessionReminder } from "@/utils/notifications";
+import { MIN_CONFIDENCE, recognizeShape, squareUp, toDrawPath, type Point as BoardPoint } from "../../../components/smartboard";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "whiteboard" | "participants" | "chat";
@@ -170,6 +171,14 @@ export default function Classroom() {
   const [currentPath, setCurrentPath] = useState("");
   const [tool, setTool] = useState<DrawTool>("pen");
   const [previewShape, setPreviewShape] = useState<DrawPath | null>(null);
+  /**
+   * Whether rough strokes are snapped to clean shapes.
+   *
+   * On by default because it is the feature that makes a diagram legible on a phone screen, but
+   * it must be switchable: a teacher drawing freehand art, or writing large, wants their own
+   * line kept exactly as drawn.
+   */
+  const [smartShapes, setSmartShapes] = useState(true);
   const [textModalVisible, setTextModalVisible] = useState(false);
   const [textInputValue, setTextInputValue] = useState("");
   const pendingTextPoint = useRef<{ x: number; y: number } | null>(null);
@@ -343,14 +352,33 @@ export default function Classroom() {
     sendBoardClear();
   };
 
-  /** One finished stroke: keep it locally and send it to everyone watching. */
+  /**
+   * One finished stroke: keep it locally and send it to everyone watching.
+   *
+   * If Smart mode is on and the stroke was clearly meant to be a shape, the rough ink is
+   * replaced with a clean vector one. Recognition is deliberately conservative — an
+   * unrecognised stroke is left exactly as drawn, because silently mangling what a teacher
+   * wrote is far worse than not helping. Handwriting is never converted: it is open and curved,
+   * which the recogniser rejects outright.
+   */
   const commitShape = useCallback(
-    (shape: DrawPath) => {
-      setPaths((prev) => [...prev, shape]);
+    (shape: DrawPath, points?: BoardPoint[]) => {
+      let final = shape;
+
+      if (smartShapes && points && points.length > 3 && shape.tool === "pen") {
+        const guess = recognizeShape(points);
+        if (guess && guess.confidence >= MIN_CONFIDENCE) {
+          const snapped = squareUp(guess);
+          const asPath = toDrawPath(snapped, shape.color ?? penColor, shape.width ?? penSize, shape.opacity);
+          if (asPath) final = asPath;
+        }
+      }
+
+      setPaths((prev) => [...prev, final]);
       setRedoStack([]); // a new stroke ends any redo branch
-      sendDrawCommit(shape);
+      sendDrawCommit(final);
     },
-    [sendDrawCommit],
+    [sendDrawCommit, smartShapes, penColor, penSize],
   );
 
   /**
@@ -927,14 +955,16 @@ export default function Classroom() {
                     <View style={{ width: sz / 2.6, height: sz / 2.6, borderRadius: 3, borderWidth: 1, borderColor: "#666", backgroundColor: "#fff" }} />
                   </TouchableOpacity>
                 ))}
-                <TouchableOpacity style={s.toolBtn} onPress={undo} disabled={paths.length === 0} activeOpacity={0.7}>
-                  <Feather name="corner-up-left" size={16} color={paths.length ? "#333" : "#BBB"} />
-                </TouchableOpacity>
-                <TouchableOpacity style={s.toolBtn} onPress={redo} disabled={redoStack.length === 0} activeOpacity={0.7}>
-                  <Feather name="corner-up-right" size={16} color={redoStack.length ? "#333" : "#BBB"} />
-                </TouchableOpacity>
-                <TouchableOpacity style={s.toolBtn} onPress={clearBoard} activeOpacity={0.7}>
-                  <Feather name="trash-2" size={16} color="#333" />
+                <View style={s.toolDivider} />
+
+                {/* Smart shapes: rough strokes snap to clean geometry. Switchable, because a
+                    teacher drawing freehand art wants their own line kept exactly as drawn. */}
+                <TouchableOpacity
+                  style={[s.toolBtn, smartShapes && { backgroundColor: colors.primary }]}
+                  onPress={() => setSmartShapes((v) => !v)}
+                  activeOpacity={0.7}
+                >
+                  <Feather name="zap" size={16} color={smartShapes ? "#fff" : "#333"} />
                 </TouchableOpacity>
 
                 <View style={s.toolDivider} />
@@ -959,6 +989,23 @@ export default function Classroom() {
                   <Feather name="maximize" size={16} color="#333" />
                 </TouchableOpacity>
               </ScrollView>
+
+              {/* Undo, redo and clear live outside the scrolling strip.
+                  They were inside it, at the far right, behind a scroll view with its indicator
+                  hidden — so on any screen narrower than the full toolbar they were invisible
+                  and there was no hint that anything lay off the edge. These three are the most
+                  used controls on the board and must always be one tap away. */}
+              <View style={s.toolbarPinned}>
+                <TouchableOpacity style={s.toolBtn} onPress={undo} disabled={paths.length === 0} activeOpacity={0.7}>
+                  <Feather name="corner-up-left" size={17} color={paths.length ? "#333" : "#BBB"} />
+                </TouchableOpacity>
+                <TouchableOpacity style={s.toolBtn} onPress={redo} disabled={redoStack.length === 0} activeOpacity={0.7}>
+                  <Feather name="corner-up-right" size={17} color={redoStack.length ? "#333" : "#BBB"} />
+                </TouchableOpacity>
+                <TouchableOpacity style={s.toolBtn} onPress={clearBoard} activeOpacity={0.7}>
+                  <Feather name="trash-2" size={17} color="#C2410C" />
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
           </ErrorBoundary>
@@ -1103,8 +1150,9 @@ const s = StyleSheet.create({
   // drawing surface has no dead zones.
   // Fixed height and no growth: a horizontal ScrollView left unconstrained in a column
   // stretches to fill the container, which collapsed the canvas above it to zero height.
-  toolbar: { height: 56, flexGrow: 0, flexShrink: 0, paddingHorizontal: 12, paddingTop: 6, paddingBottom: 4 },
-  toolbarScroll: { flexGrow: 0, flexShrink: 0 },
+  toolbar: { height: 56, flexGrow: 0, flexShrink: 0, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingTop: 6, paddingBottom: 4 },
+  toolbarScroll: { flexGrow: 1, flexShrink: 1 },
+  toolbarPinned: { flexDirection: "row", alignItems: "center", gap: 2, paddingLeft: 8, marginLeft: 4, borderLeftWidth: 1, borderLeftColor: "#E5E5E5" },
   toolbarInner: {
     flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 7,
     backgroundColor: "rgba(255,255,255,0.95)", borderRadius: 20,
