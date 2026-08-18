@@ -15,6 +15,8 @@ export const sessionEnrollmentsTable = pgTable("session_enrollments", {
     .references(() => usersTable.id, { onDelete: "cascade" }),
   paymentStatus: text("payment_status").notNull().default("pending"), // pending | paid | refunded
   paymentMethod: text("payment_method"), // esewa | khalti
+  /** The provider's transaction id, recorded when a payment is confirmed. */
+  paymentReference: text("payment_reference"),
   enrolledAt: timestamp("enrolled_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

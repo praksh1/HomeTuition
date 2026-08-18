@@ -68,20 +68,58 @@ export async function scheduleSessionReminder(session: {
   });
 }
 
-export async function sendDemoNotification(): Promise<void> {
+/**
+ * Cancels a scheduled reminder.
+ *
+ * Reminders were scheduled when a session was created and never withdrawn, so a class that
+ * finished, was cancelled, or was simply started early still fired "starts in 30 minutes"
+ * later on. The identifier matches the one used when scheduling.
+ */
+export async function cancelSessionReminder(sessionId: string): Promise<void> {
   if (Platform.OS === "web") return;
   try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Session Starting Soon",
-        body: "Calculus: Derivatives by Ram Prasad Sharma starts in 30 minutes. Tap to join.",
-        data: { type: "session_reminder" },
-        sound: true,
-      },
-      trigger: { type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL, seconds: 5, repeats: false },
-    });
-  } catch (_e) {
+    await Notifications.cancelScheduledNotificationAsync(`session_reminder_${sessionId}`);
+  } catch {
+    // Nothing scheduled for this session; nothing to undo.
   }
+}
+
+/**
+ * Raised when a message arrives from someone else.
+ *
+ * The app had no signal at all for new messages: no notification and no badge, so a message
+ * sat unseen until the user happened to open the tab. `conversationWith` is carried in the
+ * payload so tapping the notification opens that thread rather than a generic screen.
+ */
+export async function notifyNewMessage(msg: {
+  senderName: string;
+  body: string;
+  senderId: string | number;
+}): Promise<void> {
+  const title = `New message from ${msg.senderName}`;
+  const body = msg.body.length > 120 ? `${msg.body.slice(0, 117)}…` : msg.body;
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title,
+          body,
+          data: { type: "message", conversationWith: String(msg.senderId) },
+          sound: true,
+        },
+        trigger: null,
+      });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
+  }
+  await addInAppNotification({
+    title,
+    body,
+    type: "general",
+    data: { conversationWith: String(msg.senderId), type: "message" },
+  });
 }
 
 export async function notifyPaymentReceived(amount: number, studentName: string): Promise<void> {

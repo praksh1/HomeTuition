@@ -37,6 +37,7 @@ import PdfViewer from "@/components/PdfViewer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ErrorFallbackProps } from "@/components/ErrorFallback";
 import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
+import { cancelSessionReminder } from "@/utils/notifications";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "whiteboard" | "participants" | "chat";
@@ -521,6 +522,10 @@ export default function Classroom() {
     setRoomUrl(null);
     setMeetingToken(null);
     try { await apiPatch(`/sessions/${id}`, { status: "completed" }); } catch {}
+    // The class is over, so withdraw its "starts in 30 minutes" reminder. Reminders were
+    // scheduled at creation and never cancelled, which is why finished sessions kept
+    // notifying.
+    try { await cancelSessionReminder(String(id)); } catch {}
     router.back();
   }, [id]);
 
@@ -529,6 +534,7 @@ export default function Classroom() {
       setRoomUrl(null);
     setMeetingToken(null); // release camera/mic before leaving — see handleDailyLeft above
       try { await apiPatch(`/sessions/${id}`, { status: "completed" }); } catch {}
+      try { await cancelSessionReminder(String(id)); } catch {}
       router.back();
     };
     if (Platform.OS === "web") {
@@ -633,7 +639,7 @@ export default function Classroom() {
               app no longer offers its own dated versions alongside them. The panels below are
               left in place but unreachable; remove them once the native app has its own chat,
               since the native SDK has no Prebuilt and so no chat of its own. */}
-          {(["whiteboard"] as Mode[]).map((m) => (
+          {(["whiteboard", "chat"] as Mode[]).map((m) => (
             <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
               <Feather
                 name={m === "whiteboard" ? "edit-3" : m === "participants" ? "users" : "message-circle"}
@@ -656,7 +662,7 @@ export default function Classroom() {
             is the only reliable way to keep it from clashing with the chat tab. */}
         <View style={[s.videoArea, sideBySide && s.videoAreaSide, videoExpanded && s.videoAreaExpanded, mode === "chat" && s.videoAreaHidden]}>
           {roomUrl ? (
-            <DailyEmbed roomUrl={roomUrl} meetingToken={meetingToken} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
+            <DailyEmbed chatMessages={messages} onSendChat={sendChat} roomUrl={roomUrl} meetingToken={meetingToken} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
           ) : (
             <View style={[StyleSheet.absoluteFill, s.permissionGate]}>
               <ActivityIndicator color="#fff" />

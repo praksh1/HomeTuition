@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import { router } from "expo-router";
 import React, {
   createContext,
   useCallback,
@@ -78,8 +79,25 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           await refresh();
         });
 
-        responseListener.current = Notifications.addNotificationResponseReceivedListener(async (_response) => {
+        // Tapping a notification should land on the thing it is about. Previously every tap
+        // just refreshed the list and left the user wherever they already were.
+        responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
           await refresh();
+          const data = response?.notification?.request?.content?.data as
+            | { type?: string; sessionId?: string | number; conversationWith?: string | number }
+            | undefined;
+          if (!data) return;
+          try {
+            if (data.sessionId != null && (data.type === "session_reminder" || data.type === "live")) {
+              router.push(`/classroom/${data.sessionId}`);
+            } else if (data.conversationWith != null || data.type === "message") {
+              router.push(data.conversationWith != null ? `/conversation/${data.conversationWith}` : "/notifications");
+            } else {
+              router.push("/notifications");
+            }
+          } catch {
+            // A route that no longer exists must not take the app down on a tap.
+          }
         });
       }
     };

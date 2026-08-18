@@ -262,7 +262,7 @@ export default function StudentClassroom() {
 
         {/* Mode tabs */}
         <View style={s.modeSwitcher}>
-          {(["board"] as Mode[]).map((m) => (
+          {(["board", "chat"] as Mode[]).map((m) => (
             <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
               <Feather name={m === "board" ? "monitor" : "message-circle"} size={13} color={mode === m ? "#fff" : "#666"} />
               <Text style={[s.modeText, mode === m && s.modeTextActive]}>
@@ -284,6 +284,8 @@ export default function StudentClassroom() {
             <DailyEmbed
               roomUrl={roomUrl}
               meetingToken={meetingToken}
+              chatMessages={messages}
+              onSendChat={sendChat}
               displayName={studentName}
               style={StyleSheet.absoluteFill}
               onLeft={handleDailyLeft}

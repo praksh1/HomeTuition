@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -31,6 +32,16 @@ interface Props {
   onWatchedParticipantLeft?: () => void;
   /** Screen sharing is a presenter action; only the teacher gets the control. */
   canScreenShare?: boolean;
+  /**
+   * Chat, supplied by the classroom's own websocket.
+   *
+   * Daily Prebuilt carries a chat panel, but Prebuilt is the web experience — this native UI
+   * exists precisely because a WebView cannot screen-share, and it has no Prebuilt to inherit
+   * from. Feeding the app's own chat in here keeps everyone in a single conversation rather
+   * than splitting the class between an in-call chat and an in-app one.
+   */
+  chatMessages?: { id: string; senderName: string; text: string; time: string; isMe: boolean }[];
+  onSendChat?: (text: string) => void;
 }
 
 /**
@@ -89,6 +100,8 @@ export default function DailyEmbed({
   watchUserName,
   onWatchedParticipantLeft,
   canScreenShare = false,
+  chatMessages,
+  onSendChat,
 }: Props) {
   const [participants, setParticipants] = useState<DailyParticipant[]>([]);
   const [joining, setJoining] = useState(true);
@@ -96,6 +109,11 @@ export default function DailyEmbed({
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(true);
   const [screenShare, setScreenShare] = useState<ScreenShareState>("idle");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatDraft, setChatDraft] = useState("");
+  /** Unread badge on the chat button: messages that arrived while the panel was closed. */
+  const [unseen, setUnseen] = useState(0);
+  const lastSeenCount = useRef(0);
 
   const callRef = useRef<DailyCall | null>(null);
 
@@ -210,6 +228,23 @@ export default function DailyEmbed({
     c.startScreenShare();
   }, [screenShare]);
 
+  useEffect(() => {
+    const total = chatMessages?.length ?? 0;
+    if (chatOpen) {
+      lastSeenCount.current = total;
+      setUnseen(0);
+    } else {
+      setUnseen(Math.max(0, total - lastSeenCount.current));
+    }
+  }, [chatMessages, chatOpen]);
+
+  const submitChat = useCallback(() => {
+    const text = chatDraft.trim();
+    if (!text) return;
+    onSendChat?.(text);
+    setChatDraft("");
+  }, [chatDraft, onSendChat]);
+
   const leave = useCallback(() => {
     const c = callRef.current;
     if (!c) {
@@ -304,6 +339,37 @@ export default function DailyEmbed({
             })}
           </ScrollView>
 
+          {chatOpen && onSendChat && (
+            <View style={s.chatPanel}>
+              <ScrollView style={s.chatScroll} contentContainerStyle={s.chatScrollInner}>
+                {(chatMessages ?? []).length === 0 ? (
+                  <Text style={s.chatEmpty}>No messages yet.</Text>
+                ) : (
+                  (chatMessages ?? []).map((m) => (
+                    <View key={m.id} style={[s.chatMsg, m.isMe && s.chatMsgMine]}>
+                      {!m.isMe && <Text style={s.chatSender}>{m.senderName}</Text>}
+                      <Text style={s.chatText}>{m.text}</Text>
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+              <View style={s.chatInputRow}>
+                <TextInput
+                  style={s.chatInput}
+                  value={chatDraft}
+                  onChangeText={setChatDraft}
+                  placeholder="Message the class…"
+                  placeholderTextColor="#777"
+                  onSubmitEditing={submitChat}
+                  returnKeyType="send"
+                />
+                <TouchableOpacity style={s.chatSend} onPress={submitChat} activeOpacity={0.8}>
+                  <Feather name="send" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           {/* Controls — every one of these came free with Daily Prebuilt on web. */}
           <View style={s.bar}>
             <TouchableOpacity style={[s.btn, !micOn && s.btnOff]} onPress={toggleMic} activeOpacity={0.8}>
@@ -312,6 +378,16 @@ export default function DailyEmbed({
             <TouchableOpacity style={[s.btn, !camOn && s.btnOff]} onPress={toggleCam} activeOpacity={0.8}>
               <Feather name={camOn ? "video" : "video-off"} size={18} color="#fff" />
             </TouchableOpacity>
+            {onSendChat && (
+              <TouchableOpacity style={[s.btn, chatOpen && s.btnActive]} onPress={() => setChatOpen((v) => !v)} activeOpacity={0.8}>
+                <Feather name="message-circle" size={18} color="#fff" />
+                {unseen > 0 && !chatOpen && (
+                  <View style={s.unreadDot}>
+                    <Text style={s.unreadDotText}>{unseen > 9 ? "9+" : unseen}</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            )}
             {canScreenShare && (
               <TouchableOpacity
                 style={[s.btn, screenShare === "sharing" && s.btnActive]}
@@ -361,6 +437,19 @@ const s = StyleSheet.create({
     paddingVertical: 10, backgroundColor: "#0A0A0A", borderTopWidth: 1, borderTopColor: "#1E1E1E",
   },
   btn: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#2A2A2A", alignItems: "center", justifyContent: "center" },
+  unreadDot: { position: "absolute", top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: "#C41E3A", alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
+  unreadDotText: { color: "#fff", fontSize: 9, fontFamily: "Inter_700Bold" },
+  chatPanel: { maxHeight: 240, backgroundColor: "#111", borderTopWidth: 1, borderTopColor: "#222" },
+  chatScroll: { maxHeight: 190 },
+  chatScrollInner: { padding: 10, gap: 6 },
+  chatEmpty: { color: "#777", fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", paddingVertical: 16 },
+  chatMsg: { alignSelf: "flex-start", maxWidth: "85%", backgroundColor: "#1E1E1E", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7 },
+  chatMsgMine: { alignSelf: "flex-end", backgroundColor: "#C41E3A" },
+  chatSender: { color: "#9AA0A6", fontSize: 10, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
+  chatText: { color: "#fff", fontSize: 13, fontFamily: "Inter_400Regular" },
+  chatInputRow: { flexDirection: "row", alignItems: "center", gap: 8, padding: 8, borderTopWidth: 1, borderTopColor: "#222" },
+  chatInput: { flex: 1, backgroundColor: "#1A1A1A", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, color: "#fff", fontSize: 13, fontFamily: "Inter_400Regular" },
+  chatSend: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#C41E3A", alignItems: "center", justifyContent: "center" },
   btnOff: { backgroundColor: "#5A1F1F" },
   btnActive: { backgroundColor: "#16A34A" },
   btnLeave: { backgroundColor: "#C41E3A" },

@@ -4,8 +4,10 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useUnreadMessages } from "@/hooks/useUnreadMessages";
 
 function ClassicStudentTabLayout() {
+  const { unread: unreadMessages } = useUnreadMessages();
   const colors = useColors();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -53,6 +55,8 @@ function ClassicStudentTabLayout() {
         name="messages"
         options={{
           title: "Messages",
+          // Without a badge a new message was invisible until the user thought to look.
+          tabBarBadge: unreadMessages > 0 ? (unreadMessages > 99 ? "99+" : unreadMessages) : undefined,
           tabBarIcon: ({ color }) => <Feather name="message-circle" size={22} color={color} />,
         }}
       />

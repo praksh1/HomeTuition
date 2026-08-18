@@ -9,7 +9,6 @@ import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPatch } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import { useNotifications } from "@/context/NotificationContext";
-import { sendDemoNotification } from "@/utils/notifications";
 import type { Teacher } from "@/context/AuthContext";
 
 interface ApiSession {
@@ -35,7 +34,6 @@ export default function TeacherDashboard() {
   useFocusEffect(
     useCallback(() => {
       refreshNotifs();
-      sendDemoNotification();
       loadSessions();
     }, [teacher?.userId])
   );

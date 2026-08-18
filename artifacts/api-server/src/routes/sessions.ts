@@ -3,8 +3,26 @@ import { Router, type IRouter } from "express";
 import { db, sessionsTable, sessionEnrollmentsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
+import { unverifiedPaymentsAllowed, verifyWebhookSignature, webhookSecret } from "../lib/payments";
 import { broadcastSessionStatus, resetRoomPresence } from "../ws/classroomHub";
 import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
+
+
+/** Flips an enrolment to paid. Returns null when no such enrolment exists. */
+async function markEnrolmentPaid(sessionId: number, studentId: number, reference: string | null) {
+  const [enrollment] = await db
+    .select({ id: sessionEnrollmentsTable.id })
+    .from(sessionEnrollmentsTable)
+    .where(and(eq(sessionEnrollmentsTable.sessionId, sessionId), eq(sessionEnrollmentsTable.studentId, studentId)));
+  if (!enrollment) return null;
+
+  const [updated] = await db
+    .update(sessionEnrollmentsTable)
+    .set({ paymentStatus: "paid", ...(reference ? { paymentReference: reference } : {}) })
+    .where(eq(sessionEnrollmentsTable.id, enrollment.id))
+    .returning();
+  return updated ?? null;
+}
 
 const router: IRouter = Router();
 
@@ -331,15 +349,22 @@ router.post("/sessions/:id/enroll", requireAuth, async (req, res): Promise<void>
 });
 
 /**
- * Marks an enrolment as paid.
+ * Development-only payment confirmation.
  *
- * ⚠️ PLACEHOLDER. This trusts the caller, because eSewa and Khalti are not actually wired up —
- * the app only picks a method and shows a sheet. Before taking real money this MUST become a
- * server-to-server verification: the gateway's callback, or a lookup of the transaction id
- * against the gateway's API. As written, a student could call it directly and skip paying.
- * It exists so the "enrolled but unpaid cannot join" rule has something to switch on.
+ * A client saying "I paid" is not evidence of payment, so this is refused unless
+ * ALLOW_UNVERIFIED_PAYMENTS is explicitly set. Real confirmations arrive at the webhook
+ * below, signed by the provider. Leaving this open in production would let any logged-in
+ * student attend every paid class for free.
  */
 router.post("/sessions/:id/payment/confirm", requireAuth, async (req, res): Promise<void> => {
+  if (!unverifiedPaymentsAllowed()) {
+    res.status(403).json({
+      error:
+        "Payments must be confirmed by the payment provider. Set ALLOW_UNVERIFIED_PAYMENTS=true for local testing only.",
+    });
+    return;
+  }
+
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
@@ -347,24 +372,64 @@ router.post("/sessions/:id/payment/confirm", requireAuth, async (req, res): Prom
   const user = req.user!;
   const { transactionId } = req.body as { transactionId?: string };
 
-  const [enrollment] = await db
-    .select({ id: sessionEnrollmentsTable.id })
-    .from(sessionEnrollmentsTable)
-    .where(and(eq(sessionEnrollmentsTable.sessionId, id), eq(sessionEnrollmentsTable.studentId, user.userId)));
-
-  if (!enrollment) {
+  const updated = await markEnrolmentPaid(id, user.userId, transactionId ?? "dev-unverified");
+  if (!updated) {
     res.status(404).json({ error: "You are not enrolled in this session." });
     return;
   }
 
-  const [updated] = await db
-    .update(sessionEnrollmentsTable)
-    .set({ paymentStatus: "paid", ...(transactionId ? { paymentMethod: transactionId } : {}) })
-    .where(eq(sessionEnrollmentsTable.id, enrollment.id))
-    .returning();
-
-  req.log.info({ sessionId: id, studentId: user.userId }, "enrolment marked paid");
+  req.log.warn({ sessionId: id, studentId: user.userId }, "enrolment marked paid WITHOUT verification");
   res.json(updated);
+});
+
+/**
+ * Payment provider webhook — the only route to "paid" in production.
+ *
+ * The signature is checked against the raw request body, so a forged call cannot mark a
+ * class as paid. `express.json` is configured with a verify hook that stashes those exact
+ * bytes; re-serialising the parsed object would change key order or spacing and break the
+ * digest.
+ */
+router.post("/payments/webhook", async (req, res): Promise<void> => {
+  const raw = (req as { rawBody?: string }).rawBody ?? JSON.stringify(req.body ?? {});
+  const signature =
+    (req.headers["x-signature"] as string | undefined) ??
+    (req.headers["x-webhook-signature"] as string | undefined);
+
+  if (!webhookSecret()) {
+    req.log.error("payment webhook called but PAYMENT_WEBHOOK_SECRET is not configured");
+    res.status(503).json({ error: "Payment webhook is not configured." });
+    return;
+  }
+
+  if (!verifyWebhookSignature(raw, signature)) {
+    req.log.warn({ hasSignature: !!signature }, "rejected payment webhook with bad signature");
+    res.status(401).json({ error: "Invalid signature" });
+    return;
+  }
+
+  const { sessionId, studentId, transactionId, status } = req.body as {
+    sessionId?: number; studentId?: number; transactionId?: string; status?: string;
+  };
+
+  if (!Number.isInteger(sessionId) || !Number.isInteger(studentId)) {
+    res.status(400).json({ error: "sessionId and studentId are required" });
+    return;
+  }
+  if (status && status !== "success" && status !== "paid" && status !== "COMPLETE") {
+    req.log.info({ sessionId, studentId, status }, "payment webhook reported a non-success status");
+    res.json({ ok: true, ignored: true });
+    return;
+  }
+
+  const updated = await markEnrolmentPaid(sessionId!, studentId!, transactionId ?? null);
+  if (!updated) {
+    res.status(404).json({ error: "No matching enrolment" });
+    return;
+  }
+
+  req.log.info({ sessionId, studentId, transactionId }, "enrolment marked paid via verified webhook");
+  res.json({ ok: true });
 });
 
 /**

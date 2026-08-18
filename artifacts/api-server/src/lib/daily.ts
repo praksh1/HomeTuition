@@ -108,8 +108,12 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
         // it does not get these. Browsers on a phone do — they run the web build. Until the
         // native app grows its own chat, a class mixing installed-app and browser users would
         // have two separate conversations.
-        enable_chat: true,
-        enable_advanced_chat: true,
+        // Daily's chat is deliberately off. Prebuilt's chat exists only on web, and the
+        // installed app uses the native SDK behind our own call UI, which now carries the
+        // app's own chat. Enabling both would split one class into two conversations —
+        // browser users talking inside the iframe, phone-app users talking in the app, with
+        // neither able to see the other. One chat, carried by our websocket, reaches both.
+        enable_chat: false,
         enable_hand_raising: true,
         enable_emoji_reactions: true,
         enable_people_ui: true,

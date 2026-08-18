@@ -14,6 +14,10 @@ interface Props {
   /** Unused on web: Daily Prebuilt renders its own screen-share button in the iframe. Only
    * the native build has to supply one, since it has no prebuilt UI. */
   canScreenShare?: boolean;
+  /** Unused on web: Prebuilt provides the chat panel. Accepted so both platforms take the
+   * same props and the classroom does not need to branch. */
+  chatMessages?: unknown;
+  onSendChat?: (text: string) => void;
 }
 
 /**

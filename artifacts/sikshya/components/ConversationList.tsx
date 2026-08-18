@@ -5,6 +5,8 @@ import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { apiGet } from "@/utils/api";
+import { loadDrafts, type Drafts } from "@/utils/drafts";
+import { notifyNewMessage } from "@/utils/notifications";
 
 interface Conversation {
   otherUserId: number;
@@ -13,19 +15,44 @@ interface Conversation {
   lastMessage: string;
   lastMessageAt: string;
   unreadCount: number;
+  lastMessageFromMe: boolean;
 }
+
+type Folder = "inbox" | "sent" | "drafts";
+
+const FOLDERS: { id: Folder; label: string; icon: keyof typeof Feather.glyphMap }[] = [
+  { id: "inbox", label: "Inbox", icon: "inbox" },
+  { id: "sent", label: "Sent", icon: "send" },
+  { id: "drafts", label: "Drafts", icon: "edit" },
+];
 
 export default function ConversationList({ title }: { title: string }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [folder, setFolder] = useState<Folder>("inbox");
+  const [drafts, setDrafts] = useState<Drafts>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const data = await apiGet<Conversation[]>("/conversations");
-      setConversations(data);
+      // Announce genuinely new incoming messages once each. Comparing against the previous
+      // poll avoids re-notifying for the same message every six seconds.
+      setConversations((prev) => {
+        if (prev.length > 0) {
+          for (const c of data) {
+            const before = prev.find((p) => p.otherUserId === c.otherUserId);
+            const isNew = !c.lastMessageFromMe && c.unreadCount > (before?.unreadCount ?? 0);
+            if (isNew) {
+              void notifyNewMessage({ senderName: c.otherUserName, body: c.lastMessage, senderId: c.otherUserId });
+            }
+          }
+        }
+        return data;
+      });
+      setDrafts(await loadDrafts());
     } catch (_e) {
     } finally {
       setLoading(false);
@@ -44,6 +71,19 @@ export default function ConversationList({ title }: { title: string }) {
     load();
   };
 
+  // Inbox is anything the other person last spoke in (or that has unread messages); Sent is
+  // where the last word was ours. Drafts are local, so they are matched by id.
+  const visible = conversations.filter((c) => {
+    if (folder === "inbox") return !c.lastMessageFromMe || c.unreadCount > 0;
+    if (folder === "sent") return c.lastMessageFromMe;
+    return Object.prototype.hasOwnProperty.call(drafts, String(c.otherUserId));
+  });
+
+  const draftOnly =
+    folder === "drafts"
+      ? Object.keys(drafts).filter((id) => !conversations.some((c) => String(c.otherUserId) === id))
+      : [];
+
   const initials = (name: string) =>
     name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
 
@@ -56,7 +96,35 @@ export default function ConversationList({ title }: { title: string }) {
     >
       <Text style={[styles.title, { color: colors.foreground }]}>{title}</Text>
 
-      {!loading && conversations.length === 0 && (
+      <View style={styles.folders}>
+        {FOLDERS.map((f) => {
+          const active = folder === f.id;
+          const count =
+            f.id === "drafts"
+              ? Object.keys(drafts).length
+              : conversations.filter((c) =>
+                  f.id === "inbox" ? !c.lastMessageFromMe || c.unreadCount > 0 : c.lastMessageFromMe,
+                ).length;
+          return (
+            <TouchableOpacity
+              key={f.id}
+              style={[
+                styles.folderTab,
+                { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.primary + "12" : colors.muted },
+              ]}
+              onPress={() => setFolder(f.id)}
+              activeOpacity={0.75}
+            >
+              <Feather name={f.icon} size={13} color={active ? colors.primary : colors.mutedForeground} />
+              <Text style={[styles.folderText, { color: active ? colors.primary : colors.mutedForeground }]}>
+                {f.label}{count > 0 ? ` (${count})` : ""}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {!loading && visible.length === 0 && draftOnly.length === 0 && (
         <View style={[styles.empty, { backgroundColor: colors.muted }]}>
           <Feather name="message-circle" size={26} color={colors.mutedForeground} />
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
@@ -65,7 +133,7 @@ export default function ConversationList({ title }: { title: string }) {
         </View>
       )}
 
-      {conversations.map((c) => (
+      {visible.map((c) => (
         <TouchableOpacity
           key={c.otherUserId}
           style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
@@ -107,6 +175,9 @@ export default function ConversationList({ title }: { title: string }) {
 
 const styles = StyleSheet.create({
   container: { paddingHorizontal: 20, gap: 12 },
+  folders: { flexDirection: "row", gap: 8, marginBottom: 14 },
+  folderTab: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
+  folderText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   title: { fontSize: 24, fontFamily: "Inter_700Bold", marginBottom: 4 },
   empty: { borderRadius: 16, padding: 24, alignItems: "center", gap: 10, marginTop: 20 },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },

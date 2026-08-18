@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/utils/api";
+import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
 
 interface Message {
   id: number;
@@ -33,6 +34,15 @@ export default function ConversationScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+
+  // A half-written message survives navigating away; without this it was simply lost.
+  useEffect(() => {
+    let cancelled = false;
+    getDraft(String(id)).then((saved) => {
+      if (!cancelled && saved) setDraft(saved);
+    });
+    return () => { cancelled = true; };
+  }, [id]);
   const listRef = useRef<FlatList<Message>>(null);
 
   const load = useCallback(async () => {
@@ -55,6 +65,7 @@ export default function ConversationScreen() {
     setDraft("");
     try {
       const sent = await apiPost<Message>(`/messages/${id}`, { body });
+      await clearDraft(String(id)); // it is a sent message now, not a draft
       setMessages((prev) => [...prev, sent]);
       requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
     } catch (_e) {
@@ -116,7 +127,12 @@ export default function ConversationScreen() {
       <View style={[styles.inputRow, { borderTopColor: colors.border, paddingBottom: insets.bottom + 10, backgroundColor: colors.card }]}>
         <TextInput
           value={draft}
-          onChangeText={setDraft}
+          onChangeText={(t) => {
+            setDraft(t);
+            // Persist as they type so the Drafts folder reflects reality even if the app
+            // is closed mid-sentence.
+            void saveDraft(String(id), t);
+          }}
           placeholder="Type a message..."
           placeholderTextColor={colors.mutedForeground}
           style={[styles.input, { color: colors.foreground, backgroundColor: colors.muted }]}

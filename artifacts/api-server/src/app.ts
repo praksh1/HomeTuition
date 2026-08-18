@@ -26,7 +26,17 @@ app.use(
   }),
 );
 app.use(cors());
-app.use(express.json());
+// The payment webhook's signature covers the exact bytes the provider sent, so they are
+// stashed here before parsing. Re-serialising the parsed object would reorder keys or change
+// spacing and produce a different digest, rejecting every genuine callback.
+app.use(
+  express.json({
+    limit: "1mb",
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
