@@ -1,0 +1,17 @@
+{
+  // Deploys the exported web app as static assets.
+  //
+  // Without this, `wrangler deploy` runs at the root of the pnpm workspace, finds several
+  // packages and refuses: "application detection logic has been run in the root of a
+  // workspace instead of targeting a specific project."
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hometuition",
+  "compatibility_date": "2026-08-18",
+  "assets": {
+    "directory": "artifacts/sikshya/web-build",
+    // expo-router resolves every route in the browser, so a request for /classroom/123 must
+    // still be served index.html. Without this, refreshing a page or opening a shared link
+    // returns a 404.
+    "not_found_handling": "single-page-application"
+  }
+}
