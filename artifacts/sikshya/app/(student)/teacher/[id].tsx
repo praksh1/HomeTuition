@@ -33,6 +33,10 @@ interface SessionAccess {
   isTeacher: boolean;
   isEnrolled: boolean;
   hasPaid: boolean;
+  status?: string;
+  /** Paid and inside the early-join window, but the teacher has not started yet. */
+  awaitingTeacher?: boolean;
+  joinOpensAt?: string | null;
 }
 
 interface ApiReview {
@@ -171,34 +175,61 @@ export default function TeacherDetail() {
     setPaySession(session);
   };
 
+  /**
+   * Re-asks the server whether this student may now join a session.
+   *
+   * Booking used to leave this state untouched, so the card kept showing "Book & Pay" for a
+   * class the student had just paid for — and tapping it offered to sell it to them again. The
+   * server is the only thing that knows the truth, so we ask it rather than guessing locally.
+   */
+  const refreshAccess = async (sessionId: string | number) => {
+    try {
+      const a = await apiGet<SessionAccess>(`/sessions/${sessionId}/access`);
+      setAccess((prev) => ({ ...prev, [String(sessionId)]: a }));
+    } catch {
+      // Leave the previous verdict in place; a failed refresh should not downgrade a booking
+      // the server already accepted.
+    }
+  };
+
   const confirmBooking = async (session: Session, paymentMethod: PaymentMethod) => {
     setPaySession(null);
     if (bookingSessionId === session.id) return;
     setBookingSessionId(session.id);
     try {
-      await apiPost(`/sessions/${session.id}/enroll`, { paymentMethod });
-      // Enrolling alone leaves the payment "pending", and an unpaid enrolment cannot join.
-      // The payment sheet has completed at this point, so settle it. Once eSewa/Khalti are
-      // genuinely integrated this call is replaced by the gateway's own confirmation.
-      if (session.price > 0) {
-        try {
-          await apiPost(`/sessions/${session.id}/payment/confirm`, { transactionId: paymentMethod });
-        } catch {
-          Alert.alert(
-            "Payment not confirmed",
-            "You're enrolled, but the payment didn't confirm. You won't be able to join until it does — please try again from your Sessions tab.",
-          );
-        }
-      }
+      // One call. It either comes back booked and paid, or nothing was created and we say so.
+      // The old flow enrolled first and paid second, which is why students ended up holding
+      // classes marked "payment pending" that they could never get into.
+      const res = await apiPost<{ paid?: boolean; alreadyBooked?: boolean }>(
+        `/sessions/${session.id}/book`,
+        { paymentMethod },
+      );
+      await refreshAccess(session.id);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      if (res?.alreadyBooked) {
+        Alert.alert("Already booked", "You have already paid for this session. Check your Sessions tab to join.");
+        return;
+      }
       Alert.alert(
         "Booked!",
-        `Session enrolled successfully via ${paymentMethod === "esewa" ? "eSewa" : "Khalti"}.\n\nCheck your Sessions tab to join when the session goes live.`,
-        [{ text: "View My Sessions", onPress: () => router.push("/(student)/sessions") }, { text: "OK" }]
+        `Paid with ${paymentMethod === "esewa" ? "eSewa" : "Khalti"}. You're in.
+
+You can join from your Sessions tab — the class opens a few minutes before it starts.`,
+        [{ text: "View My Sessions", onPress: () => router.push("/(student)/sessions") }, { text: "OK" }],
       );
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Booking failed. Please try again.";
-      Alert.alert("Booking Failed", msg);
+      // A decline is a normal outcome with a clear next step, not a crash.
+      const declined = /declin|payment|card/i.test(msg);
+      Alert.alert(
+        declined ? "Payment declined" : "Booking failed",
+        declined ? `${msg}
+
+Nothing has been charged and you are not enrolled.` : msg,
+      );
+      // The attempt may have raced with another device; re-sync rather than assume.
+      await refreshAccess(session.id);
     } finally {
       setBookingSessionId(null);
     }
@@ -427,9 +458,11 @@ export default function TeacherDetail() {
                     <SessionCard session={s} onPress={() => {}} />
                     <View style={styles.bookBtnRow}>
                       <View style={[styles.bookBtn, { backgroundColor: colors.success + "1A", borderWidth: 1, borderColor: colors.success }]}>
-                        <Feather name={a.hasPaid ? "check-circle" : "clock"} size={14} color={colors.success} />
+                        <Feather name="check-circle" size={14} color={colors.success} />
                         <Text style={[styles.bookBtnText, { color: colors.success }]}>
-                          {a.hasPaid ? "Enrolled — you'll be able to join when it starts" : "Enrolled — payment pending"}
+                          {a.awaitingTeacher
+                            ? "Booked — waiting for the teacher to start"
+                            : "Booked & paid — opens 5 minutes before it starts"}
                         </Text>
                       </View>
                     </View>
@@ -480,9 +513,7 @@ export default function TeacherDetail() {
                       <View style={[styles.bookBtn, { backgroundColor: colors.primary }]}>
                         <Feather name="credit-card" size={14} color="#fff" />
                         <Text style={styles.bookBtnText}>
-                          {access[s.id]?.isEnrolled
-                            ? `Complete payment to join · NPR ${s.price.toLocaleString()}`
-                            : `Enroll to join · NPR ${s.price.toLocaleString()}`}
+                          {`Book & Pay to join · NPR ${s.price.toLocaleString()}`}
                         </Text>
                       </View>
                     )}

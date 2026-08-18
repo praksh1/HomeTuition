@@ -159,7 +159,7 @@ export default function Classroom() {
   const { width: winW } = useWindowDimensions();
   const sideBySide = winW >= 900;
 
-  const { connected, accessDenied, presenceCount, messages, material, sendChat, sendDrawCommit, sendBoardClear, sendMaterial, clearMaterial, sendBoardSize } =
+  const { connected, accessDenied, presenceCount, messages, material, boardClearedAt, sendChat, sendDrawCommit, sendBoardClear, sendMaterial, clearMaterial, sendBoardSize } =
     useClassroomSocket({ sessionId: id ?? "", name: teacherName, role: "teacher" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -173,6 +173,34 @@ export default function Classroom() {
   const [textModalVisible, setTextModalVisible] = useState(false);
   const [textInputValue, setTextInputValue] = useState("");
   const pendingTextPoint = useRef<{ x: number; y: number } | null>(null);
+
+  /**
+   * A new class starts on a blank board.
+   *
+   * This screen is one route with a changing id, so opening the next class reuses the same
+   * component instance and its strokes came along for the ride — the teacher opened a fresh
+   * lesson and found the last one's working still on the board. The server clears its own copy
+   * when the class goes live; this clears the local one.
+   */
+  useEffect(() => {
+    setPaths([]);
+    setRedoStack([]);
+    setPreviewShape(null);
+    setCurrentPath("");
+  }, [id]);
+
+  /**
+   * The server wipes the board when the class goes live, which also covers restarting the same
+   * session id. Follow it, or the teacher keeps ink that nobody else can see.
+   */
+  useEffect(() => {
+    if (boardClearedAt === 0) return;
+    setPaths([]);
+    setRedoStack([]);
+    setPreviewShape(null);
+    setCurrentPath("");
+  }, [boardClearedAt]);
+
   const startPoint = useRef<{ x: number; y: number } | null>(null);
   const [penColor, setPenColor] = useState("#0D0D0D");
   const [penSize, setPenSize] = useState(3);

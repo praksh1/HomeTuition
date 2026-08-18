@@ -137,6 +137,17 @@ export default function StudentClassroom() {
     }
   }, [sessionStatus]);
 
+  /**
+   * The class is open to this student but the teacher has not pressed start.
+   *
+   * Students are let in up to five minutes early so the room is populated when the lesson
+   * begins; without a clear signal that everyone is simply waiting, an empty call looks like a
+   * broken one. `sessionStatus` arrives over the socket the moment the teacher starts, so this
+   * clears itself with no polling.
+   */
+  const liveStatus = sessionStatus ?? session?.status ?? null;
+  const waitingForTeacher = !!liveStatus && liveStatus !== "live" && liveStatus !== "completed" && liveStatus !== "cancelled";
+
   const fmt = (s: number) =>
     `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
@@ -249,6 +260,16 @@ export default function StudentClassroom() {
             </Text>
           </View>
         </View>
+
+        {waitingForTeacher && (
+          <View style={s.waitingBar}>
+            <ActivityIndicator size="small" color="#FCD34D" />
+            <Text style={s.waitingText}>
+              Awaiting teacher to start the class. You're in the room — stay here and the class
+              will begin automatically.
+            </Text>
+          </View>
+        )}
 
         {accessDenied && (
           <View style={s.deniedBar}>
@@ -384,6 +405,8 @@ const s = StyleSheet.create({
   liveDot: { width: 6, height: 6, borderRadius: 3 },
   liveText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff" },
   leaveBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
+  waitingBar: { flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#3A2E0B", borderBottomWidth: 1, borderBottomColor: "#5A470F" },
+  waitingText: { flex: 1, color: "#FCD34D", fontSize: 12, lineHeight: 17 },
   teacherBanner: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 9, backgroundColor: "#111" },
   teacherAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#1A365D", justifyContent: "center", alignItems: "center" },
   teacherAvatarText: { fontSize: 14, fontFamily: "Inter_700Bold", color: "#fff" },

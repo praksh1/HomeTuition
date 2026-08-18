@@ -2,6 +2,7 @@ import http from "http";
 import app from "./app";
 import { logger } from "./lib/logger";
 import { attachClassroomHub } from "./ws/classroomHub";
+import { describePaymentMode, paymentMode } from "./lib/payments";
 
 const rawPort = process.env["PORT"];
 
@@ -20,6 +21,9 @@ attachClassroomHub(server);
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
+  // Whether real money can move is too important to have to go and look up.
+  if (paymentMode() === "simulated") logger.warn(describePaymentMode());
+  else logger.info(describePaymentMode());
 });
 
 server.on("error", (err: Error) => {

@@ -138,6 +138,12 @@ interface Result {
   presenceCount: number;
   messages: ChatMessage[];
   remotePaths: DrawPath[];
+  /**
+   * Changes whenever the server clears the board, so a screen holding its own local strokes
+   * knows to drop them. The teacher draws locally for responsiveness, so clearing only the
+   * remote copy would leave their ink on a board everyone else sees as empty.
+   */
+  boardClearedAt: number;
   floatingReactions: FloatingReaction[];
   material: BoardMaterial | null;
   /** The coordinate space the teacher's strokes are drawn in; null until they publish it. */
@@ -158,6 +164,8 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   const [presenceCount, setPresenceCount] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [remotePaths, setRemotePaths] = useState<DrawPath[]>([]);
+  /** Timestamp of the last server-driven board clear; a change means "wipe local strokes". */
+  const [boardClearedAt, setBoardClearedAt] = useState(0);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const [material, setMaterial] = useState<BoardMaterial | null>(null);
   const [boardSize, setBoardSize] = useState<BoardSize | null>(null);
@@ -255,6 +263,10 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
           break;
         case "board_clear":
           setRemotePaths([]);
+          // Bumped so the teacher's screen can drop its *own* strokes too. The teacher draws
+          // into local state for responsiveness, so clearing only the remote copy would leave
+          // their ink on a board the server and every student consider empty.
+          setBoardClearedAt(Date.now());
           break;
         case "presence":
           setPresenceCount(msg.count as number);
@@ -292,6 +304,25 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
 
     ws.onerror = () => { ws.close(); };
   }, [sessionId, addFloating]);
+
+  /**
+   * Drop everything belonging to the previous class when the session id changes.
+   *
+   * The classroom screens are one route with a changing parameter, so moving from one class to
+   * the next reuses this hook rather than remounting it. Board state therefore survived the
+   * move, and a teacher starting their next lesson found the previous lesson's strokes and
+   * shared document already on the board.
+   */
+  useEffect(() => {
+    setRemotePaths([]);
+    setBoardClearedAt(0);
+    setMaterial(null);
+    setBoardSize(null);
+    setMessages([]);
+    setPresenceCount(0);
+    setSessionStatus(null);
+    setAccessDenied(false);
+  }, [sessionId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -366,6 +397,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     presenceCount,
     messages,
     remotePaths,
+    boardClearedAt,
     floatingReactions,
     material,
     sessionStatus,

@@ -3,26 +3,97 @@ import crypto from "crypto";
 /**
  * Payment confirmation.
  *
- * The rule this enforces: **only the payment provider may declare a payment complete.**
+ * Two rules shape this file, and they pull against each other:
  *
- * Previously the app itself called an endpoint that flipped an enrolment to "paid". Anyone
- * who could log in could call the same endpoint directly and attend paid classes for free.
- * That endpoint now only works when explicitly enabled for development; in production the
- * one route to "paid" is a signed webhook from the gateway.
+ *  1. **Only the payment provider may declare a payment complete.** A client saying "I paid"
+ *     is not evidence of payment. If the app could mark its own enrolments paid, any student
+ *     who could log in could attend every paid class for free.
  *
- * eSewa and Khalti both sign their callbacks with a shared secret. Until the real integration
- * exists, `PAYMENT_WEBHOOK_SECRET` stands in for that secret and the signature is checked the
- * same way, so wiring up the real provider is a matter of matching their header and payload
- * format rather than rebuilding the trust model.
+ *  2. **A booking is never half-done.** Either the student is enrolled and paid and can walk
+ *     into the class, or nothing happened and they are told to try another method. An
+ *     enrolment stuck at "pending" is the worst outcome: the class shows up in the student's
+ *     list, the money question is unresolved, and the door refuses them at the last moment.
+ *
+ * Rule 1 alone leaves nothing working until a gateway is integrated. So payments run in one
+ * of two modes, and the mode is chosen by what is configured rather than by a flag someone
+ * has to remember to flip:
+ *
+ *   - **gateway** — a real provider is configured. Payment is settled only by a signed
+ *     callback from that provider.
+ *   - **simulated** — no provider is configured yet. The server approves the charge itself so
+ *     the product can be tested end to end, and says so loudly in the log every time.
+ *
+ * The important property is that this **tightens itself**. The moment gateway credentials
+ * exist in the environment, simulated mode stops being available — there is no way to connect
+ * a real provider and accidentally leave the free door open, because the presence of the
+ * provider is what closes it.
  */
 
-/** Development escape hatch. Never set this where real money is involved. */
-export function unverifiedPaymentsAllowed(): boolean {
-  return process.env.ALLOW_UNVERIFIED_PAYMENTS === "true";
+export type PaymentMode = "gateway" | "simulated";
+
+/** Set when a real provider is wired up. Any one of these means "we take real money now". */
+function gatewayConfigured(): boolean {
+  return !!(
+    process.env.PAYMENT_WEBHOOK_SECRET ||
+    process.env.ESEWA_MERCHANT_ID ||
+    process.env.KHALTI_SECRET_KEY
+  );
+}
+
+/**
+ * Which mode we are in.
+ *
+ * Note the asymmetry: configuring a gateway forces gateway mode, and no environment variable
+ * can override that. `PAYMENT_MODE=simulated` is honoured only while no provider exists.
+ */
+export function paymentMode(): PaymentMode {
+  if (gatewayConfigured()) return "gateway";
+  return "simulated";
 }
 
 export function webhookSecret(): string | null {
   return process.env.PAYMENT_WEBHOOK_SECRET || null;
+}
+
+export interface ChargeResult {
+  ok: boolean;
+  /** Provider's reference for a successful charge; stored against the enrolment. */
+  reference?: string;
+  /** Shown to the student verbatim when the charge fails, so it must be plain language. */
+  message?: string;
+  /** Where to send the student to complete payment, in gateway mode. */
+  redirectUrl?: string;
+}
+
+/**
+ * Attempts to take payment for a session.
+ *
+ * In simulated mode this succeeds immediately. In gateway mode it does **not** — settling a
+ * real payment needs the provider's own redirect-and-callback dance, and pretending otherwise
+ * would recreate exactly the hole this file exists to close. Wiring eSewa or Khalti means
+ * implementing the branch below and returning their redirect URL; the state machine around it
+ * already handles the rest.
+ */
+export async function chargeForSession(args: {
+  sessionId: number;
+  studentId: number;
+  amount: number;
+  method: string;
+  log?: { warn: (o: object, m: string) => void };
+}): Promise<ChargeResult> {
+  if (paymentMode() === "simulated") {
+    args.log?.warn(
+      { sessionId: args.sessionId, studentId: args.studentId, amount: args.amount },
+      "SIMULATED PAYMENT approved — no money moved. Configure a payment provider before launch.",
+    );
+    return { ok: true, reference: `SIM-${Date.now()}-${args.sessionId}-${args.studentId}` };
+  }
+
+  return {
+    ok: false,
+    message:
+      "Online payment isn't available yet. Please contact your teacher to arrange payment for this class.",
+  };
 }
 
 /**
@@ -44,4 +115,11 @@ export function verifyWebhookSignature(rawBody: string, signature: string | unde
   const b = Buffer.from(given, "utf8");
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
+}
+
+/** Logged once at boot so the operating mode is never a surprise. */
+export function describePaymentMode(): string {
+  return paymentMode() === "simulated"
+    ? "PAYMENTS: SIMULATED — bookings are approved without taking money. Do not launch like this."
+    : "PAYMENTS: gateway mode — only signed provider callbacks can settle a booking.";
 }

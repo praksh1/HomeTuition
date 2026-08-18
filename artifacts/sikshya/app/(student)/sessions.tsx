@@ -106,33 +106,58 @@ export default function StudentSessions() {
       // Offline or the server is unreachable — fall through on what we last knew.
     }
 
-    if (status === "upcoming") {
-      const sessionDate = new Date(session.date);
-      const timeStr = sessionDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const dateStr = sessionDate.toLocaleDateString("en-NP", { weekday: "short", month: "short", day: "numeric" });
-      notify("Session Upcoming", `"${session.topic}" starts on ${dateStr} at ${timeStr}.\n\nYou're enrolled — this page will update by itself once the teacher starts the class.`);
-      return;
-    }
-    if (status !== "live") {
+    if (status === "completed" || status === "cancelled") {
       notify("Session Ended", "This session has already ended.");
       return;
     }
 
-    // The server refuses the video and the board unless the enrolment is paid up, so ask
-    // before walking the student into a class that would then reject them.
+    // The server decides, because only it knows the payment state and the join window. A
+    // paid student is admitted once the class is live *or* within a few minutes of the
+    // scheduled start, so they can be waiting in the room when the teacher arrives instead of
+    // being told to come back and refresh.
+    let access: {
+      canJoin: boolean;
+      isEnrolled: boolean;
+      hasPaid?: boolean;
+      awaitingTeacher?: boolean;
+      joinOpensAt?: string | null;
+      joinWindowMinutes?: number;
+    };
     try {
-      const access = await apiGet<{ canJoin: boolean; isEnrolled: boolean }>(`/sessions/${session.id}/access`);
-      if (!access.canJoin) {
+      access = await apiGet(`/sessions/${session.id}/access`);
+    } catch {
+      notify("Couldn't Check", "We couldn't confirm your access to this class. Please try again.");
+      return;
+    }
+
+    if (!access.canJoin) {
+      if (!access.isEnrolled) {
+        notify("Not Booked", "You need to book this class before you can join.");
+        return;
+      }
+      if (!access.hasPaid) {
+        // Booking is atomic now, so this should be unreachable; if it ever fires, the student
+        // needs a way out rather than a dead end.
         notify(
-          access.isEnrolled ? "Payment Pending" : "Not Enrolled",
-          access.isEnrolled
-            ? "Your enrolment hasn't been paid yet, so you can't join this class."
-            : "You need to enrol in this class before you can join.",
+          "Payment Not Completed",
+          "This booking was never paid for, so it can't be joined. Please book it again from the teacher's page — you won't be charged twice.",
         );
         return;
       }
-    } catch {
-      notify("Couldn't Check", "We couldn't confirm your access to this class. Please try again.");
+      // Paid and waiting: tell them exactly when the door opens.
+      const opens = access.joinOpensAt ? new Date(access.joinOpensAt) : null;
+      const mins = access.joinWindowMinutes ?? 5;
+      if (opens) {
+        const t = opens.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        notify(
+          "Not Open Yet",
+          `"${session.topic}" opens at ${t}, ${mins} minutes before it starts.
+
+You're booked and paid — come back then and you can wait in the room for your teacher.`,
+        );
+      } else {
+        notify("Not Open Yet", "This class isn't open yet. You're booked — try again closer to the start time.");
+      }
       return;
     }
 

@@ -1,10 +1,15 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { db, sessionsTable, sessionEnrollmentsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
-import { getSessionMembership, canAccessSession } from "../lib/membership";
-import { unverifiedPaymentsAllowed, verifyWebhookSignature, webhookSecret } from "../lib/payments";
-import { broadcastSessionStatus, resetRoomPresence } from "../ws/classroomHub";
+import {
+  JOIN_WINDOW_MINUTES,
+  canAccessSession,
+  getSessionMembership,
+  joinWindowOpen,
+} from "../lib/membership";
+import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/payments";
+import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
 import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 
 
@@ -37,10 +42,19 @@ router.get("/sessions", async (req, res): Promise<void> => {
   if (status) conditions.push(eq(sessionsTable.status, status));
 
   if (studentId) {
+    // Only paid enrolments count as "my sessions". An unpaid row used to appear in the
+    // student's Upcoming list, so they saw a class they believed they owned and were then
+    // refused at the door. Booking is atomic now, so these should not exist at all — this is
+    // the second lock on the same door.
     const enrolled = await db
       .select({ sessionId: sessionEnrollmentsTable.sessionId })
       .from(sessionEnrollmentsTable)
-      .where(eq(sessionEnrollmentsTable.studentId, parseInt(studentId, 10)));
+      .where(
+        and(
+          eq(sessionEnrollmentsTable.studentId, parseInt(studentId, 10)),
+          eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+        ),
+      );
     const sessionIds = enrolled.map((e) => e.sessionId);
     if (sessionIds.length === 0) {
       res.json({ sessions: [], total: 0, page: pageNum, limit: limitNum });
@@ -282,10 +296,10 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       }
     }
 
-    // Force-clear any stale/"ghost" presence left over from a previous run of this same
-    // session (e.g. a connection that never closed cleanly) so the participant count
-    // reads exactly 0 the moment the teacher starts the class.
-    resetRoomPresence(String(id));
+    // Start every class on a blank board. The previous lesson's strokes used to still be
+    // there, which read as the app leaking one class into the next. This clears the board
+    // without hanging up on students already waiting in the room.
+    if (status === "live") resetBoardFor(String(id));
 
     // Proactively create the Daily.co room the moment the teacher starts the session,
     // so it already exists by the time either side's WebView tries to join it.
@@ -305,7 +319,19 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
   res.json(session);
 });
 
-router.post("/sessions/:id/enroll", requireAuth, async (req, res): Promise<void> => {
+/**
+ * Books a session: enrol and pay, or do nothing at all.
+ *
+ * This used to be two calls — `/enroll` created a "pending" row and `/payment/confirm`
+ * promoted it. Every failure in between left the student in limbo: the class appeared in their
+ * Sessions tab, so they believed they had bought it, but the door refused them when it
+ * mattered. Worse, the Discover tab kept offering to sell them the same class again.
+ *
+ * So booking is now one atomic step. It runs in a transaction that either commits a paid
+ * enrolment or rolls back to nothing, and the charge is attempted *inside* that transaction.
+ * There is no state in which a student holds an unpaid enrolment for a paid class.
+ */
+async function bookSession(req: Request, res: Response): Promise<void> {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
@@ -315,72 +341,116 @@ router.post("/sessions/:id/enroll", requireAuth, async (req, res): Promise<void>
 
   const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
-  if (session.enrolledCount >= session.maxStudents) {
-    res.status(409).json({ error: "Session is full" });
+  if (session.teacherId === user.userId) {
+    res.status(400).json({ error: "You cannot book your own session." });
+    return;
+  }
+  if (session.status === "completed" || session.status === "cancelled") {
+    res.status(409).json({ error: "This session is no longer available." });
     return;
   }
 
-  const existing = await db.select({ id: sessionEnrollmentsTable.id })
-    .from(sessionEnrollmentsTable)
-    .where(and(eq(sessionEnrollmentsTable.sessionId, id), eq(sessionEnrollmentsTable.studentId, user.userId)));
-  if (existing.length > 0) {
-    res.status(409).json({ error: "Already enrolled in this session" });
-    return;
-  }
+  const price = session.price ?? 0;
 
-  // A free class has nothing to pay for, so it is settled on enrolment. A paid one starts
-  // "pending" and only becomes joinable once payment is confirmed below.
-  const [enrollment] = await db.insert(sessionEnrollmentsTable).values({
-    sessionId: id,
-    studentId: user.userId,
-    paymentStatus: session.price > 0 ? "pending" : "paid",
-    paymentMethod: paymentMethod ?? null,
-  }).returning();
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Re-read the row inside the transaction and lock it, so two students booking the last
+      // seat at the same instant cannot both be let in.
+      const [locked] = await tx
+        .select({ enrolledCount: sessionsTable.enrolledCount, maxStudents: sessionsTable.maxStudents })
+        .from(sessionsTable)
+        .where(eq(sessionsTable.id, id))
+        .for("update");
 
-  await db.update(sessionsTable)
-    .set({ enrolledCount: session.enrolledCount + 1 })
-    .where(eq(sessionsTable.id, id));
+      if (!locked) return { kind: "gone" as const };
 
-  await db.update(teacherProfilesTable)
-    .set({ totalStudents: sql`${teacherProfilesTable.totalStudents} + 1` })
-    .where(eq(teacherProfilesTable.userId, session.teacherId));
+      const [existing] = await tx
+        .select({ id: sessionEnrollmentsTable.id, paymentStatus: sessionEnrollmentsTable.paymentStatus })
+        .from(sessionEnrollmentsTable)
+        .where(and(eq(sessionEnrollmentsTable.sessionId, id), eq(sessionEnrollmentsTable.studentId, user.userId)));
 
-  res.status(201).json(enrollment);
-});
+      // Already paid: booking again is a no-op success rather than an error, because a student
+      // tapping a stale "Book & Pay" button should end up informed, not scolded.
+      if (existing && (price <= 0 || existing.paymentStatus === "paid")) {
+        return { kind: "already" as const };
+      }
 
-/**
- * Development-only payment confirmation.
- *
- * A client saying "I paid" is not evidence of payment, so this is refused unless
- * ALLOW_UNVERIFIED_PAYMENTS is explicitly set. Real confirmations arrive at the webhook
- * below, signed by the provider. Leaving this open in production would let any logged-in
- * student attend every paid class for free.
- */
-router.post("/sessions/:id/payment/confirm", requireAuth, async (req, res): Promise<void> => {
-  if (!unverifiedPaymentsAllowed()) {
-    res.status(403).json({
-      error:
-        "Payments must be confirmed by the payment provider. Set ALLOW_UNVERIFIED_PAYMENTS=true for local testing only.",
+      // Capacity only blocks genuinely new enrolments; upgrading a leftover pending row does
+      // not consume another seat because it already holds one.
+      if (!existing && locked.enrolledCount >= locked.maxStudents) return { kind: "full" as const };
+
+      let reference: string | null = null;
+      if (price > 0) {
+        const charge = await chargeForSession({
+          sessionId: id,
+          studentId: user.userId,
+          amount: price,
+          method: paymentMethod ?? "unknown",
+          log: req.log,
+        });
+        // Returning here rolls nothing back because nothing has been written yet — which is
+        // the point: a declined payment must not leave an enrolment behind.
+        if (!charge.ok) return { kind: "declined" as const, message: charge.message };
+        reference = charge.reference ?? null;
+      }
+
+      // A leftover "pending" row from the old two-step flow is upgraded in place rather than
+      // colliding with the unique constraint.
+      const [enrolment] = existing
+        ? await tx.update(sessionEnrollmentsTable)
+            .set({ paymentStatus: "paid", paymentMethod: paymentMethod ?? null, paymentReference: reference })
+            .where(eq(sessionEnrollmentsTable.id, existing.id))
+            .returning()
+        : await tx.insert(sessionEnrollmentsTable).values({
+            sessionId: id,
+            studentId: user.userId,
+            paymentStatus: "paid",
+            paymentMethod: paymentMethod ?? null,
+            paymentReference: reference,
+          }).returning();
+
+      if (!existing) {
+        await tx.update(sessionsTable)
+          .set({ enrolledCount: locked.enrolledCount + 1 })
+          .where(eq(sessionsTable.id, id));
+        await tx.update(teacherProfilesTable)
+          .set({ totalStudents: sql`${teacherProfilesTable.totalStudents} + 1` })
+          .where(eq(teacherProfilesTable.userId, session.teacherId));
+      }
+
+      return { kind: "booked" as const, enrolment };
     });
-    return;
+
+    switch (result.kind) {
+      case "gone":
+        res.status(404).json({ error: "Session not found" });
+        return;
+      case "full":
+        res.status(409).json({ error: "This session is full." });
+        return;
+      case "declined":
+        res.status(402).json({
+          error: result.message ?? "Payment was declined. Please try a different payment method.",
+          declined: true,
+        });
+        return;
+      case "already":
+        res.status(200).json({ alreadyBooked: true, paid: true });
+        return;
+      default:
+        req.log.info({ sessionId: id, studentId: user.userId, price }, "session booked and paid");
+        res.status(201).json({ ...result.enrolment, paid: true });
+        return;
+    }
+  } catch (e) {
+    req.log.error({ err: e, sessionId: id, studentId: user.userId }, "booking failed");
+    res.status(500).json({ error: "Booking could not be completed. Please try again." });
   }
+}
 
-  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-  const id = parseInt(raw, 10);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
-
-  const user = req.user!;
-  const { transactionId } = req.body as { transactionId?: string };
-
-  const updated = await markEnrolmentPaid(id, user.userId, transactionId ?? "dev-unverified");
-  if (!updated) {
-    res.status(404).json({ error: "You are not enrolled in this session." });
-    return;
-  }
-
-  req.log.warn({ sessionId: id, studentId: user.userId }, "enrolment marked paid WITHOUT verification");
-  res.json(updated);
-});
+router.post("/sessions/:id/book", requireAuth, bookSession);
+// The app shipped against this path, so it stays and performs the same atomic booking.
+router.post("/sessions/:id/enroll", requireAuth, bookSession);
 
 /**
  * Payment provider webhook — the only route to "paid" in production.
@@ -445,11 +515,25 @@ router.get("/sessions/:id/access", requireAuth, async (req, res): Promise<void> 
   const membership = await getSessionMembership(id, req.user!.userId);
   if (!membership) { res.status(404).json({ error: "Session not found" }); return; }
 
+  const opensAt = membership.scheduledFor
+    ? new Date(membership.scheduledFor.getTime() - JOIN_WINDOW_MINUTES * 60_000).toISOString()
+    : null;
+
   res.json({
     canJoin: canAccessSession(membership),
     isTeacher: membership.isSessionTeacher,
     isEnrolled: membership.isEnrolledStudent,
     hasPaid: membership.hasPaid,
+    status: membership.status,
+    /** The door is open but the teacher has not started: the app shows a waiting room. */
+    awaitingTeacher:
+      !membership.isSessionTeacher &&
+      membership.hasPaid &&
+      membership.status !== "live" &&
+      joinWindowOpen(membership),
+    /** When the early-join window opens, so the app can count down to it. */
+    joinOpensAt: opensAt,
+    joinWindowMinutes: JOIN_WINDOW_MINUTES,
   });
 });
 

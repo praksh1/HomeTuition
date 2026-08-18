@@ -147,27 +147,24 @@ export function broadcastSessionStatus(sessionId: string, status: string): void 
   broadcast(String(sessionId), { type: "session_status", status });
 }
 
+
 /**
- * Clears all tracked presence (in-memory room clients) for a session. Presence has no
- * DB-backed table — it's tracked purely in the `rooms` map for the lifetime of open
- * WebSocket connections — so "ghost" participants are stale entries left behind by
- * connections that didn't close cleanly (e.g. dev hot-reload, app backgrounding). Called
- * when a teacher (re)starts a session so the participant count is guaranteed to read 0
- * at the moment the class begins, regardless of leftover state from a previous run.
+ * Wipes the board at the start of a class without disturbing who is in the room.
+ *
+ * A teacher starting their next class inherited the previous one's scribbles, which looked
+ * like the app had leaked another lesson onto their board. An earlier version also hung up on
+ * everyone in order to do it, and that is now the wrong trade: students are
+ * allowed to gather in the room up to five minutes before the start, so disconnecting them at
+ * the exact moment the teacher begins would empty the class it was meant to fill.
+ *
+ * Clients are told to clear too, because each one keeps its own copy of the strokes for
+ * rendering and would otherwise keep drawing a board the server has already forgotten.
  */
-export function resetRoomPresence(sessionId: string): void {
-  const room = rooms.get(String(sessionId));
-  if (!room) return;
-  for (const client of room) {
-    try {
-      client.ws.close(4000, "Session restarted");
-    } catch {
-      // ignore
-    }
-  }
-  rooms.delete(String(sessionId));
-  boards.delete(String(sessionId));
-  broadcast(String(sessionId), { type: "presence", count: 0 });
+export function resetBoardFor(sessionId: string): void {
+  const id = String(sessionId);
+  boards.delete(id);
+  broadcast(id, { type: "board_clear" });
+  broadcast(id, { type: "material_clear" });
 }
 
 export function attachClassroomHub(server: http.Server): void {
