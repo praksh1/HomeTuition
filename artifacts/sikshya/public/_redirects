@@ -1,4 +1,0 @@
-# expo-router is a single-page app: every route is resolved in the browser, so any path that
-# is not a real file must still be served index.html. Without this, refreshing on
-# /classroom/123 or opening a shared link returns a 404 from Cloudflare Pages.
-/*    /index.html   200
