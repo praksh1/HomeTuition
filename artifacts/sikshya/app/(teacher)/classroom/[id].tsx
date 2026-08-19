@@ -8,8 +8,6 @@ import {
   Alert,
   Dimensions,
   KeyboardAvoidingView,
-  Modal,
-  PanResponder,
   Platform,
   ScrollView,
   StyleSheet,
@@ -18,18 +16,14 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   View,
-  type GestureResponderEvent,
-  type LayoutChangeEvent,
 } from "react-native";
-import Svg, { Path, Line, Circle, Text as SvgText, Polygon } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import type { Teacher } from "@/context/AuthContext";
 import { apiGet, apiPatch } from "@/utils/api";
-import { useClassroomSocket, type DrawPath, type DrawTool } from "@/hooks/useClassroomSocket";
+import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
-import WhiteboardCanvas, { ERASER_SIZES, type Instrument } from "@/components/WhiteboardCanvas";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { Image } from "react-native";
@@ -38,76 +32,15 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ErrorFallbackProps } from "@/components/ErrorFallback";
 import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
 import { cancelSessionReminder } from "@/utils/notifications";
-import { MIN_CONFIDENCE, recognizeShape, squareUp, toDrawPath, type Point as BoardPoint } from "../../../components/recognition";
 import SmartBoard from "@/components/SmartBoard";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "whiteboard" | "participants" | "chat";
 
-const COLORS_PALETTE = ["#0D0D0D", "#C41E3A", "#1A365D", "#16A34A", "#F5A623", "#8B5CF6", "#FFFFFF"];
-const PEN_SIZES = [3, 6, 10];
-
-/** Shape and text tools — anything that is not freehand drawing. */
-const TOOLS: { id: DrawTool; icon: keyof typeof Feather.glyphMap; label: string }[] = [
-  { id: "line", icon: "minus", label: "Line" },
-  { id: "arrow", icon: "arrow-up-right", label: "Arrow" },
-  { id: "rect", icon: "square", label: "Rectangle" },
-  { id: "circle", icon: "circle", label: "Circle" },
-  { id: "text", icon: "type", label: "Text" },
-];
-
-/** Freehand instruments. Each lays down ink differently — see INSTRUMENTS in the canvas. */
-const PENS: { id: Instrument; icon: keyof typeof Feather.glyphMap; label: string }[] = [
-  { id: "pen", icon: "edit-3", label: "Pen" },
-  { id: "marker", icon: "edit-2", label: "Marker" },
-  { id: "highlighter", icon: "feather", label: "Highlighter" },
-  { id: "pencil", icon: "pen-tool", label: "Pencil" },
-];
-
-function renderShape(p: DrawPath, i: number) {
-  switch (p.tool) {
-    case "line":
-      return <Line key={i} x1={p.x1} y1={p.y1} x2={p.x2} y2={p.y2} stroke={p.color} strokeWidth={p.width} strokeLinecap="round" />;
-    case "arrow": {
-      const x1 = p.x1 ?? 0, y1 = p.y1 ?? 0, x2 = p.x2 ?? 0, y2 = p.y2 ?? 0;
-      const angle = Math.atan2(y2 - y1, x2 - x1);
-      const headLen = Math.max(10, p.width * 3);
-      const p1x = x2 - headLen * Math.cos(angle - Math.PI / 7);
-      const p1y = y2 - headLen * Math.sin(angle - Math.PI / 7);
-      const p2x = x2 - headLen * Math.cos(angle + Math.PI / 7);
-      const p2y = y2 - headLen * Math.sin(angle + Math.PI / 7);
-      return (
-        <React.Fragment key={i}>
-          <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={p.color} strokeWidth={p.width} strokeLinecap="round" />
-          <Polygon points={`${x2},${y2} ${p1x},${p1y} ${p2x},${p2y}`} fill={p.color} />
-        </React.Fragment>
-      );
-    }
-    case "circle": {
-      const cx = p.cx ?? 0, cy = p.cy ?? 0, r = p.r ?? 0;
-      return <Circle key={i} cx={cx} cy={cy} r={r} stroke={p.color} strokeWidth={p.width} fill="none" />;
-    }
-    case "text":
-      return (
-        <SvgText key={i} x={p.x} y={p.y} fill={p.color} fontSize={Math.max(14, p.width * 6)} fontWeight="600">
-          {p.text}
-        </SvgText>
-      );
-    case "pen":
-    default:
-      return <Path key={i} d={p.d} stroke={p.color} strokeWidth={p.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />;
-  }
-}
-
 interface SessionData {
   id: number; topic: string; subject: string; teacherName: string;
   duration: number; maxStudents: number; enrolledCount: number; status: string;
 }
-
-
-const ZOOM_MIN = 1;
-const ZOOM_MAX = 3;
-const ZOOM_STEP = 0.25;
 
 function WhiteboardFallback({ resetError }: ErrorFallbackProps) {
   return (
@@ -123,21 +56,6 @@ function WhiteboardFallback({ resetError }: ErrorFallbackProps) {
       </TouchableOpacity>
     </View>
   );
-}
-
-interface Point { x: number; y: number }
-
-/**
- * Keeps the scaled board covering the viewport. With `transformOrigin: 0 0` the content
- * spans [pan, pan + size * zoom], so pan must stay within [size * (1 - zoom), 0].
- */
-function clampPan(pan: Point, zoom: number, viewport: { w: number; h: number }): Point {
-  const minX = Math.min(0, viewport.w * (1 - zoom));
-  const minY = Math.min(0, viewport.h * (1 - zoom));
-  return {
-    x: Math.min(0, Math.max(minX, pan.x)),
-    y: Math.min(0, Math.max(minY, pan.y)),
-  };
 }
 
 export default function Classroom() {
@@ -161,62 +79,11 @@ export default function Classroom() {
   const { width: winW } = useWindowDimensions();
   const sideBySide = winW >= 900;
 
-  const { connected, accessDenied, presenceCount, messages, material, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendChat, sendDrawCommit, sendBoardClear, sendMaterial, clearMaterial, sendBoardSize } =
+  const { connected, accessDenied, presenceCount, messages, material, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendBoardView, sendChat, sendBoardClear, sendMaterial, clearMaterial } =
     useClassroomSocket({ sessionId: id ?? "", name: teacherName, role: "teacher" });
 
   const [session, setSession] = useState<SessionData | null>(null);
   const [mode, setMode] = useState<Mode>("whiteboard");
-  const [paths, setPaths] = useState<DrawPath[]>([]);
-  /** Strokes taken off the board by undo, available until the next new stroke. */
-  const [redoStack, setRedoStack] = useState<DrawPath[]>([]);
-  const [currentPath, setCurrentPath] = useState("");
-  const [tool, setTool] = useState<DrawTool>("pen");
-  const [previewShape, setPreviewShape] = useState<DrawPath | null>(null);
-  /**
-   * Whether rough strokes are snapped to clean shapes.
-   *
-   * On by default because it is the feature that makes a diagram legible on a phone screen, but
-   * it must be switchable: a teacher drawing freehand art, or writing large, wants their own
-   * line kept exactly as drawn.
-   */
-  const [smartShapes, setSmartShapes] = useState(true);
-  const [textModalVisible, setTextModalVisible] = useState(false);
-  const [textInputValue, setTextInputValue] = useState("");
-  const pendingTextPoint = useRef<{ x: number; y: number } | null>(null);
-
-  /**
-   * A new class starts on a blank board.
-   *
-   * This screen is one route with a changing id, so opening the next class reuses the same
-   * component instance and its strokes came along for the ride — the teacher opened a fresh
-   * lesson and found the last one's working still on the board. The server clears its own copy
-   * when the class goes live; this clears the local one.
-   */
-  useEffect(() => {
-    setPaths([]);
-    setRedoStack([]);
-    setPreviewShape(null);
-    setCurrentPath("");
-  }, [id]);
-
-  /**
-   * The server wipes the board when the class goes live, which also covers restarting the same
-   * session id. Follow it, or the teacher keeps ink that nobody else can see.
-   */
-  useEffect(() => {
-    if (boardClearedAt === 0) return;
-    setPaths([]);
-    setRedoStack([]);
-    setPreviewShape(null);
-    setCurrentPath("");
-  }, [boardClearedAt]);
-
-  const startPoint = useRef<{ x: number; y: number } | null>(null);
-  const [penColor, setPenColor] = useState("#0D0D0D");
-  const [penSize, setPenSize] = useState(3);
-  const [isEraser, setIsEraser] = useState(false);
-  const [instrument, setInstrument] = useState<Instrument>("pen");
-  const [eraserWidth, setEraserWidth] = useState<number>(ERASER_SIZES[1]);
   const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [chatMsg, setChatMsg] = useState("");
@@ -225,10 +92,6 @@ export default function Classroom() {
   /** Upload options stay folded away until asked for — they are occasional actions, and as
    * two permanent full-width buttons they were consuming screen the video should have. */
   const [materialMenuOpen, setMaterialMenuOpen] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
-  const [isPanMode, setIsPanMode] = useState(false);
-  const [viewport, setViewport] = useState({ w: 0, h: 0 });
   const [uploadError, setUploadError] = useState<string | null>(null);
   // Native-only: stores a local file:// URI for a PDF picked via DocumentPicker.
   // Kept separate from `material` (which is broadcast over the socket) because
@@ -239,24 +102,6 @@ export default function Classroom() {
   const [roomError, setRoomError] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatScrollRef = useRef<ScrollView>(null);
-
-  // The canvas exposes both PanResponder handlers and raw onTouch* handlers so that mouse
-  // and touch input both work. Both fire for the same touch on native, which would process
-  // every gesture twice — the first handler to fire claims the gesture and the other is
-  // ignored until it ends.
-  const gestureOwnerRef = useRef<"responder" | "touch" | null>(null);
-  const panDragRef = useRef<{ from: Point; pan: Point } | null>(null);
-
-  // Gesture callbacks read view transform state through refs so an in-flight drag always
-  // sees the latest values, never a value captured by an earlier render's closure.
-  const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
-  const panRef = useRef(pan);
-  panRef.current = pan;
-  const viewportRef = useRef(viewport);
-  viewportRef.current = viewport;
-  const isPanModeRef = useRef(isPanMode);
-  isPanModeRef.current = isPanMode;
 
   useEffect(() => {
     loadSession();
@@ -299,141 +144,6 @@ export default function Classroom() {
     } catch {}
   };
 
-  // NOTE: the old gesture pipeline (handleGesture*/toBoardPoint/PanResponder/onTouch*) used
-  // to live here. It is gone: WhiteboardCanvas owns input now, via pointer events on web so
-  // mouse, finger and stylus all work, and PanResponder on native.
-
-  const applyZoom = useCallback((next: number) => {
-    const prev = zoomRef.current;
-    const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +next.toFixed(2)));
-    if (clamped === prev) return;
-    const vp = viewportRef.current;
-    const p = panRef.current;
-    // Anchor on the viewport centre so zooming keeps the currently visible part of the
-    // material in view instead of drifting toward the top-left corner.
-    const cx = vp.w / 2;
-    const cy = vp.h / 2;
-    const nextPan =
-      clamped === ZOOM_MIN
-        ? { x: 0, y: 0 }
-        : clampPan(
-            { x: cx - ((cx - p.x) * clamped) / prev, y: cy - ((cy - p.y) * clamped) / prev },
-            clamped,
-            vp,
-          );
-    setZoom(clamped);
-    setPan(nextPan);
-    if (clamped === ZOOM_MIN) setIsPanMode(false);
-  }, []);
-
-  const resetView = useCallback(() => {
-    setZoom(ZOOM_MIN);
-    setPan({ x: 0, y: 0 });
-    setIsPanMode(false);
-  }, []);
-
-  const confirmTextShape = () => {
-    const point = pendingTextPoint.current;
-    const value = textInputValue.trim();
-    setTextModalVisible(false);
-    if (point && value) {
-      const shape: DrawPath = { tool: "text", text: value, x: point.x, y: point.y, color: penColor, width: penSize };
-      setPaths((prev) => [...prev, shape]);
-      sendDrawCommit(shape);
-    }
-    pendingTextPoint.current = null;
-    setTextInputValue("");
-  };
-
-  const clearBoard = () => {
-    setPaths([]);
-    setCurrentPath("");
-    setPreviewShape(null);
-    setRedoStack([]);
-    sendBoardClear();
-  };
-
-  /**
-   * One finished stroke: keep it locally and send it to everyone watching.
-   *
-   * If Smart mode is on and the stroke was clearly meant to be a shape, the rough ink is
-   * replaced with a clean vector one. Recognition is deliberately conservative — an
-   * unrecognised stroke is left exactly as drawn, because silently mangling what a teacher
-   * wrote is far worse than not helping. Handwriting is never converted: it is open and curved,
-   * which the recogniser rejects outright.
-   */
-  const commitShape = useCallback(
-    (shape: DrawPath, points?: BoardPoint[]) => {
-      let final = shape;
-
-      if (smartShapes && points && points.length > 3 && shape.tool === "pen") {
-        const guess = recognizeShape(points);
-        if (guess && guess.confidence >= MIN_CONFIDENCE) {
-          const snapped = squareUp(guess);
-          const asPath = toDrawPath(snapped, shape.color ?? penColor, shape.width ?? penSize, shape.opacity);
-          if (asPath) final = asPath;
-        }
-      }
-
-      setPaths((prev) => [...prev, final]);
-      setRedoStack([]); // a new stroke ends any redo branch
-      sendDrawCommit(final);
-    },
-    [sendDrawCommit, smartShapes, penColor, penSize],
-  );
-
-  /**
-   * Undo and redo work by replaying the whole board.
-   *
-   * The wire protocol only ever appends a stroke, so there is no "remove that one" message.
-   * Clearing and re-sending what remains is the honest way to keep every viewer in step —
-   * an undo that only took effect on the teacher's screen would be worse than none.
-   */
-  const replayBoard = useCallback(
-    (next: DrawPath[]) => {
-      sendBoardClear();
-      next.forEach((p) => sendDrawCommit(p));
-    },
-    [sendBoardClear, sendDrawCommit],
-  );
-
-  const undo = useCallback(() => {
-    setPaths((prev) => {
-      if (prev.length === 0) return prev;
-      const next = prev.slice(0, -1);
-      setRedoStack((r) => [...r, prev[prev.length - 1]]);
-      replayBoard(next);
-      return next;
-    });
-  }, [replayBoard]);
-
-  const redo = useCallback(() => {
-    setRedoStack((r) => {
-      if (r.length === 0) return r;
-      const shape = r[r.length - 1];
-      setPaths((prev) => {
-        const next = [...prev, shape];
-        replayBoard(next);
-        return next;
-      });
-      return r.slice(0, -1);
-    });
-  }, [replayBoard]);
-
-  const handleSurfaceLayout = useCallback(
-    (width: number, height: number) => {
-      setViewport((prev) => (prev.w === width && prev.h === height ? prev : { w: width, h: height }));
-      sendBoardSize(width, height);
-    },
-    [sendBoardSize],
-  );
-
-  const handleRequestText = useCallback((at: Point) => {
-    pendingTextPoint.current = at;
-    setTextInputValue("");
-    setTextModalVisible(true);
-  }, []);
-
   const applyUploadedFile = (dataUrl: string, kind: "image" | "pdf") => {
     if (kind === "pdf") {
       if (Platform.OS === "web") {
@@ -450,7 +160,6 @@ export default function Classroom() {
       }
       return;
     }
-    resetView();
     sendMaterial(dataUrl, kind);
   };
 
@@ -630,8 +339,6 @@ export default function Classroom() {
     [materialUri],
   );
 
-  const canPan = zoom > ZOOM_MIN;
-
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: "#0A0A0A" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={[s.container, { paddingTop: insets.top }]}>
@@ -759,7 +466,7 @@ export default function Classroom() {
               {(material || localPdfUri) && (
                 <TouchableOpacity
                   style={s.uploadDockClear}
-                  onPress={() => { clearMaterial(); setLocalPdfUri(null); setUploadError(null); resetView(); setMaterialMenuOpen(false); }}
+                  onPress={() => { clearMaterial(); setLocalPdfUri(null); setUploadError(null); setMaterialMenuOpen(false); }}
                   activeOpacity={0.7}
                 >
                   <Feather name="x-circle" size={16} color="#EF4444" />
@@ -851,185 +558,33 @@ export default function Classroom() {
                   <PdfViewer uri={localPdfUri} style={StyleSheet.absoluteFill} />
                 ) : null
               ) : (
-                /* The whiteboard proper. Excalidraw owns the surface, its own tools, undo,
-                   zoom and object handling; the strip below is only for the things it does not
-                   do (uploading material, ending the class). Annotating an uploaded document
-                   still goes through the legacy canvas further down, which is the next piece to
-                   move across. */
-                <SmartBoard
-                  sceneUpdates={sceneUpdates}
-                  onConsumeUpdates={consumeSceneUpdates}
-                  onSceneChange={sendSceneUpdate}
-                  clearedAt={boardClearedAt}
-                />
+                /* The whiteboard proper. Excalidraw owns the whole surface: its own tools,
+                   colours, undo, zoom, object handling and the controls for them. Nothing is
+                   duplicated around it — a second row of pens below the board drove a drawing
+                   engine that had already been replaced, so every one of those buttons was
+                   dead. A shared photo sits behind the ink, which is why the board's own
+                   background is transparent. */
+                <>
+                  {materialLayer}
+                  {/* Keyed by the class, so opening the next lesson starts on a blank board.
+                      This screen is one route with a changing id, so without it the component
+                      is reused and the previous lesson's working comes along for the ride. */}
+                  <SmartBoard
+                    key={id}
+                    sceneUpdates={sceneUpdates}
+                    onConsumeUpdates={consumeSceneUpdates}
+                    onSceneChange={sendSceneUpdate}
+                    onViewportChange={sendBoardView}
+                    onClearAll={sendBoardClear}
+                    clearedAt={boardClearedAt}
+                  />
+                </>
               )}
             </View>
 
-            {/* Toolbar sits below the board and takes its own space.
-                It used to float on top of the canvas across the full width, so any stroke
-                beginning in the bottom strip hit the toolbar instead of the board — which is
-                why drawing only worked in parts of the surface, and why colour taps that
-                landed in that strip appeared to do nothing. */}
-            <View style={s.toolbar}>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.toolbarScroll} contentContainerStyle={s.toolbarInner}>
-                {/* Freehand instruments — each writes differently, not just in a different colour */}
-                {PENS.map((pen) => {
-                  const active = tool === "pen" && !isEraser && instrument === pen.id;
-                  return (
-                    <TouchableOpacity
-                      key={pen.id}
-                      style={[s.toolBtn, active && { backgroundColor: colors.primary }]}
-                      onPress={() => { setTool("pen"); setInstrument(pen.id); setIsEraser(false); }}
-                      activeOpacity={0.7}
-                    >
-                      <Feather name={pen.icon} size={16} color={active ? "#fff" : "#333"} />
-                    </TouchableOpacity>
-                  );
-                })}
-
-                <View style={s.toolDivider} />
-
-                {TOOLS.map((t) => (
-                  <TouchableOpacity
-                    key={t.id}
-                    style={[s.toolBtn, tool === t.id && !isEraser && { backgroundColor: colors.primary }]}
-                    onPress={() => { setTool(t.id); setIsEraser(false); }}
-                    activeOpacity={0.7}
-                  >
-                    <Feather name={t.icon} size={16} color={tool === t.id && !isEraser ? "#fff" : "#333"} />
-                  </TouchableOpacity>
-                ))}
-
-                <View style={s.toolDivider} />
-
-                {COLORS_PALETTE.map((c) => (
-                  <TouchableOpacity
-                    key={c}
-                    style={s.colorHit}
-                    onPress={() => { setPenColor(c); setIsEraser(false); }}
-                    activeOpacity={0.7}
-                  >
-                    <View
-                      style={[
-                        s.colorDot,
-                        { backgroundColor: c, borderColor: penColor === c && !isEraser ? colors.primary : c === "#FFFFFF" ? "#CCC" : "transparent" },
-                        penColor === c && !isEraser && s.colorDotActive,
-                      ]}
-                    />
-                  </TouchableOpacity>
-                ))}
-
-                <View style={s.toolDivider} />
-
-                {PEN_SIZES.map((sz) => (
-                  <TouchableOpacity
-                    key={sz}
-                    style={[s.toolBtn, penSize === sz && !isEraser && { borderColor: colors.primary, borderWidth: 1.5 }]}
-                    onPress={() => { setPenSize(sz); setIsEraser(false); }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={{ width: sz * 1.6, height: sz * 1.6, borderRadius: sz, backgroundColor: "#333" }} />
-                  </TouchableOpacity>
-                ))}
-
-                <View style={s.toolDivider} />
-
-                {/* Eraser, with its own sizes — a single fixed width is useless for rubbing out
-                    either a stray tick or a whole worked example. */}
-                <TouchableOpacity style={[s.toolBtn, isEraser && { backgroundColor: colors.primary }]} onPress={() => setIsEraser((v) => !v)} activeOpacity={0.7}>
-                  <Feather name="delete" size={16} color={isEraser ? "#fff" : "#333"} />
-                </TouchableOpacity>
-                {isEraser && ERASER_SIZES.map((sz) => (
-                  <TouchableOpacity
-                    key={`er-${sz}`}
-                    style={[s.toolBtn, eraserWidth === sz && { borderColor: colors.primary, borderWidth: 1.5 }]}
-                    onPress={() => setEraserWidth(sz)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={{ width: sz / 2.6, height: sz / 2.6, borderRadius: 3, borderWidth: 1, borderColor: "#666", backgroundColor: "#fff" }} />
-                  </TouchableOpacity>
-                ))}
-                <View style={s.toolDivider} />
-
-                {/* Smart shapes: rough strokes snap to clean geometry. Switchable, because a
-                    teacher drawing freehand art wants their own line kept exactly as drawn. */}
-                <TouchableOpacity
-                  style={[s.toolBtn, smartShapes && { backgroundColor: colors.primary }]}
-                  onPress={() => setSmartShapes((v) => !v)}
-                  activeOpacity={0.7}
-                >
-                  <Feather name="zap" size={16} color={smartShapes ? "#fff" : "#333"} />
-                </TouchableOpacity>
-
-                <View style={s.toolDivider} />
-
-                <TouchableOpacity style={s.toolBtn} onPress={() => applyZoom(zoom - ZOOM_STEP)} activeOpacity={0.7}>
-                  <Feather name="zoom-out" size={16} color={zoom > ZOOM_MIN ? "#333" : "#BBB"} />
-                </TouchableOpacity>
-                <Text style={s.toolZoomText}>{Math.round(zoom * 100)}%</Text>
-                <TouchableOpacity style={s.toolBtn} onPress={() => applyZoom(zoom + ZOOM_STEP)} activeOpacity={0.7}>
-                  <Feather name="zoom-in" size={16} color={zoom < ZOOM_MAX ? "#333" : "#BBB"} />
-                </TouchableOpacity>
-                {/* Zoom is useless without a way to reach the rest of the material, so panning
-                    is an explicit mode — a plain drag stays reserved for drawing. */}
-                <TouchableOpacity
-                  style={[s.toolBtn, isPanMode && { backgroundColor: colors.primary }]}
-                  onPress={() => setIsPanMode((v) => canPan && !v)}
-                  activeOpacity={0.7}
-                >
-                  <Feather name="move" size={16} color={isPanMode ? "#fff" : canPan ? "#333" : "#BBB"} />
-                </TouchableOpacity>
-                <TouchableOpacity style={s.toolBtn} onPress={resetView} activeOpacity={0.7}>
-                  <Feather name="maximize" size={16} color="#333" />
-                </TouchableOpacity>
-              </ScrollView>
-
-              {/* Undo, redo and clear live outside the scrolling strip.
-                  They were inside it, at the far right, behind a scroll view with its indicator
-                  hidden — so on any screen narrower than the full toolbar they were invisible
-                  and there was no hint that anything lay off the edge. These three are the most
-                  used controls on the board and must always be one tap away. */}
-              <View style={s.toolbarPinned}>
-                <TouchableOpacity style={s.toolBtn} onPress={undo} disabled={paths.length === 0} activeOpacity={0.7}>
-                  <Feather name="corner-up-left" size={17} color={paths.length ? "#333" : "#BBB"} />
-                </TouchableOpacity>
-                <TouchableOpacity style={s.toolBtn} onPress={redo} disabled={redoStack.length === 0} activeOpacity={0.7}>
-                  <Feather name="corner-up-right" size={17} color={redoStack.length ? "#333" : "#BBB"} />
-                </TouchableOpacity>
-                <TouchableOpacity style={s.toolBtn} onPress={clearBoard} activeOpacity={0.7}>
-                  <Feather name="trash-2" size={17} color="#C2410C" />
-                </TouchableOpacity>
-              </View>
-            </View>
           </View>
           </ErrorBoundary>
         )}
-
-        {/* Text tool input modal */}
-        <Modal visible={textModalVisible} transparent animationType="fade" onRequestClose={() => setTextModalVisible(false)}>
-          <View style={s.textModalOverlay}>
-            <View style={s.textModalCard}>
-              <Text style={s.textModalTitle}>Add Text</Text>
-              <TextInput
-                style={s.textModalInput}
-                value={textInputValue}
-                onChangeText={setTextInputValue}
-                placeholder="Type text…"
-                placeholderTextColor="#666"
-                autoFocus
-                onSubmitEditing={confirmTextShape}
-              />
-              <View style={s.textModalActions}>
-                <TouchableOpacity style={s.textModalCancel} onPress={() => { setTextModalVisible(false); pendingTextPoint.current = null; }} activeOpacity={0.7}>
-                  <Text style={s.textModalCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.textModalConfirm, { backgroundColor: colors.primary }]} onPress={confirmTextShape} activeOpacity={0.8}>
-                  <Text style={s.textModalConfirmText}>Add</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
 
         {/* Participants */}
         {mode === "participants" && (
@@ -1117,11 +672,10 @@ const s = StyleSheet.create({
   modeTabTextActive: { color: "#fff" },
   whiteboardArea: { flex: 1 },
   canvasScrollWrap: {
-    flex: 1, marginHorizontal: 12, marginTop: 4, borderRadius: 12,
+    flex: 1, marginHorizontal: 12, marginTop: 4, marginBottom: 8, borderRadius: 12,
     backgroundColor: "#FFFFFF", overflow: "hidden",
     position: "relative",
   },
-  canvas: { flex: 1, width: "100%", height: "100%", transformOrigin: "0 0" } as object,
   uploadDock: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingTop: 5, paddingBottom: 3, zIndex: 50, position: "relative" },
   // Slim, quiet control. The previous pair of full-width scarlet buttons read as the most
   // important thing on screen when they are in fact an occasional action.
@@ -1140,48 +694,6 @@ const s = StyleSheet.create({
   boardFallbackBody: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#999", textAlign: "center", lineHeight: 19 },
   boardFallbackBtn: { marginTop: 4, paddingHorizontal: 20, paddingVertical: 11, borderRadius: 10, backgroundColor: "#C41E3A" },
   boardFallbackBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  // Toolbar occupies its own row under the board rather than floating over it, so the
-  // drawing surface has no dead zones.
-  // Fixed height and no growth: a horizontal ScrollView left unconstrained in a column
-  // stretches to fill the container, which collapsed the canvas above it to zero height.
-  toolbar: { height: 56, flexGrow: 0, flexShrink: 0, flexDirection: "row", alignItems: "center", paddingHorizontal: 12, paddingTop: 6, paddingBottom: 4 },
-  toolbarScroll: { flexGrow: 1, flexShrink: 1 },
-  toolbarPinned: { flexDirection: "row", alignItems: "center", gap: 2, paddingLeft: 8, marginLeft: 4, borderLeftWidth: 1, borderLeftColor: "#E5E5E5" },
-  toolbarInner: {
-    flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 7,
-    backgroundColor: "rgba(255,255,255,0.95)", borderRadius: 20,
-    borderWidth: 1, borderColor: "rgba(0,0,0,0.06)",
-  },
-  toolBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#F3F3F3", justifyContent: "center", alignItems: "center" },
-  toolDivider: { width: 1, height: 22, backgroundColor: "#E2E2E2", marginHorizontal: 2 },
-  toolZoomText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#333", minWidth: 34, textAlign: "center" },
-  // The swatch is small for looks, but the tappable area around it is a full-size target —
-  // a 24px dot inside a scroll view was easy to miss, which made colours feel unresponsive.
-  colorHit: { width: 34, height: 34, justifyContent: "center", alignItems: "center" },
-  colorDot: { width: 22, height: 22, borderRadius: 11, borderWidth: 2 },
-  colorDotActive: { transform: [{ scale: 1.18 }] },
-  island: {
-    position: "absolute", left: 12, right: 12, bottom: 12, alignItems: "center", zIndex: 40,
-  },
-  islandInner: {
-    flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 8,
-    backgroundColor: "rgba(255,255,255,0.92)", borderRadius: 22,
-    shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, elevation: 10,
-    borderWidth: 1, borderColor: "rgba(0,0,0,0.06)",
-  },
-  islandBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#F3F3F3", justifyContent: "center", alignItems: "center" },
-  islandDivider: { width: 1, height: 22, backgroundColor: "#E2E2E2", marginHorizontal: 2 },
-  islandColorDot: { width: 24, height: 24, borderRadius: 12 },
-  islandZoomText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#333", minWidth: 34, textAlign: "center" },
-  textModalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center", padding: 24 },
-  textModalCard: { width: "100%", maxWidth: 360, backgroundColor: "#1A1A1A", borderRadius: 16, padding: 18, gap: 14 },
-  textModalTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  textModalInput: { backgroundColor: "#0D0D0D", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, fontFamily: "Inter_400Regular", color: "#fff", outlineStyle: "none" } as object,
-  textModalActions: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
-  textModalCancel: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
-  textModalCancelText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#999" },
-  textModalConfirm: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 },
-  textModalConfirmText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#fff" },
   participantGrid: { flexDirection: "row", flexWrap: "wrap", padding: 16, gap: 12, justifyContent: "center" },
   participantCard: { width: (SCREEN_W - 64) / 3, alignItems: "center", gap: 6 },
   bigAvatar: { width: 76, height: 76, borderRadius: 12, justifyContent: "center", alignItems: "center", overflow: "hidden" },

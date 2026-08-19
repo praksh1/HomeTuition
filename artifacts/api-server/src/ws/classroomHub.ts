@@ -36,6 +36,15 @@ interface BoardState {
    */
   boardSize: { width: number; height: number } | null;
   /**
+   * The rectangle of the infinite canvas the teacher is looking at, in scene coordinates.
+   *
+   * Replayed to late joiners for the same reason the elements are: on a canvas with no edges,
+   * arriving at the right coordinates matters as much as being told what is drawn there. A
+   * student who joins mid-lesson otherwise lands at the origin, which may be nowhere near the
+   * work, and has to hunt for it.
+   */
+  view: { minX: number; minY: number; maxX: number; maxY: number } | null;
+  /**
    * The object board, keyed by element id.
    *
    * The stroke list above is append-only: it can say "a line was drawn" but has no way to say
@@ -65,10 +74,27 @@ const boards = new Map<string, BoardState>();
 function getBoard(sessionId: string): BoardState {
   let board = boards.get(sessionId);
   if (!board) {
-    board = { material: null, paths: [], boardSize: null, scene: new Map() };
+    board = { material: null, paths: [], boardSize: null, view: null, scene: new Map() };
     boards.set(sessionId, board);
   }
   return board;
+}
+
+/**
+ * Keeps erased work from filling the room's memory for the rest of the lesson.
+ *
+ * A deleted element is kept as a tombstone rather than removed, because it is what lets a
+ * stale update for something already rubbed out be recognised and dropped. That is worth a
+ * little memory but not an unbounded amount, so once a board is implausibly large the oldest
+ * tombstones go: the worst case if a very late message then arrives for one is that a stroke
+ * briefly reappears, which is a far smaller problem than a lesson that leaks.
+ */
+function pruneScene(board: BoardState): void {
+  if (board.scene.size <= MAX_SCENE_ELEMENTS) return;
+  for (const [id, el] of board.scene) {
+    if (board.scene.size <= MAX_SCENE_ELEMENTS) break;
+    if (el.isDeleted) board.scene.delete(id);
+  }
 }
 
 function sendTo(ws: WebSocket, msg: object): void {
@@ -255,6 +281,9 @@ export function attachClassroomHub(server: http.Server): void {
       if (elements.length > 0) sendTo(ws, { type: "scene_state", elements });
     }
 
+    // Sent after the elements, so the board is pointed at content it already holds.
+    if (board.view) sendTo(ws, { type: "board_view", ...board.view });
+
     ws.on("message", (raw: Buffer) => {
       let msg: Record<string, unknown>;
       try { msg = JSON.parse(raw.toString()) as Record<string, unknown>; } catch { return; }
@@ -301,6 +330,7 @@ export function attachClassroomHub(server: http.Server): void {
             board.scene.set(el.id, el);
             accepted.push(el);
           }
+          pruneScene(board);
           if (accepted.length > 0) broadcast(sessionId, { type: "scene_update", elements: accepted }, ws);
           break;
         }
@@ -319,6 +349,20 @@ export function attachClassroomHub(server: http.Server): void {
           if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) break;
           getBoard(sessionId).boardSize = { width, height };
           broadcast(sessionId, { type: "board_size", width, height }, ws);
+          break;
+        }
+        case "board_view": {
+          // Only the teacher leads the class, so only the teacher moves everyone's view.
+          if (!isSessionTeacher) break;
+          const minX = typeof msg.minX === "number" ? msg.minX : NaN;
+          const minY = typeof msg.minY === "number" ? msg.minY : NaN;
+          const maxX = typeof msg.maxX === "number" ? msg.maxX : NaN;
+          const maxY = typeof msg.maxY === "number" ? msg.maxY : NaN;
+          if (![minX, minY, maxX, maxY].every(Number.isFinite)) break;
+          if (maxX <= minX || maxY <= minY) break;
+          const view = { minX, minY, maxX, maxY };
+          getBoard(sessionId).view = view;
+          broadcast(sessionId, { type: "board_view", ...view }, ws);
           break;
         }
         case "reaction":

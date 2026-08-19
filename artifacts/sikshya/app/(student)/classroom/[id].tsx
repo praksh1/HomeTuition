@@ -15,12 +15,11 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import Svg, { Path, Line, Circle, Text as SvgText, Polygon } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import type { Student } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
-import { useClassroomSocket, type DrawPath } from "@/hooks/useClassroomSocket";
+import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
 import PdfViewer from "@/components/PdfViewer";
 import { Image } from "react-native";
@@ -34,41 +33,6 @@ interface SessionData {
   duration: number; maxStudents: number; enrolledCount: number; status: string;
 }
 
-function renderShape(p: DrawPath, i: number) {
-  switch (p.tool) {
-    case "line":
-      return <Line key={i} x1={p.x1} y1={p.y1} x2={p.x2} y2={p.y2} stroke={p.color} strokeWidth={p.width} strokeLinecap="round" />;
-    case "arrow": {
-      const x1 = p.x1 ?? 0, y1 = p.y1 ?? 0, x2 = p.x2 ?? 0, y2 = p.y2 ?? 0;
-      const angle = Math.atan2(y2 - y1, x2 - x1);
-      const headLen = Math.max(10, p.width * 3);
-      const p1x = x2 - headLen * Math.cos(angle - Math.PI / 7);
-      const p1y = y2 - headLen * Math.sin(angle - Math.PI / 7);
-      const p2x = x2 - headLen * Math.cos(angle + Math.PI / 7);
-      const p2y = y2 - headLen * Math.sin(angle + Math.PI / 7);
-      return (
-        <React.Fragment key={i}>
-          <Line x1={x1} y1={y1} x2={x2} y2={y2} stroke={p.color} strokeWidth={p.width} strokeLinecap="round" />
-          <Polygon points={`${x2},${y2} ${p1x},${p1y} ${p2x},${p2y}`} fill={p.color} />
-        </React.Fragment>
-      );
-    }
-    case "circle": {
-      const cx = p.cx ?? 0, cy = p.cy ?? 0, r = p.r ?? 0;
-      return <Circle key={i} cx={cx} cy={cy} r={r} stroke={p.color} strokeWidth={p.width} fill="none" />;
-    }
-    case "text":
-      return (
-        <SvgText key={i} x={p.x} y={p.y} fill={p.color} fontSize={Math.max(14, p.width * 6)} fontWeight="600">
-          {p.text}
-        </SvgText>
-      );
-    case "pen":
-    default:
-      return <Path key={i} d={p.d} stroke={p.color} strokeWidth={p.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />;
-  }
-}
-
 export default function StudentClassroom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
@@ -78,7 +42,7 @@ export default function StudentClassroom() {
 
   const studentName = student.name ?? "Student";
 
-  const { connected, accessDenied, presenceCount, messages, remotePaths, material, sessionStatus, sendChat, boardSize, sceneUpdates, consumeSceneUpdates, boardClearedAt } =
+  const { connected, accessDenied, presenceCount, messages, material, sessionStatus, sendChat, sceneUpdates, consumeSceneUpdates, boardClearedAt, boardView } =
     useClassroomSocket({ sessionId: id ?? "", name: studentName, role: "student" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -337,12 +301,18 @@ export default function StudentClassroom() {
                 Students see the same Excalidraw scene the teacher is drawing on, rather than a
                 flattened picture of it, so panning and zooming to read something small is now
                 possible from a phone — which it was not when the board was a fixed SVG scaled
-                to fit the screen. */}
+                to fit the screen.
+
+                `viewport` is what makes that an advantage rather than a hazard: an infinite
+                canvas is easy to be lost on, so the board follows wherever the teacher is
+                looking until the student takes over by panning themselves. */}
             <SmartBoard
+              key={id}
               readOnly
               sceneUpdates={sceneUpdates}
               onConsumeUpdates={consumeSceneUpdates}
               onSceneChange={noopSceneChange}
+              viewport={boardView}
               clearedAt={boardClearedAt}
             />
           </View>

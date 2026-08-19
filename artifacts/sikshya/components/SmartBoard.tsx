@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import type { SceneDelta } from "../hooks/useClassroomSocket";
+import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 
 /**
  * The same whiteboard, inside the native apps.
@@ -29,6 +29,9 @@ interface Props {
   sceneUpdates: SceneDelta[];
   onConsumeUpdates: () => void;
   onSceneChange: (changed: unknown[]) => void;
+  onViewportChange?: (view: BoardViewport) => void;
+  viewport?: BoardViewport | null;
+  onClearAll?: () => void;
   clearedAt?: number;
   theme?: "light" | "dark";
 }
@@ -42,6 +45,9 @@ export default function SmartBoard({
   sceneUpdates,
   onConsumeUpdates,
   onSceneChange,
+  onViewportChange,
+  viewport = null,
+  onClearAll,
   clearedAt = 0,
   theme = "light",
 }: Props) {
@@ -55,6 +61,8 @@ export default function SmartBoard({
    * would leave them looking at a blank board for the rest of the lesson.
    */
   const queued = useRef<SceneDelta[]>([]);
+  /** The teacher's view, held the same way and for the same reason as the deltas above. */
+  const queuedView = useRef<BoardViewport | null>(null);
 
   const post = useCallback((msg: object) => {
     webRef.current?.postMessage(JSON.stringify(msg));
@@ -75,9 +83,15 @@ export default function SmartBoard({
     post({ type: "clear" });
   }, [clearedAt, post]);
 
+  useEffect(() => {
+    if (!viewport) return;
+    if (!ready.current) queuedView.current = viewport;
+    else post({ type: "view_in", view: viewport });
+  }, [viewport, post]);
+
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let msg: { type?: string; elements?: unknown[] };
+      let msg: { type?: string; elements?: unknown[]; view?: BoardViewport };
       try {
         msg = JSON.parse(event.nativeEvent.data);
       } catch {
@@ -89,13 +103,25 @@ export default function SmartBoard({
         post({ type: "config", readOnly, theme });
         for (const delta of queued.current) post({ type: "scene_in", delta });
         queued.current = [];
+        if (queuedView.current) {
+          post({ type: "view_in", view: queuedView.current });
+          queuedView.current = null;
+        }
         return;
       }
       if (msg.type === "scene_out" && Array.isArray(msg.elements)) {
         onSceneChange(msg.elements);
+        return;
+      }
+      if (msg.type === "view_out" && msg.view) {
+        onViewportChange?.(msg.view);
+        return;
+      }
+      if (msg.type === "clear_out") {
+        onClearAll?.();
       }
     },
-    [post, readOnly, theme, onSceneChange],
+    [post, readOnly, theme, onSceneChange, onViewportChange, onClearAll],
   );
 
   const source = useMemo(

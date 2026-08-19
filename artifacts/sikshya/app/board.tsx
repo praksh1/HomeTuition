@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import SmartBoard from "../components/SmartBoard.web";
-import type { SceneDelta } from "../hooks/useClassroomSocket";
+import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 
 /**
  * The whiteboard on its own, with no classroom around it.
@@ -22,6 +22,7 @@ export default function BoardPage() {
   const [theme, setTheme] = useState<"light" | "dark">(params.theme === "dark" ? "dark" : "light");
   const [updates, setUpdates] = useState<SceneDelta[]>([]);
   const [clearedAt, setClearedAt] = useState(0);
+  const [viewport, setViewport] = useState<BoardViewport | null>(null);
 
   /** Messages from the host app. */
   useEffect(() => {
@@ -30,7 +31,13 @@ export default function BoardPage() {
     const onMessage = (event: MessageEvent | Event) => {
       const data = (event as MessageEvent).data;
       if (typeof data !== "string") return;
-      let msg: { type?: string; delta?: SceneDelta; readOnly?: boolean; theme?: "light" | "dark" };
+      let msg: {
+        type?: string;
+        delta?: SceneDelta;
+        readOnly?: boolean;
+        theme?: "light" | "dark";
+        view?: BoardViewport;
+      };
       try {
         msg = JSON.parse(data);
       } catch {
@@ -44,6 +51,9 @@ export default function BoardPage() {
           break;
         case "scene_in":
           if (msg.delta) setUpdates((prev) => [...prev, msg.delta as SceneDelta]);
+          break;
+        case "view_in":
+          if (msg.view) setViewport(msg.view);
           break;
         case "clear":
           setUpdates([]);
@@ -69,11 +79,23 @@ export default function BoardPage() {
     };
   }, []);
 
-  const handleSceneChange = useCallback((changed: unknown[]) => {
+  const postToHost = useCallback((msg: object) => {
     const host = (window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } })
       .ReactNativeWebView;
-    host?.postMessage(JSON.stringify({ type: "scene_out", elements: changed }));
+    host?.postMessage(JSON.stringify(msg));
   }, []);
+
+  const handleSceneChange = useCallback(
+    (changed: unknown[]) => postToHost({ type: "scene_out", elements: changed }),
+    [postToHost],
+  );
+
+  const handleViewportChange = useCallback(
+    (view: BoardViewport) => postToHost({ type: "view_out", view }),
+    [postToHost],
+  );
+
+  const handleClearAll = useCallback(() => postToHost({ type: "clear_out" }), [postToHost]);
 
   const consume = useCallback(() => setUpdates([]), []);
 
@@ -94,6 +116,9 @@ export default function BoardPage() {
         sceneUpdates={updates}
         onConsumeUpdates={consume}
         onSceneChange={handleSceneChange}
+        onViewportChange={handleViewportChange}
+        viewport={viewport}
+        onClearAll={handleClearAll}
         clearedAt={clearedAt}
         theme={theme}
       />

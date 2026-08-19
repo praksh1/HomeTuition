@@ -118,6 +118,68 @@ video vendor sells annotation** — Daily has none, Zoom's Web SDK has none, and
 
 ---
 
+## Reported 2026-08-19 (whiteboard, testing round 3)
+
+Five reports against the Excalidraw board, all from a live teacher/student session.
+
+### D1. A second toolbar under the board, and none of it worked — **FIXED**
+**Where:** `app/(teacher)/classroom/[id].tsx`
+Pens, shapes, colours, sizes, eraser, zoom, pan, undo, redo and clear sat in a strip below the
+canvas. Every one of them drove the *old* SVG surface, which stopped being rendered when
+Excalidraw arrived — so the buttons did nothing at all, while costing the board a 56px strip
+and reading as the board's real controls. The strip is gone, along with the state and handlers
+behind it and the text-entry modal it opened. Excalidraw's own toolbar has done this job since
+the rebuild.
+**Status:** fixed — needs re-testing
+
+### D2. The Stroke / Background panel covers the canvas and never leaves — **FIXED**
+**Where:** `components/SmartBoard.web.tsx`
+Excalidraw shows its shape-properties panel the moment a tool is picked (pressing `7`, or the
+pencil) and leaves it there. On a laptop it is a reasonable sidebar; here the board is sharing
+the screen with a video call, so it covered a quarter of the drawing surface with no way to
+dismiss it. It is now hidden until asked for — a **Styles** button next to the board's top-right
+controls toggles it — and it gets out of the way again the moment the teacher starts drawing.
+**Status:** fixed — needs re-testing
+
+### D3. No way to clear the board — only an eraser — **FIXED**
+**Where:** `components/SmartBoard.web.tsx`, `ws/classroomHub.ts`
+Rubbing out a whole lesson one stroke at a time is not a way to start the next problem.
+Excalidraw's own "reset canvas" was worse than nothing here: it empties the local copy only, so
+every student would have kept the whole board. There is now a **Clear board** control (the bin,
+beside Styles, and in the board menu) which confirms first, wipes locally and tells the server,
+so it means the same thing for everyone.
+**Status:** fixed — needs re-testing
+
+### D4. "Convert to text" turned a hand-drawn B into an L — **REMOVED**
+**Where:** `components/recognition/handwriting.ts` (deleted)
+It was Tesseract, which is a *printed*-text OCR engine; handwriting is a different problem even
+in English, and the failures are not near misses. A button that confidently replaces what a
+teacher wrote with a different letter costs more than a missing feature. Removed, along with
+the `tesseract.js` dependency. `WHITEBOARD.md` §4 records what a real implementation needs.
+**Status:** won't fix as built — needs ML Kit or MyScript, which is a budget decision
+
+### D5. The student's board showed erased work, and was zoomed away from the lesson — **FIXED**
+**Where:** `components/SmartBoard.web.tsx`, `hooks/useClassroomSocket.ts`, `ws/classroomHub.ts`
+Two separate faults, both making the student's board disagree with the teacher's:
+
+- **Erasing never reached anyone.** Excalidraw flags a rubbed-out element `isDeleted` and bumps
+  its version rather than removing it, and `getSceneElements()` hides exactly those — so the
+  outgoing diff saw no change and sent nothing. The teacher erased a scribble, drew an arrow,
+  erased that and wrote a word; the student saw all three piled up. The diff now runs over
+  `getSceneElementsIncludingDeleted()`.
+- **Nobody agreed on where to look.** On an infinite canvas, matching elements is not enough:
+  students opened at their own viewport and had to pinch repeatedly to find the teacher's work.
+  The teacher's visible rectangle is now broadcast (`board_view`), replayed to late joiners, and
+  fitted to each student's screen. A student who pans or zooms stops following, and a **Follow
+  the teacher** button takes them back.
+
+Verified end to end with two boards driven through the real page and the real message flow: the
+student's canvas renders pixel-identically to the teacher's, before and after an erase, and
+follows the teacher through a zoom.
+**Status:** fixed — needs re-testing
+
+---
+
 ## Open — known, not yet fixed
 
 ### A1. Enrolment does not require payment

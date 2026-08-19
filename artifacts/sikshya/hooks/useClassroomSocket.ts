@@ -80,6 +80,32 @@ function toBoardSize(raw: unknown): BoardSize | null {
   return { width, height };
 }
 
+/**
+ * The rectangle of the infinite canvas the teacher currently has on screen, in scene
+ * coordinates.
+ *
+ * Knowing *what* has been drawn is not enough on a canvas without edges: a student whose view
+ * sat somewhere else saw a blank stretch of board and had to pinch around hunting for the
+ * lesson. The teacher publishes the region they are looking at and every student fits it to
+ * their own screen, which also absorbs the difference between a laptop and a phone.
+ */
+export interface BoardViewport {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+function toBoardViewport(raw: unknown): BoardViewport | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const nums = [o.minX, o.minY, o.maxX, o.maxY];
+  if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  const [minX, minY, maxX, maxY] = nums as number[];
+  if (maxX <= minX || maxY <= minY) return null;
+  return { minX, minY, maxX, maxY };
+}
+
 function toMaterial(kind: unknown, dataUrl: unknown): BoardMaterial | null {
   const k = kind === "image" ? "image" : kind === "pdf" ? "pdf" : null;
   if (k === null || typeof dataUrl !== "string" || dataUrl.length === 0) return null;
@@ -169,6 +195,10 @@ interface Result {
   boardSize: BoardSize | null;
   /** Teacher only: publish the drawing surface size so viewers can scale strokes correctly. */
   sendBoardSize: (width: number, height: number) => void;
+  /** The region of the board the teacher is looking at; null until they publish one. */
+  boardView: BoardViewport | null;
+  /** Teacher only: publish the visible region so students can follow along. */
+  sendBoardView: (view: BoardViewport) => void;
   sessionStatus: string | null;
   sendChat: (text: string) => void;
   sendReaction: (emoji: string) => void;
@@ -189,6 +219,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const [material, setMaterial] = useState<BoardMaterial | null>(null);
   const [boardSize, setBoardSize] = useState<BoardSize | null>(null);
+  const [boardView, setBoardView] = useState<BoardViewport | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
 
   const [accessDenied, setAccessDenied] = useState(false);
@@ -281,6 +312,9 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
         case "board_size":
           setBoardSize(toBoardSize(msg));
           break;
+        case "board_view":
+          setBoardView((prev) => toBoardViewport(msg) ?? prev);
+          break;
         case "scene_state":
           setSceneUpdates((prev) => [...prev, { full: true, elements: (msg.elements as unknown[]) ?? [] }]);
           break;
@@ -346,6 +380,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     setBoardClearedAt(0);
     setMaterial(null);
     setBoardSize(null);
+    setBoardView(null);
     setMessages([]);
     setPresenceCount(0);
     setSessionStatus(null);
@@ -411,6 +446,16 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     [send],
   );
 
+  /**
+   * Only the teacher's own board publishes a view, and it is deliberately *not* mirrored into
+   * local state: doing so would feed the teacher's viewport straight back into their own
+   * editor and fight every pan they make.
+   */
+  const sendBoardView = useCallback(
+    (view: BoardViewport) => send({ type: "board_view", ...view }),
+    [send],
+  );
+
   const sendMaterial = useCallback(
     (dataUrl: string, kind: "image" | "pdf") => {
       setMaterial({ dataUrl, kind });
@@ -429,6 +474,8 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     accessDenied,
     boardSize,
     sendBoardSize,
+    boardView,
+    sendBoardView,
     presenceCount,
     messages,
     remotePaths,
