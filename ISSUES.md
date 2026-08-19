@@ -227,3 +227,42 @@ and awkward tap targets on a 6.1" screen until each screen is gone over.
 | F12 | `@config-plugins/react-native-webrtc` referenced in app.json but missing from package.json | Added at the SDK-54-compatible version |
 | F13 | `app.json` had two `"plugins"` keys, so the WebRTC config was silently discarded | Merged into one |
 | F14 | `.env` was not gitignored | Added, before any secrets were committed |
+
+---
+
+## Reported 2026-08-18 (testing round: booking, lobby, whiteboard)
+
+| # | Issue | Status |
+|---|-------|--------|
+| G1 | After paying, Discover still showed "Book & Pay" and offered to charge again for a class already booked | **FIXED** |
+| G2 | A booked class showed "Enrolled — payment pending" forever, and refused entry at the door | **FIXED** |
+| G3 | Unpaid classes appeared under Upcoming Sessions, then rejected the student on join | **FIXED** |
+| G4 | Students could not enter until the teacher pressed start, so classes began with an empty room | **FIXED** |
+| G5 | A new class opened onto the previous lesson's scribbles | **FIXED** |
+| G6 | Whiteboard appeared to have no undo or clear | **FIXED** |
+| G7 | Whiteboard was strokes, not objects — nothing could be selected, moved, rotated or resized | **FIXED** |
+
+### What caused G1–G3
+
+One bug, and it was self-inflicted. Booking was two calls — enrol, then confirm payment. When
+the unverified payment endpoint was closed for security, the enrol half kept working and the
+payment half silently failed. Every booking then created an enrolment that was never paid: the
+class appeared in the student's Sessions tab, so they believed they owned it, but the door
+refused them. Discover compounded it by never re-checking with the server after booking, so it
+went on offering to sell the same class again.
+
+Booking is now one atomic transaction: enrolled *and* paid, or nothing written at all. There is
+no pending state left to get stuck in. Nine corrupted enrolments from the old flow were removed
+from the database — nobody had been charged for them.
+
+### The rest
+
+- **G4** — paid students may now enter five minutes before the scheduled start and wait, with
+  "Awaiting teacher to start the class" on screen; the class begins around them with no
+  refresh. Starting the class no longer disconnects the people already waiting.
+- **G5** — the board is wiped server-side when a class goes live, and each client resets when
+  the session changes, including the teacher's own local strokes.
+- **G6** — undo, redo and clear existed but sat at the far right of a horizontal scrolling
+  toolbar with its scrollbar hidden, so on any narrow screen they were invisible with no hint
+  that anything lay off the edge.
+- **G7** — the board was rebuilt on Excalidraw. See `WHITEBOARD.md`.
