@@ -42,9 +42,9 @@ rectangle. That was the gap, and Excalidraw closes it.
 The old surface is still used for annotating an uploaded document, which is the last piece
 waiting to move across.
 
-### Already added: shape recognition
+### Shape recognition
 
-`components/smartboard/` is new and working. Draw a rough circle and you get a clean circle;
+`components/recognition/` is new and working. Draw a rough circle and you get a clean circle;
 a lumpy box becomes a rectangle; a sketched triangle becomes a triangle; a dashed-off line
 straightens; a line with a barb becomes an arrow. There is a **Smart** toggle (the lightning
 bolt) in the toolbar to turn it off.
@@ -121,8 +121,8 @@ when web and native drifted apart.
 ```
 components/
   SmartBoard.web.tsx   → mounts <Excalidraw/> directly
-  SmartBoard.tsx       → <WebView/> with the bundled board, bridged over postMessage
-  smartboard/          → recognition. Pure, shared, engine-agnostic. Already built.
+  SmartBoard.tsx       → <WebView/> pointed at /board, bridged over postMessage
+  recognition/         → shape recognition + handwriting. Pure, shared, engine-agnostic.
 ```
 
 Metro picks `.web.tsx` for web and `.tsx` for native automatically — the same mechanism
@@ -133,20 +133,35 @@ hardware a lot of Nepali teachers will have. Test on a low-end device early, not
 it disappoints, the fallback is to keep the current native SVG board for phones and use the
 full engine on web and tablets — the recognition module works with both.
 
-### Syncing it
+### How it syncs
 
-The current protocol appends strokes. An object board needs objects to *change* — move, rotate,
-delete — so append-only stops being enough.
+The old protocol only appended strokes. An object board needs objects to *change* — move,
+rotate, delete — so append-only stopped being enough.
 
-Use **Yjs** (`yjs` + `y-websocket`). It is a mature CRDT: concurrent edits merge without a
-central referee, late joiners sync automatically, and brief disconnections heal on reconnect
-instead of losing work. Both engines have established Yjs integrations. Keep the existing
-WebSocket hub for presence, chat and session status; add a Yjs document per session for the
-board.
+What is built: **element deltas with version-wins merging.** Excalidraw stamps every element
+with a `version` it increments on each edit. The teacher's board broadcasts only elements whose
+version has moved since the last send, and both the server and every client apply the same rule
+— an element is accepted only if its version is higher than the copy already held.
 
-Server-side, the board state moves from the in-memory `boards` map in `classroomHub.ts` to a
-Yjs document. Persistence is then almost free, which opens up "send students the board after
-class" — something teachers ask for constantly.
+Two consequences make this worth the small amount of code:
+
+- **Order stops mattering.** A message that arrives late cannot resurrect a deleted shape or
+  undo a move, because its version is lower and it is dropped. The server drops stale messages
+  rather than forwarding them, so no client can end up holding something the server does not.
+- **Messages stay small.** Only what changed goes on the wire, batched over ~120ms. A full
+  scene per stroke would be tens of kilobytes a message on a Nepali mobile connection.
+
+The teacher is authoritative and students are read-only, enforced server-side. That matches how
+a class runs and removes an entire category of conflict.
+
+**If simultaneous editing is ever wanted** — students drawing on the same board — this is the
+point to bring in **Yjs** (`yjs` + `y-websocket`). It is a mature CRDT that merges concurrent
+edits without a central referee. It is deliberately *not* used now: it would be real complexity
+bought for a capability the product does not yet offer.
+
+Board state lives in the in-memory `boards` map in `classroomHub.ts`, so it is lost if the
+server restarts mid-class. Persisting it is the obvious next step and would also enable "send
+students the board after class", which teachers ask for constantly.
 
 ---
 
@@ -204,16 +219,16 @@ Each step ships on its own and leaves the product working. Do not do them all at
 1. **Recognition module** — done. Works with the current board and will work with the next one.
 2. **Toolbar fixes** — done. Undo, redo and clear are pinned outside the scrolling strip
    (they were scrolled off-screen behind a hidden scrollbar, which is why they looked missing).
-3. **Mount Excalidraw on web only**, behind a feature flag, sharing the current WebSocket for
-   presence. Prove the board on a laptop before touching phones.
-4. **Move board state to Yjs.** Web-only still. This is the deep change; do it while only one
-   platform is affected.
-5. **WebView wrapper for native.** Test on the cheapest Android device you can find.
-6. **Handwriting conversion** behind the provider interface. Cloud Vision first.
-7. **Retire the old board** once the new one has taught real classes.
-
-Steps 3–5 are the substantial ones. Realistically that is a couple of weeks of focused work,
-not an afternoon — and it is worth pacing, because the whiteboard is the product.
+3. **Excalidraw on web** — done. Both classrooms use it; students are read-only.
+4. **Element-delta sync** — done, with version-wins merging enforced on the server.
+5. **WebView wrapper for native** — done. **Still needs testing on a cheap Android device**,
+   which is the one thing here that cannot be verified from a laptop.
+6. **English handwriting conversion** — done, on-device.
+7. **Move document annotation across.** An uploaded image should become an Excalidraw image
+   element so it can be annotated with the same tools; this is the last thing still on the old
+   surface, and until it moves, uploading material falls back to the legacy canvas.
+8. **Persist board state** so a server restart does not lose a lesson.
+9. **Nepali handwriting**, when there is a budget for it.
 
 ---
 
@@ -221,7 +236,7 @@ not an afternoon — and it is worth pacing, because the whiteboard is the produ
 
 - **No custom rendering engine.** Adopt, do not build.
 - **No per-stroke network recognition.** Shape recognition stays local and instant.
-- **No live handwriting conversion at first.** Deliberate conversion is better UX and honest
-  about the latency.
-- **No new wire protocol for shapes right now.** Recognised shapes reuse the existing message
-  types, so nothing else had to change to ship them.
+- **No live handwriting conversion.** Deliberate "select, then convert" is better UX and
+  honest about the latency.
+- **No CRDT yet.** Yjs is the right answer for simultaneous editing and the wrong answer for
+  a board with one author.
