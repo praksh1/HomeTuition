@@ -143,21 +143,27 @@ at startup on *both* web and native with "Invalid hook call".
 
 Working and verified: booking and payment, the 5-minute early-join lobby, in-app chat on web
 and native, notifications with deep links, unread message counts, and the whiteboard on
-Excalidraw with object manipulation, an infinite canvas, shape recognition and offline English
-handwriting-to-text.
+Excalidraw with object manipulation, an infinite canvas, and a scene that stays in step with
+every student — including erasures and the teacher's viewport.
 
 Known gaps, in rough priority order:
 
-1. **Annotating an uploaded document still uses the old SVG canvas.** Moving it across means
-   turning an upload into an Excalidraw image element. Until then, uploading material falls
-   back to the legacy board.
+1. **An uploaded photo is not a real board element.** It is drawn *behind* the board and
+   annotated over the top, which works because the canvas background is transparent, but it
+   cannot be moved or scaled with the rest of the scene and is not part of what a student's
+   view is fitted to. Turning it into an Excalidraw image element fixes both.
 2. **WebView board performance on cheap Android is untested.** This matters more than it
    sounds, given the target market.
 3. **Board state is not persisted** — a server restart loses a live lesson.
-4. **Nepali (Devanagari) handwriting recognition** is not built; it needs a paid or native
-   engine. `WHITEBOARD.md` section 4 lays out the options honestly.
-5. **No Bikram Sambat date picker** — Nepali users see Gregorian dates only.
-6. **The app calls itself "Guru" in places** and Sikshya/HomeTuition in others.
+4. **Shape recognition is built but not connected.** `components/recognition/` works; its only
+   caller was the SVG surface Excalidraw replaced, so nothing reaches it today. Re-wiring means
+   catching Excalidraw's freehand commit — `WHITEBOARD.md` step 8.
+5. **Handwriting-to-text is not built.** On-device OCR was tried and withdrawn: Tesseract reads
+   printed text, and on handwriting a clearly drawn "B" came back "L". Doing it properly needs
+   ML Kit (free, native only) or MyScript (paid). `WHITEBOARD.md` section 4 lays out the
+   options honestly.
+6. **No Bikram Sambat date picker** — Nepali users see Gregorian dates only.
+7. **The app calls itself "Guru" in places** and Sikshya/HomeTuition in others.
 
 ## Testing expectations
 

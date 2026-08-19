@@ -12,7 +12,7 @@
 - [iOS WebView WebRTC + file picker gotchas](ios-webview-webrtc-filepicker.md) — inline HTML WebViews block WebRTC on iOS; native camera/mic perms must be granted before mount; mixed image+PDF accept forces Files app over Photo Library.
 - [expo-notifications permission type mismatch](expo-notifications-perm-type.md) — duplicate expo-modules-core versions make NotificationPermissionsStatus fields inaccessible via normal property access; cast through `unknown` to bypass structural type check.
 - [scripts package rootDir fix](scripts-rootdir-fix.md) — scripts/src/seed.ts must import lib/db via `@workspace/db/schema` (workspace package), not a relative `../../lib/db/src/` path; the latter violates rootDir and breaks tsc typecheck.
-- [origin points at the wrong repository](git-remote-is-hometuition.md) — `origin` is the abandoned Paathshala repo; work goes to the `hometuition` remote. `git push origin` publishes to the wrong project.
+- [origin points at the wrong repository](git-remote-is-hometuition.md) — on the owner's Windows copy `origin` is the abandoned Paathshala repo and work goes to the `hometuition` remote; a fresh clone has one correct `origin`. Run `git remote -v` before pushing.
 - [Setting PAYMENT_WEBHOOK_SECRET will break every booking](payment-mode-trap.md) — payment mode is inferred from config; no provider is integrated yet, so setting it declines every booking.
 - [Daily's built-in chat is disabled on purpose](one-chat-per-class.md) — re-enabling it splits a mixed browser/phone class into two conversations that cannot see each other.
 - [FamilyDoc is a separate project on the same machine](familydoc-sibling-project.md) — a second Nepal product at C:\Projects\FamilyDoc with no remote; don't confuse the two working copies.
