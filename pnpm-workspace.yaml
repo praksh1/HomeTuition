@@ -162,3 +162,7 @@ allowBuilds:
   # the API server cannot be bundled. Already declared in onlyBuiltDependencies above, and
   # pinned to an exact version in overrides — this just restates that intent for pnpm 11.
   esbuild: true
+  # tesseract.js's install script fetches optional native bindings. The whiteboard uses its
+  # WebAssembly build and loads the language model at runtime, so the script is not needed and
+  # running it would only add a download to every install.
+  tesseract.js: false

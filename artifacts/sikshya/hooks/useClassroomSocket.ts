@@ -32,6 +32,13 @@ export interface DrawPath {
   opacity?: number;
 }
 
+/** One batch of changed board elements, as broadcast by the server. */
+export interface SceneDelta {
+  /** True when this is a full catch-up for a client that just joined. */
+  full: boolean;
+  elements: unknown[];
+}
+
 export interface FloatingReaction {
   id: string;
   emoji: string;
@@ -144,6 +151,18 @@ interface Result {
    * remote copy would leave their ink on a board everyone else sees as empty.
    */
   boardClearedAt: number;
+  /**
+   * Elements from the object board that have arrived since the last render.
+   *
+   * Deliberately a *queue of changes* rather than the whole scene: Excalidraw owns the scene
+   * and merges into it, and handing it a full replacement on every message would fight its own
+   * editing state — a student's viewport would jump, and a teacher's in-progress drag would be
+   * yanked out from under them.
+   */
+  sceneUpdates: SceneDelta[];
+  /** Marks updates as applied so they are not merged twice. */
+  consumeSceneUpdates: () => void;
+  sendSceneUpdate: (elements: unknown[]) => void;
   floatingReactions: FloatingReaction[];
   material: BoardMaterial | null;
   /** The coordinate space the teacher's strokes are drawn in; null until they publish it. */
@@ -166,6 +185,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   const [remotePaths, setRemotePaths] = useState<DrawPath[]>([]);
   /** Timestamp of the last server-driven board clear; a change means "wipe local strokes". */
   const [boardClearedAt, setBoardClearedAt] = useState(0);
+  const [sceneUpdates, setSceneUpdates] = useState<SceneDelta[]>([]);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const [material, setMaterial] = useState<BoardMaterial | null>(null);
   const [boardSize, setBoardSize] = useState<BoardSize | null>(null);
@@ -261,8 +281,15 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
         case "board_size":
           setBoardSize(toBoardSize(msg));
           break;
+        case "scene_state":
+          setSceneUpdates((prev) => [...prev, { full: true, elements: (msg.elements as unknown[]) ?? [] }]);
+          break;
+        case "scene_update":
+          setSceneUpdates((prev) => [...prev, { full: false, elements: (msg.elements as unknown[]) ?? [] }]);
+          break;
         case "board_clear":
           setRemotePaths([]);
+          setSceneUpdates([]);
           // Bumped so the teacher's screen can drop its *own* strokes too. The teacher draws
           // into local state for responsiveness, so clearing only the remote copy would leave
           // their ink on a board the server and every student consider empty.
@@ -315,6 +342,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
    */
   useEffect(() => {
     setRemotePaths([]);
+    setSceneUpdates([]);
     setBoardClearedAt(0);
     setMaterial(null);
     setBoardSize(null);
@@ -366,6 +394,13 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   );
 
   const sendBoardClear = useCallback(() => send({ type: "board_clear" }), [send]);
+  const sendSceneUpdate = useCallback(
+    (elements: unknown[]) => {
+      if (elements.length > 0) send({ type: "scene_update", elements });
+    },
+    [send],
+  );
+  const consumeSceneUpdates = useCallback(() => setSceneUpdates([]), []);
 
   const sendBoardSize = useCallback(
     (width: number, height: number) => {
@@ -398,6 +433,9 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     messages,
     remotePaths,
     boardClearedAt,
+    sceneUpdates,
+    consumeSceneUpdates,
+    sendSceneUpdate,
     floatingReactions,
     material,
     sessionStatus,

@@ -24,6 +24,7 @@ import { useClassroomSocket, type DrawPath } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
 import PdfViewer from "@/components/PdfViewer";
 import { Image } from "react-native";
+import SmartBoard from "@/components/SmartBoard";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "board" | "chat";
@@ -77,7 +78,7 @@ export default function StudentClassroom() {
 
   const studentName = student.name ?? "Student";
 
-  const { connected, accessDenied, presenceCount, messages, remotePaths, material, sessionStatus, sendChat, boardSize } =
+  const { connected, accessDenied, presenceCount, messages, remotePaths, material, sessionStatus, sendChat, boardSize, sceneUpdates, consumeSceneUpdates, boardClearedAt } =
     useClassroomSocket({ sessionId: id ?? "", name: studentName, role: "student" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -210,7 +211,8 @@ export default function StudentClassroom() {
     return null;
   }, [material?.kind, material?.dataUrl]);
 
-  const boardPaths = useMemo(() => remotePaths.map((p, i) => renderShape(p, i)), [remotePaths]);
+  /** Students never author anything, so outgoing changes are dropped. */
+  const noopSceneChange = useCallback(() => {}, []);
 
   const notifyTeacherLeft = () => {
     const msg = "The teacher has disconnected. They may rejoin shortly — you can wait here or leave the session.";
@@ -331,29 +333,18 @@ export default function StudentClassroom() {
         {mode === "board" && (
           <View style={s.boardArea}>
             {materialLayer}
-            {/* The teacher's strokes are recorded against their own canvas, which is a
-                different size from this one. A viewBox in that space makes SVG map every
-                coordinate onto this screen, and "meet" letterboxes it exactly the way the
-                material image is letterboxed — so ink stays on the part of the document it
-                was drawn on, whatever device is watching. Without this, a stroke near the
-                right edge of a laptop was painted off the side of a phone. */}
-            <Svg
-              style={StyleSheet.absoluteFill}
-              width="100%"
-              height="100%"
-              {...(boardSize
-                ? { viewBox: `0 0 ${boardSize.width} ${boardSize.height}`, preserveAspectRatio: "xMidYMid meet" }
-                : null)}
-            >
-              {boardPaths}
-            </Svg>
-            {remotePaths.length === 0 && !material && (
-              <View style={s.boardEmpty}>
-                <Feather name="edit-3" size={36} color="#CCC" />
-                <Text style={s.boardEmptyTitle}>Teacher's Whiteboard</Text>
-                <Text style={s.boardEmptySub}>Content will appear here as the teacher draws.</Text>
-              </View>
-            )}
+            {/* The teacher's board, read-only.
+                Students see the same Excalidraw scene the teacher is drawing on, rather than a
+                flattened picture of it, so panning and zooming to read something small is now
+                possible from a phone — which it was not when the board was a fixed SVG scaled
+                to fit the screen. */}
+            <SmartBoard
+              readOnly
+              sceneUpdates={sceneUpdates}
+              onConsumeUpdates={consumeSceneUpdates}
+              onSceneChange={noopSceneChange}
+              clearedAt={boardClearedAt}
+            />
           </View>
         )}
 

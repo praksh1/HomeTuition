@@ -9,22 +9,24 @@ Read the first section if you only read one. It is the part that decides the bud
 
 ## The short version
 
-| Requirement | How it gets built | Status |
+| Requirement | How it is built | Status |
 |---|---|---|
-| Smart shape recognition | Custom geometric recogniser, no dependencies | **Built and shipped** |
-| Per-object select / drag / rotate / scale | Adopt a drawing engine — do not hand-build | Planned |
-| Infinite canvas, 60fps pan and zoom | Same engine | Planned |
-| Real-time multilingual handwriting → text | Paid service. There is no free option that does Devanagari well | Planned, needs a budget decision |
+| Smart shape recognition | Custom geometric recogniser, no dependencies | **Built** |
+| Per-object select / drag / rotate / scale | Excalidraw | **Built** |
+| Infinite canvas, 60fps pan and zoom | Excalidraw | **Built** |
+| Handwriting → text, English, offline | Tesseract WebAssembly, on the device | **Built** |
+| Handwriting → text, Nepali / Devanagari | Needs a purpose-built engine — see section 4 | Not done, needs a budget decision |
 
-Two of the four are "adopt an engine and wire it up". One is already done. One costs money
-every month, and I would not pretend otherwise.
+The board now runs on Excalidraw. Devanagari handwriting recognition is the one thing not
+built: it is a paid capability, and section 4 explains the options rather than pretending
+otherwise.
 
 ---
 
-## 1. What exists today
+## 1. What the board was, and what changed
 
-The board is a custom SVG surface (`components/WhiteboardCanvas.tsx`, ~400 lines) driven by
-pointer events, with strokes broadcast over the classroom WebSocket as append-only messages:
+The board *was* a custom SVG surface (`components/WhiteboardCanvas.tsx`) driven by pointer
+events, with strokes broadcast over the classroom WebSocket as append-only messages:
 
 ```
 draw_commit  → one finished stroke
@@ -33,9 +35,12 @@ board_size   → the teacher's coordinate space, so strokes land in the right pl
 board_state  → replay for late joiners
 ```
 
-It draws well. What it cannot do is treat what has been drawn as *things*. A stroke is a path
-string; there is no object to select, no transform to apply, and no canvas beyond the visible
-rectangle. That is the gap.
+It drew well. What it could not do was treat what had been drawn as *things*. A stroke was a
+path string: nothing to select, no transform to apply, and no canvas beyond the visible
+rectangle. That was the gap, and Excalidraw closes it.
+
+The old surface is still used for annotating an uploaded document, which is the last piece
+waiting to move across.
 
 ### Already added: shape recognition
 

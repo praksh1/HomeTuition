@@ -38,7 +38,8 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ErrorFallbackProps } from "@/components/ErrorFallback";
 import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
 import { cancelSessionReminder } from "@/utils/notifications";
-import { MIN_CONFIDENCE, recognizeShape, squareUp, toDrawPath, type Point as BoardPoint } from "../../../components/smartboard";
+import { MIN_CONFIDENCE, recognizeShape, squareUp, toDrawPath, type Point as BoardPoint } from "../../../components/recognition";
+import SmartBoard from "@/components/SmartBoard";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "whiteboard" | "participants" | "chat";
@@ -160,7 +161,7 @@ export default function Classroom() {
   const { width: winW } = useWindowDimensions();
   const sideBySide = winW >= 900;
 
-  const { connected, accessDenied, presenceCount, messages, material, boardClearedAt, sendChat, sendDrawCommit, sendBoardClear, sendMaterial, clearMaterial, sendBoardSize } =
+  const { connected, accessDenied, presenceCount, messages, material, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendChat, sendDrawCommit, sendBoardClear, sendMaterial, clearMaterial, sendBoardSize } =
     useClassroomSocket({ sessionId: id ?? "", name: teacherName, role: "teacher" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -850,23 +851,16 @@ export default function Classroom() {
                   <PdfViewer uri={localPdfUri} style={StyleSheet.absoluteFill} />
                 ) : null
               ) : (
-                /* Drawing canvas — shown when material is an image overlay or board is blank */
-                <WhiteboardCanvas
-                  paths={paths}
-                  materialLayer={materialLayer}
-                  onCommit={commitShape}
-                  onSurfaceLayout={handleSurfaceLayout}
-                  tool={tool}
-                  instrument={instrument}
-                  color={penColor}
-                  strokeWidth={penSize}
-                  isEraser={isEraser}
-                  eraserWidth={eraserWidth}
-                  zoom={zoom}
-                  pan={pan}
-                  panMode={isPanMode}
-                  onPanChange={setPan}
-                  onRequestText={handleRequestText}
+                /* The whiteboard proper. Excalidraw owns the surface, its own tools, undo,
+                   zoom and object handling; the strip below is only for the things it does not
+                   do (uploading material, ending the class). Annotating an uploaded document
+                   still goes through the legacy canvas further down, which is the next piece to
+                   move across. */
+                <SmartBoard
+                  sceneUpdates={sceneUpdates}
+                  onConsumeUpdates={consumeSceneUpdates}
+                  onSceneChange={sendSceneUpdate}
+                  clearedAt={boardClearedAt}
                 />
               )}
             </View>

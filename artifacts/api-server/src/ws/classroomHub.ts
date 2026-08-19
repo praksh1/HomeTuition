@@ -23,6 +23,8 @@ const DRAW_TOOLS = new Set(["pen", "line", "arrow", "circle", "rect", "text"]);
 const MAX_REPLAY_PATHS = 800;
 /** Matches the client-side upload cap; anything larger is a bug or an abusive client. */
 const MAX_MATERIAL_CHARS = 2_500_000;
+/** A whole lesson of diagrams sits far below this; beyond it something has gone wrong. */
+const MAX_SCENE_ELEMENTS = 5_000;
 
 interface BoardState {
   material: { kind: "image" | "pdf"; dataUrl: string } | null;
@@ -33,6 +35,24 @@ interface BoardState {
    * "far off screen". Replayed to late joiners along with the strokes themselves.
    */
   boardSize: { width: number; height: number } | null;
+  /**
+   * The object board, keyed by element id.
+   *
+   * The stroke list above is append-only: it can say "a line was drawn" but has no way to say
+   * "that line moved" or "that line is gone". An object board needs both, so scene elements are
+   * held in a map and merged by id. Each element carries its own `version`, and a higher
+   * version always wins — which makes the merge safe to apply in any order, so a message that
+   * arrives late cannot resurrect a deleted shape or undo a move.
+   */
+  scene: Map<string, SceneElement>;
+}
+
+/** Only the fields the server needs to reason about; the rest is passed through untouched. */
+interface SceneElement {
+  id: string;
+  version: number;
+  isDeleted?: boolean;
+  [key: string]: unknown;
 }
 
 /**
@@ -45,7 +65,7 @@ const boards = new Map<string, BoardState>();
 function getBoard(sessionId: string): BoardState {
   let board = boards.get(sessionId);
   if (!board) {
-    board = { material: null, paths: [], boardSize: null };
+    board = { material: null, paths: [], boardSize: null, scene: new Map() };
     boards.set(sessionId, board);
   }
   return board;
@@ -228,6 +248,13 @@ export function attachClassroomHub(server: http.Server): void {
       });
     }
 
+    // Catch the new arrival up on the object board. Deleted elements are not replayed — nobody
+    // joining needs to know what used to be there, and sending them grows the payload forever.
+    if (board.scene.size > 0) {
+      const elements = [...board.scene.values()].filter((e) => !e.isDeleted);
+      if (elements.length > 0) sendTo(ws, { type: "scene_state", elements });
+    }
+
     ws.on("message", (raw: Buffer) => {
       let msg: Record<string, unknown>;
       try { msg = JSON.parse(raw.toString()) as Record<string, unknown>; } catch { return; }
@@ -257,9 +284,31 @@ export function attachClassroomHub(server: http.Server): void {
           broadcast(sessionId, shape, ws);
           break;
         }
+        case "scene_update": {
+          // Only the teacher may change the board, exactly as with strokes.
+          if (!isSessionTeacher) break;
+          const incoming = Array.isArray(msg.elements) ? (msg.elements as SceneElement[]) : [];
+          if (incoming.length === 0 || incoming.length > MAX_SCENE_ELEMENTS) break;
+
+          const board = getBoard(sessionId);
+          const accepted: SceneElement[] = [];
+          for (const el of incoming) {
+            if (!el || typeof el.id !== "string" || typeof el.version !== "number") continue;
+            const existing = board.scene.get(el.id);
+            // A lower version is a stale message that overtook a newer one. Dropping it here
+            // rather than forwarding it keeps every client's copy identical to the server's.
+            if (existing && existing.version >= el.version) continue;
+            board.scene.set(el.id, el);
+            accepted.push(el);
+          }
+          if (accepted.length > 0) broadcast(sessionId, { type: "scene_update", elements: accepted }, ws);
+          break;
+        }
+
         case "board_clear":
           if (isSessionTeacher) {
             getBoard(sessionId).paths = [];
+            getBoard(sessionId).scene.clear();
             broadcast(sessionId, { type: "board_clear" }, ws);
           }
           break;
