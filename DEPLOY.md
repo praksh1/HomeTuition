@@ -49,26 +49,44 @@ from the API URL automatically.
 
 ---
 
-## 3. Web app → Cloudflare Pages
+## 3. Web app → Cloudflare Workers
 
-1. Cloudflare → **Workers & Pages** → **Create** → **Pages** → connect `HomeTuition`
-2. Build settings:
+The site runs on Cloudflare **Workers** static assets (`hometuition.praksh-dhakal.workers.dev`),
+not Pages. `wrangler.jsonc` in the repo root already points at the build output and sets
+single-page-application routing, so a shared link like `/classroom/123` still resolves after a
+refresh instead of 404ing.
 
-   | Field | Value |
-   |---|---|
-   | Build command | `pnpm install --frozen-lockfile && pnpm --filter @workspace/sikshya run build` |
-   | Build output directory | `artifacts/sikshya/web-build` |
+Unlike the API, which Railway redeploys automatically on push, **the web app is deployed by
+hand**. Two commands, from the repo root:
 
-3. Environment variable — **this is the important one**:
+```
+pnpm --filter @workspace/sikshya run build
+npx wrangler deploy
+```
 
-   | Name | Value |
-   |---|---|
-   | `EXPO_PUBLIC_API_URL` | `https://<your-api-domain>` (from step 2, no trailing slash) |
+Set `EXPO_PUBLIC_API_URL` before building — it is baked in at **build time**, not read at run
+time, so changing it means rebuilding:
 
-   It is read at **build time**, not run time. Change it and you must redeploy.
+```
+EXPO_PUBLIC_API_URL=https://<your-api-domain> pnpm --filter @workspace/sikshya run build
+```
 
-4. Deploy. You get `hometuition.pages.dev`, and can attach your own domain under
-   **Custom domains**.
+### Two things that will trip you up on Windows
+
+**Run it from the repo root, which is the *nested* folder.** The project lives at
+`C:\Projects\Paathshala\Paathshala` — one level below the folder of the same name. Running
+from the parent gives `ERR_PNPM_NO_PKG_MANIFEST: No package.json found`.
+
+**`pnpm` may be blocked by PowerShell.** Windows refuses to run unsigned `.ps1` scripts, and
+pnpm installs one, so `pnpm ...` fails with `UnauthorizedAccess` / "running scripts is disabled
+on this system". Use `pnpm.cmd` instead, which is not a PowerShell script and is unaffected:
+
+```
+pnpm.cmd --filter @workspace/sikshya run build
+```
+
+`npx wrangler deploy` is unaffected either way. Note that `wrangler` is not a project
+dependency — `npx` fetches it, so the first run takes a moment.
 
 ---
 
