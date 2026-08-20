@@ -9,6 +9,7 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:board": "node scripts/board-tests/run.mjs",
     "android": "expo run:android",
     "ios": "expo run:ios"
   },
