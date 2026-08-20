@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
-import { apiPost, apiPatch, apiGet } from "@/utils/api";
+import { ApiError, apiGet, apiPatch, apiPost } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import { useNotifications } from "@/context/NotificationContext";
 import { scheduleSessionReminder } from "@/utils/notifications";
@@ -147,7 +147,10 @@ export default function SessionCreate() {
       router.replace(`/(teacher)/classroom/${newSession.id}`);
     } catch (_e) {
       if (createdId != null) {
-        const msg = "Your session was created but couldn't go live. You can start it from your Sessions tab.";
+        const msg =
+          _e instanceof ApiError && _e.status === 409
+            ? `${_e.message} Your new class is saved — start it from your Sessions tab once you have.`
+            : "Your session was created but couldn't go live. You can start it from your Sessions tab.";
         if (Platform.OS === "web") window.alert(`Session Created\n\n${msg}`);
         else Alert.alert("Session Created", msg);
         router.replace("/(teacher)/sessions");

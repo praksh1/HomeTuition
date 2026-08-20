@@ -280,7 +280,23 @@ export default function StudentClassroom() {
         {!videoExpanded && (
         <View style={s.boardWrap}>
         {/* Board — live whiteboard from teacher */}
-        {mode === "board" && (
+        {/* The board appears when the class does.
+            A student who arrived early used to see the teacher's private preparation — notes
+            scribbled before the lesson, on a board the call still described as "waiting for
+            others". The board and the class now start together; the server wipes it as the
+            class goes live, so the lesson opens clean. */}
+        {mode === "board" && waitingForTeacher && (
+          <View style={[s.boardArea, s.boardWaiting]}>
+            <Feather name="clock" size={26} color="#888" />
+            <Text style={s.boardWaitingTitle}>The board opens when the class starts</Text>
+            <Text style={s.boardWaitingBody}>
+              You are in the room and your teacher can see you. Stay here — the whiteboard
+              appears the moment they begin.
+            </Text>
+          </View>
+        )}
+
+        {mode === "board" && !waitingForTeacher && (
           <View style={s.boardArea}>
             {/* The teacher's board, read-only.
                 Students see the same Excalidraw scene the teacher is drawing on, rather than a
@@ -369,6 +385,9 @@ const s = StyleSheet.create({
   modeText: { fontSize: 12, fontFamily: "Inter_500Medium", color: "#666" },
   modeTextActive: { color: "#fff" },
   boardArea: { flex: 1, marginHorizontal: 12, marginBottom: 12, borderRadius: 14, backgroundColor: "#fff", overflow: "hidden" },
+  boardWaiting: { alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 28, backgroundColor: "#141414" },
+  boardWaitingTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#DDD", textAlign: "center" },
+  boardWaitingBody: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#888", textAlign: "center", lineHeight: 19 },
   boardEmpty: { flex: 1, justifyContent: "center", alignItems: "center", padding: 30, gap: 12 },
   boardEmptyTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold", color: "#222", textAlign: "center" },
   boardEmptySub: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#777", textAlign: "center", lineHeight: 20 },

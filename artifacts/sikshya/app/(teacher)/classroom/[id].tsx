@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import type { Teacher } from "@/context/AuthContext";
-import { apiGet, apiPatch } from "@/utils/api";
+import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
 import * as DocumentPicker from "expo-document-picker";
@@ -78,7 +78,7 @@ export default function Classroom() {
   const { width: winW } = useWindowDimensions();
   const sideBySide = winW >= 900;
 
-  const { connected, accessDenied, presenceCount, messages, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendBoardView, sendChat, sendBoardClear, clearMaterial } =
+  const { connected, accessDenied, presenceCount, messages, sessionStatus, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendBoardView, sendChat, sendBoardClear, clearMaterial } =
     useClassroomSocket({ sessionId: id ?? "", name: teacherName, role: "teacher" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -133,6 +133,52 @@ export default function Classroom() {
       setRoomError(false);
     } catch {
       setRoomError(true);
+    }
+  };
+
+  /**
+   * Whether this class is actually running.
+   *
+   * The teacher's own screen used to ignore this entirely: when their class was ended
+   * elsewhere — by starting another one, or by the server tidying up a left-over class — their
+   * window carried on showing a live lesson while the students in it had been told to leave.
+   * A teaching surface that lies about whether anyone can see it is worse than no surface.
+   */
+  const liveStatus = sessionStatus ?? session?.status ?? null;
+  const classIsLive = liveStatus === "live";
+  const classIsOver = liveStatus === "completed" || liveStatus === "cancelled";
+
+  useEffect(() => {
+    if (!classIsOver) return;
+    setRoomUrl(null);
+    setMeetingToken(null);
+    const msg =
+      "This class is no longer live. If you started another class, that one ended this one — a teacher can only run one at a time.";
+    if (Platform.OS === "web") {
+      window.alert(`Class ended\n\n${msg}`);
+      router.back();
+    } else {
+      Alert.alert("Class ended", msg, [{ text: "OK", onPress: () => router.back() }]);
+    }
+  }, [classIsOver]);
+
+  const [starting, setStarting] = useState(false);
+
+  /** Take an unstarted class live from inside the room, rather than sending them back out. */
+  const startThisClass = async () => {
+    setStarting(true);
+    try {
+      await apiPatch(`/sessions/${id}`, { status: "live" });
+      setSession((prev) => (prev ? { ...prev, status: "live" } : prev));
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.status === 409
+          ? err.message
+          : "That class could not be started. Please check your connection and try again.";
+      if (Platform.OS === "web") window.alert(`Cannot start this class\n\n${message}`);
+      else Alert.alert("Cannot start this class", message);
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -390,6 +436,24 @@ export default function Classroom() {
               The live board couldn't be opened for this class. It may belong to another teacher
               account — check you're signed in as the teacher who created it.
             </Text>
+          </View>
+        )}
+
+        {!classIsLive && !classIsOver && (
+          <View style={s.notLiveBar}>
+            <Feather name="eye-off" size={15} color="#FCD34D" />
+            <Text style={s.notLiveText}>
+              This class has not started, so nothing you draw is shared yet. Start it when you
+              are ready and your students will see the board straight away.
+            </Text>
+            <TouchableOpacity
+              style={s.notLiveBtn}
+              onPress={startThisClass}
+              disabled={starting}
+              activeOpacity={0.8}
+            >
+              <Text style={s.notLiveBtnText}>{starting ? "Starting…" : "Start class"}</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -697,6 +761,10 @@ const s = StyleSheet.create({
   materialBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, backgroundColor: "#C41E3A", paddingVertical: 9, position: "relative", overflow: "hidden", zIndex: 50 },
   materialBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
   uploadDockClear: { width: 30, height: 30, borderRadius: 8, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
+  notLiveBar: { flexDirection: "row", alignItems: "center", gap: 9, marginHorizontal: 14, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: "#3A2E0B", borderWidth: 1, borderColor: "#5A470F" },
+  notLiveText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCD34D", lineHeight: 17 },
+  notLiveBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 8, backgroundColor: "#FCD34D" },
+  notLiveBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#3A2E0B" },
   pdfWarnBar: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 12, marginTop: 4, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, backgroundColor: "#3A2E0B", borderWidth: 1, borderColor: "#5A470F" },
   pdfWarnText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCD34D", lineHeight: 17 },
   uploadErrorBar: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 12, marginTop: 4, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, backgroundColor: "#2A1416", borderWidth: 1, borderColor: "#7F1D1D" },

@@ -11,6 +11,7 @@ import {
 import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/payments";
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
 import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
+import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -66,16 +67,11 @@ router.get("/sessions", async (req, res): Promise<void> => {
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
   if (status === "live") {
-    // Ghost/bot-generated "live" sessions (e.g. from seed data) never get moved to
-    // "completed" by a real teacher action. Lazily auto-expire them so the Sessions tab and
-    // Live Now section only ever show genuinely active classes.
-    //
-    // Staleness is judged from `startedAt` — when the teacher actually began — and only falls
-    // back to the scheduled `date` for rows that predate that column. Using the scheduled slot
-    // meant a class started even slightly late was already "expired": the next client to load
-    // the live list would complete it and broadcast an end-of-session to everyone in it. A
-    // student opening their own sessions tab was enough to kill the teacher's class.
-    const staleLive = await db
+    // Classes that are only nominally live — a crashed browser, seed data, a teacher who
+    // closed the tab — are tidied up before the list is read, so "Live Now" only ever shows
+    // classes that are genuinely running. The rule for what counts as left over lives in
+    // sessionLifecycle.ts; it used to be written out here as well, and the two copies drifted.
+    const allLive = await db
       .select({
         id: sessionsTable.id,
         date: sessionsTable.date,
@@ -85,22 +81,7 @@ router.get("/sessions", async (req, res): Promise<void> => {
       .from(sessionsTable)
       .where(eq(sessionsTable.status, "live"));
 
-    const staleIds = staleLive
-      .filter((s) => {
-        const begunAt = s.startedAt ?? s.date;
-        const endMs = new Date(begunAt).getTime() + (s.duration + 15) * 60 * 1000;
-        return endMs < Date.now();
-      })
-      .map((s) => s.id);
-
-    if (staleIds.length > 0) {
-      await db.update(sessionsTable).set({ status: "completed" }).where(
-        sql`${sessionsTable.id} = ANY(ARRAY[${sql.join(staleIds.map((id) => sql`${id}`), sql`,`)}]::int[])`
-      );
-      for (const staleId of staleIds) {
-        broadcastSessionStatus(String(staleId), "completed");
-      }
-    }
+    await expireLeftOverSessions(allLive);
 
     const liveSessions = await db
       .selectDistinctOn([sessionsTable.teacherId])
@@ -282,18 +263,25 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
   }
 
   if (status === "live") {
-    const staleLiveSessions = await db
-      .select({ id: sessionsTable.id })
-      .from(sessionsTable)
-      .where(and(eq(sessionsTable.teacherId, user.userId), eq(sessionsTable.status, "live"), sql`${sessionsTable.id} != ${id}`));
-
-    if (staleLiveSessions.length > 0) {
-      await db.update(sessionsTable).set({ status: "completed" }).where(
-        and(eq(sessionsTable.teacherId, user.userId), eq(sessionsTable.status, "live"), sql`${sessionsTable.id} != ${id}`)
-      );
-      for (const stale of staleLiveSessions) {
-        broadcastSessionStatus(String(stale.id), "completed");
-      }
+    /**
+     * One class at a time.
+     *
+     * Starting a second class used to silently mark every other live class of this teacher
+     * "completed" and tell those rooms the teacher had left — so a teacher who opened a second
+     * window threw a room full of students out of a lesson in progress, while their own first
+     * window carried on as though nothing had happened. A teacher doing that has almost always
+     * made a mistake, so the new class is refused and the old one is named. Genuinely
+     * left-over classes are tidied up first and never stand in the way.
+     */
+    const running = await otherRunningSessions(user.userId, id);
+    if (running.length > 0) {
+      const other = running[0];
+      res.status(409).json({
+        error: `You are already teaching "${other.topic}". End that class before starting another.`,
+        liveSessionId: other.id,
+        liveSessionTopic: other.topic,
+      });
+      return;
     }
 
     // Start every class on a blank board. The previous lesson's strokes used to still be

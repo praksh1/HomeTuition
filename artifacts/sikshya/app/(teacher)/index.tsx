@@ -2,11 +2,11 @@ import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
-import { apiGet, apiPatch } from "@/utils/api";
+import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import { useNotifications } from "@/context/NotificationContext";
 import type { Teacher } from "@/context/AuthContext";
@@ -53,7 +53,18 @@ export default function TeacherDashboard() {
   const startSession = async (session: ApiSession) => {
     try {
       await apiPatch(`/sessions/${session.id}`, { status: "live" });
-    } catch {}
+    } catch (err) {
+      // Walking into the classroom anyway is what hid this: the class never went live, the
+      // teacher taught to a room nobody could enter, and nothing said so. A refusal is now
+      // shown and the navigation does not happen.
+      const message =
+        err instanceof ApiError && err.status === 409
+          ? err.message
+          : "That class could not be started. Please check your connection and try again.";
+      if (Platform.OS === "web") window.alert(`Cannot start this class\n\n${message}`);
+      else Alert.alert("Cannot start this class", message);
+      return;
+    }
     router.push(`/(teacher)/classroom/${session.id}`);
   };
 

@@ -54,6 +54,11 @@ jobs:
       - name: Check every package compiles
         run: pnpm run typecheck
 
+      # Rules the whole product depends on, exercised without a database: what counts as a
+      # class being over, and therefore whether a teacher may start another one.
+      - name: Server rules
+        run: pnpm --filter @workspace/api-server run test
+
       - name: Build the web app
         run: pnpm --filter @workspace/sikshya run build
 
