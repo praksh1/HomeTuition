@@ -1,23 +1,52 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React from "react";
-import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useState } from "react";
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
+import { apiGet } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import type { Student } from "@/context/AuthContext";
 
-const PAYMENT_METHODS = [
-  { id: "pm1", type: "eSewa", account: "98*******12", verified: true },
-  { id: "pm2", type: "Khalti", account: "97*******45", verified: true },
-];
+/**
+ * Teachers this student has followed. Following is free — a bookmark, not a purchase.
+ */
+interface FollowedTeacher {
+  id: number;
+  name: string;
+  subject: string | null;
+}
 
 export default function StudentProfile() {
   const { user, logout } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const student = user as Student;
+  const [following, setFollowing] = useState<FollowedTeacher[]>([]);
+  const [followingLoading, setFollowingLoading] = useState(true);
+
+  const loadFollowing = useCallback(async () => {
+    if (!student?.userId) return;
+    setFollowingLoading(true);
+    try {
+      const res = await apiGet<{ teachers: FollowedTeacher[] }>(
+        `/students/${student.userId}/followed-teachers`,
+      );
+      setFollowing(res.teachers);
+    } catch {
+      setFollowing([]);
+    } finally {
+      setFollowingLoading(false);
+    }
+  }, [student?.userId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadFollowing();
+    }, [loadFollowing]),
+  );
 
   const doLogout = async () => {
     await logout();
@@ -92,23 +121,21 @@ export default function StudentProfile() {
           All payments to teachers are processed securely through the Sikshya platform.
         </Text>
 
-        {PAYMENT_METHODS.map((pm) => (
-          <View key={pm.id} style={[styles.pmRow, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-            <View style={[styles.pmIcon, { backgroundColor: pm.type === "eSewa" ? "#60B246" + "20" : "#5C2D91" + "20" }]}>
-              <Text style={[styles.pmName, { color: pm.type === "eSewa" ? "#60B246" : "#5C2D91" }]}>{pm.type === "eSewa" ? "e" : "K"}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.pmType, { color: colors.foreground }]}>{pm.type}</Text>
-              <Text style={[styles.pmAccount, { color: colors.mutedForeground }]}>{pm.account}</Text>
-            </View>
-            {pm.verified && (
-              <View style={[styles.verifiedBadge, { backgroundColor: colors.success + "15" }]}>
-                <Feather name="check" size={12} color={colors.success} />
-                <Text style={[styles.verifiedText, { color: colors.success }]}>Verified</Text>
-              </View>
-            )}
+        {/* This listed two "verified" eSewa and Khalti accounts with masked numbers, for every
+            student, invented in the code. No payment provider is connected yet, so showing
+            somebody a verified payment method they do not have is the one thing this screen
+            must not do. */}
+        <View style={[styles.pmRow, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          <View style={[styles.pmIcon, { backgroundColor: colors.mutedForeground + "20" }]}>
+            <Feather name="credit-card" size={16} color={colors.mutedForeground} />
           </View>
-        ))}
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.pmType, { color: colors.foreground }]}>No payment method yet</Text>
+            <Text style={[styles.pmAccount, { color: colors.mutedForeground }]}>
+              eSewa and Khalti are coming. Booking works without one for now.
+            </Text>
+          </View>
+        </View>
       </View>
 
       <View style={[styles.securityCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -144,6 +171,51 @@ export default function StudentProfile() {
         <Text style={[styles.supportText, { color: colors.foreground }]}>Customer Support</Text>
         <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
       </TouchableOpacity>
+
+      {/* Following a teacher was a one-way door: a student could follow from Discover and then
+          had nowhere to see, or undo, who they had followed. */}
+      <View style={[styles.infoCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.cardTitle, { color: colors.foreground }]}>Teachers you follow</Text>
+        {followingLoading ? (
+          <ActivityIndicator color={colors.primary} style={{ marginVertical: 14 }} />
+        ) : following.length === 0 ? (
+          <>
+            <Text style={[styles.paySubtitle, { color: colors.mutedForeground }]}>
+              You are not following anyone yet. Follow a teacher from Discover and they will
+              appear here, so their new classes are easy to find.
+            </Text>
+            <TouchableOpacity
+              style={[styles.followBtn, { backgroundColor: colors.primary }]}
+              onPress={() => router.push("/(student)")}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.followBtnText}>Find a teacher</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          following.map((t) => (
+            <TouchableOpacity
+              key={t.id}
+              style={[styles.pmRow, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              onPress={() => router.push(`/(student)/teacher/${t.id}`)}
+              activeOpacity={0.75}
+            >
+              <View style={[styles.pmIcon, { backgroundColor: colors.primary + "18" }]}>
+                <Text style={[styles.pmName, { color: colors.primary }]}>
+                  {t.name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.pmType, { color: colors.foreground }]}>{t.name}</Text>
+                {!!t.subject && (
+                  <Text style={[styles.pmAccount, { color: colors.mutedForeground }]}>{t.subject}</Text>
+                )}
+              </View>
+              <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
 
       <TouchableOpacity
         style={[styles.logoutBtn, { borderColor: colors.destructive + "40", backgroundColor: colors.destructive + "08" }]}
@@ -186,6 +258,8 @@ const styles = StyleSheet.create({
   secRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
   secLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
   secValue: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  followBtn: { marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 },
+  followBtnText: { fontSize: 13.5, fontFamily: "Inter_600SemiBold", color: "#fff" },
   logoutBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15 },
   logoutText: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
   supportBtn: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15, paddingHorizontal: 16 },

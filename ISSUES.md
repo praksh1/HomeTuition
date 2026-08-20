@@ -197,7 +197,7 @@ is closed by a test or by the owner seeing it work.
 | E8 | A student who drops takes a long time to rejoin, and sometimes cannot | queued |
 | E9 | "The teacher has ended this session" reaches students who left long before | **FIXED** |
 | E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | queued |
-| E11 | Teachers cannot see who follows them; students cannot see who they follow | queued |
+| E11 | Teachers cannot see who follows them; students cannot see who they follow | **FIXED** |
 | E12 | Use Daily's in-call chat instead of the app's own | queued — **see the caveat below** |
 | E13 | Excalidraw's Library button opens a library teachers cannot use; wants curated free content instead | **FIXED** |
 
@@ -238,6 +238,21 @@ have, and its worker is refused if served with the wrong MIME type.
 bytes, so there is nothing to hand the board. It opens for the teacher alone with the banner
 saying students cannot see it. Reading the file into memory first would close this, and the
 board itself already knows how to do the rest.
+
+### Found while doing E11, and worth more than E11
+
+Two screens were showing invented data as though it were real, which is worse than showing
+nothing: it lets someone believe a thing about their own business that is not true.
+
+- The teacher's **My Students** tab was six hard-coded students — names, session counts,
+  five-star reviews — displayed to every teacher who opened it.
+- The student's **Payment Methods** listed two *verified* eSewa and Khalti accounts with masked
+  numbers, for every student, invented in the code. No payment provider is connected at all.
+
+Both now show the truth. Alongside them, two access holes: `PATCH /teachers/:id` required a
+login and nothing else, so any account could rewrite any teacher's bio, subjects and price per
+session; and `GET /students/:id/followed-teachers` would tell any logged-in user which teachers
+any student follows. Both are now restricted to the person they belong to.
 
 ### E12 — the caveat, recorded before it is done
 

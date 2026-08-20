@@ -1,30 +1,72 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useState } from "react";
-import { FlatList, StyleSheet, Text, TextInput, View } from "react-native";
+import { router } from "expo-router";
+import React, { useCallback, useState } from "react";
+import { ActivityIndicator, FlatList, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
-import StarRating from "@/components/StarRating";
+import { useAuth } from "@/context/AuthContext";
+import type { Teacher } from "@/context/AuthContext";
+import { apiGet } from "@/utils/api";
 
-const MOCK_STUDENTS = [
-  { id: "s1", name: "Aarav Shrestha", grade: "Grade 10", joinedDate: "Jan 2025", sessionsAttended: 12, lastActive: "Today", rating: 5, comment: "Excellent teacher!" },
-  { id: "s2", name: "Sita Gurung", grade: "Grade 11", joinedDate: "Feb 2025", sessionsAttended: 8, lastActive: "Yesterday", rating: 5, comment: "Very clear explanations." },
-  { id: "s3", name: "Ramesh Karki", grade: "Grade 12", joinedDate: "Dec 2024", sessionsAttended: 20, lastActive: "3 days ago", rating: 4, comment: "Good sessions overall." },
-  { id: "s4", name: "Puja Rai", grade: "Grade 10", joinedDate: "Mar 2025", sessionsAttended: 5, lastActive: "1 week ago", rating: 5, comment: "Best math teacher!" },
-  { id: "s5", name: "Bikash Tamang", grade: "Grade 11", joinedDate: "Jan 2025", sessionsAttended: 15, lastActive: "2 days ago", rating: 4, comment: "Helpful and patient." },
-  { id: "s6", name: "Anita Basnet", grade: "Grade 12", joinedDate: "Nov 2024", sessionsAttended: 24, lastActive: "Today", rating: 5, comment: "Transformed my understanding." },
-];
+/**
+ * The students who follow this teacher.
+ *
+ * This screen used to be six invented students — Aarav Shrestha, twelve sessions attended, a
+ * five-star review — hard-coded and shown to every teacher who opened it. It looked like a
+ * working feature, which is worse than an empty one: a teacher could believe they had a
+ * following they did not have.
+ *
+ * Following is free and one-directional: a student bookmarks a teacher from Discover. Until
+ * now the teacher had no way of knowing it had happened.
+ */
+
+interface Follower {
+  id: number;
+  name: string;
+  since: string;
+}
 
 export default function TeacherStudents() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const teacher = user as Teacher;
+  const [followers, setFollowers] = useState<Follower[]>([]);
   const [search, setSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
-  const filtered = MOCK_STUDENTS.filter((s) =>
-    s.name.toLowerCase().includes(search.toLowerCase()) ||
-    s.grade.toLowerCase().includes(search.toLowerCase())
+  const load = useCallback(async () => {
+    // The followers route is keyed by the teacher's *profile* id, not their user id — see
+    // .agents/memory/teacher-id-convention.md, which exists because this is easy to get wrong.
+    if (!teacher?.id) return;
+    setLoading(true);
+    setLoadError(false);
+    try {
+      const res = await apiGet<{ followers: Follower[] }>(`/teachers/${teacher.id}/followers`);
+      setFollowers(res.followers);
+    } catch {
+      setLoadError(true);
+      setFollowers([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [teacher?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
   );
 
-  const avgRating = MOCK_STUDENTS.reduce((acc, s) => acc + s.rating, 0) / MOCK_STUDENTS.length;
+  const filtered = followers.filter((f) => f.name.toLowerCase().includes(search.trim().toLowerCase()));
+
+  const since = (value: string) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -32,30 +74,29 @@ export default function TeacherStudents() {
         <Text style={[styles.title, { color: colors.foreground }]}>My Students</Text>
         <View style={styles.statsRow}>
           <View style={[styles.statPill, { backgroundColor: colors.primary + "12" }]}>
-            <Text style={[styles.statNum, { color: colors.primary }]}>{MOCK_STUDENTS.length}</Text>
-            <Text style={[styles.statLabel, { color: colors.primary }]}>Students</Text>
-          </View>
-          <View style={[styles.statPill, { backgroundColor: colors.success + "12" }]}>
-            <StarRating rating={avgRating} size={14} />
-            <Text style={[styles.statNum, { color: colors.success }]}>{avgRating.toFixed(1)}</Text>
-            <Text style={[styles.statLabel, { color: colors.success }]}>Avg Rating</Text>
+            <Text style={[styles.statNum, { color: colors.primary }]}>{followers.length}</Text>
+            <Text style={[styles.statLabel, { color: colors.primary }]}>
+              {followers.length === 1 ? "Follower" : "Followers"}
+            </Text>
           </View>
         </View>
-        <View style={[styles.searchBar, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <Feather name="search" size={16} color={colors.mutedForeground} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.foreground }]}
-            placeholder="Search students..."
-            placeholderTextColor={colors.mutedForeground}
-            value={search}
-            onChangeText={setSearch}
-          />
-        </View>
+        {followers.length > 0 && (
+          <View style={[styles.searchBar, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Feather name="search" size={16} color={colors.mutedForeground} />
+            <TextInput
+              style={[styles.searchInput, { color: colors.foreground }]}
+              placeholder="Search students..."
+              placeholderTextColor={colors.mutedForeground}
+              value={search}
+              onChangeText={setSearch}
+            />
+          </View>
+        )}
       </View>
 
       <FlatList
         data={filtered}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
         scrollEnabled={!!filtered.length}
         renderItem={({ item }) => {
@@ -68,38 +109,61 @@ export default function TeacherStudents() {
                 </View>
                 <View style={styles.studentInfo}>
                   <Text style={[styles.studentName, { color: colors.foreground }]}>{item.name}</Text>
-                  <Text style={[styles.studentGrade, { color: colors.mutedForeground }]}>{item.grade}</Text>
-                </View>
-                <View style={[styles.activeBadge, { backgroundColor: item.lastActive === "Today" ? colors.success + "15" : colors.muted }]}>
-                  <Text style={[styles.activeText, { color: item.lastActive === "Today" ? colors.success : colors.mutedForeground }]}>
-                    {item.lastActive}
+                  <Text style={[styles.studentGrade, { color: colors.mutedForeground }]}>
+                    Following since {since(item.since)}
                   </Text>
                 </View>
               </View>
-              <View style={styles.cardMeta}>
-                <View style={styles.metaItem}>
-                  <Feather name="calendar" size={13} color={colors.mutedForeground} />
-                  <Text style={[styles.metaText, { color: colors.mutedForeground }]}>Joined {item.joinedDate}</Text>
-                </View>
-                <View style={styles.metaItem}>
-                  <Feather name="check-circle" size={13} color={colors.mutedForeground} />
-                  <Text style={[styles.metaText, { color: colors.mutedForeground }]}>{item.sessionsAttended} sessions</Text>
-                </View>
-              </View>
-              {!!item.comment && (
-                <View style={[styles.review, { backgroundColor: colors.muted }]}>
-                  <StarRating rating={item.rating} size={13} />
-                  <Text style={[styles.reviewText, { color: colors.mutedForeground }]}>"{item.comment}"</Text>
-                </View>
-              )}
             </View>
           );
         }}
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <Feather name="users" size={48} color={colors.border} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>No students found</Text>
-          </View>
+          loading ? (
+            <View style={styles.empty}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : loadError ? (
+            <View style={styles.empty}>
+              <Feather name="wifi-off" size={44} color={colors.border} />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                Your students could not be loaded
+              </Text>
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                This is a connection problem, not an empty list.
+              </Text>
+              <TouchableOpacity
+                style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
+                onPress={() => void load()}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.emptyBtnText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : search.trim() ? (
+            <View style={styles.empty}>
+              <Feather name="search" size={44} color={colors.border} />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No match</Text>
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                No student of yours has that name.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.empty}>
+              <Feather name="users" size={44} color={colors.border} />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No followers yet</Text>
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                Students who find you on Discover can follow you for free, and they appear here.
+                Running classes is what gets you found.
+              </Text>
+              <TouchableOpacity
+                style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
+                onPress={() => router.push("/(teacher)/session-create")}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.emptyBtnText}>Create a session</Text>
+              </TouchableOpacity>
+            </View>
+          )
         }
       />
     </View>
@@ -108,29 +172,25 @@ export default function TeacherStudents() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingHorizontal: 20, paddingBottom: 12, gap: 14 },
-  title: { fontSize: 24, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
-  statsRow: { flexDirection: "row", gap: 12 },
-  statPill: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
-  statNum: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  statLabel: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  searchBar: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 12 },
-  searchInput: { flex: 1, fontSize: 15, fontFamily: "Inter_400Regular" },
-  list: { paddingHorizontal: 20, paddingTop: 8 },
-  card: { borderRadius: 16, borderWidth: 1, padding: 14, marginBottom: 12 },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 10 },
-  avatar: { width: 46, height: 46, borderRadius: 23, justifyContent: "center", alignItems: "center" },
+  header: { paddingHorizontal: 20, paddingBottom: 16, gap: 14 },
+  title: { fontSize: 26, fontFamily: "Inter_700Bold" },
+  statsRow: { flexDirection: "row", gap: 10 },
+  statPill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  statNum: { fontSize: 15, fontFamily: "Inter_700Bold" },
+  statLabel: { fontSize: 12, fontFamily: "Inter_500Medium" },
+  searchBar: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 11, borderRadius: 12, borderWidth: 1 },
+  searchInput: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", outlineStyle: "none" } as object,
+  list: { paddingHorizontal: 20, gap: 12 },
+  card: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 12 },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 12 },
+  avatar: { width: 46, height: 46, borderRadius: 23, alignItems: "center", justifyContent: "center" },
   initials: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  studentInfo: { flex: 1 },
+  studentInfo: { flex: 1, gap: 2 },
   studentName: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  studentGrade: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
-  activeBadge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  activeText: { fontSize: 11, fontFamily: "Inter_500Medium" },
-  cardMeta: { flexDirection: "row", gap: 16, marginBottom: 10 },
-  metaItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  metaText: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  review: { borderRadius: 10, padding: 10, gap: 6 },
-  reviewText: { fontSize: 13, fontFamily: "Inter_400Regular", fontStyle: "italic" },
-  empty: { alignItems: "center", paddingTop: 80, gap: 12 },
-  emptyText: { fontSize: 16, fontFamily: "Inter_400Regular" },
+  studentGrade: { fontSize: 12.5, fontFamily: "Inter_400Regular" },
+  empty: { alignItems: "center", gap: 10, paddingTop: 70, paddingHorizontal: 34 },
+  emptyTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold", textAlign: "center" },
+  emptyText: { fontSize: 13.5, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
+  emptyBtn: { marginTop: 8, paddingHorizontal: 20, paddingVertical: 11, borderRadius: 12 },
+  emptyBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#fff" },
 });
