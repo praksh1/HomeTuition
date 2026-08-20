@@ -188,8 +188,8 @@ is closed by a test or by the owner seeing it work.
 | # | Issue | Status |
 |---|-------|--------|
 | E1 | A photo the teacher shared arrived as an empty picture frame; resizing it gave students a bigger empty frame | **FIXED** |
-| E2 | A shared PDF hid the whiteboard for the teacher and showed students a broken half-view neither could see was different | **FIXED to fail honestly** — real fix is E3 |
-| E3 | PDF pages must live *on* the board, annotatable like anything else | next |
+| E2 | A shared PDF hid the whiteboard for the teacher and showed students a broken half-view neither could see was different | **FIXED** by E3 |
+| E3 | PDF pages must live *on* the board, annotatable like anything else | **FIXED on web** — native still opens locally, see below |
 | E4 | A teacher can open three concurrent sessions; starting a second tells students the first has ended while the teacher sees it running | queued — correctness, rated above the cosmetic items |
 | E5 | Teacher dashboard lists upcoming sessions, but Sessions → Upcoming is empty | queued |
 | E6 | The whiteboard is live and shared before the teacher has started the call | queued |
@@ -221,6 +221,23 @@ images is the right fix (E3) and is not a small change. Until then a PDF opens f
 alone, is not broadcast at all — so the student-side mess is gone — and the teacher is told on
 screen that students cannot see it. A teacher who knows will hold up a photo instead; a teacher
 who does not know teaches a lesson to nobody.
+
+### E3 — where it stands
+
+A PDF shared from the web app is rasterised in the teacher's browser and its pages placed on
+the board as ordinary pictures, stacked in reading order: annotatable with every tool, movable,
+and synced like a hand-drawn line. Students receive plain images and never run a PDF engine,
+which is what matters on low-end Android. Beyond 25 pages the rest is left off and the teacher
+is told — a board is not a textbook.
+
+Two things are recorded in `.agents/memory/pdfjs-legacy-build.md` because both failed silently
+and cost real time: pdf.js's modern bundle needs JavaScript that older Android browsers do not
+have, and its worker is refused if served with the wrong MIME type.
+
+**Still open:** on the *phone apps*, a picked PDF is a device-local `file://` URI rather than
+bytes, so there is nothing to hand the board. It opens for the teacher alone with the banner
+saying students cannot see it. Reading the file into memory first would close this, and the
+board itself already knows how to do the rest.
 
 ### E12 — the caveat, recorded before it is done
 

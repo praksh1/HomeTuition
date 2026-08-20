@@ -96,7 +96,9 @@ export default function Classroom() {
    * The next picture to place on the whiteboard. A new `key` is what triggers the placement,
    * so uploading the same photo twice still works and a re-render never duplicates one.
    */
-  const [boardImage, setBoardImage] = useState<{ key: string; dataUrl: string } | null>(null);
+  const [boardDocument, setBoardDocument] = useState<
+    { key: string; dataUrl: string; kind: "image" | "pdf" } | null
+  >(null);
   // Native-only: stores a local file:// URI for a PDF picked via DocumentPicker.
   // Kept separate from `material` (which is broadcast over the socket) because
   // file:// paths are device-local and meaningless on other participants' devices.
@@ -148,26 +150,25 @@ export default function Classroom() {
     } catch {}
   };
 
+  const nextBoardKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
   const applyUploadedFile = (dataUrl: string, kind: "image" | "pdf") => {
-    if (kind === "pdf") {
-      /**
-       * A shared PDF is **not** on the whiteboard yet, and pretending otherwise is what made
-       * this dangerous. The PDF used to be broadcast and rendered by each participant
-       * separately: the teacher got a full PDF viewer with the whiteboard hidden behind it,
-       * while students got a broken half-view with the previous scribbles floating over it.
-       * Neither could tell the other was seeing something different.
-       *
-       * Until pages can be placed on the board as images, it opens for the teacher alone and
-       * says so, loudly. A teacher who knows students cannot see it will hold up a photo
-       * instead; a teacher who does not know teaches a whole lesson to nobody.
-       */
+    /**
+     * On native a PDF arrives as a device-local `file://` URI rather than bytes, so there is
+     * nothing to hand the board. It opens for the teacher alone and says so, loudly — the same
+     * honest failure as before. Reading the file into memory first would close this gap and is
+     * worth doing; pretending it is shared is not.
+     */
+    if (kind === "pdf" && Platform.OS !== "web") {
       setLocalPdfUri(dataUrl);
       clearMaterial();
       return;
     }
-    // Photos go onto the board as real objects — movable, resizable, and part of what a
-    // student's view is fitted to.
-    setBoardImage({ key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, dataUrl });
+
+    // Everything else goes to the board, which turns a PDF into pages and places a photo as a
+    // single picture. Both end up as ordinary objects the whole class can see.
+    setLocalPdfUri(null);
+    setBoardDocument({ key: nextBoardKey(), dataUrl, kind });
     clearMaterial();
   };
 
@@ -453,15 +454,15 @@ export default function Classroom() {
               >
                 <Feather name="paperclip" size={13} color={materialMenuOpen ? "#fff" : "#B9B9B9"} />
                 <Text style={[s.materialToggleText, materialMenuOpen && s.materialToggleTextOpen]}>
-                  {boardImage || localPdfUri ? "Material" : "Add material"}
+                  {boardDocument || localPdfUri ? "Material" : "Add material"}
                 </Text>
                 <Feather name={materialMenuOpen ? "chevron-up" : "chevron-down"} size={13} color="#777" />
               </TouchableOpacity>
 
-              {(boardImage || localPdfUri) && (
+              {(boardDocument || localPdfUri) && (
                 <TouchableOpacity
                   style={s.uploadDockClear}
-                  onPress={() => { clearMaterial(); setLocalPdfUri(null); setBoardImage(null); setUploadError(null); setMaterialMenuOpen(false); }}
+                  onPress={() => { clearMaterial(); setLocalPdfUri(null); setBoardDocument(null); setUploadError(null); setMaterialMenuOpen(false); }}
                   activeOpacity={0.7}
                 >
                   <Feather name="x-circle" size={16} color="#EF4444" />
@@ -584,7 +585,7 @@ export default function Classroom() {
                     onSceneChange={sendSceneUpdate}
                     onViewportChange={sendBoardView}
                     onClearAll={sendBoardClear}
-                    insertImage={boardImage}
+                    insertDocument={boardDocument}
                     clearedAt={boardClearedAt}
                   />
                 </>

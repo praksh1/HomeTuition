@@ -123,10 +123,17 @@ interface Props {
   onConsumeUpdates: () => void;
   onSceneChange: (changed: unknown[], files: unknown[]) => void;
   /**
-   * A picture to place on the board. Changing `key` places it; the same key is never placed
-   * twice, so a re-render cannot duplicate it.
+   * A document to place on the board: a photo, or a PDF whose pages become pictures.
+   *
+   * The board does the converting rather than the screen around it, for two reasons. The phone
+   * apps run this very page inside a WebView, so they get PDF support without a second
+   * implementation; and "put this document on the board" is the board's job, which keeps the
+   * classroom screens to arranging panes.
+   *
+   * Changing `key` places it; the same key is never placed twice, so a re-render cannot
+   * duplicate a page.
    */
-  insertImage?: { key: string; dataUrl: string } | null;
+  insertDocument?: { key: string; dataUrl: string; kind: "image" | "pdf" } | null;
   /** Teacher only: publishes the part of the canvas they are looking at. */
   onViewportChange?: (view: BoardViewport) => void;
   /** Students only: the part of the canvas the teacher is looking at. */
@@ -201,7 +208,7 @@ export default function SmartBoard({
   onSceneChange,
   onViewportChange,
   viewport = null,
-  insertImage = null,
+  insertDocument = null,
   onClearAll,
   clearedAt = 0,
   theme = "light",
@@ -484,91 +491,159 @@ export default function SmartBoard({
   }, [api, readOnly, onClearAll]);
 
   /**
-   * Put an uploaded picture on the board as a real element.
+   * Put an uploaded document on the board as real elements.
    *
-   * It used to be drawn *behind* the canvas and annotated over the top, which meant it could
-   * not be moved or scaled with the diagram, was not part of what a student's view is fitted
-   * to, and on a screen of a different shape did not line up with the ink at all. As an element
-   * it is just another object: draggable, resizable, erasable, and synced by the same rules as
-   * everything else.
+   * A photo used to be drawn *behind* the canvas and annotated over the top, and a PDF was
+   * handed to every participant to render separately — which is how the teacher and the class
+   * ended up looking at different things without either being able to tell. As elements they
+   * are just objects: draggable, resizable, erasable, part of what a student's view is fitted
+   * to, and synced by the same rules as a hand-drawn line.
+   *
+   * PDF pages are rasterised **here, once, on the sharer's device**. Students receive plain
+   * pictures and never run a PDF engine, which is what matters on a market of cheap Android
+   * phones. The engine is loaded on demand, so a teacher who never shares a PDF never
+   * downloads it.
    */
   useEffect(() => {
-    if (!api || readOnly || !insertImage) return;
-    if (insertedImages.current.has(insertImage.key)) return;
-    insertedImages.current.add(insertImage.key);
+    if (!api || readOnly || !insertDocument) return;
+    if (insertedImages.current.has(insertDocument.key)) return;
+    insertedImages.current.add(insertDocument.key);
 
     let cancelled = false;
-    const img = new window.Image();
-    img.onload = () => {
-      if (cancelled) return;
+
+    const load = (src: string) =>
+      new Promise<HTMLImageElement | null>((resolve) => {
+        const image = new window.Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => resolve(null);
+        image.src = src;
+      });
+
+    const place = (entries: { image: HTMLImageElement; dataUrl: string }[]) => {
       const state = api.getAppState();
       const zoom = state.zoom?.value ?? 1;
       const viewW = (state.width || 800) / zoom;
       const viewH = (state.height || 600) / zoom;
 
-      // Fill most of what the teacher is looking at, without overflowing it.
-      const scale = Math.min(1, (viewW * 0.8) / img.naturalWidth, (viewH * 0.8) / img.naturalHeight);
-      const width = Math.max(1, Math.round(img.naturalWidth * scale));
-      const height = Math.max(1, Math.round(img.naturalHeight * scale));
-      const x = -state.scrollX + (viewW - width) / 2;
-      const y = -state.scrollY + (viewH - height) / 2;
+      const files: BinaryFile[] = [];
+      const elements: Record<string, unknown>[] = [];
+      let cursorY = 0;
+      let firstElement: Record<string, unknown> | null = null;
 
-      const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-      const mimeMatch = /^data:([^;,]+)[;,]/.exec(insertImage.dataUrl);
-      api.addFiles([
-        {
+      entries.forEach((entry, index) => {
+        // Every page gets the same treatment: fill most of the view without overflowing it.
+        const scale = Math.min(
+          1,
+          (viewW * 0.8) / entry.image.naturalWidth,
+          (viewH * 0.8) / entry.image.naturalHeight,
+        );
+        const width = Math.max(1, Math.round(entry.image.naturalWidth * scale));
+        const height = Math.max(1, Math.round(entry.image.naturalHeight * scale));
+        const x = -state.scrollX + (viewW - width) / 2;
+        const y = -state.scrollY + (viewH - height) / 2 + cursorY;
+        // Pages stack down the canvas in reading order, so scrolling the board scrolls the
+        // document.
+        cursorY += height + Math.round(height * 0.06);
+
+        const fileId = `file-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`;
+        const mimeMatch = /^data:([^;,]+)[;,]/.exec(entry.dataUrl);
+        files.push({
           id: fileId,
-          dataURL: insertImage.dataUrl,
+          dataURL: entry.dataUrl,
           mimeType: mimeMatch ? mimeMatch[1] : "image/jpeg",
           created: Date.now(),
-        },
-      ]);
+        });
 
-      const element = {
-        id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        type: "image",
-        fileId,
-        status: "saved",
-        x, y, width, height,
-        angle: 0,
-        strokeColor: "transparent",
-        backgroundColor: "transparent",
-        fillStyle: "solid",
-        strokeWidth: 1,
-        strokeStyle: "solid",
-        roughness: 0,
-        opacity: 100,
-        groupIds: [],
-        frameId: null,
-        roundness: null,
-        seed: Math.floor(Math.random() * 100000),
-        version: 1,
-        versionNonce: Math.floor(Math.random() * 100000),
-        isDeleted: false,
-        boundElements: null,
-        updated: Date.now(),
-        link: null,
-        locked: false,
-        scale: [1, 1],
-        crop: null,
-      };
+        const element: Record<string, unknown> = {
+          id: `img-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+          type: "image",
+          fileId,
+          status: "saved",
+          x, y, width, height,
+          angle: 0,
+          strokeColor: "transparent",
+          backgroundColor: "transparent",
+          fillStyle: "solid",
+          strokeWidth: 1,
+          strokeStyle: "solid",
+          roughness: 0,
+          opacity: 100,
+          groupIds: [],
+          frameId: null,
+          roundness: null,
+          seed: Math.floor(Math.random() * 100000),
+          version: 1,
+          versionNonce: Math.floor(Math.random() * 100000),
+          isDeleted: false,
+          boundElements: null,
+          updated: Date.now(),
+          link: null,
+          locked: false,
+          scale: [1, 1],
+          crop: null,
+        };
+        elements.push(element);
+        if (index === 0) firstElement = element;
+      });
 
+      api.addFiles(files);
       applyingRemote.current = true;
-      api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), element] });
+      api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...elements] });
       setTimeout(() => {
         applyingRemote.current = false;
-        // Point everyone at it — the teacher's view is broadcast, so students come along.
-        api.scrollToContent([element], { fitToContent: true, animate: false, maxZoom: 1 });
+        // Start at the top of the document. Fitting every page at once would shrink the text to
+        // nothing; the teacher's view is broadcast, so students land on page one too.
+        if (firstElement) {
+          api.scrollToContent([firstElement], { fitToContent: true, animate: false, maxZoom: 1 });
+        }
         flush();
       }, 0);
     };
-    img.onerror = () => {
-      if (!cancelled) api.setToast({ message: "That picture could not be opened.", duration: 4000 });
-    };
-    img.src = insertImage.dataUrl;
+
+    void (async () => {
+      let sources: string[] = [];
+
+      if (insertDocument.kind === "pdf") {
+        try {
+          api.setToast({ message: "Opening the PDF…", duration: 60000 });
+          const { renderPdfToImages } = await import("../utils/pdfToImages");
+          const { pages, truncated } = await renderPdfToImages(insertDocument.dataUrl, ({ page, total }) => {
+            if (!cancelled) api.setToast({ message: `Adding page ${page} of ${total}…`, duration: 60000 });
+          });
+          if (cancelled) return;
+          sources = pages;
+          api.setToast(
+            truncated
+              ? { message: `Added the first ${pages.length} pages — a whole textbook does not fit on one board.`, duration: 6000 }
+              : null,
+          );
+        } catch {
+          if (!cancelled) {
+            api.setToast({ message: "That PDF could not be opened. Try sharing a photo of the page.", duration: 5000 });
+          }
+          return;
+        }
+      } else {
+        sources = [insertDocument.dataUrl];
+      }
+
+      if (cancelled || sources.length === 0) return;
+
+      const loaded = await Promise.all(sources.map(load));
+      if (cancelled) return;
+      const usable = loaded
+        .map((image, index) => ({ image, dataUrl: sources[index] }))
+        .filter((entry): entry is { image: HTMLImageElement; dataUrl: string } => entry.image !== null);
+
+      if (usable.length === 0) {
+        api.setToast({ message: "That file could not be opened as a picture.", duration: 4000 });
+        return;
+      }
+      place(usable);
+    })();
 
     return () => { cancelled = true; };
-  }, [api, readOnly, insertImage, flush]);
+  }, [api, readOnly, insertDocument, flush]);
 
   /** Show or hide the shape properties panel, in whichever layout Excalidraw is using. */
   const setPropsVisible = useCallback(

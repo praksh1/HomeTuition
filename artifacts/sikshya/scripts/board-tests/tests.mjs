@@ -4,7 +4,7 @@
  * Each entry is one property of a working lesson, written as the failure it guards against.
  * Every one of these has been broken in production at least once.
  */
-import { ERASER, PEN, RED_PNG, ink, near, openBoard, pump, selectTool, stroke } from "./harness.mjs";
+import { ERASER, PEN, RED_PNG, TWO_PAGE_PDF, ink, near, openBoard, pump, selectTool, stroke } from "./harness.mjs";
 
 export const tests = [
   {
@@ -55,7 +55,10 @@ export const tests = [
       await teacher.evaluate(
         (dataUrl) =>
           window.postMessage(
-            JSON.stringify({ type: "insert_image", image: { key: "test-1", dataUrl } }),
+            JSON.stringify({
+              type: "insert_document",
+              document: { key: "photo-test-1", dataUrl, kind: "image" },
+            }),
             "*",
           ),
         RED_PNG,
@@ -73,6 +76,51 @@ export const tests = [
         "at the same size, not as an empty frame",
         Math.abs(onStudent.red - onTeacher.red) < onTeacher.red * 0.1,
       );
+    },
+  },
+
+  {
+    name: "a shared PDF becomes pages on the board that students can see",
+    why:
+      "A PDF used to be broadcast and rendered separately by everyone: the teacher got a PDF " +
+      "viewer with the whiteboard hidden behind it, students got a broken half-view, and " +
+      "neither could tell they were looking at different things.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+
+      await teacher.evaluate(
+        (dataUrl) =>
+          window.postMessage(
+            JSON.stringify({
+              type: "insert_document",
+              document: { key: "pdf-test-1", dataUrl, kind: "pdf" },
+            }),
+            "*",
+          ),
+        TWO_PAGE_PDF,
+      );
+      // Loading the engine, rasterising two pages and placing them.
+      await teacher.waitForTimeout(6000);
+
+      const onTeacher = await ink(teacher);
+      assert("the pages rendered onto the teacher's board", onTeacher.red > 500);
+
+      await pump(teacher, student);
+      await student.waitForTimeout(600);
+      const onStudent = await ink(student);
+      assert("and reached the student as pictures, not an empty frame", onStudent.red > 500);
+      assert(
+        "showing the same thing",
+        Math.abs(onStudent.red - onTeacher.red) < onTeacher.red * 0.1,
+      );
+
+      // The point of pages-as-pictures: they can be drawn on like anything else.
+      await selectTool(teacher, PEN);
+      await stroke(teacher, 380, 300, 520, 420);
+      await pump(teacher, student);
+      const annotated = await ink(student);
+      assert("and can be annotated, with the ink reaching the student", annotated.n > 0);
     },
   },
 

@@ -61,6 +61,10 @@ function getDeploymentDomain() {
 function main() {
   console.log("Building static web export (browser-testable, no Expo Go needed)...");
 
+  // The whiteboard rasterises shared PDFs in the browser, and pdf.js loads its worker by URL.
+  // Copied into public/ so it ships with the site instead of being fetched from a CDN.
+  require("./copy-pdf-worker.js");
+
   // An explicit API URL wins; only fall back to the single-origin model if it is absent.
   const apiUrl = getApiUrl();
   const domain = apiUrl ? null : getDeploymentDomain();

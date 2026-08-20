@@ -13,6 +13,7 @@
 - [expo-notifications permission type mismatch](expo-notifications-perm-type.md) — duplicate expo-modules-core versions make NotificationPermissionsStatus fields inaccessible via normal property access; cast through `unknown` to bypass structural type check.
 - [scripts package rootDir fix](scripts-rootdir-fix.md) — scripts/src/seed.ts must import lib/db via `@workspace/db/schema` (workspace package), not a relative `../../lib/db/src/` path; the latter violates rootDir and breaks tsc typecheck.
 - [origin points at the wrong repository](git-remote-is-hometuition.md) — on the owner's Windows copy `origin` is the abandoned Paathshala repo and work goes to the `hometuition` remote; a fresh clone has one correct `origin`. Run `git remote -v` before pushing.
+- [Use pdf.js's legacy build, and serve its worker as .js](pdfjs-legacy-build.md) — the modern bundle needs JS that old Android browsers lack, and a worker served as `.mjs` is refused for its MIME type.
 - [The API URL is baked into the web build, and the docs had the wrong one](deploy-url-baked-in.md) — a wrong `EXPO_PUBLIC_API_URL` compiles a dead backend into the site and fails silently; verify the domain before every build.
 - [Setting PAYMENT_WEBHOOK_SECRET will break every booking](payment-mode-trap.md) — payment mode is inferred from config; no provider is integrated yet, so setting it declines every booking.
 - [Daily's built-in chat is disabled on purpose](one-chat-per-class.md) — re-enabling it splits a mixed browser/phone class into two conversations that cannot see each other.

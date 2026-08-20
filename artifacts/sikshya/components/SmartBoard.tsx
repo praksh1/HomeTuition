@@ -30,7 +30,7 @@ interface Props {
   onConsumeUpdates: () => void;
   onSceneChange: (changed: unknown[], files: unknown[]) => void;
   onViewportChange?: (view: BoardViewport) => void;
-  insertImage?: { key: string; dataUrl: string } | null;
+  insertDocument?: { key: string; dataUrl: string; kind: "image" | "pdf" } | null;
   viewport?: BoardViewport | null;
   onClearAll?: () => void;
   clearedAt?: number;
@@ -48,7 +48,7 @@ export default function SmartBoard({
   onSceneChange,
   onViewportChange,
   viewport = null,
-  insertImage = null,
+  insertDocument = null,
   onClearAll,
   clearedAt = 0,
   theme = "light",
@@ -86,9 +86,9 @@ export default function SmartBoard({
   }, [clearedAt, post]);
 
   useEffect(() => {
-    if (!insertImage || !ready.current) return;
-    post({ type: "insert_image", image: insertImage });
-  }, [insertImage, post]);
+    if (!insertDocument || !ready.current) return;
+    post({ type: "insert_document", document: insertDocument });
+  }, [insertDocument, post]);
 
   useEffect(() => {
     if (!viewport) return;

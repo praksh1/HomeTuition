@@ -262,11 +262,12 @@ Each step ships on its own and leaves the product working. Do not do them all at
    which is the one thing here that cannot be verified from a laptop.
 6. **Handwriting conversion** — attempted with on-device OCR, and withdrawn: see section 4.
    Do this properly (ML Kit or MyScript) or not at all.
-7. **Make shared material a first-class element.** An uploaded image is currently drawn
-   *behind* the board and annotated over the top, which works because the canvas background is
-   transparent, but the photo cannot be moved or scaled with the rest of the scene, and it is
-   not part of what a student's viewport is fitted to. Turning it into an Excalidraw image
-   element fixes both.
+7. **Make shared material a first-class element** — done. Photos and PDF pages are Excalidraw
+   image elements, placed by the board itself rather than the screens around it, so the phone
+   apps get the same behaviour through the WebView. PDFs are rasterised on the sharer's device
+   with pdf.js's *legacy* build; students receive plain pictures and never run a PDF engine.
+   Still open: on the phone apps a picked PDF is a `file://` URI with no bytes to hand over,
+   so it opens locally with a banner saying the class cannot see it.
 8. **Re-wire shape recognition** to Excalidraw's freehand commit — see section 1.
 9. **Persist board state** so a server restart does not lose a lesson.
 10. **Nepali handwriting**, when there is a budget for it.
