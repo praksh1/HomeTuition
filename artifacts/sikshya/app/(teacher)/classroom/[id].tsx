@@ -88,6 +88,14 @@ export default function Classroom() {
   const [chatMsg, setChatMsg] = useState("");
   const [isLandscape, setIsLandscape] = useState(false);
   const [videoExpanded, setVideoExpanded] = useState(false);
+  /**
+   * The board taking the whole pane, with the call collapsed out of the way.
+   *
+   * On a phone the board was a strip a few centimetres tall — unusable for teaching, and the
+   * only expand control on the screen belonged to the video. The call is hidden rather than
+   * unmounted: tearing down the Daily frame would drop the teacher out of their own class.
+   */
+  const [boardExpanded, setBoardExpanded] = useState(false);
   /** Upload options stay folded away until asked for — they are occasional actions, and as
    * two permanent full-width buttons they were consuming screen the video should have. */
   const [materialMenuOpen, setMaterialMenuOpen] = useState(false);
@@ -484,7 +492,7 @@ export default function Classroom() {
             browsers break the embedded call out into a native Picture-in-Picture window that
             floats above all DOM content regardless of z-index, so removing it from layout
             is the only reliable way to keep it from clashing with the chat tab. */}
-        <View style={[s.videoArea, sideBySide && s.videoAreaSide, videoExpanded && s.videoAreaExpanded, mode === "chat" && s.videoAreaHidden]}>
+        <View style={[s.videoArea, sideBySide && s.videoAreaSide, videoExpanded && s.videoAreaExpanded, (mode === "chat" || boardExpanded) && s.videoAreaHidden]}>
           {roomUrl ? (
             <DailyEmbed chatMessages={messages} onSendChat={sendChat} roomUrl={roomUrl} meetingToken={meetingToken} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
           ) : (
@@ -500,13 +508,23 @@ export default function Classroom() {
           </TouchableOpacity>
         </View>
         {!videoExpanded && (
-        <View style={[s.boardArea, sideBySide && s.boardAreaSide]}>
+        <View style={[s.boardArea, sideBySide && s.boardAreaSide, boardExpanded && s.boardAreaExpanded]}>
         {/* Whiteboard. Scoped to its own boundary so a board rendering failure shows a
             recoverable message here instead of unmounting the app — which would also tear
             down the video call the class is running on. */}
         {mode === "whiteboard" && (
           <ErrorBoundary FallbackComponent={WhiteboardFallback}>
           <View style={s.whiteboardArea}>
+            {/* Mirrors the video's own expand control, so whichever one the teacher needs can
+                have the screen. */}
+            <TouchableOpacity
+              style={s.boardExpandBtn}
+              onPress={() => setBoardExpanded((v) => !v)}
+              activeOpacity={0.8}
+            >
+              <Feather name={boardExpanded ? "minimize-2" : "maximize-2"} size={13} color="#fff" />
+              <Text style={s.boardExpandText}>{boardExpanded ? "Show call" : "Full board"}</Text>
+            </TouchableOpacity>
             {/* Material controls. Collapsed to a single slim row by default: uploading happens
                 once or twice a lesson, so it does not deserve permanent space that the video
                 and the board itself need. Tapping it reveals the actual upload options. */}
@@ -811,6 +829,15 @@ const s = StyleSheet.create({
   permissionGate: { alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
   permissionGateText: { color: "#ccc", fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
   boardArea: { flex: 1, overflow: "hidden" },
+  // Takes the whole content area when the call is collapsed away.
+  boardAreaExpanded: { flex: 1 },
+  boardExpandBtn: {
+    position: "absolute", top: 8, right: 14, zIndex: 60,
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.65)",
+  },
+  boardExpandText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#fff" },
   // The board is the thing being judged, so it gets the larger share when side by side.
   boardAreaSide: { flex: 1.4 },
   chatCover: { backgroundColor: "#0A0A0A", zIndex: 9999, position: "relative" },

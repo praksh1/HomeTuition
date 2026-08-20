@@ -48,6 +48,8 @@ export default function StudentClassroom() {
   const [chatMsg, setChatMsg] = useState("");
   const [mode, setMode] = useState<Mode>("board");
   const [videoExpanded, setVideoExpanded] = useState(false);
+  /** The board taking the whole pane. The call is hidden, never unmounted — see the video pane. */
+  const [boardExpanded, setBoardExpanded] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
@@ -264,7 +266,7 @@ export default function StudentClassroom() {
             browsers break the embedded call out into a native Picture-in-Picture window that
             floats above all DOM content regardless of z-index, so removing it from layout
             is the only reliable way to keep it from clashing with the chat tab. */}
-        <View style={[s.videoArea, videoExpanded && s.videoAreaExpanded, mode === "chat" && s.videoAreaHidden]}>
+        <View style={[s.videoArea, videoExpanded && s.videoAreaExpanded, (mode === "chat" || boardExpanded) && s.videoAreaHidden]}>
           {roomUrl ? (
             <DailyEmbed
               roomUrl={roomUrl}
@@ -310,6 +312,16 @@ export default function StudentClassroom() {
 
         {mode === "board" && !waitingForTeacher && (
           <View style={s.boardArea}>
+            {/* Reading a teacher's working on a phone needs the screen. The call is collapsed
+                rather than left, so nothing has to be rejoined afterwards. */}
+            <TouchableOpacity
+              style={s.boardExpandBtn}
+              onPress={() => setBoardExpanded((v) => !v)}
+              activeOpacity={0.8}
+            >
+              <Feather name={boardExpanded ? "minimize-2" : "maximize-2"} size={13} color="#fff" />
+              <Text style={s.boardExpandText}>{boardExpanded ? "Show call" : "Full board"}</Text>
+            </TouchableOpacity>
             {/* The teacher's board, read-only.
                 Students see the same Excalidraw scene the teacher is drawing on, rather than a
                 flattened picture of it, so panning and zooming to read something small is now
@@ -397,6 +409,13 @@ const s = StyleSheet.create({
   modeText: { fontSize: 12, fontFamily: "Inter_500Medium", color: "#666" },
   modeTextActive: { color: "#fff" },
   boardArea: { flex: 1, marginHorizontal: 12, marginBottom: 12, borderRadius: 14, backgroundColor: "#fff", overflow: "hidden" },
+  boardExpandBtn: {
+    position: "absolute", top: 8, right: 8, zIndex: 60,
+    flexDirection: "row", alignItems: "center", gap: 5,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14,
+    backgroundColor: "rgba(0,0,0,0.65)",
+  },
+  boardExpandText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#fff" },
   boardWaiting: { alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 28, backgroundColor: "#141414" },
   boardWaitingTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#DDD", textAlign: "center" },
   boardWaitingBody: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#888", textAlign: "center", lineHeight: 19 },

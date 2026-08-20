@@ -190,12 +190,12 @@ is closed by a test or by the owner seeing it work.
 | E1 | A photo the teacher shared arrived as an empty picture frame; resizing it gave students a bigger empty frame | **FIXED** |
 | E2 | A shared PDF hid the whiteboard for the teacher and showed students a broken half-view neither could see was different | **FIXED** by E3 |
 | E3 | PDF pages must live *on* the board, annotatable like anything else | **FIXED on web** — native still opens locally, see below |
-| E4 | A teacher can open three concurrent sessions; starting a second tells students the first has ended while the teacher sees it running | queued — correctness, rated above the cosmetic items |
-| E5 | Teacher dashboard lists upcoming sessions, but Sessions → Upcoming is empty | queued |
-| E6 | The whiteboard is live and shared before the teacher has started the call | queued |
-| E7 | On Android Chrome the board is too small to teach on, and only the video can be maximised | queued |
+| E4 | A teacher can open three concurrent sessions; starting a second tells students the first has ended while the teacher sees it running | **FIXED** |
+| E5 | Teacher dashboard lists upcoming sessions, but Sessions → Upcoming is empty | **FIXED** — cause not reproducible without the live database, so the class of bug was removed |
+| E6 | The whiteboard is live and shared before the teacher has started the call | **FIXED** |
+| E7 | On Android Chrome the board is too small to teach on, and only the video can be maximised | **FIXED** — needs your eyes on a real phone |
 | E8 | A student who drops takes a long time to rejoin, and sometimes cannot | queued |
-| E9 | "The teacher has ended this session" reaches students who left long before | queued |
+| E9 | "The teacher has ended this session" reaches students who left long before | **FIXED** |
 | E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | queued |
 | E11 | Teachers cannot see who follows them; students cannot see who they follow | queued |
 | E12 | Use Daily's in-call chat instead of the app's own | queued — **see the caveat below** |
