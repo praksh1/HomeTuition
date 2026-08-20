@@ -65,11 +65,12 @@ jobs:
           npm i -g playwright
           npx playwright install --with-deps chromium
 
-      # `continue-on-error` while these prove themselves on CI hardware, which is slower than
-      # the machine they were written on. Once a few runs have passed, delete that line: a
-      # broken whiteboard should stop the deploy, not annotate it.
+      # These block the deploy. They were non-blocking for one run while it was unknown
+      # whether their timeouts held up on CI hardware, which is slower than the machine they
+      # were written on; that run passed all twenty checks in 44 seconds, so a broken
+      # whiteboard now stops the deploy rather than annotating it. If one ever fails for a
+      # reason that is not a real regression, fix the test — do not restore this exemption.
       - name: Whiteboard tests
-        continue-on-error: true
         run: pnpm --filter @workspace/sikshya run test:board
 
       # Until the Cloudflare token is added, everything above still runs — so the code is
