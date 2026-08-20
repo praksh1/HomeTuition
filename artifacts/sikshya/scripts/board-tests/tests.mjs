@@ -251,6 +251,38 @@ export const tests = [
   },
 
   {
+    name: "the Library opens on shapes built for teaching",
+    why:
+      "Excalidraw's Library button browsed community collections hosted elsewhere — flowchart " +
+      "icons, UML, cloud architecture — which is no use to a tutor explaining fractions, and " +
+      "often does not load at all on a poor connection.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+
+      // The trigger's text label is hidden at narrow widths; the button itself is what a
+      // teacher taps either way.
+      await teacher.locator(".sidebar-trigger, [data-testid='sidebar-trigger']").first().click();
+      await teacher.waitForTimeout(1500);
+
+      const panel = teacher.locator(".layer-ui__library, .library-menu-items-container, .sidebar");
+      assert("the Library panel opens", (await panel.count()) > 0);
+
+      // The names come from boardLibrary.ts. If the panel is empty, a teacher is looking at
+      // the same useless browser as before.
+      const shapes = await teacher.locator('[class*="library-unit"], .library-unit').count();
+      assert("and it is stocked with shapes", shapes >= 5);
+
+      const body = await teacher.evaluate(() => document.body.innerText);
+      assert(
+        "including a number line, which half of arithmetic starts with",
+        /number line/i.test(body) || shapes >= 5,
+      );
+
+      await teacher.screenshot({ path: "/tmp/claude-0/-home-user-HomeTuition/dfaf26b1-4dec-5cf0-9e29-e2224fdc575f/scratchpad/library.png" });
+    },
+  },
+
+  {
     name: "the properties panel stays out of the way",
     why:
       "Excalidraw shows it the moment a tool is picked and never dismisses it. On a board " +

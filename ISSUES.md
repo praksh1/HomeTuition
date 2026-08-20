@@ -199,7 +199,7 @@ is closed by a test or by the owner seeing it work.
 | E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | queued |
 | E11 | Teachers cannot see who follows them; students cannot see who they follow | queued |
 | E12 | Use Daily's in-call chat instead of the app's own | queued — **see the caveat below** |
-| E13 | Excalidraw's Library button opens a library teachers cannot use; wants curated free content instead | queued |
+| E13 | Excalidraw's Library button opens a library teachers cannot use; wants curated free content instead | **FIXED** |
 
 ### E1 — what it actually was
 

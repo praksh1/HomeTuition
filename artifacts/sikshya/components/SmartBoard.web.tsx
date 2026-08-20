@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Excalidraw, MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
+import { teachingLibrary } from "./boardLibrary";
 
 /**
  * The classroom whiteboard, on Excalidraw.
@@ -712,6 +713,15 @@ export default function SmartBoard({
 
   const initialData = useMemo(
     () => ({
+      /**
+       * The Library panel opens on shapes built for teaching.
+       *
+       * Excalidraw's own button browses community collections hosted on excalidraw.com —
+       * flowchart icons, UML, cloud architecture — which is no use to a tutor explaining
+       * fractions, and often does not load at all on a poor connection. See boardLibrary.ts;
+       * adding a shape there is all it takes to add one here.
+       */
+      libraryItems: teachingLibrary(),
       appState: {
         // Transparent rather than white: an uploaded photo or worksheet is rendered behind the
         // board, and a painted background would hide the very thing being annotated.
