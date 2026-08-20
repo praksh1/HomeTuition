@@ -52,6 +52,15 @@ export default function StudentClassroom() {
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
+  /**
+   * Set the moment this student leaves.
+   *
+   * Leaving calls `router.back()`, but a navigation stack often keeps the screen mounted — so
+   * the classroom socket stayed connected and, when the teacher later ended the class, this
+   * screen popped up "The teacher has ended this session" over whatever the student was doing,
+   * sometimes many minutes after they had gone.
+   */
+  const hasLeft = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
@@ -84,6 +93,7 @@ export default function StudentClassroom() {
   };
 
   useEffect(() => {
+    if (hasLeft.current) return;
     if (sessionStatus === "completed" || sessionStatus === "cancelled") {
       // Clear the room first: DailyEmbed releases the camera and microphone in its effect
       // cleanup, and dropping the URL runs that immediately rather than waiting for this
@@ -135,6 +145,7 @@ export default function StudentClassroom() {
   // Called when the student clicks Daily's native Leave button — no confirmation needed
   // since the user already made an explicit in-call gesture. Redirect instantly.
   const handleDailyLeft = useCallback(() => {
+    hasLeft.current = true;
     setRoomUrl(null);
     setMeetingToken(null); // release camera/mic before navigating away
     router.back();
@@ -142,6 +153,7 @@ export default function StudentClassroom() {
 
   const leaveSession = () => {
     const doLeave = () => {
+      hasLeft.current = true;
       setRoomUrl(null);
     setMeetingToken(null); // release camera/mic before navigating away
       router.back();

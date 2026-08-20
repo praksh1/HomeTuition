@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
@@ -33,18 +33,27 @@ export default function TeacherSessions() {
   const teacher = user as Teacher;
   const [sessions, setSessions] = useState<Session[]>([]);
   const [filter, setFilter] = useState<FilterTab>("all");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadSessions();
-    }, [])
-  );
-
-  const loadSessions = async () => {
+  /**
+   * Each tab asks the server for that status, rather than pulling a slice of everything and
+   * sifting it here.
+   *
+   * The old version fetched the hundred most recent sessions and filtered them in the app, so
+   * a teacher with more history than that saw tabs that were simply wrong — an Upcoming tab
+   * reporting "No sessions yet" while the dashboard, which asks the server for upcoming
+   * sessions properly, listed several. Whatever else was going on, a list that can only be
+   * right for teachers with little history is not a list worth keeping.
+   */
+  const loadSessions = useCallback(async () => {
     if (!teacher?.userId) return;
+    setLoading(true);
+    setLoadError(false);
+    const statusParam = filter === "all" ? "" : `&status=${filter}`;
     try {
       const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string }[] }>(
-        `/sessions?teacherId=${teacher.userId}&limit=100`
+        `/sessions?teacherId=${teacher.userId}${statusParam}&limit=100`
       );
       setSessions(res.sessions.map((s) => ({
         id: String(s.id),
@@ -59,8 +68,21 @@ export default function TeacherSessions() {
         price: s.price,
         status: s.status as Session["status"],
       })));
-    } catch (_e) {}
-  };
+    } catch (_e) {
+      // An empty list and a failed request used to look identical: both showed "No sessions
+      // yet", so a teacher whose classes had not loaded was told they had none.
+      setLoadError(true);
+      setSessions([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [teacher?.userId, filter]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void loadSessions();
+    }, [loadSessions]),
+  );
 
   const TABS: { key: FilterTab; label: string }[] = [
     { key: "all", label: "All" },
@@ -69,7 +91,8 @@ export default function TeacherSessions() {
     { key: "completed", label: "Completed" },
   ];
 
-  const filtered = filter === "all" ? sessions : sessions.filter((s) => s.status === filter);
+  // The server has already filtered by status; sifting again here is what made the tab wrong.
+  const filtered = sessions;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -112,9 +135,33 @@ export default function TeacherSessions() {
           />
         )}
         ListEmptyComponent={
+          loading ? (
+            <View style={styles.empty}>
+              <ActivityIndicator color={colors.primary} />
+            </View>
+          ) : loadError ? (
+            <View style={styles.empty}>
+              <Feather name="wifi-off" size={44} color={colors.border} />
+              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+                Your sessions could not be loaded
+              </Text>
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                This is a connection problem, not an empty diary. Check your internet and try again.
+              </Text>
+              <TouchableOpacity
+                style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
+                onPress={() => void loadSessions()}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.emptyBtnText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
           <View style={styles.empty}>
             <Feather name="calendar" size={48} color={colors.border} />
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No sessions yet</Text>
+            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+              {filter === "all" ? "No sessions yet" : `No ${filter} sessions`}
+            </Text>
             <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
               Create your first session to start teaching
             </Text>
@@ -126,6 +173,7 @@ export default function TeacherSessions() {
               <Text style={styles.emptyBtnText}>Create Session</Text>
             </TouchableOpacity>
           </View>
+          )
         }
       />
     </View>
