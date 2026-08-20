@@ -3,6 +3,7 @@ import { Excalidraw, MainMenu, WelcomeScreen } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 import { teachingLibrary } from "./boardLibrary";
+import { isShareableSize, shrinkForSharing } from "../utils/boardImage";
 
 /**
  * The classroom whiteboard, on Excalidraw.
@@ -70,6 +71,22 @@ const MAX_ZOOM = 10;
 const BOARD_CSS = `
 .sikshya-board--hide-props .App-menu__left { display: none !important; }
 .sikshya-board .App-menu__left { max-height: calc(100% - 6rem); }
+
+/*
+ * On a phone these two buttons must not be in the toolbar row.
+ *
+ * Measured on an iPhone-sized viewport: Excalidraw's own toolbar is 373px, these add 70px,
+ * and the row is centred in a 393px screen — so 27px is lost off *each* side and the
+ * Selection tool ends up at x = -23, entirely off-screen. A teacher on a phone could not
+ * select, move or resize anything, which is most of what the board is for.
+ *
+ * Nothing is lost by hiding them here: Excalidraw's mobile layout already carries both.
+ * "Clear board for everyone" is in the hamburger menu, and the style sheet opens from the
+ * palette in the bottom bar. They exist at all because on a *laptop* the properties panel
+ * covers a quarter of the canvas and nothing dismisses it — a problem the mobile layout,
+ * which uses a dismissable bottom sheet, does not have.
+ */
+.excalidraw--mobile .sikshya-board__top-right { display: none !important; }
 `;
 
 type ExcalidrawAppState = {
@@ -229,6 +246,27 @@ export default function SmartBoard({
   const sentVersions = useRef<Map<string, number>>(new Map());
   /** Pictures already put on the wire. They are large and never change once created. */
   const sentFiles = useRef<Set<string>>(new Set());
+  /**
+   * Pictures being brought down to a size the class can receive, and the results.
+   *
+   * Excalidraw's own image button puts the picked file straight into the scene, untouched.
+   * A phone photo is routinely 2-5 MB, and measured against the real server that means the
+   * student gets an empty frame at 2 MB and the teacher's board connection is closed
+   * outright at 3 MB. So an oversized picture is re-encoded before it goes on the wire, and
+   * its element is held back until it is ready — an image element without its picture is
+   * exactly the empty frame we are trying to avoid.
+   */
+  const shrinking = useRef<Set<string>>(new Set());
+  const shareable = useRef<Map<string, BinaryFile>>(new Map());
+  /** Pictures that could not be made small enough. Reported once, then never retried. */
+  const unshareable = useRef<Set<string>>(new Set());
+  /**
+   * Always points at the current `flush`.
+   *
+   * The re-encode above finishes after `flush` has already returned, and it is declared
+   * before it, so it cannot call it directly without capturing a stale copy.
+   */
+  const flushRef = useRef<() => void>(() => {});
   const insertedImages = useRef<Set<string>>(new Set());
   const pendingSync = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingView = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -247,6 +285,49 @@ export default function SmartBoard({
    */
   const applyingRemote = useRef(false);
 
+  /**
+   * The version of a picture that may go on the wire, or null while one is being made.
+   *
+   * Kicks off the re-encode the first time it is asked about a picture that is too big, and
+   * schedules another sync pass for when it lands.
+   */
+  const readyToShare = useCallback(
+    (fileId: string, source: BinaryFile): BinaryFile | null => {
+      const already = shareable.current.get(fileId);
+      if (already) return already;
+
+      const dataUrl = typeof source.dataURL === "string" ? source.dataURL : "";
+      if (!dataUrl) return null;
+      if (isShareableSize(dataUrl)) return source;
+
+      if (!shrinking.current.has(fileId)) {
+        shrinking.current.add(fileId);
+        void shrinkForSharing(dataUrl)
+          .then((smaller) => {
+            shareable.current.set(fileId, { ...source, mimeType: "image/jpeg", dataURL: smaller });
+          })
+          .catch(() => {
+            // Beyond saving. Say so once, rather than leaving the teacher believing the class
+            // can see something they cannot.
+            unshareable.current.add(fileId);
+            api?.setToast({
+              message: "That picture is too large to share with the class. Try a smaller one.",
+              duration: 6000,
+            });
+          })
+          .finally(() => {
+            shrinking.current.delete(fileId);
+            // The element is still held back waiting on this, and Excalidraw will not fire
+            // another change on its own — nothing on the board moved. So ask for one more
+            // pass explicitly, or the picture would sit here until the teacher next drew.
+            if (!pendingSync.current) pendingSync.current = setTimeout(() => flushRef.current(), SYNC_INTERVAL_MS);
+          });
+      }
+      return null;
+    },
+    [api],
+  );
+
   // --- outgoing: what changed since last time ---
   const flush = useCallback(() => {
     pendingSync.current = null;
@@ -255,30 +336,40 @@ export default function SmartBoard({
     // Deleted elements included, deliberately: erasing is an edit, and a board that only ever
     // reports additions leaves every student looking at work the teacher rubbed out.
     const elements = api.getSceneElementsIncludingDeleted();
+    const available = api.getFiles();
     const changed: unknown[] = [];
-    for (const el of elements) {
-      const last = sentVersions.current.get(el.id);
-      if (last === el.version) continue;
-      sentVersions.current.set(el.id, el.version);
-      changed.push(el);
-    }
-
     // An image element is a frame and a reference; the picture itself lives in a separate map
     // and has to travel with it, once. Without this a student gets the frame and no picture,
     // and resizing it on the teacher's board just gives them a bigger empty frame.
     const files: unknown[] = [];
-    const available = api.getFiles();
-    for (const el of changed as ExcalidrawElement[]) {
+
+    for (const el of elements) {
+      const last = sentVersions.current.get(el.id);
+      if (last === el.version) continue;
+
       const fileId = typeof el.fileId === "string" ? el.fileId : null;
-      if (!fileId || sentFiles.current.has(fileId)) continue;
-      const file = available[fileId];
-      if (!file) continue;
-      sentFiles.current.add(fileId);
-      files.push(file);
+      if (fileId && !sentFiles.current.has(fileId) && !unshareable.current.has(fileId)) {
+        const source = available[fileId];
+        // The bytes are not in the scene yet; leave the element unsent and pick it up on a
+        // later pass rather than sending a frame with nothing behind it.
+        if (!source) continue;
+
+        const ready = readyToShare(fileId, source);
+        // Still being re-encoded. Holding the element back is the point: the student would
+        // otherwise render an empty frame until the picture caught up.
+        if (!ready) continue;
+
+        sentFiles.current.add(fileId);
+        files.push(ready);
+      }
+
+      sentVersions.current.set(el.id, el.version);
+      changed.push(el);
     }
 
     if (changed.length > 0) onSceneChange(changed, files);
-  }, [api, readOnly, onSceneChange]);
+  }, [api, readOnly, onSceneChange, readyToShare]);
+  flushRef.current = flush;
 
   // --- outgoing: where the teacher is looking ---
   const publishViewport = useCallback(() => {
@@ -665,7 +756,10 @@ export default function SmartBoard({
   const renderTopRightUI = useCallback(() => {
     if (readOnly) return null;
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      // The class name is what hides this on a phone — see BOARD_CSS. It cannot be a
+      // conditional render here, because this callback does not re-run when the editor
+      // changes layout.
+      <div className="sikshya-board__top-right" style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <button
           type="button"
           onClick={() => setPropsVisible(!showProps)}

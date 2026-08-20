@@ -9,7 +9,8 @@
     "start": "node --env-file-if-exists=../../.env --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
-    "test:notifications": "node scripts/notification-tests/run.mjs"
+    "test:notifications": "node scripts/notification-tests/run.mjs",
+    "test:board-limits": "node scripts/board-limits/run.mjs"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

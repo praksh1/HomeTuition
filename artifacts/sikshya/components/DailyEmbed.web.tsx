@@ -46,6 +46,9 @@ interface Props {
  */
 const JOIN_TIMEOUT_MS = 20000;
 
+/** Height of the strip above the call that holds our own chat control. */
+const CHAT_STRIP_PX = 38;
+
 /** Shown when the call has not come up in time. Not an error — a state, with a way out. */
 const SLOW_JOIN = "The video call is taking longer than usual to connect.";
 
@@ -369,7 +372,19 @@ export default function DailyEmbed({
     ),
   );
 
-  // Deliberately clear of Prebuilt's own controls, which sit along the bottom of the iframe.
+  /**
+   * The chat button lives in a strip of our own above the call, not floating over it.
+   *
+   * It used to sit at the top-right corner of the iframe, on the assumption that Prebuilt
+   * keeps its controls along the bottom. That is true on a laptop and false on a phone: a
+   * recording from a real iPhone shows this button sitting directly on top of Prebuilt's
+   * Leave button and its fullscreen control, all three overlapping. Aiming for Chat and
+   * hitting Leave ends the teacher's class.
+   *
+   * Reserving a strip costs a little height and cannot collide with anything, now or when
+   * Daily next changes its layout — which is worth more than the pixels, given that guessing
+   * where a third-party UI puts its buttons is what caused this.
+   */
   const chatButton = h(
     "button",
     {
@@ -378,8 +393,8 @@ export default function DailyEmbed({
       "aria-label": unseen > 0 ? `Open chat, ${unseen} unread` : "Open chat",
       style: {
         position: "absolute",
-        top: "12px",
-        right: "12px",
+        top: "6px",
+        right: "10px",
         zIndex: 3,
         display: "flex",
         alignItems: "center",
@@ -469,7 +484,11 @@ export default function DailyEmbed({
         overflow: "hidden",
       },
     },
-    h("div", { key: "frame", ref: containerRef, style: { position: "absolute", inset: 0 } }),
+    h("div", {
+      key: "frame",
+      ref: containerRef,
+      style: { position: "absolute", top: showChat ? CHAT_STRIP_PX : 0, right: 0, bottom: 0, left: 0 },
+    }),
     joinError ? errorOverlay : null,
     showChat ? (chatOpen ? chatPanel : chatButton) : null,
   );

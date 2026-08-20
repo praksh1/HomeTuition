@@ -78,7 +78,7 @@ export default function Classroom() {
   const { width: winW } = useWindowDimensions();
   const sideBySide = winW >= 900;
 
-  const { connected, accessDenied, presenceCount, messages, sessionStatus, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendBoardView, sendChat, sendBoardClear, clearMaterial } =
+  const { connected, accessDenied, presenceCount, messages, sessionStatus, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendBoardView, sendChat, sendBoardClear, clearMaterial, materialRejected, clearMaterialRejected } =
     useClassroomSocket({ sessionId: id ?? "", name: teacherName, role: "teacher" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -309,7 +309,11 @@ export default function Classroom() {
     if (Platform.OS === "web") {
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = "application/pdf";
+      // The extension matters as much as the MIME type. On iOS Safari a bare
+      // `application/pdf` leaves every PDF greyed out in the Files browser — the picker
+      // matches on the file's type identifier, and without `.pdf` it disables the very
+      // files this button exists to choose. Reported from a real iPhone.
+      input.accept = "application/pdf,.pdf";
       input.onchange = () => {
         const file = input.files?.[0];
         if (!file) return;
@@ -618,6 +622,17 @@ export default function Classroom() {
               </View>
             )}
 
+            {/* The server refusing a picture is the teacher's problem to know about: without
+                this they see it on their own board and assume the class does too. */}
+            {materialRejected && (
+              <View style={s.uploadErrorBar}>
+                <Feather name="alert-circle" size={14} color="#FCA5A5" />
+                <Text style={s.uploadErrorText}>{materialRejected}</Text>
+                <TouchableOpacity onPress={clearMaterialRejected} activeOpacity={0.7}>
+                  <Feather name="x" size={14} color="#FCA5A5" />
+                </TouchableOpacity>
+              </View>
+            )}
             {uploadError && (
               <View style={s.uploadErrorBar}>
                 <Feather name="alert-circle" size={15} color="#FCA5A5" />

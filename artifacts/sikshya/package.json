@@ -14,7 +14,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "test:notifications": "node scripts/notification-tests/browser.mjs",
-    "test:call-chat": "node scripts/call-chat-tests/run.mjs"
+    "test:call-chat": "node scripts/call-chat-tests/run.mjs",
+    "test:phone": "node scripts/phone-tests/run.mjs",
+    "test:photo": "node scripts/phone-tests/photo.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

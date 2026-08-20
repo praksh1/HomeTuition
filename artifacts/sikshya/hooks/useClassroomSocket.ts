@@ -211,6 +211,15 @@ interface Result {
   sendSceneUpdate: (elements: unknown[], files?: unknown[]) => void;
   floatingReactions: FloatingReaction[];
   material: BoardMaterial | null;
+  /**
+   * Set when the server refuses a picture for being too large, and cleared once shown.
+   *
+   * The server has always answered `material_rejected` and nothing has ever listened, so the
+   * teacher saw the picture on their own board and had no way of knowing the class could not.
+   * That is the worst version of this bug: it looks like it worked.
+   */
+  materialRejected: string | null;
+  clearMaterialRejected: () => void;
   /** The coordinate space the teacher's strokes are drawn in; null until they publish it. */
   boardSize: BoardSize | null;
   /** Teacher only: publish the drawing surface size so viewers can scale strokes correctly. */
@@ -238,6 +247,8 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   const [sceneUpdates, setSceneUpdates] = useState<SceneDelta[]>([]);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
   const [material, setMaterial] = useState<BoardMaterial | null>(null);
+  const [materialRejected, setMaterialRejected] = useState<string | null>(null);
+  const clearMaterialRejected = useCallback(() => setMaterialRejected(null), []);
   const [boardSize, setBoardSize] = useState<BoardSize | null>(null);
   const [boardView, setBoardView] = useState<BoardViewport | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
@@ -360,6 +371,11 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
           break;
         case "reaction":
           addFloating(msg.emoji as string, msg.senderName as string);
+          break;
+        case "material_rejected":
+          setMaterialRejected(
+            "That picture was too large to share, so the class cannot see it. Try a smaller one.",
+          );
           break;
         case "material_set":
           setMaterial((prev) => toMaterial(msg.kind, msg.dataUrl) ?? prev);
@@ -536,6 +552,8 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     sendSceneUpdate,
     floatingReactions,
     material,
+    materialRejected,
+    clearMaterialRejected,
     sessionStatus,
     sendChat,
     sendReaction,

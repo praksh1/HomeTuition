@@ -112,6 +112,12 @@ jobs:
           HEARTBEAT_MS: 3000
         run: pnpm --filter @workspace/api-server run test:notifications
 
+      # The size at which a shared picture stops reaching the class, and the size at which it
+      # closes the teacher's board connection. Pinned down because a teacher hit both from an
+      # iPhone and the app said nothing either time.
+      - name: What the board does with a big picture
+        run: pnpm --filter @workspace/api-server run test:board-limits
+
       # The half that was actually missing: the app never listened. Only a real browser
       # running the real bundle can show that it does. Built against the local API, so this
       # build is deliberately thrown away and the deploy build made fresh below.
@@ -145,6 +151,15 @@ jobs:
       # reason that is not a real regression, fix the test — do not restore this exemption.
       - name: Whiteboard tests
         run: pnpm --filter @workspace/sikshya run test:board
+
+      # The same board at the size it is actually taught on. These exist because the board
+      # looked right on a laptop while a teacher on an iPhone had no Selection tool at all —
+      # it was rendered off the left edge of the screen. A desktop-sized test cannot see that.
+      - name: Whiteboard on a phone
+        run: pnpm --filter @workspace/sikshya run test:phone
+
+      - name: A phone photo reaches the class
+        run: pnpm --filter @workspace/sikshya run test:photo
 
       # The class conversation lives inside the call now rather than behind a tab that hid the
       # video. This drives the real component in a real browser, including the state a student

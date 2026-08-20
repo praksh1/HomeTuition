@@ -390,6 +390,85 @@ red.
 
 ---
 
+## Reported 2026-08-20 (iPhone, Safari — five screen recordings)
+
+The same teacher, this time on an iPhone. Three problems reported, and a fourth found in the
+footage. Labelled P for phone; F is already taken further down this file.
+
+| # | Issue | Status |
+|---|-------|--------|
+| P1 | The whiteboard toolbar is cut off on iPhone — tools missing | **FIXED** |
+| P2 | A photo shared from the iPhone reached the student as an empty picture frame | **partly fixed — read below** |
+| P3 | PDFs are greyed out in the iPhone file picker | **fix shipped, needs your phone to confirm** |
+| P4 | The in-call Chat button sat on top of the call's own Leave button | **FIXED** — found in the recordings, not reported |
+
+### P1 — the toolbar was missing its most important tool
+
+Measured rather than eyeballed. At iPhone width the editor's own toolbar is 373px wide, the two
+buttons this project adds to it (Styles and Clear) are another 70px, and the row is centred in a
+393px screen. So 27px was lost off **each** side, and the **Selection tool ended up at x = -23**
+— entirely off the screen. A teacher on a phone could not select, move or resize anything they
+had drawn, which is most of the point of having an object board rather than a drawing surface.
+
+The two buttons no longer appear in the phone layout. Nothing is lost with them: "Clear board
+for everyone" is already in the menu there, and the style sheet already opens from the palette
+in the bottom bar. They exist for laptops, where the properties panel covers a quarter of the
+canvas and nothing dismisses it — a problem the phone layout does not have.
+
+Now covered by tests that open the real board at three phone widths — iPhone 14, iPhone SE, and
+a small Android — and fail if any tool lands off screen. Run against the previous build they
+report exactly `off screen: Selection`, at all three sizes.
+
+### P2 — the photo that arrived as an empty frame
+
+**What was found, measured against a running server:** a picture over about 1.8 MB is dropped by
+the server while its element goes through — which is precisely an empty frame on the student's
+screen — and a picture over about 3 MB exceeds the WebSocket frame limit and **closes the
+teacher's board connection** in the middle of the lesson. Neither said anything to anyone.
+
+Both halves are addressed. Pictures are re-encoded down to a size the class can actually receive
+before they are sent, whichever button put them on the board: the "Add material" upload always
+did this, the editor's own image tool did not. And the refusal the server has always sent, which
+nothing in the app had ever listened for, now reaches the teacher as a message instead of
+leaving them explaining a picture nobody can see.
+
+**What could not be reproduced: the exact failure on the iPhone.** In a desktop browser the
+editor compresses a 12-megapixel photo to about 1.1 MB on its own, so it arrives fine — which is
+why this was never caught here. The likeliest explanation is that the editor's compression
+behaves differently under iOS Safari's canvas memory limits, but that cannot be confirmed
+without an iPhone, so it is not being claimed as fixed. What can honestly be said is narrower:
+the app no longer trusts the editor to keep pictures small, and when one still cannot be shared
+the teacher is told rather than left guessing.
+
+A large SVG *was* reproduced going over the limit — 2.43 MB, refused by the server, empty frame
+for the student. That one is fixed outright: it now goes out at 0.06 MB.
+
+**Worth trying again from your phone.** If the class still cannot see the picture, there should
+now be a message saying so — and that message is the useful thing to report.
+
+### P3 — PDFs greyed out in the picker
+
+The picker asked for `application/pdf` and nothing else. iOS matches on the file's type
+identifier, and without `.pdf` in the list it disables the very files the button exists to
+choose. The extension is there now.
+
+Honestly: this could not be verified here. iOS Safari cannot be run on this machine, and its
+file picker is exactly the part that behaves differently from every other browser. It is a
+one-line change with a well-established cause, but it needs your phone to confirm.
+
+### P4 — the Chat button was on top of the Leave button
+
+Not reported — found in the recordings. The in-call Chat button was placed at the top-right of
+the video on the assumption that the call keeps its own controls along the bottom. True on a
+laptop, false on a phone: the footage shows the Chat button, the call's **Leave** button and its
+fullscreen control all stacked in the same corner, overlapping. Aiming for Chat and hitting
+Leave ends the class.
+
+It now sits in a strip of its own above the call, which cannot collide with anything — including
+whatever the video provider does with its layout next.
+
+---
+
 ## Open — known, not yet fixed
 
 ### A1. Enrolment does not require payment

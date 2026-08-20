@@ -43,39 +43,74 @@ function loadImageElement(url: string): Promise<HTMLImageElement> {
   });
 }
 
+/**
+ * Re-encodes a loaded image down the quality ladder until it fits the budget.
+ *
+ * Shared by both ways a picture reaches the board — the "Add material" button and
+ * Excalidraw's own image tool — because a size rule that only one path obeys is not a rule.
+ */
+function encodeWithinBudget(img: HTMLImageElement): string {
+  const sourceW = img.naturalWidth;
+  const sourceH = img.naturalHeight;
+  if (!sourceW || !sourceH) throw new BoardImageError("That file could not be opened as an image.");
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new BoardImageError("Your browser could not process this image.");
+
+  for (const { edge, quality } of ATTEMPTS) {
+    const scale = Math.min(1, edge / Math.max(sourceW, sourceH));
+    const w = Math.max(1, Math.round(sourceW * scale));
+    const h = Math.max(1, Math.round(sourceH * scale));
+
+    canvas.width = w;
+    canvas.height = h;
+    // JPEG has no alpha channel, so a transparent PNG would otherwise flatten to black
+    // against the white board.
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+
+    const dataUrl = canvas.toDataURL("image/jpeg", quality);
+    if (dataUrlBytes(dataUrl) <= MAX_BYTES) return dataUrl;
+  }
+
+  throw new BoardImageError(TOO_BIG_MESSAGE);
+}
+
 async function prepareWeb(file: File): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
   try {
-    const img = await loadImageElement(objectUrl);
-    const sourceW = img.naturalWidth;
-    const sourceH = img.naturalHeight;
-    if (!sourceW || !sourceH) throw new BoardImageError("That file could not be opened as an image.");
-
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new BoardImageError("Your browser could not process this image.");
-
-    for (const { edge, quality } of ATTEMPTS) {
-      const scale = Math.min(1, edge / Math.max(sourceW, sourceH));
-      const w = Math.max(1, Math.round(sourceW * scale));
-      const h = Math.max(1, Math.round(sourceH * scale));
-
-      canvas.width = w;
-      canvas.height = h;
-      // JPEG has no alpha channel, so a transparent PNG would otherwise flatten to black
-      // against the white board.
-      ctx.fillStyle = "#FFFFFF";
-      ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(img, 0, 0, w, h);
-
-      const dataUrl = canvas.toDataURL("image/jpeg", quality);
-      if (dataUrlBytes(dataUrl) <= MAX_BYTES) return dataUrl;
-    }
-
-    throw new BoardImageError(TOO_BIG_MESSAGE);
+    return encodeWithinBudget(await loadImageElement(objectUrl));
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+/**
+ * Brings a picture already on the board down to a size the class can actually receive.
+ *
+ * Excalidraw's own image button does not go through `prepareBoardImage` — it puts the file
+ * the user picked straight into the scene. On a laptop that is usually harmless; on a phone
+ * it is not. Measured against the real server: a 2 MB photo has its picture dropped and the
+ * student is left with an empty frame, and a 3 MB photo closes the teacher's board
+ * connection outright (a WebSocket frame over the 4 MB limit, close code 1009). An iPhone
+ * photo is routinely 2-5 MB, so that is the ordinary case rather than an edge one.
+ *
+ * Re-encoding here also fixes a second thing quietly: an iPhone photo is often HEIC, which
+ * Safari can decode and an Android phone cannot. Sending JPEG means the student sees it.
+ *
+ * Returns the original when it is already small enough. Throws BoardImageError only when the
+ * picture cannot be brought under budget at all.
+ */
+export async function shrinkForSharing(dataUrl: string): Promise<string> {
+  if (dataUrlBytes(dataUrl) <= MAX_BYTES) return dataUrl;
+  return encodeWithinBudget(await loadImageElement(dataUrl));
+}
+
+/** Whether this picture can go on the wire untouched. */
+export function isShareableSize(dataUrl: string): boolean {
+  return dataUrlBytes(dataUrl) <= MAX_BYTES;
 }
 
 /**
