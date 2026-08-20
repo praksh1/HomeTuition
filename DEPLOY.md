@@ -40,9 +40,21 @@ Neon already hosts it. Copy the connection string from the Neon dashboard; it is
 
    Do **not** set `PORT` — Railway provides it.
 
-3. **Settings → Networking → Generate Domain**. You get something like
-   `hometuition-api.up.railway.app`. That is your API URL.
-4. Check it: `https://<your-api-domain>/api/healthz` should return `{"status":"ok"}`
+3. **Settings → Networking → Generate Domain**. Railway generates the name; it is **not**
+   derived from the project name and is not guessable. The live one is:
+
+   ```
+   https://workspaceapi-server-production-5a63.up.railway.app
+   ```
+
+   > Treat that as a fact with a shelf life. This line previously carried a plausible-looking
+   > example — `hometuition-api.up.railway.app` — phrased as though it were the real domain. It
+   > is not; it 404s. Building the web app against it ships a site that cannot reach its
+   > backend at all, and nothing about the build fails to warn you. **Check the domain before
+   > every build** (step 4), and if it has changed, correct this line.
+
+4. Check it: `https://<your-api-domain>/api/healthz` should return `{"status":"ok"}`. A `404`
+   means the domain is wrong, not that the API is broken.
 
 WebSocket traffic (the whiteboard) works over the same domain; the app derives `wss://`
 from the API URL automatically.
@@ -65,11 +77,38 @@ npx wrangler deploy
 ```
 
 Set `EXPO_PUBLIC_API_URL` before building — it is baked in at **build time**, not read at run
-time, so changing it means rebuilding:
+time, so changing it means rebuilding. On Windows, in PowerShell (the one-line
+`VAR=value command` form below it is Mac/Linux syntax and PowerShell rejects it):
+
+```
+$env:EXPO_PUBLIC_API_URL = "https://workspaceapi-server-production-5a63.up.railway.app"
+pnpm.cmd --filter @workspace/sikshya run build
+npx.cmd wrangler deploy
+```
+
+On Mac or Linux:
 
 ```
 EXPO_PUBLIC_API_URL=https://<your-api-domain> pnpm --filter @workspace/sikshya run build
 ```
+
+### Verify the deploy actually shipped
+
+`wrangler deploy` reporting success only means files were uploaded. To confirm the live site is
+the build you think it is, read the API URL back out of the bundle it is serving — it is baked
+in as a plain string, so it can be checked from outside with no login:
+
+```
+$idx = curl.exe -s https://hometuition.praksh-dhakal.workers.dev/
+$js  = [regex]::Match($idx, '_expo/static/js/web/entry-[A-Za-z0-9._-]+\.js').Value
+(curl.exe -s "https://hometuition.praksh-dhakal.workers.dev/$js" |
+  Select-String -Pattern 'https://[A-Za-z0-9.-]+\.up\.railway\.app' -AllMatches
+).Matches.Value | Select-Object -Unique
+```
+
+It should print your API domain and nothing else. A wrong domain here is the failure this
+section exists to prevent; an empty result means the bundle did not update. (`curl.exe`, not
+`curl` — in PowerShell `curl` is an alias for something else entirely.)
 
 ### Two things that will trip you up on Windows
 
@@ -85,8 +124,9 @@ on this system". Use `pnpm.cmd` instead, which is not a PowerShell script and is
 pnpm.cmd --filter @workspace/sikshya run build
 ```
 
-`npx wrangler deploy` is unaffected either way. Note that `wrangler` is not a project
-dependency — `npx` fetches it, so the first run takes a moment.
+The same applies to `npx`: use **`npx.cmd wrangler deploy`**. This doc previously claimed
+`npx` was exempt; it is not, and it fails the same way on the owner's machine. Note that
+`wrangler` is not a project dependency — `npx` fetches it, so the first run takes a moment.
 
 ---
 
@@ -123,7 +163,11 @@ value is compiled into the bundle.
 - **`EXPO_PUBLIC_API_URL` is baked in at build time.** Changing the API domain means
   redeploying the web app, not just the API.
 - **Daily rooms expire 6 hours after creation** (`artifacts/api-server/src/lib/daily.ts`).
-- **Payment confirmation is not verified.** `POST /sessions/:id/payment/confirm` trusts the
-  caller because eSewa/Khalti are not integrated. Anyone could call it directly and skip
-  paying. This must become a server-to-server verification before taking real money.
+- **Booking is free in production today.** No payment provider is integrated, so the server
+  approves its own charges (*simulated* mode) and anyone can book a paid class for nothing.
+  This must be resolved before launch. The old unverified `POST /sessions/:id/payment/confirm`
+  endpoint this line used to warn about is **gone** — booking is now one atomic transaction at
+  `POST /sessions/:id/book`. Do not add provider variables to Railway hoping to close the hole:
+  that flips the server to *gateway* mode and, with no provider actually wired up, declines
+  **every** booking. See `.agents/memory/payment-mode-trap.md`.
 - **`.env` is gitignored** and must never be committed; set values in the hosting dashboards.

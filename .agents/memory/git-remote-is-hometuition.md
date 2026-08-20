@@ -3,13 +3,20 @@ name: origin points at the wrong repository — on the owner's Windows copy
 description: On that machine `origin` is the old Paathshala repo and the live one is the `hometuition` remote, so `git push origin` publishes to the wrong project. A fresh clone has one correct `origin`; run `git remote -v` to tell them apart.
 ---
 
-**This applies to the owner's Windows working copy, not to every clone.** A fresh clone — a
-Claude Code session on the web, CI, a new machine — has a single remote named `origin` pointing
-at `github.com/praksh1/HomeTuition`, and pushing to `origin` there is correct. Check before
-trusting either rule: `git remote -v` settles it in one command, and the danger below is real
-only where more than one remote exists.
+**On the owner's Windows machine, `git push origin` publishes work to an abandoned repository.**
+It has happened — a night's work went to the wrong project and had to be force-reset back out
+of it. Treat any command naming `origin` on that machine as a mistake.
 
-On that Windows copy there are three remotes, and the obvious one is the wrong one:
+**Which case am I in?** `git remote -v` answers it in one command, and it is worth running
+before the first push of any session:
+
+- **Three remotes** (`origin`, `hometuition`, `gitsafe-backup`) → the owner's Windows copy. The
+  danger below is live. Never name `origin`.
+- **One remote called `origin` pointing at `github.com/praksh1/HomeTuition`** → a fresh clone: a
+  Claude Code session in the cloud, CI, a new machine. Pushing to `origin` there is correct and
+  is how work normally lands.
+
+On the Windows copy there are three remotes, and the obvious one is the wrong one:
 
 - `origin` → `github.com/praksh1/Paathshala` — **an older repo, not where work goes**
 - `hometuition` → `github.com/praksh1/HomeTuition` — **the live repository**
