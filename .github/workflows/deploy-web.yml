@@ -83,13 +83,21 @@ jobs:
           echo "::notice::secret is not set. Add it under Settings -> Secrets and variables ->"
           echo "::notice::Actions, and the next push will deploy by itself."
 
+      # Wrangler is fetched here rather than run through cloudflare/wrangler-action, and it is
+      # deliberately *not* a project dependency.
+      #
+      # The action installs wrangler itself when it cannot find one, and in a pnpm workspace
+      # that means `pnpm add` at the root, which pnpm refuses without an explicit `-w`. The
+      # deploy died there in one second. Adding wrangler to the workspace instead looked like
+      # the tidy fix and is worse: its `workerd` dependency has a build script, pnpm blocks
+      # those by default, and every `pnpm install` — including the owner's, on Windows — would
+      # start failing with a prompt about approving build scripts.
+      #
+      # So it is fetched on demand, at a pinned version so a deploy is reproducible rather than
+      # whatever CI resolves on the day. This is also exactly what DEPLOY.md documents.
       - name: Deploy to Cloudflare
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ env.CLOUDFLARE_API_TOKEN }}
-          # Optional: only needed if the token can see more than one Cloudflare account.
-          accountId: ${{ env.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4.124.0 deploy
 
       # `wrangler deploy` succeeding only means files were uploaded. This reads the API address
       # back out of the bundle the live site is actually serving, which is the check that would

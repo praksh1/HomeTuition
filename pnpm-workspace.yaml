@@ -166,3 +166,4 @@ allowBuilds:
   # WebAssembly build and loads the language model at runtime, so the script is not needed and
   # running it would only add a download to every install.
   tesseract.js: false
+  workerd: set this to true or false
