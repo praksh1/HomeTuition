@@ -96,9 +96,18 @@ const built = spawn(
   { cwd: appRoot, stdio: "inherit" },
 );
 
-const buildOk = await new Promise((resolve) => built.on("exit", (code) => resolve(code === 0)));
+// `exit` never fires if the binary cannot be spawned at all, so without the `error` handler a
+// missing esbuild would hang here silently until CI's job timeout — thirty minutes to learn
+// nothing. A test rig that cannot fail loudly is worse than no test rig.
+const buildOk = await new Promise((resolve) => {
+  built.on("error", (err) => {
+    console.error(`Could not run esbuild at ${esbuild}: ${err.message}`);
+    resolve(false);
+  });
+  built.on("exit", (code) => resolve(code === 0));
+});
 if (!buildOk) {
-  console.error("Could not bundle the component for testing.");
+  console.error("Could not bundle the component for testing. Has `pnpm install` been run?");
   rmSync(work, { recursive: true, force: true });
   process.exit(1);
 }
