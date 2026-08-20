@@ -180,6 +180,59 @@ follows the teacher through a zoom.
 
 ---
 
+## Reported 2026-08-20 (first full teacher/student run — Surface laptop teaching an Android phone)
+
+The whole list, in the order it will be worked. Nothing here is closed by argument: each one
+is closed by a test or by the owner seeing it work.
+
+| # | Issue | Status |
+|---|-------|--------|
+| E1 | A photo the teacher shared arrived as an empty picture frame; resizing it gave students a bigger empty frame | **FIXED** |
+| E2 | A shared PDF hid the whiteboard for the teacher and showed students a broken half-view neither could see was different | **FIXED to fail honestly** — real fix is E3 |
+| E3 | PDF pages must live *on* the board, annotatable like anything else | next |
+| E4 | A teacher can open three concurrent sessions; starting a second tells students the first has ended while the teacher sees it running | queued — correctness, rated above the cosmetic items |
+| E5 | Teacher dashboard lists upcoming sessions, but Sessions → Upcoming is empty | queued |
+| E6 | The whiteboard is live and shared before the teacher has started the call | queued |
+| E7 | On Android Chrome the board is too small to teach on, and only the video can be maximised | queued |
+| E8 | A student who drops takes a long time to rejoin, and sometimes cannot | queued |
+| E9 | "The teacher has ended this session" reaches students who left long before | queued |
+| E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | queued |
+| E11 | Teachers cannot see who follows them; students cannot see who they follow | queued |
+| E12 | Use Daily's in-call chat instead of the app's own | queued — **see the caveat below** |
+| E13 | Excalidraw's Library button opens a library teachers cannot use; wants curated free content instead | queued |
+
+### E1 — what it actually was
+
+Excalidraw stores a picture's bytes in a `files` map, separate from the element that draws it;
+the element carries only position, size and a file id. The sync sent elements alone, so every
+image element arrived pointing at data the student had never been given — which is precisely
+what Excalidraw's grey placeholder is for. Files now travel with the elements that reference
+them, once each, and are replayed to late joiners under their own much lower cap. Covered by a
+test that shares a solid red picture and counts red pixels on the student's canvas: a
+placeholder is grey, so it cannot pass on an empty frame.
+
+Uploaded photos are also real board objects now rather than a picture painted behind the
+canvas — movable, resizable, and counted when a student's view is fitted to the lesson.
+
+### E2 — why it is "fail honestly" and not "fixed"
+
+The PDF was broadcast and rendered independently by each participant. Making pages into board
+images is the right fix (E3) and is not a small change. Until then a PDF opens for the teacher
+alone, is not broadcast at all — so the student-side mess is gone — and the teacher is told on
+screen that students cannot see it. A teacher who knows will hold up a photo instead; a teacher
+who does not know teaches a lesson to nobody.
+
+### E12 — the caveat, recorded before it is done
+
+`.agents/memory/one-chat-per-class.md` records Daily's chat being disabled *deliberately*: with
+one person on a laptop and one on the phone app, Daily's chat and the app's chat become two
+conversations that cannot see each other, and both sides look like they are working. On the web
+this does not arise. The plan is therefore to bridge the two rather than flip the switch, so
+there is still one conversation everywhere. If that turns out to be more than it is worth, the
+honest answer is to say so rather than ship the split again.
+
+---
+
 ## Open — known, not yet fixed
 
 ### A1. Enrolment does not require payment
