@@ -23,6 +23,14 @@ implementation — Daily's chat on web, the app's on native — silently created
 Daily's chat was turned off and the in-app chat tab was restored in both classrooms instead.
 The app's own chat is the single conversation everywhere.
 
+**Asked for again, and answered without breaking it.** The owner later asked directly for
+Daily's chat (E12). The request was real; the mechanism was not. What they wanted was chat they
+could read without leaving the call — on web, chatting meant a tab that hid the video. The app's
+own chat is now rendered *over* the Daily iframe on web, which is what the native build already
+did. Same conversation, inside the call, on both platforms, and `enable_chat` is still false.
+
+If it is asked for again, this is the answer: put the app's chat where Daily's would have been.
+
 **How to apply:**
 - Leave `enable_chat: false`. Chat belongs to the classroom socket, not to Daily.
 - The same reasoning applies to any Daily feature that keeps its own state: if it does not

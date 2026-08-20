@@ -146,6 +146,13 @@ jobs:
       - name: Whiteboard tests
         run: pnpm --filter @workspace/sikshya run test:board
 
+      # The class conversation lives inside the call now rather than behind a tab that hid the
+      # video. This drives the real component in a real browser, including the state a student
+      # on a bad connection lands in — where the call never comes up and chat is all they have.
+      # See artifacts/sikshya/scripts/call-chat-tests/.
+      - name: In-call chat
+        run: pnpm --filter @workspace/sikshya run test:call-chat
+
       # Until the Cloudflare token is added, everything above still runs — so the code is
       # checked and the whiteboard tested on every push — and the deploy simply waits, rather
       # than failing and showing a red cross nobody can act on.

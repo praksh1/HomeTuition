@@ -198,7 +198,7 @@ is closed by a test or by the owner seeing it work.
 | E9 | "The teacher has ended this session" reaches students who left long before | **FIXED** |
 | E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | **FIXED** — email needs one setting from you, see below |
 | E11 | Teachers cannot see who follows them; students cannot see who they follow | **FIXED** |
-| E12 | Use Daily's in-call chat instead of the app's own | queued — **see the caveat below** |
+| E12 | Use Daily's in-call chat instead of the app's own | **DONE differently — read why** |
 | E13 | Excalidraw's Library button opens a library teachers cannot use; wants curated free content instead | **FIXED** |
 
 ### E1 — what it actually was
@@ -351,14 +351,42 @@ it. Both suites were then deliberately broken to prove they fail: removing the p
 turned exactly one red, removing the socket's token check turned exactly the three security
 checks red, and stopping the app from listening turned exactly the four delivery checks red.
 
-### E12 — the caveat, recorded before it is done
+### E12 — you got what you asked for, by not doing what you asked
 
-`.agents/memory/one-chat-per-class.md` records Daily's chat being disabled *deliberately*: with
-one person on a laptop and one on the phone app, Daily's chat and the app's chat become two
-conversations that cannot see each other, and both sides look like they are working. On the web
-this does not arise. The plan is therefore to bridge the two rather than flip the switch, so
-there is still one conversation everywhere. If that turns out to be more than it is worth, the
-honest answer is to say so rather than ship the split again.
+You asked for Daily's chat instead of the app's own. That is the one change this project has
+already written down as a mistake, and the reason has not changed: **the phone app has no Daily
+Prebuilt at all.** It uses Daily's SDK with a screen we built, because a WebView cannot share a
+screen. Turn Prebuilt's chat on and a class with you on the laptop and a student on a phone has
+*two* conversations that cannot see each other — and neither of you can tell. Each side sees
+their own messages sent successfully and concludes the other is ignoring them. That is a worse
+bug than the one being fixed, and it is invisible from a bug report.
+
+So what was the actual complaint? On the web, chatting meant tapping the Chat tab, which hid
+the video completely. You left the lesson to say a sentence. That is what "I want Daily's chat"
+meant in practice — chat you can read without leaving the call. It did not require Daily's chat
+at all, and the phone app already worked that way.
+
+The class conversation is now inside the call on the web too: a Chat button on the video, with
+an unread count, opening a panel over the call rather than instead of it. The call keeps
+running underneath. It is the same conversation as the Chat tab and the same one the phone
+sees — one conversation everywhere, which is the whole point.
+
+The Chat tab stays, because the call is not always on screen: full-board mode hides it. Same
+messages either way.
+
+**Something worse found while testing this.** Daily's `join()` never fails when it cannot reach
+the room — it does not return an error, it simply never finishes. So a student whose connection
+could not reach Daily saw a **black rectangle, indefinitely**, with nothing to read and nothing
+to do. Nobody would report that as a bug; they would report that the app is broken. There is
+now a 20-second deadline, after which it says it is still trying and points out that the board
+and chat work in the meantime — and if the call does come up later, the message removes itself.
+A failed call also no longer takes the chat panel down with it, which it used to: a student
+whose video failed lost the one way they had left to say so.
+
+**How it was checked.** Seventeen checks driving the real component in a real browser, with the
+test playing the classroom socket on both sides. Turning the in-call chat off turns exactly the
+two chat-control checks red; removing the join deadline turns exactly the two "says so" checks
+red.
 
 ---
 

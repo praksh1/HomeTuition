@@ -467,10 +467,11 @@ export default function Classroom() {
 
         {/* Mode tabs */}
         <View style={s.modeSwitcher}>
-          {/* Chat and participants come from Daily Prebuilt now, inside the call itself, so the
-              app no longer offers its own dated versions alongside them. The panels below are
-              left in place but unreachable; remove them once the native app has its own chat,
-              since the native SDK has no Prebuilt and so no chat of its own. */}
+          {/* The class conversation is inside the call as well now (see DailyEmbed), which is
+              where it belongs during a lesson. This tab stays because the call is not always
+              on screen — full-board mode hides it — and it is the same conversation either
+              way, not a second one. */}
+
           {(["whiteboard", "chat"] as Mode[]).map((m) => (
             <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
               <Feather
