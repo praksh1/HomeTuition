@@ -1,6 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    // Node runs these tests directly with --experimental-strip-types, which requires imports
+    // to name the .ts file explicitly. The build uses esbuild, not tsc, so nothing is emitted
+    // from these paths and the extension never reaches runtime JavaScript.
+    "allowImportingTsExtensions": true,
     "incremental": true,
     "tsBuildInfoFile": ".tsbuildinfo",
     "outDir": "dist",

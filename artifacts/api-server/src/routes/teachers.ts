@@ -167,6 +167,23 @@ router.patch("/teachers/:id", requireAuth, async (req, res): Promise<void> => {
   const id = parseInt(raw, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid teacher ID" }); return; }
 
+  /**
+   * A profile may only be edited by the teacher it belongs to.
+   *
+   * This route required a login and nothing else, so any account could rewrite any teacher's
+   * bio, subjects, price per session and online flag by sending their profile id — undercut a
+   * rival's price, or mark them offline in the middle of their working day.
+   */
+  const [owner] = await db
+    .select({ userId: teacherProfilesTable.userId })
+    .from(teacherProfilesTable)
+    .where(eq(teacherProfilesTable.id, id));
+  if (!owner) { res.status(404).json({ error: "Teacher not found" }); return; }
+  if (owner.userId !== req.user!.userId) {
+    res.status(403).json({ error: "You can only edit your own profile" });
+    return;
+  }
+
   const allowedFields = ["bio", "subject", "subjects", "location", "district", "experienceYears", "pricePerSession", "languages", "isOnline"];
   const updates: Record<string, unknown> = {};
   for (const field of allowedFields) {
@@ -277,10 +294,50 @@ router.delete("/teachers/:id/follow", requireAuth, async (req, res): Promise<voi
   res.json({ following: false });
 });
 
+/**
+ * The students who follow this teacher.
+ *
+ * Following is free and one-directional — a student bookmarking a teacher — so the teacher had
+ * no way of knowing it had happened. Restricted to the teacher themselves: it is a list of
+ * real people's names, and nobody else has any business reading it.
+ */
+router.get("/teachers/:id/followers", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const profileId = parseInt(raw, 10);
+  if (isNaN(profileId)) { res.status(400).json({ error: "Invalid teacher ID" }); return; }
+
+  const [profile] = await db
+    .select({ userId: teacherProfilesTable.userId })
+    .from(teacherProfilesTable)
+    .where(eq(teacherProfilesTable.id, profileId));
+  if (!profile) { res.status(404).json({ error: "Teacher not found" }); return; }
+  if (profile.userId !== req.user!.userId) {
+    res.status(403).json({ error: "You can only see your own followers" });
+    return;
+  }
+
+  const followers = await db
+    .select({
+      id: usersTable.id,
+      name: usersTable.name,
+      since: studentTeacherSubscriptionsTable.createdAt,
+    })
+    .from(studentTeacherSubscriptionsTable)
+    .innerJoin(usersTable, eq(studentTeacherSubscriptionsTable.studentId, usersTable.id))
+    .where(eq(studentTeacherSubscriptionsTable.teacherId, profile.userId))
+    .orderBy(desc(studentTeacherSubscriptionsTable.createdAt));
+
+  res.json({ followers });
+});
+
 router.get("/students/:id/followed-teachers", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const studentId = parseInt(raw, 10);
   if (isNaN(studentId)) { res.status(400).json({ error: "Invalid student ID" }); return; }
+  if (studentId !== req.user!.userId) {
+    res.status(403).json({ error: "You can only see your own followed teachers" });
+    return;
+  }
 
   const teachers = await db
     .select({
