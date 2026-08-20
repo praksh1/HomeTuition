@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Animated } from "react-native";
 import { getToken } from "@/utils/api";
 import { wsUrl } from "@/utils/wsUrl";
+import { onNetworkResume } from "@/utils/networkResume";
 
 export interface ChatMessage {
   id: string;
@@ -147,6 +148,30 @@ function toDrawPath(raw: Record<string, unknown>): DrawPath | null {
     y: raw.y as number | undefined,
     opacity: typeof raw.opacity === "number" && raw.opacity > 0 && raw.opacity <= 1 ? raw.opacity : 1,
   };
+}
+
+/**
+ * How long to wait before trying the classroom socket again.
+ *
+ * This was `3000 * 2 ** (attempts - 1)`, capped at 30s, whether or not the student had ever
+ * been in the class. So a student whose phone lost signal for a second waited three seconds to
+ * get back in, and a student on a genuinely patchy connection — which is most of this
+ * product's market — was soon waiting half a minute at a time while their lesson carried on
+ * without them. That is the "takes forever to rejoin" report.
+ *
+ * A socket that has been open once is a different situation from one that never opened: the
+ * first is a network blip and should be retried almost at once, the second may be a server
+ * that is down and deserves backing off from. So they are no longer treated the same.
+ *
+ * The jitter matters more than it looks. When a teacher's connection wobbles, every student in
+ * the class is disconnected at the same instant; without it they would all reconnect on the
+ * same tick and hit the server as one spike.
+ */
+export function reconnectDelay(attempt: number, everConnected: boolean): number {
+  const base = everConnected
+    ? Math.min(8000, 300 * 2 ** (attempt - 1)) // 300ms, 600, 1.2s, 2.4s, 4.8s, 8s...
+    : Math.min(30000, 3000 * 2 ** (attempt - 1)); // unchanged: 3s, 6s, 12s, 24s, 30s...
+  return Math.round(base * (0.8 + Math.random() * 0.4));
 }
 
 function getWsUrl(sessionId: string, token: string, name: string): string {
@@ -360,8 +385,10 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
         return;
       }
 
-      const delay = Math.min(30000, 3000 * 2 ** (failedAttemptsRef.current - 1));
-      reconnTimerRef.current = setTimeout(() => { void connect(); }, delay);
+      reconnTimerRef.current = setTimeout(
+        () => { void connect(); },
+        reconnectDelay(failedAttemptsRef.current, everConnectedRef.current),
+      );
     };
 
     ws.onerror = () => { ws.close(); };
@@ -397,6 +424,29 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
       wsRef.current?.close();
     };
   }, [connect]);
+
+  /**
+   * Get back into the class the moment the device can, instead of waiting out a timer set
+   * while it could not.
+   *
+   * A student who walks back into signal, or picks their phone back up, is looking at the
+   * screen right then. Sitting on a pending backoff for several more seconds is exactly what
+   * "rejoining takes forever" felt like from their side.
+   */
+  useEffect(() => {
+    return onNetworkResume(() => {
+      if (!mountedRef.current || accessDenied) return;
+      const ws = wsRef.current;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      if (reconnTimerRef.current) {
+        clearTimeout(reconnTimerRef.current);
+        reconnTimerRef.current = null;
+      }
+      // The backoff exists for a server that is refusing, not for a network that was off.
+      failedAttemptsRef.current = 0;
+      void connect();
+    });
+  }, [connect, accessDenied]);
 
   const sendChat = useCallback(
     (text: string) => {

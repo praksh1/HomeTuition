@@ -7,6 +7,7 @@ import { logger } from "../lib/logger";
 import { verifyToken, type JwtPayload } from "../lib/auth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
 import { addUserChannel } from "./userHub";
+import { startHeartbeat, watchHeartbeat } from "./heartbeat";
 
 interface RoomClient {
   ws: WebSocket;
@@ -234,6 +235,10 @@ export function attachClassroomHub(server: http.Server): void {
   // runaway or hostile client cannot buffer an arbitrarily large frame in server memory.
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
 
+  // Both kinds of connection on this server — a classroom and a user channel — are watched by
+  // the same heartbeat. See ws/heartbeat.ts for why it has to exist.
+  startHeartbeat(wss);
+
   server.on("upgrade", (req: IncomingMessage, socket, head) => {
     const url = new URL(req.url ?? "/", "http://x");
     if (!url.pathname.startsWith("/api/ws")) {
@@ -264,6 +269,7 @@ export function attachClassroomHub(server: http.Server): void {
       const userId = payload.userId;
       wss.handleUpgrade(req, socket, head, (ws) => {
         const remove = addUserChannel(ws, userId);
+        watchHeartbeat(ws);
         logger.info({ userId }, "ws user channel open");
         ws.on("close", remove);
         ws.on("error", () => remove());
@@ -298,6 +304,7 @@ export function attachClassroomHub(server: http.Server): void {
   function handleConnection(ws: WebSocket, member: Membership): void {
     const { sessionId, userId, role, name, isSessionTeacher } = member;
 
+    watchHeartbeat(ws);
     const client: RoomClient = { ws, userId, role, name, isSessionTeacher };
     if (!rooms.has(sessionId)) rooms.set(sessionId, new Set());
     rooms.get(sessionId)!.add(client);

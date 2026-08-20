@@ -194,7 +194,7 @@ is closed by a test or by the owner seeing it work.
 | E5 | Teacher dashboard lists upcoming sessions, but Sessions → Upcoming is empty | **FIXED** — cause not reproducible without the live database, so the class of bug was removed |
 | E6 | The whiteboard is live and shared before the teacher has started the call | **FIXED** |
 | E7 | On Android Chrome the board is too small to teach on, and only the video can be maximised | **FIXED** — needs your eyes on a real phone |
-| E8 | A student who drops takes a long time to rejoin, and sometimes cannot | queued |
+| E8 | A student who drops takes a long time to rejoin, and sometimes cannot | **FIXED** |
 | E9 | "The teacher has ended this session" reaches students who left long before | **FIXED** |
 | E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | **FIXED** — email needs one setting from you, see below |
 | E11 | Teachers cannot see who follows them; students cannot see who they follow | **FIXED** |
@@ -253,6 +253,45 @@ Both now show the truth. Alongside them, two access holes: `PATCH /teachers/:id`
 login and nothing else, so any account could rewrite any teacher's bio, subjects and price per
 session; and `GET /students/:id/followed-teachers` would tell any logged-in user which teachers
 any student follows. Both are now restricted to the person they belong to.
+
+### E8 — two separate problems wearing one name
+
+**"Sometimes cannot rejoin" was not slowness at all.** Nothing on the server checked whether a
+connection was still alive. A phone that walks out of coverage, or a network that drops a
+connection at a router, leaves a socket that is open on paper and carries nothing — and
+*neither side is told*. The server kept the student in the room, so the class showed someone
+who was not there. Worse, the student's app believed it was still connected, so it never
+retried. It simply sat there. No amount of retrying would have fixed that, because the app had
+no idea anything was wrong.
+
+The server now pings every connection every 25 seconds and closes any that does not answer.
+That is the standard WebSocket ping, which browsers reply to on their own — no change needed
+in the app for it to work. It also keeps a healthy connection alive through the proxies and
+mobile networks that drop an idle one after 30 or 60 seconds, which is very likely a second
+cause of the same complaint.
+
+**"Takes forever" was a schedule written for the wrong situation.** Every retry waited
+`3 seconds × 2^attempts`, up to 30 seconds, whether or not the student had ever been in the
+class. So a phone that blinked off for a moment cost three seconds; a genuinely patchy
+connection — which is most of this product's market — soon cost half a minute at a time, while
+the lesson carried on without them.
+
+Those are two different situations and are no longer treated the same. A socket that has been
+open once is a blip: it is retried after about 300ms, backing off to at most 8 seconds. One
+that has never opened may be a server that is down, and still backs off to 30. Both are
+jittered, because a teacher's connection wobbling disconnects the whole class at the same
+instant and they should not all come back on the same tick.
+
+And the app no longer waits out a timer it set while offline: coming back into signal, or
+picking the phone back up, reconnects immediately.
+
+**How it was checked.** Against a running server: a socket is made to go silent without
+closing — the closest thing to leaving coverage that can be arranged — and the test asserts
+the server notices, drops it, and lets the person straight back in. Both the user channel and
+a real classroom socket. Turning the heartbeat off turns exactly that check red. The retry
+schedule has six tests of its own, including the two properties that were wrong before: a
+student who was in the class waits under 400ms, and nobody ever waits more than about 8
+seconds.
 
 ### E10 — there were no notifications at all
 

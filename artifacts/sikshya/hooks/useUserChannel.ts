@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { getToken } from "@/utils/api";
 import { wsUrl } from "@/utils/wsUrl";
+import { onNetworkResume } from "@/utils/networkResume";
 
 /** One event pushed by the server to a signed-in user, wherever they are in the app. */
 export interface UserEvent {
@@ -90,7 +91,21 @@ export function useUserChannel(enabled: boolean, onEvent: (event: UserEvent) => 
 
     void connect();
 
+    // Same reasoning as the classroom socket: a device that has just come back deserves to be
+    // reconnected now, not whenever the timer set while it was offline happens to fire.
+    const stopWatching = onNetworkResume(() => {
+      if (closed) return;
+      if (socket && (socket.readyState === 0 || socket.readyState === 1)) return;
+      if (retry) {
+        clearTimeout(retry);
+        retry = null;
+      }
+      attempt = 0;
+      void connect();
+    });
+
     return () => {
+      stopWatching();
       closed = true;
       if (retry) clearTimeout(retry);
       if (socket) {

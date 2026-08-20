@@ -117,6 +117,24 @@ function openChannel(token) {
   };
 }
 
+/** A classroom socket — the one a student sits on for the whole lesson. */
+function openClassroom(token, sessionId, name) {
+  const ws = new WebSocket(
+    `${WS}/api/ws?sessionId=${encodeURIComponent(sessionId)}&token=${encodeURIComponent(token)}&name=${encodeURIComponent(name)}`,
+  );
+  return {
+    ws,
+    open: () =>
+      new Promise((resolve, reject) => {
+        if (ws.readyState === 1) return resolve();
+        ws.once("open", resolve);
+        ws.once("error", reject);
+        ws.once("close", () => reject(new Error("classroom socket closed before opening")));
+      }),
+    close: () => ws.close(),
+  };
+}
+
 /** Resolves once nothing has arrived for `ms` — used to prove silence, not just delay. */
 const quiet = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -406,6 +424,106 @@ async function testASlowOrGoneListenerDoesNotBreakSending() {
   again.close();
 }
 
+/**
+ * A connection that dies without saying so must be noticed and cleaned up.
+ *
+ * This is the half of "a student sometimes cannot rejoin" that no client-side retrying can
+ * fix: the socket is open on paper and carries nothing, so the app never learns it should
+ * reconnect and the room keeps a ghost. Only the server's heartbeat can tell.
+ */
+async function testDeadConnectionsAreNoticed() {
+  console.log("\nA connection that dies silently is noticed and cleaned up");
+  const teacher = await register("teacher");
+  const student = await register("student");
+
+  const channel = openChannel(teacher.token);
+  await channel.open();
+
+  // Pause the socket so it answers nothing at all — the closest thing to a phone leaving
+  // coverage that can be arranged from here. The connection stays open; it just goes quiet.
+  channel.ws.pause();
+
+  const heartbeat = Number(process.env.HEARTBEAT_MS ?? 25000);
+  // Two rounds: one to ask, one to notice there was no answer.
+  const waitFor = heartbeat * 2 + 3000;
+  console.log(`  (waiting ${Math.round(waitFor / 1000)}s for two heartbeat rounds)`);
+  await quiet(waitFor);
+
+  channel.ws.resume();
+  await quiet(500);
+  check(
+    "the server closed the dead connection",
+    channel.ws.readyState === 2 || channel.ws.readyState === 3,
+    `readyState ${channel.ws.readyState}`,
+  );
+
+  // And the person can come straight back, which is the point of noticing.
+  const again = openChannel(teacher.token);
+  await again.open();
+  await sendMessage(student.token, teacher.user.id, "Back after the drop");
+  const event = await again.next((e) => e.kind === "message");
+  check("and they can reconnect and receive again", Boolean(event));
+  again.close();
+}
+
+/**
+ * The same liveness rule, on the socket a student actually sits on during a lesson.
+ *
+ * This is the reported failure in its own words: a student drops and "takes forever" to get
+ * back, and sometimes cannot. A classroom socket that dies without a close frame leaves the
+ * app believing it is still in the class — so it never retries — while the room still counts
+ * them as present.
+ */
+async function testAClassroomSocketThatDiesIsNoticed() {
+  console.log("\nA student whose connection dies is noticed, and can come back");
+  const teacher = await register("teacher");
+  const student = await register("student");
+
+  const created = await api("/sessions", {
+    method: "POST",
+    token: teacher.token,
+    body: {
+      topic: "Rejoin test class",
+      subject: "Maths",
+      description: "Checking a dropped student",
+      date: new Date(Date.now() + 60_000).toISOString(),
+      duration: 60,
+      price: 500,
+      maxStudents: 10,
+    },
+  });
+  const sessionId = created.body?.id;
+  if (!sessionId) {
+    check("a class can be created for the rejoin test", false, `status ${created.status}`);
+    return;
+  }
+  await api(`/sessions/${sessionId}/book`, { method: "POST", token: student.token, body: {} });
+
+  const inClass = openClassroom(student.token, sessionId, "Student");
+  await inClass.open();
+  check("the student is in the class", inClass.ws.readyState === 1);
+
+  // Goes quiet without closing — a phone leaving coverage, not a user pressing Leave.
+  inClass.ws.pause();
+  const heartbeat = Number(process.env.HEARTBEAT_MS ?? 25000);
+  const waitFor = heartbeat * 2 + 3000;
+  console.log(`  (waiting ${Math.round(waitFor / 1000)}s for two heartbeat rounds)`);
+  await quiet(waitFor);
+  inClass.ws.resume();
+  await quiet(500);
+
+  check(
+    "the server does not keep a student who is no longer there",
+    inClass.ws.readyState === 2 || inClass.ws.readyState === 3,
+    `readyState ${inClass.ws.readyState}`,
+  );
+
+  const back = openClassroom(student.token, sessionId, "Student");
+  await back.open();
+  check("and they can get straight back into the class", back.ws.readyState === 1);
+  back.close();
+}
+
 async function main() {
   const health = await fetch(`${API}/api/healthz`).catch(() => null);
   if (!health || !health.ok) {
@@ -423,6 +541,10 @@ async function main() {
   await testGoingLiveTellsPaidStudentsOnly();
   await testManyRecipientsAtOnce();
   await testASlowOrGoneListenerDoesNotBreakSending();
+  if (process.env.SKIP_SLOW !== "1") {
+    await testDeadConnectionsAreNoticed();
+    await testAClassroomSocketThatDiesIsNoticed();
+  }
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length > 0) {

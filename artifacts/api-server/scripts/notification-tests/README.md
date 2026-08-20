@@ -22,6 +22,10 @@ That expects the API on `http://127.0.0.1:8080`. Point it somewhere else with `A
 API_URL=http://localhost:3000 pnpm --filter @workspace/api-server run test:notifications
 ```
 
+Two of them wait for the server's heartbeat, which is 25 seconds in production — so run the
+server with `WS_HEARTBEAT_MS=3000` and the tests with `HEARTBEAT_MS=3000` unless you want to
+wait a minute, or skip them with `SKIP_SLOW=1`. They prove the mechanism, not the number.
+
 They create their own users (a fresh email per run), so they can be run repeatedly against
 the same database without cleaning up first. Do not run them against production: they write
 users, classes, bookings and messages.
@@ -40,6 +44,8 @@ users, classes, bookings and messages.
 | Taking a class live tells the students who paid for it | Telling everyone, or telling nobody |
 | Many people at once, and nobody misses theirs | Events lost or merged under concurrency |
 | A disconnected listener does not break the thing being announced | A dead socket failing the message that triggered it |
+| A connection that dies silently is noticed and cleaned up | A half-open socket the app never learns to retry (E8) |
+| A student whose connection dies is noticed, and can come back | The same, on the socket a student sits on during a lesson |
 
 ## Proving they work
 
@@ -51,7 +57,10 @@ deliberately:
 - Removing the token check on the user channel in `src/ws/classroomHub.ts` — exactly the
   three security checks went red.
 
-Restoring each returned the suite to 39 passed, 0 failed.
+- Commenting out `startHeartbeat` — exactly the "server closed the dead connection" check went
+  red, which is precisely the state the product was in before.
+
+Restoring each returned the suite to 44 passed, 0 failed.
 
 ## The email path
 

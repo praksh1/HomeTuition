@@ -88,6 +88,9 @@ jobs:
           SESSION_SECRET: ci-only-not-a-real-secret
           PORT: 8080
           NODE_ENV: test
+          # The heartbeat is 25s in production, which is right for real networks and far too
+          # slow to wait out twice in CI. The tests prove the mechanism, not the number.
+          WS_HEARTBEAT_MS: 3000
         run: |
           set -euo pipefail
           pnpm run db:push
@@ -105,6 +108,8 @@ jobs:
           exit 1
 
       - name: Notifications leave the server
+        env:
+          HEARTBEAT_MS: 3000
         run: pnpm --filter @workspace/api-server run test:notifications
 
       # The half that was actually missing: the app never listened. Only a real browser
