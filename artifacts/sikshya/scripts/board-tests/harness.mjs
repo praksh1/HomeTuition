@@ -65,13 +65,16 @@ export async function pump(teacher, student) {
   });
   for (const m of msgs) {
     if (m.type === "scene_out") {
+      // Elements *and* the picture data that goes with them — the classroom hub relays both,
+      // and a rig that quietly dropped the pictures would report a passing sync while every
+      // student saw empty picture frames.
       await student.evaluate(
-        (els) =>
+        ({ els, files }) =>
           window.postMessage(
-            JSON.stringify({ type: "scene_in", delta: { full: false, elements: els } }),
+            JSON.stringify({ type: "scene_in", delta: { full: false, elements: els, files } }),
             "*",
           ),
-        m.elements,
+        { els: m.elements, files: m.files ?? [] },
       );
     } else if (m.type === "view_out") {
       await student.evaluate(
@@ -100,9 +103,11 @@ export function ink(page) {
     const { data, width, height } = canvas
       .getContext("2d")
       .getImageData(0, 0, canvas.width, canvas.height);
-    let n = 0, left = 0, right = 0;
+    let n = 0, left = 0, right = 0, red = 0;
     let minX = Infinity, minY = Infinity, maxX = -1, maxY = -1;
     for (let i = 0; i < data.length; i += 4) {
+      // A strongly red pixel means a shared picture actually rendered, not its placeholder.
+      if (data[i] > 150 && data[i + 1] < 100 && data[i + 2] < 100 && data[i + 3] > 40) red++;
       if (!(data[i] < 128 && data[i + 3] > 40)) continue;
       const p = i / 4, x = p % width, y = Math.floor(p / width);
       n++;
@@ -112,9 +117,20 @@ export function ink(page) {
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     }
-    return { n, left, right, minX, minY, maxX, maxY, width, height };
+    return { n, left, right, red, minX, minY, maxX, maxY, width, height };
   });
 }
+
+/**
+ * A solid red 64x64 PNG, as a data URL.
+ *
+ * Red because Excalidraw draws a *placeholder* for an image element whose picture data never
+ * arrived, and a placeholder is grey. Counting red pixels is therefore the difference between
+ * "the student got the picture" and "the student got an empty frame where a picture should be"
+ * — which is the bug this fixture exists to catch.
+ */
+export const RED_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAT0lEQVR42u3PQQkAAAgEsEty/UMZxgi+hcEKLNO+FgEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGBywLPLIEA68ZURwAAAABJRU5ErkJggg==";
 
 /** Draws a stroke with the pen, the way a teacher would. */
 export async function stroke(page, x1, y1, x2, y2) {

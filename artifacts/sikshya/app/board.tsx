@@ -23,6 +23,7 @@ export default function BoardPage() {
   const [updates, setUpdates] = useState<SceneDelta[]>([]);
   const [clearedAt, setClearedAt] = useState(0);
   const [viewport, setViewport] = useState<BoardViewport | null>(null);
+  const [insertImage, setInsertImage] = useState<{ key: string; dataUrl: string } | null>(null);
 
   /** Messages from the host app. */
   useEffect(() => {
@@ -37,6 +38,7 @@ export default function BoardPage() {
         readOnly?: boolean;
         theme?: "light" | "dark";
         view?: BoardViewport;
+        image?: { key: string; dataUrl: string };
       };
       try {
         msg = JSON.parse(data);
@@ -54,6 +56,9 @@ export default function BoardPage() {
           break;
         case "view_in":
           if (msg.view) setViewport(msg.view);
+          break;
+        case "insert_image":
+          if (msg.image) setInsertImage(msg.image);
           break;
         case "clear":
           setUpdates([]);
@@ -86,7 +91,7 @@ export default function BoardPage() {
   }, []);
 
   const handleSceneChange = useCallback(
-    (changed: unknown[]) => postToHost({ type: "scene_out", elements: changed }),
+    (changed: unknown[], files: unknown[]) => postToHost({ type: "scene_out", elements: changed, files }),
     [postToHost],
   );
 
@@ -118,6 +123,7 @@ export default function BoardPage() {
         onSceneChange={handleSceneChange}
         onViewportChange={handleViewportChange}
         viewport={viewport}
+        insertImage={insertImage}
         onClearAll={handleClearAll}
         clearedAt={clearedAt}
         theme={theme}

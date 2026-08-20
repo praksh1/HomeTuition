@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,8 +21,6 @@ import type { Student } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
-import PdfViewer from "@/components/PdfViewer";
-import { Image } from "react-native";
 import SmartBoard from "@/components/SmartBoard";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -42,7 +40,7 @@ export default function StudentClassroom() {
 
   const studentName = student.name ?? "Student";
 
-  const { connected, accessDenied, presenceCount, messages, material, sessionStatus, sendChat, sceneUpdates, consumeSceneUpdates, boardClearedAt, boardView } =
+  const { connected, accessDenied, presenceCount, messages, sessionStatus, sendChat, sceneUpdates, consumeSceneUpdates, boardClearedAt, boardView } =
     useClassroomSocket({ sessionId: id ?? "", name: studentName, role: "student" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -162,18 +160,6 @@ export default function StudentClassroom() {
   // don't fall back to enrolledCount before the socket connects, or a ghost count/avatar
   // shows up for a class nobody has actually joined yet.
   const livePresenceCount = connected ? presenceCount : 0;
-
-  // The session timer re-renders this screen once a second. Without memoising, that threw
-  // away and re-decoded the shared material and every stroke on every tick.
-  const materialLayer = useMemo(() => {
-    if (material?.kind === "image") {
-      return <Image source={{ uri: material.dataUrl }} style={StyleSheet.absoluteFill} resizeMode="contain" />;
-    }
-    if (material?.kind === "pdf") {
-      return <PdfViewer uri={material.dataUrl} style={StyleSheet.absoluteFill} />;
-    }
-    return null;
-  }, [material?.kind, material?.dataUrl]);
 
   /** Students never author anything, so outgoing changes are dropped. */
   const noopSceneChange = useCallback(() => {}, []);
@@ -296,7 +282,6 @@ export default function StudentClassroom() {
         {/* Board — live whiteboard from teacher */}
         {mode === "board" && (
           <View style={s.boardArea}>
-            {materialLayer}
             {/* The teacher's board, read-only.
                 Students see the same Excalidraw scene the teacher is drawing on, rather than a
                 flattened picture of it, so panning and zooming to read something small is now

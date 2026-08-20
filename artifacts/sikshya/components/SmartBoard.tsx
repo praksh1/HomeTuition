@@ -28,8 +28,9 @@ interface Props {
   readOnly?: boolean;
   sceneUpdates: SceneDelta[];
   onConsumeUpdates: () => void;
-  onSceneChange: (changed: unknown[]) => void;
+  onSceneChange: (changed: unknown[], files: unknown[]) => void;
   onViewportChange?: (view: BoardViewport) => void;
+  insertImage?: { key: string; dataUrl: string } | null;
   viewport?: BoardViewport | null;
   onClearAll?: () => void;
   clearedAt?: number;
@@ -47,6 +48,7 @@ export default function SmartBoard({
   onSceneChange,
   onViewportChange,
   viewport = null,
+  insertImage = null,
   onClearAll,
   clearedAt = 0,
   theme = "light",
@@ -84,6 +86,11 @@ export default function SmartBoard({
   }, [clearedAt, post]);
 
   useEffect(() => {
+    if (!insertImage || !ready.current) return;
+    post({ type: "insert_image", image: insertImage });
+  }, [insertImage, post]);
+
+  useEffect(() => {
     if (!viewport) return;
     if (!ready.current) queuedView.current = viewport;
     else post({ type: "view_in", view: viewport });
@@ -91,7 +98,7 @@ export default function SmartBoard({
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let msg: { type?: string; elements?: unknown[]; view?: BoardViewport };
+      let msg: { type?: string; elements?: unknown[]; files?: unknown[]; view?: BoardViewport };
       try {
         msg = JSON.parse(event.nativeEvent.data);
       } catch {
@@ -110,7 +117,7 @@ export default function SmartBoard({
         return;
       }
       if (msg.type === "scene_out" && Array.isArray(msg.elements)) {
-        onSceneChange(msg.elements);
+        onSceneChange(msg.elements, Array.isArray(msg.files) ? msg.files : []);
         return;
       }
       if (msg.type === "view_out" && msg.view) {

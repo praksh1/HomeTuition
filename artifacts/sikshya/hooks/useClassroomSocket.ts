@@ -37,6 +37,14 @@ export interface SceneDelta {
   /** True when this is a full catch-up for a client that just joined. */
   full: boolean;
   elements: unknown[];
+  /**
+   * The picture data for any image elements in this batch.
+   *
+   * Excalidraw stores a picture apart from the element that draws it, so a delta carrying only
+   * elements gives the far side a frame with nothing in it — which is precisely what students
+   * saw when a teacher shared a photo.
+   */
+  files?: unknown[];
 }
 
 export interface FloatingReaction {
@@ -188,7 +196,7 @@ interface Result {
   sceneUpdates: SceneDelta[];
   /** Marks updates as applied so they are not merged twice. */
   consumeSceneUpdates: () => void;
-  sendSceneUpdate: (elements: unknown[]) => void;
+  sendSceneUpdate: (elements: unknown[], files?: unknown[]) => void;
   floatingReactions: FloatingReaction[];
   material: BoardMaterial | null;
   /** The coordinate space the teacher's strokes are drawn in; null until they publish it. */
@@ -316,10 +324,16 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
           setBoardView((prev) => toBoardViewport(msg) ?? prev);
           break;
         case "scene_state":
-          setSceneUpdates((prev) => [...prev, { full: true, elements: (msg.elements as unknown[]) ?? [] }]);
+          setSceneUpdates((prev) => [
+            ...prev,
+            { full: true, elements: (msg.elements as unknown[]) ?? [], files: (msg.files as unknown[]) ?? [] },
+          ]);
           break;
         case "scene_update":
-          setSceneUpdates((prev) => [...prev, { full: false, elements: (msg.elements as unknown[]) ?? [] }]);
+          setSceneUpdates((prev) => [
+            ...prev,
+            { full: false, elements: (msg.elements as unknown[]) ?? [], files: (msg.files as unknown[]) ?? [] },
+          ]);
           break;
         case "board_clear":
           setRemotePaths([]);
@@ -430,8 +444,8 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
 
   const sendBoardClear = useCallback(() => send({ type: "board_clear" }), [send]);
   const sendSceneUpdate = useCallback(
-    (elements: unknown[]) => {
-      if (elements.length > 0) send({ type: "scene_update", elements });
+    (elements: unknown[], files: unknown[] = []) => {
+      if (elements.length > 0) send({ type: "scene_update", elements, files });
     },
     [send],
   );

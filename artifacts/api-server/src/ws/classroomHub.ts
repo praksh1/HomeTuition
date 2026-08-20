@@ -25,6 +25,8 @@ const MAX_REPLAY_PATHS = 800;
 const MAX_MATERIAL_CHARS = 2_500_000;
 /** A whole lesson of diagrams sits far below this; beyond it something has gone wrong. */
 const MAX_SCENE_ELEMENTS = 5_000;
+/** Pictures are orders of magnitude larger than shapes, so they get their own, much lower cap. */
+const MAX_SCENE_FILES = 40;
 
 interface BoardState {
   material: { kind: "image" | "pdf"; dataUrl: string } | null;
@@ -54,6 +56,19 @@ interface BoardState {
    * arrives late cannot resurrect a deleted shape or undo a move.
    */
   scene: Map<string, SceneElement>;
+  /**
+   * Picture data for the image elements above, keyed by file id.
+   *
+   * Excalidraw keeps these apart from the elements, and both halves have to be replayed or a
+   * student joining mid-lesson gets picture frames with nothing in them.
+   */
+  files: Map<string, SceneFile>;
+}
+
+interface SceneFile {
+  id: string;
+  dataURL: string;
+  [key: string]: unknown;
 }
 
 /** Only the fields the server needs to reason about; the rest is passed through untouched. */
@@ -74,7 +89,7 @@ const boards = new Map<string, BoardState>();
 function getBoard(sessionId: string): BoardState {
   let board = boards.get(sessionId);
   if (!board) {
-    board = { material: null, paths: [], boardSize: null, view: null, scene: new Map() };
+    board = { material: null, paths: [], boardSize: null, view: null, scene: new Map(), files: new Map() };
     boards.set(sessionId, board);
   }
   return board;
@@ -278,7 +293,13 @@ export function attachClassroomHub(server: http.Server): void {
     // joining needs to know what used to be there, and sending them grows the payload forever.
     if (board.scene.size > 0) {
       const elements = [...board.scene.values()].filter((e) => !e.isDeleted);
-      if (elements.length > 0) sendTo(ws, { type: "scene_state", elements });
+      // The pictures travel with the elements that reference them, not separately, so a
+      // late joiner never renders an image element it has no bytes for.
+      const fileIds = new Set(
+        elements.map((e) => (typeof e.fileId === "string" ? e.fileId : "")).filter(Boolean),
+      );
+      const files = [...board.files.values()].filter((f) => fileIds.has(f.id));
+      if (elements.length > 0) sendTo(ws, { type: "scene_state", elements, files });
     }
 
     // Sent after the elements, so the board is pointed at content it already holds.
@@ -330,8 +351,27 @@ export function attachClassroomHub(server: http.Server): void {
             board.scene.set(el.id, el);
             accepted.push(el);
           }
+          // Picture data for any images in this batch. Each is stored once and replayed to
+          // whoever joins later; anything implausibly large is dropped rather than relayed,
+          // because a single oversized frame stalls every phone in the room.
+          const incomingFiles = Array.isArray(msg.files) ? (msg.files as SceneFile[]) : [];
+          const acceptedFiles: SceneFile[] = [];
+          for (const file of incomingFiles) {
+            if (!file || typeof file.id !== "string" || typeof file.dataURL !== "string") continue;
+            if (file.dataURL.length > MAX_MATERIAL_CHARS) {
+              logger.warn({ sessionId, userId, size: file.dataURL.length }, "ws board image too large, dropped");
+              sendTo(ws, { type: "material_rejected", reason: "too_large" });
+              continue;
+            }
+            if (board.files.size >= MAX_SCENE_FILES && !board.files.has(file.id)) continue;
+            board.files.set(file.id, file);
+            acceptedFiles.push(file);
+          }
+
           pruneScene(board);
-          if (accepted.length > 0) broadcast(sessionId, { type: "scene_update", elements: accepted }, ws);
+          if (accepted.length > 0) {
+            broadcast(sessionId, { type: "scene_update", elements: accepted, files: acceptedFiles }, ws);
+          }
           break;
         }
 
@@ -339,6 +379,7 @@ export function attachClassroomHub(server: http.Server): void {
           if (isSessionTeacher) {
             getBoard(sessionId).paths = [];
             getBoard(sessionId).scene.clear();
+            getBoard(sessionId).files.clear();
             broadcast(sessionId, { type: "board_clear" }, ws);
           }
           break;

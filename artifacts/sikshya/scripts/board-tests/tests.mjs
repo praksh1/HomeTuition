@@ -4,7 +4,7 @@
  * Each entry is one property of a working lesson, written as the failure it guards against.
  * Every one of these has been broken in production at least once.
  */
-import { ERASER, PEN, ink, near, openBoard, pump, selectTool, stroke } from "./harness.mjs";
+import { ERASER, PEN, RED_PNG, ink, near, openBoard, pump, selectTool, stroke } from "./harness.mjs";
 
 export const tests = [
   {
@@ -38,6 +38,41 @@ export const tests = [
       assert("the student's board dropped it too", s.left === 0);
       assert("and kept what replaced it", s.right > 0);
       assert("pixel for pixel", s.n === t.n);
+    },
+  },
+
+  {
+    name: "a picture the teacher shares actually reaches the student",
+    why:
+      "Excalidraw keeps a picture's bytes in a separate map from the element that draws it. " +
+      "The sync sent only elements, so students got an empty picture frame — and when the " +
+      "teacher resized it, a bigger empty frame.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+
+      // The same route the app uses to hand a photo to the board.
+      await teacher.evaluate(
+        (dataUrl) =>
+          window.postMessage(
+            JSON.stringify({ type: "insert_image", image: { key: "test-1", dataUrl } }),
+            "*",
+          ),
+        RED_PNG,
+      );
+      await teacher.waitForTimeout(1200);
+
+      const onTeacher = await ink(teacher);
+      assert("the picture is on the teacher's board", onTeacher.red > 200);
+
+      await pump(teacher, student);
+      await student.waitForTimeout(400);
+      const onStudent = await ink(student);
+      assert("and on the student's board", onStudent.red > 200);
+      assert(
+        "at the same size, not as an empty frame",
+        Math.abs(onStudent.red - onTeacher.red) < onTeacher.red * 0.1,
+      );
     },
   },
 

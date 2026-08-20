@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -26,7 +26,6 @@ import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import { Image } from "react-native";
 import PdfViewer from "@/components/PdfViewer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ErrorFallbackProps } from "@/components/ErrorFallback";
@@ -79,7 +78,7 @@ export default function Classroom() {
   const { width: winW } = useWindowDimensions();
   const sideBySide = winW >= 900;
 
-  const { connected, accessDenied, presenceCount, messages, material, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendBoardView, sendChat, sendBoardClear, sendMaterial, clearMaterial } =
+  const { connected, accessDenied, presenceCount, messages, boardClearedAt, sceneUpdates, consumeSceneUpdates, sendSceneUpdate, sendBoardView, sendChat, sendBoardClear, clearMaterial } =
     useClassroomSocket({ sessionId: id ?? "", name: teacherName, role: "teacher" });
 
   const [session, setSession] = useState<SessionData | null>(null);
@@ -93,6 +92,11 @@ export default function Classroom() {
    * two permanent full-width buttons they were consuming screen the video should have. */
   const [materialMenuOpen, setMaterialMenuOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /**
+   * The next picture to place on the whiteboard. A new `key` is what triggers the placement,
+   * so uploading the same photo twice still works and a re-render never duplicates one.
+   */
+  const [boardImage, setBoardImage] = useState<{ key: string; dataUrl: string } | null>(null);
   // Native-only: stores a local file:// URI for a PDF picked via DocumentPicker.
   // Kept separate from `material` (which is broadcast over the socket) because
   // file:// paths are device-local and meaningless on other participants' devices.
@@ -146,21 +150,25 @@ export default function Classroom() {
 
   const applyUploadedFile = (dataUrl: string, kind: "image" | "pdf") => {
     if (kind === "pdf") {
-      if (Platform.OS === "web") {
-        // On web: the dataUrl is a full base64 data URI. Feed it straight to an
-        // <iframe> via the socket so all web participants see it in the browser's
-        // native PDF renderer — no pdf.js canvas rasterization, no off-screen
-        // canvas allocation, no memory pressure on the mobile main thread.
-        sendMaterial(dataUrl, "pdf");
-      } else {
-        // On native: dataUrl is a device-local file:// URI from DocumentPicker.
-        // Show it locally in a WebView; don't broadcast since file paths are
-        // meaningless on other participants' devices.
-        setLocalPdfUri(dataUrl);
-      }
+      /**
+       * A shared PDF is **not** on the whiteboard yet, and pretending otherwise is what made
+       * this dangerous. The PDF used to be broadcast and rendered by each participant
+       * separately: the teacher got a full PDF viewer with the whiteboard hidden behind it,
+       * while students got a broken half-view with the previous scribbles floating over it.
+       * Neither could tell the other was seeing something different.
+       *
+       * Until pages can be placed on the board as images, it opens for the teacher alone and
+       * says so, loudly. A teacher who knows students cannot see it will hold up a photo
+       * instead; a teacher who does not know teaches a whole lesson to nobody.
+       */
+      setLocalPdfUri(dataUrl);
+      clearMaterial();
       return;
     }
-    sendMaterial(dataUrl, kind);
+    // Photos go onto the board as real objects — movable, resizable, and part of what a
+    // student's view is fitted to.
+    setBoardImage({ key: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, dataUrl });
+    clearMaterial();
   };
 
   /** PDFs are passed through untouched, so they need their own ceiling. */
@@ -326,19 +334,6 @@ export default function Classroom() {
   // caused a stale avatar/count to render even when nobody is actually present.
   const participantCount = connected ? presenceCount : 0;
 
-  // The material image and every committed stroke are memoised so that changing zoom, pan or
-  // the active tool re-renders only the transform wrapper. Without this, each zoom tap threw
-  // away and rebuilt the decoded image plus every SVG path, which is what exhausted memory
-  // and took the video call down with the app.
-  const materialUri = material?.kind === "image" ? material.dataUrl : null;
-  const materialLayer = useMemo(
-    () =>
-      materialUri ? (
-        <Image source={{ uri: materialUri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-      ) : null,
-    [materialUri],
-  );
-
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: "#0A0A0A" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={[s.container, { paddingTop: insets.top }]}>
@@ -458,15 +453,15 @@ export default function Classroom() {
               >
                 <Feather name="paperclip" size={13} color={materialMenuOpen ? "#fff" : "#B9B9B9"} />
                 <Text style={[s.materialToggleText, materialMenuOpen && s.materialToggleTextOpen]}>
-                  {material || localPdfUri ? "Material" : "Add material"}
+                  {boardImage || localPdfUri ? "Material" : "Add material"}
                 </Text>
                 <Feather name={materialMenuOpen ? "chevron-up" : "chevron-down"} size={13} color="#777" />
               </TouchableOpacity>
 
-              {(material || localPdfUri) && (
+              {(boardImage || localPdfUri) && (
                 <TouchableOpacity
                   style={s.uploadDockClear}
-                  onPress={() => { clearMaterial(); setLocalPdfUri(null); setUploadError(null); setMaterialMenuOpen(false); }}
+                  onPress={() => { clearMaterial(); setLocalPdfUri(null); setBoardImage(null); setUploadError(null); setMaterialMenuOpen(false); }}
                   activeOpacity={0.7}
                 >
                   <Feather name="x-circle" size={16} color="#EF4444" />
@@ -526,6 +521,19 @@ export default function Classroom() {
               </View>
             )}
 
+            {localPdfUri !== null && (
+              <View style={s.pdfWarnBar}>
+                <Feather name="eye-off" size={15} color="#FCD34D" />
+                <Text style={s.pdfWarnText}>
+                  Your students cannot see this PDF — only your whiteboard is shared. To teach
+                  from a page, close this and upload it as a photo instead.
+                </Text>
+                <TouchableOpacity onPress={() => setLocalPdfUri(null)} activeOpacity={0.7}>
+                  <Feather name="x" size={15} color="#FCD34D" />
+                </TouchableOpacity>
+              </View>
+            )}
+
             {uploadError && (
               <View style={s.uploadErrorBar}>
                 <Feather name="alert-circle" size={15} color="#FCA5A5" />
@@ -541,10 +549,11 @@ export default function Classroom() {
                   No pdf.js, no off-screen canvas allocation, no main-thread rasterization.
                   - Web: <iframe> — Chrome/Safari's built-in PDF plugin renders it.
                   - Native: WebView with the local file:// URI picked by DocumentPicker. */}
-              {(material?.kind === "pdf" || localPdfUri !== null) ? (
-                Platform.OS === "web" && material?.kind === "pdf" ? (
+              {localPdfUri !== null ? (
+                // Shown to the teacher only, and never broadcast — see applyUploadedFile.
+                Platform.OS === "web" ? (
                   React.createElement("iframe", {
-                    src: material.dataUrl,
+                    src: localPdfUri,
                     title: "PDF document",
                     style: {
                       position: "absolute",
@@ -554,9 +563,9 @@ export default function Classroom() {
                       borderRadius: 12,
                     },
                   })
-                ) : localPdfUri !== null ? (
+                ) : (
                   <PdfViewer uri={localPdfUri} style={StyleSheet.absoluteFill} />
-                ) : null
+                )
               ) : (
                 /* The whiteboard proper. Excalidraw owns the whole surface: its own tools,
                    colours, undo, zoom, object handling and the controls for them. Nothing is
@@ -565,7 +574,6 @@ export default function Classroom() {
                    dead. A shared photo sits behind the ink, which is why the board's own
                    background is transparent. */
                 <>
-                  {materialLayer}
                   {/* Keyed by the class, so opening the next lesson starts on a blank board.
                       This screen is one route with a changing id, so without it the component
                       is reused and the previous lesson's working comes along for the ride. */}
@@ -576,6 +584,7 @@ export default function Classroom() {
                     onSceneChange={sendSceneUpdate}
                     onViewportChange={sendBoardView}
                     onClearAll={sendBoardClear}
+                    insertImage={boardImage}
                     clearedAt={boardClearedAt}
                   />
                 </>
@@ -687,6 +696,8 @@ const s = StyleSheet.create({
   materialBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderRadius: 8, backgroundColor: "#C41E3A", paddingVertical: 9, position: "relative", overflow: "hidden", zIndex: 50 },
   materialBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
   uploadDockClear: { width: 30, height: 30, borderRadius: 8, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
+  pdfWarnBar: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 12, marginTop: 4, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, backgroundColor: "#3A2E0B", borderWidth: 1, borderColor: "#5A470F" },
+  pdfWarnText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCD34D", lineHeight: 17 },
   uploadErrorBar: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 12, marginTop: 4, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, backgroundColor: "#2A1416", borderWidth: 1, borderColor: "#7F1D1D" },
   uploadErrorText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCA5A5", lineHeight: 17 },
   boardFallback: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12, paddingHorizontal: 28 },

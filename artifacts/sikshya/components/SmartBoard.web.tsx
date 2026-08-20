@@ -84,9 +84,28 @@ type ExcalidrawAPI = {
   getSceneElements: () => readonly ExcalidrawElement[];
   getSceneElementsIncludingDeleted: () => readonly ExcalidrawElement[];
   getAppState: () => ExcalidrawAppState;
+  /** The picture data behind image elements, keyed by file id. */
+  getFiles: () => Record<string, BinaryFile>;
+  addFiles: (files: BinaryFile[]) => void;
   scrollToContent: (target?: unknown, opts?: unknown) => void;
   setToast: (toast: { message: string; duration?: number; closable?: boolean } | null) => void;
 };
+
+/**
+ * A picture on the board, as Excalidraw stores it.
+ *
+ * Excalidraw deliberately keeps this apart from the element that draws it: the element carries
+ * position, size and a `fileId`, and the bytes live here. Anything syncing a board has to send
+ * both — an element whose file never arrived renders as an empty picture frame, which is
+ * exactly what students saw.
+ */
+interface BinaryFile {
+  id: string;
+  dataURL: string;
+  mimeType: string;
+  created: number;
+  lastRetrieved?: number;
+}
 
 /** Only the fields the sync rules reason about; everything else is carried through untouched. */
 interface ExcalidrawElement {
@@ -102,7 +121,12 @@ interface Props {
   /** Deltas arriving from the classroom socket. */
   sceneUpdates: SceneDelta[];
   onConsumeUpdates: () => void;
-  onSceneChange: (changed: unknown[]) => void;
+  onSceneChange: (changed: unknown[], files: unknown[]) => void;
+  /**
+   * A picture to place on the board. Changing `key` places it; the same key is never placed
+   * twice, so a re-render cannot duplicate it.
+   */
+  insertImage?: { key: string; dataUrl: string } | null;
   /** Teacher only: publishes the part of the canvas they are looking at. */
   onViewportChange?: (view: BoardViewport) => void;
   /** Students only: the part of the canvas the teacher is looking at. */
@@ -177,6 +201,7 @@ export default function SmartBoard({
   onSceneChange,
   onViewportChange,
   viewport = null,
+  insertImage = null,
   onClearAll,
   clearedAt = 0,
   theme = "light",
@@ -194,6 +219,9 @@ export default function SmartBoard({
    * moved since we last sent it. Without it, every change would re-broadcast the whole board.
    */
   const sentVersions = useRef<Map<string, number>>(new Map());
+  /** Pictures already put on the wire. They are large and never change once created. */
+  const sentFiles = useRef<Set<string>>(new Set());
+  const insertedImages = useRef<Set<string>>(new Set());
   const pendingSync = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingView = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingApply = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -226,7 +254,22 @@ export default function SmartBoard({
       sentVersions.current.set(el.id, el.version);
       changed.push(el);
     }
-    if (changed.length > 0) onSceneChange(changed);
+
+    // An image element is a frame and a reference; the picture itself lives in a separate map
+    // and has to travel with it, once. Without this a student gets the frame and no picture,
+    // and resizing it on the teacher's board just gives them a bigger empty frame.
+    const files: unknown[] = [];
+    const available = api.getFiles();
+    for (const el of changed as ExcalidrawElement[]) {
+      const fileId = typeof el.fileId === "string" ? el.fileId : null;
+      if (!fileId || sentFiles.current.has(fileId)) continue;
+      const file = available[fileId];
+      if (!file) continue;
+      sentFiles.current.add(fileId);
+      files.push(file);
+    }
+
+    if (changed.length > 0) onSceneChange(changed, files);
   }, [api, readOnly, onSceneChange]);
 
   // --- outgoing: where the teacher is looking ---
@@ -360,6 +403,20 @@ export default function SmartBoard({
     const current = new Map<string, ExcalidrawElement>();
     for (const el of api.getSceneElementsIncludingDeleted()) current.set(el.id, el);
 
+    // Pictures first. Excalidraw renders an image element the moment it appears, so handing it
+    // the element before the bytes shows an empty frame that only corrects itself on the next
+    // change — and there may not be one.
+    const incomingFiles: BinaryFile[] = [];
+    for (const delta of sceneUpdates) {
+      for (const raw of delta.files ?? []) {
+        const file = raw as BinaryFile;
+        if (!file || typeof file.id !== "string" || typeof file.dataURL !== "string") continue;
+        sentFiles.current.add(file.id);
+        incomingFiles.push(file);
+      }
+    }
+    if (incomingFiles.length > 0) api.addFiles(incomingFiles);
+
     let touched = false;
     for (const delta of sceneUpdates) {
       for (const raw of delta.elements) {
@@ -398,6 +455,7 @@ export default function SmartBoard({
   useEffect(() => {
     if (!api || clearedAt === 0) return;
     sentVersions.current.clear();
+    sentFiles.current.clear();
     applyingRemote.current = true;
     api.updateScene({ elements: [] });
     setTimeout(() => { applyingRemote.current = false; }, 0);
@@ -417,12 +475,100 @@ export default function SmartBoard({
       return;
     }
     sentVersions.current.clear();
+    sentFiles.current.clear();
     applyingRemote.current = true;
     api.updateScene({ elements: [] });
     setTimeout(() => { applyingRemote.current = false; }, 0);
     onClearAll?.();
     api.setToast({ message: "Board cleared", duration: 2000 });
   }, [api, readOnly, onClearAll]);
+
+  /**
+   * Put an uploaded picture on the board as a real element.
+   *
+   * It used to be drawn *behind* the canvas and annotated over the top, which meant it could
+   * not be moved or scaled with the diagram, was not part of what a student's view is fitted
+   * to, and on a screen of a different shape did not line up with the ink at all. As an element
+   * it is just another object: draggable, resizable, erasable, and synced by the same rules as
+   * everything else.
+   */
+  useEffect(() => {
+    if (!api || readOnly || !insertImage) return;
+    if (insertedImages.current.has(insertImage.key)) return;
+    insertedImages.current.add(insertImage.key);
+
+    let cancelled = false;
+    const img = new window.Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const state = api.getAppState();
+      const zoom = state.zoom?.value ?? 1;
+      const viewW = (state.width || 800) / zoom;
+      const viewH = (state.height || 600) / zoom;
+
+      // Fill most of what the teacher is looking at, without overflowing it.
+      const scale = Math.min(1, (viewW * 0.8) / img.naturalWidth, (viewH * 0.8) / img.naturalHeight);
+      const width = Math.max(1, Math.round(img.naturalWidth * scale));
+      const height = Math.max(1, Math.round(img.naturalHeight * scale));
+      const x = -state.scrollX + (viewW - width) / 2;
+      const y = -state.scrollY + (viewH - height) / 2;
+
+      const fileId = `file-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const mimeMatch = /^data:([^;,]+)[;,]/.exec(insertImage.dataUrl);
+      api.addFiles([
+        {
+          id: fileId,
+          dataURL: insertImage.dataUrl,
+          mimeType: mimeMatch ? mimeMatch[1] : "image/jpeg",
+          created: Date.now(),
+        },
+      ]);
+
+      const element = {
+        id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        type: "image",
+        fileId,
+        status: "saved",
+        x, y, width, height,
+        angle: 0,
+        strokeColor: "transparent",
+        backgroundColor: "transparent",
+        fillStyle: "solid",
+        strokeWidth: 1,
+        strokeStyle: "solid",
+        roughness: 0,
+        opacity: 100,
+        groupIds: [],
+        frameId: null,
+        roundness: null,
+        seed: Math.floor(Math.random() * 100000),
+        version: 1,
+        versionNonce: Math.floor(Math.random() * 100000),
+        isDeleted: false,
+        boundElements: null,
+        updated: Date.now(),
+        link: null,
+        locked: false,
+        scale: [1, 1],
+        crop: null,
+      };
+
+      applyingRemote.current = true;
+      api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), element] });
+      setTimeout(() => {
+        applyingRemote.current = false;
+        // Point everyone at it — the teacher's view is broadcast, so students come along.
+        api.scrollToContent([element], { fitToContent: true, animate: false, maxZoom: 1 });
+        flush();
+      }, 0);
+    };
+    img.onerror = () => {
+      if (!cancelled) api.setToast({ message: "That picture could not be opened.", duration: 4000 });
+    };
+    img.src = insertImage.dataUrl;
+
+    return () => { cancelled = true; };
+  }, [api, readOnly, insertImage, flush]);
 
   /** Show or hide the shape properties panel, in whichever layout Excalidraw is using. */
   const setPropsVisible = useCallback(
