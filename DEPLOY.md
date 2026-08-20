@@ -68,8 +68,22 @@ not Pages. `wrangler.jsonc` in the repo root already points at the build output 
 single-page-application routing, so a shared link like `/classroom/123` still resolves after a
 refresh instead of 404ing.
 
-Unlike the API, which Railway redeploys automatically on push, **the web app is deployed by
-hand**. Two commands, from the repo root:
+**The web app now deploys itself too.** `.github/workflows/deploy-web.yml` runs on every push
+to `main`: it typechecks, builds, runs the whiteboard tests, deploys to Cloudflare, and then
+reads the API address back out of the live bundle to prove the deploy actually landed. Nothing
+below needs doing by hand any more — it is kept because it is what the workflow does, and
+because it is how to deploy if the workflow is ever broken or unavailable.
+
+There is also a button: **Actions → Deploy the web app → Run workflow**.
+
+The one-time setup is a `CLOUDFLARE_API_TOKEN` repository secret (Settings → Secrets and
+variables → Actions), created from the "Edit Cloudflare Workers" template at
+**dash.cloudflare.com → My Profile → API Tokens**. Until it exists the workflow still runs
+every check, and simply skips the deploy with a note rather than failing.
+
+---
+
+To deploy by hand instead, two commands from the repo root:
 
 ```
 pnpm --filter @workspace/sikshya run build

@@ -1,0 +1,115 @@
+# Deploys the web app when main changes.
+#
+# The API has always redeployed itself — Railway watches the repo. The web app did not, so
+# every fix needed a human to run three commands in the right folder, in the right shell, in
+# the right order. That step failed in every way it could: a `git pull` that silently did not
+# run, leaving a build of stale code that deployed perfectly and shipped nothing; a wrong API
+# URL baked into the bundle; PowerShell rejecting the syntax in our own docs. None of those
+# were mistakes about the product, and all of them cost real time.
+#
+# So the machine does it now. A push to main is the deploy.
+name: Deploy the web app
+
+on:
+  push:
+    branches: [main]
+  # Also gives a button: Actions -> Deploy the web app -> Run workflow.
+  workflow_dispatch:
+
+# Two deploys racing would be a coin toss over which one wins.
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+env:
+  # Baked into the JavaScript at build time, not read at run time — a wrong value here ships a
+  # site that cannot reach its backend, and nothing fails loudly when it does. See
+  # .agents/memory/deploy-url-baked-in.md before changing it.
+  EXPO_PUBLIC_API_URL: https://workspaceapi-server-production-5a63.up.railway.app
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Cheap, deterministic, and catches the whole class of "it compiled on my machine".
+      # Nothing is deployed if this fails.
+      - name: Check every package compiles
+        run: pnpm run typecheck
+
+      - name: Build the web app
+        run: pnpm --filter @workspace/sikshya run build
+
+      # The whiteboard is the product, and its failures are invisible in the code and obvious
+      # on screen — so these drive the real board in a real browser and compare pixels.
+      # See artifacts/sikshya/scripts/board-tests/README.md.
+      - name: Install a browser for the whiteboard tests
+        run: |
+          npm i -g playwright
+          npx playwright install --with-deps chromium
+
+      # `continue-on-error` while these prove themselves on CI hardware, which is slower than
+      # the machine they were written on. Once a few runs have passed, delete that line: a
+      # broken whiteboard should stop the deploy, not annotate it.
+      - name: Whiteboard tests
+        continue-on-error: true
+        run: pnpm --filter @workspace/sikshya run test:board
+
+      # Until the Cloudflare token is added, everything above still runs — so the code is
+      # checked and the whiteboard tested on every push — and the deploy simply waits, rather
+      # than failing and showing a red cross nobody can act on.
+      - name: Deploy is not set up yet
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN == '' }}
+        run: |
+          echo "::notice::Checks passed, but nothing was deployed: the CLOUDFLARE_API_TOKEN"
+          echo "::notice::secret is not set. Add it under Settings -> Secrets and variables ->"
+          echo "::notice::Actions, and the next push will deploy by itself."
+
+      - name: Deploy to Cloudflare
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Optional: only needed if the token can see more than one Cloudflare account.
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      # `wrangler deploy` succeeding only means files were uploaded. This reads the API address
+      # back out of the bundle the live site is actually serving, which is the check that would
+      # have caught a wrong URL before anyone noticed logins failing.
+      # `wrangler deploy` succeeding only means files were uploaded. This reads the API address
+      # back out of the bundle the live site is actually serving, which is the check that would
+      # have caught a wrong URL before anyone noticed logins failing. It retries, because a CDN
+      # can keep serving the previous bundle for a few seconds and a red cross for that would
+      # be a false alarm.
+      - name: Confirm the live site is serving this build
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        run: |
+          set -uo pipefail
+          site="https://hometuition.praksh-dhakal.workers.dev"
+          for attempt in 1 2 3 4 5 6; do
+            entry=$(curl -sSf "$site/" 2>/dev/null | grep -oE '_expo/static/js/web/entry-[A-Za-z0-9._-]+\.js' | head -1 || true)
+            found=""
+            if [ -n "$entry" ]; then
+              found=$(curl -sSf "$site/$entry" 2>/dev/null | grep -oE 'https://[A-Za-z0-9.-]+\.up\.railway\.app' | sort -u | head -1 || true)
+            fi
+            if [ "$found" = "$EXPO_PUBLIC_API_URL" ]; then
+              echo "Deployed and verified. Live bundle $entry points at $found"
+              exit 0
+            fi
+            echo "attempt $attempt: bundle='${entry:-none}' api='${found:-none}' — waiting for the CDN"
+            sleep 10
+          done
+          echo "::error::the live site is not serving a build that points at $EXPO_PUBLIC_API_URL"
+          echo "::error::last seen: bundle='${entry:-none}' api='${found:-none}'"
+          exit 1
