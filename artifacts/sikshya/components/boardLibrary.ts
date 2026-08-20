@@ -190,8 +190,15 @@ function item(name: string, elements: unknown[]) {
   };
 }
 
-/** Everything the Library panel offers out of the box. Add to this list to add a shape. */
-export function teachingLibrary() {
+/**
+ * Everything the Library panel offers out of the box. Add to this list to add a shape.
+ *
+ * Typed loosely at this one boundary on purpose. Excalidraw's element type is a large internal
+ * union, and these objects are validated by Excalidraw's own import path when the board loads
+ * them — the same treatment the rest of this file's dealings with the editor get.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function teachingLibrary(): any[] {
   return [
     item("Number line 0–10", numberLine()),
     item("Coordinate axes", axes()),
