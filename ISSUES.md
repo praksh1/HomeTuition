@@ -196,7 +196,7 @@ is closed by a test or by the owner seeing it work.
 | E7 | On Android Chrome the board is too small to teach on, and only the video can be maximised | **FIXED** — needs your eyes on a real phone |
 | E8 | A student who drops takes a long time to rejoin, and sometimes cannot | queued |
 | E9 | "The teacher has ended this session" reaches students who left long before | **FIXED** |
-| E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | queued |
+| E10 | Notifications are not real time: a new follower and a new message both arrive late or not at all. Wants per-user notification preferences, and email for the important ones | **FIXED** — email needs one setting from you, see below |
 | E11 | Teachers cannot see who follows them; students cannot see who they follow | **FIXED** |
 | E12 | Use Daily's in-call chat instead of the app's own | queued — **see the caveat below** |
 | E13 | Excalidraw's Library button opens a library teachers cannot use; wants curated free content instead | **FIXED** |
@@ -253,6 +253,64 @@ Both now show the truth. Alongside them, two access holes: `PATCH /teachers/:id`
 login and nothing else, so any account could rewrite any teacher's bio, subjects and price per
 session; and `GET /students/:id/followed-teachers` would tell any logged-in user which teachers
 any student follows. Both are now restricted to the person they belong to.
+
+### E10 — there were no notifications at all
+
+This one was worse than reported. "Not real time" implies a system that is slow; there was no
+system. The list every user saw was **invented on their own phone**: the app wrote six sample
+notifications into local storage the first time it opened — a payment of NPR 500 from "Aarav
+Shrestha", a verification approval, a subscription renewal — and showed them as though they
+had happened. None of it ever touched the server.
+
+The one thing that did work, new messages, worked only while the Messages screen was open: it
+compared each poll against the last and announced the difference. Close the tab and nothing was
+announced at all. Following a teacher wrote a row into the database that nothing ever read, so
+a teacher was genuinely never told.
+
+**What is there now.** A signed-in app holds one WebSocket to the server for as long as it is
+open — separate from the classroom socket, which only ever carried one lesson and so could not
+carry anything that happened outside one. Three things push down it today: a message, a new
+follower, and a class going live (to the students who paid for it, and no one else).
+
+The invented notifications are deleted. A new account's list is empty until something actually
+happens, and there is a test that fails if sample data ever comes back.
+
+**Preferences.** Profile → Notifications, for teachers and students alike. Four switches for
+in-app alerts and four for email: messages, class starting, new followers, class reminders.
+They are stored on the server, so they follow you to every device you sign in on. Turning one
+off genuinely stops the notification being sent, rather than hiding it after the fact.
+
+**Email needs one thing from you.** Nothing in this project could send an email — there was no
+mail provider at all. The code is written and tested; it needs an account with a sending
+service. Until two settings exist on Railway, the email switches appear greyed out with the
+line "Email is not switched on for this server yet", rather than pretending to work:
+
+- `RESEND_API_KEY` — from a free account at resend.com
+- `EMAIL_FROM` — the address mail comes from, e.g. `Sikshya <hello@yourdomain.com>`
+- `APP_URL` (optional) — so the links inside emails open the app
+
+This follows the same rule as payments: what the server can do follows from what is configured,
+not from a flag someone can flip by mistake.
+
+**You do not have to run anything.** Storing preferences needs a new table, and the first
+version of this put it as a column on the users table — which would have meant you running
+`db:push` at exactly the right moment. That was tested rather than assumed, and it was bad:
+with the code deployed and the database not yet updated, **logging in and registering both
+returned 500**. The whole site, not just notifications, for as long as it took someone to
+notice and run a command.
+
+So it is a table of its own instead, and the server creates it on start-up if it is not there.
+That is safe in a way a column change is not: it only ever creates, it does nothing at all if
+the table already exists, and if it fails the server still starts — only the notifications
+settings screen waits. Verified against a database that had never seen the feature: sign-in,
+registration, browsing classes and sending messages all keep working throughout.
+
+**How it was checked.** 39 checks against a real server and a real Postgres, and 9 more driving
+the actual built app in a real browser — including that a message arrives with nobody touching
+anything, that a brand new account's list is empty, and that turning a switch off really stops
+it. Both suites were then deliberately broken to prove they fail: removing the preference check
+turned exactly one red, removing the socket's token check turned exactly the three security
+checks red, and stopping the app from listening turned exactly the four delivery checks red.
 
 ### E12 — the caveat, recorded before it is done
 

@@ -12,6 +12,7 @@ import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
 import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
+import { notifyMany } from "../lib/notify";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -302,6 +303,34 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
 
   if (status !== undefined) {
     broadcastSessionStatus(String(id), status);
+  }
+
+  /**
+   * Tell the enrolled students their class has begun.
+   *
+   * `broadcastSessionStatus` only reaches people already sitting in that classroom. A student
+   * who booked and is elsewhere in the app — or on the Discover tab waiting — heard nothing at
+   * all, which is most of what "notifications are not real time" meant in practice.
+   */
+  if (status === "live") {
+    const enrolled = await db
+      .select({ studentId: sessionEnrollmentsTable.studentId })
+      .from(sessionEnrollmentsTable)
+      .where(
+        and(
+          eq(sessionEnrollmentsTable.sessionId, id),
+          eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+        ),
+      );
+    notifyMany(
+      enrolled.map((e) => e.studentId),
+      {
+        kind: "session_live",
+        sessionId: id,
+        topic: existing.topic,
+        at: new Date().toISOString(),
+      },
+    );
   }
 
   res.json(session);

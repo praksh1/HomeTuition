@@ -96,15 +96,24 @@ clone will not run until they exist — ask the owner for them rather than guess
 
 ## Deploying
 
-**The API redeploys itself** when you push (Railway watches the repo). **The web app does
-not** — it needs a manual deploy every time:
+**The API redeploys itself** when you push (Railway watches the repo). **The web app now does
+too**, via `.github/workflows/deploy-web.yml` — a push to `main` runs the checks and deploys.
+That workflow needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repository secrets;
+without them everything is still checked and the deploy step simply says so rather than
+failing.
+
+The manual path still works if the workflow is ever unavailable:
 
 ```
 pnpm --filter @workspace/sikshya run build
 npx wrangler deploy
 ```
 
-`EXPO_PUBLIC_API_URL` is baked in at build time, not read at run time.
+`EXPO_PUBLIC_API_URL` is baked in at build time, not read at run time — and Metro caches that
+substitution without the value in its cache key, so changing the API address and rebuilding
+used to succeed while still shipping the old one. `scripts/build.js` now clears the bundler
+cache when the address changes and fails the build if the result does not contain it. See
+`.agents/memory/metro-cache-stale-api-url.md`.
 
 ---
 
@@ -142,16 +151,21 @@ at startup on *both* web and native with "Invalid hook call".
 ## Current state
 
 Working and verified: booking and payment, the 5-minute early-join lobby, in-app chat on web
-and native, notifications with deep links, unread message counts, and the whiteboard on
-Excalidraw with object manipulation, an infinite canvas, and a scene that stays in step with
-every student — including erasures and the teacher's viewport.
+and native, unread message counts, and the whiteboard on Excalidraw with object manipulation,
+an infinite canvas, shared images and PDFs as real board objects, and a scene that stays in
+step with every student — including erasures and the teacher's viewport.
+
+Notifications are real now, and were not before: what users saw was six samples the app
+invented in local storage on first run. A signed-in app holds one WebSocket to the server
+(`ws/userHub.ts`, separate from the classroom socket) and hears about messages, new followers
+and classes going live, subject to per-user preferences stored server-side. See
+`ISSUES.md` → E10.
 
 Known gaps, in rough priority order:
 
-1. **An uploaded photo is not a real board element.** It is drawn *behind* the board and
-   annotated over the top, which works because the canvas background is transparent, but it
-   cannot be moved or scaled with the rest of the scene and is not part of what a student's
-   view is fitted to. Turning it into an Excalidraw image element fixes both.
+1. **Email cannot be sent until a provider is configured.** `lib/mailer.ts` is written and the
+   preference switches exist; without `RESEND_API_KEY` and `EMAIL_FROM` the app says so plainly
+   rather than pretending. Same self-describing pattern as payments.
 2. **WebView board performance on cheap Android is untested.** This matters more than it
    sounds, given the target market.
 3. **Board state is not persisted** — a server restart loses a live lesson.
@@ -162,8 +176,10 @@ Known gaps, in rough priority order:
    printed text, and on handwriting a clearly drawn "B" came back "L". Doing it properly needs
    ML Kit (free, native only) or MyScript (paid). `WHITEBOARD.md` section 4 lays out the
    options honestly.
-6. **No Bikram Sambat date picker** — Nepali users see Gregorian dates only.
-7. **The app calls itself "Guru" in places** and Sikshya/HomeTuition in others.
+6. **A PDF picked on a phone opens locally, not on the board.** The picker hands back a
+   `file://` URI with no bytes to share; the app says so rather than failing silently.
+7. **No Bikram Sambat date picker** — Nepali users see Gregorian dates only.
+8. **The app calls itself "Guru" in places** and Sikshya/HomeTuition in others.
 
 ## Testing expectations
 

@@ -1,4 +1,5 @@
 export * from "./users";
+export * from "./notificationPrefs";
 export * from "./teacherProfiles";
 export * from "./studentProfiles";
 export * from "./sessions";

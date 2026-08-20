@@ -2,6 +2,7 @@ import { and, asc, eq, or, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, messagesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
+import { notify } from "../lib/notify";
 
 const router: IRouter = Router();
 
@@ -111,6 +112,26 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
     receiverId: otherUserId,
     body: body.trim(),
   }).returning();
+
+  /**
+   * Tell the recipient now, if they are looking at the app.
+   *
+   * Before this, nothing on the server ever told anyone a message had arrived — the unread
+   * badge only moved when the recipient's app next happened to ask. Sending must not depend on
+   * announcing, so this cannot throw and is not awaited on the response path.
+   */
+  const [sender] = await db
+    .select({ name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+
+  notify(otherUserId, {
+    kind: "message",
+    fromUserId: userId,
+    fromName: sender?.name ?? "Someone",
+    preview: message.body.slice(0, 140),
+    at: new Date(message.createdAt).toISOString(),
+  });
 
   res.status(201).json(message);
 });

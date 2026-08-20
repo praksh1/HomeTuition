@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { apiGet } from "@/utils/api";
 import { loadDrafts, type Drafts } from "@/utils/drafts";
-import { notifyNewMessage } from "@/utils/notifications";
 
 interface Conversation {
   otherUserId: number;
@@ -38,20 +37,11 @@ export default function ConversationList({ title }: { title: string }) {
   const load = useCallback(async () => {
     try {
       const data = await apiGet<Conversation[]>("/conversations");
-      // Announce genuinely new incoming messages once each. Comparing against the previous
-      // poll avoids re-notifying for the same message every six seconds.
-      setConversations((prev) => {
-        if (prev.length > 0) {
-          for (const c of data) {
-            const before = prev.find((p) => p.otherUserId === c.otherUserId);
-            const isNew = !c.lastMessageFromMe && c.unreadCount > (before?.unreadCount ?? 0);
-            if (isNew) {
-              void notifyNewMessage({ senderName: c.otherUserName, body: c.lastMessage, senderId: c.otherUserId });
-            }
-          }
-        }
-        return data;
-      });
+      // Announcing a new message used to happen here, by diffing one poll against the last.
+      // That meant it only worked while this screen was open — which is what "notifications
+      // are not real time" meant in practice. The server now pushes it down the user channel
+      // (see hooks/useUserChannel), so doing it here as well would announce it twice.
+      setConversations(data);
       setDrafts(await loadDrafts());
     } catch (_e) {
     } finally {

@@ -40,6 +40,19 @@ Neon already hosts it. Copy the connection string from the Neon dashboard; it is
 
    Do **not** set `PORT` — Railway provides it.
 
+   **Optional, and only if you want email notifications.** Nothing in this project could send
+   an email until now, and it still cannot until these exist. Leave them out and the app tells
+   users plainly that email is off, rather than showing switches that do nothing:
+
+   | Name | Value |
+   |---|---|
+   | `RESEND_API_KEY` | an API key from a free account at resend.com |
+   | `EMAIL_FROM` | the address mail comes from, e.g. `Sikshya <hello@yourdomain.com>` |
+   | `APP_URL` | where the app is served, so links inside emails work: `https://hometuition.praksh-dhakal.workers.dev` |
+
+   Like payments, this is inferred rather than switched: the server sends email when it has a
+   provider and does not when it does not. There is no flag to get wrong.
+
 3. **Settings → Networking → Generate Domain**. Railway generates the name; it is **not**
    derived from the project name and is not guessable. The live one is:
 
@@ -148,14 +161,24 @@ The same applies to `npx`: use **`npx.cmd wrangler deploy`**. This doc previousl
 
 **Create the database tables** (once, from your laptop, pointed at the same Neon database):
 
-```bash
-pnpm run db:push
 ```
+pnpm.cmd run db:push
+```
+
+Run this again whenever a change adds a table or a column. It is safe on a live database: it
+adds what is missing and leaves existing rows alone.
+
+> **Why the ordering matters.** The API redeploys itself on every push; this command is one you
+> run by hand. So there is always a window where the code is newer than the database. A new
+> *column* on an existing table is dangerous in that window — Drizzle names every column in its
+> queries, so sign-in and registration both fail with a 500 until this runs. A new *table* is
+> not: nothing else touches it. Prefer a new table, and where a change really does need a
+> column, deploy it in two steps — add the column first, then the code that uses it.
 
 **Optionally seed demo data:**
 
-```bash
-pnpm run seed
+```
+pnpm.cmd run seed
 ```
 
 ---

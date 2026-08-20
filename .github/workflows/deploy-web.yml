@@ -31,6 +31,24 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    # A throwaway database, so the notification tests can run against a real one. They cannot
+    # be faked usefully: what broke before was not logic but wiring, and only a real request
+    # through a real socket shows whether the wiring is there.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hometuition_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     # Lifted out of `secrets` so the steps below can ask whether it is set. GitHub allows the
     # `secrets` context in a step's `with:` and `env:` but not in its `if:` — using it there is
     # a validation error that fails the run instantly, with no jobs and no log to read.
@@ -59,17 +77,62 @@ jobs:
       - name: Server rules
         run: pnpm --filter @workspace/api-server run test
 
-      - name: Build the web app
+      # Notifications broke in a way unit tests cannot see: nothing was wrong, the wiring was
+      # simply absent — the app showed sample data it had invented on the device, and the
+      # server never told anyone anything. So the next three steps run the real API against a
+      # real database, and then the real built app in a real browser against that API.
+      # See artifacts/api-server/scripts/notification-tests/README.md.
+      - name: Start the API against a throwaway database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+          PORT: 8080
+          NODE_ENV: test
+        run: |
+          set -euo pipefail
+          pnpm run db:push
+          pnpm --filter @workspace/api-server run build
+          nohup node artifacts/api-server/dist/index.mjs > /tmp/api.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/api/healthz >/dev/null; then
+              echo "API up after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the API never came up"
+          cat /tmp/api.log
+          exit 1
+
+      - name: Notifications leave the server
+        run: pnpm --filter @workspace/api-server run test:notifications
+
+      # The half that was actually missing: the app never listened. Only a real browser
+      # running the real bundle can show that it does. Built against the local API, so this
+      # build is deliberately thrown away and the deploy build made fresh below.
+      - name: Install a browser for the tests that need one
+        run: |
+          npm i -g playwright
+          npx playwright install --with-deps chromium
+
+      - name: Notifications reach the app
+        env:
+          EXPO_PUBLIC_API_URL: http://127.0.0.1:8080
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/sikshya run build
+          pnpm --filter @workspace/sikshya run test:notifications
+
+      # Rebuilt pointing at the real API. The build script clears the bundler cache whenever
+      # the API address changes, because Metro inlines it during transform and caches the
+      # result without the value in the key — so without that, this step would happily reship
+      # the localhost build above. That was reproduced deliberately before it was fixed.
+      - name: Build the web app for deploy
         run: pnpm --filter @workspace/sikshya run build
 
       # The whiteboard is the product, and its failures are invisible in the code and obvious
       # on screen — so these drive the real board in a real browser and compare pixels.
       # See artifacts/sikshya/scripts/board-tests/README.md.
-      - name: Install a browser for the whiteboard tests
-        run: |
-          npm i -g playwright
-          npx playwright install --with-deps chromium
-
       # These block the deploy. They were non-blocking for one run while it was unknown
       # whether their timeouts held up on CI hardware, which is slower than the machine they
       # were written on; that run passed all twenty checks in 44 seconds, so a broken
@@ -104,9 +167,6 @@ jobs:
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
         run: npx --yes wrangler@4.124.0 deploy
 
-      # `wrangler deploy` succeeding only means files were uploaded. This reads the API address
-      # back out of the bundle the live site is actually serving, which is the check that would
-      # have caught a wrong URL before anyone noticed logins failing.
       # `wrangler deploy` succeeding only means files were uploaded. This reads the API address
       # back out of the bundle the live site is actually serving, which is the check that would
       # have caught a wrong URL before anyone noticed logins failing. It retries, because a CDN

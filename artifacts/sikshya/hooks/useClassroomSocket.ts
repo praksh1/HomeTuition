@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Animated, Platform } from "react-native";
+import { Animated } from "react-native";
 import { getToken } from "@/utils/api";
+import { wsUrl } from "@/utils/wsUrl";
 
 export interface ChatMessage {
   id: string;
@@ -149,21 +150,7 @@ function toDrawPath(raw: Record<string, unknown>): DrawPath | null {
 }
 
 function getWsUrl(sessionId: string, token: string, name: string): string {
-  const params = new URLSearchParams({ sessionId, token, name });
-  // Mirrors getApiBase() in utils/api.ts: an explicit origin wins, so the socket follows the
-  // API to whatever host/port it is actually on. http -> ws, https -> wss.
-  const explicit = process.env.EXPO_PUBLIC_API_URL;
-  if (explicit) {
-    const base = explicit.replace(/\/+$/, "").replace(/^http/, "ws");
-    return `${base}/api/ws?${params.toString()}`;
-  }
-  const domain = process.env.EXPO_PUBLIC_DOMAIN;
-  if (domain) return `wss://${domain}/api/ws?${params.toString()}`;
-  if (Platform.OS === "web" && typeof window !== "undefined") {
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}/api/ws?${params.toString()}`;
-  }
-  return `ws://localhost:80/api/ws?${params.toString()}`;
+  return wsUrl({ sessionId, token, name });
 }
 
 interface Options {

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
+import { notify } from "../lib/notify";
 
 const router: IRouter = Router();
 
@@ -271,6 +272,24 @@ router.post("/teachers/:id/follow", requireAuth, async (req, res): Promise<void>
   await db.insert(studentTeacherSubscriptionsTable)
     .values({ studentId: user.userId, teacherId: teacher.userId })
     .onConflictDoNothing();
+
+  /**
+   * Tell the teacher they have a new follower.
+   *
+   * This is the case the owner reported: a student followed a teacher and the teacher was
+   * never told, because following only ever wrote a row. Nothing read it on their behalf.
+   */
+  const [follower] = await db
+    .select({ name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, user.userId));
+
+  notify(teacher.userId, {
+    kind: "follower",
+    fromUserId: user.userId,
+    fromName: follower?.name ?? "A student",
+    at: new Date().toISOString(),
+  });
 
   res.status(201).json({ following: true });
 });

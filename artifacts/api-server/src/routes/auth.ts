@@ -6,13 +6,34 @@ import { hashPassword, verifyPassword, signToken } from "../lib/auth";
 
 const router: IRouter = Router();
 
+/**
+ * The columns sign-in needs — named rather than taken with a bare `select()`.
+ *
+ * A bare select asks for every column the schema declares, so the moment a new column is added
+ * to the schema, **logging in fails until the database has been updated**. That was measured,
+ * not guessed: with `notification_prefs` in the code and not yet in the database, login and
+ * registration both returned 500. The API redeploys itself on every push while `db:push` is a
+ * separate step someone has to run, so those two are never in step, and the gap must not be
+ * able to take the whole app down.
+ *
+ * Add a column here only when sign-in actually needs it.
+ */
+const AUTH_COLUMNS = {
+  id: usersTable.id,
+  email: usersTable.email,
+  name: usersTable.name,
+  role: usersTable.role,
+  passwordHash: usersTable.passwordHash,
+  createdAt: usersTable.createdAt,
+} as const;
+
 router.post("/auth/login", async (req, res): Promise<void> => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
     res.status(400).json({ error: "Email and password are required" });
     return;
   }
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email.toLowerCase().trim()));
+  const [user] = await db.select(AUTH_COLUMNS).from(usersTable).where(eq(usersTable.email, email.toLowerCase().trim()));
   if (!user) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
@@ -51,7 +72,9 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     email: email.toLowerCase().trim(),
     role,
     passwordHash,
-  }).returning();
+    // Same reason as AUTH_COLUMNS: a bare `returning()` asks for every column, so registration
+    // would break on a schema change the database has not caught up with yet.
+  }).returning(AUTH_COLUMNS);
   if (role === "teacher") {
     await db.insert(teacherProfilesTable).values({
       userId: user.id,
@@ -82,7 +105,7 @@ router.post("/auth/register", async (req, res): Promise<void> => {
 
 router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
-  const [user] = await db.select().from(usersTable).where(eq(usersTable.id, userId));
+  const [user] = await db.select(AUTH_COLUMNS).from(usersTable).where(eq(usersTable.id, userId));
   if (!user) {
     res.status(401).json({ error: "User not found" });
     return;
@@ -91,7 +114,7 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
   res.json(profile);
 });
 
-async function buildUserProfile(user: typeof usersTable.$inferSelect) {
+async function buildUserProfile(user: { id: number; email: string; name: string; role: string }) {
   if (user.role === "teacher") {
     const [teacher] = await db
       .select()

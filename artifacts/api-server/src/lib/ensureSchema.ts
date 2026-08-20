@@ -1,0 +1,47 @@
+import { sql } from "drizzle-orm";
+import { db } from "@workspace/db";
+import { logger } from "./logger";
+
+/**
+ * Creates the notification-preferences table if it is not there yet.
+ *
+ * This is **not** a migration system and must not grow into one. `pnpm run db:push` remains
+ * how this project's schema changes; the reason for this one exception is the shape of the
+ * deploy: the API redeploys itself on every push, while `db:push` is a command the owner runs
+ * by hand from his laptop. Those two are never in step, and the owner should not have to be
+ * the thing that keeps them in step.
+ *
+ * What makes it safe to do at boot:
+ *
+ * - It only ever *creates*. `IF NOT EXISTS` means it does nothing on a database that already
+ *   has the table, and there is no statement here that can drop, alter or rewrite anything.
+ * - It cannot stop the server starting. If it fails — no permission, database asleep — it is
+ *   logged and the app runs; the only thing that does not work is the notifications settings
+ *   screen, which already answers with the defaults when it has nothing stored.
+ *
+ * Anything beyond adding a new, empty, additive table belongs in `db:push`, where a human can
+ * see what it is about to do.
+ */
+export async function ensureNotificationPrefsTable(): Promise<void> {
+  try {
+    // The foreign key is named explicitly to match what drizzle-kit generates. Left to
+    // Postgres it would be `..._user_id_fkey`, and `db:push` would then drop and recreate it
+    // on every run — harmless, but it makes a no-op push look like a schema change.
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "user_notification_prefs" (
+        "user_id" integer PRIMARY KEY,
+        "prefs" jsonb NOT NULL,
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "user_notification_prefs_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    logger.info("notification preferences table is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the notification preferences table; run `pnpm run db:push`. " +
+        "Everything else works — only the notifications settings screen is affected.",
+    );
+  }
+}

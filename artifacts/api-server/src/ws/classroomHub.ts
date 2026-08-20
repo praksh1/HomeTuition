@@ -6,6 +6,7 @@ import { db, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { verifyToken, type JwtPayload } from "../lib/auth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
+import { addUserChannel } from "./userHub";
 
 interface RoomClient {
   ws: WebSocket;
@@ -243,6 +244,32 @@ export function attachClassroomHub(server: http.Server): void {
     // A destroyed or reset socket emits 'error'; without a listener that would crash the
     // process, and the membership lookup below gives it time to happen.
     socket.on("error", () => {});
+
+    /**
+     * A connection with no `sessionId` is a *user* channel rather than a classroom one: the
+     * app opens it once, signed in, to hear about things that happen outside a lesson — a new
+     * follower, a message, a class about to start. It still has to prove who it is.
+     */
+    if (!url.searchParams.get("sessionId")) {
+      const token = url.searchParams.get("token") ?? "";
+      let payload: JwtPayload;
+      try {
+        payload = verifyToken(token);
+      } catch {
+        socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      if (socket.destroyed) return;
+      const userId = payload.userId;
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        const remove = addUserChannel(ws, userId);
+        logger.info({ userId }, "ws user channel open");
+        ws.on("close", remove);
+        ws.on("error", () => remove());
+      });
+      return;
+    }
 
     // Membership is settled before the handshake completes, so an unauthorized peer never
     // gets an open WebSocket at all.

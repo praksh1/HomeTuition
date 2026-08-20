@@ -172,6 +172,17 @@ export default function TeacherProfile() {
 
       <TouchableOpacity
         style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+        onPress={() => router.push("/notification-settings")}
+        activeOpacity={0.7}
+        testID="notification-settings-link"
+      >
+        <Feather name="bell" size={18} color={colors.foreground} />
+        <Text style={[styles.supportText, { color: colors.foreground }]}>Notifications</Text>
+        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
         onPress={() => router.push("/support")}
         activeOpacity={0.7}
         testID="customer-support-link"

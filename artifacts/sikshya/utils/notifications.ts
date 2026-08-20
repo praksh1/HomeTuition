@@ -122,6 +122,34 @@ export async function notifyNewMessage(msg: {
   });
 }
 
+/**
+ * Raised when someone starts following a teacher.
+ *
+ * The owner reported never hearing about a new follower. Following only ever wrote a row —
+ * nothing read it on the teacher's behalf, on the server or here.
+ */
+export async function notifyNewFollower(follower: { name: string; userId: number | string }): Promise<void> {
+  const title = "New follower";
+  const body = `${follower.name} started following you. They'll be told when you schedule a class.`;
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: { title, body, data: { type: "follower", userId: String(follower.userId) }, sound: true },
+        trigger: null,
+      });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
+  }
+  await addInAppNotification({
+    title,
+    body,
+    type: "general",
+    data: { type: "follower", userId: String(follower.userId) },
+  });
+}
+
 export async function notifyPaymentReceived(amount: number, studentName: string): Promise<void> {
   if (Platform.OS === "web") {
     await addInAppNotification({
@@ -169,19 +197,26 @@ export async function notifyCredentialStatus(status: "approved" | "rejected", re
   await addInAppNotification({ title, body, type: "credential", data: { status } });
 }
 
-export async function notifySessionLive(session: { topic: string; teacherName: string }): Promise<void> {
-  const title = "Session is Live Now!";
-  const body = `"${session.topic}" by ${session.teacherName} has started. Join now!`;
+export async function notifySessionLive(session: {
+  topic: string;
+  teacherName?: string;
+  sessionId?: number | string;
+}): Promise<void> {
+  const title = "Class is live now";
+  const body = `"${session.topic}"${session.teacherName ? ` by ${session.teacherName}` : ""} has started. Join now!`;
+  // Carried so a tap opens the classroom rather than a generic list. Without it the
+  // notification told a student their class had begun and then left them to find it.
+  const data = { type: "live", sessionId: session.sessionId != null ? String(session.sessionId) : undefined };
   if (Platform.OS !== "web") {
     try {
       await Notifications.scheduleNotificationAsync({
-        content: { title, body, data: { type: "live" }, sound: true },
+        content: { title, body, data, sound: true },
         trigger: null,
       });
     } catch (_e) {
     }
   }
-  await addInAppNotification({ title, body, type: "live" });
+  await addInAppNotification({ title, body, type: "live", data });
 }
 
 export async function addInAppNotification(
@@ -213,66 +248,4 @@ export async function markAllRead(): Promise<void> {
 export async function getUnreadCount(): Promise<number> {
   const notifications = await getNotifications();
   return notifications.filter((n) => !n.read).length;
-}
-
-export async function seedSampleNotifications(): Promise<void> {
-  const stored = await AsyncStorage.getItem(NOTIFICATIONS_KEY);
-  if (stored) {
-    const existing: AppNotification[] = JSON.parse(stored);
-    if (existing.length > 0) return;
-  }
-
-  const now = Date.now();
-  const samples: AppNotification[] = [
-    {
-      id: "n_seed_1",
-      title: "Session Starting Soon",
-      body: "Calculus: Derivatives by Ram Prasad Sharma starts in 30 minutes. Tap to join.",
-      type: "session_reminder",
-      read: false,
-      createdAt: new Date(now - 25 * 60 * 1000).toISOString(),
-    },
-    {
-      id: "n_seed_2",
-      title: "Payment Received",
-      body: "NPR 500 received from Aarav Shrestha via eSewa for Calculus session.",
-      type: "payment",
-      read: false,
-      createdAt: new Date(now - 3 * 3600000).toISOString(),
-    },
-    {
-      id: "n_seed_3",
-      title: "New Student Enrolled",
-      body: "Sita Gurung has enrolled in your session: Integration Techniques.",
-      type: "general",
-      read: true,
-      createdAt: new Date(now - 6 * 3600000).toISOString(),
-    },
-    {
-      id: "n_seed_4",
-      title: "Verification Approved!",
-      body: "Your credentials have been verified. You can now start teaching on Sikshya!",
-      type: "credential",
-      read: true,
-      createdAt: new Date(now - 2 * 86400000).toISOString(),
-    },
-    {
-      id: "n_seed_5",
-      title: "Session is Live Now!",
-      body: "Newton's Laws of Motion by Sunita Thapa has started. Join now!",
-      type: "live",
-      read: true,
-      createdAt: new Date(now - 86400000).toISOString(),
-    },
-    {
-      id: "n_seed_6",
-      title: "Monthly Subscription Active",
-      body: "Your Sikshya Pro plan has been renewed. 10 sessions available for June.",
-      type: "payment",
-      read: true,
-      createdAt: new Date(now - 5 * 86400000).toISOString(),
-    },
-  ];
-
-  await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(samples));
 }

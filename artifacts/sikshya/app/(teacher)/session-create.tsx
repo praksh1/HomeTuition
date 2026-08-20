@@ -44,7 +44,7 @@ export default function SessionCreate() {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [saving, setSaving] = useState(false);
-  const { refresh: refreshNotifs } = useNotifications();
+  const { refresh: refreshNotifs, preferences } = useNotifications();
 
   React.useEffect(() => {
     (async () => {
@@ -103,7 +103,11 @@ export default function SessionCreate() {
         maxStudents,
         price: Number(price),
       });
-      try { await scheduleSessionReminder({ id: String(newSession.id), topic: newSession.topic, date: newSession.date }); } catch {}
+      // Honoured here rather than inside the scheduler: a reminder is booked once, now, and a
+      // user who has turned reminders off should never have one queued in the first place.
+      if (preferences.push.reminders) {
+        try { await scheduleSessionReminder({ id: String(newSession.id), topic: newSession.topic, date: newSession.date }); } catch {}
+      }
       try { await refreshNotifs(); } catch {}
       try { await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
       if (Platform.OS === "web") {

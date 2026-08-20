@@ -5,6 +5,65 @@ const { spawnSync } = require("child_process");
 const projectRoot = path.resolve(__dirname, "..");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
 
+/**
+ * Remembers which API the last build was pointed at.
+ *
+ * Metro caches each transformed module, and `process.env.EXPO_PUBLIC_*` is inlined during
+ * that transform — but the cache key does not include the value. So changing the API URL and
+ * rebuilding produces a build that *succeeds* and still contains the old address. That was
+ * reproduced here deliberately: a build asked for port 9999 reported success and shipped 8080.
+ *
+ * Clearing the bundler cache fixes it and costs about a minute, so it is done only when the
+ * target has actually changed rather than on every build.
+ */
+const TARGET_STAMP = path.join(projectRoot, "node_modules", ".cache", "sikshya-build-target");
+
+function readLastTarget() {
+  try {
+    return fs.readFileSync(TARGET_STAMP, "utf8").trim();
+  } catch {
+    // No stamp means we cannot know what is cached, so treat it as changed.
+    return null;
+  }
+}
+
+function writeTarget(target) {
+  try {
+    fs.mkdirSync(path.dirname(TARGET_STAMP), { recursive: true });
+    fs.writeFileSync(TARGET_STAMP, target);
+  } catch {
+    // Not being able to record it only costs a slower next build.
+  }
+}
+
+/**
+ * Reads the API address back out of the files that were just produced.
+ *
+ * The stamp above prevents the known cause; this catches the symptom whatever the cause. A
+ * wrong API address in a bundle is invisible — the build passes, the site loads, and only
+ * logins fail — so it is worth failing loudly here instead.
+ */
+function assertBundleTargets(expected) {
+  const jsDir = path.join(projectRoot, "web-build", "_expo", "static", "js", "web");
+  let files = [];
+  try {
+    files = fs.readdirSync(jsDir).filter((f) => f.endsWith(".js"));
+  } catch {
+    exitWithError(`Build produced no JavaScript to check in ${jsDir}`);
+  }
+  const found = files.some((f) =>
+    fs.readFileSync(path.join(jsDir, f), "utf8").includes(`"${expected}"`),
+  );
+  if (!found) {
+    exitWithError(
+      `The build does not point at ${expected}.\n` +
+        "This usually means the bundler served a cached copy of the old address. Delete\n" +
+        "node_modules/.cache and try again, or run the export with --clear.",
+    );
+  }
+  console.log(`Verified: the built app points at ${expected}`);
+}
+
 function exitWithError(message) {
   console.error(message);
   process.exit(1);
@@ -70,6 +129,12 @@ function main() {
   const domain = apiUrl ? null : getDeploymentDomain();
   console.log(apiUrl ? `API at ${apiUrl}` : `Setting EXPO_PUBLIC_DOMAIN=${domain}`);
 
+  const target = apiUrl ? `api:${apiUrl}` : `domain:${domain}`;
+  const targetChanged = readLastTarget() !== target;
+  if (targetChanged) {
+    console.log("The API address changed since the last build — clearing the bundler cache.");
+  }
+
   const outputDir = path.join(projectRoot, "web-build");
   if (fs.existsSync(outputDir)) {
     fs.rmSync(outputDir, { recursive: true });
@@ -86,7 +151,7 @@ function main() {
 
   const result = spawnSync(
     process.execPath,
-    [expoCli, "export", "-p", "web", "--output-dir", "web-build"],
+    [expoCli, "export", "-p", "web", "--output-dir", "web-build", ...(targetChanged ? ["--clear"] : [])],
     {
       cwd: projectRoot,
       stdio: "inherit",
@@ -105,6 +170,9 @@ function main() {
   if (!fs.existsSync(path.join(outputDir, "index.html"))) {
     exitWithError("Build did not produce web-build/index.html");
   }
+
+  assertBundleTargets(apiUrl ?? domain);
+  writeTarget(target);
 
   console.log(`Build complete! Static web app ready in web-build/ (base path: ${basePath || "/"})`);
 }
