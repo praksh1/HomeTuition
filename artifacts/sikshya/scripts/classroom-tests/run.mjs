@@ -285,6 +285,20 @@ async function main() {
     !/Setting up video room/i.test(rejoin.text),
     rejoin.text.slice(0, 200).replace(/\n/g, " | "),
   );
+  /**
+   * One chat, not two.
+   *
+   * On the web the call carries Daily's own chat, inside the video where it belongs. The
+   * classroom's own tab beside the board was a second, emptier conversation next to a working
+   * one — "I don't want teacher and student to get confused on which chat system to use". It
+   * stays on the installed apps, where Daily has no chat panel at all and this is the only one
+   * there is. See utils/classroomChat.ts.
+   */
+  check(
+    "the board has no second chat tab beside it on the web",
+    !(await page2.getByText("Chat", { exact: false }).filter({ hasText: /^Chat/ }).count()),
+    `found ${await page2.getByText("Chat", { exact: false }).filter({ hasText: /^Chat/ }).count()} chat control(s)`,
+  );
 
   await ctx2.close();
   await browser.close();

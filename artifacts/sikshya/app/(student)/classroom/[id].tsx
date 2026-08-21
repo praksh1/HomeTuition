@@ -22,6 +22,7 @@ import { ApiError, apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
 import SmartBoard from "@/components/SmartBoard";
+import { showsOwnChatTab } from "@/utils/classroomChat";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "board" | "chat";
@@ -257,7 +258,7 @@ export default function StudentClassroom() {
 
         {/* Mode tabs */}
         <View style={s.modeSwitcher}>
-          {(["board", "chat"] as Mode[]).map((m) => (
+          {(showsOwnChatTab(Platform.OS) ? (["board", "chat"] as Mode[]) : ([] as Mode[])).map((m) => (
             <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
               <Feather name={m === "board" ? "monitor" : "message-circle"} size={13} color={mode === m ? "#fff" : "#666"} />
               <Text style={[s.modeText, mode === m && s.modeTextActive]}>

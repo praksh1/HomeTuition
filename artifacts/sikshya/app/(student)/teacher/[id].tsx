@@ -3,7 +3,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { confirm, notify } from "@/utils/alerts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
@@ -208,21 +209,25 @@ export default function TeacherDetail() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       if (res?.alreadyBooked) {
-        Alert.alert("Already booked", "You have already paid for this session. Check your Sessions tab to join.");
+        notify("Already booked", "You have already paid for this session. Check your Sessions tab to join.");
         return;
       }
-      Alert.alert(
-        "Booked!",
-        `Paid with ${paymentMethod === "esewa" ? "eSewa" : "Khalti"}. You're in.
+      if (
+        await confirm(
+          "Booked!",
+          `Paid with ${paymentMethod === "esewa" ? "eSewa" : "Khalti"}. You're in.
 
 You can join from your Sessions tab — the class opens a few minutes before it starts.`,
-        [{ text: "View My Sessions", onPress: () => router.push("/(student)/sessions") }, { text: "OK" }],
-      );
+          "View My Sessions",
+        )
+      ) {
+        router.push("/(student)/sessions");
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Booking failed. Please try again.";
       // A decline is a normal outcome with a clear next step, not a crash.
       const declined = /declin|payment|card/i.test(msg);
-      Alert.alert(
+      notify(
         declined ? "Payment declined" : "Booking failed",
         declined ? `${msg}
 
@@ -257,10 +262,10 @@ Nothing has been charged and you are not enrolled.` : msg,
         comment: `Great teacher! Rated ${myRating} star${myRating !== 1 ? "s" : ""}.`,
       });
       setRatingSubmitted(true);
-      Alert.alert("Thank you!", `You rated ${teacher.name} ${myRating} star${myRating !== 1 ? "s" : ""}.`);
+      notify("Thank you!", `You rated ${teacher.name} ${myRating} star${myRating !== 1 ? "s" : ""}.`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "You can only rate teachers after attending a completed session.";
-      Alert.alert("Can't Submit Rating", msg);
+      notify("Can't Submit Rating", msg);
     }
   };
 
@@ -277,7 +282,7 @@ Nothing has been charged and you are not enrolled.` : msg,
       setTeacher({ ...teacher, isFollowing: nowFollowing });
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } catch (_e) {
-      Alert.alert("Something went wrong", "Please try again.");
+      notify("Something went wrong", "Please try again.");
     } finally {
       setSubscribing(false);
     }

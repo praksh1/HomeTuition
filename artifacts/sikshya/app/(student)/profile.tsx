@@ -3,6 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { notify } from "@/utils/alerts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
@@ -106,20 +107,22 @@ export default function StudentProfile() {
       </View>
 
       <View style={[styles.payCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        {/*
+          No "+ Add" button.
+          
+          It was here and it did nothing — reported exactly that way. Two separate reasons, and
+          removing it answers both. `Alert` is not implemented by react-native-web, so the tap
+          genuinely did nothing at all on a browser; and had it worked, it promised "add a new
+          payment method via eSewa or Khalti" when there is no payment provider connected and
+          nothing to add. A control that cannot do its job is worse than no control: it makes
+          somebody think the fault is theirs.
+
+          It comes back with the payment provider — see A1 in ISSUES.md — because that is the
+          change that gives it something to do.
+        */}
         <View style={styles.payHeader}>
           <Text style={[styles.cardTitle, { color: colors.foreground }]}>Payment Methods</Text>
-          <TouchableOpacity
-            style={[styles.addBtn, { backgroundColor: colors.secondary + "15" }]}
-            onPress={() => Alert.alert("Add Payment", "Add a new payment method via eSewa or Khalti.")}
-            activeOpacity={0.7}
-          >
-            <Feather name="plus" size={15} color={colors.secondary} />
-            <Text style={[styles.addBtnText, { color: colors.secondary }]}>Add</Text>
-          </TouchableOpacity>
         </View>
-        <Text style={[styles.paySubtitle, { color: colors.mutedForeground }]}>
-          All payments to teachers are processed securely through the Sikshya platform.
-        </Text>
 
         {/* This listed two "verified" eSewa and Khalti accounts with masked numbers, for every
             student, invented in the code. No payment provider is connected yet, so showing
@@ -130,9 +133,10 @@ export default function StudentProfile() {
             <Feather name="credit-card" size={16} color={colors.mutedForeground} />
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.pmType, { color: colors.foreground }]}>No payment method yet</Text>
+            <Text style={[styles.pmType, { color: colors.foreground }]}>No saved payment method</Text>
             <Text style={[styles.pmAccount, { color: colors.mutedForeground }]}>
-              eSewa and Khalti are coming. Booking works without one for now.
+              Nothing to save yet. Choosing eSewa or Khalti when you book applies to that class
+              only — no account is stored, and nothing has been charged to one.
             </Text>
           </View>
         </View>
@@ -148,7 +152,7 @@ export default function StudentProfile() {
           <TouchableOpacity
             key={item.label}
             style={styles.secRow}
-            onPress={() => Alert.alert(item.label, `Manage your ${item.label.toLowerCase()} settings.`)}
+            onPress={() => notify(item.label, `Manage your ${item.label.toLowerCase()} settings.`)}
             activeOpacity={0.7}
           >
             <Feather name={item.icon as "shield"} size={16} color={colors.mutedForeground} />

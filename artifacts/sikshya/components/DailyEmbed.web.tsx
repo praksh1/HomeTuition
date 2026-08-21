@@ -90,6 +90,14 @@ const SLOW_JOIN = "The video call is taking longer than usual to connect.";
  */
 let _activeFrame: any = null;
 let _pendingDestroy: Promise<void> = Promise.resolve();
+/**
+ * The Daily module itself, kept once it has been imported.
+ *
+ * Only so an abandoned frame can be found again — see `claimOrphanedFrame`. Daily is loaded as
+ * a module rather than a global, so there is nothing else to ask.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _dailySdk: any = null;
 
 /**
  * Daily rejects with a plain object (`{action:'error', errorMsg:'…'}`), not an Error, so the
@@ -113,12 +121,49 @@ function describeError(err: unknown): string {
   return String(err);
 }
 
-/** Fire-and-forget: clears _activeFrame and records the destroy promise. */
+/**
+ * Ends the call and tears the frame down, in that order.
+ *
+ * `destroy()` on its own removes the iframe but does not reliably end the call inside it, and a
+ * frame still in a call keeps its camera and microphone. Reported from a real session: the
+ * teacher ended the class, went back to their session list, and the webcam light was still on
+ * with the browser's camera indicator showing in the address bar. Nothing in the app was using
+ * the camera — the abandoned call was.
+ *
+ * So `leave()` first, then `destroy()`, and the destroy still runs if the leave fails: a frame
+ * that will not leave must not be left behind holding the devices.
+ *
+ * Fire-and-forget by design — the caller is a React cleanup and cannot await — but the promise
+ * is recorded so the next mount waits for it rather than racing a half-destroyed frame.
+ */
 function scheduleDestroy() {
-  if (_activeFrame) {
-    const frame = _activeFrame;
-    _activeFrame = null;
-    _pendingDestroy = frame.destroy().catch(() => {});
+  const frame = _activeFrame ?? claimOrphanedFrame();
+  if (!frame) return;
+  _activeFrame = null;
+  _pendingDestroy = Promise.resolve()
+    .then(() => frame.leave())
+    .catch(() => {
+      // Already left, never joined, or the frame is in a state that refuses. Either way the
+      // destroy below is what actually has to happen.
+    })
+    .then(() => frame.destroy())
+    .catch(() => {});
+}
+
+/**
+ * A call frame that exists without this module knowing about it.
+ *
+ * Daily keeps its own reference to the one frame a page may have. If a frame is ever created
+ * and this module's own pointer is lost — a re-render at the wrong moment, an error between
+ * creating and recording it — that frame holds the camera and nothing here would ever release
+ * it. Asking Daily is the only way to find it.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function claimOrphanedFrame(): any {
+  try {
+    return _dailySdk?.getCallInstance?.() ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -189,6 +234,7 @@ export default function DailyEmbed({
     (async () => {
       try {
         const { default: DailyIframe } = await import("@daily-co/daily-js");
+        _dailySdk = DailyIframe;
 
         // Kick off destroy of any existing frame and wait for it to fully
         // complete.  This covers two cases:

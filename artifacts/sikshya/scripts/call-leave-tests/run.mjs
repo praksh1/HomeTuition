@@ -47,16 +47,23 @@ writeFileSync(
   fakeDaily,
   `
 const handlers = {};
+window.__calls = [];
+let destroyed = false;
 const frame = {
   on(event, fn) { (handlers[event] ||= []).push(fn); return frame; },
   join() { return new Promise(() => {}); },
-  leave() { return Promise.resolve(); },
-  destroy() { return Promise.resolve(); },
+  leave() { window.__calls.push("leave"); return Promise.resolve(); },
+  destroy() { window.__calls.push("destroy"); destroyed = true; return Promise.resolve(); },
   iframe() { return null; },
   setLocalAudio() {}, setLocalVideo() {}, startScreenShare() {}, stopScreenShare() {},
 };
 window.__emit = (event, payload) => { for (const fn of handlers[event] ?? []) fn(payload); };
-export default { createFrame: () => frame, getCallInstance: () => null };
+// Daily keeps its own pointer to the one frame a page may have, and returns null once it has
+// been destroyed. That is what lets an abandoned frame be found and released.
+const stub = { createFrame: () => frame, getCallInstance: () => (destroyed ? null : frame) };
+// So the test can ask what Daily itself still holds, rather than taking the app's word.
+window.__callInstanceGone = () => stub.getCallInstance() === null;
+export default stub;
 `,
 );
 
@@ -69,13 +76,20 @@ import { createRoot } from "react-dom/client";
 import DailyEmbed from ${JSON.stringify(path.join(appRoot, "components", "DailyEmbed.web.tsx"))};
 
 window.__lefts = 0;
-createRoot(document.getElementById("root")).render(
-  React.createElement(DailyEmbed, {
-    roomUrl: "https://example.invalid/room-that-is-not-there",
-    displayName: "Ram Prasad",
-    onLeft: () => { window.__lefts += 1; },
-  }),
-);
+const root = createRoot(document.getElementById("root"));
+function Harness() {
+  const [inCall, setInCall] = React.useState(true);
+  // The classroom clears the room URL when the teacher ends the class, which unmounts this.
+  window.__endCall = () => setInCall(false);
+  return inCall
+    ? React.createElement(DailyEmbed, {
+        roomUrl: "https://example.invalid/room-that-is-not-there",
+        displayName: "Ram Prasad",
+        onLeft: () => { window.__lefts += 1; },
+      })
+    : React.createElement("div", null, "call over");
+}
+root.render(React.createElement(Harness));
 `,
 );
 
@@ -147,6 +161,30 @@ try {
   check("and is not reported twice for the same call",
     (await page.evaluate(() => window.__lefts)) === 1,
     `onLeft called ${await page.evaluate(() => window.__lefts)} time(s)`);
+
+  console.log("\nEnding the class hands the camera back");
+  /**
+   * Reported from a real session: the teacher ended the class, went back to their session
+   * list, and the webcam light was still on with the browser's camera indicator showing.
+   * Nothing in the app was using the camera — the abandoned call was. `destroy()` removes the
+   * iframe but does not reliably end the call inside it, and a frame still in a call keeps its
+   * devices, so the order here is the fix.
+   */
+  await page.evaluate(() => { window.__calls = []; window.__endCall(); });
+  await page.waitForTimeout(800);
+  const calls = await page.evaluate(() => window.__calls);
+  check("the call is left, not just torn down", calls.includes("leave"), JSON.stringify(calls));
+  check("and the frame is destroyed after that", calls.includes("destroy"), JSON.stringify(calls));
+  check(
+    "in that order — a frame still in a call keeps the camera",
+    calls.indexOf("leave") < calls.indexOf("destroy"),
+    JSON.stringify(calls),
+  );
+  check(
+    "and Daily itself is left holding no call",
+    await page.evaluate(() => window.__callInstanceGone()),
+    "the SDK still has a call instance, which is a frame nobody will ever release",
+  );
 
   check("no errors were thrown", errors.length === 0, errors[0] ?? "");
 } finally {

@@ -35,6 +35,7 @@ import { File as FsFile } from "expo-file-system";
 import { MAX_PDF_BYTES, preparePickedPdf } from "@/utils/pickedPdf";
 import { cancelSessionReminder } from "@/utils/notifications";
 import { canOpenSession } from "@/utils/sessionWindow";
+import { showsOwnChatTab } from "@/utils/classroomChat";
 import SmartBoard from "@/components/SmartBoard";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -647,7 +648,7 @@ export default function Classroom() {
               on screen — full-board mode hides it — and it is the same conversation either
               way, not a second one. */}
 
-          {(["whiteboard", "chat"] as Mode[]).map((m) => (
+          {(showsOwnChatTab(Platform.OS) ? (["whiteboard", "chat"] as Mode[]) : ([] as Mode[])).map((m) => (
             <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
               <Feather
                 name={m === "whiteboard" ? "edit-3" : m === "participants" ? "users" : "message-circle"}

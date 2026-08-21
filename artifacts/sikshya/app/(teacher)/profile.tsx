@@ -5,6 +5,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { notify } from "@/utils/alerts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
@@ -54,7 +55,7 @@ export default function TeacherProfile() {
   const uploadCredential = async (type: string) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== "granted") {
-      Alert.alert("Permission needed", "Please grant photo library access to upload credentials.");
+      notify("Permission needed", "Please grant photo library access to upload credentials.");
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -75,9 +76,9 @@ export default function TeacherProfile() {
       const updated = [...(teacher.credentials ?? []), newCred];
       await updateUser({ credentials: updated, approvalStatus: "pending" } as Partial<Teacher>);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert("Uploaded", `${type} uploaded successfully. It will be reviewed within 24-48 hours.`);
+      notify("Uploaded", `${type} uploaded successfully. It will be reviewed within 24-48 hours.`);
     } catch (_e) {
-      Alert.alert("Error", "Upload failed. Please try again.");
+      notify("Error", "Upload failed. Please try again.");
     } finally {
       setUploading(false);
     }

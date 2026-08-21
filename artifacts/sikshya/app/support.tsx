@@ -4,7 +4,6 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
-  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -14,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { notify } from "@/utils/alerts";
 import { useColors } from "@/hooks/useColors";
 import { apiPost } from "@/utils/api";
 
@@ -85,14 +85,11 @@ export default function SupportScreen() {
       const evidenceUrl = await uploadEvidence();
       await apiPost("/disputes", { reason, description: description.trim(), evidenceUrl });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        "Report Submitted",
-        "Our support team will review your report and get back to you shortly.",
-        [{ text: "OK", onPress: () => router.back() }]
-      );
+      notify("Report Submitted", "Our support team will review your report and get back to you shortly.");
+      router.back();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Something went wrong. Please try again.";
-      Alert.alert("Submission Failed", msg);
+      notify("Submission Failed", msg);
     } finally {
       setSubmitting(false);
     }

@@ -608,6 +608,73 @@ next would be worse than either.
 
 ---
 
+## Reported 2026-08-22 (fifth run) — after the fourth-round deploy
+
+### J1 — the camera stayed on after the class ended — **FIXED**
+**Where:** teacher, web. Screenshot shows the browser's camera indicator still lit on the
+session list, after the class was over.
+
+Nothing in the app was using the camera. The abandoned call was. Tearing the video down called
+Daily's `destroy()`, which removes the iframe but does not reliably end the call inside it — and
+a frame still in a call keeps its camera and microphone. The order is now `leave()` and then
+`destroy()`, and the destroy still runs if the leave fails: a frame that will not leave must not
+be left behind holding the devices.
+
+There is also a sweep for a frame this module has lost track of. Daily keeps its own pointer to
+the one frame a page may have; if ours is ever dropped — a re-render at the wrong moment, an
+error between creating a frame and recording it — that frame holds the camera and nothing here
+would ever release it. Asking Daily is the only way to find it.
+
+Four checks in `scripts/call-leave-tests` drive it with a stand-in SDK: the call is left, the
+frame is destroyed, in that order, and Daily itself is left holding no call. Reverting to the
+old teardown prints `["destroy"]` with no leave.
+
+### J2 — two chats in one class — **FIXED on web**
+Daily's chat works now, so the classroom's own tab beside the board was a second, emptier
+conversation next to a working one: "I don't want teacher and student to get confused on which
+chat system to use."
+
+Hidden on the web, where the call carries Daily's chat. **Kept on the installed iOS and Android
+apps**, where Daily's chat does not exist at all — those drive the native SDK behind this app's
+own call interface, which has no Prebuilt panels, so removing it there would leave a student on
+a phone with no way to ask a question. One rule, in `utils/classroomChat.ts`, with tests.
+
+That difference is the split already on the pre-launch checklist: a class mixing an installed
+app with a browser has two conversations that cannot see each other. Nobody is on an installed
+app today, so nothing is paid for it yet.
+
+### J3 — the "+ Add" payment method button did nothing — **FIXED**, and it was the small half
+**Where:** student → Profile → Payment Methods
+
+Two reasons, and removing the button answers both. `Alert` is a React Native module that
+**react-native-web does not implement**, so the tap did nothing at all in a browser. And had it
+worked, it promised "add a new payment method via eSewa or Khalti" when there is no payment
+provider connected and nothing to add. A control that cannot do its job is worse than none — it
+makes somebody think the fault is theirs. It comes back with the payment provider (A1).
+
+The empty state now also answers the question behind the report — *"I used this account to pay
+with eSewa/Khalti, why is nothing here?"* — by saying that choosing a method when booking
+applies to that class only, that no account is stored, and that nothing has been charged to one.
+
+### J4 — thirteen other buttons that said nothing on the web — **FIXED**, found while fixing J3
+Not reported, and worse than what was. `Alert.alert` is silent on the web, and thirteen call
+sites used it with no web path at all. Every one was a message somebody was supposed to see and
+nobody ever did:
+
+- **Booking a class**: "Booked! Paid with eSewa" and "Payment declined — nothing has been
+  charged and you are not enrolled". A student paid and the app said nothing at all.
+- **Uploading credentials**: "Uploaded — reviewed within 24-48 hours", the failure, and the
+  permission refusal. A teacher had no idea whether it worked.
+- **Support**: both the success and the failure of submitting a report.
+- Also "Already booked", the rating thank-you and its failure, and the profile settings rows.
+
+All now go through `utils/alerts.ts`, which uses the browser's own dialog on web and `Alert` on
+a phone. The two Log Out buttons were **already** guarded and were never broken; the classroom
+had worked this out too and branched inline every time. This is that, in one place, so the next
+screen cannot forget.
+
+---
+
 ## Reported 2026-08-21 (fourth run) — after the Sikshya rename and PDF-on-phone deploy
 
 Three recordings: an Android student watching a shared PDF, and an iPhone teacher trying to
