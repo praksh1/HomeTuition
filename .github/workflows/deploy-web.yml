@@ -206,6 +206,12 @@ jobs:
           # three-day-old class opened a classroom and asked the phone for its camera. A test
           # of a rule cannot see that; only this can.
           pnpm --filter @workspace/sikshya run test:classroom
+          # Starting a conversation, which for a long time only one side could do. It belongs
+          # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
+          # production URL, so the built app talks to Railway, never signs in with the local
+          # token, and has no tab bar to click. Its API-level checks passed there and only the
+          # browser half failed, which is exactly how that mistake hides.
+          pnpm --filter @workspace/sikshya run test:messaging
 
       # Rebuilt pointing at the real API. The build script clears the bundler cache whenever
       # the API address changes, because Metro inlines it during transform and caches the
@@ -255,13 +261,6 @@ jobs:
       - name: A failed call does not end the class
         run: pnpm --filter @workspace/sikshya run test:call-leave
 
-      # Starting a conversation, which for a long time only one side could do: a student could
-      # message a teacher from their profile and a teacher had nowhere to begin, so their
-      # Messages screen listed conversations they could only ever reply to.
-      - name: Writing to someone for the first time
-        env:
-          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
-        run: pnpm --filter @workspace/sikshya run test:messaging
 
       # Until the Cloudflare token is added, everything above still runs — so the code is
       # checked and the whiteboard tested on every push — and the deploy simply waits, rather
