@@ -50,11 +50,26 @@ scaled with everything else, is the piece still waiting to move across.
 becomes a rectangle; a sketched triangle becomes a triangle; a dashed-off line straightens; a
 line with a barb becomes an arrow.
 
-**It is not reaching the board at present.** Its only caller was the old SVG surface, and that
-stopped being rendered when Excalidraw arrived — the **Smart** toggle lived in a toolbar whose
-buttons had all been disconnected, and that toolbar has now been removed. The module is intact
-and engine-agnostic, which is what it was built for; wiring it back means catching Excalidraw's
-freehand commit and replacing the element with the recognised one, in `SmartBoard.web.tsx`.
+**It reaches the board now.** For a long stretch it did not: its only caller was the old SVG
+surface, and that stopped being rendered when Excalidraw arrived — the **Smart** toggle lived in
+a toolbar whose buttons had all been disconnected, and that toolbar has since been removed.
+Being engine-agnostic is what it was built for, and it paid off: `SmartBoard.web.tsx` offers it
+each finished freehand stroke and swaps in a real Excalidraw element when it is confident.
+
+Two things about the swap, beyond the three properties below:
+
+- **It is one undoable step.** `updateScene` is called with `CaptureUpdateAction.IMMEDIATELY`,
+  so a teacher who meant the wobble presses undo and has their stroke back. Without that this
+  would be a feature to be fought rather than helped by.
+- **The stroke is withdrawn, not dropped.** It is flagged `isDeleted` with its version bumped,
+  because the sync diff reports deletions as edits — an element simply removed from the array
+  produces no delta, and every student would be left looking at the wobbly original underneath
+  the teacher's tidy shape.
+
+Wiring it up turned up a bug that had been there the whole time: **every arrow was recognised as
+a plain line.** The barb was measured one sample at a time against a threshold that a resampled
+corner never reaches on its own, because resampling spreads it across the two samples bracketing
+it. A short flick still worked, which is how it survived being tried by hand.
 
 Three properties worth knowing, because they are what make it safe to leave on:
 
@@ -266,10 +281,13 @@ Each step ships on its own and leaves the product working. Do not do them all at
    image elements, placed by the board itself rather than the screens around it, so the phone
    apps get the same behaviour through the WebView. PDFs are rasterised on the sharer's device
    with pdf.js's *legacy* build; students receive plain pictures and never run a PDF engine.
-   Still open: on the phone apps a picked PDF is a `file://` URI with no bytes to hand over,
-   so it opens locally with a banner saying the class cannot see it.
-8. **Re-wire shape recognition** to Excalidraw's freehand commit — see section 1.
-9. **Persist board state** so a server restart does not lose a lesson.
+   The phone apps read a picked PDF into bytes and post those to the board, so they share one
+   the same way; the size a phone will carry across that bridge is the part still unproven.
+8. **Re-wire shape recognition** — done. A finished freehand stroke is offered to the
+   recogniser, and a confident match replaces it with a real Excalidraw shape in one undoable
+   step, keeping the teacher's colour and stroke width. See section 1.
+9. **Persist board state** — done. Boards are written down as they change and read back once
+   when the first person joins after a restart.
 10. **Nepali handwriting**, when there is a budget for it.
 
 ---

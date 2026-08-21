@@ -4,7 +4,7 @@
  * Each entry is one property of a working lesson, written as the failure it guards against.
  * Every one of these has been broken in production at least once.
  */
-import { ERASER, PEN, RED_PNG, TWO_PAGE_PDF, ink, near, openBoard, pump, selectTool, stroke } from "./harness.mjs";
+import { ERASER, PEN, RED_PNG, TWO_PAGE_PDF, drawPath, ink, near, openBoard, pump, roughCircle, selectTool, stroke, writingPath } from "./harness.mjs";
 
 export const tests = [
   {
@@ -347,6 +347,107 @@ export const tests = [
       const seen = await receipts();
       assert("the board acknowledges the document within two seconds", seen.length === 1);
       assert("naming the one it received", seen[0].key === "receipt-1");
+      assert("no errors were thrown", teacher.errors.length === 0);
+    },
+  },
+
+  {
+    name: "a roughly drawn circle becomes a real circle, and the class gets the circle",
+    why:
+      "Drawing a round circle with a finger, on a phone, in front of a class is genuinely " +
+      "hard — and that is the market. The recogniser has existed since before Excalidraw " +
+      "arrived and reached nothing: its only caller was the drawing surface Excalidraw " +
+      "replaced. This is the whole of it, from a wobbling gesture to what a student sees.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+
+      // Last state per element wins. An element is re-sent every time it changes, so the
+      // stroke appears twice: once live while it was being drawn, and again withdrawn once it
+      // was tidied. Asking "what does the student end up with" means asking the latest.
+      const sent = async () =>
+        [
+          ...(
+            await teacher.evaluate(() =>
+              window.__out
+                .filter((m) => m.type === "scene_out")
+                .flatMap((m) => m.elements ?? [])
+                .map((e) => ({ id: e.id, type: e.type, isDeleted: !!e.isDeleted })),
+            )
+          ).reduce((acc, e) => acc.set(e.id, e), new Map()).values(),
+        ];
+
+      await selectTool(teacher, PEN);
+      await drawPath(teacher, roughCircle(450, 350, 110));
+      await teacher.waitForTimeout(700);
+
+      const after = await sent();
+      const live = after.filter((e) => !e.isDeleted);
+      assert("the class is sent an ellipse", live.some((e) => e.type === "ellipse"));
+      assert(
+        "and not the wobbling stroke it replaced",
+        !live.some((e) => e.type === "freedraw"),
+      );
+      // The stroke has to be *reported* deleted, not merely dropped. A board that only ever
+      // reports additions leaves students looking at the original underneath the tidy shape.
+      assert(
+        "the original stroke is withdrawn rather than abandoned",
+        after.some((e) => e.type === "freedraw" && e.isDeleted),
+      );
+
+      await pump(teacher, student);
+      await student.waitForTimeout(500);
+      assert("and it reaches the student", (await ink(student)).n > 0);
+      assert("no errors were thrown", teacher.errors.length === 0);
+    },
+  },
+
+  {
+    name: "writing is left exactly as written, and undo gives back a stroke that was tidied",
+    why:
+      "The two ways this feature could hurt rather than help. Turning a teacher's sentence " +
+      "into a triangle loses the sentence; correcting a stroke they meant to leave wobbly, " +
+      "with no way back, makes the board something to be fought. Neither may happen.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+
+      const live = async () =>
+        (await teacher.evaluate(() =>
+          window.__out
+            .filter((m) => m.type === "scene_out")
+            .flatMap((m) => m.elements ?? [])
+            .map((e) => ({ id: e.id, type: e.type, isDeleted: !!e.isDeleted })),
+        ))
+          // Last state wins: an element is re-sent every time it changes.
+          .reduce((acc, e) => acc.set(e.id, e), new Map());
+
+      await selectTool(teacher, PEN);
+      await drawPath(teacher, writingPath(250, 300));
+      await teacher.waitForTimeout(700);
+
+      const written = [...(await live()).values()].filter((e) => !e.isDeleted);
+      assert("writing stays as the freehand it was", written.some((e) => e.type === "freedraw"));
+      assert(
+        "and is not turned into a shape",
+        !written.some((e) => ["ellipse", "rectangle", "line", "arrow"].includes(e.type)),
+      );
+
+      // Now a stroke that *is* corrected, and taken back.
+      await drawPath(teacher, roughCircle(600, 300, 90));
+      await teacher.waitForTimeout(700);
+      const tidied = [...(await live()).values()].filter((e) => !e.isDeleted);
+      assert("the circle was tidied", tidied.some((e) => e.type === "ellipse"));
+
+      await teacher.keyboard.press("Control+z");
+      await teacher.waitForTimeout(700);
+
+      const undone = [...(await live()).values()];
+      const ellipse = undone.find((e) => e.type === "ellipse");
+      assert("undo withdraws the shape", ellipse?.isDeleted === true);
+      assert(
+        "and restores the stroke the teacher actually drew",
+        undone.some((e) => e.type === "freedraw" && !e.isDeleted),
+      );
       assert("no errors were thrown", teacher.errors.length === 0);
     },
   },

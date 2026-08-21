@@ -150,6 +150,40 @@ export async function stroke(page, x1, y1, x2, y2) {
   await page.waitForTimeout(350);
 }
 
+/**
+ * Draws a freehand path through a list of points, the way a finger would.
+ *
+ * `stroke` above draws a straight two-point line; recognition needs a shape drawn as a
+ * continuous wobbling gesture, which is the only kind it is ever asked about.
+ */
+export async function drawPath(page, points) {
+  await page.mouse.move(points[0][0], points[0][1]);
+  await page.mouse.down();
+  for (const [x, y] of points.slice(1)) await page.mouse.move(x, y);
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+}
+
+/** A rough circle, drawn with a wobble no hand would be without. */
+export function roughCircle(cx, cy, r, wobble = 5) {
+  const pts = [];
+  for (let i = 0; i <= 40; i++) {
+    const a = (i / 40) * Math.PI * 2;
+    const jitter = Math.sin(i * 2.7) * wobble;
+    pts.push([cx + Math.cos(a) * (r + jitter), cy + Math.sin(a) * (r + jitter)]);
+  }
+  return pts;
+}
+
+/** The shape of a written word: open, curved, and none of the board's business. */
+export function writingPath(x, y, length = 200) {
+  const pts = [];
+  for (let i = 0; i <= 40; i++) {
+    pts.push([x + (i / 40) * length, y + Math.sin(i / 2.2) * 26]);
+  }
+  return pts;
+}
+
 export const PEN = "7";
 export const ERASER = "0";
 

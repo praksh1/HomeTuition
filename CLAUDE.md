@@ -181,9 +181,10 @@ Known gaps, in rough priority order:
    stroke lands in ~140 ms — and it still paints at 25× slowdown. That says the code is not
    doing anything foolish; it does not reproduce a weak GPU, memory pressure or thermal
    throttling. `artifacts/sikshya/scripts/perf-tests` runs it on every deploy.
-3. **Shape recognition is built but not connected.** `components/recognition/` works; its only
-   caller was the SVG surface Excalidraw replaced, so nothing reaches it today. Re-wiring means
-   catching Excalidraw's freehand commit — `WHITEBOARD.md` step 8.
+3. **Shape recognition is on, and has never been used by a real teacher.** A confident
+   freehand stroke is replaced with a real shape in one undoable step; writing and uncertain
+   strokes are left alone. It is covered by 27 tests, none of which is a person drawing on a
+   phone. Watch for it correcting something a teacher meant to leave rough.
 4. **Handwriting-to-text is not built.** On-device OCR was tried and withdrawn: Tesseract reads
    printed text, and on handwriting a clearly drawn "B" came back "L". Doing it properly needs
    ML Kit (free, native only) or MyScript (paid). `WHITEBOARD.md` section 4 lays out the
