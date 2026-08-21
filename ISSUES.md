@@ -736,6 +736,27 @@ their API, so **the repair has never run against a real room**. If chat still do
 after this deploys, that is where to look, and the server log line is `repairing Daily room
 settings`.
 
+### H7 — a video call that fails to connect ended the class — **FIXED**
+**Where:** teacher's classroom, any platform
+
+Found by CI while checking the H2 fix, and it is the more serious of the two.
+
+The teacher's classroom ends the class when the call reports a leave — mark it completed, tell
+the students, go back. Daily emits `left-meeting` when a join **fails** as well as when somebody
+hangs up. So a room that could not be reached — a poor connection, a room that had expired,
+Daily having a bad day — silently marked the lesson finished and threw the teacher out of their
+own class, with "Class ended" as the only explanation. On the connections this product is built
+for, that is not an edge case.
+
+It also explains why the H2 fix passed here and failed on CI twice: this sandbox cannot reach
+Daily at all, so the call never runs and never fails. CI can. Every local run was green because
+the bug needs a *working* network to a *broken* room.
+
+A leave now only counts if there was something to leave — the embed records a join first. The
+new suite replaces Daily's SDK with one the test drives, so both orderings are reproducible
+anywhere: a leave with no join before it must not end the class, and a leave after a join still
+must. Reverting the guard turns four of its five checks red.
+
 ### H5b — the student's board jumps away from the lesson — **OPEN**
 Described under H1. Driving a teacher and a student board through zoom and scroll here keeps them
 pixel-identical, so this is not the empty-frame fault and is still unexplained.

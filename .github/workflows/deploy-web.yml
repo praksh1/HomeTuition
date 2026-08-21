@@ -248,6 +248,13 @@ jobs:
       - name: In-call chat
         run: pnpm --filter @workspace/sikshya run test:call-chat
 
+      # What a "leave" from the video call is allowed to mean. Daily emits `left-meeting` when
+      # a join *fails* as well as when someone hangs up, and the teacher's classroom ends the
+      # class on a leave — so an unreachable room ended the lesson and threw the teacher out.
+      # Invisible from a sandbox that cannot reach Daily at all; this run found it.
+      - name: A failed call does not end the class
+        run: pnpm --filter @workspace/sikshya run test:call-leave
+
       # Starting a conversation, which for a long time only one side could do: a student could
       # message a teacher from their profile and a teacher had nowhere to begin, so their
       # Messages screen listed conversations they could only ever reply to.

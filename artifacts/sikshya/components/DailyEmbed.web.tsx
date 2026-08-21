@@ -144,6 +144,19 @@ export default function DailyEmbed({
 
   const cbRef = useRef({ onLeft, watchUserName, onWatchedParticipantLeft });
   cbRef.current = { onLeft, watchUserName, onWatchedParticipantLeft };
+  /**
+   * Whether this side ever actually got into the call.
+   *
+   * Daily emits `left-meeting` when a join **fails** as well as when somebody hangs up, and the
+   * teacher's classroom treats a leave as "end this class for everyone and go back". So a room
+   * that could not be reached — a poor connection, a room that has expired, Daily having a bad
+   * day — quietly marked the lesson finished and threw the teacher out of their own class, with
+   * "Class ended" as the only explanation.
+   *
+   * That is the market this is built for: the connections here are exactly the ones where a
+   * join fails. A leave only means a leave if there was something to leave.
+   */
+  const joined = useRef(false);
 
   // An unread count on the button, so a message sent while the panel is shut is not missed.
   useEffect(() => {
@@ -220,12 +233,16 @@ export default function DailyEmbed({
         });
 
         callFrame.on("left-meeting", () => {
+          // A join that never succeeded is not a departure. See `joined` above.
+          if (!joined.current) return;
+          joined.current = false;
           cbRef.current.onLeft?.();
         });
 
         // If the call does come up after all — a slow network rather than a broken one — take
         // the message back down rather than leaving it contradicting a working video.
         callFrame.on("joined-meeting", () => {
+          joined.current = true;
           if (joinTimer.current) {
             clearTimeout(joinTimer.current);
             joinTimer.current = null;
@@ -243,6 +260,7 @@ export default function DailyEmbed({
         }, JOIN_TIMEOUT_MS);
 
         await callFrame.join({ url: roomUrl, userName: displayName, ...(meetingToken ? { token: meetingToken } : null) });
+        joined.current = true;
         if (joinTimer.current) {
           clearTimeout(joinTimer.current);
           joinTimer.current = null;
@@ -259,6 +277,7 @@ export default function DailyEmbed({
 
     return () => {
       cancelled = true;
+      joined.current = false;
       if (joinTimer.current) {
         clearTimeout(joinTimer.current);
         joinTimer.current = null;

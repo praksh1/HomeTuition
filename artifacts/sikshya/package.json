@@ -20,7 +20,8 @@
     "test": "node --test --experimental-strip-types \"utils/**/*.test.ts\" \"components/**/*.test.ts\"",
     "test:classroom": "node scripts/classroom-tests/run.mjs",
     "test:perf": "node scripts/perf-tests/run.mjs",
-    "test:messaging": "node scripts/messaging-tests/run.mjs"
+    "test:messaging": "node scripts/messaging-tests/run.mjs",
+    "test:call-leave": "node scripts/call-leave-tests/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
