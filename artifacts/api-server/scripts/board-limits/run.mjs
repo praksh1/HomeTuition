@@ -110,9 +110,51 @@ async function main() {
     await wait(1200);
     const updates = s.seen.filter((m) => m.type === "scene_update");
     check("the picture is not relayed", !updates.some((m) => (m.files ?? []).some((f) => f.id === "big")));
+    /**
+     * The check this suite was missing, and the bug it let through.
+     *
+     * "Refused rather than half-delivered" was the title of this scenario from the start, and
+     * only the picture half was ever asserted. Elements and files were filtered independently,
+     * so the frame travelled on without its picture and every student rendered a grey
+     * placeholder where the page should be — permanently, while the teacher's own board looked
+     * right because it draws from local memory. Reported from a real class: "the pdf disappears
+     * and the image icon appears".
+     */
+    check(
+      "and the empty frame does not reach the class either",
+      !updates.some((m) => (m.elements ?? []).some((e) => e.fileId === "big")),
+      JSON.stringify(updates.flatMap((m) => (m.elements ?? []).map((e) => e.id))),
+    );
     // The half that makes this survivable: the teacher is told, so they do not spend the
     // lesson explaining a picture nobody can see.
     check("the teacher is told it was refused", t.seen.some((m) => m.type === "material_rejected"));
+    check("the teacher stays connected", t.ws.readyState === 1);
+    t.ws.close(); s.ws.close();
+  }
+
+  console.log("\nMore pictures than a board will hold, refused the same way");
+  {
+    const t = socket(teacher.token, sessionId, "T");
+    const s = socket(student.token, sessionId, "S");
+    await Promise.all([t.open(), s.open()]);
+    await wait(400);
+    // A long PDF is placed as one picture per page, so this is reached by ordinary use rather
+    // than by abuse: two 25-page documents in one lesson is past the limit.
+    for (let i = 0; i < 46; i += 1) {
+      t.ws.send(JSON.stringify(photoFrame(0.05, `p${i}`)));
+      await wait(45);
+    }
+    await wait(1500);
+    const updates = s.seen.filter((m) => m.type === "scene_update");
+    const gotFiles = new Set(updates.flatMap((m) => (m.files ?? []).map((f) => f.id)));
+    const gotFrames = updates.flatMap((m) => (m.elements ?? []).filter((e) => e.fileId));
+    check("the class receives pictures up to the limit", gotFiles.size > 0);
+    check(
+      "every frame the class receives has its picture",
+      gotFrames.every((e) => gotFiles.has(e.fileId)),
+      `frames without pictures: ${JSON.stringify(gotFrames.filter((e) => !gotFiles.has(e.fileId)).map((e) => e.id))}`,
+    );
+    check("the teacher is told the rest were refused", t.seen.some((m) => m.type === "material_rejected"));
     check("the teacher stays connected", t.ws.readyState === 1);
     t.ws.close(); s.ws.close();
   }

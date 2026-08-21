@@ -144,6 +144,22 @@ export default function Classroom() {
         setExpired({ title: check.title, message: check.message });
         return;
       }
+      /**
+       * A class the teacher ended, and has come back to, is taken live again.
+       *
+       * This is the entire purpose of the three-hour window: a teacher who hung up by mistake
+       * gets straight back in. Without this they did not. The class stayed `completed`, the
+       * screen decided it was over, threw away the room it had just been given, and showed
+       * "Setting up video room…" for as long as they were willing to wait — while telling them
+       * on the way past that they must have started another class, which they had not.
+       *
+       * The server decides whether this is allowed, not this screen: it applies the same
+       * window and refuses if the teacher is already teaching something else.
+       */
+      if (current.status === "completed") {
+        const resumed = await resumeThisClass();
+        if (!resumed) return;
+      }
       await loadRoom();
     })();
     timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
@@ -152,6 +168,31 @@ export default function Classroom() {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
     };
   }, [id]);
+
+  /**
+   * Take a class the teacher ended live again, and say plainly when that cannot be done.
+   *
+   * Returns false when the class stays closed, so the caller does not go on to ask for a video
+   * room it will not be allowed to use. The refusals worth showing are the server's own: the
+   * class is past the window, or this teacher is already teaching something else — that second
+   * one names the other class, which is the only thing that makes it actionable.
+   */
+  const resumeThisClass = async (): Promise<boolean> => {
+    try {
+      await apiPatch(`/sessions/${id}`, { status: "live" });
+      setSession((prev) => (prev ? { ...prev, status: "live" } : prev));
+      return true;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        setExpired({ title: "Cannot rejoin this class", message: err.message });
+        return false;
+      }
+      // Anything else is a connection problem rather than a decision, and the video area
+      // already knows how to say so.
+      setRoomError(true);
+      return false;
+    }
+  };
 
   const loadSession = async (): Promise<SessionData | null> => {
     try {
@@ -165,7 +206,12 @@ export default function Classroom() {
 
   // Daily.co rooms must be created server-side via their REST API before anyone can
   // join them — the client can no longer just guess a room URL and connect to it.
+  /** Guards against two requests in flight at once — see the safety net below. */
+  const roomInFlight = useRef(false);
+
   const loadRoom = async () => {
+    if (roomInFlight.current) return;
+    roomInFlight.current = true;
     try {
       const { roomUrl: url, token } = await apiGet<{ roomUrl: string; token?: string | null }>(`/sessions/${id}/room`);
       setRoomUrl(url);
@@ -181,7 +227,10 @@ export default function Classroom() {
         });
         return;
       }
+      // Anything else leaves the video area able to say so.
       setRoomError(true);
+    } finally {
+      roomInFlight.current = false;
     }
   };
 
@@ -197,8 +246,21 @@ export default function Classroom() {
   const classIsLive = liveStatus === "live";
   const classIsOver = liveStatus === "completed" || liveStatus === "cancelled";
 
+  /**
+   * Whether this class has been live at any point while the teacher has been on this screen.
+   *
+   * The difference matters and getting it wrong is what broke re-entry. A class that is over
+   * *when you open it* is one you hung up on and have come back to, which the window above
+   * exists to allow. A class that goes over *while you are in it* was ended somewhere else,
+   * and that is worth interrupting someone for. Both used to take the second path.
+   */
+  const wasLiveOnThisVisit = useRef(false);
   useEffect(() => {
-    if (!classIsOver) return;
+    if (classIsLive) wasLiveOnThisVisit.current = true;
+  }, [classIsLive]);
+
+  useEffect(() => {
+    if (!classIsOver || !wasLiveOnThisVisit.current) return;
     setRoomUrl(null);
     setMeetingToken(null);
     const msg =
@@ -210,6 +272,20 @@ export default function Classroom() {
       Alert.alert("Class ended", msg, [{ text: "OK", onPress: () => router.back() }]);
     }
   }, [classIsOver]);
+
+  /**
+   * A live class must never be left without a room.
+   *
+   * `loadRoom` used to run once, at mount. Anything that cleared the room after that — a class
+   * ending and being started again, a failed first attempt — left the video area spinning
+   * forever with nothing to bring it back. This is the safety net rather than the mechanism:
+   * if the class is live and there is no room, ask for one.
+   */
+  useEffect(() => {
+    if (!classIsLive || roomUrl || roomError || expired) return;
+    void loadRoom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [classIsLive, roomUrl, roomError, expired]);
 
   const [starting, setStarting] = useState(false);
 

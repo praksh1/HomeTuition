@@ -366,7 +366,19 @@ export default function SmartBoard({
       if (last === el.version) continue;
 
       const fileId = typeof el.fileId === "string" ? el.fileId : null;
-      if (fileId && !sentFiles.current.has(fileId) && !unshareable.current.has(fileId)) {
+      if (fileId && !sentFiles.current.has(fileId)) {
+        /**
+         * A picture that could not be made small enough holds its element back for good.
+         *
+         * This used to read `&& !unshareable.has(fileId)`, which skipped the whole guard for
+         * exactly the pictures that could not be sent — so the element went out alone and every
+         * student got a grey placeholder where the page should be, for the rest of the lesson,
+         * with nothing to tell them or the teacher that the two boards no longer matched. The
+         * teacher saw their own copy, which renders from local memory and always looks right.
+         * Sending nothing is the honest outcome; the toast beside `unshareable` says why.
+         */
+        if (unshareable.current.has(fileId)) continue;
+
         const source = available[fileId];
         // The bytes are not in the scene yet; leave the element unsent and pick it up on a
         // later pass rather than sending a frame with nothing behind it.

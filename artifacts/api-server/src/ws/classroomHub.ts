@@ -517,21 +517,54 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           // because a single oversized frame stalls every phone in the room.
           const incomingFiles = Array.isArray(msg.files) ? (msg.files as SceneFile[]) : [];
           const acceptedFiles: SceneFile[] = [];
+          /** Pictures refused here, so the frames that need them are refused too. */
+          const refusedFiles = new Set<string>();
           for (const file of incomingFiles) {
             if (!file || typeof file.id !== "string" || typeof file.dataURL !== "string") continue;
             if (file.dataURL.length > MAX_MATERIAL_CHARS) {
               logger.warn({ sessionId, userId, size: file.dataURL.length }, "ws board image too large, dropped");
               sendTo(ws, { type: "material_rejected", reason: "too_large" });
+              refusedFiles.add(file.id);
               continue;
             }
-            if (board.files.size >= MAX_SCENE_FILES && !board.files.has(file.id)) continue;
+            if (board.files.size >= MAX_SCENE_FILES && !board.files.has(file.id)) {
+              logger.warn({ sessionId, userId, files: board.files.size }, "ws board has too many pictures, dropped");
+              sendTo(ws, { type: "material_rejected", reason: "too_many" });
+              refusedFiles.add(file.id);
+              continue;
+            }
             board.files.set(file.id, file);
             acceptedFiles.push(file);
           }
 
+          /**
+           * A picture frame is never sent without its picture.
+           *
+           * Elements and their pictures were filtered independently, so a picture refused just
+           * above — too large, or past the limit on how many a board may hold — left its
+           * element to travel on alone. Every student then rendered a grey placeholder where
+           * the page should be, permanently, while the teacher's own board looked right because
+           * it draws from local memory. That is the worst shape a bug can take here: the two
+           * sides disagree and neither person is told.
+           *
+           * A frame whose picture the board already holds is fine — that is an element being
+           * re-sent after a move, and its picture went out the first time.
+           */
+          const deliverable = accepted.filter((el) => {
+            const fileId = typeof el.fileId === "string" ? el.fileId : null;
+            if (!fileId) return true;
+            if (board.files.has(fileId)) return true;
+            return !refusedFiles.has(fileId);
+          });
+
+          // Dropped from the stored board too, or a late joiner is replayed the same empty frame.
+          for (const el of accepted) {
+            if (!deliverable.includes(el)) board.scene.delete(el.id);
+          }
+
           pruneScene(board);
-          if (accepted.length > 0) {
-            broadcast(sessionId, { type: "scene_update", elements: accepted, files: acceptedFiles }, ws);
+          if (deliverable.length > 0) {
+            broadcast(sessionId, { type: "scene_update", elements: deliverable, files: acceptedFiles }, ws);
             // Written down shortly, so a restart mid-lesson does not erase the board.
             rememberBoard(sessionId);
           }

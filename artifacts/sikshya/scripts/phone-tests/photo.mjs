@@ -172,6 +172,26 @@ async function main() {
     const files = sent.flatMap((m) => m.files);
     check("the picture is sent to the class at all", files.length > 0, `${sent.length} scene messages`);
 
+    /**
+     * The invariant, across everything the board has said, not just the message with the file.
+     *
+     * A picture frame whose picture never went with it renders on every student's board as a
+     * grey placeholder and on the teacher's as the real thing, because theirs draws from local
+     * memory. Nobody in the room can tell the two boards have diverged. The board holds an
+     * element back until its picture is ready, and — the case that was wrong — holds it back
+     * for good when the picture cannot be made small enough at all.
+     */
+    const everything = await teacher.page.evaluate(() =>
+      window.__out.filter((m) => m.type === "scene_out"),
+    );
+    const sentFileIds = new Set(everything.flatMap((m) => (m.files ?? []).map((f) => f.id)));
+    const framesSent = everything.flatMap((m) => (m.elements ?? []).filter((e) => e.fileId));
+    check(
+      "no picture frame was ever sent to the class without its picture",
+      framesSent.every((e) => sentFileIds.has(e.fileId)),
+      `frames with no picture: ${JSON.stringify(framesSent.filter((e) => !sentFileIds.has(e.fileId)).map((e) => e.id))}`,
+    );
+
     const biggest = files.reduce((max, f) => Math.max(max, (f.dataURL ?? "").length), 0);
     console.log(`   ...  what the editor held: ${(pasted / 1048576).toFixed(2)} MB; what went on the wire: ${(biggest / 1048576).toFixed(2)} MB of base64`);
     check(

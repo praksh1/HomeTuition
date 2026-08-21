@@ -209,6 +209,38 @@ async function main() {
     check("nothing new appears while it is off", afterOff.length === beforeOff,
       `was ${beforeOff}, now ${afterOff.length}`);
 
+    /**
+     * The switches above are worth nothing if nobody can reach the screen they live on.
+     *
+     * Reported from a real phone: Profile → Notifications "doesn't do anything, instead brings
+     * the user to the Dashboard". The screen was fine. The route guard held its own list of
+     * screens that belong to neither the teacher nor the student tabs, `notification-settings`
+     * was not on it, and a teacher who went there failed every branch of the role check and was
+     * replaced back to their dashboard. Its sibling `notifications` *was* on the list and
+     * worked, which is what made it look like a dead button rather than a routing bug.
+     */
+    console.log("\nThe notification settings screen can actually be reached");
+    // Reached by tapping the tab, which is how a person gets there. Loading /profile cold
+    // bounces to the dashboard — a separate weakness, recorded in ISSUES.md rather than
+    // papered over here, and not the bug this checks.
+    await page.goto(siteUrl, { waitUntil: "networkidle" });
+    await page.waitForTimeout(2500);
+    await page.click('a[role="tab"][href="/profile"]', { timeout: 15000 });
+    await page.waitForTimeout(2500);
+    const row = page.getByTestId("notification-settings-link").first();
+    check("the Notifications row is on the teacher's profile", (await row.count()) > 0);
+    await row.click({ timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+    const landed = await page.evaluate(() => ({
+      path: location.pathname,
+      text: document.body.innerText.slice(0, 400),
+    }));
+    check("tapping it opens the settings screen rather than the dashboard",
+      landed.path === "/notification-settings", `landed on ${landed.path}`);
+    check("and the switches are there",
+      /Class starting/i.test(landed.text) && /Messages/i.test(landed.text),
+      landed.text.slice(0, 160).replace(/\n/g, " | "));
+
     await ctx.close();
   } finally {
     await browser.close();

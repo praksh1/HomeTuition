@@ -208,6 +208,85 @@ async function main() {
   );
 
   await ctx.close();
+
+  // ---------------------------------------------------------------------------------------
+  // The other half of the same window: a teacher who hung up and comes straight back.
+  //
+  // Reported from a real session and reproduced here before it was fixed. Ending a class set
+  // it `completed`; walking back in fetched a perfectly good room and then threw it away,
+  // because the screen could not tell "I ended this and came back" from "someone ended this
+  // while I was in it". The teacher was told they must have started another class — they had
+  // not — and bounced to the dashboard, or on a phone left watching "Setting up video room…"
+  // for as long as they cared to wait. The three-hour window exists for exactly this person.
+  // ---------------------------------------------------------------------------------------
+  console.log("\nA teacher ends a class and walks straight back in");
+
+  const mine = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    topic: "Rejoin Test", subject: "Mathematics", description: "d",
+    date: new Date().toISOString(), duration: 60, price: 500, maxStudents: 20 } });
+  await api(`/sessions/${mine.body.id}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+  await api(`/sessions/${mine.body.id}`, { method: "PATCH", token: teacher.token, body: { status: "completed" } });
+  check(
+    "the class really is ended before we start",
+    sql(`select status from sessions where id = ${mine.body.id}`) === "completed",
+  );
+
+  const ctx2 = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const rejoinRooms = [];
+  const page2 = await ctx2.newPage();
+  page2.on("response", (r) => {
+    if (/\/api\/sessions\/\d+\/room/.test(r.url())) rejoinRooms.push(r.status());
+  });
+  const rejoinDialogs = [];
+  page2.on("dialog", async (d) => { rejoinDialogs.push(d.message()); await d.dismiss(); });
+  await page2.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+
+  await page2.goto(siteUrl, { waitUntil: "networkidle" });
+  await page2.waitForTimeout(3000);
+  await page2.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
+  await page2.waitForTimeout(2500);
+  await page2.click('text="Completed"', { timeout: 5000 }).catch(() => {});
+  await page2.waitForTimeout(2000);
+  await page2.locator('text="Rejoin Test"').first().click({ timeout: 10000 });
+  await page2.waitForTimeout(5000);
+
+  const rejoin = await page2.evaluate(() => ({ url: location.pathname, text: document.body.innerText }));
+
+  check(
+    "the teacher stays in the classroom instead of being bounced out",
+    /classroom/.test(rejoin.url),
+    `ended on ${rejoin.url}`,
+  );
+  check(
+    "they are not told they started another class",
+    !rejoinDialogs.some((d) => /no longer live|started another class/i.test(d)),
+    `dialogs: ${JSON.stringify(rejoinDialogs)}`,
+  );
+  check(
+    "the class is live again, which is what the three-hour window is for",
+    sql(`select status from sessions where id = ${mine.body.id}`) === "live",
+    `status is ${sql(`select status from sessions where id = ${mine.body.id}`)}`,
+  );
+  check(
+    "a video room is granted",
+    rejoinRooms.includes(200),
+    `room responses: ${JSON.stringify(rejoinRooms)}`,
+  );
+  check(
+    "and asked for once, not twice",
+    rejoinRooms.length === 1,
+    `room responses: ${JSON.stringify(rejoinRooms)}`,
+  );
+  check(
+    "the video area is not left saying it is still setting up",
+    !/Setting up video room/i.test(rejoin.text),
+    rejoin.text.slice(0, 200).replace(/\n/g, " | "),
+  );
+
+  await ctx2.close();
   await browser.close();
   stopServer();
 

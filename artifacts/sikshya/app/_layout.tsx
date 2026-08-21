@@ -22,6 +22,26 @@ SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
+/**
+ * Screens that live outside the teacher and student tab groups, and belong to both.
+ *
+ * One list, read by the navigator below *and* by the guard above, because they used to be two
+ * and they disagreed. `notification-settings` was declared as a screen and left out of the
+ * guard, so a teacher tapping Profile → Notifications failed every branch of the role check
+ * and was sent back to their dashboard — the screen was fine and unreachable. The sibling
+ * `notifications` was in both lists and worked, which is what made it look like a dead button
+ * rather than a routing bug.
+ *
+ * `segment` is the first path segment the router reports, which is the file name for a plain
+ * screen and the directory for a dynamic one.
+ */
+const SHARED_SCREENS = [
+  { name: "notifications", segment: "notifications" },
+  { name: "notification-settings", segment: "notification-settings" },
+  { name: "conversation/[id]", segment: "conversation" },
+  { name: "support", segment: "support" },
+] as const;
+
 function AuthGuard() {
   const { user, isLoading } = useAuth();
   const segments = useSegments();
@@ -33,7 +53,7 @@ function AuthGuard() {
     const inTeacherGroup = segments[0] === "(teacher)";
     const inStudentGroup = segments[0] === "(student)";
     const inAuthGroup = segments[0] === "(auth)";
-    const onSharedScreen = segments[0] === "notifications" || segments[0] === "conversation" || segments[0] === "support";
+    const onSharedScreen = SHARED_SCREENS.some(({ segment }) => segments[0] === segment);
     const inProtectedGroup = inTeacherGroup || inStudentGroup;
 
     if (!user) {
@@ -58,34 +78,13 @@ function RootLayoutNav() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(teacher)" />
         <Stack.Screen name="(student)" />
-        <Stack.Screen
-          name="notifications"
-          options={{
-            animation: "slide_from_right",
-            presentation: "card",
-          }}
-        />
-        <Stack.Screen
-          name="conversation/[id]"
-          options={{
-            animation: "slide_from_right",
-            presentation: "card",
-          }}
-        />
-        <Stack.Screen
-          name="notification-settings"
-          options={{
-            animation: "slide_from_right",
-            presentation: "card",
-          }}
-        />
-        <Stack.Screen
-          name="support"
-          options={{
-            animation: "slide_from_right",
-            presentation: "card",
-          }}
-        />
+        {SHARED_SCREENS.map(({ name }) => (
+          <Stack.Screen
+            key={name}
+            name={name}
+            options={{ animation: "slide_from_right", presentation: "card" }}
+          />
+        ))}
       </Stack>
     </>
   );

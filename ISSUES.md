@@ -603,6 +603,108 @@ next would be worse than either.
 
 ---
 
+## Reported 2026-08-21 (fourth run) — after the Sikshya rename and PDF-on-phone deploy
+
+Three recordings: an Android student watching a shared PDF, and an iPhone teacher trying to
+get back into a call they had ended. Five reports, four of them reproduced here before being
+fixed and one still open.
+
+### H1 — the PDF that turns into a grey icon on the student's board — **FIXED**
+**Where:** student on Android; teacher had shared a PDF
+
+The student saw the page, and then a grey image placeholder instead. Two separate defects, in
+two different processes, both producing exactly that and both silent.
+
+**On the server.** The classroom hub filtered elements and their pictures *independently*. A
+picture refused for being too large, or for being past the forty-picture limit a board holds,
+was dropped — and its element was broadcast anyway. Every student then rendered an empty frame,
+permanently. The teacher's own board looked right throughout, because it draws from local
+memory rather than from what was sent, so nobody in the room could tell the two had diverged.
+The hub now refuses the frame along with the picture, and drops it from the stored board so a
+late joiner is not replayed the same hole.
+
+**On the teacher's board.** The same shape of mistake one process earlier. A picture that could
+not be re-encoded small enough was marked unshareable, and the guard that holds an element back
+until its picture is ready read `&& !unshareable.has(fileId)` — which skipped the guard entirely
+for exactly the pictures that could never be sent. The comment three lines below it said the
+opposite of what the code did.
+
+The board-limits suite has said "refused rather than half-delivered" in its title since it was
+written, and only ever asserted the picture half. It asserts the frame now too, and reverting
+either fix turns those checks red naming the exact elements that got through — `el_big`, and
+`el_p40` through `el_p45`.
+
+**Not yet explained:** in the same recording the student's board also jumps away from the
+content entirely — "Scroll back to content" on an otherwise blank canvas — when the teacher
+zooms or scrolls. Driving a teacher and student board through zoom and scroll here keeps them
+pixel-identical, so that is a separate fault and it is still open. See H5.
+
+### H2 — a teacher could not get back into a call they had ended — **FIXED**
+**Where:** teacher on iPhone, within minutes of ending the class
+
+"Setting up video room…" forever, with the whiteboard loaded underneath.
+
+The server was never the problem: it hands back a room for a class ended minutes ago, which is
+what the three-hour window is for. The classroom screen threw it away. It could not tell "I
+ended this and came back" from "someone ended this while I was in it", so re-entering a class
+you had hung up on took the second path: the room was nulled, and the teacher was told *"if you
+started another class, that one ended this one"* — which they had not — and bounced to the
+dashboard. On a phone that alert blocks, so the screen sat on "Setting up video room…" with the
+room already discarded.
+
+Three things were wrong and all three are fixed: a class the teacher ended and comes back to
+inside the window is taken live again rather than refused; the "ended elsewhere" interruption
+now only fires for a class that was live *on this visit*; and a live class with no room asks for
+one instead of spinning, because `loadRoom` previously ran once at mount and nothing could ever
+bring it back.
+
+The owner's suggestion was to load the whiteboard only after the video arrives. That would have
+hidden this rather than fixed it — the board loading first was not the fault, the room being
+discarded was — and it would make a poor connection cost the teacher their board as well as
+their call.
+
+### H3 — Profile → Notifications went to the Dashboard — **FIXED**
+**Where:** teacher profile, any platform
+
+The screen was fine and unreachable. The route guard keeps its own list of screens that belong
+to neither the teacher nor the student tab group; `notification-settings` was declared as a
+screen and left off that list, so a teacher who went there failed every branch of the role check
+and was `replace`d back to their dashboard. Its sibling `notifications` *was* on the list and
+worked, which is what made it look like a dead button rather than a routing bug.
+
+There is one list now, read by both the guard and the navigator, so the two cannot disagree
+again. The app's notification suite tries the door.
+
+### H4 — a teacher cannot start a conversation — **OPEN**
+**Where:** Messages, teacher
+
+`ConversationList` lists conversations and offers no way to begin one, on either side. A student
+can message a teacher from that teacher's profile; a teacher has nowhere to start. The empty
+state reads "Messages you send or receive will show up here", which is true and unhelpful when
+there is no way to send one. Wanted: a teacher can message the students subscribed to them, so
+a new class can be announced to the people most likely to take it.
+
+### H6 — loading a tab URL directly bounces to the dashboard — **OPEN**, found while fixing H3
+**Where:** any platform, web
+
+Not reported, found by a test that tried to reach `/profile` by loading it rather than by
+tapping the tab. Opening a tab URL cold — a refresh, a shared link, a bookmark — lands on the
+dashboard instead. Tapping the tab from inside the app is fine, which is why nobody has hit it.
+
+Same guard as H3, a different hole in it: on a cold load the route's group has not been resolved
+when the role check runs, so `segments[0]` is `profile` rather than `(teacher)`, the check
+decides the user is somewhere they should not be, and replaces them. Worth fixing before anyone
+shares a link to anything, and worth fixing carefully — the guard is what keeps a student out of
+teacher screens.
+
+### H5 — Daily's chat does not appear in the call, and the student's board jumps — **OPEN**
+Two things left from this round that are not yet root-caused. Daily's own chat is switched on at
+room creation (`enable_chat: true`) and rooms are never updated afterwards, so any room made
+before that setting existed keeps chat off for its six-hour life — that is a hypothesis and has
+not been confirmed against a real room. The board jump is described under H1.
+
+---
+
 ## Reported 2026-08-21 (third run) — still opening a finished class
 
 Reported again after the fix above, with recordings. The fix was live; the app running on the
