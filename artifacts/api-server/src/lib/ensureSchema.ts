@@ -45,3 +45,35 @@ export async function ensureNotificationPrefsTable(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Creates the session-activity table if it is not there yet.
+ *
+ * Same reasoning as above, and the same narrow licence: create only, additive only, and
+ * unable to stop the server starting. This one matters more than the last, because the code
+ * that reads it sits in the path a teacher takes to **start a class** — without the table,
+ * going live returns a 500 and the whole product stops working until someone runs `db:push`.
+ * That was measured, not guessed, after shipping exactly that.
+ */
+export async function ensureSessionActivityTable(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_activity" (
+        "session_id" integer PRIMARY KEY,
+        "teacher_last_seen_at" timestamp with time zone,
+        "ended_at" timestamp with time zone,
+        CONSTRAINT "session_activity_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE
+      )
+    `);
+    logger.info("session activity table is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the session activity table; run `pnpm run db:push`. " +
+        "Classes still start and run — only the rules about restarting an old class and " +
+        "recovering from a force-closed browser fall back to the older behaviour.",
+    );
+  }
+}

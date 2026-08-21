@@ -77,7 +77,11 @@ export async function otherRunningSessions(teacherId: number, exceptId: number) 
   const running = [];
   for (const row of stillRunning) {
     const activity = await activityFor(row.id);
-    if (teacherHasGone(row, activity.teacherLastSeenAt)) abandoned.push(row.id);
+    // Only act on presence we can actually read. When the record is unavailable, the older
+    // rule above (a class past its length plus grace) is the whole answer — ending a lesson
+    // in progress because we could not look something up would be far worse than leaving a
+    // dead class blocking for a while longer.
+    if (activity.known && teacherHasGone(row, activity.teacherLastSeenAt)) abandoned.push(row.id);
     else running.push(row);
   }
 
@@ -134,14 +138,37 @@ export async function markSessionEnded(sessionId: number): Promise<void> {
   }
 }
 
-/** What actually happened to a class, for the rules that need it. Empty when nothing has. */
+/**
+ * What actually happened to a class, for the rules that need it. Empty when nothing has.
+ *
+ * Never throws, and that is load-bearing rather than tidy. This is read on the path a teacher
+ * takes to **start a class**, and the table it reads is newer than the code: the API redeploys
+ * itself on a push while `db:push` is run by hand. Letting a missing table become an exception
+ * here means no teacher can start a class at all until someone runs a command — which is
+ * exactly what happened, and was caught by dropping the table and trying it.
+ *
+ * Answering "nothing has happened to this class" is the right fallback: the rules then behave
+ * as they did before the table existed.
+ */
 export async function activityFor(sessionId: number) {
-  const [row] = await db
-    .select({
-      teacherLastSeenAt: sessionActivityTable.teacherLastSeenAt,
-      endedAt: sessionActivityTable.endedAt,
-    })
-    .from(sessionActivityTable)
-    .where(eq(sessionActivityTable.sessionId, sessionId));
-  return row ?? { teacherLastSeenAt: null, endedAt: null };
+  try {
+    const [row] = await db
+      .select({
+        teacherLastSeenAt: sessionActivityTable.teacherLastSeenAt,
+        endedAt: sessionActivityTable.endedAt,
+      })
+      .from(sessionActivityTable)
+      .where(eq(sessionActivityTable.sessionId, sessionId));
+    return {
+      teacherLastSeenAt: row?.teacherLastSeenAt ?? null,
+      endedAt: row?.endedAt ?? null,
+      known: true,
+    };
+  } catch {
+    // `known: false` is not the same as "the teacher has gone". If this said null the way a
+    // class with no row does, every live class older than two minutes would look abandoned
+    // and be closed — including one a teacher is in the middle of teaching. Unknown must
+    // decide nothing.
+    return { teacherLastSeenAt: null, endedAt: null, known: false };
+  }
 }

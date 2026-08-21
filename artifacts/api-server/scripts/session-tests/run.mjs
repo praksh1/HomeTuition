@@ -214,6 +214,44 @@ async function testInvitingIsOnlyTelling() {
   check("and then they are let in", after.status === 200, `status ${after.status}`);
 }
 
+async function testSurvivesAMissingActivityTable() {
+  console.log("\nThe class rules survive a database that has not caught up yet");
+  const teacher = await register("teacher");
+  const first = await createSession(teacher);
+  check("a class starts normally", (await goLive(teacher, first.id)).status === 200);
+
+  // The API redeploys itself on a push while db:push is run by hand, so for a few minutes the
+  // code is newer than the database. Shipping this table without allowing for that took the
+  // live site down: starting any class returned 500. Reproduced here by removing it.
+  sql(`update sessions set started_at = now() - interval '10 minutes' where id = ${first.id}`);
+  sql("drop table if exists session_activity");
+
+  const second = await createSession(teacher);
+  const blocked = await goLive(teacher, second.id);
+  check(
+    "a teacher is still refused a second class rather than getting a 500",
+    blocked.status === 409,
+    `status ${blocked.status}`,
+  );
+
+  // The dangerous half: with no presence to read, "unknown" must not be taken for "gone".
+  const status = sql(`select status from sessions where id = ${first.id}`);
+  check(
+    "a lesson in progress is not closed just because presence cannot be read",
+    status === "live",
+    `status: ${status}`,
+  );
+
+  // And a brand new class still starts, which is the thing that was actually broken.
+  sql(`update sessions set status = 'completed' where id = ${first.id}`);
+  const third = await createSession(teacher);
+  const started = await goLive(teacher, third.id);
+  check("a new class can still be started", started.status === 200, `status ${started.status}`);
+
+  // Put it back for whatever runs next; the server recreates it at boot in real life.
+  sql(`CREATE TABLE IF NOT EXISTS "session_activity" ("session_id" integer PRIMARY KEY, "teacher_last_seen_at" timestamp with time zone, "ended_at" timestamp with time zone, CONSTRAINT "session_activity_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE)`);
+}
+
 async function main() {
   const health = await fetch(`${API}/api/healthz`).catch(() => null);
   if (!health?.ok) { console.error(`No API at ${API}. Start it first, or set API_URL.`); process.exit(1); }
@@ -223,6 +261,7 @@ async function main() {
   await testTeacherCanGetBackIntoTheirClass();
   await testAStudentCannotStartAnything();
   await testInvitingIsOnlyTelling();
+  await testSurvivesAMissingActivityTable();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length) { console.log("\nFailures:"); for (const f of failures) console.log(`  - ${f}`); }

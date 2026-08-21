@@ -3,7 +3,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { attachClassroomHub } from "./ws/classroomHub";
 import { describePaymentMode, paymentMode } from "./lib/payments";
-import { ensureNotificationPrefsTable } from "./lib/ensureSchema";
+import { ensureNotificationPrefsTable, ensureSessionActivityTable } from "./lib/ensureSchema";
 
 const rawPort = process.env["PORT"];
 
@@ -25,6 +25,7 @@ server.listen(port, () => {
   // Deliberately after listen and deliberately not awaited: the server must come up whatever
   // the database is doing. See lib/ensureSchema.ts for why this exists at all.
   void ensureNotificationPrefsTable();
+  void ensureSessionActivityTable();
   // Whether real money can move is too important to have to go and look up.
   if (paymentMode() === "simulated") logger.warn(describePaymentMode());
   else logger.info(describePaymentMode());
