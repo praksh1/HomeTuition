@@ -29,12 +29,17 @@ is cheap next to what it costs afterwards. Tick them off in order.
       `EMAIL_FROM`, and `APP_URL` for the links inside them.
 - [ ] **Test the whiteboard on the cheapest Android you can find.** The target market is a
       phone nobody here has held.
-- [ ] **Confirm the bundle identifier before the first store build.** The app is now called
-      Sikshya everywhere, and its identifier is `com.sikshya.app` on both iOS and Android.
-      That identifier is free to change today and *impossible* to change once the app is
-      published — a different one is a different app, with its own downloads, ratings and
-      reviews, and existing users do not get moved across. So: if you would rather it read
-      `com.hometuition.app`, or match a domain you own, say so now. Set in
+- [ ] **Settle the name, then the bundle identifier, before the first store build.** The owner
+      expects to rename once more before launch — "probably GharTuition or TuitionGhar or
+      something similar". The name itself is cheap to change at any time: `name`, `slug` and
+      `scheme` in `artifacts/sikshya/app.json`, then a rebuild — and the build now fails loudly
+      if a stale bundler cache tries to ship the old one.
+
+      The **identifier** is the part that is not cheap. It is `com.sikshya.app` on both iOS and
+      Android today, free to change until the app is published and *impossible* afterwards: a
+      different identifier is a different app, with its own downloads, ratings and reviews, and
+      existing users do not get moved across. So the order matters — decide the name, set the
+      identifier to match it, and only then make a store build. Set in
       `artifacts/sikshya/app.json` (`ios.bundleIdentifier` and `android.package`).
 
 
