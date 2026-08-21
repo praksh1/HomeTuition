@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Guru",
-    "slug": "guru",
+    "name": "Sikshya",
+    "slug": "sikshya",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
-    "scheme": "guru",
+    "scheme": "sikshya",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.guru.app",
+      "bundleIdentifier": "com.sikshya.app",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Sikshya needs microphone access for live classroom audio.",
         "NSCameraUsageDescription": "Sikshya needs camera access for live classroom video.",
@@ -23,7 +23,7 @@
       }
     },
     "android": {
-      "package": "com.guru.app",
+      "package": "com.sikshya.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#1A365D"
@@ -44,15 +44,12 @@
     "web": {
       "favicon": "./assets/images/icon.png",
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "name": "Sikshya",
+      "shortName": "Sikshya"
     },
     "plugins": [
-      [
-        "expo-router",
-        {
-          "origin": "https://replit.com/"
-        }
-      ],
+      "expo-router",
       "expo-font",
       "expo-web-browser",
       "expo-screen-orientation",

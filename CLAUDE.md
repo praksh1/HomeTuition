@@ -143,6 +143,11 @@ at startup on *both* web and native with "Invalid hook call".
 `pnpm exec expo prebuild -p android --no-install`, then `cd android && ./gradlew
 :app:assembleDebug`. `android/` and `ios/` are generated and gitignored — never hand-edit them.
 
+**A debug build installed before August 2026 will not be replaced.** The Android package was
+`com.guru.app` and is now `com.sikshya.app`; Android treats a different package as a different
+app, so a new build installs *alongside* the old one instead of upgrading it. Uninstall "Guru"
+from the phone first, or you will be testing whichever of the two you happen to tap.
+
 **Package versions must match Expo SDK 54.** Installing SDK 56 packages produces a
 `ClassNotFoundException` on device, which looks like a native bug and is not.
 
@@ -154,6 +159,11 @@ Working and verified: booking and payment, the 5-minute early-join lobby, in-app
 and native, unread message counts, and the whiteboard on Excalidraw with object manipulation,
 an infinite canvas, shared images and PDFs as real board objects, and a scene that stays in
 step with every student — including erasures and the teacher's viewport.
+
+The app is called **Sikshya** — one name, in the interface and in `app.json`. It used to answer
+to "Guru" wherever the machine looked rather than the user: the browser tab, and the label under
+the icon when a student adds the site to an Android home screen. `HomeTuition` stays as the name
+of the repository and the Cloudflare Worker, which is plumbing nobody reads.
 
 Notifications are real now, and were not before: what users saw was six samples the app
 invented in local storage on first run. A signed-in app holds one WebSocket to the server
@@ -171,17 +181,19 @@ Known gaps, in rough priority order:
    stroke lands in ~140 ms — and it still paints at 25× slowdown. That says the code is not
    doing anything foolish; it does not reproduce a weak GPU, memory pressure or thermal
    throttling. `artifacts/sikshya/scripts/perf-tests` runs it on every deploy.
-4. **Shape recognition is built but not connected.** `components/recognition/` works; its only
+3. **Shape recognition is built but not connected.** `components/recognition/` works; its only
    caller was the SVG surface Excalidraw replaced, so nothing reaches it today. Re-wiring means
    catching Excalidraw's freehand commit — `WHITEBOARD.md` step 8.
-5. **Handwriting-to-text is not built.** On-device OCR was tried and withdrawn: Tesseract reads
+4. **Handwriting-to-text is not built.** On-device OCR was tried and withdrawn: Tesseract reads
    printed text, and on handwriting a clearly drawn "B" came back "L". Doing it properly needs
    ML Kit (free, native only) or MyScript (paid). `WHITEBOARD.md` section 4 lays out the
    options honestly.
-6. **A PDF picked on a phone opens locally, not on the board.** The picker hands back a
+5. **A PDF picked on a phone opens locally, not on the board.** The picker hands back a
    `file://` URI with no bytes to share; the app says so rather than failing silently.
-7. **No Bikram Sambat date picker** — Nepali users see Gregorian dates only.
-8. **The app calls itself "Guru" in places** and Sikshya/HomeTuition in others.
+6. **No Bikram Sambat date picker** — Nepali users see Gregorian dates only.
+7. **The bundle identifier has not been confirmed by the owner.** It is `com.sikshya.app` on
+   both platforms, which is free to change now and permanent after the first store publish.
+   On the pre-launch checklist in `ISSUES.md`.
 
 ## Testing expectations
 

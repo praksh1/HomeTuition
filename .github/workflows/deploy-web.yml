@@ -284,19 +284,25 @@ jobs:
         run: |
           set -uo pipefail
           site="https://hometuition.praksh-dhakal.workers.dev"
+          # The name the app should answer to, read from the file that decides it rather than
+          # written out here, so a future rename does not need this step edited too.
+          want_title=$(node -p "JSON.parse(require('fs').readFileSync('artifacts/sikshya/app.json','utf8')).expo.web.name")
           for attempt in 1 2 3 4 5 6; do
-            entry=$(curl -sSf "$site/" 2>/dev/null | grep -oE '_expo/static/js/web/entry-[A-Za-z0-9._-]+\.js' | head -1 || true)
+            home=$(curl -sSf "$site/" 2>/dev/null || true)
+            entry=$(printf '%s' "$home" | grep -oE '_expo/static/js/web/entry-[A-Za-z0-9._-]+\.js' | head -1 || true)
+            title=$(printf '%s' "$home" | grep -oE '<title>[^<]*</title>' | sed -e 's|<title>||' -e 's|</title>||' || true)
             found=""
             if [ -n "$entry" ]; then
               found=$(curl -sSf "$site/$entry" 2>/dev/null | grep -oE 'https://[A-Za-z0-9.-]+\.up\.railway\.app' | sort -u | head -1 || true)
             fi
-            if [ "$found" = "$EXPO_PUBLIC_API_URL" ]; then
-              echo "Deployed and verified. Live bundle $entry points at $found"
+            if [ "$found" = "$EXPO_PUBLIC_API_URL" ] && [ "$title" = "$want_title" ]; then
+              echo "Deployed and verified. Live bundle $entry points at $found, and the tab reads $title"
               exit 0
             fi
-            echo "attempt $attempt: bundle='${entry:-none}' api='${found:-none}' — waiting for the CDN"
+            echo "attempt $attempt: bundle='${entry:-none}' api='${found:-none}' title='${title:-none}' — waiting for the CDN"
             sleep 10
           done
-          echo "::error::the live site is not serving a build that points at $EXPO_PUBLIC_API_URL"
-          echo "::error::last seen: bundle='${entry:-none}' api='${found:-none}'"
+          echo "::error::the live site is not serving the build this run produced"
+          echo "::error::wanted api=$EXPO_PUBLIC_API_URL title=$want_title"
+          echo "::error::last seen: bundle='${entry:-none}' api='${found:-none}' title='${title:-none}'"
           exit 1

@@ -6,12 +6,16 @@ const projectRoot = path.resolve(__dirname, "..");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
 
 /**
- * Remembers which API the last build was pointed at.
+ * Remembers what the last build was pointed at, and what it called itself.
  *
  * Metro caches each transformed module, and `process.env.EXPO_PUBLIC_*` is inlined during
  * that transform — but the cache key does not include the value. So changing the API URL and
  * rebuilding produces a build that *succeeds* and still contains the old address. That was
  * reproduced here deliberately: a build asked for port 9999 reported success and shipped 8080.
+ *
+ * The app's own name, slug and scheme travel the same route: expo-constants has the manifest
+ * baked into it at transform time, so renaming the app in app.json and rebuilding can leave
+ * the browser tab and the home-screen label showing the old name. Both go in the stamp.
  *
  * Clearing the bundler cache fixes it and costs about a minute, so it is done only when the
  * target has actually changed rather than on every build.
@@ -62,6 +66,46 @@ function assertBundleTargets(expected) {
     );
   }
   console.log(`Verified: the built app points at ${expected}`);
+}
+
+/**
+ * What the app calls itself, read from the one file that decides it.
+ *
+ * Kept as a lookup rather than a hardcoded "Sikshya" so that this check keeps working through
+ * the next rename instead of quietly becoming a check that the app is still called Sikshya.
+ */
+function readIdentity() {
+  const expo = JSON.parse(fs.readFileSync(path.join(projectRoot, "app.json"), "utf8")).expo;
+  return {
+    name: (expo.web && expo.web.name) || expo.name,
+    slug: expo.slug,
+    scheme: expo.scheme,
+  };
+}
+
+/**
+ * Reads the app's name back out of the files that were just produced.
+ *
+ * The title is the first thing a student sees — it is the browser tab, and it is the label
+ * under the icon when the site is added to an Android home screen. It shipped as "Guru", the
+ * name the project was generated under, long after every screen in the app said Sikshya.
+ *
+ * The stamp above prevents the stale-cache cause; this catches the symptom whatever the cause.
+ */
+function assertBuildIdentity(identity) {
+  const html = fs.readFileSync(path.join(projectRoot, "web-build", "index.html"), "utf8");
+  const title = /<title>([^<]*)<\/title>/.exec(html);
+  if (!title) {
+    exitWithError("Build produced no <title> in web-build/index.html");
+  }
+  if (title[1].trim() !== identity.name) {
+    exitWithError(
+      `The built app calls itself "${title[1].trim()}", but app.json says "${identity.name}".\n` +
+        "This usually means the bundler served a cached copy of the old name. Delete\n" +
+        "node_modules/.cache and try again, or run the export with --clear.",
+    );
+  }
+  console.log(`Verified: the built app calls itself ${identity.name}`);
 }
 
 function exitWithError(message) {
@@ -129,10 +173,16 @@ function main() {
   const domain = apiUrl ? null : getDeploymentDomain();
   console.log(apiUrl ? `API at ${apiUrl}` : `Setting EXPO_PUBLIC_DOMAIN=${domain}`);
 
-  const target = apiUrl ? `api:${apiUrl}` : `domain:${domain}`;
+  const identity = readIdentity();
+  const target = [
+    apiUrl ? `api:${apiUrl}` : `domain:${domain}`,
+    `name:${identity.name}`,
+    `slug:${identity.slug}`,
+    `scheme:${identity.scheme}`,
+  ].join("|");
   const targetChanged = readLastTarget() !== target;
   if (targetChanged) {
-    console.log("The API address changed since the last build — clearing the bundler cache.");
+    console.log("The API address or the app's name changed since the last build — clearing the bundler cache.");
   }
 
   const outputDir = path.join(projectRoot, "web-build");
@@ -172,6 +222,7 @@ function main() {
   }
 
   assertBundleTargets(apiUrl ?? domain);
+  assertBuildIdentity(identity);
   writeTarget(target);
 
   console.log(`Build complete! Static web app ready in web-build/ (base path: ${basePath || "/"})`);

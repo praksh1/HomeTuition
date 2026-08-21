@@ -29,8 +29,13 @@ is cheap next to what it costs afterwards. Tick them off in order.
       `EMAIL_FROM`, and `APP_URL` for the links inside them.
 - [ ] **Test the whiteboard on the cheapest Android you can find.** The target market is a
       phone nobody here has held.
-- [ ] **Pick one name.** The app calls itself "Guru" in `app.json` (name, slug, scheme, bundle
-      identifier) and Sikshya everywhere a user can see. Store listings make that permanent.
+- [ ] **Confirm the bundle identifier before the first store build.** The app is now called
+      Sikshya everywhere, and its identifier is `com.sikshya.app` on both iOS and Android.
+      That identifier is free to change today and *impossible* to change once the app is
+      published — a different one is a different app, with its own downloads, ratings and
+      reviews, and existing users do not get moved across. So: if you would rather it read
+      `com.hometuition.app`, or match a domain you own, say so now. Set in
+      `artifacts/sikshya/app.json` (`ios.bundleIdentifier` and `android.package`).
 
 
 ## Reported 2026-08-01 (testing round 1)
