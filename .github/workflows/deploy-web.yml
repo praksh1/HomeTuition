@@ -126,6 +126,29 @@ jobs:
       # When a class may be started, and when a force-closed one stops blocking the next.
       # Both were reported from a real session: a teacher could start a class from days ago,
       # and a force-quit browser locked them out of starting anything else.
+      # The door and the money, in both modes. Payment mode follows what is configured rather
+      # than a flag, so the only way to test the mode that matters — a real provider wired up,
+      # where nothing but a signed callback may settle a booking — is to run a second server
+      # with one configured. That half had never been exercised.
+      - name: Paying for a class
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+        run: |
+          set -euo pipefail
+          API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:payments
+
+          # A second instance, with a provider configured, on its own port.
+          PAYMENT_WEBHOOK_SECRET=ci-only-webhook-secret PORT=8081 NODE_ENV=test \
+            nohup node artifacts/api-server/dist/index.mjs > /tmp/api-gateway.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8081/api/healthz >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then echo "::error::the gateway-mode API never came up"; cat /tmp/api-gateway.log; exit 1; fi
+            sleep 1
+          done
+          API_URL=http://127.0.0.1:8081 PAYMENT_WEBHOOK_SECRET=ci-only-webhook-secret \
+            pnpm --filter @workspace/api-server run test:payments
+
       - name: When a class may be started
         env:
           # These tests age rows past the three-hour and two-minute windows rather than

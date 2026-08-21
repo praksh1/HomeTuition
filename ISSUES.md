@@ -648,12 +648,39 @@ guard turns exactly five of them red.
 
 ## Open — known, not yet fixed
 
-### A1. Enrolment does not require payment
-**Where:** `POST /sessions/:id/enroll` (`artifacts/api-server/src/routes/sessions.ts`)
-Enrolling creates a row with `paymentStatus: "pending"` and nothing ever promotes it to
-`"paid"`. The classroom only checks that an enrolment row exists, so a student can join a paid
-class without paying. Must be fixed before taking real money.
-**Status:** open
+### A1. No payment provider is integrated, so configuring one stops all bookings
+
+**This entry used to say something else, and it was out of date.** It said enrolling left a
+`"pending"` row nobody promoted, so a student could join a paid class for free. That was true
+of the old two-step flow and has not been true since booking became one transaction: `/enroll`
+is now the same call as `/book`, there is no pending state to be stuck in, and the classroom
+door checks a paid enrolment rather than the existence of a row.
+
+That is now tested rather than asserted — `artifacts/api-server/scripts/payment-tests`, run in
+**both** modes, in CI. A student who never booked is refused the room; an unsigned or
+wrongly-signed provider callback is refused; a correctly signed callback for a booking that
+does not exist changes nothing. Forcing the server to approve its own charges while a provider
+is configured turns six of those checks red, so they are doing real work.
+
+**What is actually still open** is the other side of the same coin. Payment mode follows what
+is configured: no provider means **simulated**, where the server approves charges itself so
+the product can be used, and says so in the log every time. Configuring a provider switches to
+**gateway** mode permanently — and the eSewa/Khalti branch is not written, so in gateway mode
+every booking is declined with "Online payment isn't available yet."
+
+So the position today is:
+
+- **Nobody gets a paid class for free.** The door is sound in both modes.
+- **No money is actually being taken.** Bookings in simulated mode approve themselves.
+- **Setting `PAYMENT_WEBHOOK_SECRET`, `ESEWA_MERCHANT_ID` or `KHALTI_SECRET_KEY` will stop
+  every booking**, because that is what turns the free door off, and nothing has been built to
+  replace it. See `.agents/memory/payment-mode-trap.md`.
+
+Taking real money means implementing the gateway branch in `lib/payments.ts` — the redirect to
+the provider and the signed callback that settles the booking. The state machine around it,
+including the webhook, already exists and is tested.
+
+**Status:** open — and the self-tightening design means it cannot be half-launched by accident
 
 ### A2. iOS screen sharing not implemented
 Needs a Broadcast Upload Extension, and cannot be built on Windows at all. Android only for now.
