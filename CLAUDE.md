@@ -166,8 +166,11 @@ Known gaps, in rough priority order:
 1. **Email cannot be sent until a provider is configured.** `lib/mailer.ts` is written and the
    preference switches exist; without `RESEND_API_KEY` and `EMAIL_FROM` the app says so plainly
    rather than pretending. Same self-describing pattern as payments.
-2. **WebView board performance on cheap Android is untested.** This matters more than it
-   sounds, given the target market.
+2. **Board performance is measured but not on a real phone.** With the processor throttled to
+   roughly a budget Android's speed, a 500-element lesson paints in about 1.6 s and a new
+   stroke lands in ~140 ms — and it still paints at 25× slowdown. That says the code is not
+   doing anything foolish; it does not reproduce a weak GPU, memory pressure or thermal
+   throttling. `artifacts/sikshya/scripts/perf-tests` runs it on every deploy.
 4. **Shape recognition is built but not connected.** `components/recognition/` works; its only
    caller was the SVG surface Excalidraw replaced, so nothing reaches it today. Re-wiring means
    catching Excalidraw's freehand commit — `WHITEBOARD.md` step 8.

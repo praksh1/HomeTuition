@@ -234,6 +234,13 @@ jobs:
       - name: A phone photo reaches the class
         run: pnpm --filter @workspace/sikshya run test:photo
 
+      # The board with a processor slowed to roughly a budget Android's. Most numbers are
+      # reported rather than asserted; this fails only if the board never becomes visible or
+      # an incoming stroke takes longer than three seconds, which is breakage rather than
+      # slowness. See artifacts/sikshya/scripts/perf-tests/README.md.
+      - name: The whiteboard on a slow phone
+        run: pnpm --filter @workspace/sikshya run test:perf
+
       # The class conversation lives inside the call now rather than behind a tab that hid the
       # video. This drives the real component in a real browser, including the state a student
       # on a bad connection lands in — where the call never comes up and chat is all they have.

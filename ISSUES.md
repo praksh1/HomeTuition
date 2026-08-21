@@ -7,6 +7,32 @@ Status key: **open** · **in progress** · **fixed** · **won't fix**
 
 ---
 
+## Before this goes to the App Store, Play Store, or a real launch
+
+Not a wish list — these are the things that are *unsafe or wrong* to launch with, and each one
+is cheap next to what it costs afterwards. Tick them off in order.
+
+- [ ] **Rotate the Daily.co API key.** It was pasted into a chat transcript earlier in this
+      project's life, so it must be treated as public. Daily dashboard → Developers → rotate,
+      then update `DAILY_API_KEY` on Railway. Whoever holds that key can create and join rooms
+      on your account and bill you for it. **Do this before the first public build**, not
+      after — see A4.
+- [ ] **Decide what happens to chat.** Daily's chat is web-only. The moment an installed app
+      is in someone's hands, a class mixing an app user and a browser user has two
+      conversations that cannot see each other, and both look like they are working. Either
+      bridge them or turn Daily's chat back off and fix the app's own panel. See
+      `.agents/memory/one-chat-per-class.md`.
+- [ ] **Wire a real payment provider.** Today bookings approve themselves and no money moves.
+      Setting `PAYMENT_WEBHOOK_SECRET`, `ESEWA_MERCHANT_ID` or `KHALTI_SECRET_KEY` closes that
+      door and declines every booking, because the eSewa/Khalti branch is not written. See A1.
+- [ ] **Set the email variables** if you want email notifications: `RESEND_API_KEY`,
+      `EMAIL_FROM`, and `APP_URL` for the links inside them.
+- [ ] **Test the whiteboard on the cheapest Android you can find.** The target market is a
+      phone nobody here has held.
+- [ ] **Pick one name.** The app calls itself "Guru" in `app.json` (name, slug, scheme, bundle
+      identifier) and Sikshya everywhere a user can see. Store listings make that permanent.
+
+
 ## Reported 2026-08-01 (testing round 1)
 
 ### B1. Camera and microphone stay on after the call ends — **FIXED**
@@ -678,6 +704,39 @@ Checked by restarting the real server between writing and reading, because that 
 way to tell persistence from a variable that happens to still be in scope. Removing the save
 turns five of the seven checks red with exactly the old symptom: no board, no elements, no
 picture.
+
+---
+
+## The whiteboard on a slow phone — measured
+
+"WebView board performance on cheap Android is untested" has been on the gaps list since the
+board was built, and it is the one aimed squarely at the actual market. It is now measured,
+with the processor throttled to roughly a budget Android's speed at a phone's screen size.
+
+| Board contents | Time until a joining student sees it | One new stroke arriving |
+|---|---|---|
+| 50 things | ~1.2 s | 109 ms |
+| 200 things | ~1.1 s | 118 ms |
+| 500 things | ~1.6 s | 139 ms |
+
+Pushed harder by hand: 1000 elements paint in 2.5 s, 2000 in 4.4 s, and the board **still
+paints within 10 seconds at 25× slowdown** — slower than any phone likely to be in use. On this
+evidence the board copes, with room to spare, and there is nothing here to fix.
+
+**Two limits on that, stated because the number on its own would overclaim.** This is a
+simulated processor: it slows the main thread and does not reproduce a weak GPU, memory
+pressure, thermal throttling, or a phone running four other apps. And the measurement
+interfered with itself — polling by screenshot every 500 ms made 12× look like it never
+painted, and this was very nearly written up as a performance cliff between 6× and 12×. There
+is no cliff. Sampling infrequently and from outside the page showed it painting fine
+throughout.
+
+The suite runs on every deploy. Most numbers are reported rather than asserted, because "is
+300 ms too slow" is a judgement; it fails only when the board never becomes visible or a single
+stroke takes over three seconds, which is breakage rather than slowness.
+
+Still worth doing when a device is to hand: open the board on the cheapest Android you can
+find. That remains on the pre-launch checklist at the top of this file.
 
 ---
 
