@@ -558,6 +558,48 @@ next would be worse than either.
 
 ---
 
+## Reported 2026-08-21 (third run) — still opening a finished class
+
+Reported again after the fix above, with recordings. The fix was live; the app running on the
+phone was not.
+
+The recordings are timestamped 10:09:55 to 10:13:12. The API redeploys on push and had picked
+up the guard partway through that window — which is visible in the footage: at 10:11:37 a
+video room is still handed over and the phone asks for the camera, and by 10:13:12 the same
+tap gets "Couldn't set up the video room" instead. The **web app** deployed at 10:13:34, after
+the last recording, so every tap in those videos went through the old screens: into the
+classroom, LIVE badge, running timer.
+
+**That timing is an explanation and not a defence.** The real fault is that none of it should
+have been possible to ship: there was no test that tapped the card a teacher taps. Every test
+written for this was a test of a *rule*, and the screen that had to ask the rule was never
+touched, so all of them passed against a build that opened a three-day-old class and asked for
+the camera.
+
+### What is different now
+
+`artifacts/sikshya/scripts/classroom-tests` signs in as a teacher, opens My Sessions, taps a
+class that finished three days ago, and asserts what the teacher sees:
+
+- the classroom is never opened, **not even briefly**
+- nothing asks the server for a video room
+- nothing asks for the camera or microphone
+- no LIVE badge appears
+- the screen says the session has expired
+
+Watching every address the app visits rather than where it ends up is deliberate, and it is
+what made the difference. The classroom already bounced a finished class back out with an
+alert, so "where did the teacher end up" answered *the sessions list* — while the classroom had
+mounted, asked for a room and started a call on the way through. Reverting the guards prints
+the trail exactly as reported:
+
+```
+visited ["/", "/sessions", "/classroom/75", "/", "/"]
+requests: [".../api/sessions/75/room"]
+```
+
+Which is the report in two lines: in, out to the dashboard, camera prompt on arrival.
+
 ## Reported 2026-08-21 (second run) — opening a finished class
 
 G1 was reported fixed and was not. The guard went on the dashboard's Start button, and that is

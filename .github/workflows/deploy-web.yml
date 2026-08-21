@@ -141,13 +141,22 @@ jobs:
           npm i -g playwright
           npx playwright install --with-deps chromium
 
-      - name: Notifications reach the app
+      # Both of these drive the real app against the local API, so they share one build of it.
+      # That build is deliberately thrown away and the deploy build made fresh below.
+      - name: The app against a real server
         env:
           EXPO_PUBLIC_API_URL: http://127.0.0.1:8080
+          # The classroom test ages a class past the three-hour window rather than waiting.
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: |
           set -euo pipefail
           pnpm --filter @workspace/sikshya run build
           pnpm --filter @workspace/sikshya run test:notifications
+          # Tapping the card a teacher actually taps. This exists because a rule was fixed and
+          # the screen that had to ask it was never touched: every test passed while tapping a
+          # three-day-old class opened a classroom and asked the phone for its camera. A test
+          # of a rule cannot see that; only this can.
+          pnpm --filter @workspace/sikshya run test:classroom
 
       # Rebuilt pointing at the real API. The build script clears the bundler cache whenever
       # the API address changes, because Metro inlines it during transform and caches the
