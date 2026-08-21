@@ -30,7 +30,9 @@ import PdfViewer from "@/components/PdfViewer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ErrorFallbackProps } from "@/components/ErrorFallback";
 import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
-import { looksLikePdf } from "@/utils/pickedFile";
+import { isShareableSource, looksLikePdf } from "@/utils/pickedFile";
+import { File as FsFile } from "expo-file-system";
+import { MAX_PDF_BYTES, preparePickedPdf } from "@/utils/pickedPdf";
 import { cancelSessionReminder } from "@/utils/notifications";
 import { canOpenSession } from "@/utils/sessionWindow";
 import SmartBoard from "@/components/SmartBoard";
@@ -245,28 +247,32 @@ export default function Classroom() {
 
   const nextBoardKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  const applyUploadedFile = (dataUrl: string, kind: "image" | "pdf") => {
+  const applyUploadedFile = (source: string, kind: "image" | "pdf") => {
     /**
-     * On native a PDF arrives as a device-local `file://` URI rather than bytes, so there is
-     * nothing to hand the board. It opens for the teacher alone and says so, loudly — the same
-     * honest failure as before. Reading the file into memory first would close this gap and is
-     * worth doing; pretending it is shared is not.
+     * What may go on the board is decided by whether we are holding bytes, not by which
+     * platform we are on. This used to ask `Platform.OS !== "web"` and send every PDF picked
+     * on a phone to the local viewer — which was right while the phone only had a `file://`
+     * path, and wrong the moment it could read one. A device-local path still cannot be
+     * shared, so it still opens here alone, with the banner saying so.
      */
-    if (kind === "pdf" && Platform.OS !== "web") {
-      setLocalPdfUri(dataUrl);
-      clearMaterial();
+    if (!isShareableSource(source)) {
+      if (kind === "pdf") {
+        setLocalPdfUri(source);
+        clearMaterial();
+        return;
+      }
+      // A picture always reaches this point as bytes; if it has not, something upstream is
+      // broken and silently putting an unopenable path on the board is the worst answer.
+      reportUploadError("That picture could not be prepared for sharing. Please try again.");
       return;
     }
 
-    // Everything else goes to the board, which turns a PDF into pages and places a photo as a
-    // single picture. Both end up as ordinary objects the whole class can see.
+    // Bytes go to the board, which turns a PDF into pages and places a photo as a single
+    // picture. Both end up as ordinary objects the whole class can see.
     setLocalPdfUri(null);
-    setBoardDocument({ key: nextBoardKey(), dataUrl, kind });
+    setBoardDocument({ key: nextBoardKey(), dataUrl: source, kind });
     clearMaterial();
   };
-
-  /** PDFs are passed through untouched, so they need their own ceiling. */
-  const MAX_PDF_BYTES = 8_000_000;
 
   const reportUploadError = (message: string) => {
     setUploadError(message);
@@ -368,6 +374,7 @@ export default function Classroom() {
       return;
     }
 
+    setUploadError(null);
     try {
       const doc = await DocumentPicker.getDocumentAsync({
         type: ["application/pdf"],
@@ -375,7 +382,17 @@ export default function Classroom() {
       });
       if (doc.canceled || !doc.assets?.[0]) return;
       const asset = doc.assets[0];
-      applyUploadedFile(asset.uri, "pdf");
+      // Bytes if it could be read, the local path if it could not — see utils/pickedPdf.ts.
+      // Either way the PDF is not lost: what changes is whether the class can see it.
+      const picked = await preparePickedPdf(asset.uri, (uri) => new FsFile(uri));
+      if (!picked.shareable) {
+        // Saying why matters: "too large" is something a teacher can act on by splitting the
+        // file, where a silent local-only PDF taught them nothing.
+        reportUploadError(picked.reason);
+        applyUploadedFile(picked.localUri, "pdf");
+        return;
+      }
+      applyUploadedFile(picked.dataUrl, "pdf");
     } catch {
       Alert.alert("Upload Failed", "Could not upload the PDF. Please try again.");
     }
@@ -774,6 +791,16 @@ export default function Classroom() {
                     onViewportChange={sendBoardView}
                     onClearAll={sendBoardClear}
                     insertDocument={boardDocument}
+                    /* A document the board never acknowledged. On a phone the board is a WebView, and a
+                       large file can be dropped on the way in rather than refused — which looks exactly
+                       like a board still thinking. Better to say so than to leave a teacher waiting in
+                       front of a class. */
+                    onDocumentLost={() =>
+                      reportUploadError(
+                        "The whiteboard did not receive that file — it may be too large for this phone. " +
+                          "Try a smaller PDF, or share a photo of the page instead.",
+                      )
+                    }
                     clearedAt={boardClearedAt}
                   />
                 </>

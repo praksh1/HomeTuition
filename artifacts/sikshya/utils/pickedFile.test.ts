@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { looksLikeImage, looksLikePdf } from "./pickedFile.ts";
+import { isShareableSource, looksLikeImage, looksLikePdf } from "./pickedFile.ts";
 
 test("a PDF that declares itself is a PDF", () => {
   assert.equal(looksLikePdf({ name: "notes.pdf", type: "application/pdf" }), true);
@@ -41,4 +41,24 @@ test("something unrecognisable is neither", () => {
   assert.equal(looksLikeImage({ name: "archive.zip", type: "" }), false);
   assert.equal(looksLikePdf({}), false);
   assert.equal(looksLikeImage({}), false);
+});
+
+test("bytes can go on the board; a path on one phone cannot", () => {
+  assert.equal(isShareableSource("data:application/pdf;base64,JVBERi0="), true);
+  assert.equal(isShareableSource("https://example.com/notes.pdf"), true);
+  assert.equal(isShareableSource("file:///var/mobile/Containers/notes.pdf"), false, "iOS picker");
+  assert.equal(isShareableSource("content://com.android.providers.downloads/1"), false, "Android");
+});
+
+test("an unfamiliar scheme is refused rather than guessed at", () => {
+  // Refusing wrongly opens the local viewer and says the class cannot see it. Accepting
+  // wrongly breaks the lesson for every student and tells nobody.
+  assert.equal(isShareableSource("ph://ABCD-1234"), false, "an iOS photo library reference");
+  assert.equal(isShareableSource("assets-library://asset/asset.JPG"), false);
+  assert.equal(isShareableSource(""), false);
+});
+
+test("whitespace around a source does not change what it is", () => {
+  assert.equal(isShareableSource("  data:application/pdf;base64,JVBERi0="), true);
+  assert.equal(isShareableSource(" file:///tmp/notes.pdf "), false);
 });

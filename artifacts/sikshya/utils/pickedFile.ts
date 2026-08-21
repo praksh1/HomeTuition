@@ -44,3 +44,21 @@ export function looksLikeImage(file: PickedFile): boolean {
   if (!UNHELPFUL.has(type)) return false;
   return IMAGE_EXTENSIONS.has(extension(file));
 }
+
+/**
+ * Whether something can be put on the board, or only opened on the device that picked it.
+ *
+ * A picker on a phone hands back a path, not bytes: `file://` on both platforms, and
+ * `content://` from an Android file provider. Those resolve on one device and nowhere else, so
+ * putting one on the board gives every student a permanently broken picture — and nothing tells
+ * anyone, which is the worst version of that failure.
+ *
+ * An allow-list rather than a list of the schemes to reject, deliberately: an unfamiliar scheme
+ * wrongly refused opens the local viewer with a banner saying the class cannot see it, which is
+ * honest. An unfamiliar scheme wrongly accepted breaks the lesson silently.
+ */
+const SHAREABLE_SCHEME = /^(data|https?):/i;
+
+export function isShareableSource(source: string): boolean {
+  return SHAREABLE_SCHEME.test(source.trim());
+}

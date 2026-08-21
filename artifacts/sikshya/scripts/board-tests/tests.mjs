@@ -303,4 +303,51 @@ export const tests = [
       assert("and drawing closes it again", !(await visible()));
     },
   },
+
+  {
+    name: "the board says a document arrived, so the app can tell when one never does",
+    why:
+      "On a phone the board is a WebView and a shared file crosses into it as one message. An " +
+      "8 MB PDF is around 11 MB once base64-encoded, and a message that size can be dropped on " +
+      "the way in rather than refused — no error, no pages, nothing, which from outside is " +
+      "indistinguishable from a board still working. The app waits for this receipt and tells " +
+      "the teacher when it never comes, instead of leaving them watching an empty board in " +
+      "front of a class.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      await teacher.evaluate(() => {
+        window.__out = [];
+      });
+
+      const receipts = () =>
+        teacher.evaluate(() => window.__out.filter((m) => m.type === "document_in"));
+
+      assert("nothing is acknowledged before anything is sent", (await receipts()).length === 0);
+
+      await teacher.evaluate(
+        (dataUrl) =>
+          window.postMessage(
+            JSON.stringify({
+              type: "insert_document",
+              document: { key: "receipt-1", dataUrl, kind: "pdf" },
+            }),
+            "*",
+          ),
+        TWO_PAGE_PDF,
+      );
+
+      // The receipt is for arrival, not for rendering. Rasterising this same PDF takes several
+      // seconds in the test above; a receipt that waited for that could not tell a slow phone
+      // from a lost message, which is the whole point of it.
+      await teacher.waitForFunction(
+        () => window.__out.some((m) => m.type === "document_in"),
+        undefined,
+        { timeout: 2000 },
+      );
+      const seen = await receipts();
+      assert("the board acknowledges the document within two seconds", seen.length === 1);
+      assert("naming the one it received", seen[0].key === "receipt-1");
+      assert("no errors were thrown", teacher.errors.length === 0);
+    },
+  },
 ];

@@ -265,10 +265,24 @@ Two things are recorded in `.agents/memory/pdfjs-legacy-build.md` because both f
 and cost real time: pdf.js's modern bundle needs JavaScript that older Android browsers do not
 have, and its worker is refused if served with the wrong MIME type.
 
-**Still open:** on the *phone apps*, a picked PDF is a device-local `file://` URI rather than
-bytes, so there is nothing to hand the board. It opens for the teacher alone with the banner
-saying students cannot see it. Reading the file into memory first would close this, and the
-board itself already knows how to do the rest.
+**Now closed on the phone apps too, with one thing left to confirm on a real device.** A
+picked PDF used to be a device-local `file://` URI rather than bytes, so there was nothing to
+hand the board and it opened for the teacher alone. The app reads the file into bytes and posts
+those to the board instead. Nothing about the board itself changed: on a phone it is a WebView
+running the same web board, which already turns a PDF into pages — it only ever wanted the
+bytes rather than a path to them.
+
+What still cannot be checked here is the size a phone will actually carry. Everything else
+crossing into the WebView is small; an 8 MB PDF is about 11 MB once base64-encoded, and the
+largest thing proven across that bridge so far is a compressed photo at roughly 1 MB. A message
+that big can be *dropped* on the way in rather than refused, which from outside looks exactly
+like a board still thinking.
+
+So it is made visible rather than guessed at: the board acknowledges a document the moment it
+arrives, and the app tells the teacher plainly when no acknowledgement comes — "the whiteboard
+did not receive that file, it may be too large for this phone". If a PDF fails on your phone
+you will be told, and the message tells us where the real limit is. **Worth testing with a
+large PDF (5-8 MB) as well as a small one.**
 
 ### Found while doing E11, and worth more than E11
 

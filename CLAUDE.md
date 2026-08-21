@@ -188,8 +188,11 @@ Known gaps, in rough priority order:
    printed text, and on handwriting a clearly drawn "B" came back "L". Doing it properly needs
    ML Kit (free, native only) or MyScript (paid). `WHITEBOARD.md` section 4 lays out the
    options honestly.
-5. **A PDF picked on a phone opens locally, not on the board.** The picker hands back a
-   `file://` URI with no bytes to share; the app says so rather than failing silently.
+5. **A large PDF over the WebView bridge is untested on a real phone.** A PDF picked on a
+   phone now reaches the board — the app reads the file into bytes and posts those, which is
+   all the board ever wanted. But an 8 MB PDF is ~11 MB base64, and the biggest thing proven
+   across that bridge is a ~1 MB photo. The board acknowledges arrival and the app says so
+   when nothing comes back, so this fails loudly rather than silently. See `ISSUES.md` → E3.
 6. **No Bikram Sambat date picker** — Nepali users see Gregorian dates only.
 7. **The bundle identifier has not been confirmed by the owner.** It is `com.sikshya.app` on
    both platforms, which is free to change now and permanent after the first store publish.

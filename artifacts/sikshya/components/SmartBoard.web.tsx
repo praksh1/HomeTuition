@@ -152,6 +152,12 @@ interface Props {
    * duplicate a page.
    */
   insertDocument?: { key: string; dataUrl: string; kind: "image" | "pdf" } | null;
+  /**
+   * Accepted and never called. On the web the board is in this process, so a document cannot
+   * be lost in transit to it — there is no transit. The prop exists so the two boards keep the
+   * same signature and a caller that typechecks against one works against the other.
+   */
+  onDocumentLost?: () => void;
   /** Teacher only: publishes the part of the canvas they are looking at. */
   onViewportChange?: (view: BoardViewport) => void;
   /** Students only: the part of the canvas the teacher is looking at. */

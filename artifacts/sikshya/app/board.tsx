@@ -31,6 +31,12 @@ export default function BoardPage() {
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
 
+    const hostPost = (msg: object) => {
+      const host = (window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } })
+        .ReactNativeWebView;
+      host?.postMessage(JSON.stringify(msg));
+    };
+
     const onMessage = (event: MessageEvent | Event) => {
       const data = (event as MessageEvent).data;
       if (typeof data !== "string") return;
@@ -60,7 +66,14 @@ export default function BoardPage() {
           if (msg.view) setViewport(msg.view);
           break;
         case "insert_document":
-          if (msg.document) setInsertDocument(msg.document);
+          if (msg.document) {
+            setInsertDocument(msg.document);
+            // Tell the host it arrived, immediately and before any rendering. A large file can
+            // be dropped on its way into the WebView rather than refused, and from outside that
+            // is indistinguishable from a board that is still working. This is what lets the
+            // app say "the board never got it" instead of leaving the teacher watching nothing.
+            hostPost({ type: "document_in", key: msg.document.key });
+          }
           break;
         case "clear":
           setUpdates([]);
@@ -76,9 +89,7 @@ export default function BoardPage() {
 
     // Announce readiness only once the listeners are attached, so the host's opening burst —
     // which includes the catch-up for everything already on the board — cannot be missed.
-    const host = (window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } })
-      .ReactNativeWebView;
-    host?.postMessage(JSON.stringify({ type: "ready" }));
+    hostPost({ type: "ready" });
 
     return () => {
       window.removeEventListener("message", onMessage);

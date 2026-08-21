@@ -31,6 +31,11 @@ interface Props {
   onSceneChange: (changed: unknown[], files: unknown[]) => void;
   onViewportChange?: (view: BoardViewport) => void;
   insertDocument?: { key: string; dataUrl: string; kind: "image" | "pdf" } | null;
+  /**
+   * Called when a document was posted to the board and the board never said it arrived.
+   * Silence here is the failure this exists to make visible — see the delivery note below.
+   */
+  onDocumentLost?: () => void;
   viewport?: BoardViewport | null;
   onClearAll?: () => void;
   clearedAt?: number;
@@ -41,6 +46,15 @@ interface Props {
 const BOARD_ORIGIN =
   process.env.EXPO_PUBLIC_BOARD_URL ?? "https://hometuition.praksh-dhakal.workers.dev";
 
+/**
+ * How long to wait for the board to say a document arrived.
+ *
+ * Long enough that a budget Android parsing a multi-megabyte message is never accused of losing
+ * it, short enough that a teacher is not left guessing. A false alarm here would be worse than
+ * a slow truth, so it errs long.
+ */
+const DELIVERY_DEADLINE_MS = 15_000;
+
 export default function SmartBoard({
   readOnly = false,
   sceneUpdates,
@@ -49,6 +63,7 @@ export default function SmartBoard({
   onViewportChange,
   viewport = null,
   insertDocument = null,
+  onDocumentLost,
   onClearAll,
   clearedAt = 0,
   theme = "light",
@@ -65,6 +80,17 @@ export default function SmartBoard({
   const queued = useRef<SceneDelta[]>([]);
   /** The teacher's view, held the same way and for the same reason as the deltas above. */
   const queuedView = useRef<BoardViewport | null>(null);
+  /**
+   * A document posted to the board that has not been acknowledged yet.
+   *
+   * Everything else crossing this bridge is small. A shared picture or PDF is not: an 8 MB PDF
+   * is around 11 MB once base64-encoded, and a message that size can be dropped on its way into
+   * the WebView rather than refused. From out here that is indistinguishable from a board still
+   * working — no error, no pages, nothing — which is the worst way for this to fail on a phone
+   * in front of a class. The board acknowledges a document the moment it has it; silence past
+   * the deadline means it never arrived.
+   */
+  const pendingDocument = useRef<{ key: string; timer: ReturnType<typeof setTimeout> } | null>(null);
 
   const post = useCallback((msg: object) => {
     webRef.current?.postMessage(JSON.stringify(msg));
@@ -85,10 +111,42 @@ export default function SmartBoard({
     post({ type: "clear" });
   }, [clearedAt, post]);
 
+  /**
+   * Held in a ref so that this effect depends on the document and nothing else.
+   *
+   * The classroom passes an inline arrow, which is a new function on every render. Depending
+   * on it directly would re-run the effect each time — re-posting the whole document across
+   * the bridge, several megabytes at a time, and resetting the deadline so it could never fire.
+   * That is the opposite of what the deadline is for.
+   */
+  const documentLost = useRef(onDocumentLost);
+  useEffect(() => {
+    documentLost.current = onDocumentLost;
+  }, [onDocumentLost]);
+
   useEffect(() => {
     if (!insertDocument || !ready.current) return;
     post({ type: "insert_document", document: insertDocument });
+
+    const key = insertDocument.key;
+    if (pendingDocument.current) clearTimeout(pendingDocument.current.timer);
+    pendingDocument.current = {
+      key,
+      timer: setTimeout(() => {
+        pendingDocument.current = null;
+        documentLost.current?.();
+      }, DELIVERY_DEADLINE_MS),
+    };
   }, [insertDocument, post]);
+
+  // A board being torn down owes nobody a warning about a document it is no longer waiting for.
+  useEffect(
+    () => () => {
+      if (pendingDocument.current) clearTimeout(pendingDocument.current.timer);
+      pendingDocument.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!viewport) return;
@@ -98,7 +156,7 @@ export default function SmartBoard({
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let msg: { type?: string; elements?: unknown[]; files?: unknown[]; view?: BoardViewport };
+      let msg: { type?: string; key?: string; elements?: unknown[]; files?: unknown[]; view?: BoardViewport };
       try {
         msg = JSON.parse(event.nativeEvent.data);
       } catch {
@@ -113,6 +171,14 @@ export default function SmartBoard({
         if (queuedView.current) {
           post({ type: "view_in", view: queuedView.current });
           queuedView.current = null;
+        }
+        return;
+      }
+      if (msg.type === "document_in") {
+        const pending = pendingDocument.current;
+        if (pending && pending.key === msg.key) {
+          clearTimeout(pending.timer);
+          pendingDocument.current = null;
         }
         return;
       }

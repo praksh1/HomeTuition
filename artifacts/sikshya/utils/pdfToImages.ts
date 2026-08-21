@@ -1,13 +1,15 @@
 /**
  * Turning a shared PDF into whiteboard pages — the native side.
  *
- * On iOS and Android the board itself runs inside a WebView, and a PDF picked with
- * DocumentPicker is a device-local `file://` URI rather than bytes we hold. Rasterising it here
- * would mean reading the file, shipping it into the WebView, and rendering there — worth doing,
- * but not worth pretending to have done. Until then this reports honestly that it cannot, and
- * the classroom keeps the local viewer plus the warning that students cannot see it.
+ * On iOS and Android the board runs inside a WebView, so nothing rasterises a PDF in React
+ * Native's own JavaScript — and nothing needs to. The classroom reads the picked file into
+ * bytes and posts them to the WebView, where the web board renders them with the real
+ * implementation in `pdfToImages.web.ts`. This file is only the twin that keeps the types
+ * honest: Metro resolves `.web.ts` ahead of it wherever the board actually runs.
  *
- * Metro resolves `.web.ts` ahead of this file on web, where the real implementation lives.
+ * So reaching this function means a PDF got into React Native's own bundle rather than the
+ * board's, which is a wiring mistake rather than a missing feature. It throws rather than
+ * returning something empty that would look like a document with no pages.
  */
 
 export interface PdfRenderProgress {
@@ -22,8 +24,6 @@ export interface PdfRenderResult {
   truncated: boolean;
 }
 
-export const PDF_TO_BOARD_SUPPORTED = false;
-
 /**
  * Same signature as the web implementation, deliberately: TypeScript resolves this file, Metro
  * resolves the `.web.ts` one, and a caller that typechecks here has to work there too.
@@ -32,5 +32,5 @@ export async function renderPdfToImages(
   _dataUrl: string,
   _onProgress?: (progress: PdfRenderProgress) => void,
 ): Promise<PdfRenderResult> {
-  throw new Error("Sharing a PDF to the whiteboard is only available on the web app for now.");
+  throw new Error("A PDF must be rendered on the board itself, not in the app's own bundle.");
 }

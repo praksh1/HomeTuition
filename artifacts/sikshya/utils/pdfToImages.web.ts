@@ -35,8 +35,6 @@ export interface PdfRenderResult {
   truncated: boolean;
 }
 
-export const PDF_TO_BOARD_SUPPORTED = true;
-
 /**
  * A lesson is not a textbook. Beyond this the board becomes unusable and the room's memory
  * suffers, so the rest is left out and the teacher is told.
