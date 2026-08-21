@@ -54,8 +54,28 @@ Neon already hosts it. Copy the connection string from the Neon dashboard; it is
    | Name | Value |
    |---|---|
    | `RESEND_API_KEY` | an API key from a free account at resend.com |
-   | `EMAIL_FROM` | the address mail comes from, e.g. `Sikshya <hello@yourdomain.com>` |
+   | `EMAIL_FROM` | the address mail appears to come from — see below |
    | `APP_URL` | where the app is served, so links inside emails work: `https://hometuition.praksh-dhakal.workers.dev` |
+
+   **`EMAIL_FROM` needs a domain, and that is the whole difficulty.** Mail claiming to come
+   from a domain you cannot prove you own is refused or filed as spam — that is how email
+   works, not a rule Resend invented. So there are two answers depending on what you have:
+
+   - **No domain yet:** use `onboarding@resend.dev`, Resend's test sender. It works
+     immediately and delivers **only to the address that owns your Resend account**. Mail to
+     students is rejected. Good for confirming the feature runs end to end; not something to
+     launch on.
+   - **A domain you own:** `hello@yourdomain.com`, or `Sikshya <hello@yourdomain.com>` if you
+     want a name beside it. You add two or three DNS records at your registrar and Resend
+     verifies them. A .com is roughly $10-15 a year; Nepal's `.np` is free to Nepali citizens
+     and businesses through Mercantile, but it is a paperwork process rather than a purchase.
+
+   Worth settling the app's **name** before buying anything — see the pre-launch checklist in
+   ISSUES.md, which records that it is expected to change again.
+
+   Setting these with a domain that is not verified is safe: Resend rejects the send, the
+   server logs it and carries on, and the notification still arrives in the app. A mail
+   provider that is down can never break the thing it was notifying about.
 
    Like payments, this is inferred rather than switched: the server sends email when it has a
    provider and does not when it does not. There is no flag to get wrong.
