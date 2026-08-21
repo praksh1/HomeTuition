@@ -26,7 +26,15 @@ export async function clearToken(): Promise<void> {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  /**
+   * The whole response body, not just its message.
+   *
+   * A refusal often carries what to do about it — "you are already teaching X" comes with the
+   * id of X — and throwing that away left the app able to say only that something was wrong.
+   * A teacher whose browser had crashed was told they had an active session and given no way
+   * back to it.
+   */
+  constructor(public status: number, message: string, public data: Record<string, unknown> = {}) {
     super(message);
     this.name = "ApiError";
   }
@@ -38,7 +46,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(`${getApiBase()}${path}`, { headers });
   const data = await res.json();
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed");
+  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
   return data as T;
 }
 
@@ -52,7 +60,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed");
+  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
   return data as T;
 }
 
@@ -66,7 +74,7 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   const data = await res.json();
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed");
+  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
   return data as T;
 }
 
@@ -79,6 +87,6 @@ export async function apiDelete<T>(path: string): Promise<T> {
     headers,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed");
+  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
   return data as T;
 }

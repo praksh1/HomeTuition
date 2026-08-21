@@ -7,6 +7,7 @@ import { logger } from "../lib/logger";
 import { verifyToken, type JwtPayload } from "../lib/auth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
 import { addUserChannel } from "./userHub";
+import { markTeacherPresent } from "../lib/sessionLifecycle";
 import { startHeartbeat, watchHeartbeat } from "./heartbeat";
 
 interface RoomClient {
@@ -29,6 +30,13 @@ const MAX_MATERIAL_CHARS = 2_500_000;
 const MAX_SCENE_ELEMENTS = 5_000;
 /** Pictures are orders of magnitude larger than shapes, so they get their own, much lower cap. */
 const MAX_SCENE_FILES = 40;
+/**
+ * How often a connected teacher's presence is written down.
+ *
+ * Comfortably shorter than the two minutes after which a class counts as abandoned, so a
+ * teacher who is really there is never mistaken for one who has gone.
+ */
+const TEACHER_PRESENCE_INTERVAL_MS = 30_000;
 
 interface BoardState {
   material: { kind: "image" | "pdf"; dataUrl: string } | null;
@@ -309,6 +317,28 @@ export function attachClassroomHub(server: http.Server): void {
     if (!rooms.has(sessionId)) rooms.set(sessionId, new Set());
     rooms.get(sessionId)!.add(client);
     logger.info({ sessionId, userId, role, isSessionTeacher }, "ws join");
+
+    /**
+     * The teacher being here is what keeps the class open.
+     *
+     * Recorded on joining and refreshed while they are connected, so a browser that was
+     * force-quit can be told apart from a lesson in progress. Without this a teacher who
+     * force-closed was locked out of starting anything else until the class's own length ran
+     * out — and had no way back into the class either.
+     */
+    let presenceTimer: ReturnType<typeof setInterval> | null = null;
+    if (isSessionTeacher) {
+      const numericId = Number(sessionId);
+      if (Number.isFinite(numericId)) {
+        void markTeacherPresent(numericId);
+        presenceTimer = setInterval(() => {
+          if (ws.readyState === 1) void markTeacherPresent(numericId);
+        }, TEACHER_PRESENCE_INTERVAL_MS);
+        ws.on("close", () => {
+          if (presenceTimer) clearInterval(presenceTimer);
+        });
+      }
+    }
 
     const count = rooms.get(sessionId)!.size;
     broadcast(sessionId, { type: "presence", count });

@@ -61,6 +61,28 @@ export default function TeacherDashboard() {
         err instanceof ApiError && err.status === 409
           ? err.message
           : "That class could not be started. Please check your connection and try again.";
+
+      /**
+       * "You are already teaching X" is only half an answer without a way to X.
+       *
+       * A teacher whose browser had crashed was told they had an active session, could not
+       * start a new one, and was given no route back to the old one either. The refusal
+       * carries the class it means, so the offer can be made directly.
+       */
+      const runningId = err instanceof ApiError ? err.data.liveSessionId : undefined;
+      if (typeof runningId === "number") {
+        const goBack = `${message}\n\nOpen that class now?`;
+        if (Platform.OS === "web") {
+          if (window.confirm(goBack)) router.push(`/(teacher)/classroom/${runningId}`);
+        } else {
+          Alert.alert("You are already teaching", goBack, [
+            { text: "Not now", style: "cancel" },
+            { text: "Open it", onPress: () => router.push(`/(teacher)/classroom/${runningId}`) },
+          ]);
+        }
+        return;
+      }
+
       if (Platform.OS === "web") window.alert(`Cannot start this class\n\n${message}`);
       else Alert.alert("Cannot start this class", message);
       return;

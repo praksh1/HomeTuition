@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
   Modal,
   ScrollView,
@@ -18,6 +19,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
 import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
+import { matches as matchesSearch, score as searchScore } from "@/utils/search";
 import TeacherCard from "@/components/TeacherCard";
 import type { Teacher } from "@/context/AuthContext";
 
@@ -56,6 +58,14 @@ export default function Discover() {
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("All");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  /**
+   * True until the first fetch answers.
+   *
+   * Without it this screen said "No teachers found — try a different keyword" for the second
+   * or two before anyone arrived, which is not merely blank but wrong: it blames the student
+   * for a search that has not run yet.
+   */
+  const [loadingTeachers, setLoadingTeachers] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("rating");
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [showSort, setShowSort] = useState(false);
@@ -74,6 +84,8 @@ export default function Discover() {
       setTeachers(res.teachers.map((t: Teacher) => ({ ...t, credentials: [] })));
     } catch (_e) {
       setTeachers([]);
+    } finally {
+      setLoadingTeachers(false);
     }
   };
 
@@ -87,10 +99,18 @@ export default function Discover() {
   }, [filters]);
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim();
+    const q = search.trim();
     let result = teachers.filter((t) => {
       if (q) {
-        const haystack = [
+        /**
+         * Spacing carries no meaning in a search box.
+         *
+         * This was a plain substring match, so looking for "Ram Prasad" as `RamPrasad`,
+         * `ram p rasa d` or `r ampr asad` — all reported — found nobody. See utils/search.ts.
+         * Each field is offered separately rather than glued into one string, so a name match
+         * can outrank a word that merely appears in a bio.
+         */
+        const fields = [
           t.name,
           t.subject,
           t.bio,
@@ -98,8 +118,8 @@ export default function Discover() {
           t.district ?? "",
           ...(t.subjects ?? []),
           ...(t.languages ?? []),
-        ].join(" ").toLowerCase();
-        if (!haystack.includes(q)) return false;
+        ];
+        if (!fields.some((field) => matchesSearch(field, q))) return false;
       }
       if (subject !== "All" && t.subject !== subject) return false;
       if (filters.district !== "All Districts" && t.district !== filters.district) return false;
@@ -108,6 +128,24 @@ export default function Discover() {
       if (filters.onlineOnly && !t.isOnline) return false;
       return true;
     });
+
+    // A search is itself a ranking. Sorting by rating while someone is typing a name buries
+    // the person they asked for under whoever happens to be rated highest.
+    if (q) {
+      const rank = (t: Teacher) =>
+        searchScore(
+          [
+            { value: t.name, weight: 4 },
+            { value: t.subject, weight: 2 },
+            { value: (t.subjects ?? []).join(" "), weight: 2 },
+            { value: t.district ?? "", weight: 2 },
+            { value: t.location ?? "", weight: 1 },
+            { value: t.bio, weight: 1 },
+          ],
+          q,
+        );
+      return [...result].sort((a, b) => rank(b) - rank(a) || b.rating - a.rating);
+    }
 
     result = [...result].sort((a, b) => {
       switch (sortKey) {
@@ -318,6 +356,14 @@ export default function Discover() {
           />
         )}
         ListEmptyComponent={
+          loadingTeachers ? (
+            <View style={styles.empty}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                Finding teachers…
+              </Text>
+            </View>
+          ) : (
           <View style={styles.empty}>
             <View style={[styles.emptyIcon, { backgroundColor: colors.muted }]}>
               <Feather name="search" size={32} color={colors.mutedForeground} />
@@ -336,6 +382,7 @@ export default function Discover() {
               </TouchableOpacity>
             )}
           </View>
+          )
         }
       />
 

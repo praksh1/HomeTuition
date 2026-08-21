@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte, or, sql, type AnyColumn } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
@@ -41,16 +41,30 @@ router.get("/teachers", async (req, res): Promise<void> => {
     conditions.push(eq(teacherProfilesTable.isOnline, true));
   }
   if (search && search.trim()) {
-    const pattern = `%${search.trim()}%`;
-    conditions.push(
-      or(
-        ilike(usersTable.name, pattern),
-        ilike(teacherProfilesTable.subject, pattern),
-        ilike(teacherProfilesTable.bio, pattern),
-        ilike(teacherProfilesTable.location, pattern),
-        ilike(teacherProfilesTable.district, pattern),
-      )!
-    );
+    /**
+     * Spacing carries no meaning in a search box.
+     *
+     * Reported with examples: looking for "Ram Prasad" as `RamPrasad`, `ram p rasa d` or
+     * `r ampr asad` found nobody, because this was a plain `%...%` match. Both sides are
+     * stripped to letters and digits before comparing, which makes all of those work. The
+     * app applies the same rule in utils/search.ts — they have to agree, or a search that
+     * finds someone on one screen misses them on the next.
+     */
+    const squashed = search.trim().toLowerCase().replace(/[^a-z0-9]/gi, "");
+    if (squashed.length > 0) {
+      const pattern = `%${squashed}%`;
+      const bare = (column: AnyColumn) =>
+        sql`regexp_replace(lower(${column}), '[^a-z0-9]', '', 'g') LIKE ${pattern}`;
+      conditions.push(
+        or(
+          bare(usersTable.name),
+          bare(teacherProfilesTable.subject),
+          bare(teacherProfilesTable.bio),
+          bare(teacherProfilesTable.location),
+          bare(teacherProfilesTable.district),
+        )!,
+      );
+    }
   }
 
   const orderByCol = (() => {

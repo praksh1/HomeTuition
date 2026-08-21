@@ -1,7 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
-import { db, sessionsTable } from "@workspace/db";
+import { db, sessionActivityTable, sessionsTable } from "@workspace/db";
 import { broadcastSessionStatus } from "../ws/classroomHub";
 import { isLeftOver, type LiveSessionRow } from "./sessionStaleness";
+import { teacherHasGone } from "./sessionStart";
 
 export { isLeftOver, type LiveSessionRow } from "./sessionStaleness";
 
@@ -61,5 +62,86 @@ export async function otherRunningSessions(teacherId: number, exceptId: number) 
     );
 
   const expired = new Set(await expireLeftOverSessions(others));
-  return others.filter((row) => !expired.has(row.id));
+  const stillRunning = others.filter((row) => !expired.has(row.id));
+  if (stillRunning.length === 0) return [];
+
+  /**
+   * A class whose teacher is not in it is not a class in progress.
+   *
+   * This is the force-close case, reported from a real session: the browser was killed, the
+   * class stayed "live" with nobody in it, and the teacher could then neither start anything
+   * new — "you still have an active session" — nor get back to the old one. Waiting for the
+   * class's own length to run out was the only way through.
+   */
+  const abandoned: number[] = [];
+  const running = [];
+  for (const row of stillRunning) {
+    const activity = await activityFor(row.id);
+    if (teacherHasGone(row, activity.teacherLastSeenAt)) abandoned.push(row.id);
+    else running.push(row);
+  }
+
+  if (abandoned.length > 0) {
+    await db
+      .update(sessionsTable)
+      .set({ status: "completed" })
+      .where(sql`${sessionsTable.id} = ANY(ARRAY[${sql.join(abandoned.map((id) => sql`${id}`), sql`,`)}]::int[])`);
+    for (const id of abandoned) {
+      await markSessionEnded(id);
+      broadcastSessionStatus(String(id), "completed");
+    }
+  }
+
+  return running;
+}
+
+
+/**
+ * Note that the teacher's classroom connection is alive.
+ *
+ * Called when their socket opens and on its heartbeat. This is the only thing that tells a
+ * lesson in progress apart from a browser that was force-quit — without it, a teacher who
+ * force-closed could not start another class, and had no way back into the one still marked
+ * live.
+ *
+ * Never throws: losing a heartbeat must not break a classroom.
+ */
+export async function markTeacherPresent(sessionId: number): Promise<void> {
+  try {
+    const now = new Date();
+    await db
+      .insert(sessionActivityTable)
+      .values({ sessionId, teacherLastSeenAt: now })
+      .onConflictDoUpdate({
+        target: sessionActivityTable.sessionId,
+        set: { teacherLastSeenAt: now },
+      });
+  } catch {
+    // A class that cannot record presence still runs; it just expires on the older rule.
+  }
+}
+
+/** Record when a class ended, so the restart window is measured from what happened. */
+export async function markSessionEnded(sessionId: number): Promise<void> {
+  try {
+    const now = new Date();
+    await db
+      .insert(sessionActivityTable)
+      .values({ sessionId, endedAt: now })
+      .onConflictDoUpdate({ target: sessionActivityTable.sessionId, set: { endedAt: now } });
+  } catch {
+    // Falls back to the scheduled end, which is the behaviour that existed before this.
+  }
+}
+
+/** What actually happened to a class, for the rules that need it. Empty when nothing has. */
+export async function activityFor(sessionId: number) {
+  const [row] = await db
+    .select({
+      teacherLastSeenAt: sessionActivityTable.teacherLastSeenAt,
+      endedAt: sessionActivityTable.endedAt,
+    })
+    .from(sessionActivityTable)
+    .where(eq(sessionActivityTable.sessionId, sessionId));
+  return row ?? { teacherLastSeenAt: null, endedAt: null };
 }

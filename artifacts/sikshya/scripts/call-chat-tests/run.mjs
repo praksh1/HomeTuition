@@ -62,6 +62,8 @@ function Harness() {
     React.createElement(DailyEmbed, {
       roomUrl: "https://example.invalid/does-not-exist",
       displayName: "Teacher",
+      // Switched off in the app; the tests keep it working while it waits.
+      enableInCallChat: true,
       chatMessages: messages,
       onSendChat: (text) => {
         window.__sent.push(text);

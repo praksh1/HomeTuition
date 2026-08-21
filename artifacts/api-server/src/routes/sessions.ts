@@ -13,6 +13,8 @@ import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
 import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notifyMany } from "../lib/notify";
+import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
+import { canStart } from "../lib/sessionStart";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -265,6 +267,21 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
 
   if (status === "live") {
     /**
+     * A class that is over stays over.
+     *
+     * A teacher could scroll back through past classes and start one — some warned, many
+     * simply began — which means a lesson from days ago could be made live again and students
+     * pulled into it. The only exception is a short window after it finished, for the teacher
+     * who ended the call by accident. See lib/sessionStart.ts.
+     */
+    const activity = await activityFor(id);
+    const startable = canStart({ ...existing, endedAt: activity.endedAt });
+    if (!startable.ok) {
+      res.status(409).json({ error: startable.reason, expired: true });
+      return;
+    }
+
+    /**
      * One class at a time.
      *
      * Starting a second class used to silently mark every other live class of this teacher
@@ -332,6 +349,10 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       },
     );
   }
+
+  // Record when it stopped, so the restart window is measured from what actually happened
+  // rather than from the slot it was booked into.
+  if (status === "completed" || status === "cancelled") await markSessionEnded(id);
 
   res.json(session);
 });

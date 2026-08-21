@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { Alert, FlatList, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
@@ -33,6 +33,15 @@ export default function StudentSessions() {
   const insets = useSafeAreaInsets();
   const student = user as Student;
   const [sessions, setSessions] = useState<Session[]>([]);
+  /**
+   * True until the first fetch answers.
+   *
+   * Without it this screen rendered "No sessions yet — browse teachers and book your first
+   * session" for the second or two before the classes arrived, telling a student who had
+   * booked and paid that they had nothing. Only the first load counts: the poll below must
+   * not flash the list away every few seconds.
+   */
+  const [loading, setLoading] = useState(true);
 
   // Sessions go live on the teacher's schedule, not the student's navigation. Loading only
   // on focus meant a class that started while this screen was open never appeared as live —
@@ -78,7 +87,11 @@ export default function StudentSessions() {
         ...liveRes.sessions.filter((ls) => !myRes.sessions.some((ms) => ms.id === ls.id)).map(mapSession),
       ];
       setSessions(allSessions);
-    } catch (_e) {}
+    } catch (_e) {
+      // Offline: fall through to whatever was last known rather than emptying the list.
+    } finally {
+      setLoading(false);
+    }
   };
 
   const notify = (title: string, msg: string) => {
@@ -224,6 +237,14 @@ You're booked and paid — come back then and you can wait in the room for your 
         }
         renderItem={() => null}
         ListEmptyComponent={
+          loading ? (
+            <View style={styles.empty}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                Loading your classes…
+              </Text>
+            </View>
+          ) : (
           <View style={styles.empty}>
             <Feather name="calendar" size={48} color={colors.border} />
             <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No sessions yet</Text>
@@ -238,6 +259,7 @@ You're booked and paid — come back then and you can wait in the room for your 
               <Text style={styles.discoverBtnText}>Find a Teacher</Text>
             </TouchableOpacity>
           </View>
+          )
         }
       />
     </View>

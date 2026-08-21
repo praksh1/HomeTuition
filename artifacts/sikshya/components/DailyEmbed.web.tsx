@@ -36,6 +36,14 @@ interface Props {
    */
   chatMessages?: ChatMessage[];
   onSendChat?: (text: string) => void;
+  /**
+   * Draw the app's own chat over the call.
+   *
+   * Off everywhere today — see IN_CALL_CHAT_ENABLED. The prop exists so the tests can still
+   * exercise the panel while it is switched off, which is what keeps a disabled feature from
+   * quietly rotting until the day someone wants it back.
+   */
+  enableInCallChat?: boolean;
 }
 
 /**
@@ -48,6 +56,21 @@ const JOIN_TIMEOUT_MS = 20000;
 
 /** Height of the strip above the call that holds our own chat control. */
 const CHAT_STRIP_PX = 38;
+
+/**
+ * Whether the app draws its own chat over the call.
+ *
+ * Off, at the owner's decision after using it on a phone: the panel took over the screen and
+ * could not be closed again, which on a small screen makes the call itself unusable. Daily's
+ * own chat is enabled on the room instead (see api-server/src/lib/daily.ts) — it comes with
+ * the call and is built for that space.
+ *
+ * Turned off rather than deleted, deliberately and at the owner's request: the day this
+ * project moves off Daily, this panel is what a call would need, and it works — its faults
+ * were in how much room it took, not in what it did. The tests in
+ * scripts/call-chat-tests still drive it, so it cannot rot while it waits.
+ */
+const IN_CALL_CHAT_ENABLED = false;
 
 /** Shown when the call has not come up in time. Not an error — a state, with a way out. */
 const SLOW_JOIN = "The video call is taking longer than usual to connect.";
@@ -108,6 +131,7 @@ export default function DailyEmbed({
   onWatchedParticipantLeft,
   chatMessages,
   onSendChat,
+  enableInCallChat = IN_CALL_CHAT_ENABLED,
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -166,7 +190,16 @@ export default function DailyEmbed({
 
         const callFrame = DailyIframe.createFrame(containerRef.current, {
           iframeStyle: { width: "100%", height: "100%", border: "0" },
-          showLeaveButton: true,
+          /**
+           * One way out, not two.
+           *
+           * The call had its own Leave button and the classroom had an End button above it,
+           * doing different amounts of work: Daily's left the call, ours ends the class for
+           * everyone and marks it finished. Two buttons that look the same and are not is a
+           * trap on a small screen. The classroom's End is the one that survives, because it
+           * is the one that means what a teacher thinks it means.
+           */
+          showLeaveButton: false,
           showFullscreenButton: true,
         });
 
@@ -235,7 +268,7 @@ export default function DailyEmbed({
   }, [roomUrl, displayName, meetingToken]);
 
   const h = React.createElement;
-  const showChat = Boolean(onSendChat);
+  const showChat = enableInCallChat && Boolean(onSendChat);
 
   /**
    * The panel sits over the call rather than beside it.

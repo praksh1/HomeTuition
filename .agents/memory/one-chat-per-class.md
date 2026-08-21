@@ -1,12 +1,14 @@
 ---
-name: Daily's built-in chat is disabled on purpose
-description: `enable_chat: false` in daily.ts is deliberate — re-enabling it splits a mixed browser/phone class into two conversations that cannot see each other.
+name: Daily's chat is on for web, and the app's own chat is off — the split is now a known, accepted cost
+description: `enable_chat: true` in daily.ts was the owner's decision after testing on a phone. It buys a usable call and costs one thing: an installed app and a browser in the same class have two conversations that cannot see each other.
 ---
 
-`artifacts/api-server/src/lib/daily.ts` sets `enable_chat: false` on every room. It looks like
-a feature switched off by mistake, and turning it back on is an easy, plausible "fix".
+**This entry was reversed on 2026-08-21, deliberately.** It used to say Daily's chat must stay
+off. The owner then used the app's own in-call chat on a phone, found it took over the screen
+and could not be closed, and asked for Daily's chat instead. That is the current state:
+`enable_chat: true` on the room, and `IN_CALL_CHAT_ENABLED = false` in `DailyEmbed.web.tsx`.
 
-Do not. Here is what happens:
+The reason the switch was off has not gone away, so here it is, still true:
 
 - On **web**, Daily Prebuilt would supply its own chat panel, and messages would live inside
   Daily.
@@ -38,3 +40,19 @@ If it is asked for again, this is the answer: put the app's chat where Daily's w
   reactions are safe because they are transient signals rather than a shared history.
 - When testing chat, always test with **one browser and one phone at once**. Two browsers, or
   two phones, will never reveal this class of bug.
+
+
+## What changed, and what to watch for
+
+- `daily.ts` now sets `enable_chat: true`. Prebuilt supplies the chat on web.
+- `DailyEmbed.web.tsx` sets `IN_CALL_CHAT_ENABLED = false`, so the app no longer draws its own
+  panel over the call. The panel is **switched off, not deleted**, at the owner's request: it
+  is what a call would need the day this project moves off Daily. Its tests still drive it via
+  the `enableInCallChat` prop, so it cannot rot while it waits.
+- The app's Chat **tab** is untouched and is still the chat on iOS and Android.
+
+**The cost is not currently being paid, and comes due later.** Everyone is on browsers today,
+so there is one chat per class in practice. The day the installed app reaches a store, a class
+mixing an app user and a browser user has two conversations, both looking like they work.
+Before that ships, one of these has to happen: bridge the two, or turn Daily's chat back off
+and fix the app's own panel so it does not take over a small screen.

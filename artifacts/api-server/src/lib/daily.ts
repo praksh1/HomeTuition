@@ -105,15 +105,23 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
         // Caveat worth remembering: Prebuilt is the *web* experience. The installed
         // Android/iOS app uses Daily's native SDK behind our own call interface (a WebView
         // cannot capture the screen for screen sharing), and that has no Prebuilt panels, so
-        // it does not get these. Browsers on a phone do — they run the web build. Until the
-        // native app grows its own chat, a class mixing installed-app and browser users would
-        // have two separate conversations.
-        // Daily's chat is deliberately off. Prebuilt's chat exists only on web, and the
-        // installed app uses the native SDK behind our own call UI, which now carries the
-        // app's own chat. Enabling both would split one class into two conversations —
-        // browser users talking inside the iframe, phone-app users talking in the app, with
-        // neither able to see the other. One chat, carried by our websocket, reaches both.
-        enable_chat: false,
+        /**
+         * Daily's own chat, on at the owner's decision after using both.
+         *
+         * The app's in-call chat panel took over the screen on a phone and could not be
+         * closed again, which on a small screen makes the call itself unusable. Daily's chat
+         * comes with the call, is built for that space, and is not ours to get wrong.
+         *
+         * The known cost, unchanged and worth restating: Prebuilt's chat exists on **web
+         * only**. The installed iOS and Android apps drive Daily's native SDK behind our own
+         * call UI, and their chat is the app's Chat tab, carried by the classroom socket. A
+         * class mixing an installed app with a browser therefore has two conversations that
+         * cannot see each other, and both sides look like they are working. Everyone is on
+         * browsers today, so this is a real cost that is not currently being paid — but it
+         * comes due the day the app ships to a store. See
+         * .agents/memory/one-chat-per-class.md.
+         */
+        enable_chat: true,
         enable_hand_raising: true,
         enable_emoji_reactions: true,
         enable_people_ui: true,

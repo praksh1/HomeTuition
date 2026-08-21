@@ -77,6 +77,11 @@ jobs:
       - name: Server rules
         run: pnpm --filter @workspace/api-server run test
 
+      # The app's own pure logic — currently how a search box treats spacing, which is why
+      # "ram p rasa d" now finds Ram Prasad.
+      - name: App rules
+        run: pnpm --filter @workspace/sikshya run test
+
       # Notifications broke in a way unit tests cannot see: nothing was wrong, the wiring was
       # simply absent — the app showed sample data it had invented on the device, and the
       # server never told anyone anything. So the next three steps run the real API against a
@@ -117,6 +122,16 @@ jobs:
       # iPhone and the app said nothing either time.
       - name: What the board does with a big picture
         run: pnpm --filter @workspace/api-server run test:board-limits
+
+      # When a class may be started, and when a force-closed one stops blocking the next.
+      # Both were reported from a real session: a teacher could start a class from days ago,
+      # and a force-quit browser locked them out of starting anything else.
+      - name: When a class may be started
+        env:
+          # These tests age rows past the three-hour and two-minute windows rather than
+          # waiting them out, so they need the database directly as well as the API.
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: pnpm --filter @workspace/api-server run test:sessions
 
       # The half that was actually missing: the app never listened. Only a real browser
       # running the real bundle can show that it does. Built against the local API, so this
