@@ -17,7 +17,7 @@
     "test:call-chat": "node scripts/call-chat-tests/run.mjs",
     "test:phone": "node scripts/phone-tests/run.mjs",
     "test:photo": "node scripts/phone-tests/photo.mjs",
-    "test": "node --test --experimental-strip-types \"utils/**/*.test.ts\"",
+    "test": "node --test --experimental-strip-types \"utils/**/*.test.ts\" \"components/**/*.test.ts\"",
     "test:classroom": "node scripts/classroom-tests/run.mjs",
     "test:perf": "node scripts/perf-tests/run.mjs"
   },

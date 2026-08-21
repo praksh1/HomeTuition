@@ -218,8 +218,22 @@ function arrowhead(pts: Point[]): boolean {
   const angles = turnAngles(pts);
   if (angles.length < 8) return false;
   const tailStart = Math.floor(angles.length * 0.6);
+
+  /**
+   * Turn is summed over a short window rather than read off a single sample.
+   *
+   * Resampling spreads a sharp corner across two or three points, so the barb of an arrow —
+   * a genuine turn of about 143° — arrived as 1.52 and 0.98 radians side by side. Testing each
+   * on its own found neither above the threshold, and *every* arrow was recognised as a plain
+   * line instead. This is the same accumulation `findCorners` below uses, and for the same
+   * reason. A smooth curve cannot reach the threshold this way: a stroke resampled to 64 points
+   * turns about 0.1 radians per sample, so three of them sum to well under a third of it.
+   */
+  const WINDOW = 2;
   for (let i = tailStart; i < angles.length; i++) {
-    if (Math.abs(angles[i]) > 1.6) return true;
+    let sum = 0;
+    for (let k = i; k < Math.min(angles.length, i + WINDOW); k++) sum += angles[k];
+    if (Math.abs(sum) > 1.6) return true;
   }
   return false;
 }
