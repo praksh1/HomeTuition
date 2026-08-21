@@ -39,6 +39,7 @@ const SHARED_SCREENS = [
   { name: "notifications", segment: "notifications" },
   { name: "notification-settings", segment: "notification-settings" },
   { name: "conversation/[id]", segment: "conversation" },
+  { name: "new-message", segment: "new-message" },
   { name: "support", segment: "support" },
 ] as const;
 

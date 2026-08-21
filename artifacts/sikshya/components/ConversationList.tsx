@@ -84,7 +84,22 @@ export default function ConversationList({ title }: { title: string }) {
       showsVerticalScrollIndicator={false}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
     >
-      <Text style={[styles.title, { color: colors.foreground }]}>{title}</Text>
+      <View style={styles.titleRow}>
+        <Text style={[styles.title, { color: colors.foreground }]}>{title}</Text>
+        {/*
+          The way in. There was none: this screen listed conversations and offered no way to
+          begin one, so a teacher could only ever reply to a student who had written first.
+        */}
+        <TouchableOpacity
+          style={[styles.newBtn, { backgroundColor: colors.primary }]}
+          onPress={() => router.push("/new-message")}
+          activeOpacity={0.85}
+          testID="new-message-button"
+        >
+          <Feather name="edit-2" size={13} color="#fff" />
+          <Text style={styles.newBtnText}>New</Text>
+        </TouchableOpacity>
+      </View>
 
       <View style={styles.folders}>
         {FOLDERS.map((f) => {
@@ -118,8 +133,18 @@ export default function ConversationList({ title }: { title: string }) {
         <View style={[styles.empty, { backgroundColor: colors.muted }]}>
           <Feather name="message-circle" size={26} color={colors.mutedForeground} />
           <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            No conversations yet. Messages you send or receive will show up here.
+            No conversations yet.
           </Text>
+          {/* An empty state that only describes the emptiness is no help. */}
+          <TouchableOpacity
+            style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
+            onPress={() => router.push("/new-message")}
+            activeOpacity={0.85}
+            testID="empty-new-message-button"
+          >
+            <Feather name="edit-2" size={13} color="#fff" />
+            <Text style={styles.newBtnText}>Write to someone</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -169,6 +194,10 @@ const styles = StyleSheet.create({
   folderTab: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
   folderText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   title: { fontSize: 24, fontFamily: "Inter_700Bold", marginBottom: 4 },
+  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  newBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
+  newBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#fff" },
+  emptyBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, marginTop: 4 },
   empty: { borderRadius: 16, padding: 24, alignItems: "center", gap: 10, marginTop: 20 },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
   row: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 16, borderWidth: 1, padding: 14 },

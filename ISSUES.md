@@ -675,14 +675,29 @@ worked, which is what made it look like a dead button rather than a routing bug.
 There is one list now, read by both the guard and the navigator, so the two cannot disagree
 again. The app's notification suite tries the door.
 
-### H4 — a teacher cannot start a conversation — **OPEN**
+### H4 — a teacher cannot start a conversation — **FIXED**
 **Where:** Messages, teacher
 
-`ConversationList` lists conversations and offers no way to begin one, on either side. A student
-can message a teacher from that teacher's profile; a teacher has nowhere to start. The empty
-state reads "Messages you send or receive will show up here", which is true and unhelpful when
-there is no way to send one. Wanted: a teacher can message the students subscribed to them, so
-a new class can be announced to the people most likely to take it.
+`ConversationList` listed conversations and offered no way to begin one, on either side. A
+student could message a teacher from that teacher's profile; a teacher had nowhere to start, so
+their Messages screen showed conversations they could only ever reply to under an empty state
+reading "Messages you send or receive will show up here" — true, and no help when there is no
+way to send one.
+
+There is a **New** button on Messages now, and the empty state offers the same thing rather than
+just describing the emptiness. It opens a picker of the people that person could sensibly write
+to, from `GET /message-recipients`: for a teacher, the students who follow them and the students
+in their paid classes; for a student, the teachers they follow and the ones they are learning
+from. Names are searched with the same matcher as the rest of the app, so "si ta" finds Sita.
+
+Two sources unioned, because either alone is wrong. Subscription is the relationship the owner
+named. Enrolment is the one that matters in practice: a student who has paid for your class is
+someone you must be able to reach whether or not they ever tapped Follow.
+
+**This is a convenience, not a gate.** `POST /messages/:otherUserId` still accepts any real
+user, exactly as before. Narrowing that is a separate decision — it is the only thing standing
+between the app and unsolicited messages between strangers, and it also governs the
+student-to-teacher direction that already works, so it should not be changed in passing.
 
 ### H6 — loading a tab URL directly bounces to the dashboard — **OPEN**, found while fixing H3
 **Where:** any platform, web
