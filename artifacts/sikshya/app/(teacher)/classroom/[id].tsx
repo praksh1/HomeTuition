@@ -30,6 +30,7 @@ import PdfViewer from "@/components/PdfViewer";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ErrorFallbackProps } from "@/components/ErrorFallback";
 import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
+import { looksLikePdf } from "@/utils/pickedFile";
 import { cancelSessionReminder } from "@/utils/notifications";
 import SmartBoard from "@/components/SmartBoard";
 
@@ -238,7 +239,10 @@ export default function Classroom() {
   const handleWebFileSelected = async (file: File) => {
     setUploadError(null);
     try {
-      if (file.type === "application/pdf") {
+      // The name is consulted when the type is missing, which is the ordinary case for a PDF
+      // picked from an Android file manager. Asking only about the type is what made every
+      // such PDF fail with "could not be opened as an image". See utils/pickedFile.ts.
+      if (looksLikePdf(file)) {
         if (file.size > MAX_PDF_BYTES) {
           reportUploadError("This PDF is too large to share on the board. Please use one under 8 MB.");
           return;
@@ -313,6 +317,9 @@ export default function Classroom() {
       // `application/pdf` leaves every PDF greyed out in the Files browser — the picker
       // matches on the file's type identifier, and without `.pdf` it disables the very
       // files this button exists to choose. Reported from a real iPhone.
+      // Both forms, deliberately. iOS matches on the type identifier and greys out every PDF
+      // without the extension present; Android matches on the MIME type and ignores the
+      // extension. Naming both is the only spelling that works on both.
       input.accept = "application/pdf,.pdf";
       input.onchange = () => {
         const file = input.files?.[0];
@@ -582,7 +589,12 @@ export default function Classroom() {
                       <Text style={s.materialBtnText} pointerEvents="none">PDF</Text>
                       {React.createElement("input", {
                         type: "file",
-                        accept: "application/pdf",
+                        // Both spellings, and this is the input the teacher actually taps on
+                        // the web — the earlier fix went to the native-picker path and never
+                        // reached here, which is why PDFs were still greyed out. iOS matches
+                        // on the type identifier and disables every PDF without the
+                        // extension; Android matches on the MIME type and ignores it.
+                        accept: "application/pdf,.pdf",
                         onChange: (e: any) => {
                           const file = e.target.files?.[0];
                           if (!file) return;
@@ -606,6 +618,13 @@ export default function Classroom() {
                     </TouchableOpacity>
                   </>
                 )}
+                {/* A way out that is not the browser's Back button. Without it the only exit
+                    from this menu was Back, which a teacher reasonably feared would drop them
+                    out of the class they were teaching. */}
+                <TouchableOpacity style={s.materialCancel} onPress={() => setMaterialMenuOpen(false)} activeOpacity={0.8}>
+                  <Feather name="x" size={14} color="#B9B9B9" />
+                  <Text style={s.materialCancelText}>Cancel</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -789,6 +808,8 @@ const s = StyleSheet.create({
   // important thing on screen when they are in fact an occasional action.
   materialToggle: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: "#1A1A1A", borderWidth: 1, borderColor: "#2A2A2A" },
   materialToggleOpen: { backgroundColor: "#C41E3A", borderColor: "#FF6B81" },
+  materialCancel: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 10, borderWidth: 1, borderColor: "#2A2A2A" },
+  materialCancelText: { fontSize: 12.5, fontFamily: "Inter_500Medium", color: "#B9B9B9" },
   materialToggleText: { fontSize: 12, fontFamily: "Inter_500Medium", color: "#B9B9B9" },
   materialToggleTextOpen: { color: "#fff" },
   materialMenu: { flexDirection: "row", gap: 6, paddingHorizontal: 12, paddingBottom: 4, zIndex: 50 },

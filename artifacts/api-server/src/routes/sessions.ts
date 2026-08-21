@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, sessionsTable, sessionEnrollmentsTable, teacherProfilesTable, usersTable } from "@workspace/db";
+import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import {
   JOIN_WINDOW_MINUTES,
@@ -108,6 +108,81 @@ router.get("/sessions", async (req, res): Promise<void> => {
   res.json({ sessions, total, page: pageNum, limit: limitNum });
 });
 
+/**
+ * The students this teacher may tell about a new class.
+ *
+ * Exactly two groups, and no wider: people who chose to follow them, and people who have
+ * actually taken a paid class with them. A teacher cannot use this to reach the whole
+ * platform — an invitation is a message to someone you already have a relationship with, not
+ * a mailing list.
+ *
+ * This is only ever a notification. It grants nothing: an invited student books and pays like
+ * anybody else, and the door checks enrolment, not invitations.
+ */
+/**
+ * The user ids this teacher is allowed to tell about a class: their followers, and students
+ * who have actually paid for one of their classes before.
+ *
+ * Shared by the listing endpoint and by the invite itself, deliberately. A list that says who
+ * may be invited and a check that decides who actually is, written separately, is how the
+ * second one ends up more generous than the first.
+ */
+async function invitableStudentIds(teacherUserId: number): Promise<Set<number>> {
+  const followers = await db
+    .select({ id: studentTeacherSubscriptionsTable.studentId })
+    .from(studentTeacherSubscriptionsTable)
+    .where(eq(studentTeacherSubscriptionsTable.teacherId, teacherUserId));
+
+  const past = await db
+    .selectDistinct({ id: sessionEnrollmentsTable.studentId })
+    .from(sessionEnrollmentsTable)
+    .innerJoin(sessionsTable, eq(sessionEnrollmentsTable.sessionId, sessionsTable.id))
+    .where(
+      and(
+        eq(sessionsTable.teacherId, teacherUserId),
+        eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+      ),
+    );
+
+  return new Set([...followers, ...past].map((r) => r.id));
+}
+
+router.get("/sessions/invitable-students", requireAuth, async (req, res): Promise<void> => {
+  const user = req.user!;
+  if (user.role !== "teacher") {
+    res.status(403).json({ error: "Only teachers can see this" });
+    return;
+  }
+
+  const followers = await db
+    .select({ id: usersTable.id, name: usersTable.name })
+    .from(studentTeacherSubscriptionsTable)
+    .innerJoin(usersTable, eq(studentTeacherSubscriptionsTable.studentId, usersTable.id))
+    .where(eq(studentTeacherSubscriptionsTable.teacherId, user.userId));
+
+  const past = await db
+    .selectDistinct({ id: usersTable.id, name: usersTable.name })
+    .from(sessionEnrollmentsTable)
+    .innerJoin(sessionsTable, eq(sessionEnrollmentsTable.sessionId, sessionsTable.id))
+    .innerJoin(usersTable, eq(sessionEnrollmentsTable.studentId, usersTable.id))
+    .where(
+      and(
+        eq(sessionsTable.teacherId, user.userId),
+        eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+      ),
+    );
+
+  const byId = new Map<number, { id: number; name: string; follower: boolean; pastStudent: boolean }>();
+  for (const f of followers) byId.set(f.id, { ...f, follower: true, pastStudent: false });
+  for (const p of past) {
+    const existing = byId.get(p.id);
+    if (existing) existing.pastStudent = true;
+    else byId.set(p.id, { ...p, follower: false, pastStudent: true });
+  }
+
+  res.json({ students: [...byId.values()].sort((a, b) => a.name.localeCompare(b.name)) });
+});
+
 router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
   const user = req.user!;
   if (user.role !== "teacher") {
@@ -159,6 +234,39 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
     price: price!,
     status: "upcoming",
   }).returning();
+
+  /**
+   * Tell the students the teacher picked, and nothing more than tell them.
+   *
+   * The owner was explicit, and it is the rule that matters here: "Please be sure that the
+   * students are not getting free links to get into the session without paying." So this
+   * writes no enrolment, issues no token and grants no access. It sends a notification whose
+   * link opens the class the same way the Discover tab does — where the student books and
+   * pays like anyone else, and the classroom door checks enrolment rather than invitations.
+   *
+   * The recipients are filtered against the teacher's own followers and past paid students,
+   * so a crafted request cannot turn this into a way to message the whole platform.
+   */
+  const requested = Array.isArray((req.body as { inviteStudentIds?: unknown }).inviteStudentIds)
+    ? ((req.body as { inviteStudentIds: unknown[] }).inviteStudentIds
+        .map((v) => Number(v))
+        .filter((v) => Number.isInteger(v)) as number[])
+    : [];
+
+  if (requested.length > 0) {
+    const allowed = await invitableStudentIds(user.userId);
+    const recipients = [...new Set(requested)].filter((id) => allowed.has(id));
+    if (recipients.length > 0) {
+      notifyMany(recipients, {
+        kind: "session_invite",
+        sessionId: session.id,
+        topic: session.topic,
+        fromUserId: user.userId,
+        fromName: userRow?.name ?? "Your teacher",
+        at: new Date().toISOString(),
+      });
+    }
+  }
 
   res.status(201).json(session);
 });

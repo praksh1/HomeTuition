@@ -166,6 +166,54 @@ async function testAStudentCannotStartAnything() {
   check("a student cannot take a class live", attempt.status === 403, `status ${attempt.status}`);
 }
 
+async function testInvitingIsOnlyTelling() {
+  console.log("\nInviting a student tells them and nothing more");
+  const teacher = await register("teacher");
+  const follower = await register("student");
+  const stranger = await register("student");
+
+  // The follower is someone who chose this teacher; the stranger has no relationship at all.
+  const me = await api("/auth/me", { token: teacher.token });
+  const profileId = me.body?.teacher?.id;
+  const followed = await api(`/teachers/${profileId}/follow`, { method: "POST", token: follower.token });
+  check("a student can follow the teacher", followed.status === 201 || followed.status === 200, `status ${followed.status}`);
+
+  const list = await api("/sessions/invitable-students", { token: teacher.token });
+  check("the teacher can see who they may tell", list.status === 200, `status ${list.status}`);
+  const ids = (list.body?.students ?? []).map((s) => s.id);
+  check("their follower is on the list", ids.includes(follower.user.id), JSON.stringify(ids));
+  check("a stranger is not", !ids.includes(stranger.user.id), JSON.stringify(ids));
+
+  const asStudent = await api("/sessions/invitable-students", { token: follower.token });
+  check("a student cannot read a teacher's student list", asStudent.status === 403, `status ${asStudent.status}`);
+
+  // Invite both. The stranger must be silently dropped rather than reached.
+  const created = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    topic: "Invited class", subject: "Maths", description: "d",
+    date: new Date(Date.now() + 60 * 60_000).toISOString(), duration: 60, price: 500, maxStudents: 10,
+    inviteStudentIds: [follower.user.id, stranger.user.id] } });
+  check("the class is created", created.status === 201, `status ${created.status}`);
+  const sessionId = created.body.id;
+
+  // The rule the owner underlined: an invitation must not be a way in.
+  const enrolments = sql(`select count(*) from session_enrollments where session_id = ${sessionId}`);
+  check("inviting enrols nobody", enrolments === "0", `enrolments: ${enrolments}`);
+
+  const paid = sql(`select count(*) from session_enrollments where session_id = ${sessionId} and payment_status = 'paid'`);
+  check("and pays for nobody", paid === "0", `paid rows: ${paid}`);
+
+  // An invited student who has not booked is refused at the door, exactly like anyone else.
+  await goLive(teacher, sessionId);
+  const door = await api(`/sessions/${sessionId}/room`, { token: follower.token });
+  check("an invited student who has not paid cannot enter", door.status === 403, `status ${door.status}`);
+
+  // And once they book and pay, they can — the invitation changed nothing either way.
+  const booked = await api(`/sessions/${sessionId}/book`, { method: "POST", token: follower.token, body: {} });
+  check("they can book normally", booked.status === 200 || booked.status === 201, `status ${booked.status}`);
+  const after = await api(`/sessions/${sessionId}/room`, { token: follower.token });
+  check("and then they are let in", after.status === 200, `status ${after.status}`);
+}
+
 async function main() {
   const health = await fetch(`${API}/api/healthz`).catch(() => null);
   if (!health?.ok) { console.error(`No API at ${API}. Start it first, or set API_URL.`); process.exit(1); }
@@ -174,6 +222,7 @@ async function main() {
   await testForceCloseDoesNotBlockTheNextClass();
   await testTeacherCanGetBackIntoTheirClass();
   await testAStudentCannotStartAnything();
+  await testInvitingIsOnlyTelling();
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length) { console.log("\nFailures:"); for (const f of failures) console.log(`  - ${f}`); }

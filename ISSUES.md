@@ -469,6 +469,95 @@ whatever the video provider does with its layout next.
 
 ---
 
+## Reported 2026-08-21 (teacher on Android, student on iPhone)
+
+Nine problems from a real class. Labelled G.
+
+| # | Issue | Status |
+|---|-------|--------|
+| G1 | A teacher could start a class that ended days ago | **FIXED** |
+| G2 | The app's in-call chat took over the screen and could not be closed | **FIXED** — Daily's chat is on instead |
+| G3 | Adding a PDF to the whiteboard still does not work; the picker has no way to cancel | **FIXED** — two causes found |
+| G4 | Force-closing the browser left a class live, blocking the next one with no way back | **FIXED** |
+| G5 | On iPhone the chat box sits under the browser's URL bar | **FIXED** — needs your phone to confirm |
+| G6 | Two End Call buttons | **FIXED** |
+| G7 | Let a teacher tell their students about a new class | **FIXED** |
+| G8 | Student Sessions and Discover go blank for a few seconds | **FIXED** |
+| G9 | Search cannot cope with how people actually type a name | **FIXED** |
+
+### G1 and G4 — when a class may run
+
+These are one subject. A class was only ever "live" or not, with nothing recording what had
+actually happened to it, so both of these were possible at once: a class from days ago could be
+started, and a class nobody was in could not be got rid of.
+
+A class that is over now stays over, with a **three-hour window** after it finishes — the
+owner's reasoning, kept because it is the whole justification: a teacher may have ended the
+call by accident and should be able to get straight back in. Past that, starting it again is a
+mistake far more often than an intention. The window is measured from what actually happened:
+when it ended, else when it started plus its length, else the slot it was booked into. So a
+12:30 class begun at 15:00 is a class in progress, not a stale one.
+
+Force-closing is now recognised. The classroom connection records that the teacher is in the
+room; a live class whose teacher has been gone **two minutes** is closed rather than left
+blocking the next one. Two minutes rides out a phone changing cell — the socket reconnects in
+well under a second, and its heartbeat notices a dead one within about 25 — without locking a
+teacher out for an hour after a force-quit.
+
+And the refusal has always named the class it meant. The app threw that away and showed only
+the message, which is what left a teacher told they had an active session with no route to it.
+It now offers to open that class.
+
+### G3 — the PDF, and two separate reasons it failed
+
+The first fix went to the wrong place. There are two file pickers in the classroom: one for the
+phone apps, and an invisible `<input>` overlaid on the button for the web. The `.pdf` extension
+was added to the first and the browser uses the second, so on the web nothing changed at all.
+
+The second reason is why it failed on Android even with the picker working. The code asked
+`file.type === "application/pdf"` and nothing else — and a PDF picked from Android's Downloads
+or Drive commonly arrives with **no type at all**. It was therefore sent down the image path,
+where the teacher was told their PDF could not be opened as an image. That is also why photos
+worked: a gallery photo does declare its type. The file name is now consulted whenever the type
+is missing or meaningless.
+
+The picker menu also has a **Cancel**. There was no way out of it except the browser's Back
+button, which you were right to be wary of.
+
+### G5 — the chat box under the URL bar
+
+Expo's web page sizes everything with `height: 100%`, and on iOS Safari that measures the
+**layout** viewport, which extends behind the browser's own toolbar. Anything at the bottom of
+the screen — the message box — is drawn underneath it. The app now sizes itself to the viewport
+as it actually is, which shrinks and grows as Safari's bars collapse.
+
+Verified only as far as it can be here: the fix is in the shipped bundle. iOS Safari cannot be
+run on a build machine, so **this one needs your phone**.
+
+### G7 — telling your students about a class
+
+When creating a class, a teacher can now pick from the students who follow them and those who
+have taken a paid class with them. Those students get a notification with a link.
+
+**It grants nothing.** The owner underlined this and it is worth stating plainly: an invitation
+writes no enrolment, issues no token and opens no door. There are tests that create a class
+with an invitation and then check that nobody is enrolled, nobody is marked paid, and an
+invited student who has not booked is **refused at the classroom door** — and let in only once
+they have booked and paid, exactly like anyone else. A teacher also cannot use this to reach
+the platform: the recipients are filtered on the server against their own followers and past
+students, so a crafted request reaches nobody new.
+
+### G9 — searching for a name
+
+Every spelling reported — `RamPrasad`, `ram p rasa d`, `ram pra sad`, `r ampr asad` — now finds
+Ram Prasad Sharma, checked against the real server. Spacing and punctuation are ignored on both
+sides, because that is what a thumb on a phone produces. Results are ranked while typing, so
+the person asked for is not buried under whoever happens to be rated highest. The app and the
+server apply the same rule: a search that found someone on one screen and missed them on the
+next would be worse than either.
+
+---
+
 ## Open — known, not yet fixed
 
 ### A1. Enrolment does not require payment

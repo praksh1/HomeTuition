@@ -19,6 +19,7 @@ import {
   markAllRead,
   notifyNewFollower,
   notifyNewMessage,
+  notifySessionInvite,
   notifySessionLive,
   requestNotificationPermissions,
   type AppNotification,
@@ -132,6 +133,12 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           });
         } else if (event.kind === "follower") {
           await notifyNewFollower({ name: event.fromName ?? "A student", userId: event.fromUserId ?? 0 });
+        } else if (event.kind === "session_invite") {
+          await notifySessionInvite({
+            topic: event.topic ?? "a class",
+            teacherName: event.fromName,
+            sessionId: event.sessionId,
+          });
         } else if (event.kind === "session_live") {
           await notifySessionLive({
             topic: event.topic ?? "Your class",

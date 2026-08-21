@@ -5,7 +5,7 @@ import { onNetworkResume } from "@/utils/networkResume";
 
 /** One event pushed by the server to a signed-in user, wherever they are in the app. */
 export interface UserEvent {
-  kind: "message" | "follower" | "session_live";
+  kind: "message" | "follower" | "session_live" | "session_invite";
   at?: string;
   fromUserId?: number;
   fromName?: string;

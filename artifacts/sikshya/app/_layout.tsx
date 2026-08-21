@@ -15,6 +15,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { applyWebViewportFix } from "@/utils/webViewport";
 import { NotificationProvider } from "@/context/NotificationContext";
 
 SplashScreen.preventAutoHideAsync();
@@ -89,6 +90,10 @@ function RootLayoutNav() {
     </>
   );
 }
+
+// iOS Safari draws the bottom of a 100%-tall page behind its own toolbar, which is where the
+// chat input lives. See utils/webViewport.ts.
+applyWebViewportFix();
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({

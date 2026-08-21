@@ -17,13 +17,16 @@ import { notifyUser } from "../ws/userHub";
  * day must not turn into a failed booking.
  */
 
-export type NotificationKind = "message" | "follower" | "session_live";
+export type NotificationKind = "message" | "follower" | "session_live" | "session_invite";
 
 /** Which preference switch governs each kind. */
 const PREF_KEY: Record<NotificationKind, PrefKind> = {
   message: "messages",
   follower: "followers",
   session_live: "sessionLive",
+  // An invitation is a class about to exist, so it follows the same switch as a class going
+  // live: someone who does not want to hear about classes does not want to hear about these.
+  session_invite: "sessionLive",
 };
 
 export interface NotificationEvent {
@@ -68,6 +71,18 @@ function emailFor(event: NotificationEvent, recipientName: string): { subject: s
           `They will be told when you schedule a class.` +
           signoff,
       };
+    case "session_invite": {
+      const link = appUrl(`/session/${event.sessionId ?? ""}`);
+      return {
+        subject: `${event.fromName ?? "Your teacher"} has scheduled "${event.topic ?? "a class"}"`,
+        text:
+          `${hello}\n\n${event.fromName ?? "Your teacher"} has scheduled a new class: ` +
+          `"${event.topic ?? ""}".\n` +
+          (link ? `\nSee it and book your place: ${link}\n` : "") +
+          `\nYour place is not held until you book and pay for it.` +
+          signoff,
+      };
+    }
     case "session_live": {
       const link = appUrl(`/classroom/${event.sessionId ?? ""}`);
       return {

@@ -26,6 +26,13 @@ const CUSTOM_SUBJECT_OPTION = "Create your own";
 const DURATIONS = [30, 45, 60];
 const MAX_STUDENTS_OPTIONS = [5, 10, 15, 20];
 
+interface InvitableStudent {
+  id: number;
+  name: string;
+  follower: boolean;
+  pastStudent: boolean;
+}
+
 export default function SessionCreate() {
   const { user } = useAuth();
   const colors = useColors();
@@ -44,6 +51,14 @@ export default function SessionCreate() {
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [saving, setSaving] = useState(false);
+  /**
+   * Students to tell about this class: the teacher's followers and anyone who has taken a
+   * paid class with them. Telling them is all this does — they book and pay like anyone else,
+   * and the classroom door checks enrolment, not invitations.
+   */
+  const [invitable, setInvitable] = useState<InvitableStudent[]>([]);
+  const [invited, setInvited] = useState<number[]>([]);
+  const [showInvites, setShowInvites] = useState(false);
   const { refresh: refreshNotifs, preferences } = useNotifications();
 
   React.useEffect(() => {
@@ -52,6 +67,14 @@ export default function SessionCreate() {
         const res = await apiGet<{ subjects: string[] }>("/sessions/subjects");
         if (res.subjects?.length) setSubjects(res.subjects);
       } catch {}
+    })();
+    (async () => {
+      try {
+        const res = await apiGet<{ students: InvitableStudent[] }>("/sessions/invitable-students");
+        setInvitable(res.students ?? []);
+      } catch {
+        // No list is the same as an empty one here: the section simply does not appear.
+      }
     })();
   }, []);
 
@@ -102,6 +125,7 @@ export default function SessionCreate() {
         duration,
         maxStudents,
         price: Number(price),
+        inviteStudentIds: invited,
       });
       // Honoured here rather than inside the scheduler: a reminder is booked once, now, and a
       // user who has turned reminders off should never have one queued in the first place.
@@ -143,6 +167,7 @@ export default function SessionCreate() {
         duration,
         maxStudents,
         price: Number(price),
+        inviteStudentIds: invited,
       });
       createdId = newSession.id;
       await apiPatch(`/sessions/${newSession.id}`, { status: "live" });
@@ -357,6 +382,75 @@ export default function SessionCreate() {
           </View>
         </Section>
 
+        {/* Telling students a class exists. It does not book them in, and it does not let them
+            in — they book and pay exactly as they would from Discover. Hidden entirely when
+            the teacher has nobody to tell, rather than showing an empty box. */}
+        {invitable.length > 0 && (
+          <Section title="Tell your students">
+            <TouchableOpacity
+              style={[styles.inviteToggle, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              onPress={() => setShowInvites((v) => !v)}
+              activeOpacity={0.8}
+            >
+              <Feather name="users" size={15} color={colors.mutedForeground} />
+              <Text style={[styles.inviteToggleText, { color: colors.foreground }]}>
+                {invited.length > 0
+                  ? `${invited.length} of ${invitable.length} will be notified`
+                  : `Notify students who follow you (${invitable.length})`}
+              </Text>
+              <Feather name={showInvites ? "chevron-up" : "chevron-down"} size={16} color={colors.mutedForeground} />
+            </TouchableOpacity>
+
+            {showInvites && (
+              <View style={[styles.inviteList, { borderColor: colors.border }]}>
+                <View style={styles.inviteActions}>
+                  <TouchableOpacity onPress={() => setInvited(invitable.map((s) => s.id))} activeOpacity={0.7}>
+                    <Text style={[styles.inviteAction, { color: colors.primary }]}>Select all</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setInvited([])} activeOpacity={0.7}>
+                    <Text style={[styles.inviteAction, { color: colors.mutedForeground }]}>Clear</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {invitable.map((student) => {
+                  const on = invited.includes(student.id);
+                  return (
+                    <TouchableOpacity
+                      key={student.id}
+                      style={[styles.inviteRow, { borderTopColor: colors.border }]}
+                      onPress={() =>
+                        setInvited((prev) =>
+                          prev.includes(student.id) ? prev.filter((id) => id !== student.id) : [...prev, student.id],
+                        )
+                      }
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.inviteCheck, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? colors.primary : "transparent" }]}>
+                        {on && <Feather name="check" size={12} color="#fff" />}
+                      </View>
+                      <View style={styles.inviteWho}>
+                        <Text style={[styles.inviteName, { color: colors.foreground }]}>{student.name}</Text>
+                        <Text style={[styles.inviteWhy, { color: colors.mutedForeground }]}>
+                          {student.pastStudent && student.follower
+                            ? "Follows you · has taken a class"
+                            : student.pastStudent
+                              ? "Has taken a class with you"
+                              : "Follows you"}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                <Text style={[styles.inviteNote, { color: colors.mutedForeground }]}>
+                  They will get a notification with a link. They still book and pay for the class
+                  in the usual way — this does not reserve a place for them.
+                </Text>
+              </View>
+            )}
+          </Section>
+        )}
+
         <View style={[styles.summaryBox, { backgroundColor: colors.muted, borderColor: colors.border }]}>
           <Feather name="info" size={15} color={colors.mutedForeground} />
           <Text style={[styles.summaryText, { color: colors.mutedForeground }]}>
@@ -415,6 +509,17 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: "row", gap: 10 },
   pillChip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 18, paddingVertical: 9 },
   pillText: { fontSize: 14, fontFamily: "Inter_500Medium" },
+  inviteToggle: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 13 },
+  inviteToggleText: { flex: 1, fontSize: 14, fontFamily: "Inter_500Medium" },
+  inviteList: { marginTop: 10, borderWidth: 1, borderRadius: 14, overflow: "hidden" },
+  inviteActions: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10 },
+  inviteAction: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  inviteRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  inviteCheck: { width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
+  inviteWho: { flex: 1 },
+  inviteName: { fontSize: 14.5, fontFamily: "Inter_500Medium" },
+  inviteWhy: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
+  inviteNote: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17, paddingHorizontal: 14, paddingVertical: 12 },
   summaryBox: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderRadius: 14, borderWidth: 1, padding: 14 },
   summaryText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   goLiveBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 16, paddingVertical: 17 },

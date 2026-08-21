@@ -150,6 +150,32 @@ export async function notifyNewFollower(follower: { name: string; userId: number
   });
 }
 
+/**
+ * Raised when a teacher schedules a class and tells their students about it.
+ *
+ * The wording matters: this is an announcement, not a booking. A student who reads "you're in"
+ * and turns up unpaid finds a door that refuses them, which is a worse experience than not
+ * being told at all.
+ */
+export async function notifySessionInvite(session: {
+  topic: string;
+  teacherName?: string;
+  sessionId?: number | string;
+}): Promise<void> {
+  const title = `${session.teacherName ?? "Your teacher"} scheduled a class`;
+  const body = `"${session.topic}" — tap to see it and book your place.`;
+  const data = { type: "invite", sessionId: session.sessionId != null ? String(session.sessionId) : undefined };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({ content: { title, body, data, sound: true }, trigger: null });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
+  }
+  await addInAppNotification({ title, body, type: "general", data });
+}
+
 export async function notifyPaymentReceived(amount: number, studentName: string): Promise<void> {
   if (Platform.OS === "web") {
     await addInAppNotification({
