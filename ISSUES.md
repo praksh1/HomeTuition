@@ -712,11 +712,33 @@ decides the user is somewhere they should not be, and replaces them. Worth fixin
 shares a link to anything, and worth fixing carefully — the guard is what keeps a student out of
 teacher screens.
 
-### H5 — Daily's chat does not appear in the call, and the student's board jumps — **OPEN**
-Two things left from this round that are not yet root-caused. Daily's own chat is switched on at
-room creation (`enable_chat: true`) and rooms are never updated afterwards, so any room made
-before that setting existed keeps chat off for its six-hour life — that is a hypothesis and has
-not been confirmed against a real room. The board jump is described under H1.
+### H5 — Daily's chat does not appear in the call — **FIXED, needs your phone to confirm**
+**Where:** the video call, web
+
+The hypothesis held up in the code. A room is created once and then reused for the rest of its
+life, and `ensureDailyRoom` returned an existing one untouched — so a room's settings freeze at
+whatever they were the day it was made, and every later change to them reaches new rooms only.
+Turning Daily's chat on therefore left every room already in existence without a chat panel, for
+the whole six hours until it expired. The same would have been true of every future change to
+those settings, silently.
+
+An existing room is now checked against the wanted settings on the way past and repaired if it
+is short of them. It costs one extra API call, and only when something is actually wrong. A
+repair that fails is logged and the lesson goes ahead: a call with the wrong settings is worth
+far more than no call at all.
+
+**What is proven and what is not.** The comparison is its own module with no imports, and seven
+tests cover it — a room that is already right, one with chat switched off, one missing a setting
+entirely, one from before any of this, several wrong at once. Breaking the comparison so it only
+notices *missing* settings rather than wrong ones turns three of them red. What cannot be
+checked here is the call to Daily itself: there is no API key in this environment and no route to
+their API, so **the repair has never run against a real room**. If chat still does not appear
+after this deploys, that is where to look, and the server log line is `repairing Daily room
+settings`.
+
+### H5b — the student's board jumps away from the lesson — **OPEN**
+Described under H1. Driving a teacher and a student board through zoom and scroll here keeps them
+pixel-identical, so this is not the empty-frame fault and is still unexplained.
 
 ---
 

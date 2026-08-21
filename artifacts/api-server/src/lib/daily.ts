@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { ROOM_PROPERTIES, propertiesToRepair, roomExpiry } from "./dailyRoom";
 
 const DAILY_API_BASE = "https://api.daily.co/v1";
 
@@ -83,7 +84,26 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
 
   const getRes = await fetch(`${DAILY_API_BASE}/rooms/${roomName}`, { headers });
   if (getRes.ok) {
-    const room = (await getRes.json()) as { url: string };
+    const room = (await getRes.json()) as { url: string; config?: Record<string, unknown> };
+    const repairs = propertiesToRepair(room.config);
+    if (Object.keys(repairs).length > 0) {
+      // Costs one extra call, and only when something is actually wrong. A room that is already
+      // right — which is every room made since it was created — goes straight through.
+      logger.info({ roomName, repairs: Object.keys(repairs) }, "repairing Daily room settings");
+      const patch = await fetch(`${DAILY_API_BASE}/rooms/${roomName}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ properties: repairs }),
+      });
+      if (!patch.ok) {
+        // Not fatal. A call with the wrong settings is worth far more than no call at all, and
+        // the room URL is still good — so this is logged and the lesson goes ahead.
+        logger.warn(
+          { roomName, status: patch.status, body: await patch.text() },
+          "could not repair Daily room settings; joining anyway",
+        );
+      }
+    }
     return room.url;
   }
 
@@ -99,40 +119,7 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
     body: JSON.stringify({
       name: roomName,
       privacy: "public",
-      properties: {
-        // Chat, hand raising and reactions come from Daily Prebuilt.
-        //
-        // Caveat worth remembering: Prebuilt is the *web* experience. The installed
-        // Android/iOS app uses Daily's native SDK behind our own call interface (a WebView
-        // cannot capture the screen for screen sharing), and that has no Prebuilt panels, so
-        /**
-         * Daily's own chat, on at the owner's decision after using both.
-         *
-         * The app's in-call chat panel took over the screen on a phone and could not be
-         * closed again, which on a small screen makes the call itself unusable. Daily's chat
-         * comes with the call, is built for that space, and is not ours to get wrong.
-         *
-         * The known cost, unchanged and worth restating: Prebuilt's chat exists on **web
-         * only**. The installed iOS and Android apps drive Daily's native SDK behind our own
-         * call UI, and their chat is the app's Chat tab, carried by the classroom socket. A
-         * class mixing an installed app with a browser therefore has two conversations that
-         * cannot see each other, and both sides look like they are working. Everyone is on
-         * browsers today, so this is a real cost that is not currently being paid — but it
-         * comes due the day the app ships to a store. See
-         * .agents/memory/one-chat-per-class.md.
-         */
-        enable_chat: true,
-        enable_hand_raising: true,
-        enable_emoji_reactions: true,
-        enable_people_ui: true,
-        enable_network_ui: true,
-        enable_noise_cancellation_ui: true,
-        enable_screenshare: true,
-        start_video_off: false,
-        start_audio_off: false,
-        // Rooms are torn down 6h after creation; a class running longer than that would drop.
-        exp: Math.floor(Date.now() / 1000) + 60 * 60 * 6,
-      },
+      properties: { ...ROOM_PROPERTIES, exp: roomExpiry() },
     }),
   });
 
