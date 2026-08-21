@@ -757,9 +757,40 @@ new suite replaces Daily's SDK with one the test drives, so both orderings are r
 anywhere: a leave with no join before it must not end the class, and a leave after a join still
 must. Reverting the guard turns four of its five checks red.
 
-### H5b — the student's board jumps away from the lesson — **OPEN**
-Described under H1. Driving a teacher and a student board through zoom and scroll here keeps them
-pixel-identical, so this is not the empty-frame fault and is still unexplained.
+### H5b — the student's board loses the lesson — **OPEN, with a likely cause found**
+**Where:** student, any platform
+
+Described under H1: the student's board jumps away from the content ("Scroll back to content"
+on blank canvas) and a shared picture shows as a grey placeholder. The empty-frame fault fixed
+in H1 was one half of it. This is the other half, and it is **not fixed**.
+
+**The likely cause, from reading rather than from a reproduction.** In the student's classroom
+the board is *conditionally rendered* — `{mode === "board" && ...}`, inside `{!videoExpanded &&
+...}`. So switching to Chat, or expanding the call, **unmounts** it. Everything the board knows
+lives inside that component: the elements it has accumulated, the pictures registered with the
+editor, which versions have been seen. Unmounting throws all of it away.
+
+Nothing brings it back. The catch-up that would rebuild the board is sent when the **socket**
+connects, and the socket lives in the screen above, which does not remount. The queue of pending
+deltas has already been consumed by the previous instance. So a student who glances at the chat
+and comes back gets a blank board that then fills in only with whatever the teacher draws next —
+and a picture element arriving without its file renders as exactly the grey placeholder that was
+reported.
+
+The teacher's classroom already learned this for video: *"Video is persistently mounted so it
+never reconnects when switching tabs."* The board needs the same treatment — hidden with
+`display: none` rather than unmounted.
+
+**Why it is not fixed here.** The change is four lines and reads as obviously right, which is
+the most dangerous kind. There is no test that can drive the student's classroom at all: an hour
+went into building one and it never reached the board — the class is booked, live, and returned
+by both endpoints the screen calls, yet its card does not render for the student. That is worth
+understanding on its own, and may be a second bug sitting in front of this one. Shipping an
+unverified change to the student's board — the screen this whole product is for — on the
+strength of reasoning alone is the exact thing that has gone wrong here before.
+
+**What it needs:** a rig that can get a student into a live classroom, which does not exist yet.
+That is the piece of work, and the fix is a few lines once it does.
 
 ---
 
