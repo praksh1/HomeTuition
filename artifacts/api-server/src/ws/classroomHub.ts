@@ -8,6 +8,7 @@ import { verifyToken, type JwtPayload } from "../lib/auth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
 import { addUserChannel } from "./userHub";
 import { markTeacherPresent } from "../lib/sessionLifecycle";
+import { forgetBoard, loadBoard, saveBoardNow, saveBoardSoon } from "../lib/boardStore";
 import { startHeartbeat, watchHeartbeat } from "./heartbeat";
 
 interface RoomClient {
@@ -95,6 +96,79 @@ interface SceneElement {
  * current board per room lets late joiners be caught up on connect.
  */
 const boards = new Map<string, BoardState>();
+
+/**
+ * Sessions whose stored whiteboard has already been read back, and the reads in flight.
+ *
+ * The board lives in memory, so a restart used to erase a lesson — and the API redeploys on
+ * every push, which made that an ordinary event rather than a rare one. It is read back once
+ * per session, before anyone is told what is on the board, and never again: after that the
+ * memory copy is the truth.
+ */
+const restored = new Set<string>();
+const restoring = new Map<string, Promise<void>>();
+
+/** What is worth keeping of a board. Deleted elements included: erasing is an edit. */
+function boardToStore(board: BoardState) {
+  return {
+    scene: [...board.scene.values()],
+    files: [...board.files.values()],
+    view: board.view,
+  };
+}
+
+/**
+ * Reads a session's whiteboard back into memory, once.
+ *
+ * Anything already in memory wins: a class that has been running since the process started
+ * has the newer copy, and overwriting it with a stored one would undo live work.
+ */
+async function restoreBoard(sessionId: string): Promise<void> {
+  if (restored.has(sessionId)) return;
+  const existing = restoring.get(sessionId);
+  if (existing) return existing;
+
+  const numericId = Number(sessionId);
+  if (!Number.isFinite(numericId)) {
+    restored.add(sessionId);
+    return;
+  }
+
+  const work = (async () => {
+    const stored = await loadBoard(numericId);
+    const board = getBoard(sessionId);
+    // Only fill an empty board. A live one is ahead of anything written down.
+    if (stored && board.scene.size === 0) {
+      for (const element of stored.scene) {
+        const el = element as SceneElement;
+        if (el && typeof el.id === "string") board.scene.set(el.id, el);
+      }
+      for (const file of stored.files) {
+        const f = file as SceneFile;
+        if (f && typeof f.id === "string") board.files.set(f.id, f);
+      }
+      if (stored.view && !board.view) board.view = stored.view as BoardState["view"];
+      logger.info({ sessionId, elements: board.scene.size }, "whiteboard restored after restart");
+    }
+  })()
+    .catch((err) => {
+      logger.warn({ err, sessionId }, "could not restore the whiteboard");
+    })
+    .finally(() => {
+      restoring.delete(sessionId);
+      restored.add(sessionId);
+    });
+
+  restoring.set(sessionId, work);
+  return work;
+}
+
+/** Ask for this board to be written down shortly. Collapses repeated calls. */
+function rememberBoard(sessionId: string): void {
+  const numericId = Number(sessionId);
+  if (!Number.isFinite(numericId)) return;
+  saveBoardSoon(numericId, () => boardToStore(getBoard(sessionId)));
+}
 
 function getBoard(sessionId: string): BoardState {
   let board = boards.get(sessionId);
@@ -234,6 +308,18 @@ export function broadcastSessionStatus(sessionId: string, status: string): void 
 export function resetBoardFor(sessionId: string): void {
   const id = String(sessionId);
   boards.delete(id);
+  /**
+   * The stored copy has to go too, and the "already restored" mark with it.
+   *
+   * Without this, starting a class would empty the board in memory and then the next person
+   * to join would have the *previous* lesson read back over the top of it — the exact thing
+   * this reset exists to prevent, reintroduced by the act of making boards survive a restart.
+   * Marked as restored so nothing reads it back before the deletion lands.
+   */
+  restored.add(id);
+  const numericId = Number(id);
+  if (Number.isFinite(numericId)) void forgetBoard(numericId);
+
   broadcast(id, { type: "board_clear" });
   broadcast(id, { type: "material_clear" });
 }
@@ -307,6 +393,36 @@ export function attachClassroomHub(server: http.Server): void {
     })();
   });
 
+/** Tells one client what is already on the board. Called once the stored copy is back. */
+function replayBoardTo(ws: WebSocket, sessionId: string): void {
+    const board = getBoard(sessionId);
+    if (board.material || board.paths.length > 0 || board.boardSize) {
+      sendTo(ws, {
+        type: "board_state",
+        material: board.material,
+        paths: board.paths,
+        boardSize: board.boardSize,
+      });
+    }
+
+    // Catch the new arrival up on the object board. Deleted elements are not replayed — nobody
+    // joining needs to know what used to be there, and sending them grows the payload forever.
+    if (board.scene.size > 0) {
+      const elements = [...board.scene.values()].filter((e) => !e.isDeleted);
+      // The pictures travel with the elements that reference them, not separately, so a
+      // late joiner never renders an image element it has no bytes for.
+      const fileIds = new Set(
+        elements.map((e) => (typeof e.fileId === "string" ? e.fileId : "")).filter(Boolean),
+      );
+      const files = [...board.files.values()].filter((f) => fileIds.has(f.id));
+      if (elements.length > 0) sendTo(ws, { type: "scene_state", elements, files });
+    }
+
+    // Sent after the elements, so the board is pointed at content it already holds.
+    if (board.view) sendTo(ws, { type: "board_view", ...board.view });
+}
+
+
   // Called only from the upgrade handler above, which has already proven this user belongs in
   // this session. Identity is never re-read from the query string here.
   function handleConnection(ws: WebSocket, member: Membership): void {
@@ -343,31 +459,12 @@ export function attachClassroomHub(server: http.Server): void {
     const count = rooms.get(sessionId)!.size;
     broadcast(sessionId, { type: "presence", count });
 
-    const board = getBoard(sessionId);
-    if (board.material || board.paths.length > 0 || board.boardSize) {
-      sendTo(ws, {
-        type: "board_state",
-        material: board.material,
-        paths: board.paths,
-        boardSize: board.boardSize,
-      });
-    }
-
-    // Catch the new arrival up on the object board. Deleted elements are not replayed — nobody
-    // joining needs to know what used to be there, and sending them grows the payload forever.
-    if (board.scene.size > 0) {
-      const elements = [...board.scene.values()].filter((e) => !e.isDeleted);
-      // The pictures travel with the elements that reference them, not separately, so a
-      // late joiner never renders an image element it has no bytes for.
-      const fileIds = new Set(
-        elements.map((e) => (typeof e.fileId === "string" ? e.fileId : "")).filter(Boolean),
-      );
-      const files = [...board.files.values()].filter((f) => fileIds.has(f.id));
-      if (elements.length > 0) sendTo(ws, { type: "scene_state", elements, files });
-    }
-
-    // Sent after the elements, so the board is pointed at content it already holds.
-    if (board.view) sendTo(ws, { type: "board_view", ...board.view });
+    // Read the stored board back before telling this person what is on it. Without this a
+    // joiner arriving after a restart is told the board is empty, and that answer is then the
+    // one everybody keeps.
+    void restoreBoard(sessionId).then(() => {
+      replayBoardTo(ws, sessionId);
+    });
 
     ws.on("message", (raw: Buffer) => {
       let msg: Record<string, unknown>;
@@ -435,6 +532,8 @@ export function attachClassroomHub(server: http.Server): void {
           pruneScene(board);
           if (accepted.length > 0) {
             broadcast(sessionId, { type: "scene_update", elements: accepted, files: acceptedFiles }, ws);
+            // Written down shortly, so a restart mid-lesson does not erase the board.
+            rememberBoard(sessionId);
           }
           break;
         }
@@ -445,6 +544,10 @@ export function attachClassroomHub(server: http.Server): void {
             getBoard(sessionId).scene.clear();
             getBoard(sessionId).files.clear();
             broadcast(sessionId, { type: "board_clear" }, ws);
+            // Cleared means cleared, including through a restart — otherwise wiping the board
+            // and restarting would bring the whole lesson back.
+            const cleared = Number(sessionId);
+            if (Number.isFinite(cleared)) void forgetBoard(cleared);
           }
           break;
         case "board_size": {

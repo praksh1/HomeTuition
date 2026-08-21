@@ -149,6 +149,32 @@ jobs:
           API_URL=http://127.0.0.1:8081 PAYMENT_WEBHOOK_SECRET=ci-only-webhook-secret \
             pnpm --filter @workspace/api-server run test:payments
 
+      # A whiteboard has to survive the server restarting, and the only way to tell that from
+      # a variable still being in scope is to actually restart it between writing and reading.
+      # This matters more than it sounds: the API redeploys on every push, so shipping any
+      # change during a lesson used to take its whiteboard with it, silently.
+      - name: A whiteboard survives a restart
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+        run: |
+          set -euo pipefail
+          cat > /tmp/restart-api.sh <<'RESTART'
+          #!/bin/bash
+          pkill -f "artifacts/api-server/dist/index.mjs" 2>/dev/null || true
+          sleep 1
+          cd "$GITHUB_WORKSPACE"
+          PORT=8080 nohup node artifacts/api-server/dist/index.mjs > /tmp/api.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/api/healthz >/dev/null && exit 0
+            sleep 1
+          done
+          exit 1
+          RESTART
+          chmod +x /tmp/restart-api.sh
+          API_URL=http://127.0.0.1:8080 RESTART_CMD=/tmp/restart-api.sh \
+            pnpm --filter @workspace/api-server run test:board-persistence
+
       - name: When a class may be started
         env:
           # These tests age rows past the three-hour and two-minute windows rather than

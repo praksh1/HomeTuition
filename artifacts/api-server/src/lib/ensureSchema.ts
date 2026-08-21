@@ -77,3 +77,35 @@ export async function ensureSessionActivityTable(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Creates the whiteboard table if it is not there yet.
+ *
+ * Same narrow licence as the two above: create only, additive only, unable to stop the server
+ * starting. Without it a deploy would run for a few minutes with code that stores boards and
+ * a database with nowhere to put them — and the failure would be silent, which is the worst
+ * shape for something whose whole job is not losing a lesson.
+ */
+export async function ensureSessionBoardTable(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_board" (
+        "session_id" integer PRIMARY KEY,
+        "scene" jsonb,
+        "files" jsonb,
+        "view" jsonb,
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_board_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE
+      )
+    `);
+    logger.info("session board table is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the session board table; run `pnpm run db:push`. " +
+        "Classes still run — a whiteboard just will not survive a server restart.",
+    );
+  }
+}

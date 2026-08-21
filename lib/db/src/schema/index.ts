@@ -4,6 +4,7 @@ export * from "./teacherProfiles";
 export * from "./studentProfiles";
 export * from "./sessions";
 export * from "./sessionActivity";
+export * from "./sessionBoard";
 export * from "./sessionEnrollments";
 export * from "./reviews";
 export * from "./studentTeacherSubscriptions";

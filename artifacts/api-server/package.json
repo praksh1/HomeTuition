@@ -12,7 +12,8 @@
     "test:notifications": "node scripts/notification-tests/run.mjs",
     "test:board-limits": "node scripts/board-limits/run.mjs",
     "test:sessions": "node scripts/session-tests/run.mjs",
-    "test:payments": "node scripts/payment-tests/run.mjs"
+    "test:payments": "node scripts/payment-tests/run.mjs",
+    "test:board-persistence": "node scripts/board-persistence/run.mjs"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

@@ -646,6 +646,41 @@ guard turns exactly five of them red.
 
 ---
 
+## A whiteboard now survives the server restarting
+
+Board state lived only in the classroom hub's memory, so a restart erased it. That was listed
+as a known gap and it was quietly worse than it read: **the API redeploys itself on every
+push**, so shipping any change during a lesson took its whiteboard with it — silently, with
+nothing for the teacher to recover. Every deploy made while someone was teaching was a small
+data loss.
+
+Boards are now written down as they change: elements, the pictures they point at, and where
+the teacher was looking. Read back once when the first person joins after a restart, and never
+again — after that the copy in memory is the truth, so a class that has been running since the
+process started is never overwritten by an older one.
+
+Written on a two-second debounce rather than on every change, because a teacher drawing
+produces a change every hundred milliseconds and one lesson would otherwise be thousands of
+writes for a board nobody is reading. A restart loses at most a stroke or two.
+
+Two hazards that persistence itself creates, both handled and both tested:
+
+- **Clearing has to persist.** Otherwise wiping the board and restarting would bring the whole
+  lesson back.
+- **Starting a class must not resurrect the last one.** Taking a class live empties the board
+  on purpose; without care the next person to join would have the previous lesson read back
+  over the top of it.
+
+Pictures are dropped, and the drawing kept, past about 6 MB. A restored board missing a picture
+is worse than one that has it — but a board with nothing at all is worse than both.
+
+Checked by restarting the real server between writing and reading, because that is the only
+way to tell persistence from a variable that happens to still be in scope. Removing the save
+turns five of the seven checks red with exactly the old symptom: no board, no elements, no
+picture.
+
+---
+
 ## Open — known, not yet fixed
 
 ### A1. No payment provider is integrated, so configuring one stops all bookings

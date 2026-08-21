@@ -168,7 +168,6 @@ Known gaps, in rough priority order:
    rather than pretending. Same self-describing pattern as payments.
 2. **WebView board performance on cheap Android is untested.** This matters more than it
    sounds, given the target market.
-3. **Board state is not persisted** — a server restart loses a live lesson.
 4. **Shape recognition is built but not connected.** `components/recognition/` works; its only
    caller was the SVG surface Excalidraw replaced, so nothing reaches it today. Re-wiring means
    catching Excalidraw's freehand commit — `WHITEBOARD.md` step 8.
