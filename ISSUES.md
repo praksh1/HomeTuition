@@ -475,7 +475,7 @@ Nine problems from a real class. Labelled G.
 
 | # | Issue | Status |
 |---|-------|--------|
-| G1 | A teacher could start a class that ended days ago | **FIXED** |
+| G1 | A teacher could start a class that ended days ago | **FIXED PROPERLY** — the first attempt guarded the wrong screen, see below |
 | G2 | The app's in-call chat took over the screen and could not be closed | **FIXED** — Daily's chat is on instead |
 | G3 | Adding a PDF to the whiteboard still does not work; the picker has no way to cancel | **FIXED** — two causes found |
 | G4 | Force-closing the browser left a class live, blocking the next one with no way back | **FIXED** |
@@ -555,6 +555,52 @@ sides, because that is what a thumb on a phone produces. Results are ranked whil
 the person asked for is not buried under whoever happens to be rated highest. The app and the
 server apply the same rule: a search that found someone on one screen and missed them on the
 next would be worse than either.
+
+---
+
+## Reported 2026-08-21 (second run) — opening a finished class
+
+G1 was reported fixed and was not. The guard went on the dashboard's Start button, and that is
+not how a teacher opens a class. Tapping a card in **My Sessions** pushed straight into the
+classroom with no check of any kind, and the classroom asks the server for a video room the
+moment it mounts.
+
+**Four separate holes, and the video one was the serious one.**
+
+`GET /sessions/:id/room` never looked at the class's state at all. For a lesson that finished
+three days earlier it called `ensureDailyRoom` — which **creates a Daily room** — and minted an
+owner token. That is why the phone asked for camera and microphone after backing out to the
+dashboard, and the owner's reading of it was exactly right: *"I feel like clicking/tapping in a
+completed session activates DailyCo internally somehow and that triggers a call."* It did.
+Removing the new guard and re-running the tests reproduces it in one line:
+`{"roomUrl":"https://sikshya.daily.co/sikshya35","isOwner":true}` for a class from Tuesday.
+
+The other three:
+
+- **My Sessions had no check.** Any card, any status, straight into the classroom.
+- **The classroom asked for the room before it knew what the class was.** `loadRoom()` ran on
+  mount, in parallel with loading the session, so the video request went out before anything
+  could refuse it.
+- **The LIVE badge was hardcoded.** It was drawn unconditionally, so a class that ended on
+  Tuesday was labelled LIVE with a running timer. That is the "big disconnect" in the report.
+
+### What it does now
+
+A tap is refused immediately, from the date and length already in the list — no round trip, no
+navigation, no room request, no camera. It says **"Session already expired. Please create a new
+one."**, and offers to create one.
+
+The server refuses the room on the same window, and that is the control rather than the
+courtesy: the room URL and the owner token are the things worth refusing, and a screen that
+declines to ask for them is only a good manner. Both use the same three-hour rule, so "may I
+start it" and "may I go in" cannot answer differently.
+
+Landing in the classroom anyway — a stale link, a back-stack entry — now shows the expired
+screen instead of a classroom, before any video is set up.
+
+Covered by tests that ask the real server for a room on a class aged three days and assert
+there is no URL, no token, and that asking did not quietly make the class live. Removing the
+guard turns exactly five of them red.
 
 ---
 

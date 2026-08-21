@@ -18,7 +18,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import type { Student } from "@/context/AuthContext";
-import { apiGet } from "@/utils/api";
+import { ApiError, apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
 import SmartBoard from "@/components/SmartBoard";
@@ -54,6 +54,8 @@ export default function StudentClassroom() {
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
+  /** Set when the server refuses a room because the class is over. */
+  const [roomExpired, setRoomExpired] = useState<string | null>(null);
   /**
    * Set the moment this student leaves.
    *
@@ -89,7 +91,13 @@ export default function StudentClassroom() {
       setRoomUrl(url);
       setMeetingToken(token ?? null);
       setRoomError(false);
-    } catch {
+    } catch (err) {
+      // A class that is over is refused by the server rather than given a room. Say that,
+      // instead of "couldn't set up the video room", which sounds like a fault to retry.
+      if (err instanceof ApiError && err.status === 409) {
+        setRoomExpired(err.message || "This class has finished.");
+        return;
+      }
       setRoomError(true);
     }
   };
@@ -283,7 +291,7 @@ export default function StudentClassroom() {
             <View style={[StyleSheet.absoluteFill, s.permissionGate]}>
               <ActivityIndicator color="#fff" />
               <Text style={s.permissionGateText}>
-                {roomError ? "Couldn't set up the video room." : "Setting up video room…"}
+                {roomExpired ?? (roomError ? "Couldn't set up the video room." : "Setting up video room…")}
               </Text>
             </View>
           )}

@@ -290,7 +290,13 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
 
   const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
-  res.json(session);
+
+  // `endedAt` travels with the class so the app can answer "may I open this?" the moment a
+  // card is tapped, without a round trip and without opening the classroom to find out. The
+  // server still decides — see the room endpoint — but the two now judge on the same facts,
+  // so the app cannot offer what the server will refuse.
+  const activity = await activityFor(id);
+  res.json({ ...session, endedAt: activity.endedAt });
 });
 
 // Ensures a Daily.co room exists for this session and returns its join URL. Daily rooms
@@ -312,6 +318,28 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
   const membership = await getSessionMembership(id, req.user!.userId);
   if (!canAccessSession(membership)) {
     res.status(403).json({ error: "You must be enrolled in this session to join it." });
+    return;
+  }
+
+  /**
+   * A class that is over gets no room, no token, and no video.
+   *
+   * This is the check that actually stops it. Reported from a real session: tapping a class
+   * from three days ago opened the classroom and the phone asked for camera and microphone —
+   * "I feel like clicking in a completed session activates DailyCo internally somehow", which
+   * is exactly what was happening. This route did not care about the class's state at all, so
+   * `ensureDailyRoom` **created a Daily room** and `createMeetingToken` minted an owner token
+   * for a lesson that had finished three days earlier.
+   *
+   * It has to be here rather than only in the app: the room URL and the owner token are the
+   * things worth refusing, and a screen that declines to ask for them is a courtesy, not a
+   * control. Same window as starting a class — see lib/sessionStart.ts — so "may I start it"
+   * and "may I go in" can never answer differently.
+   */
+  const activity = await activityFor(id);
+  const joinable = canStart({ ...session, endedAt: activity.endedAt });
+  if (!joinable.ok) {
+    res.status(409).json({ error: joinable.reason, expired: true });
     return;
   }
 

@@ -252,6 +252,63 @@ async function testSurvivesAMissingActivityTable() {
   sql(`CREATE TABLE IF NOT EXISTS "session_activity" ("session_id" integer PRIMARY KEY, "teacher_last_seen_at" timestamp with time zone, "ended_at" timestamp with time zone, CONSTRAINT "session_activity_session_id_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE)`);
 }
 
+async function testAnExpiredClassGetsNoVideoRoom() {
+  console.log("\nA class that is over gets no video room at all");
+  const teacher = await register("teacher");
+  const student = await register("student");
+
+  const s1 = await createSession(teacher);
+  await api(`/sessions/${s1.id}/book`, { method: "POST", token: student.token, body: {} });
+  await goLive(teacher, s1.id);
+
+  // While it is running, the room is handed over as normal.
+  const live = await api(`/sessions/${s1.id}/room`, { token: teacher.token });
+  check("a running class gives the teacher a room", live.status === 200, `status ${live.status}`);
+  check("with a token to join it", Boolean(live.body?.roomUrl), JSON.stringify(live.body ?? {}).slice(0, 120));
+
+  await endClass(teacher, s1.id);
+
+  // Just ended: still available, because the teacher may have hung up by accident.
+  const justEnded = await api(`/sessions/${s1.id}/room`, { token: teacher.token });
+  check("a class just ended still gives a room", justEnded.status === 200, `status ${justEnded.status}`);
+
+  // Aged past the window — the reported case was a class from three days earlier.
+  sql(`update session_activity set ended_at = now() - interval '3 days' where session_id = ${s1.id}`);
+
+  const expired = await api(`/sessions/${s1.id}/room`, { token: teacher.token });
+  check("a class from days ago gives the teacher no room", expired.status === 409, `status ${expired.status}`);
+  check("and no room URL to connect to", !expired.body?.roomUrl, JSON.stringify(expired.body ?? {}).slice(0, 160));
+  check("and no meeting token", !expired.body?.token, JSON.stringify(expired.body ?? {}).slice(0, 160));
+  check("and says why, in words a teacher can act on", /no longer be started|expired/i.test(expired.body?.error ?? ""),
+    expired.body?.error ?? "");
+
+  // The student half of the same door.
+  // The student is turned away by the membership check before the window is even consulted,
+  // which is a stronger refusal, not a weaker one. What matters is that no room comes back —
+  // asserting a particular status here would be testing the order of two guards rather than
+  // the thing that protects anyone.
+  const studentTry = await api(`/sessions/${s1.id}/room`, { token: student.token });
+  check(
+    "a student gets no room for it either",
+    studentTry.status >= 400 && !studentTry.body?.roomUrl,
+    `status ${studentTry.status} ${JSON.stringify(studentTry.body ?? {}).slice(0, 120)}`,
+  );
+
+  // And it must not have been quietly made live by asking.
+  const status = sql(`select status from sessions where id = ${s1.id}`);
+  check("asking for the room does not start the class", status !== "live", `status: ${status}`);
+}
+
+async function testAnOldScheduledClassGetsNoRoom() {
+  console.log("\nA class whose time passed without ever running gets no room");
+  const teacher = await register("teacher");
+  // Scheduled for two days ago and never started — exactly what sits in the Completed list.
+  const old = await createSession(teacher, { minutesFromNow: -60 * 48 });
+  const room = await api(`/sessions/${old.id}/room`, { token: teacher.token });
+  check("no room for a class whose slot is long past", room.status === 409, `status ${room.status}`);
+  check("and no URL", !room.body?.roomUrl, JSON.stringify(room.body ?? {}).slice(0, 140));
+}
+
 async function main() {
   const health = await fetch(`${API}/api/healthz`).catch(() => null);
   if (!health?.ok) { console.error(`No API at ${API}. Start it first, or set API_URL.`); process.exit(1); }
@@ -261,6 +318,8 @@ async function main() {
   await testTeacherCanGetBackIntoTheirClass();
   await testAStudentCannotStartAnything();
   await testInvitingIsOnlyTelling();
+  await testAnExpiredClassGetsNoVideoRoom();
+  await testAnOldScheduledClassGetsNoRoom();
   await testSurvivesAMissingActivityTable();
 
   console.log(`\n${passed} passed, ${failed} failed`);

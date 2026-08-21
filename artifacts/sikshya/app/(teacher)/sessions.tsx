@@ -1,11 +1,12 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
+import { canOpenSession } from "@/utils/sessionWindow";
 import SessionCard from "@/components/SessionCard";
 import { useColors } from "@/hooks/useColors";
 import type { Teacher } from "@/context/AuthContext";
@@ -94,6 +95,25 @@ export default function TeacherSessions() {
   // The server has already filtered by status; sifting again here is what made the tab wrong.
   const filtered = sessions;
 
+  /**
+   * Opening a class from this list.
+   *
+   * This used to push straight into the classroom with no check at all, which is how a class
+   * from three days ago could be tapped and start a video call: the classroom asks the server
+   * for a room the moment it mounts, the server created one, and the phone asked for camera
+   * and microphone. The refusal happens here, before any of that — decided from the date and
+   * length already in this list, so it is immediate and needs no round trip.
+   */
+  const openSession = (item: Session) => {
+    const check = canOpenSession(item);
+    if (!check.ok) {
+      if (Platform.OS === "web") window.alert(`${check.title}\n\n${check.message}`);
+      else Alert.alert(check.title, check.message, [{ text: "OK" }]);
+      return;
+    }
+    router.push(`/(teacher)/classroom/${item.id}`);
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
@@ -131,7 +151,7 @@ export default function TeacherSessions() {
         renderItem={({ item }) => (
           <SessionCard
             session={item}
-            onPress={() => router.push(`/(teacher)/classroom/${item.id}`)}
+            onPress={() => openSession(item)}
           />
         )}
         ListEmptyComponent={

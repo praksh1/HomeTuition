@@ -32,6 +32,7 @@ import type { ErrorFallbackProps } from "@/components/ErrorFallback";
 import { prepareBoardImage, BoardImageError, NATIVE_PICKER_QUALITY } from "@/utils/boardImage";
 import { looksLikePdf } from "@/utils/pickedFile";
 import { cancelSessionReminder } from "@/utils/notifications";
+import { canOpenSession } from "@/utils/sessionWindow";
 import SmartBoard from "@/components/SmartBoard";
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -40,6 +41,10 @@ type Mode = "whiteboard" | "participants" | "chat";
 interface SessionData {
   id: number; topic: string; subject: string; teacherName: string;
   duration: number; maxStudents: number; enrolledCount: number; status: string;
+  /** Needed to answer whether this class may still be opened. See utils/sessionWindow.ts. */
+  date: string;
+  startedAt?: string | null;
+  endedAt?: string | null;
 }
 
 function WhiteboardFallback({ resetError }: ErrorFallbackProps) {
@@ -115,12 +120,30 @@ export default function Classroom() {
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
+  /**
+   * Set when this class is too old to open. Nothing about the call is set up while it is —
+   * no room is requested, so no Daily room is created and the phone is never asked for the
+   * camera. That request happening for a class that finished days ago is what made this feel
+   * like tapping an old lesson "activates the video internally".
+   */
+  const [expired, setExpired] = useState<{ title: string; message: string } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatScrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
-    loadSession();
-    loadRoom();
+    // Order matters, and this is the whole fix: find out what the class *is* before asking
+    // for anything that starts a video call. Asking first is what created a Daily room and
+    // set the phone asking for camera and microphone on a class that ended days ago.
+    void (async () => {
+      const current = await loadSession();
+      if (!current) return;
+      const check = canOpenSession(current);
+      if (!check.ok) {
+        setExpired({ title: check.title, message: check.message });
+        return;
+      }
+      await loadRoom();
+    })();
     timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -128,8 +151,14 @@ export default function Classroom() {
     };
   }, [id]);
 
-  const loadSession = async () => {
-    try { setSession(await apiGet<SessionData>(`/sessions/${id}`)); } catch {}
+  const loadSession = async (): Promise<SessionData | null> => {
+    try {
+      const current = await apiGet<SessionData>(`/sessions/${id}`);
+      setSession(current);
+      return current;
+    } catch {
+      return null;
+    }
   };
 
   // Daily.co rooms must be created server-side via their REST API before anyone can
@@ -140,7 +169,16 @@ export default function Classroom() {
       setRoomUrl(url);
       setMeetingToken(token ?? null);
       setRoomError(false);
-    } catch {
+    } catch (err) {
+      // The server applies the same window on this endpoint, and it is the one that counts.
+      // If it refuses, say so rather than showing a broken video area.
+      if (err instanceof ApiError && err.status === 409) {
+        setExpired({
+          title: "Session already expired",
+          message: err.message || "This class ended more than 3 hours ago. Please create a new one.",
+        });
+        return;
+      }
       setRoomError(true);
     }
   };
@@ -400,6 +438,34 @@ export default function Classroom() {
   // caused a stale avatar/count to render even when nobody is actually present.
   const participantCount = connected ? presenceCount : 0;
 
+  /**
+   * A class too old to open gets this instead of a classroom.
+   *
+   * Returned before anything else renders, so no video area is mounted, no board socket is
+   * used for teaching and nothing on this screen suggests a lesson is running. Someone can
+   * still arrive here from a stale link or a back-stack entry; this is what they get.
+   */
+  if (expired) {
+    return (
+      <View style={[s.container, s.expiredScreen, { paddingTop: insets.top }]}>
+        <Feather name="clock" size={44} color="#F5A623" />
+        <Text style={s.expiredTitle}>{expired.title}</Text>
+        <Text style={s.expiredText}>{expired.message}</Text>
+        <TouchableOpacity
+          style={s.expiredBtn}
+          onPress={() => router.replace("/(teacher)/session-create")}
+          activeOpacity={0.85}
+        >
+          <Feather name="plus" size={16} color="#fff" />
+          <Text style={s.expiredBtnText}>Create a new session</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+          <Text style={s.expiredBack}>Back to my sessions</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: "#0A0A0A" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <View style={[s.container, { paddingTop: insets.top }]}>
@@ -413,10 +479,15 @@ export default function Classroom() {
               </Text>
               <Text style={s.timer}>{fmt(elapsed)} / {String(session?.duration ?? 60).padStart(2, "0")}:00</Text>
             </View>
-            <View style={[s.liveTag, { backgroundColor: colors.primary }]}>
-              <View style={[s.liveDot, { backgroundColor: connected ? "#fff" : "#ff0" }]} />
-              <Text style={s.liveText}>LIVE</Text>
-            </View>
+            {/* Only when it actually is. This badge used to be drawn unconditionally, so a
+                class that had finished on Tuesday was labelled LIVE with a running timer —
+                the "big disconnect" in the report. */}
+            {classIsLive && (
+              <View style={[s.liveTag, { backgroundColor: colors.primary }]}>
+                <View style={[s.liveDot, { backgroundColor: connected ? "#fff" : "#ff0" }]} />
+                <Text style={s.liveText}>LIVE</Text>
+              </View>
+            )}
           </View>
           <View style={s.headerRight}>
             <TouchableOpacity style={s.iconBtn} onPress={toggleLandscape} activeOpacity={0.8}>
@@ -790,6 +861,12 @@ const s = StyleSheet.create({
   miniAvatar: { width: 26, height: 26, borderRadius: 13, justifyContent: "center", alignItems: "center", borderWidth: 2, borderColor: "#0A0A0A" },
   miniAvatarText: { fontSize: 10, fontFamily: "Inter_700Bold", color: "#fff" },
   presenceText: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#888" },
+  expiredScreen: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14, paddingHorizontal: 32 },
+  expiredTitle: { fontSize: 20, fontFamily: "Inter_600SemiBold", color: "#fff", textAlign: "center" },
+  expiredText: { fontSize: 14.5, fontFamily: "Inter_400Regular", color: "#B9B9B9", textAlign: "center", lineHeight: 21 },
+  expiredBtn: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 8, paddingHorizontal: 20, paddingVertical: 13, borderRadius: 14, backgroundColor: "#C41E3A" },
+  expiredBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
+  expiredBack: { fontSize: 13.5, fontFamily: "Inter_500Medium", color: "#8A8A8A", marginTop: 4 },
   deniedBar: { flexDirection: "row", alignItems: "center", gap: 9, marginHorizontal: 14, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: "#2A1416", borderWidth: 1, borderColor: "#7F1D1D" },
   deniedText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCA5A5", lineHeight: 17 },
   modeSwitcher: { flexDirection: "row", paddingHorizontal: 14, paddingBottom: 8, gap: 6 },
