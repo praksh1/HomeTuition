@@ -1,14 +1,15 @@
 import { and, eq } from "drizzle-orm";
 import { db, sessionsTable, sessionEnrollmentsTable } from "@workspace/db";
+import { DOORS_OPEN_MINUTES, canJoin } from "./sessionStart";
 
 /**
  * How early a paid student may enter the classroom.
  *
- * Students used to be locked out until the teacher pressed start, which meant nobody could be
- * waiting when the class began — every class opened with the teacher talking to an empty room
- * while students refreshed. Opening the door slightly early lets the room fill up first.
+ * Re-exported rather than defined here: the whole timeline lives in sessionStart.ts, and a
+ * class having two ideas about when its doors open is how this project ended up with a socket
+ * and a room URL that disagreed about who was allowed in.
  */
-export const JOIN_WINDOW_MINUTES = 5;
+export const JOIN_WINDOW_MINUTES = DOORS_OPEN_MINUTES;
 
 export interface SessionMembership {
   /** True only for the teacher who owns this session — not merely any teacher account. */
@@ -20,6 +21,8 @@ export interface SessionMembership {
   status: string;
   /** Scheduled start, used to decide whether the early-join window is open. */
   scheduledFor: Date | null;
+  /** The booked length in minutes. The whole timeline is measured from these two. */
+  duration: number;
 }
 
 /**
@@ -41,6 +44,7 @@ export async function getSessionMembership(
       price: sessionsTable.price,
       status: sessionsTable.status,
       date: sessionsTable.date,
+      duration: sessionsTable.duration,
     })
     .from(sessionsTable)
     .where(eq(sessionsTable.id, sessionId));
@@ -55,6 +59,7 @@ export async function getSessionMembership(
       hasPaid: true,
       status: session.status,
       scheduledFor,
+      duration: session.duration,
     };
   }
 
@@ -77,32 +82,41 @@ export async function getSessionMembership(
     hasPaid,
     status: session.status,
     scheduledFor,
+    duration: session.duration,
   };
 }
 
-/** True once we are inside the early-join window for a session that has not started yet. */
+/** True while a paid student may still walk into this class. */
 export function joinWindowOpen(m: SessionMembership, now = new Date()): boolean {
   if (!m.scheduledFor) return false;
-  const opensAt = m.scheduledFor.getTime() - JOIN_WINDOW_MINUTES * 60_000;
-  return now.getTime() >= opensAt;
+  return canJoin(
+    { date: m.scheduledFor, duration: m.duration, startedAt: null, endedAt: null, status: m.status },
+    now.getTime(),
+  ).ok;
 }
 
 /**
  * May this user actually be in the class?
  *
  * Payment is the hard gate: a student who never paid holds nothing and is refused outright.
- * Timing is the soft gate — a paid student is admitted once the class is live, or once we are
- * within `JOIN_WINDOW_MINUTES` of the scheduled start so they can wait in the room for the
- * teacher. The teacher who owns the session always passes, at any time, because someone has to
- * be able to open the room.
+ * Timing is the soft gate, and it is now the same timeline everything else reads — the doors
+ * open ten minutes before the booked start and shut five minutes after the booked finish.
+ *
+ * Two things changed here and both were asked for. A student is no longer let in on the
+ * strength of the class being marked live, and no longer kept out on the strength of its being
+ * marked completed: the clock decides, not the status. That is what "it must remain active for
+ * the full duration, allowing students to join even if the teacher is absent" requires — a
+ * teacher who never starts the class leaves it "upcoming", and one who ends it early leaves it
+ * "completed", and in both cases the student is entitled to be in that room and to be recorded
+ * as having been there.
+ *
+ * The teacher who owns the session still passes at any time, because someone has to be able to
+ * open the room; what they may *do* once inside is `canStart`, checked on the room route.
  */
 export function canAccessSession(m: SessionMembership | null, now = new Date()): boolean {
   if (!m) return false;
   if (m.isSessionTeacher) return true;
   if (!m.isEnrolledStudent || !m.hasPaid) return false;
   if (m.status === "cancelled") return false;
-  if (m.status === "live") return true;
-  // A completed class is over; replaying it is not a thing the product does yet.
-  if (m.status === "completed") return false;
   return joinWindowOpen(m, now);
 }

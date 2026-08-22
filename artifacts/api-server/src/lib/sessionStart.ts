@@ -1,15 +1,19 @@
 /**
- * May this class be started, and is its teacher still in it?
+ * The timeline of a class: when its doors open, when they close, and when the call is over.
  *
- * Two rules that were missing entirely, both reported from a real session:
+ * Everything here is measured from the **scheduled** start and the booked length, never from
+ * when the teacher happened to press start. That is the owner's rule and it is worth stating
+ * plainly, because it has a consequence: a teacher who begins twenty minutes late does not get
+ * twenty extra minutes at the end. The call still stops ten minutes after the booked finish.
+ * A predictable clock both people can see beats a generous one only the server understands —
+ * a student who booked 10:00 to 11:00 needs to know they are free at 11:00.
  *
- * 1. A teacher could scroll back to a class from days ago and start it. Some of those showed a
- *    warning and many simply began, which means students could be pulled into a lesson that
- *    was over, and the teacher's list of past work was one tap away from becoming live again.
- *
- * 2. Force-closing the browser left the class "live" with nobody in it. The teacher could then
- *    neither start a new class — "you still have an active session" — nor get back into the
- *    old one. The only way out was to wait for the class's own length to run out.
+ * ```
+ *   T-10m ─────── T ──────────────── T+duration ── +5m ─────── +10m
+ *   doors open   scheduled start     scheduled end  │           │
+ *                                                   │           └─ call ends, nobody may reopen
+ *                                                   └─ students see "Session Expired"
+ * ```
  *
  * Pure and dependency-free, like sessionStaleness.ts and for the same reason: a rule about
  * when a class is over that can only be exercised with a database and a WebSocket hub is a
@@ -17,13 +21,41 @@
  */
 
 /**
- * How long after a class finishes a teacher may still start it again.
+ * How early the doors open, in minutes before the scheduled start.
  *
- * The owner's reasoning, kept because it is the whole justification for the window existing:
- * a teacher may have ended the call by accident, and should be able to get straight back in.
- * Past that, starting it again is much more likely to be a mistake than an intention.
+ * Long enough that a class opens with people already in it rather than with the teacher
+ * talking to an empty room. Was five; the owner raised it to ten.
  */
-export const RESTART_WINDOW_HOURS = 3;
+export const DOORS_OPEN_MINUTES = 10;
+
+/**
+ * How long past the scheduled finish a student may still join, in minutes.
+ *
+ * The owner's rule: "Exactly 5 minutes past the scheduled end time, grey out the button and
+ * display 'Session Expired'." Late enough to cover a class that overran slightly, early enough
+ * that nobody wanders into the last minute of a lesson they missed.
+ */
+export const STUDENT_GRACE_MINUTES = 5;
+
+/**
+ * When the call stops, in minutes past the scheduled finish.
+ *
+ * Both the hard cutoff for a call in progress and the last moment a teacher may reopen a class
+ * they ended by mistake. One number for both, because they are the same question — is this
+ * class still happening? — and answering it twice is how this project ended up with two
+ * disagreeing rules before.
+ *
+ * This replaces a three-hour restart window. Three hours meant a teacher could bring a finished
+ * class back to life long after everyone had gone.
+ */
+export const OVERTIME_CUTOFF_MINUTES = 10;
+
+/**
+ * How long before the finish the room is warned, in minutes.
+ *
+ * Enough to wrap up a thought and set homework, not so much that it interrupts teaching.
+ */
+export const WRAP_UP_WARNING_MINUTES = 5;
 
 /**
  * How long a live class waits for its teacher before it is treated as finished.
@@ -50,56 +82,134 @@ function ms(value: Date | string | null | undefined): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
-/**
- * When this class finished, or would have finished if left to run.
- *
- * Prefers what actually happened over what was scheduled, in that order: when it was ended,
- * else when it was started plus its length, else the slot it was booked into. A class started
- * late and still running has a finish time in the future, which is the point.
- */
-export function finishedAt(session: StartableSession): number | null {
-  const ended = ms(session.endedAt);
-  if (ended !== null) return ended;
-
-  const started = ms(session.startedAt);
-  if (started !== null) return started + session.duration * 60_000;
-
+/** When the doors open: `DOORS_OPEN_MINUTES` before the booked start. Null if unreadable. */
+export function doorsOpenAt(session: StartableSession): number | null {
   const scheduled = ms(session.date);
-  if (scheduled !== null) return scheduled + session.duration * 60_000;
+  return scheduled === null ? null : scheduled - DOORS_OPEN_MINUTES * 60_000;
+}
 
-  return null;
+/**
+ * When the class was booked to finish.
+ *
+ * The booked slot, not what happened. See the note at the top of this file for why.
+ */
+export function scheduledEndAt(session: StartableSession): number | null {
+  const scheduled = ms(session.date);
+  return scheduled === null ? null : scheduled + session.duration * 60_000;
+}
+
+/** The moment a class in progress is stopped, and the last moment it may be reopened. */
+export function cutoffAt(session: StartableSession): number | null {
+  const end = scheduledEndAt(session);
+  return end === null ? null : end + OVERTIME_CUTOFF_MINUTES * 60_000;
+}
+
+/** The moment a student's Join button greys out. */
+export function studentDoorClosesAt(session: StartableSession): number | null {
+  const end = scheduledEndAt(session);
+  return end === null ? null : end + STUDENT_GRACE_MINUTES * 60_000;
+}
+
+/** The moment the room should be told five minutes remain. */
+export function wrapUpWarningAt(session: StartableSession): number | null {
+  const end = scheduledEndAt(session);
+  return end === null ? null : end - WRAP_UP_WARNING_MINUTES * 60_000;
 }
 
 export type StartCheck = { ok: true } | { ok: false; reason: string };
 
+/** How long until a time, in words a person would use. */
+function inWords(msUntil: number): string {
+  const minutes = Math.round(msUntil / 60_000);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days === 1 ? "" : "s"}`;
+}
+
 /**
- * Whether a teacher may take this class live.
+ * Whether the teacher may take this class live, or get back into one they ended.
  *
- * A class that is over stays over. The only exception is the window above, which exists for
- * the teacher who hung up by mistake.
+ * Two closed doors rather than one. Too early is now a refusal in its own right — a teacher
+ * could previously open a class booked for next week and pull anyone who happened to be there
+ * into it. Too late is the old rule, tightened from three hours to ten minutes past the booked
+ * finish.
  */
 export function canStart(session: StartableSession, now: number = Date.now()): StartCheck {
   if (session.status === "cancelled") {
     return { ok: false, reason: "This class was cancelled. Create a new one to teach it again." };
   }
 
-  const finished = finishedAt(session);
+  const opensAt = doorsOpenAt(session);
   // A date we cannot read is not a reason to refuse a teacher their class.
-  if (finished === null) return { ok: true };
+  if (opensAt === null) return { ok: true };
 
-  const overBy = now - finished;
-  if (overBy > RESTART_WINDOW_HOURS * 3_600_000) {
-    const hours = Math.floor(overBy / 3_600_000);
-    const when = hours < 24 ? `${hours} hours ago` : `${Math.floor(hours / 24)} days ago`;
+  if (now < opensAt) {
     return {
       ok: false,
       reason:
-        `This class finished ${when} and can no longer be started. ` +
+        `This class opens ${DOORS_OPEN_MINUTES} minutes before it starts — ` +
+        `that is in ${inWords(opensAt - now)}.`,
+    };
+  }
+
+  const cutoff = cutoffAt(session);
+  if (cutoff !== null && now > cutoff) {
+    return {
+      ok: false,
+      reason:
+        `This class finished ${inWords(now - cutoff)} ago and can no longer be opened. ` +
         `Create a new session for it instead.`,
     };
   }
 
   return { ok: true };
+}
+
+/**
+ * Whether a paid student may go into the classroom.
+ *
+ * Deliberately a wider door than the teacher's in one direction and a narrower one in the
+ * other. Wider: it does **not** ask whether the teacher has arrived, because the owner's rule
+ * is that a student can go in and wait — "allowing students to join even if the teacher is
+ * absent" — and a student sitting in an empty room is exactly the evidence a refund needs.
+ * Narrower: it shuts five minutes after the booked finish rather than ten, so a student cannot
+ * still be arriving while the room is being closed around them.
+ */
+export function canJoin(session: StartableSession, now: number = Date.now()): StartCheck {
+  if (session.status === "cancelled") {
+    return { ok: false, reason: "This class was cancelled." };
+  }
+
+  const opensAt = doorsOpenAt(session);
+  if (opensAt === null) return { ok: true };
+
+  if (now < opensAt) {
+    return {
+      ok: false,
+      reason:
+        `This class opens ${DOORS_OPEN_MINUTES} minutes before it starts — ` +
+        `that is in ${inWords(opensAt - now)}.`,
+    };
+  }
+
+  const closesAt = studentDoorClosesAt(session);
+  if (closesAt !== null && now > closesAt) {
+    return { ok: false, reason: "Session expired." };
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Whether a live call has run past the point where it is stopped.
+ *
+ * Read on a timer inside the classroom, so it takes the clock rather than reading it.
+ */
+export function isPastCutoff(session: StartableSession, now: number = Date.now()): boolean {
+  const cutoff = cutoffAt(session);
+  return cutoff !== null && now > cutoff;
 }
 
 /**

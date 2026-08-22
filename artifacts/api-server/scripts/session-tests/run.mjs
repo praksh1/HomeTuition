@@ -86,11 +86,31 @@ async function testCannotStartAnOldClass() {
   check("a class just ended can be restarted", again.status === 200, `status ${again.status}`);
   await endClass(teacher, fresh.id);
 
-  // Aged past the window, the way a class from this morning would be.
-  sql(`update session_activity set ended_at = now() - interval '4 hours' where session_id = ${fresh.id}`);
+  /**
+   * Aged past the window by moving its booked slot, which is what the rule reads.
+   *
+   * It used to be aged by moving `session_activity.ended_at`, and that stopped meaning
+   * anything: the window is now measured from the *scheduled* finish, not from when the
+   * teacher happened to hang up. A teacher who starts twenty minutes late does not get twenty
+   * extra minutes at the end, and a class whose slot is still open is still open however long
+   * ago they ended it.
+   */
+  sql(`update sessions set date = now() - interval '4 hours' where id = ${fresh.id}`);
   const stale = await goLive(teacher, fresh.id);
-  check("a class that ended four hours ago cannot be restarted", stale.status === 409, `status ${stale.status}`);
-  check("and the teacher is told why", /no longer be started/i.test(stale.body?.error ?? ""), stale.body?.error ?? "");
+  check("a class whose slot finished hours ago cannot be restarted", stale.status === 409, `status ${stale.status}`);
+  check("and the teacher is told why", /no longer be opened/i.test(stale.body?.error ?? ""), stale.body?.error ?? "");
+
+  // The other end of the same window: nine minutes past a booked finish is still a recovery.
+  const recent = await createSession(teacher);
+  await goLive(teacher, recent.id);
+  await endClass(teacher, recent.id);
+  sql(`update sessions set date = now() - interval '69 minutes' where id = ${recent.id}`);
+  const reopened = await goLive(teacher, recent.id);
+  check("nine minutes past the finish it can still be reopened", reopened.status === 200, `status ${reopened.status}`);
+  await endClass(teacher, recent.id);
+  sql(`update sessions set date = now() - interval '71 minutes' where id = ${recent.id}`);
+  const tooLate = await goLive(teacher, recent.id);
+  check("eleven minutes past the finish it cannot", tooLate.status === 409, `status ${tooLate.status}`);
 
   // The reported case: scrolling back to a class from days ago and starting it.
   const old = await createSession(teacher, { minutesFromNow: -60 * 30 });
@@ -188,9 +208,13 @@ async function testInvitingIsOnlyTelling() {
   check("a student cannot read a teacher's student list", asStudent.status === 403, `status ${asStudent.status}`);
 
   // Invite both. The stranger must be silently dropped rather than reached.
+  // Five minutes out, so the class is inside its own window. An hour out it is not: the doors
+  // now open ten minutes before the booked start, and a teacher cannot take a class live
+  // before that — which used to be possible and pulled anyone already looking at it into a
+  // call for a lesson that had not begun.
   const created = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: "Invited class", subject: "Maths", description: "d",
-    date: new Date(Date.now() + 60 * 60_000).toISOString(), duration: 60, price: 500, maxStudents: 10,
+    date: new Date(Date.now() + 5 * 60_000).toISOString(), duration: 60, price: 500, maxStudents: 10,
     inviteStudentIds: [follower.user.id, stranger.user.id] } });
   check("the class is created", created.status === 201, `status ${created.status}`);
   const sessionId = created.body.id;
@@ -203,7 +227,10 @@ async function testInvitingIsOnlyTelling() {
   check("and pays for nobody", paid === "0", `paid rows: ${paid}`);
 
   // An invited student who has not booked is refused at the door, exactly like anyone else.
-  await goLive(teacher, sessionId);
+  const wentLive = await goLive(teacher, sessionId);
+  // Asserted rather than assumed: this step was unchecked, so a refusal here would have made
+  // everything below it meaningless while still reporting a pass.
+  check("the teacher can take it live", wentLive.status === 200, `status ${wentLive.status} ${JSON.stringify(wentLive.body ?? {})}`);
   const door = await api(`/sessions/${sessionId}/room`, { token: follower.token });
   check("an invited student who has not paid cannot enter", door.status === 403, `status ${door.status}`);
 
@@ -272,14 +299,15 @@ async function testAnExpiredClassGetsNoVideoRoom() {
   const justEnded = await api(`/sessions/${s1.id}/room`, { token: teacher.token });
   check("a class just ended still gives a room", justEnded.status === 200, `status ${justEnded.status}`);
 
-  // Aged past the window — the reported case was a class from three days earlier.
-  sql(`update session_activity set ended_at = now() - interval '3 days' where session_id = ${s1.id}`);
+  // Aged past the window by its booked slot — the reported case was a class from three days
+  // earlier, which means its slot was three days ago. See the note in the restart test above.
+  sql(`update sessions set date = now() - interval '3 days' where id = ${s1.id}`);
 
   const expired = await api(`/sessions/${s1.id}/room`, { token: teacher.token });
   check("a class from days ago gives the teacher no room", expired.status === 409, `status ${expired.status}`);
   check("and no room URL to connect to", !expired.body?.roomUrl, JSON.stringify(expired.body ?? {}).slice(0, 160));
   check("and no meeting token", !expired.body?.token, JSON.stringify(expired.body ?? {}).slice(0, 160));
-  check("and says why, in words a teacher can act on", /no longer be started|expired/i.test(expired.body?.error ?? ""),
+  check("and says why, in words a teacher can act on", /no longer be opened|expired/i.test(expired.body?.error ?? ""),
     expired.body?.error ?? "");
 
   // The student half of the same door.
@@ -309,11 +337,81 @@ async function testAnOldScheduledClassGetsNoRoom() {
   check("and no URL", !room.body?.roomUrl, JSON.stringify(room.body ?? {}).slice(0, 140));
 }
 
+
+async function testTheNewDoors() {
+  console.log("\nThe doors open ten minutes before and shut on a schedule");
+  const teacher = await register("teacher");
+  const student = await register("student");
+
+  /**
+   * Too early is now a closed door in its own right.
+   *
+   * A teacher could previously open a class booked for next week, which pulled anyone already
+   * looking at it into a call for a lesson that had not begun.
+   */
+  const soon = await createSession(teacher, { minutesFromNow: 40 });
+  await api(`/sessions/${soon.id}/book`, { method: "POST", token: student.token, body: {} });
+
+  const tooEarlyTeacher = await goLive(teacher, soon.id);
+  check("a teacher cannot open a class forty minutes early", tooEarlyTeacher.status === 409, `status ${tooEarlyTeacher.status}`);
+  check("and is told when it does open", /opens 10 minutes before/i.test(tooEarlyTeacher.body?.error ?? ""), tooEarlyTeacher.body?.error ?? "");
+
+  const tooEarlyStudent = await api(`/sessions/${soon.id}/room`, { token: student.token });
+  check("a student cannot get in that early either", tooEarlyStudent.status === 403 || tooEarlyStudent.status === 409, `status ${tooEarlyStudent.status}`);
+
+  // Nine minutes out: the doors are open, for both of them.
+  sql(`update sessions set date = now() + interval '9 minutes' where id = ${soon.id}`);
+  const opened = await goLive(teacher, soon.id);
+  check("nine minutes out, the teacher can open it", opened.status === 200, `status ${opened.status}`);
+  const early = await api(`/sessions/${soon.id}/room`, { token: student.token });
+  check("and the student can go in and wait", early.status === 200, `status ${early.status}`);
+
+  /**
+   * A student may sit in the room with no teacher in it.
+   *
+   * This is the owner's rule and it is also the evidence a refund is argued from: a student who
+   * waited in an empty room must be able to have waited in an empty room. So the class is put
+   * back to "upcoming" — the state a class the teacher never opened is actually in — and the
+   * student is still let through.
+   */
+  sql(`update sessions set status = 'upcoming', started_at = null, date = now() - interval '20 minutes' where id = ${soon.id}`);
+  const waiting = await api(`/sessions/${soon.id}/room`, { token: student.token });
+  check("a student can go in when the teacher never turned up", waiting.status === 200, `status ${waiting.status}`);
+
+  /**
+   * And when the teacher ended early. The class is marked completed, which used to be an
+   * outright refusal — the clock decides now, not the status.
+   */
+  sql(`update sessions set status = 'completed' where id = ${soon.id}`);
+  const afterEarlyEnd = await api(`/sessions/${soon.id}/room`, { token: student.token });
+  check("a student can still go in after the teacher ended early", afterEarlyEnd.status === 200, `status ${afterEarlyEnd.status}`);
+
+  // Four minutes past the booked finish: still open. Seven: expired. Deliberately not five —
+  // five is the exact instant the door shuts, and a test that sits on a boundary reports on
+  // how long the request took rather than on the rule.
+  sql(`update sessions set date = now() - interval '64 minutes' where id = ${soon.id}`);
+  const grace = await api(`/sessions/${soon.id}/room`, { token: student.token });
+  check("four minutes past the finish the student door is still open", grace.status === 200, `status ${grace.status}`);
+
+  sql(`update sessions set date = now() - interval '67 minutes' where id = ${soon.id}`);
+  const expired = await api(`/sessions/${soon.id}/room`, { token: student.token });
+  check("seven minutes past, it is shut", expired.status === 403 || expired.status === 409, `status ${expired.status}`);
+
+  // ...while the teacher's own door is still open for another few minutes.
+  const teacherStillIn = await api(`/sessions/${soon.id}/room`, { token: teacher.token });
+  check("the teacher's door outlasts the student's", teacherStillIn.status === 200, `status ${teacherStillIn.status}`);
+
+  sql(`update sessions set date = now() - interval '75 minutes' where id = ${soon.id}`);
+  const bothShut = await api(`/sessions/${soon.id}/room`, { token: teacher.token });
+  check("and shuts ten minutes past the finish", bothShut.status === 409, `status ${bothShut.status}`);
+}
+
 async function main() {
   const health = await fetch(`${API}/api/healthz`).catch(() => null);
   if (!health?.ok) { console.error(`No API at ${API}. Start it first, or set API_URL.`); process.exit(1); }
 
   await testCannotStartAnOldClass();
+  await testTheNewDoors();
   await testForceCloseDoesNotBlockTheNextClass();
   await testTeacherCanGetBackIntoTheirClass();
   await testAStudentCannotStartAnything();

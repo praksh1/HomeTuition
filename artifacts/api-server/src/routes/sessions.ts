@@ -14,7 +14,7 @@ import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
-import { canStart } from "../lib/sessionStart";
+import { canJoin, canStart } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
 
@@ -339,9 +339,19 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
    * and "may I go in" can never answer differently.
    */
   const activity = await activityFor(id);
-  const joinable = canStart({ ...session, endedAt: activity.endedAt });
-  if (!joinable.ok) {
-    res.status(409).json({ error: joinable.reason, expired: true });
+  /**
+   * The teacher's door and the student's are no longer the same door.
+   *
+   * A teacher may reopen a class up to ten minutes past the booked finish; a student's door
+   * shuts at five, so nobody is still arriving while the room is being closed around them.
+   * Asking one question for both would either let a student in too late or lock a teacher out
+   * of a recovery — see lib/sessionStart.ts.
+   */
+  const timing = membership!.isSessionTeacher
+    ? canStart({ ...session, endedAt: activity.endedAt })
+    : canJoin({ ...session, endedAt: activity.endedAt });
+  if (!timing.ok) {
+    res.status(409).json({ error: timing.reason, expired: true });
     return;
   }
 

@@ -16,7 +16,7 @@ import { useColors } from "@/hooks/useColors";
 import { apiGet } from "@/utils/api";
 import { notify } from "@/utils/alerts";
 import { countdown, humanDuration, serverNow, waitingState } from "@/utils/sessionClock";
-import { startState } from "@/utils/sessionWindow";
+import { joinState, startState } from "@/utils/sessionWindow";
 
 /**
  * A class's own page — the link the owner asked for.
@@ -172,7 +172,15 @@ export default function SessionPage() {
   }
 
   const scheduled = new Date(session.date);
-  const start = startState(session, now);
+  /**
+   * Two different doors, so two different buttons.
+   *
+   * The teacher's opens ten minutes early and stays open ten minutes past the booked finish,
+   * for the one who ended the call by mistake. The student's opens at the same moment but
+   * shuts at five past, and never asks whether the teacher has arrived — they are entitled to
+   * go in and wait, and that wait is what a refund is argued from. See utils/sessionWindow.ts.
+   */
+  const start = isTeacher ? startState(session, now) : joinState(session, now);
   const waiting = attendance
     ? waitingState({
         teacherJoinedAt: attendance.teacherJoinedAt,
@@ -341,7 +349,7 @@ export default function SessionPage() {
       >
         <Feather name="video" size={18} color={start.enabled ? "#fff" : colors.mutedForeground} />
         <Text style={[styles.primaryBtnText, { color: start.enabled ? "#fff" : colors.mutedForeground }]}>
-          {isTeacher ? start.label : start.enabled ? "Join class" : start.label}
+          {start.label}
         </Text>
       </TouchableOpacity>
       {start.reason && (

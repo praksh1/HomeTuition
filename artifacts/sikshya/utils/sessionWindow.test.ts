@@ -1,132 +1,131 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { canOpenSession, finishedAt, startState } from "./sessionWindow.ts";
+import {
+  DOORS_OPEN_MINUTES,
+  OVERTIME_CUTOFF_MINUTES,
+  STUDENT_GRACE_MINUTES,
+  canJoinSession,
+  canOpenSession,
+  cutoffAt,
+  doorsOpenAt,
+  isPastCutoff,
+  joinState,
+  scheduledEndAt,
+  startState,
+  studentDoorClosesAt,
+  type SessionWindowInput,
+} from "./sessionWindow.ts";
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
-const NOW = Date.parse("2026-08-21T12:00:00Z");
+/** A class booked 10:00–11:00. Every time below is relative to that. */
+const START = new Date("2026-08-22T10:00:00.000Z").getTime();
+const END = START + 60 * MIN;
 
-const session = (over: Partial<Parameters<typeof canOpenSession>[0]> = {}) => ({
-  date: new Date(NOW).toISOString(),
-  duration: 60,
-  status: "upcoming",
-  startedAt: null,
-  endedAt: null,
-  ...over,
+function session(over: Partial<SessionWindowInput> = {}): SessionWindowInput {
+  return { date: new Date(START), duration: 60, status: "upcoming", startedAt: null, endedAt: null, ...over };
+}
+
+test("the app measures the same timeline the server does", () => {
+  const s = session();
+  assert.equal(doorsOpenAt(s), START - DOORS_OPEN_MINUTES * MIN);
+  assert.equal(scheduledEndAt(s), END);
+  assert.equal(studentDoorClosesAt(s), END + STUDENT_GRACE_MINUTES * MIN);
+  assert.equal(cutoffAt(s), END + OVERTIME_CUTOFF_MINUTES * MIN);
 });
 
-test("a class from three days ago does not open", () => {
-  // The reported bug, exactly: a Completed class from Tuesday, tapped on Friday, opened the
-  // classroom and set the phone asking for camera and microphone.
-  const result = canOpenSession(session({ status: "completed", date: new Date(NOW - 72 * HOUR).toISOString() }), NOW);
+test("a late start does not move the finish", () => {
+  const late = session({ startedAt: new Date(START + 20 * MIN), status: "live" });
+  assert.equal(cutoffAt(late), END + OVERTIME_CUTOFF_MINUTES * MIN);
+});
+
+test("a teacher cannot open a class booked for next week", () => {
+  const result = canOpenSession(session(), START - 7 * 24 * HOUR);
   assert.equal(result.ok, false);
-  if (!result.ok) {
-    assert.equal(result.title, "Session already expired");
-    assert.match(result.message, /create a new one/i);
-  }
+  assert.match(result.ok === false ? result.message : "", /opens 10 minutes before it starts/);
 });
 
-test("a class that finished four hours ago does not open", () => {
-  const result = canOpenSession(session({ status: "completed", endedAt: new Date(NOW - 4 * HOUR).toISOString() }), NOW);
-  assert.equal(result.ok, false);
+test("a teacher can open it the moment the doors do, and not a minute earlier", () => {
+  assert.equal(canOpenSession(session(), START - DOORS_OPEN_MINUTES * MIN).ok, true);
+  assert.equal(canOpenSession(session(), START - (DOORS_OPEN_MINUTES + 1) * MIN).ok, false);
 });
 
-test("a class that has just ended still opens, so an accidental hang-up is recoverable", () => {
-  assert.equal(canOpenSession(session({ status: "completed", endedAt: new Date(NOW - 5 * MIN).toISOString() }), NOW).ok, true);
+test("a teacher who ended by accident gets back in inside ten minutes", () => {
+  const ended = session({ status: "completed", endedAt: new Date(END - 5 * MIN) });
+  assert.equal(canOpenSession(ended, END + 9 * MIN).ok, true);
+  assert.equal(canOpenSession(ended, END + 11 * MIN).ok, false);
 });
 
-test("a class running right now opens", () => {
+test("the three-hour window is gone", () => {
+  const ended = session({ status: "completed", endedAt: new Date(END) });
+  assert.equal(canOpenSession(ended, END + 2 * HOUR).ok, false);
+});
+
+test("a student can join with no teacher there at all", () => {
+  // Nothing in this check asks after the teacher. That is the point of it.
+  assert.equal(canJoinSession(session({ startedAt: null }), START + 30 * MIN).ok, true);
+});
+
+test("a student can still join five minutes past the finish, and not six", () => {
+  assert.equal(canJoinSession(session(), END + STUDENT_GRACE_MINUTES * MIN).ok, true);
+  assert.equal(canJoinSession(session(), END + (STUDENT_GRACE_MINUTES + 1) * MIN).ok, false);
+});
+
+test("the student's door shuts before the teacher's", () => {
+  const between = END + (STUDENT_GRACE_MINUTES + 2) * MIN;
+  assert.equal(canJoinSession(session(), between).ok, false);
+  assert.equal(canOpenSession(session(), between).ok, true);
+});
+
+test("a class marked completed does not stop a student joining inside the window", () => {
+  // The teacher ended early. The student is still entitled to be in that room, and to be
+  // recorded as having been there — that record is what a refund is argued from.
+  const endedEarly = session({ status: "completed", endedAt: new Date(START + 10 * MIN) });
+  assert.equal(canJoinSession(endedEarly, START + 30 * MIN).ok, true);
+});
+
+test("the teacher's button says what it will do", () => {
+  assert.equal(startState(session(), START - 5 * MIN).label, "Open the Session");
+  assert.equal(startState(session({ status: "live" }), START + 5 * MIN).label, "Rejoin the session");
   assert.equal(
-    canOpenSession(session({ status: "live", startedAt: new Date(NOW - 20 * MIN).toISOString() }), NOW).ok,
-    true,
+    startState(session({ status: "completed", endedAt: new Date(END - MIN) }), END + 2 * MIN).label,
+    "Reopen the session",
   );
 });
 
-test("a long class started late is judged from when it began", () => {
-  // Scheduled this morning, begun twenty minutes ago: still running, not stale.
-  assert.equal(
-    canOpenSession(
-      session({ status: "live", date: new Date(NOW - 6 * HOUR).toISOString(), startedAt: new Date(NOW - 20 * MIN).toISOString() }),
-      NOW,
-    ).ok,
-    true,
-  );
-});
-
-test("a class scheduled for later opens", () => {
-  assert.equal(canOpenSession(session({ date: new Date(NOW + 2 * HOUR).toISOString() }), NOW).ok, true);
-});
-
-test("a cancelled class does not open", () => {
-  const result = canOpenSession(session({ status: "cancelled", date: new Date(NOW + HOUR).toISOString() }), NOW);
-  assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.title, "Session cancelled");
-});
-
-test("the edge of the window is still open", () => {
-  const justInside = new Date(NOW - (3 * HOUR - MIN)).toISOString();
-  assert.equal(canOpenSession(session({ status: "completed", endedAt: justInside }), NOW).ok, true);
-});
-
-test("an unreadable date does not lock a teacher out", () => {
-  assert.equal(canOpenSession(session({ date: "nonsense" }), NOW).ok, true);
-  assert.equal(finishedAt(session({ date: "nonsense" })), null);
-});
-
-test("when it ended beats when it was scheduled to end", () => {
-  const ended = NOW - 10 * MIN;
-  assert.equal(
-    finishedAt(session({ date: new Date(NOW - 5 * HOUR).toISOString(), endedAt: new Date(ended).toISOString() })),
-    ended,
-  );
-});
-
-
-const START = new Date("2026-08-21T10:00:00.000Z").getTime();
-
-const upcoming = { date: new Date(START), duration: 60, status: "upcoming", startedAt: null, endedAt: null };
-
-test("an upcoming class can be started", () => {
-  const state = startState(upcoming, START - 5 * MIN);
-  assert.equal(state.enabled, true);
-  assert.equal(state.label, "Start class");
-  assert.equal(state.reason, null);
-});
-
-test("a live class offers a way back in rather than a way to start it again", () => {
-  const state = startState({ ...upcoming, status: "live", startedAt: new Date(START) }, START + 10 * MIN);
-  assert.equal(state.enabled, true);
-  assert.equal(state.label, "Rejoin class");
-});
-
-test("a class ended by accident can be reopened inside the window", () => {
-  // The whole reason the three-hour window exists. Named a reopen, not a start.
-  const ended = { ...upcoming, status: "completed", startedAt: new Date(START), endedAt: new Date(START + 20 * MIN) };
-  const state = startState(ended, START + 40 * MIN);
-  assert.equal(state.enabled, true);
-  assert.equal(state.label, "Reopen class");
-});
-
-test("a class that finished more than three hours ago is greyed out, with the reason showing", () => {
-  const ended = { ...upcoming, status: "completed", startedAt: new Date(START), endedAt: new Date(START + 60 * MIN) };
-  const state = startState(ended, START + 5 * 60 * MIN);
+test("the teacher's button is greyed out before the doors open, with the reason showing", () => {
+  const state = startState(session(), START - 30 * MIN);
   assert.equal(state.enabled, false);
   assert.equal(state.label, "Session expired");
-  // The reason is carried, not left for a tap to reveal — the owner asked for grey, not for a
-  // button that looks fine and then refuses.
-  assert.match(state.reason ?? "", /more than 3 hours ago/);
+  assert.match(state.reason ?? "", /opens 10 minutes before/);
 });
 
-test("a cancelled class is greyed out and says so", () => {
-  const state = startState({ ...upcoming, status: "cancelled" }, START);
+test("the student's button reads Join the Class while the door is open", () => {
+  const state = joinState(session(), START + 5 * MIN);
+  assert.equal(state.enabled, true);
+  assert.equal(state.label, "Join the Class");
+});
+
+test("and greys out to Session Expired six minutes past the finish", () => {
+  const state = joinState(session(), END + (STUDENT_GRACE_MINUTES + 1) * MIN);
   assert.equal(state.enabled, false);
-  assert.equal(state.label, "Cancelled");
-  assert.match(state.reason ?? "", /cancelled/i);
+  assert.equal(state.label, "Session Expired");
+  assert.match(state.reason ?? "", /report it from Support/);
 });
 
-test("an old class that somehow says it is live is still let back into", () => {
-  // A class stuck at "live" is the force-closed-browser case. Locking the teacher out of it is
-  // exactly the bug the restart window was added to fix, so live wins over the window.
-  const stuck = { ...upcoming, status: "live", startedAt: new Date(START), endedAt: null };
-  assert.equal(startState(stuck, START + 10 * 60 * MIN).enabled, true);
+test("a cancelled class is greyed out for both", () => {
+  assert.equal(startState(session({ status: "cancelled" }), START).label, "Cancelled");
+  assert.equal(joinState(session({ status: "cancelled" }), START).label, "Cancelled");
+});
+
+test("a call is over one minute past the cutoff and not before", () => {
+  assert.equal(isPastCutoff(session(), END + OVERTIME_CUTOFF_MINUTES * MIN), false);
+  assert.equal(isPastCutoff(session(), END + (OVERTIME_CUTOFF_MINUTES + 1) * MIN), true);
+});
+
+test("an unreadable date locks nobody out", () => {
+  const broken = session({ date: "nonsense" });
+  assert.equal(canOpenSession(broken, START).ok, true);
+  assert.equal(canJoinSession(broken, START).ok, true);
+  assert.equal(isPastCutoff(broken, START), false);
 });
