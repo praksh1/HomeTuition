@@ -135,13 +135,44 @@ in charge of somebody's income.
 
 ## 4. Where this starts
 
-In order, each useful on its own:
+In order, each useful on its own. The first three are built.
 
-1. **The evidence ledger** (section 3). No money, no provider, no legal question. Also powers
-   the attendance list and the "teacher is late" rule the owner asked for separately.
-2. **The session page**: who has enrolled, before; who attended, after. Teachers told when
-   somebody books.
-3. **Written reviews**, shown to teachers without the student's name.
-4. **The dispute record** — a refund request against a session, with its state, its deadlines
-   and its evidence. Decisions recorded, nothing paid or refunded, because nothing can be.
+1. ~~**The evidence ledger** (section 3).~~ **Built.** `session_participation` records, per
+   class and per person, when they arrived, when they were last seen, how long they were
+   actually connected, how many times their connection opened, and how much they drew and
+   said. Written by the classroom hub from the one thing neither side can argue with — whether
+   the socket was open — batched every thirty seconds and on disconnect, and unable to throw:
+   a database having a bad day must not end somebody's lesson. Read back through
+   `GET /sessions/:id/attendance`. The findings it produces are statements of fact with the
+   numbers attached, never verdicts; see `api-server/src/lib/sessionEvidence.ts`.
+2. ~~**The session page**~~ **Built.** `/session/:id` — who has enrolled before, who attended
+   after, a running clock on the server's time, and a Start button that greys out with its
+   reason showing once a class is past the three-hour window. Teachers are told when somebody
+   books, on a notification switch of their own. It also fixed a link that had never worked:
+   every invitation email points at `/session/:id`, and no such screen existed.
+3. ~~**Written reviews**~~ **Built.** Optional, in the student's own words — the app used to
+   invent them — and anonymous to everybody rather than only to the teacher, because a public
+   list a teacher can read signed out is not made anonymous by hiding the name on their own
+   screen.
+4. **The dispute record** — next. A refund request against a session, with its state, its
+   deadlines and its evidence. Decisions recorded, nothing paid or refunded, because nothing
+   can be. Half of this exists already: a report can now name the class it is about, may only
+   be filed by somebody who was in that class, and no longer demands an attachment. What is
+   missing is the *process* — the 3-day teacher response, the 2-day notification, the appeal,
+   and the state a request moves through.
 5. **Money**, when there is a provider and an answer on licensing.
+
+### A fourth thing that has to be said, found while building the above
+
+**File attachments have never worked.** Not "worked badly" — every attempt returned 400 before
+a byte left the phone, because the app asked for an upload URL with the wrong field names.
+That is fixed. But the endpoint behind it wants object-storage settings left over from this
+app's Replit origins (`PRIVATE_OBJECT_DIR`, `PUBLIC_OBJECT_SEARCH_PATHS`) which do not exist on
+Railway, so attachments still will not arrive until somewhere to put files is chosen and
+configured. That is a decision, and possibly a cost.
+
+Until then a report goes through without its file, and the person is told so plainly. This
+matters more than it sounds for the policy above: several of its steps assume a student or
+teacher can hand over evidence, and today they cannot. The attendance ledger covers most of
+what those steps actually need — but not a video of a teacher behaving badly, which is exactly
+the case the owner described.

@@ -165,6 +165,17 @@ to "Guru" wherever the machine looked rather than the user: the browser tab, and
 the icon when a student adds the site to an Android home screen. `HomeTuition` stays as the name
 of the repository and the Cloudflare Worker, which is plumbing nobody reads.
 
+A class now has a record of itself. The classroom hub writes down who was in it, when they
+arrived, how long they were actually connected and how much they drew — the foundation every
+refund rule rests on, since each of those rules is a question about presence and the app could
+previously answer none of them. See `REFUNDS.md`. Each class has its own page at
+`/session/:id`: who booked, before it runs; who attended, after; a clock taken from the server
+rather than the handset, because a phone whose clock is half an hour out would otherwise tell
+its owner their teacher was late for a class that had not started. Teachers are told when
+somebody books, which they never were. Reviews can be written in the student's own words — the
+app used to invent them — and carry no name, to anybody. Customer Support is its own tab for
+both roles.
+
 Notifications are real now, and were not before: what users saw was six samples the app
 invented in local storage on first run. A signed-in app holds one WebSocket to the server
 (`ws/userHub.ts`, separate from the classroom socket) and hears about messages, new followers
@@ -198,6 +209,15 @@ Known gaps, in rough priority order:
 7. **The bundle identifier has not been confirmed by the owner.** It is `com.sikshya.app` on
    both platforms, which is free to change now and permanent after the first store publish.
    On the pre-launch checklist in `ISSUES.md`.
+8. **There is nowhere to put an uploaded file.** Attaching evidence to a support report never
+   worked — the app asked for an upload URL with the wrong field names, so every attempt was
+   refused before a byte left the phone. That is fixed, but the endpoint behind it wants
+   object-storage settings inherited from this app's Replit origins that Railway does not
+   have. Reports now go through without the file and say so. `ISSUES.md` → F1.
+9. **A dispute has no process.** A report can name a class and is checked against who was
+   actually in it, but the workflow the owner specified — three days for the teacher to
+   respond, two days to tell the student, the appeal — does not exist yet, and no money can
+   move regardless. `REFUNDS.md` section 4.
 
 ## Testing expectations
 

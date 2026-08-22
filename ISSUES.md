@@ -27,6 +27,14 @@ is cheap next to what it costs afterwards. Tick them off in order.
       door and declines every booking, because the eSewa/Khalti branch is not written. See A1.
 - [ ] **Set the email variables** if you want email notifications: `RESEND_API_KEY`,
       `EMAIL_FROM`, and `APP_URL` for the links inside them.
+- [ ] **Decide where uploaded files go.** Attaching anything to a Customer Support report has
+      never worked — the app asked for an upload URL with the wrong field names and every
+      attempt returned 400 before a byte left the phone. That part is fixed, but the endpoint
+      behind it still wants object-storage settings left over from this app's Replit origins
+      (`PRIVATE_OBJECT_DIR`, `PUBLIC_OBJECT_SEARCH_PATHS`), which do not exist on Railway. Until
+      somewhere to put files is chosen, a report goes through without its attachment and the
+      person is told so. This blocks the part of the refund policy that assumes somebody can
+      hand over a video. See F1.
 - [ ] **Test the whiteboard on the cheapest Android you can find.** The target market is a
       phone nobody here has held.
 - [ ] **Settle the name, then the bundle identifier, before the first store build.** The owner
@@ -1135,3 +1143,52 @@ from the database — nobody had been charged for them.
   toolbar with its scrollbar hidden, so on any narrow screen they were invisible with no hint
   that anything lay off the edge.
 - **G7** — the board was rebuilt on Excalidraw. See `WHITEBOARD.md`.
+
+---
+
+## Found while building the refund groundwork, 2026-08-22
+
+### F1. Attaching a file to a Customer Support report has never worked — **half fixed**
+
+Two faults in the app, both fixed, and one in the environment, which is not ours to fix.
+
+The app asked `/storage/uploads/request-url` for a URL using `fileName` and no size. The
+endpoint requires `name`, `size` and `contentType`, so the request was rejected with a 400
+every single time — before any file was read, with nothing shown to the person filing the
+report beyond a generic failure. Past that, the app read `uploadUrl` from a response whose
+field is `uploadURL`, so even a valid request would have uploaded to `undefined`.
+
+Both are fixed, and the old request shape is now asserted to *fail* in the attendance suite so
+it cannot come back quietly.
+
+What is left is not a bug: the upload endpoint is inherited from this app's Replit origins and
+depends on `PRIVATE_OBJECT_DIR` and `PUBLIC_OBJECT_SEARCH_PATHS` pointing at a Google Cloud
+Storage bucket. Railway has neither. Attachments will keep failing until somewhere to put files
+is chosen and configured — a decision, and possibly a cost.
+
+In the meantime a failed upload no longer swallows the complaint: the report is sent without
+the file and the person is told plainly that it did not go with them. Evidence is optional on
+the server too, because a mandatory attachment on top of an uploader that has never worked is a
+complaints box that quietly refuses complaints.
+
+### F2. The teacher was never told when a student booked — **fixed**
+
+A student could book, pay and turn up, and the first the teacher knew of it was finding them in
+the room — or never finding out, for a class nobody happened to open. Reported by the owner as
+"the teacher does not get any notification when a student registers for the session".
+
+Teachers are now notified when a booking completes, on a preference switch of their own:
+somebody who mutes class-starting reminders has not asked to stop hearing that they were paid.
+
+### F3. Every review in the database was written by the app — **fixed**
+
+The server required a comment; the app satisfied that by inventing one. Every review reads
+"Great teacher! Rated 4 stars." under a real student's name, whatever that student thought.
+Students can write their own now, the box is optional, and no sentence is invented for an empty
+one. Existing rows still hold the invented text — worth clearing before launch, since they are
+attributed to real people who did not write them.
+
+### F4. Every invitation email linked to a screen that did not exist — **fixed**
+
+`session_invite` emails have always pointed at `/session/:id`. There was no such route, so
+every invitation ever sent led to a "not found". The class's own page now lives there.
