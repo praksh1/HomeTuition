@@ -251,6 +251,38 @@ async function main() {
   await page2.click('text="Completed"', { timeout: 5000 }).catch(() => {});
   await page2.waitForTimeout(2000);
   await page2.locator('text="Rejoin Test"').first().click({ timeout: 10000 });
+  await page2.waitForTimeout(3000);
+
+  /**
+   * The list now opens the class's own page rather than the classroom itself.
+   *
+   * The owner asked for that directly — "the teacher should be able to click on it and see the
+   * students that have enrolled... the start option should come after this" — and the recovery
+   * this block is about still has to work through it. So the page is checked, and then it is
+   * used: the class a teacher ended by accident must still be one tap from being live again.
+   */
+  const landing = await page2.evaluate(() => ({ url: location.pathname, text: document.body.innerText }));
+  check(
+    "tapping a class opens its own page, not a video call",
+    /\/session\//.test(landing.url),
+    `ended on ${landing.url}`,
+  );
+  check(
+    "no video room is asked for merely by looking at a class",
+    rejoinRooms.length === 0,
+    `room responses: ${JSON.stringify(rejoinRooms)}`,
+  );
+  check(
+    "the page offers a way back in, because this class ended within the window",
+    /Reopen class/i.test(landing.text),
+    landing.text.slice(0, 300).replace(/\n/g, " | "),
+  );
+  check(
+    "and a running clock is on it, as asked for",
+    (await page2.locator('[data-testid="session-clock"]').count()) > 0,
+  );
+
+  await page2.locator('[data-testid="session-start-btn"]').first().click({ timeout: 10000 });
   await page2.waitForTimeout(5000);
 
   const rejoin = await page2.evaluate(() => ({ url: location.pathname, text: document.body.innerText }));
@@ -299,6 +331,71 @@ async function main() {
     !(await page2.getByText("Chat", { exact: false }).filter({ hasText: /^Chat/ }).count()),
     `found ${await page2.getByText("Chat", { exact: false }).filter({ hasText: /^Chat/ }).count()} chat control(s)`,
   );
+
+  console.log("\nA teacher looks at a class without starting it");
+
+  /**
+   * The owner's ask, driven through the real screen: "the teacher should be able to click on
+   * it and see the students that have enrolled", and "the start option should be grayed out"
+   * for anything too old to reopen.
+   *
+   * Checked in a browser rather than against the endpoint because the endpoint was never the
+   * doubtful part. A rule the server enforces and a screen that never shows it are the same
+   * thing from the teacher's side — which is the failure this whole suite exists for.
+   */
+  const soon = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    topic: "Who Is Coming", subject: "Mathematics", description: "d",
+    date: new Date(Date.now() + 30 * 60_000).toISOString(),
+    duration: 60, price: 500, maxStudents: 20 } });
+
+  const pupilA = await register("student");
+  const pupilB = await register("student");
+  for (const pupil of [pupilA, pupilB]) {
+    const booked = await api(`/sessions/${soon.body.id}/book`, {
+      method: "POST", token: pupil.token, body: { paymentMethod: "esewa" },
+    });
+    if (booked.status > 201) throw new Error(`book: ${booked.status} ${JSON.stringify(booked.body)}`);
+  }
+
+  const ctx3 = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const page3 = await ctx3.newPage();
+  const peekRooms = [];
+  page3.on("response", (r) => {
+    if (/\/api\/sessions\/\d+\/room/.test(r.url())) peekRooms.push(r.status());
+  });
+  await page3.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+
+  await page3.goto(`${siteUrl}/session/${soon.body.id}`, { waitUntil: "networkidle" });
+  await page3.waitForTimeout(3500);
+  const peek = await page3.evaluate(() => document.body.innerText);
+
+  check("both students who booked are named", /Student/.test(peek) && peek.match(/Student \d+/g)?.length >= 2,
+    (peek.match(/Student \d+/g) ?? []).join(", "));
+  check("they are shown as booked, not as having attended", /Booked/.test(peek) && !/Attended/.test(peek));
+  check("the class can be started from here", /Start class/i.test(peek));
+  check("looking at who is coming does not open a video room", peekRooms.length === 0,
+    `room responses: ${JSON.stringify(peekRooms)}`);
+
+  // The three-day-old class from the first block, opened at its own address.
+  await page3.goto(`${siteUrl}/session/${old.body.id}`, { waitUntil: "networkidle" });
+  await page3.waitForTimeout(3500);
+  const expired = await page3.evaluate(() => document.body.innerText);
+  check("a class too old to reopen says so on the button itself", /Session expired/i.test(expired), expired.slice(0, 300).replace(/\n/g, " | "));
+  check("and the reason is on the page, not hidden behind a tap",
+    /more than 3 hours ago/i.test(expired), expired.slice(0, 300).replace(/\n/g, " | "));
+
+  await page3.locator('[data-testid="session-start-btn"]').first().click({ timeout: 10000 }).catch(() => {});
+  await page3.waitForTimeout(2500);
+  check("and tapping it goes nowhere near a classroom",
+    !/classroom/.test(await page3.evaluate(() => location.pathname)),
+    await page3.evaluate(() => location.pathname));
+  check("still no video room, after tapping the greyed-out button", peekRooms.length === 0,
+    `room responses: ${JSON.stringify(peekRooms)}`);
+
+  await ctx3.close();
 
   await ctx2.close();
   await browser.close();
