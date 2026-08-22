@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { logActivity } from "./middlewares/activityLog";
 
 const app: Express = express();
 
@@ -38,6 +39,14 @@ app.use(
   }),
 );
 app.use(express.urlencoded({ extended: true }));
+
+/**
+ * Mounted before the routes but recorded after them.
+ *
+ * It reads `req.user`, which each route's own `requireAuth` sets — that has happened by the
+ * time the response finishes, which is when this writes. See middlewares/activityLog.ts.
+ */
+app.use(logActivity);
 
 app.use("/api", router);
 

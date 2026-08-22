@@ -197,3 +197,87 @@ export async function ensureDisputeColumns(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Creates the session message table if it is not there yet.
+ *
+ * Same narrow licence as the others: create only, additive only, unable to stop the server
+ * starting. This one carries a teacher's "running ten minutes late" and the thread a refund is
+ * argued from, so a gap here is not a cosmetic one — the messages sent during those minutes
+ * are refused, and the person sending them is told the class has no thread.
+ */
+export async function ensureSessionMessagesTable(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_messages" (
+        "id" serial PRIMARY KEY,
+        "session_id" integer NOT NULL,
+        "sender_id" integer NOT NULL,
+        "sender_name" text NOT NULL,
+        "sender_role" text NOT NULL,
+        "body" text NOT NULL,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_messages_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "session_messages_sender_id_users_id_fk"
+          FOREIGN KEY ("sender_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_messages_session_id_idx"
+        ON "session_messages" ("session_id", "id")
+    `);
+    logger.info("session messages table is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the session messages table; run `pnpm run db:push`. " +
+        "Classes still run — but the message thread on a class is unavailable, which is how a " +
+        "late teacher tells the people waiting for them.",
+    );
+  }
+}
+
+
+/**
+ * Creates the activity log if it is not there yet.
+ *
+ * Same narrow licence as the others. This one is written from a middleware on every request
+ * that changes anything, so a missing table would otherwise be the loudest failure in the
+ * product; it is not, because `recordActivity` swallows its own errors. What is lost while it
+ * is missing cannot be recovered — an audit log has no way to backfill what nobody wrote down.
+ */
+export async function ensureActivityLogTable(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "activity_log" (
+        "id" serial PRIMARY KEY,
+        "user_id" integer,
+        "action" text NOT NULL,
+        "subject_type" text,
+        "subject_id" integer,
+        "detail" jsonb,
+        "ip" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "activity_log_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "activity_log_user_idx" ON "activity_log" ("user_id", "id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "activity_log_subject_idx"
+        ON "activity_log" ("subject_type", "subject_id", "id")
+    `);
+    logger.info("activity log table is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the activity log table; run `pnpm run db:push`. " +
+        "Everything still works — but nothing is being recorded about who did what, and a " +
+        "support agent looking at a complaint from this period will have nothing to read.",
+    );
+  }
+}

@@ -123,6 +123,38 @@ export async function notifyNewMessage(msg: {
 }
 
 /**
+ * Raised when somebody writes in a class's own message thread.
+ *
+ * Kept apart from `notifyNewMessage` because it opens a different place. A direct message
+ * opens a conversation with one person; this opens the class, which is where the thread lives
+ * and where the Join button is. The commonest thing sent on it is a teacher saying they are
+ * running late, and a notification that took the student to a private chat instead of to the
+ * class they are waiting for would be actively unhelpful.
+ */
+export async function notifySessionMessage(msg: {
+  senderName: string;
+  body: string;
+  sessionId: number | string;
+  topic?: string;
+}): Promise<void> {
+  const title = msg.topic ? `${msg.senderName} · ${msg.topic}` : `${msg.senderName} messaged your class`;
+  const body = msg.body.length > 120 ? `${msg.body.slice(0, 117)}…` : msg.body;
+  const data = { type: "session_message", sessionId: String(msg.sessionId) };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: { title, body, data, sound: true },
+        trigger: null,
+      });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
+  }
+  await addInAppNotification({ title, body, type: "general", data });
+}
+
+/**
  * Raised when someone starts following a teacher.
  *
  * The owner reported never hearing about a new follower. Following only ever wrote a row —

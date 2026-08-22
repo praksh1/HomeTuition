@@ -17,6 +17,7 @@ import { apiGet } from "@/utils/api";
 import { notify } from "@/utils/alerts";
 import { countdown, humanDuration, serverNow, waitingState } from "@/utils/sessionClock";
 import { joinState, startState } from "@/utils/sessionWindow";
+import SessionThread from "@/components/SessionThread";
 
 /**
  * A class's own page — the link the owner asked for.
@@ -325,6 +326,32 @@ export default function SessionPage() {
               ))}
             </View>
           )}
+        </View>
+      )}
+
+      {/*
+        The class's own message thread.
+
+        "Add a Session Group Messaging link on this page for session-specific chat (used for
+        late notices and refund evidence)" — and the student's side of the same ask, "should
+        also be able to see the Messaging Link... and be able to send/receive messages directly
+        from here". So it is not a link to somewhere else: it is the thread, on the page, for
+        both of them.
+
+        Only shown to people with a place in the class. Somebody following an invitation link
+        who has not booked yet can see what they are being invited to and nothing more.
+      */}
+      {attendance && (
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Class messages</Text>
+          <SessionThread
+            sessionId={session.id}
+            audienceHint={
+              isTeacher
+                ? "Everyone who has booked this class can read this — use it to tell them if you are running late."
+                : "Your teacher and everyone else in this class can read this."
+            }
+          />
         </View>
       )}
 

@@ -21,6 +21,7 @@ import {
   notifyNewMessage,
   notifySessionInvite,
   notifySessionLive,
+  notifySessionMessage,
   requestNotificationPermissions,
   type AppNotification,
 } from "@/utils/notifications";
@@ -39,6 +40,15 @@ interface NotificationContextType {
   preferences: NotificationPrefs;
   /** False when the server has no mail provider configured, so email switches cannot work. */
   emailAvailable: boolean;
+  /**
+   * The last event that arrived on the socket, whatever kind it was.
+   *
+   * Exposed so a screen can react to something happening *while it is open* without polling —
+   * the class message thread listens for `session_message` and asks for what it has not seen.
+   * Deliberately the raw event: it is a nudge, not the data. A screen that trusted the event's
+   * contents would show a message the server has not confirmed.
+   */
+  lastEvent: UserEvent | null;
   refresh: () => Promise<void>;
   markRead: () => Promise<void>;
   setPreference: (channel: PrefChannel, kind: PrefKind, value: boolean) => Promise<void>;
@@ -47,6 +57,7 @@ interface NotificationContextType {
 const NotificationContext = createContext<NotificationContextType>({
   notifications: [],
   unreadCount: 0,
+  lastEvent: null,
   hasPermission: false,
   preferences: DEFAULT_PREFS,
   emailAvailable: false,
@@ -73,7 +84,11 @@ function openTarget(data: {
   conversationWith?: string | number;
 }): void {
   try {
-    if (data.sessionId != null && (data.type === "session_reminder" || data.type === "live")) {
+    if (data.sessionId != null && data.type === "session_message") {
+      // The class's own page, where the thread is and where the Join button is — not the
+      // classroom, which would put a waiting student into a call to read a message.
+      router.push(`/session/${data.sessionId}`);
+    } else if (data.sessionId != null && (data.type === "session_reminder" || data.type === "live")) {
       router.push(`/classroom/${data.sessionId}`);
     } else if (data.conversationWith != null || data.type === "message") {
       router.push(data.conversationWith != null ? `/conversation/${data.conversationWith}` : "/notifications");
@@ -92,6 +107,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [hasPermission, setHasPermission] = useState(false);
   const [preferences, setPreferences] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [emailAvailable, setEmailAvailable] = useState(false);
+  const [lastEvent, setLastEvent] = useState<UserEvent | null>(null);
   const notificationListener = useRef<Notifications.EventSubscription | null>(null);
   const responseListener = useRef<Notifications.EventSubscription | null>(null);
   /**
@@ -118,6 +134,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   /** Turns one server event into a notification the user can see and act on. */
   const onEvent = useCallback(
     async (event: UserEvent) => {
+      // Published before the de-duplication below, because a screen listening for its own
+      // updates wants every nudge — two copies cost it one extra request, a missed one costs
+      // it a message that never appears.
+      setLastEvent(event);
+
       const key = `${event.kind}:${event.fromUserId ?? event.sessionId ?? ""}:${event.at ?? ""}`;
       if (seen.current.has(key)) return;
       seen.current.add(key);
@@ -138,6 +159,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             topic: event.topic ?? "a class",
             teacherName: event.fromName,
             sessionId: event.sessionId,
+          });
+        } else if (event.kind === "session_message") {
+          // A class's own thread, which is where a teacher says they are running late. It
+          // deserves a notification for the same reason a direct message does: it is somebody
+          // talking to you, and it is time-critical far more often than not.
+          await notifySessionMessage({
+            senderName: event.fromName ?? "Someone",
+            body: event.preview ?? "",
+            sessionId: event.sessionId ?? 0,
+            topic: event.topic,
           });
         } else if (event.kind === "session_live") {
           await notifySessionLive({
@@ -247,6 +278,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         hasPermission,
         preferences,
         emailAvailable,
+        lastEvent,
         refresh,
         markRead,
         setPreference,

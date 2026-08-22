@@ -5,7 +5,13 @@ import { onNetworkResume } from "@/utils/networkResume";
 
 /** One event pushed by the server to a signed-in user, wherever they are in the app. */
 export interface UserEvent {
-  kind: "message" | "follower" | "session_live" | "session_invite";
+  /**
+   * Mirrors NotificationKind on the server (api-server/src/lib/notify.ts), plus the events
+   * that are delivered straight down the channel without going through notification
+   * preferences — `session_message` is one, because a class's own thread is not something a
+   * teacher's "class starting" switch should silence.
+   */
+  kind: "message" | "follower" | "session_live" | "session_invite" | "session_booked" | "session_message";
   at?: string;
   fromUserId?: number;
   fromName?: string;

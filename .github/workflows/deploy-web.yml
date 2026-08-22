@@ -158,6 +158,34 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:reviews
 
+      # A class's own message thread, and the log of who did what. Both have to survive a
+      # restart to be worth anything — a teacher's "running ten minutes late" and a refund
+      # argued weeks later both depend on the words still being there — so this restarts the
+      # server between writing and reading.
+      - name: The class thread and the audit log
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+        run: |
+          set -euo pipefail
+          cat > /tmp/restart-api.sh <<'SH'
+          #!/bin/bash
+          set -euo pipefail
+          pkill -f 'artifacts/api-server/dist/index.mjs' || true
+          sleep 1
+          PORT=8080 NODE_ENV=test WS_HEARTBEAT_MS=3000 \
+            nohup node artifacts/api-server/dist/index.mjs > /tmp/api.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/api/healthz >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "the API never came back up"; cat /tmp/api.log; exit 1
+          SH
+          chmod +x /tmp/restart-api.sh
+          API_URL=http://127.0.0.1:8080 RESTART_CMD=/tmp/restart-api.sh \
+            pnpm --filter @workspace/api-server run test:thread
+
       # Who was in the class, which is the evidence every refund rule in REFUNDS.md is argued
       # from. Only a real socket into a real database shows whether the classroom hub actually
       # writes any of it down — the arithmetic is covered by the unit tests above, the wiring
