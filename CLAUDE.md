@@ -165,6 +165,15 @@ to "Guru" wherever the machine looked rather than the user: the browser tab, and
 the icon when a student adds the site to an Android home screen. `HomeTuition` stays as the name
 of the repository and the Cloudflare Worker, which is plumbing nobody reads.
 
+**The clock a class runs on is one timeline, in one file.** Doors open ten minutes before the
+booked start; a student's Join greys out five minutes after the booked finish; the call stops,
+and no teacher may reopen it, ten minutes after that. It is measured from the *booked* slot,
+never from when the teacher pressed start — so a teacher who begins twenty minutes late does
+not get twenty extra minutes, which is deliberate: a student who booked 10:00 to 11:00 needs to
+know they are free at 11:00. `api-server/src/lib/sessionStart.ts` is the original and
+`sikshya/utils/sessionWindow.ts` is the app's mirror; a test reads one and compares the other,
+because a mirror that drifts leaves both halves looking correct in isolation.
+
 A class now has a record of itself. The classroom hub writes down who was in it, when they
 arrived, how long they were actually connected and how much they drew — the foundation every
 refund rule rests on, since each of those rules is a question about presence and the app could
@@ -175,6 +184,23 @@ its owner their teacher was late for a class that had not started. Teachers are 
 somebody books, which they never were. Reviews can be written in the student's own words — the
 app used to invent them — and carry no name, to anybody. Customer Support is its own tab for
 both roles.
+
+A class also has a message thread that outlives it, shared by the teacher and everyone who
+paid, readable from the class's page by both. It is not the chat inside a lesson — that one
+lives in memory and goes with the room — and it exists for the two things a disappearing chat
+cannot do: a teacher telling waiting students they are late, and evidence in a refund argued
+weeks later.
+
+There is a support desk at `/(admin)` for customer-care agents: the ticket queue, one ticket
+with its class, attendance, thread and findings on the same screen, and the four things an
+agent can do — close a ticket with a written decision, suspend an account with a reason, issue
+a password reset code whose result they never see, and review teaching credentials. An agent
+account is made by promoting a registered account directly in the database; `ISSUES.md` says
+how, and why there is no way to do it from inside the app.
+
+Everything anybody does that changes something is written to an activity log, by a middleware
+rather than by hand-written calls per route — a claim of "every action" that depends on
+somebody remembering is not one worth making.
 
 Notifications are real now, and were not before: what users saw was six samples the app
 invented in local storage on first run. A signed-in app holds one WebSocket to the server
