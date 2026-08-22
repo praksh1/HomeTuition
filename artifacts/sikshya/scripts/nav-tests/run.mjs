@@ -177,6 +177,75 @@ async function main() {
   check("and it opens the same report form",
     /Customer Support/i.test(await page2.evaluate(() => document.body.innerText)));
 
+  console.log("\nWhat the cleanup moved");
+
+  /**
+   * Three small changes the owner asked for, each of which is invisible to a typecheck and
+   * would be found only by opening the app: a link removed from Profile, a set of invented
+   * numbers removed from Messages, and a list moved from Profile into Discover.
+   */
+  const ctx3 = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+  });
+  const page3 = await ctx3.newPage();
+  await page3.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), student.token);
+
+  await page3.goto(`${siteUrl}/profile`, { waitUntil: "networkidle" });
+  await page3.waitForTimeout(3000);
+  const profile = await page3.evaluate(() => document.body.innerText);
+  check("Support is gone from the student's Profile", !/Customer Support/i.test(profile),
+    profile.slice(0, 200).replace(/\n/g, " | "));
+  check("and so is the list of teachers they follow", !/Teachers you follow/i.test(profile),
+    profile.slice(0, 200).replace(/\n/g, " | "));
+
+  await page3.goto(`${siteUrl}/`, { waitUntil: "networkidle" });
+  await page3.waitForTimeout(3500);
+  check("Discover has a Following sub-tab", (await page3.locator('[data-testid="discover-subtab-following"]').count()) > 0);
+  // Looked for as an element, not as text: a placeholder is an attribute, so it never appears
+  // in innerText and an assertion against the page's text could not have passed.
+  const searchBox = 'input[placeholder*="Search name"]';
+  check("and Discover is what it opens on", (await page3.locator(searchBox).count()) > 0);
+
+  await page3.locator('[data-testid="discover-subtab-following"]').click({ timeout: 10000 });
+  await page3.waitForTimeout(2500);
+  const following = await page3.evaluate(() => document.body.innerText);
+  check("tapping Following shows the follow list instead of the search",
+    /not following anyone yet/i.test(following) || (await page3.locator('[data-testid="followed-teachers"]').count()) > 0,
+    following.slice(0, 220).replace(/\n/g, " | "));
+  check("and the search box is out of the way while it is showing",
+    (await page3.locator(searchBox).count()) === 0, following.slice(0, 220).replace(/\n/g, " | "));
+
+  await page3.locator('[data-testid="discover-subtab-discover"]').click({ timeout: 10000 });
+  await page3.waitForTimeout(2000);
+  check("and going back to Discover brings the search box back",
+    (await page3.locator(searchBox).count()) > 0);
+
+  /**
+   * Real conversations first, or this proves nothing.
+   *
+   * An account with no messages shows no numbers whatever the rule is, so an assertion against
+   * an empty inbox passes just as happily with the old behaviour as with the new one. The
+   * student sends one message (filling Sent) and receives two (filling Inbox with genuine
+   * unread), which is exactly the shape that used to read "Inbox (1) · Sent (1)".
+   */
+  await api(`/messages/${teacher.user.id}`, { method: "POST", token: student.token, body: { body: "Hello" } });
+  await api(`/messages/${student.user.id}`, { method: "POST", token: teacher.token, body: { body: "Hi there" } });
+  await api(`/messages/${student.user.id}`, { method: "POST", token: teacher.token, body: { body: "And again" } });
+
+  await page3.goto(`${siteUrl}/messages`, { waitUntil: "networkidle" });
+  await page3.waitForTimeout(3500);
+  const messages = await page3.evaluate(() => document.body.innerText);
+  check("the conversation is actually there, so these checks mean something",
+    /Teacher|Hi there|And again/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
+  check("Messages shows no invented count beside Sent",
+    !/Sent \(\d+\)/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
+  check("nor beside Drafts",
+    !/Drafts \(\d+\)/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
+  check("and Inbox counts unread messages, not conversations",
+    /Inbox \(2\)/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
+
+  await ctx3.close();
+
   await ctx2.close();
   await browser.close();
   stopServer();

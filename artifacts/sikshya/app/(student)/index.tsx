@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 
 import { useColors } from "@/hooks/useColors";
+import FollowedTeachers from "@/components/FollowedTeachers";
 import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
 import { matches as matchesSearch, score as searchScore } from "@/utils/search";
@@ -55,6 +56,8 @@ export default function Discover() {
   const insets = useSafeAreaInsets();
   const { unreadCount } = useNotifications();
 
+  /** Which half of Discover is showing: everybody, or just the teachers you follow. */
+  const [view, setView] = useState<"discover" | "following">("discover");
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("All");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -206,88 +209,134 @@ export default function Discover() {
           </TouchableOpacity>
         </View>
 
-        {/* Search bar */}
-        <View style={[styles.searchBar, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <Feather name="search" size={17} color={colors.mutedForeground} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.foreground }]}
-            placeholder="Search name, subject, location, keyword..."
-            placeholderTextColor={colors.mutedForeground}
-            value={search}
-            onChangeText={setSearch}
-            returnKeyType="search"
-          />
-          {!!search && (
-            <TouchableOpacity onPress={() => setSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <Feather name="x" size={16} color={colors.mutedForeground} />
-            </TouchableOpacity>
-          )}
+        {/*
+          Two ways to arrive at a teacher, side by side.
+
+          The owner asked for "Teachers You Follow" to move here from Profile and to sit in a
+          sub-tab of its own. Finding somebody new and going back to somebody you already like
+          are the same errand, and the second one was buried at the bottom of a settings screen.
+        */}
+        <View style={styles.subTabs}>
+          {([
+            { id: "discover", label: "Discover" },
+            { id: "following", label: "Following" },
+          ] as const).map((tab) => {
+            const active = view === tab.id;
+            return (
+              <TouchableOpacity
+                key={tab.id}
+                testID={`discover-subtab-${tab.id}`}
+                onPress={() => setView(tab.id)}
+                activeOpacity={0.75}
+                style={[
+                  styles.subTab,
+                  {
+                    borderColor: active ? colors.secondary : colors.border,
+                    backgroundColor: active ? colors.secondary + "12" : colors.muted,
+                  },
+                ]}
+              >
+                <Text style={[styles.subTabText, { color: active ? colors.secondary : colors.mutedForeground }]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        {/* Subject chips */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-          {SUBJECTS.map((s) => (
+        {/* Searching, filtering and sorting are Discover's; Following is just a list. */}
+        {view === "discover" && (
+          <>
+          {/* Search bar */}
+          <View style={[styles.searchBar, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+            <Feather name="search" size={17} color={colors.mutedForeground} />
+            <TextInput
+              style={[styles.searchInput, { color: colors.foreground }]}
+              placeholder="Search name, subject, location, keyword..."
+              placeholderTextColor={colors.mutedForeground}
+              value={search}
+              onChangeText={setSearch}
+              returnKeyType="search"
+            />
+            {!!search && (
+              <TouchableOpacity onPress={() => setSearch("")} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <Feather name="x" size={16} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {/* Subject chips */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+            {SUBJECTS.map((s) => (
+              <TouchableOpacity
+                key={s}
+                style={[
+                  styles.chip,
+                  {
+                    backgroundColor: subject === s ? colors.secondary : colors.muted,
+                    borderColor: subject === s ? colors.secondary : colors.border,
+                  },
+                ]}
+                onPress={() => { setSubject(s); Haptics.selectionAsync(); }}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.chipText, { color: subject === s ? "#fff" : colors.mutedForeground }]}>
+                  {s}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          {/* Sort + Filter row */}
+          <View style={styles.toolRow}>
             <TouchableOpacity
-              key={s}
-              style={[
-                styles.chip,
-                {
-                  backgroundColor: subject === s ? colors.secondary : colors.muted,
-                  borderColor: subject === s ? colors.secondary : colors.border,
-                },
-              ]}
-              onPress={() => { setSubject(s); Haptics.selectionAsync(); }}
+              style={[styles.toolBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              onPress={() => setShowSort(true)}
               activeOpacity={0.7}
             >
-              <Text style={[styles.chipText, { color: subject === s ? "#fff" : colors.mutedForeground }]}>
-                {s}
+              <Feather name="bar-chart-2" size={14} color={colors.foreground} />
+              <Text style={[styles.toolBtnText, { color: colors.foreground }]} numberOfLines={1}>
+                {currentSortLabel}
               </Text>
+              <Feather name="chevron-down" size={13} color={colors.mutedForeground} />
             </TouchableOpacity>
-          ))}
-        </ScrollView>
 
-        {/* Sort + Filter row */}
-        <View style={styles.toolRow}>
-          <TouchableOpacity
-            style={[styles.toolBtn, { backgroundColor: colors.muted, borderColor: colors.border }]}
-            onPress={() => setShowSort(true)}
-            activeOpacity={0.7}
-          >
-            <Feather name="bar-chart-2" size={14} color={colors.foreground} />
-            <Text style={[styles.toolBtnText, { color: colors.foreground }]} numberOfLines={1}>
-              {currentSortLabel}
+            <TouchableOpacity
+              style={[
+                styles.toolBtn,
+                {
+                  backgroundColor: activeFilterCount > 0 ? colors.primary + "12" : colors.muted,
+                  borderColor: activeFilterCount > 0 ? colors.primary + "40" : colors.border,
+                },
+              ]}
+              onPress={openFilter}
+              activeOpacity={0.7}
+            >
+              <Feather name="sliders" size={14} color={activeFilterCount > 0 ? colors.primary : colors.foreground} />
+              <Text style={[styles.toolBtnText, { color: activeFilterCount > 0 ? colors.primary : colors.foreground }]}>
+                Filters
+              </Text>
+              {activeFilterCount > 0 && (
+                <View style={[styles.filterBadge, { backgroundColor: colors.primary }]}>
+                  <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <Text style={[styles.resultCount, { color: colors.mutedForeground }]}>
+              {filtered.length} {filtered.length === 1 ? "teacher" : "teachers"}
             </Text>
-            <Feather name="chevron-down" size={13} color={colors.mutedForeground} />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.toolBtn,
-              {
-                backgroundColor: activeFilterCount > 0 ? colors.primary + "12" : colors.muted,
-                borderColor: activeFilterCount > 0 ? colors.primary + "40" : colors.border,
-              },
-            ]}
-            onPress={openFilter}
-            activeOpacity={0.7}
-          >
-            <Feather name="sliders" size={14} color={activeFilterCount > 0 ? colors.primary : colors.foreground} />
-            <Text style={[styles.toolBtnText, { color: activeFilterCount > 0 ? colors.primary : colors.foreground }]}>
-              Filters
-            </Text>
-            {activeFilterCount > 0 && (
-              <View style={[styles.filterBadge, { backgroundColor: colors.primary }]}>
-                <Text style={styles.filterBadgeText}>{activeFilterCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-          <Text style={[styles.resultCount, { color: colors.mutedForeground }]}>
-            {filtered.length} {filtered.length === 1 ? "teacher" : "teachers"}
-          </Text>
-        </View>
+          </View>
+          </>
+        )}
       </View>
 
+      {view === "following" ? (
+        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}>
+          <FollowedTeachers />
+        </ScrollView>
+      ) : (
+      <>
       {/* ── List ── */}
       <FlatList
         data={isSearching ? filtered : restTeachers}
@@ -526,6 +575,8 @@ export default function Discover() {
           </TouchableOpacity>
         </View>
       </Modal>
+      </>
+      )}
     </View>
   );
 }
@@ -541,6 +592,9 @@ const styles = StyleSheet.create({
   bellBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", color: "#fff" },
   searchBar: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 16, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 13 },
   searchInput: { flex: 1, fontSize: 15, fontFamily: "Inter_400Regular" },
+  subTabs: { flexDirection: "row", gap: 8, marginBottom: 12 },
+  subTab: { flex: 1, alignItems: "center", borderRadius: 12, borderWidth: 1, paddingVertical: 9 },
+  subTabText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   chips: { gap: 8, paddingVertical: 2 },
   chip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 8 },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },

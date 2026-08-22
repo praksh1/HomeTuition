@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { apiGet } from "@/utils/api";
 import { loadDrafts, type Drafts } from "@/utils/drafts";
+import { unreadTotal } from "@/utils/conversations";
 
 interface Conversation {
   otherUserId: number;
@@ -104,12 +105,17 @@ export default function ConversationList({ title }: { title: string }) {
       <View style={styles.folders}>
         {FOLDERS.map((f) => {
           const active = folder === f.id;
-          const count =
-            f.id === "drafts"
-              ? Object.keys(drafts).length
-              : conversations.filter((c) =>
-                  f.id === "inbox" ? !c.lastMessageFromMe || c.unreadCount > 0 : c.lastMessageFromMe,
-                ).length;
+          /**
+           * A number here means "unread", and nothing else.
+           *
+           * Every folder used to show how many conversations were in it, so a tidy inbox read
+           * "Inbox (1) · Sent (1) · Drafts (1)" — three numbers, none of which was anything to
+           * act on, all of them looking like the badge that means somebody is waiting for a
+           * reply. The owner asked for them gone. Only genuinely unread messages count now,
+           * and only on Inbox, which is the only folder where waiting is possible: nothing in
+           * Sent or Drafts can be unread by you.
+           */
+          const count = f.id === "inbox" ? unreadTotal(conversations) : 0;
           return (
             <TouchableOpacity
               key={f.id}

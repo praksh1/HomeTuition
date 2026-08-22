@@ -11,44 +11,11 @@ import { apiGet } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import type { Student } from "@/context/AuthContext";
 
-/**
- * Teachers this student has followed. Following is free — a bookmark, not a purchase.
- */
-interface FollowedTeacher {
-  id: number;
-  name: string;
-  subject: string | null;
-}
-
 export default function StudentProfile() {
   const { user, logout } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const student = user as Student;
-  const [following, setFollowing] = useState<FollowedTeacher[]>([]);
-  const [followingLoading, setFollowingLoading] = useState(true);
-
-  const loadFollowing = useCallback(async () => {
-    if (!student?.userId) return;
-    setFollowingLoading(true);
-    try {
-      const res = await apiGet<{ teachers: FollowedTeacher[] }>(
-        `/students/${student.userId}/followed-teachers`,
-      );
-      setFollowing(res.teachers);
-    } catch {
-      setFollowing([]);
-    } finally {
-      setFollowingLoading(false);
-    }
-  }, [student?.userId]);
-
-  useFocusEffect(
-    useCallback(() => {
-      void loadFollowing();
-    }, [loadFollowing]),
-  );
-
   const doLogout = async () => {
     await logout();
     router.replace("/welcome");
@@ -176,61 +143,22 @@ export default function StudentProfile() {
         <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-        onPress={() => router.push("/support")}
-        activeOpacity={0.7}
-        testID="customer-support-link"
-      >
-        <Feather name="help-circle" size={18} color={colors.foreground} />
-        <Text style={[styles.supportText, { color: colors.foreground }]}>Customer Support</Text>
-        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-      </TouchableOpacity>
+      {/*
+        Customer Support used to sit here.
 
-      {/* Following a teacher was a one-way door: a student could follow from Discover and then
-          had nowhere to see, or undo, who they had followed. */}
-      <View style={[styles.infoCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.cardTitle, { color: colors.foreground }]}>Teachers you follow</Text>
-        {followingLoading ? (
-          <ActivityIndicator color={colors.primary} style={{ marginVertical: 14 }} />
-        ) : following.length === 0 ? (
-          <>
-            <Text style={[styles.paySubtitle, { color: colors.mutedForeground }]}>
-              You are not following anyone yet. Follow a teacher from Discover and they will
-              appear here, so their new classes are easy to find.
-            </Text>
-            <TouchableOpacity
-              style={[styles.followBtn, { backgroundColor: colors.primary }]}
-              onPress={() => router.push("/(student)")}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.followBtnText}>Find a teacher</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          following.map((t) => (
-            <TouchableOpacity
-              key={t.id}
-              style={[styles.pmRow, { backgroundColor: colors.muted, borderColor: colors.border }]}
-              onPress={() => router.push(`/(student)/teacher/${t.id}`)}
-              activeOpacity={0.75}
-            >
-              <View style={[styles.pmIcon, { backgroundColor: colors.primary + "18" }]}>
-                <Text style={[styles.pmName, { color: colors.primary }]}>
-                  {t.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.pmType, { color: colors.foreground }]}>{t.name}</Text>
-                {!!t.subject && (
-                  <Text style={[styles.pmAccount, { color: colors.mutedForeground }]}>{t.subject}</Text>
-                )}
-              </View>
-              <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-            </TouchableOpacity>
-          ))
-        )}
-      </View>
+        It is a tab of its own now, for both roles — the owner asked for that, and then asked
+        for this link to go: "Remove the 'Support' link from the Profile section for both
+        teachers and students (it now lives in its own tab)." Two doors to the same screen is
+        one more than anybody needs, and the one buried two taps down was never the one to keep.
+      */}
+
+      {/*
+        "Teachers you follow" used to be here, at the bottom of a settings screen.
+
+        It lives in Discover now, in a sub-tab of its own, because the owner asked for that and
+        because it is the right place: finding a new teacher and going back to one you already
+        like are the same errand. See components/FollowedTeachers.tsx.
+      */}
 
       <TouchableOpacity
         style={[styles.logoutBtn, { borderColor: colors.destructive + "40", backgroundColor: colors.destructive + "08" }]}

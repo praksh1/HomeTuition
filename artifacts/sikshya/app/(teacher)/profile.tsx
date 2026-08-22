@@ -198,16 +198,15 @@ export default function TeacherProfile() {
         <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-        onPress={() => router.push("/support")}
-        activeOpacity={0.7}
-        testID="customer-support-link"
-      >
-        <Feather name="help-circle" size={18} color={colors.foreground} />
-        <Text style={[styles.supportText, { color: colors.foreground }]}>Customer Support</Text>
-        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-      </TouchableOpacity>
+      {/*
+        Customer Support used to sit here.
+
+        It is a tab of its own now, for both roles — the owner asked for that, and then asked
+        for this link to go: "Remove the 'Support' link from the Profile section for both
+        teachers and students (it now lives in its own tab)." Two doors to the same screen is
+        one more than anybody needs, and the one buried two taps down was never the one to
+        keep.
+      */}
 
       <TouchableOpacity
         style={[styles.logoutBtn, { borderColor: colors.destructive + "40", backgroundColor: colors.destructive + "08" }]}
