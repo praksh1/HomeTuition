@@ -109,3 +109,46 @@ export async function ensureSessionBoardTable(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Creates the participation table if it is not there yet.
+ *
+ * Same narrow licence as the three above: create only, additive only, unable to stop the
+ * server starting. This one is written from inside the classroom hub, on every join and every
+ * flush, so a missing table would otherwise throw on the busiest path in the product. It does
+ * not — `recordParticipation` swallows its own errors — but the gap it leaves is worse than
+ * the usual one: the evidence for a lesson taught during those minutes is not late, it is
+ * gone, and a refund argued weeks later has nothing to read.
+ */
+export async function ensureSessionParticipationTable(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_participation" (
+        "session_id" integer NOT NULL,
+        "user_id" integer NOT NULL,
+        "role" text NOT NULL,
+        "first_joined_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "last_seen_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "present_ms" integer NOT NULL DEFAULT 0,
+        "join_count" integer NOT NULL DEFAULT 0,
+        "draw_count" integer NOT NULL DEFAULT 0,
+        "message_count" integer NOT NULL DEFAULT 0,
+        CONSTRAINT "session_participation_session_id_user_id_pk"
+          PRIMARY KEY ("session_id", "user_id"),
+        CONSTRAINT "session_participation_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "session_participation_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    logger.info("session participation table is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the session participation table; run `pnpm run db:push`. " +
+        "Classes still run — but nothing is being recorded about who attended them, so a " +
+        "refund argued over one of these lessons will have no evidence to read.",
+    );
+  }
+}

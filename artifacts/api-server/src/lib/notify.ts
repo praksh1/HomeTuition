@@ -17,7 +17,12 @@ import { notifyUser } from "../ws/userHub";
  * day must not turn into a failed booking.
  */
 
-export type NotificationKind = "message" | "follower" | "session_live" | "session_invite";
+export type NotificationKind =
+  | "message"
+  | "follower"
+  | "session_live"
+  | "session_invite"
+  | "session_booked";
 
 /** Which preference switch governs each kind. */
 const PREF_KEY: Record<NotificationKind, PrefKind> = {
@@ -27,6 +32,9 @@ const PREF_KEY: Record<NotificationKind, PrefKind> = {
   // An invitation is a class about to exist, so it follows the same switch as a class going
   // live: someone who does not want to hear about classes does not want to hear about these.
   session_invite: "sessionLive",
+  // Its own switch rather than sharing one. A teacher turning off "class starting" reminders
+  // has not asked to stop being told that somebody paid them.
+  session_booked: "bookings",
 };
 
 export interface NotificationEvent {
@@ -80,6 +88,17 @@ function emailFor(event: NotificationEvent, recipientName: string): { subject: s
           `"${event.topic ?? ""}".\n` +
           (link ? `\nSee it and book your place: ${link}\n` : "") +
           `\nYour place is not held until you book and pay for it.` +
+          signoff,
+      };
+    }
+    case "session_booked": {
+      const link = appUrl(`/session/${event.sessionId ?? ""}`);
+      return {
+        subject: `${event.fromName ?? "A student"} booked "${event.topic ?? "your class"}"`,
+        text:
+          `${hello}\n\n${event.fromName ?? "A student"} has booked and paid for your class ` +
+          `"${event.topic ?? ""}".\n` +
+          (link ? `\nSee who is coming: ${link}\n` : "") +
           signoff,
       };
     }

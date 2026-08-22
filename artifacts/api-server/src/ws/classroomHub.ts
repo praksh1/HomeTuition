@@ -8,6 +8,7 @@ import { verifyToken, type JwtPayload } from "../lib/auth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
 import { addUserChannel } from "./userHub";
 import { markTeacherPresent } from "../lib/sessionLifecycle";
+import { recordParticipation } from "../lib/participation";
 import { forgetBoard, loadBoard, saveBoardNow, saveBoardSoon } from "../lib/boardStore";
 import { startHeartbeat, watchHeartbeat } from "./heartbeat";
 
@@ -38,6 +39,14 @@ const MAX_SCENE_FILES = 40;
  * teacher who is really there is never mistaken for one who has gone.
  */
 const TEACHER_PRESENCE_INTERVAL_MS = 30_000;
+/**
+ * How often each person's time in the room is written down.
+ *
+ * The same half-minute as the teacher's presence above, and for the same reason: fine enough
+ * that a class ended by a browser crash is recorded to within thirty seconds, coarse enough
+ * that a room of ten people costs twenty rows a minute rather than one per stroke.
+ */
+const PARTICIPATION_FLUSH_INTERVAL_MS = 30_000;
 
 interface BoardState {
   material: { kind: "image" | "pdf"; dataUrl: string } | null;
@@ -456,6 +465,49 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
       }
     }
 
+    /**
+     * The attendance ledger for this connection.
+     *
+     * Counted here and written in batches, because the alternative is a database round trip
+     * per stroke on the busiest path in the product. See lib/participation.ts; the reason any
+     * of this is recorded at all is REFUNDS.md — a refund argued three weeks after a lesson
+     * has nothing to read unless somebody wrote down who was in the room.
+     */
+    const numericSessionId = Number(sessionId);
+    const ledger = { since: Date.now(), draws: 0, messages: 0, opened: true };
+    let ledgerTimer: ReturnType<typeof setInterval> | null = null;
+
+    function flushLedger(): void {
+      if (!Number.isFinite(numericSessionId)) return;
+      const now = Date.now();
+      const delta = {
+        presentMs: now - ledger.since,
+        drawCount: ledger.draws,
+        messageCount: ledger.messages,
+        opened: ledger.opened,
+      };
+      ledger.since = now;
+      ledger.draws = 0;
+      ledger.messages = 0;
+      ledger.opened = false;
+      void recordParticipation(
+        numericSessionId,
+        userId,
+        isSessionTeacher ? "teacher" : "student",
+        delta,
+      );
+    }
+
+    if (Number.isFinite(numericSessionId)) {
+      // Written immediately rather than on the first flush: a student who opens a class and
+      // finds no teacher may well close it inside thirty seconds, and "I was there and nobody
+      // came" is exactly the case this ledger exists to be able to answer.
+      flushLedger();
+      ledgerTimer = setInterval(() => {
+        if (ws.readyState === 1) flushLedger();
+      }, PARTICIPATION_FLUSH_INTERVAL_MS);
+    }
+
     const count = rooms.get(sessionId)!.size;
     broadcast(sessionId, { type: "presence", count });
 
@@ -472,6 +524,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
       switch (msg.type) {
         case "chat":
+          ledger.messages += 1;
           broadcast(sessionId, {
             type: "chat",
             senderName: name,
@@ -489,6 +542,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           if (!isSessionTeacher) break;
           const shape = sanitizeDrawCommit(msg);
           if (!shape) break;
+          ledger.draws += 1;
           const board = getBoard(sessionId);
           board.paths.push(shape);
           if (board.paths.length > MAX_REPLAY_PATHS) board.paths.shift();
@@ -500,6 +554,11 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           if (!isSessionTeacher) break;
           const incoming = Array.isArray(msg.elements) ? (msg.elements as SceneElement[]) : [];
           if (incoming.length === 0 || incoming.length > MAX_SCENE_ELEMENTS) break;
+
+          // One per board-changing message, not per element: Excalidraw re-sends an element on
+          // every frame of a drag, so counting elements would say a teacher who drew one line
+          // and moved it about had drawn four hundred things.
+          ledger.draws += 1;
 
           const board = getBoard(sessionId);
           const accepted: SceneElement[] = [];
@@ -633,6 +692,11 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
     });
 
     ws.on("close", () => {
+      // Before anything else: whatever this connection did is written down even if the room
+      // teardown below throws. A lesson's evidence is not worth losing to a tidying-up bug.
+      if (ledgerTimer) clearInterval(ledgerTimer);
+      flushLedger();
+
       rooms.get(sessionId)?.delete(client);
       const remaining = rooms.get(sessionId);
       if (!remaining?.size) {

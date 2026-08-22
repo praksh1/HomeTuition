@@ -14,18 +14,26 @@ export interface NotificationPrefs {
 }
 
 export type PrefChannel = "push" | "email";
-export type PrefKind = "messages" | "followers" | "sessionLive" | "reminders";
+export type PrefKind = "messages" | "followers" | "sessionLive" | "reminders" | "bookings";
 
 export const PREF_CHANNELS: readonly PrefChannel[] = ["push", "email"];
-export const PREF_KINDS: readonly PrefKind[] = ["messages", "followers", "sessionLive", "reminders"];
+export const PREF_KINDS: readonly PrefKind[] = [
+  "messages",
+  "followers",
+  "sessionLive",
+  "reminders",
+  "bookings",
+];
 
 export const DEFAULT_PREFS: NotificationPrefs = {
   // In-app and device notifications are on: they are the app working as expected, and a user
   // who does not want them can turn them off.
-  push: { messages: true, followers: true, sessionLive: true, reminders: true },
-  // Email is off by default except for messages, which is the one thing genuinely missed
-  // while the app is closed.
-  email: { messages: true, followers: false, sessionLive: false, reminders: false },
+  push: { messages: true, followers: true, sessionLive: true, reminders: true, bookings: true },
+  // Email is off by default except for messages and bookings — the two things genuinely
+  // missed while the app is closed. A booking is a teacher's income arriving and a student
+  // expecting them at a particular hour; a teacher who first hears about it by finding
+  // somebody waiting in the room has been failed by us, not by the student.
+  email: { messages: true, followers: false, sessionLive: false, reminders: false, bookings: true },
 };
 
 /**

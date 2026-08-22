@@ -3,7 +3,12 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { attachClassroomHub } from "./ws/classroomHub";
 import { describePaymentMode, paymentMode } from "./lib/payments";
-import { ensureNotificationPrefsTable, ensureSessionActivityTable, ensureSessionBoardTable } from "./lib/ensureSchema";
+import {
+  ensureNotificationPrefsTable,
+  ensureSessionActivityTable,
+  ensureSessionBoardTable,
+  ensureSessionParticipationTable,
+} from "./lib/ensureSchema";
 
 const rawPort = process.env["PORT"];
 
@@ -27,6 +32,7 @@ server.listen(port, () => {
   void ensureNotificationPrefsTable();
   void ensureSessionActivityTable();
   void ensureSessionBoardTable();
+  void ensureSessionParticipationTable();
   // Whether real money can move is too important to have to go and look up.
   if (paymentMode() === "simulated") logger.warn(describePaymentMode());
   else logger.info(describePaymentMode());

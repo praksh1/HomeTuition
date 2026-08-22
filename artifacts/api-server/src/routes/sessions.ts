@@ -12,9 +12,11 @@ import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
 import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
-import { notifyMany } from "../lib/notify";
+import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
 import { canStart } from "../lib/sessionStart";
+import { attendanceFor, enrolledStudents } from "../lib/participation";
+import { findingsFor, teacherIsLate } from "../lib/sessionEvidence";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -611,10 +613,34 @@ async function bookSession(req: Request, res: Response): Promise<void> {
       case "already":
         res.status(200).json({ alreadyBooked: true, paid: true });
         return;
-      default:
+      default: {
         req.log.info({ sessionId: id, studentId: user.userId, price }, "session booked and paid");
+        /**
+         * Tell the teacher somebody is coming.
+         *
+         * This was simply missing: a student could book, pay and turn up, and the first the
+         * teacher knew of it was finding them in the room — or not finding out at all, for a
+         * class nobody happened to open. Reported by the owner as "the teacher does not get
+         * any notification when a student registers for the session".
+         *
+         * After the transaction, never inside it: the booking is committed and paid at this
+         * point, and a notification that cannot be sent must not undo somebody's payment.
+         */
+        const [studentRow] = await db
+          .select({ name: usersTable.name })
+          .from(usersTable)
+          .where(eq(usersTable.id, user.userId));
+        notify(session.teacherId, {
+          kind: "session_booked",
+          sessionId: id,
+          topic: session.topic,
+          fromUserId: user.userId,
+          fromName: studentRow?.name ?? "A student",
+          at: new Date().toISOString(),
+        });
         res.status(201).json({ ...result.enrolment, paid: true });
         return;
+      }
     }
   } catch (e) {
     req.log.error({ err: e, sessionId: id, studentId: user.userId }, "booking failed");
@@ -708,6 +734,118 @@ router.get("/sessions/:id/access", requireAuth, async (req, res): Promise<void> 
     /** When the early-join window opens, so the app can count down to it. */
     joinOpensAt: opensAt,
     joinWindowMinutes: JOIN_WINDOW_MINUTES,
+  });
+});
+
+
+/**
+ * Who was expected in this class, and who actually turned up.
+ *
+ * Three things the owner asked for come out of this one endpoint, and they are the same
+ * question asked at different moments:
+ *
+ * - *Before* the class: the teacher opens the session's own page and sees who has booked,
+ *   without having to start it to find out. "The teacher should be able to click on it and
+ *   see the students that have enrolled."
+ * - *During* it: a student sitting in the room can tell whether the teacher has arrived, and
+ *   after ten minutes is offered a way to get help. `serverTime` is here for that — a cheap
+ *   phone with a wrong clock must not decide on its own that a punctual teacher is late.
+ * - *Afterwards*: the completed class shows who attended, and a refund argued weeks later has
+ *   something to read. See REFUNDS.md.
+ *
+ * Who may read it is deliberately not `canAccessSession`. That answers "may this person be in
+ * the room", which is false for everybody once a class is over — and the moment a student most
+ * needs the record is precisely after the class they are disputing has finished. The rule here
+ * is "may this person read the record of this class": its teacher, or a student who paid.
+ */
+router.get("/sessions/:id/attendance", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
+
+  const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id));
+  if (!session) { res.status(404).json({ error: "Session not found" }); return; }
+
+  const membership = await getSessionMembership(id, req.user!.userId);
+  if (!membership || (!membership.isSessionTeacher && !membership.hasPaid)) {
+    res.status(403).json({ error: "You do not have access to this session." });
+    return;
+  }
+
+  const activity = await activityFor(id);
+  const attendance = await attendanceFor(id);
+  const scheduled = {
+    date: session.date,
+    duration: session.duration,
+    startedAt: session.startedAt,
+    endedAt: activity.endedAt,
+  };
+  const teacherRecord = attendance.rows.find((row) => row.role === "teacher") ?? null;
+
+  const shared = {
+    sessionId: id,
+    // The server's clock, so the app can run a timestamp that agrees with the rules the server
+    // enforces rather than with whatever the handset believes the time is.
+    serverTime: new Date().toISOString(),
+    startedAt: session.startedAt,
+    endedAt: activity.endedAt,
+    status: session.status,
+    /** Null when the ledger could not be read — which is not the same as "no teacher came". */
+    teacherJoinedAt: attendance.known ? (teacherRecord?.firstJoinedAt ?? null) : null,
+    teacherIsLate: attendance.known ? teacherIsLate(scheduled, teacherRecord) : false,
+    /**
+     * False means "we could not read the record", never "nothing happened". The app has to be
+     * able to tell those apart, or a database blip shows a student that their teacher never
+     * came to a lesson they both sat through.
+     */
+    known: attendance.known,
+  };
+
+  if (!membership.isSessionTeacher) {
+    // A student is told about the teacher and about themselves. Not about the other students:
+    // paying for a class does not buy the register.
+    const mine = attendance.rows.find((row) => row.userId === req.user!.userId) ?? null;
+    res.json({
+      ...shared,
+      role: "student",
+      you: mine,
+      teacher: teacherRecord,
+      attendeeCount: attendance.rows.filter((row) => row.role === "student").length,
+    });
+    return;
+  }
+
+  const enrolled = await enrolledStudents(id);
+  const byUser = new Map(attendance.rows.map((row) => [row.userId, row]));
+
+  res.json({
+    ...shared,
+    role: "teacher",
+    teacher: teacherRecord,
+    /**
+     * Everyone who paid, each carrying what the ledger knows about them.
+     *
+     * Built from the enrolment list rather than the attendance list on purpose: a student who
+     * paid and never opened the class has no ledger row at all, and they are exactly the
+     * person a teacher needs to see. `attended` is false for them, not missing.
+     */
+    enrolled: enrolled.map((student) => {
+      const record = byUser.get(student.userId) ?? null;
+      return {
+        ...student,
+        attended: !!record,
+        presentMs: record?.presentMs ?? 0,
+        joinCount: record?.joinCount ?? 0,
+        firstJoinedAt: record?.firstJoinedAt ?? null,
+        lastSeenAt: record?.lastSeenAt ?? null,
+        messageCount: record?.messageCount ?? 0,
+      };
+    }),
+    // Plain statements of fact with the numbers attached, for the teacher and for whoever
+    // reads a dispute later. Deliberately not a verdict — see lib/sessionEvidence.ts.
+    findings: attendance.known
+      ? findingsFor(scheduled, attendance.rows, enrolled.map((e) => ({ userId: e.userId, name: e.name })))
+      : [],
   });
 });
 

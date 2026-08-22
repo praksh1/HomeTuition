@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_PREFS, mergePrefs, readPrefs } from "./notificationPrefs.ts";
+import { DEFAULT_PREFS, PREF_KINDS, mergePrefs, readPrefs } from "./notificationPrefs.ts";
 
 test("a user who has never set anything gets the defaults", () => {
   assert.deepEqual(readPrefs(null), DEFAULT_PREFS);
@@ -55,9 +55,22 @@ test("non-boolean values are rejected so the column stays clean", () => {
 });
 
 test("every switch can be turned off explicitly", () => {
-  const allOff = {
-    push: { messages: false, followers: false, sessionLive: false, reminders: false },
-    email: { messages: false, followers: false, sessionLive: false, reminders: false },
-  };
+  // Built from PREF_KINDS rather than a list written out by hand. A hand-written list only
+  // covers the switches somebody remembered on the day, and silently stops covering the next
+  // one added — which is the opposite of what a test called "every switch" should do.
+  const off = Object.fromEntries(PREF_KINDS.map((kind) => [kind, false]));
+  const allOff = { push: { ...off }, email: { ...off } };
   assert.deepEqual(mergePrefs(DEFAULT_PREFS, allOff), allOff);
+});
+
+test("an older app that has never heard of a switch does not turn it off", () => {
+  // The app on a phone is always behind the server. A build that sends only the switches it
+  // knows about must leave the rest alone, or every new notification would arrive silenced for
+  // anyone who had not updated.
+  const merged = mergePrefs(DEFAULT_PREFS, { push: { messages: false } });
+  assert.equal(merged.push.messages, false, "the switch it did send is honoured");
+  for (const kind of PREF_KINDS) {
+    if (kind === "messages") continue;
+    assert.equal(merged.push[kind], DEFAULT_PREFS.push[kind], `${kind} was left alone`);
+  }
 });
