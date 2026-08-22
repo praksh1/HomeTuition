@@ -16,9 +16,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
-import { PREF_LABELS, type PrefChannel, type PrefKind } from "@/utils/notificationPrefs";
+import { PREF_LABELS, PREF_ORDER, type PrefChannel, type PrefKind } from "@/utils/notificationPrefs";
 
-const ORDER: PrefKind[] = ["messages", "sessionLive", "followers", "reminders"];
+/** Every switch, in a deliberate order. See utils/notificationPrefs.ts for why it lives there. */
+const ORDER: PrefKind[] = PREF_ORDER;
 
 export default function NotificationSettingsScreen() {
   const colors = useColors();
