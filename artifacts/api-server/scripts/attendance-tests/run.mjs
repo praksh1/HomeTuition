@@ -433,6 +433,72 @@ async function run() {
       mine.body?.some((d) => d.sessionId === session.id && d.evidenceUrl === null));
   }
 
+  console.log("\nA full room, all moving at once\n");
+
+  {
+    /**
+     * Nine people joining, talking and dropping at the same time.
+     *
+     * The owner has asked for changes to be proven at scale rather than spot-checked, and for
+     * this the scale *is* the test: the ledger is written from a timer and from every
+     * disconnect, so several writes land on the same row at once. Every column is
+     * `existing + delta` rather than a set precisely so that they add up instead of
+     * overwriting each other, and only concurrency shows whether that is true.
+     */
+    const host = await register("teacher");
+    const session = await createSession(host);
+    const pupils = [];
+    for (let i = 0; i < 8; i += 1) {
+      const pupil = await register("student", `Pupil ${i}`);
+      await book(pupil, session.id);
+      pupils.push(pupil);
+    }
+
+    const t = classroom(host.token, session.id, "Teacher");
+    await t.open();
+
+    const VISITS = 3;
+    await Promise.all(pupils.map(async (pupil, i) => {
+      for (let round = 0; round < VISITS; round += 1) {
+        const seat = classroom(pupil.token, session.id, `Pupil ${i}`);
+        await seat.open();
+        seat.send({ type: "chat", text: `hello ${round}` });
+        // Staggered, so the disconnects interleave rather than arriving in a neat batch.
+        await wait(120 + i * 10);
+        await seat.close();
+      }
+    }));
+
+    const STROKES = 20;
+    for (let k = 0; k < STROKES; k += 1) {
+      t.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3, d: `M${k},1 L${k},2` });
+    }
+    await wait(400);
+    await t.close();
+
+    const wrong = [];
+    for (const [i, pupil] of pupils.entries()) {
+      const row = ledgerRow(session.id, pupil.user.id);
+      if (row?.joinCount !== VISITS || row?.messageCount !== VISITS || !(row?.presentMs > 0)) {
+        wrong.push(`Pupil ${i}: joins=${row?.joinCount} messages=${row?.messageCount} presentMs=${row?.presentMs}`);
+      }
+    }
+    check(`each of 8 students has all ${VISITS} visits and all ${VISITS} messages counted`,
+      wrong.length === 0, wrong.join("; "));
+
+    const hostRow = ledgerRow(session.id, host.user.id);
+    check("the teacher's strokes all landed, none lost to the traffic",
+      hostRow?.drawCount === STROKES, `drawCount=${hostRow?.drawCount}`);
+    check("and the teacher is still recorded as having joined once",
+      hostRow?.joinCount === 1, `joinCount=${hostRow?.joinCount}`);
+
+    const read = await api(`/sessions/${session.id}/attendance`, { token: host.token });
+    check("all 8 are on the register", (read.body?.enrolled ?? []).length === 8,
+      `listed ${(read.body?.enrolled ?? []).length}`);
+    check("and all 8 are marked as having attended",
+      (read.body?.enrolled ?? []).every((e) => e.attended === true));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length) {
     console.log("\nFailures:");
