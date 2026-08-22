@@ -18,6 +18,14 @@ explanation.
 failed in CI it threw away the one thing that would have said why — the script prints the API's
 log before giving up, and none of it reached the run. It captures and prints the output now.
 
-That last point is the reason the original CI failure here was never diagnosed: it was not
-reproducible locally (the old script came up in two seconds), and the evidence had been
-discarded. If it recurs, the log will now be in the run.
+**And `cd` to the repo root first.** `pnpm --filter` runs the test with its working directory
+set to the *package*, so a relative `node artifacts/api-server/dist/index.mjs` resolves to
+`artifacts/api-server/artifacts/api-server/dist/index.mjs` and node exits before binding
+anything. The `board-persistence` step had `cd "$GITHUB_WORKSPACE"` from the start and worked;
+the one written later did not and failed three runs in a row.
+
+That last point is what the discarded output was hiding. The cause was in the very first
+failing log the whole time, one line long — and it took three runs to see because the script's
+output was thrown away and the local reproduction ran from the repo root, where the relative
+path happens to work. Reproduce a CI failure with **CI's working directory**, not just CI's
+command.

@@ -185,6 +185,16 @@ jobs:
           #!/bin/bash
           set -euo pipefail
 
+          # Run from the repo root, whatever called this.
+          #
+          # `pnpm --filter` runs the test with its working directory set to the *package*, so
+          # the relative path below resolved to
+          # artifacts/api-server/artifacts/api-server/dist/index.mjs and node exited before it
+          # bound anything. Thirty seconds of health checks then reported "never came back up"
+          # with no clue why, because the restart's output was being discarded — which is how
+          # this went undiagnosed for three runs.
+          cd "${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
+
           # Killed by its recorded id, never by matching its command line.
           #
           # `pkill -f` matches any process whose command line contains the pattern, which
