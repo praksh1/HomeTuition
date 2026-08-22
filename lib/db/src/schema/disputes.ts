@@ -9,6 +9,10 @@ export const disputeReasonEnum = pgEnum("dispute_reason", [
   "Payment Issue",
   "Technical Failure",
   "Inappropriate Behavior",
+  // Its own reason rather than "Other". A refund is the one thing a report can ask for that
+  // has money at the end of it, and a support queue where those are indistinguishable from
+  // general questions is one where they get answered last. See REFUNDS.md.
+  "Refund Request",
   "Other",
 ]);
 

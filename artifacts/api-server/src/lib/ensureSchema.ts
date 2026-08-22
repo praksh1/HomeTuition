@@ -281,3 +281,26 @@ export async function ensureActivityLogTable(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Adds the reasons a report can be filed under, if the database is behind.
+ *
+ * `ADD VALUE IF NOT EXISTS` on an enum is additive and idempotent: it cannot remove a value,
+ * cannot rewrite a row, and does nothing on a database that already has it. Without it, a
+ * server that knows about "Refund Request" and a database that does not would reject every
+ * refund request with a foreign-looking database error, and refunds are the reports that
+ * matter most.
+ */
+export async function ensureDisputeReasons(): Promise<void> {
+  try {
+    await db.execute(sql`ALTER TYPE "dispute_reason" ADD VALUE IF NOT EXISTS 'Refund Request'`);
+    logger.info("dispute reasons are up to date");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not add the refund reason; run `pnpm run db:push`. " +
+        "Reports still work — a refund request just cannot be filed under its own reason.",
+    );
+  }
+}

@@ -124,6 +124,40 @@ export function teacherIsLate(
   return lateBy > TEACHER_LATE_MINUTES * 60_000;
 }
 
+/**
+ * Did the teacher end the call early and never come back before the class was due to finish?
+ *
+ * The owner's rule, and the one refund case the app can recognise on its own: "If a teacher
+ * ends a call early and fails to reopen it before the scheduled end time, students must be
+ * able to request a refund." Both halves matter — ending early is not itself a problem, since
+ * a teacher who hangs up by mistake has ten minutes to walk back in. It becomes one when they
+ * do not.
+ *
+ * Answers `false` while the class could still be reopened, because a question asked too early
+ * has no true answer yet: at 10:40 in an 11:00 class, a teacher who left at 10:30 may be back
+ * in a moment.
+ *
+ * Deliberately generous about what counts as early. A class that ran to within a couple of
+ * minutes of its end was taught; the tolerance is there so a teacher who wraps up at 10:58 is
+ * not reported for it.
+ */
+export const EARLY_FINISH_TOLERANCE_MINUTES = 3;
+
+export function endedEarlyWithoutReturning(
+  session: ScheduledSession,
+  now: number = Date.now(),
+): boolean {
+  const ended = ms(session.endedAt);
+  const scheduled = ms(session.date);
+  if (ended === null || scheduled === null) return false;
+
+  const scheduledEnd = scheduled + session.duration * 60_000;
+  // Still time to come back: not yet a complaint.
+  if (now < scheduledEnd) return false;
+
+  return ended < scheduledEnd - EARLY_FINISH_TOLERANCE_MINUTES * 60_000;
+}
+
 /** A statement of fact about a class, with the numbers that support it. */
 export interface Finding {
   /** A stable key, so the app can style or group these without matching on English. */
@@ -131,6 +165,7 @@ export interface Finding {
     | "teacher_never_joined"
     | "teacher_late"
     | "teacher_left_early"
+    | "teacher_ended_early_and_did_not_return"
     | "teacher_connection_unstable"
     | "student_never_joined"
     | "student_barely_attended"
@@ -215,6 +250,21 @@ export function findingsFor(
           detail: `The class ended after ${ranFor} minutes of a booked ${session.duration}.`,
         });
       }
+    }
+
+    if (endedEarlyWithoutReturning(session, now)) {
+      const ended = ms(session.endedAt);
+      const scheduled = ms(session.date);
+      const short = ended !== null && scheduled !== null
+        ? Math.round((scheduled + session.duration * 60_000 - ended) / 60_000)
+        : 0;
+      findings.push({
+        code: "teacher_ended_early_and_did_not_return",
+        userId: teacher.userId,
+        detail:
+          `The teacher ended the class ${short} minutes before it was due to finish and did ` +
+          `not reopen it.`,
+      });
     }
 
     if (teacher.drawCount === 0) {

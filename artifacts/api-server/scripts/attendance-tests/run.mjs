@@ -499,6 +499,81 @@ async function run() {
       (read.body?.enrolled ?? []).every((e) => e.attended === true));
   }
 
+  console.log("\nAsking for a refund when a teacher left early\n");
+
+  {
+    const teacher = await register("teacher");
+    const student = await register("student", "Short-changed");
+    const other = await register("student", "Uninvolved");
+    const session = await createSession(teacher, { minutesFromNow: 1, duration: 60 });
+    await book(student, session.id);
+
+    // What the dropdown offers before anything has gone wrong.
+    const before = await api("/support/sessions", { token: student.token });
+    check("the support form lists the student's recent classes", before.status === 200, `status=${before.status}`);
+    const listed = (before.body?.sessions ?? []).find((s) => s.id === session.id);
+    check("including this one", !!listed);
+    check("marked as theirs to attend, not to teach", listed?.yourRole === "student", listed?.yourRole);
+    check("and not flagged, because nothing has happened yet", listed?.endedEarly === false);
+
+    check("someone else's class is not on their list",
+      !(before.body?.sessions ?? []).some((s) => s.id !== session.id && s.yourRole === "student" && s.teacherName === undefined));
+
+    const asOther = await api("/support/sessions", { token: other.token });
+    check("a student with no classes gets an empty list, not somebody else's",
+      (asOther.body?.sessions ?? []).every((s) => s.id !== session.id),
+      JSON.stringify((asOther.body?.sessions ?? []).map((s) => s.id)));
+
+    const asTeacher = await api("/support/sessions", { token: teacher.token });
+    check("a teacher sees their own class, as theirs",
+      (asTeacher.body?.sessions ?? []).some((s) => s.id === session.id && s.yourRole === "teacher"));
+
+    /**
+     * The teacher opens it, ends it after a few minutes, and never comes back. Then the class
+     * runs past the time it was booked to finish, which is the moment the question becomes
+     * answerable — before that they might still have walked back in.
+     */
+    await api(`/sessions/${session.id}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+    await api(`/sessions/${session.id}`, { method: "PATCH", token: teacher.token, body: { status: "completed" } });
+
+    /**
+     * The class is moved into the past *and* the moment it ended is moved with it.
+     *
+     * Ageing only the booked slot produces a class that ended after its own finish time, which
+     * is not this case at all — it is a class that overran. The state being tested is a
+     * teacher who ended five minutes in and never came back, so both halves have to say so.
+     */
+    sql(`update sessions set date = now() - interval '90 minutes' where id = ${session.id}`);
+    sql(
+      `update session_activity set ended_at = (select date from sessions where id = ${session.id}) ` +
+      `+ interval '5 minutes' where session_id = ${session.id}`,
+    );
+
+    const after = await api("/support/sessions", { token: student.token });
+    const flagged = (after.body?.sessions ?? []).find((s) => s.id === session.id);
+    check("once the class is over, it is flagged as ended early", flagged?.endedEarly === true,
+      JSON.stringify(flagged));
+
+    const filed = await api("/disputes", { method: "POST", token: student.token, body: {
+      reason: "Refund Request",
+      description: "The teacher left after five minutes and never came back.",
+      sessionId: session.id,
+    } });
+    check("a refund can be requested under its own reason", filed.status === 201, `status=${filed.status} ${JSON.stringify(filed.body)}`);
+    check("and is stored against the class", filed.body?.sessionId === session.id);
+    check("with no file needed", filed.body?.evidenceUrl === null);
+
+    const stolen = await api("/disputes", { method: "POST", token: other.token, body: {
+      reason: "Refund Request", description: "Not my class.", sessionId: session.id,
+    } });
+    check("somebody who was not in the class cannot ask for its refund", stolen.status === 403, `status=${stolen.status}`);
+
+    const logged = sql(
+      `select count(*) from activity_log where action='dispute.create' and user_id=${student.user.id}`,
+    );
+    check("filing it is written down", Number(logged) >= 1, logged);
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length) {
     console.log("\nFailures:");

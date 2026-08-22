@@ -6,6 +6,7 @@ import {
   findingsFor,
   teacherIsLate,
   teacherMinutesLate,
+  endedEarlyWithoutReturning,
   type PresenceRecord,
   type ScheduledSession,
 } from "./sessionEvidence.ts";
@@ -196,4 +197,51 @@ test("being late does not stop being true once the teacher walks in", () => {
   const teacher = present({ firstJoinedAt: new Date(START + 15 * MIN) });
   assert.equal(teacherIsLate(session(), teacher, START + 16 * MIN), true);
   assert.equal(teacherIsLate(session(), teacher, START + 90 * MIN), true);
+});
+
+const END = START + 60 * MIN;
+
+test("a class that ran to its finish is not an early end", () => {
+  const ran = session({ endedAt: new Date(END) });
+  assert.equal(endedEarlyWithoutReturning(ran, END + 30 * MIN), false);
+});
+
+test("wrapping up two minutes early is teaching, not a complaint", () => {
+  const ran = session({ endedAt: new Date(END - 2 * MIN) });
+  assert.equal(endedEarlyWithoutReturning(ran, END + 30 * MIN), false);
+});
+
+test("a class ended half an hour early and never reopened is the refund case", () => {
+  const cut = session({ endedAt: new Date(START + 30 * MIN) });
+  assert.equal(endedEarlyWithoutReturning(cut, END + 5 * MIN), true);
+});
+
+test("but not while the teacher could still walk back in", () => {
+  // Asked at 10:40 about an 11:00 class: the teacher who left at 10:30 may be back in a
+  // moment, and a question asked too early has no true answer yet.
+  const cut = session({ endedAt: new Date(START + 30 * MIN) });
+  assert.equal(endedEarlyWithoutReturning(cut, START + 40 * MIN), false);
+});
+
+test("a class that never ended is not an early end", () => {
+  assert.equal(endedEarlyWithoutReturning(session({ endedAt: null }), END + 30 * MIN), false);
+});
+
+test("an unreadable date decides nothing here either", () => {
+  const broken = session({ date: "not a date", endedAt: new Date(START) });
+  assert.equal(endedEarlyWithoutReturning(broken, END + 30 * MIN), false);
+});
+
+test("the finding says how much of the class was missed", () => {
+  const cut = session({ endedAt: new Date(START + 20 * MIN) });
+  const found = findingsFor(cut, [present({ lastSeenAt: new Date(START + 20 * MIN), presentMs: 20 * MIN })], [], END + 30 * MIN);
+  const early = found.find((f) => f.code === "teacher_ended_early_and_did_not_return");
+  assert.ok(early, "expected an ended-early finding");
+  assert.match(early.detail, /40 minutes before it was due to finish/);
+});
+
+test("a class taught to the end raises no ended-early finding", () => {
+  const ran = session({ endedAt: new Date(END) });
+  const codes = findingsFor(ran, [present()], [], END + 30 * MIN).map((f) => f.code);
+  assert.ok(!codes.includes("teacher_ended_early_and_did_not_return"));
 });

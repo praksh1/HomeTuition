@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Platform,
   ScrollView,
@@ -15,9 +15,17 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { notify } from "@/utils/alerts";
 import { useColors } from "@/hooks/useColors";
-import { apiPost } from "@/utils/api";
+import { apiGet, apiPost } from "@/utils/api";
 
-const REASONS = ["Payment Issue", "Technical Failure", "Inappropriate Behavior", "Other"] as const;
+const REASONS = [
+  "Payment Issue",
+  "Technical Failure",
+  "Inappropriate Behavior",
+  // Its own reason rather than "Other": a refund is the one report with money at the end of
+  // it, and a queue where those look like general questions is one where they wait longest.
+  "Refund Request",
+  "Other",
+] as const;
 type Reason = (typeof REASONS)[number];
 
 interface UploadUrlResponse {
@@ -25,6 +33,19 @@ interface UploadUrlResponse {
    *  `undefined` and a PUT to nowhere. That was the second of two faults in this upload. */
   uploadURL: string;
   objectPath: string;
+}
+
+/** One of the user's own classes from the past week, as the support form lists it. */
+interface ReportableSession {
+  id: number;
+  topic: string;
+  subject: string;
+  date: string;
+  status: string;
+  teacherName: string;
+  yourRole: "teacher" | "student";
+  /** The teacher ended it early and never came back — the one refund case we can recognise. */
+  endedEarly: boolean;
 }
 
 interface PickedFile {
@@ -60,9 +81,57 @@ export default function SupportScreen() {
     REASONS.includes(presetReason as Reason) ? (presetReason as Reason) : null,
   );
   const [reasonOpen, setReasonOpen] = useState(false);
+
+  /**
+   * Which class this is about, if any.
+   *
+   * The owner asked for a dropdown of the user's classes from the past seven days plus a "Not
+   * session related" option. It matters for more than tidiness: a report that names a class
+   * lets the server read its own record of what happened — who was in that room and when —
+   * which is better evidence than anything the person filing it could attach.
+   */
+  const [sessions, setSessions] = useState<ReportableSession[]>([]);
+  const [sessionsKnown, setSessionsKnown] = useState(true);
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [chosenSession, setChosenSession] = useState<number | null>(null);
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<PickedFile | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiGet<{ sessions: ReportableSession[]; known: boolean }>("/support/sessions");
+        if (cancelled) return;
+        setSessions(res.sessions ?? []);
+        setSessionsKnown(res.known !== false);
+      } catch {
+        if (!cancelled) setSessionsKnown(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Arrived from a class's own page — that class is the one being reported, so it is chosen.
+  useEffect(() => {
+    if (sessionId) setChosenSession(Number(sessionId));
+  }, [sessionId]);
+
+  /**
+   * A class the teacher ended early and never came back to.
+   *
+   * "If a teacher ends a call early and fails to reopen it before the scheduled end time,
+   * students must be able to request a refund." The server works out which classes those are;
+   * this notices when the one being reported is one of them and offers the refund reason
+   * rather than making a student explain from scratch what the app already knows.
+   */
+  const selected = sessions.find((session) => session.id === chosenSession) ?? null;
+  const refundable = selected?.endedEarly === true && selected.yourRole === "student";
+
+  useEffect(() => {
+    if (refundable && reason === null) setReason("Refund Request");
+  }, [refundable, reason]);
 
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -156,7 +225,7 @@ export default function SupportScreen() {
         reason,
         description: description.trim(),
         evidenceUrl,
-        ...(sessionId ? { sessionId: Number(sessionId) } : {}),
+        ...(chosenSession !== null ? { sessionId: chosenSession } : {}),
       });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       notify(
@@ -170,6 +239,7 @@ export default function SupportScreen() {
       setDescription("");
       setFile(null);
       setReason(null);
+      setChosenSession(null);
       if (router.canGoBack()) router.back();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Something went wrong. Please try again.";
@@ -187,7 +257,7 @@ export default function SupportScreen() {
    * it, the server already holds the record of who was in that room and when — better evidence
    * than a screenshot, and evidence neither side can edit.
    */
-  const needsEvidence = !sessionId;
+  const needsEvidence = chosenSession === null;
   const canSubmit =
     !!reason && description.trim().length > 0 && (!needsEvidence || !!file) && !submitting;
 
@@ -221,6 +291,96 @@ export default function SupportScreen() {
           : "Report an issue or file a dispute. Please provide as much detail as possible along " +
             "with supporting evidence so our team can help you quickly."}
       </Text>
+
+      {/*
+        Which class this is about.
+
+        The owner's ask: "Add a 'Session' dropdown showing the user's enrolled sessions from
+        the past 7 days, plus a 'Not session related' option for general issues." Seven days is
+        the refund window; past it there is nothing left to ask for.
+
+        Naming a class is not bureaucracy — it is what lets the server read its own record of
+        what happened in that room, which is better evidence than anything the person filing
+        this could attach, and is why a report that names one needs no file.
+      */}
+      <View style={styles.field}>
+        <Text style={[styles.label, { color: colors.foreground }]}>Session</Text>
+        <TouchableOpacity
+          testID="support-session-select"
+          style={[styles.select, { borderColor: colors.border, backgroundColor: colors.card }]}
+          onPress={() => setSessionOpen((v) => !v)}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.selectText, { color: selected ? colors.foreground : colors.mutedForeground }]}>
+            {selected ? `${selected.topic} · ${new Date(selected.date).toLocaleDateString()}` : "Not session related"}
+          </Text>
+          <Feather name={sessionOpen ? "chevron-up" : "chevron-down"} size={18} color={colors.mutedForeground} />
+        </TouchableOpacity>
+        {sessionOpen && (
+          <View style={[styles.optionsList, { borderColor: colors.border, backgroundColor: colors.card }]}>
+            <TouchableOpacity
+              testID="support-session-none"
+              style={styles.optionRow}
+              onPress={() => { setChosenSession(null); setSessionOpen(false); }}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.optionText, { color: colors.foreground }]}>Not session related</Text>
+            </TouchableOpacity>
+            {!sessionsKnown && (
+              <Text style={[styles.optionNote, { color: colors.mutedForeground }]}>
+                We could not load your recent classes. You can still report a general issue.
+              </Text>
+            )}
+            {sessionsKnown && sessions.length === 0 && (
+              <Text style={[styles.optionNote, { color: colors.mutedForeground }]}>
+                You have no classes from the past 7 days.
+              </Text>
+            )}
+            {sessions.map((session) => (
+              <TouchableOpacity
+                key={session.id}
+                testID={`support-session-${session.id}`}
+                style={styles.optionRow}
+                onPress={() => { setChosenSession(session.id); setSessionOpen(false); }}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.optionText, { color: colors.foreground }]}>{session.topic}</Text>
+                  <Text style={[styles.optionNote, { color: colors.mutedForeground }]}>
+                    {new Date(session.date).toLocaleDateString()} · {session.subject}
+                    {session.yourRole === "student" ? ` · ${session.teacherName}` : " · your class"}
+                  </Text>
+                </View>
+                {session.endedEarly && session.yourRole === "student" && (
+                  <View style={[styles.flag, { backgroundColor: colors.destructive + "15" }]}>
+                    <Text style={[styles.flagText, { color: colors.destructive }]}>Ended early</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+
+      {/*
+        The one case the app can recognise on its own, said out loud.
+
+        A student should not have to work out that they are entitled to ask, or find the words
+        for it. The server has already established that the teacher ended this class early and
+        never came back; this says so, and the reason is set for them.
+      */}
+      {refundable && (
+        <View
+          testID="support-refund-notice"
+          style={[styles.notice, { backgroundColor: colors.destructive + "10", borderColor: colors.destructive + "30" }]}
+        >
+          <Feather name="alert-circle" size={16} color={colors.destructive} />
+          <Text style={[styles.noticeText, { color: colors.destructive }]}>
+            Your teacher ended this class early and did not reopen it. You can request a refund
+            below — tell us anything else that would help.
+          </Text>
+        </View>
+      )}
 
       <View style={styles.field}>
         <Text style={[styles.label, { color: colors.foreground }]}>Reason</Text>
@@ -315,6 +475,11 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
   intro: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 21 },
+  optionNote: { fontSize: 12, fontFamily: "Inter_400Regular", paddingHorizontal: 14, paddingBottom: 10, lineHeight: 17 },
+  flag: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 8 },
+  flagText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
+  notice: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 18 },
+  noticeText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   field: { gap: 8 },
   label: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   select: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 14 },
