@@ -230,3 +230,35 @@ export function joinState(session: SessionWindowInput, now: number = Date.now())
   }
   return { enabled: true, label: "Join the Class", reason: null };
 }
+
+export interface CallTimeState {
+  /** True once the class is inside its last five minutes and should be told so. */
+  pastWarning: boolean;
+  /** True once the call has run past the point where it is stopped. */
+  overtime: boolean;
+  /** Whole minutes until the booked finish. Zero once it has passed; never negative. */
+  minutesLeft: number;
+}
+
+/**
+ * Where a running call sits against its own clock.
+ *
+ * Pure, so the two things that happen to a call as it runs out of time can be tested without
+ * mounting a classroom: the five-minute warning, and the hard stop ten minutes past the booked
+ * finish. The hook that uses this (hooks/useCallTimeLimit.ts) is then only timers and a
+ * dismiss button, which is the part that genuinely needs React.
+ *
+ * `now` is the **server's** clock. A handset twenty minutes fast would otherwise cut a lesson
+ * short twenty minutes early, which on this app's target market is not a hypothetical.
+ */
+export function callTimeState(session: SessionWindowInput, now: number): CallTimeState {
+  const warnAt = wrapUpWarningAt(session);
+  const stopAt = cutoffAt(session);
+  const endsAt = scheduledEndAt(session);
+
+  return {
+    pastWarning: warnAt !== null && now >= warnAt,
+    overtime: stopAt !== null && now > stopAt,
+    minutesLeft: endsAt === null ? 0 : Math.max(0, Math.ceil((endsAt - now) / 60_000)),
+  };
+}

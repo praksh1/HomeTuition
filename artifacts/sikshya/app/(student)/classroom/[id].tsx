@@ -23,6 +23,8 @@ import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import DailyEmbed from "@/components/DailyEmbed";
 import SmartBoard from "@/components/SmartBoard";
 import { showsOwnChatTab } from "@/utils/classroomChat";
+import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
+import CallTimeNotice from "@/components/CallTimeNotice";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "board" | "chat";
@@ -30,6 +32,8 @@ type Mode = "board" | "chat";
 interface SessionData {
   id: number; topic: string; subject: string; teacherName: string;
   duration: number; maxStudents: number; enrolledCount: number; status: string;
+  /** The booked start. The whole call clock is measured from this and the duration. */
+  date: string;
 }
 
 export default function StudentClassroom() {
@@ -161,6 +165,21 @@ export default function StudentClassroom() {
     setMeetingToken(null); // release camera/mic before navigating away
     router.back();
   }, []);
+
+  /**
+   * The same clock the teacher's screen runs on.
+   *
+   * Five minutes before the booked finish everybody is told; ten minutes past it the call
+   * ends. Both screens read utils/sessionWindow.ts, because a call that stopped for one person
+   * and not the other would be worse than no limit at all.
+   */
+  const timeLimit = useCallTimeLimit({
+    session: session
+      ? { date: session.date, duration: session.duration, status: session.status, startedAt: null, endedAt: null }
+      : null,
+    active: !!roomUrl,
+    onCutoff: handleDailyLeft,
+  });
 
   const leaveSession = () => {
     const doLeave = () => {
@@ -299,6 +318,13 @@ export default function StudentClassroom() {
           <TouchableOpacity style={s.videoExpandBtn} onPress={() => setVideoExpanded((v) => !v)} activeOpacity={0.8}>
             <Feather name={videoExpanded ? "minimize-2" : "maximize-2"} size={13} color="#fff" />
           </TouchableOpacity>
+
+          {/* Over the video, covering nothing that matters. See components/CallTimeNotice.tsx. */}
+          {timeLimit.overtime ? (
+            <CallTimeNotice kind="overtime" minutesLeft={0} />
+          ) : timeLimit.showWarning ? (
+            <CallTimeNotice kind="warning" minutesLeft={timeLimit.minutesLeft} onClose={timeLimit.dismissWarning} />
+          ) : null}
         </View>
         {!videoExpanded && (
         <View style={s.boardWrap}>

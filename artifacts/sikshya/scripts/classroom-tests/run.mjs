@@ -274,7 +274,7 @@ async function main() {
   );
   check(
     "the page offers a way back in, because this class ended within the window",
-    /Reopen class/i.test(landing.text),
+    /Reopen the session/i.test(landing.text),
     landing.text.slice(0, 300).replace(/\n/g, " | "),
   );
   check(
@@ -357,9 +357,11 @@ async function main() {
    * doubtful part. A rule the server enforces and a screen that never shows it are the same
    * thing from the teacher's side — which is the failure this whole suite exists for.
    */
+  // Five minutes out, so the doors are open. Thirty would now be refused, and correctly: the
+  // teacher's button does not unlock until ten minutes before the booked start.
   const soon = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: "Who Is Coming", subject: "Mathematics", description: "d",
-    date: new Date(Date.now() + 30 * 60_000).toISOString(),
+    date: new Date(Date.now() + 5 * 60_000).toISOString(),
     duration: 60, price: 500, maxStudents: 20 } });
 
   const pupilA = await register("student");
@@ -389,7 +391,19 @@ async function main() {
   check("both students who booked are named", /Student/.test(peek) && peek.match(/Student \d+/g)?.length >= 2,
     (peek.match(/Student \d+/g) ?? []).join(", "));
   check("they are shown as booked, not as having attended", /Booked/.test(peek) && !/Attended/.test(peek));
-  check("the class can be started from here", /Start class/i.test(peek));
+  check("the class can be opened from here", /Open the Session/i.test(peek),
+    peek.slice(0, 200).replace(/\n/g, " | "));
+
+  // ...and one still an hour away cannot, which is the other half of the same rule.
+  const distant = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    topic: "Next Week", subject: "Mathematics", description: "d",
+    date: new Date(Date.now() + 7 * 24 * 3600_000).toISOString(),
+    duration: 60, price: 500, maxStudents: 20 } });
+  await page3.goto(`${siteUrl}/session/${distant.body.id}`, { waitUntil: "networkidle" });
+  await page3.waitForTimeout(3000);
+  const early = await page3.evaluate(() => document.body.innerText);
+  check("a class booked for next week cannot be opened yet",
+    /opens 10 minutes before it starts/i.test(early), early.slice(0, 240).replace(/\n/g, " | "));
   check("looking at who is coming does not open a video room", peekRooms.length === 0,
     `room responses: ${JSON.stringify(peekRooms)}`);
 
@@ -399,7 +413,7 @@ async function main() {
   const expired = await page3.evaluate(() => document.body.innerText);
   check("a class too old to reopen says so on the button itself", /Session expired/i.test(expired), expired.slice(0, 300).replace(/\n/g, " | "));
   check("and the reason is on the page, not hidden behind a tap",
-    /more than 3 hours ago/i.test(expired), expired.slice(0, 300).replace(/\n/g, " | "));
+    /can no longer be opened/i.test(expired), expired.slice(0, 300).replace(/\n/g, " | "));
 
   await page3.locator('[data-testid="session-start-btn"]').first().click({ timeout: 10000 }).catch(() => {});
   await page3.waitForTimeout(2500);
@@ -410,6 +424,125 @@ async function main() {
     `room responses: ${JSON.stringify(peekRooms)}`);
 
   await ctx3.close();
+
+  console.log("\nA class that is running out of time");
+
+  /**
+   * The two things the owner asked for: a warning five minutes before the booked finish that
+   * closes itself if ignored, and a hard stop ten minutes past it that says so and then ends
+   * the call.
+   *
+   * Driven by moving the class's booked slot, because that is what the clock reads. Nothing
+   * here waits out a real hour.
+   */
+  const timed = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    topic: "Running Late", subject: "Mathematics", description: "d",
+    date: new Date(Date.now() + 5 * 60_000).toISOString(),
+    duration: 60, price: 500, maxStudents: 20 } });
+  const timedId = timed.body.id;
+  await api(`/sessions/${timedId}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+
+  const ctx4 = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const page4 = await ctx4.newPage();
+  await page4.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+
+  // Three minutes from the booked finish: inside the warning, nowhere near the cutoff.
+  sql(`update sessions set date = now() - interval '57 minutes' where id = ${timedId}`);
+  /**
+   * Reached the way a teacher reaches it: through the class's own page, not by typing the
+   * classroom's address.
+   *
+   * A cold load straight onto /classroom/:id bounces to the Dashboard — a known open issue
+   * (ISSUES.md H6) and nothing to do with the clock this block is about. Driving the real
+   * route keeps this test measuring the thing it names.
+   */
+  await page4.goto(`${siteUrl}/session/${timedId}`, { waitUntil: "networkidle" });
+  await page4.waitForTimeout(3500);
+  await page4.locator('[data-testid="session-start-btn"]').first().click({ timeout: 15000 });
+  await page4.waitForTimeout(5000);
+
+  check("the class is warned that time is nearly up",
+    (await page4.locator('[data-testid="call-warning-notice"]').count()) > 0,
+    (await page4.evaluate(() => document.body.innerText)).slice(0, 200).replace(/\n/g, " | "));
+  check("and told how long is left",
+    /minutes? left in this class/i.test(await page4.evaluate(() => document.body.innerText)));
+  check("the warning has a close button", (await page4.locator('[data-testid="call-warning-close"]').count()) > 0);
+
+  await page4.locator('[data-testid="call-warning-close"]').click({ timeout: 10000 });
+  await page4.waitForTimeout(1000);
+  check("closing it makes it go away",
+    (await page4.locator('[data-testid="call-warning-notice"]').count()) === 0);
+
+  /**
+   * Left alone, it closes itself — checked from a fresh arrival, in its own browser.
+   *
+   * The first version of this check was worthless and passed a deliberate break: it ran on the
+   * page where the warning had just been closed by hand, so it was asserting that a dismissed
+   * banner stays dismissed. Nothing about the thirty-second timer was being exercised at all.
+   */
+  const idleCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const idlePage = await idleCtx.newPage();
+  await idlePage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+  await idlePage.goto(`${siteUrl}/session/${timedId}`, { waitUntil: "networkidle" });
+  await idlePage.waitForTimeout(3500);
+  await idlePage.locator('[data-testid="session-start-btn"]').first().click({ timeout: 15000 });
+  await idlePage.waitForTimeout(5000);
+  check("a fresh arrival is warned too, so the next check means something",
+    (await idlePage.locator('[data-testid="call-warning-notice"]').count()) > 0);
+
+  await idlePage.waitForTimeout(33000);
+  check("and left alone, it closes itself",
+    (await idlePage.locator('[data-testid="call-warning-notice"]').count()) === 0);
+  await idleCtx.close();
+
+  console.log("\nA class that has run over");
+
+  const overCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const overPage = await overCtx.newPage();
+  await overPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+
+  /**
+   * A class whose cutoff falls a few seconds after the teacher walks in.
+   *
+   * The situation the rule is about is somebody *in* a call that runs out of time, so the call
+   * has to start while it is still allowed and then cross the line. Moving the class's date
+   * mid-call does not simulate that: the classroom holds the copy of the session it fetched
+   * when it opened, and in real life a booked slot does not move underneath a lesson.
+   *
+   * So the slot is placed so that the cutoff is about twenty seconds out — far enough ahead
+   * that the class can still be opened, close enough that it passes while somebody is in it.
+   */
+  sql(`update sessions set status = 'live', date = now() - interval '69 minutes 40 seconds' where id = ${timedId}`);
+  await overPage.goto(`${siteUrl}/session/${timedId}`, { waitUntil: "networkidle" });
+  await overPage.waitForTimeout(3500);
+  await overPage.locator('[data-testid="session-start-btn"]').first().click({ timeout: 15000 });
+  await overPage.waitForTimeout(20000);
+
+  const overtimeText = await overPage.evaluate(() => document.body.innerText);
+  check("the room is told it has run over",
+    (await overPage.locator('[data-testid="call-overtime-notice"]').count()) > 0 ||
+      /run past its finish time/i.test(overtimeText),
+    overtimeText.slice(0, 220).replace(/\n/g, " | "));
+
+  // Announced first, ended after — the notice is useless if the call vanishes with it.
+  await overPage.waitForTimeout(10000);
+  check("and then the call is ended, leaving the classroom",
+    !/\/classroom\//.test(await overPage.evaluate(() => location.pathname)),
+    await overPage.evaluate(() => location.pathname));
+  check("the class is marked completed", sql(`select status from sessions where id = ${timedId}`) === "completed",
+    sql(`select status from sessions where id = ${timedId}`));
+
+  await overCtx.close();
+  await ctx4.close();
 
   await ctx2.close();
   await browser.close();

@@ -4,6 +4,7 @@ import {
   DOORS_OPEN_MINUTES,
   OVERTIME_CUTOFF_MINUTES,
   STUDENT_GRACE_MINUTES,
+  callTimeState,
   canJoinSession,
   canOpenSession,
   cutoffAt,
@@ -128,4 +129,54 @@ test("an unreadable date locks nobody out", () => {
   assert.equal(canOpenSession(broken, START).ok, true);
   assert.equal(canJoinSession(broken, START).ok, true);
   assert.equal(isPastCutoff(broken, START), false);
+});
+
+test("a call in the middle of its hour is warned about nothing", () => {
+  const state = callTimeState(session(), START + 20 * MIN);
+  assert.equal(state.pastWarning, false);
+  assert.equal(state.overtime, false);
+  assert.equal(state.minutesLeft, 40);
+});
+
+test("the warning starts exactly five minutes before the booked finish", () => {
+  assert.equal(callTimeState(session(), END - 6 * MIN).pastWarning, false);
+  assert.equal(callTimeState(session(), END - 5 * MIN).pastWarning, true);
+});
+
+test("the warning says how many minutes are left, rounded up", () => {
+  // Four minutes and thirty seconds is "5 minutes left" to a person, not "4".
+  assert.equal(callTimeState(session(), END - 4.5 * MIN).minutesLeft, 5);
+  assert.equal(callTimeState(session(), END - 60_000).minutesLeft, 1);
+});
+
+test("past the booked finish there are no minutes left, not negative ones", () => {
+  assert.equal(callTimeState(session(), END + 3 * MIN).minutesLeft, 0);
+});
+
+test("the warning stays true through the overtime, and the stop is separate", () => {
+  // They are two different facts. A call that has run over is also past its warning; the
+  // screen decides which to show, and it must not have to infer one from the other.
+  const overrun = callTimeState(session(), END + 3 * MIN);
+  assert.equal(overrun.pastWarning, true);
+  assert.equal(overrun.overtime, false);
+});
+
+test("the call is over one minute past the cutoff and not on it", () => {
+  assert.equal(callTimeState(session(), END + OVERTIME_CUTOFF_MINUTES * MIN).overtime, false);
+  assert.equal(callTimeState(session(), END + (OVERTIME_CUTOFF_MINUTES + 1) * MIN).overtime, true);
+});
+
+test("a late start does not buy more time on the call", () => {
+  // Stated as a test because it is the consequence people will be surprised by: the clock is
+  // the booked slot's, so a class begun twenty minutes late still stops when it was due to.
+  const late = session({ startedAt: new Date(START + 20 * MIN), status: "live" });
+  assert.equal(callTimeState(late, END + (OVERTIME_CUTOFF_MINUTES + 1) * MIN).overtime, true);
+});
+
+test("an unreadable date never cuts a call off", () => {
+  const broken = session({ date: "nonsense" });
+  const state = callTimeState(broken, END);
+  assert.equal(state.overtime, false);
+  assert.equal(state.pastWarning, false);
+  assert.equal(state.minutesLeft, 0);
 });

@@ -222,6 +222,18 @@ export default function DailyEmbed({
       setScreenShare("idle");
       return;
     }
+    /**
+     * The chat gets out of the way first.
+     *
+     * The other half of the reported problem: "the Daily.co chat/overlay windows are extremely
+     * difficult to close on iOS/Android, blocking screen shares". Sharing a screen and reading
+     * chat over the top of it are not things anybody is doing at once — the whole point of
+     * sharing is that people look at what is shared — so the panel closes itself rather than
+     * leaving somebody to find its close button while the thing they wanted to show is behind
+     * it. It reopens with one tap, and unread messages still show on the badge meanwhile.
+     */
+    setChatOpen(false);
+
     // The OS now shows its own capture consent prompt. "starting" holds until Daily reports
     // back, so the button cannot be double-fired while that dialog is up.
     setScreenShare("starting");
@@ -339,8 +351,40 @@ export default function DailyEmbed({
             })}
           </ScrollView>
 
+          {/*
+            Somewhere to tap to get out.
+
+            Reported from a phone: "the Daily.co chat/overlay windows are extremely difficult
+            to close on iOS/Android, blocking screen shares". They were. The panel had no close
+            control of its own — the only way out was the small chat toggle in the bar
+            *underneath* it, which on a phone means aiming at a 40-pixel target below a panel
+            that is covering the thing you are trying to see. This backdrop closes it from
+            anywhere, which is what people try first.
+          */}
           {chatOpen && onSendChat && (
-            <View style={s.chatPanel}>
+            <TouchableOpacity
+              testID="call-chat-backdrop"
+              style={s.chatBackdrop}
+              activeOpacity={1}
+              onPress={() => setChatOpen(false)}
+            />
+          )}
+
+          {chatOpen && onSendChat && (
+            <View style={s.chatPanel} testID="call-chat-panel">
+              {/* An explicit way out, at the top of the panel, big enough to hit one-handed. */}
+              <View style={s.chatHeader}>
+                <Text style={s.chatTitle}>Class chat</Text>
+                <TouchableOpacity
+                  testID="call-chat-close"
+                  onPress={() => setChatOpen(false)}
+                  hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+                  style={s.chatCloseBtn}
+                  activeOpacity={0.7}
+                >
+                  <Feather name="x" size={20} color="#fff" />
+                </TouchableOpacity>
+              </View>
               <ScrollView style={s.chatScroll} contentContainerStyle={s.chatScrollInner}>
                 {(chatMessages ?? []).length === 0 ? (
                   <Text style={s.chatEmpty}>No messages yet.</Text>
@@ -439,7 +483,19 @@ const s = StyleSheet.create({
   btn: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#2A2A2A", alignItems: "center", justifyContent: "center" },
   unreadDot: { position: "absolute", top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: "#C41E3A", alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
   unreadDotText: { color: "#fff", fontSize: 9, fontFamily: "Inter_700Bold" },
-  chatPanel: { maxHeight: 240, backgroundColor: "#111", borderTopWidth: 1, borderTopColor: "#222" },
+  /**
+   * Covers the video, not the controls.
+   *
+   * Positioned above the bar rather than in the layout flow, so the buttons that mute, hang up
+   * and stop a screen share stay reachable while the chat is open — which was half the
+   * complaint: an overlay you cannot get out of is much worse when it is also sitting on the
+   * button that would end the thing you are stuck in.
+   */
+  chatBackdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 },
+  chatPanel: { maxHeight: 260, backgroundColor: "#111", borderTopWidth: 1, borderTopColor: "#222", zIndex: 21 },
+  chatHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: 14, paddingRight: 6, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#222" },
+  chatTitle: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  chatCloseBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
   chatScroll: { maxHeight: 190 },
   chatScrollInner: { padding: 10, gap: 6 },
   chatEmpty: { color: "#777", fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", paddingVertical: 16 },
