@@ -101,6 +101,9 @@ jobs:
           pnpm run db:push
           pnpm --filter @workspace/api-server run build
           nohup node artifacts/api-server/dist/index.mjs > /tmp/api.log 2>&1 &
+          # Written down so a later step can restart *this* process by its id. Matching on the
+          # command line instead is how a kill ends up hitting something it was never aimed at.
+          echo $! > /tmp/api.pid
           for attempt in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8080/api/healthz >/dev/null; then
               echo "API up after ${attempt}s"
@@ -181,15 +184,34 @@ jobs:
           cat > /tmp/restart-api.sh <<'SH'
           #!/bin/bash
           set -euo pipefail
-          pkill -f 'artifacts/api-server/dist/index.mjs' || true
-          sleep 1
+
+          # Killed by its recorded id, never by matching its command line.
+          #
+          # `pkill -f` matches any process whose command line contains the pattern, which
+          # includes whatever shell happens to be running a script that mentions it. This
+          # project has a memory note about that exact trap, and a kill in CI that hits the
+          # wrong thing is invisible until something downstream fails for no stated reason.
+          if [ -f /tmp/api.pid ]; then
+            kill "$(cat /tmp/api.pid)" 2>/dev/null || true
+          fi
+
+          # Wait for the port to be free before starting the replacement, rather than assuming
+          # a second is enough. A new process that dies instantly with EADDRINUSE looks exactly
+          # like one that never started.
+          for attempt in $(seq 1 30); do
+            if ! curl -sf --max-time 1 http://127.0.0.1:8080/api/healthz >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+
           PORT=8080 NODE_ENV=test WS_HEARTBEAT_MS=3000 \
             nohup node artifacts/api-server/dist/index.mjs > /tmp/api.log 2>&1 &
+          echo $! > /tmp/api.pid
+
           for attempt in $(seq 1 30); do
             if curl -sf http://127.0.0.1:8080/api/healthz >/dev/null; then exit 0; fi
             sleep 1
           done
-          echo "the API never came back up"; cat /tmp/api.log; exit 1
+          echo "the API never came back up. Its log:"; cat /tmp/api.log; exit 1
           SH
           chmod +x /tmp/restart-api.sh
           API_URL=http://127.0.0.1:8080 RESTART_CMD=/tmp/restart-api.sh \

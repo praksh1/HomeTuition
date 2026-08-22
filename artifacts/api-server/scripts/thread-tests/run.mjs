@@ -190,7 +190,24 @@ async function run() {
   console.log("\nIt survives the server restarting\n");
 
   if (RESTART_CMD) {
-    execSync(RESTART_CMD, { stdio: "ignore" });
+    /**
+     * The restart's own output is kept, not discarded.
+     *
+     * It was run with `stdio: "ignore"`, and when it failed in CI that threw away the one thing
+     * that would have said why — the script prints the API's log before giving up, and none of
+     * it reached anybody. A test that restarts a server has to be able to explain a server that
+     * did not come back.
+     */
+    try {
+      execSync(RESTART_CMD, { stdio: "pipe", encoding: "utf8" });
+    } catch (err) {
+      const detail = [err.stdout, err.stderr].filter(Boolean).join("\n").trim();
+      console.log(`  FAIL the API could not be restarted\n${detail || String(err)}`);
+      failed += 1;
+      failures.push("the API could not be restarted");
+      console.log(`\n${passed} passed, ${failed} failed`);
+      process.exit(1);
+    }
     const afterRestart = await api(`/sessions/${session.id}/messages`, { token: alice.token });
     check("the thread is still there after a restart",
       (afterRestart.body?.messages ?? []).length >= 4, `${(afterRestart.body?.messages ?? []).length} messages`);
