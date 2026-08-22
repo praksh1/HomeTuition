@@ -149,6 +149,15 @@ jobs:
           API_URL=http://127.0.0.1:8081 PAYMENT_WEBHOOK_SECRET=ci-only-webhook-secret \
             pnpm --filter @workspace/api-server run test:payments
 
+      # Who was in the class, which is the evidence every refund rule in REFUNDS.md is argued
+      # from. Only a real socket into a real database shows whether the classroom hub actually
+      # writes any of it down — the arithmetic is covered by the unit tests above, the wiring
+      # is not, and wiring is what has silently gone missing here before.
+      - name: Who was actually in the class
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:attendance
+
       # A whiteboard has to survive the server restarting, and the only way to tell that from
       # a variable still being in scope is to actually restart it between writing and reading.
       # This matters more than it sounds: the API redeploys on every push, so shipping any

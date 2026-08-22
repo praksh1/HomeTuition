@@ -16,7 +16,7 @@ import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
 import { canStart } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
-import { findingsFor, teacherIsLate } from "../lib/sessionEvidence";
+import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -790,9 +790,32 @@ router.get("/sessions/:id/attendance", requireAuth, async (req, res): Promise<vo
     startedAt: session.startedAt,
     endedAt: activity.endedAt,
     status: session.status,
-    /** Null when the ledger could not be read — which is not the same as "no teacher came". */
+    /**
+     * When the teacher arrived, or null if they have not.
+     *
+     * This is the one to read for "is the teacher here yet" — the waiting banner a student
+     * sees. It is a different question from whether they were late, and the two must not be
+     * run together: a teacher who turns up at minute fifteen *is* here, and *was* late.
+     *
+     * Null also when the ledger could not be read, which is not the same as "no teacher came";
+     * `known` is how those are told apart.
+     */
     teacherJoinedAt: attendance.known ? (teacherRecord?.firstJoinedAt ?? null) : null,
+    /**
+     * Whether the teacher kept this class waiting past the ten-minute line.
+     *
+     * Stays true once it is true, including after the teacher arrives. That is the point of it:
+     * the owner's rule is that a student made to wait more than ten minutes gets a way to reach
+     * customer service, and a teacher strolling in at minute twelve does not undo the wait.
+     */
     teacherIsLate: attendance.known ? teacherIsLate(scheduled, teacherRecord) : false,
+    /**
+     * How many minutes late, counting up while nobody has arrived.
+     *
+     * Sent so the app can say "your teacher is 12 minutes late" without doing clock arithmetic
+     * on a handset whose clock may be wrong. Null when there is no readable start time.
+     */
+    teacherLateBy: attendance.known ? teacherMinutesLate(scheduled, teacherRecord) : null,
     /**
      * False means "we could not read the record", never "nothing happened". The app has to be
      * able to tell those apart, or a database blip shows a student that their teacher never

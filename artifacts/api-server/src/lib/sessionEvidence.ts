@@ -82,22 +82,26 @@ export function absentMs(record: PresenceRecord): number {
 }
 
 /**
- * How many minutes after the scheduled start the teacher arrived. Null if we cannot say.
+ * How many minutes late the teacher is. Null only when there is no readable start time.
  *
  * Measured against the booked time rather than when the class went live, because going live
  * *is* the teacher arriving — measuring one against the other would make every teacher
  * punctual by definition. Negative means early, and is reported as zero.
+ *
+ * A teacher who has not arrived at all is late by however long it has been so far, so the
+ * number keeps climbing while a student sits waiting. That is what the student's screen needs
+ * to show; whether they *ever* came is a separate question, answered by whether there is a
+ * presence record at all.
  */
 export function teacherMinutesLate(
   session: ScheduledSession,
   teacher: PresenceRecord | null,
+  now: number = Date.now(),
 ): number | null {
   const scheduled = ms(session.date);
   if (scheduled === null) return null;
-  if (!teacher) return null;
-  const arrived = ms(teacher.firstJoinedAt);
-  if (arrived === null) return null;
-  return Math.max(0, Math.round((arrived - scheduled) / 60_000));
+  const arrived = teacher ? ms(teacher.firstJoinedAt) : null;
+  return Math.max(0, Math.round(((arrived ?? now) - scheduled) / 60_000));
 }
 
 /**
@@ -174,7 +178,7 @@ export function findingsFor(
       detail: "The teacher never opened this class.",
     });
   } else {
-    const late = teacherMinutesLate(session, teacher);
+    const late = teacherMinutesLate(session, teacher, now);
     if (late !== null && late > TEACHER_LATE_MINUTES) {
       findings.push({
         code: "teacher_late",

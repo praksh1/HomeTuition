@@ -169,12 +169,14 @@ async function run() {
     check("the student is recorded as a student", arrivedStudent?.role === "student", arrivedStudent?.role);
     check("opening the classroom counts as one arrival", arrivedTeacher?.joinCount === 1, `joinCount=${arrivedTeacher?.joinCount}`);
 
-    t.send({ type: "draw_commit", tool: "pen", color: "#000", size: 3, points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] });
+    t.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3, d: "M1,1 L2,2" });
     t.send({ type: "scene_update", elements: [{ id: "e1", version: 1, type: "rectangle" }] });
+    // Refused by the sanitiser — a pen stroke with no path. Counted nowhere.
+    t.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3 });
     t.send({ type: "chat", text: "Good morning" });
     s.send({ type: "chat", text: "Namaste" });
     // A student trying to draw: refused by the hub, and must not be recorded as having drawn.
-    s.send({ type: "draw_commit", tool: "pen", color: "#000", size: 3, points: [{ x: 5, y: 5 }, { x: 6, y: 6 }] });
+    s.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3, d: "M5,5 L6,6" });
     await wait(400);
 
     await t.close();
@@ -183,6 +185,8 @@ async function run() {
     const finalTeacher = ledgerRow(session.id, teacher.user.id);
     const finalStudent = ledgerRow(session.id, student.user.id);
     check("board writes are counted for the teacher", finalTeacher?.drawCount === 2, `drawCount=${finalTeacher?.drawCount}`);
+    check("a malformed stroke the board refused is not counted as drawing",
+      finalTeacher?.drawCount === 2, `a stroke with no path was also sent; drawCount=${finalTeacher?.drawCount}`);
     check("a student's refused stroke is not counted as drawing", finalStudent?.drawCount === 0, `drawCount=${finalStudent?.drawCount}`);
     check("chat is counted for whoever sent it", finalTeacher?.messageCount === 1 && finalStudent?.messageCount === 1,
       `teacher=${finalTeacher?.messageCount} student=${finalStudent?.messageCount}`);
@@ -237,7 +241,7 @@ async function run() {
     await t.open();
     const a = classroom(attender.token, session.id, "Bikash Thapa");
     await a.open();
-    t.send({ type: "draw_commit", tool: "pen", color: "#000", size: 3, points: [{ x: 1, y: 1 }, { x: 2, y: 2 }] });
+    t.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3, d: "M1,1 L2,2" });
     await wait(500);
     await t.close();
     await a.close();
@@ -293,13 +297,18 @@ async function run() {
       late.body?.teacherIsLate === true);
     check("no teacher means no arrival time to report", late.body?.teacherJoinedAt === null);
 
+    const climbing = late.body?.teacherLateBy;
+    check("the student is told how many minutes they have been waiting",
+      typeof climbing === "number" && climbing >= 15, `teacherLateBy=${climbing}`);
+
     const t = classroom(teacher.token, session.id, "Teacher");
     await t.open();
     await wait(400);
     const arrived = await api(`/sessions/${session.id}/attendance`, { token: student.token });
-    check("once the teacher arrives the student is no longer waiting on nobody",
-      arrived.body?.teacherIsLate === false);
-    check("when the teacher arrived is reported", typeof arrived.body?.teacherJoinedAt === "string");
+    check("the teacher arriving is visible as an arrival time",
+      typeof arrived.body?.teacherJoinedAt === "string");
+    check("but arriving late does not un-make the wait, so help stays available",
+      arrived.body?.teacherIsLate === true);
 
     await t.close();
     await s.close();

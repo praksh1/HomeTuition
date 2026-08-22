@@ -63,8 +63,15 @@ test("a teacher who arrived early reads as zero, not as a negative number", () =
   assert.equal(teacherMinutesLate(session(), present({ firstJoinedAt: new Date(START - 5 * MIN) })), 0);
 });
 
-test("no teacher record means we cannot say how late they were", () => {
-  assert.equal(teacherMinutesLate(session(), null), null);
+test("with nobody there yet, the minutes late keep climbing", () => {
+  // What a waiting student's screen shows. A teacher who has not arrived is not "unknown
+  // minutes late", they are late by however long the student has been sitting there.
+  assert.equal(teacherMinutesLate(session(), null, START + 12 * MIN), 12);
+});
+
+test("a teacher who has arrived stops the clock at the moment they arrived", () => {
+  const teacher = present({ firstJoinedAt: new Date(START + 12 * MIN) });
+  assert.equal(teacherMinutesLate(session(), teacher, START + 50 * MIN), 12);
 });
 
 test("a student waiting past the threshold with nobody there is owed help", () => {
@@ -177,6 +184,16 @@ test("a teacher account enrolled in someone else's class is judged as a student 
 
 test("an unreadable date decides nothing", () => {
   const broken = session({ date: "not a date" });
-  assert.equal(teacherMinutesLate(broken, present()), null);
+  assert.equal(teacherMinutesLate(broken, present(), START + 90 * MIN), null);
   assert.equal(teacherIsLate(broken, null, START + 90 * MIN), false);
+});
+
+test("being late does not stop being true once the teacher walks in", () => {
+  // The owner's rule is that a student kept waiting past ten minutes gets a way to reach
+  // customer service. A teacher strolling in at minute fifteen does not undo the wait, so this
+  // must not flip back to false — "is the teacher here yet" is a different question, and the
+  // answer to that one is whether there is a presence record at all.
+  const teacher = present({ firstJoinedAt: new Date(START + 15 * MIN) });
+  assert.equal(teacherIsLate(session(), teacher, START + 16 * MIN), true);
+  assert.equal(teacherIsLate(session(), teacher, START + 90 * MIN), true);
 });
