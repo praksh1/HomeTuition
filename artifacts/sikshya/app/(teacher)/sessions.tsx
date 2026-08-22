@@ -111,7 +111,18 @@ export default function TeacherSessions() {
       else Alert.alert(check.title, check.message, [{ text: "OK" }]);
       return;
     }
-    router.push(`/(teacher)/classroom/${item.id}`);
+    /**
+     * To the class's own page, not straight into the classroom.
+     *
+     * The owner's ask: "the teacher should be able to click on it and see the students that
+     * have enrolled... The start option should come after this". Seeing who is coming before
+     * going live is the point — and a class opened by accident from this list used to put a
+     * teacher on camera in front of whoever was already there.
+     *
+     * The dashboard still has a one-tap Start on the class that is about to begin, so the
+     * common path has not grown a step.
+     */
+    router.push(`/session/${item.id}`);
   };
 
   return (

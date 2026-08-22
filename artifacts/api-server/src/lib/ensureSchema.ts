@@ -152,3 +152,48 @@ export async function ensureSessionParticipationTable(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Brings the disputes table up to date if it is behind.
+ *
+ * This one goes slightly beyond "create a new table", so it is worth being explicit about
+ * what it does and why that is still safe:
+ *
+ * - `ADD COLUMN IF NOT EXISTS session_id` — additive, nullable, and does nothing on a database
+ *   that already has it. Without it, `disputes` is read with a bare `select()` in
+ *   /disputes/mine, so the moment the code knows about the column and the database does not,
+ *   every report a user has ever filed becomes a 500.
+ * - `ALTER COLUMN evidence_url DROP NOT NULL` — strictly widening. It cannot fail on existing
+ *   rows, cannot lose data, and is idempotent. Requiring a file was wrong for the person who
+ *   most needs to file a report: a student whose teacher never arrived has nothing to attach.
+ *
+ * Nothing here drops, renames, or narrows anything, and none of it can stop the server
+ * starting. Anything that does belongs in `db:push`, where a human can see it first.
+ */
+export async function ensureDisputeColumns(): Promise<void> {
+  try {
+    await db.execute(sql`ALTER TABLE "disputes" ADD COLUMN IF NOT EXISTS "session_id" integer`);
+    // Added separately and tolerantly: the constraint may already be there from `db:push`, and
+    // a duplicate is not a reason to leave the column unusable.
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        ALTER TABLE "disputes"
+          ADD CONSTRAINT "disputes_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE SET NULL;
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+    await db.execute(sql`ALTER TABLE "disputes" ALTER COLUMN "evidence_url" DROP NOT NULL`);
+    logger.info("disputes table is up to date");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not update the disputes table; run `pnpm run db:push`. " +
+        "Reports about a specific class, and reports filed without a file attached, will be " +
+        "refused until it is.",
+    );
+  }
+}

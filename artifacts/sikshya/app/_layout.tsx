@@ -41,6 +41,9 @@ const SHARED_SCREENS = [
   { name: "conversation/[id]", segment: "conversation" },
   { name: "new-message", segment: "new-message" },
   { name: "support", segment: "support" },
+  // A class's own page. Shared because both roles land on it from the same link — the one in
+  // the invitation and booking emails, which until now led nowhere.
+  { name: "session/[id]", segment: "session" },
 ] as const;
 
 function AuthGuard() {

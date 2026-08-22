@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { canOpenSession, finishedAt } from "./sessionWindow.ts";
+import { canOpenSession, finishedAt, startState } from "./sessionWindow.ts";
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -79,4 +79,54 @@ test("when it ended beats when it was scheduled to end", () => {
     finishedAt(session({ date: new Date(NOW - 5 * HOUR).toISOString(), endedAt: new Date(ended).toISOString() })),
     ended,
   );
+});
+
+
+const START = new Date("2026-08-21T10:00:00.000Z").getTime();
+
+const upcoming = { date: new Date(START), duration: 60, status: "upcoming", startedAt: null, endedAt: null };
+
+test("an upcoming class can be started", () => {
+  const state = startState(upcoming, START - 5 * MIN);
+  assert.equal(state.enabled, true);
+  assert.equal(state.label, "Start class");
+  assert.equal(state.reason, null);
+});
+
+test("a live class offers a way back in rather than a way to start it again", () => {
+  const state = startState({ ...upcoming, status: "live", startedAt: new Date(START) }, START + 10 * MIN);
+  assert.equal(state.enabled, true);
+  assert.equal(state.label, "Rejoin class");
+});
+
+test("a class ended by accident can be reopened inside the window", () => {
+  // The whole reason the three-hour window exists. Named a reopen, not a start.
+  const ended = { ...upcoming, status: "completed", startedAt: new Date(START), endedAt: new Date(START + 20 * MIN) };
+  const state = startState(ended, START + 40 * MIN);
+  assert.equal(state.enabled, true);
+  assert.equal(state.label, "Reopen class");
+});
+
+test("a class that finished more than three hours ago is greyed out, with the reason showing", () => {
+  const ended = { ...upcoming, status: "completed", startedAt: new Date(START), endedAt: new Date(START + 60 * MIN) };
+  const state = startState(ended, START + 5 * 60 * MIN);
+  assert.equal(state.enabled, false);
+  assert.equal(state.label, "Session expired");
+  // The reason is carried, not left for a tap to reveal — the owner asked for grey, not for a
+  // button that looks fine and then refuses.
+  assert.match(state.reason ?? "", /more than 3 hours ago/);
+});
+
+test("a cancelled class is greyed out and says so", () => {
+  const state = startState({ ...upcoming, status: "cancelled" }, START);
+  assert.equal(state.enabled, false);
+  assert.equal(state.label, "Cancelled");
+  assert.match(state.reason ?? "", /cancelled/i);
+});
+
+test("an old class that somehow says it is live is still let back into", () => {
+  // A class stuck at "live" is the force-closed-browser case. Locking the teacher out of it is
+  // exactly the bug the restart window was added to fix, so live wins over the window.
+  const stuck = { ...upcoming, status: "live", startedAt: new Date(START), endedAt: null };
+  assert.equal(startState(stuck, START + 10 * 60 * MIN).enabled, true);
 });

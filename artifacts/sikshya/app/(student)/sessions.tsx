@@ -120,7 +120,15 @@ export default function StudentSessions() {
     }
 
     if (status === "completed" || status === "cancelled") {
-      notify("Session Ended", "This session has already ended.");
+      /**
+       * A finished class opens its own page rather than a dead end.
+       *
+       * "This session has already ended" was the whole of what a student got, which is no use
+       * to the one person who might need it most: somebody who paid for a lesson that went
+       * wrong and wants to say so. The page shows what actually happened and how to reach
+       * support about it.
+       */
+      router.push(`/session/${session.id}`);
       return;
     }
 

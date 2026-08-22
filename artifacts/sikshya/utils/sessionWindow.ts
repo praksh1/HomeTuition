@@ -78,3 +78,49 @@ export function canOpenSession(session: SessionWindowInput, now: number = Date.n
 
   return { ok: true };
 }
+
+
+export interface StartState {
+  /** Whether the button does anything. False means it is shown greyed out, never hidden. */
+  enabled: boolean;
+  label: string;
+  /**
+   * Why it is greyed out, shown next to the button rather than only on tapping it.
+   *
+   * The owner asked for the button to be *grey*, not merely to refuse: a teacher who has to
+   * tap something to be told it will not work has already been given a reason to think the app
+   * is broken.
+   */
+  reason: string | null;
+}
+
+/**
+ * What the Start button on a teacher's session page should look like right now.
+ *
+ * The window itself is `canOpenSession`, shared with the sessions list and mirrored on the
+ * server in sessionStart.ts. This adds the wording and the greyed-out state, so all three
+ * places that ask "can this class be started" get the same answer.
+ */
+export function startState(session: SessionWindowInput, now: number = Date.now()): StartState {
+  if (session.status === "live") {
+    return { enabled: true, label: "Rejoin class", reason: null };
+  }
+
+  const check = canOpenSession(session, now);
+  if (!check.ok) {
+    return {
+      enabled: false,
+      label: session.status === "cancelled" ? "Cancelled" : "Session expired",
+      reason: check.message,
+    };
+  }
+
+  if (session.status === "completed") {
+    // Inside the three-hour window a completed class can still be reopened, because the
+    // teacher may have ended the call by accident — that is the whole reason the window
+    // exists. Named so it is obvious this is a recovery, not a fresh start.
+    return { enabled: true, label: "Reopen class", reason: null };
+  }
+
+  return { enabled: true, label: "Start class", reason: null };
+}

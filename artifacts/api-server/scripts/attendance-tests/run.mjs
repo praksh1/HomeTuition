@@ -357,6 +357,56 @@ async function run() {
       JSON.stringify(read.body?.teacher));
   }
 
+  console.log("\nReporting a class that went wrong\n");
+
+  {
+    const teacher = await register("teacher");
+    const student = await register("student", "Unhappy Student");
+    const outsider = await register("student", "Uninvolved");
+    const session = await createSession(teacher);
+    await book(student, session.id);
+
+    // The case this was rebuilt for: the teacher never came, so the student has nothing to
+    // photograph. Requiring a file locked out exactly the person who most needed to report.
+    const noFile = await api("/disputes", { method: "POST", token: student.token, body: {
+      reason: "Technical Failure",
+      description: "My teacher never joined the class.",
+      sessionId: session.id,
+    } });
+    check("a student can report a class without attaching a file", noFile.status === 201, `status=${noFile.status}`);
+    check("the report remembers which class it is about", noFile.body?.sessionId === session.id, `sessionId=${noFile.body?.sessionId}`);
+
+    const orphan = await api("/disputes", { method: "POST", token: student.token, body: {
+      reason: "Other", description: "Something general.",
+    } });
+    check("a report about nothing in particular still needs evidence", orphan.status === 400, `status=${orphan.status}`);
+
+    const withFile = await api("/disputes", { method: "POST", token: student.token, body: {
+      reason: "Payment Issue", description: "Charged twice.", evidenceUrl: "uploads/receipt.png",
+    } });
+    check("a general report with a file is accepted as before", withFile.status === 201, `status=${withFile.status}`);
+
+    const stolen = await api("/disputes", { method: "POST", token: outsider.token, body: {
+      reason: "Technical Failure",
+      description: "Complaining about a class I was never in.",
+      sessionId: session.id,
+    } });
+    check("somebody who was never in the class cannot file a report against it",
+      stolen.status === 403, `status=${stolen.status}`);
+
+    const fromTeacher = await api("/disputes", { method: "POST", token: teacher.token, body: {
+      reason: "Inappropriate Behavior",
+      description: "Reporting my own class.",
+      sessionId: session.id,
+    } });
+    check("the class's own teacher can report it too", fromTeacher.status === 201, `status=${fromTeacher.status}`);
+
+    const mine = await api("/disputes/mine", { token: student.token });
+    check("a student can read their own reports back", mine.status === 200 && Array.isArray(mine.body));
+    check("the report filed with no file reads back with no file",
+      mine.body?.some((d) => d.sessionId === session.id && d.evidenceUrl === null));
+  }
+
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length) {
     console.log("\nFailures:");

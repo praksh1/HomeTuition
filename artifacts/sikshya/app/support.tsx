@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
 import {
   Platform,
@@ -34,7 +34,17 @@ interface PickedFile {
 export default function SupportScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const [reason, setReason] = useState<Reason | null>(null);
+  /**
+   * Arrived from a particular class, e.g. one whose teacher was late.
+   *
+   * When it is set, the report carries the class with it and the server can read its own
+   * record of what happened — who joined, when, and for how long. See the API's
+   * lib/participation.ts.
+   */
+  const { sessionId, reason: presetReason } = useLocalSearchParams<{ sessionId?: string; reason?: string }>();
+  const [reason, setReason] = useState<Reason | null>(
+    REASONS.includes(presetReason as Reason) ? (presetReason as Reason) : null,
+  );
   const [reasonOpen, setReasonOpen] = useState(false);
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<PickedFile | null>(null);
@@ -79,11 +89,16 @@ export default function SupportScreen() {
   };
 
   const submit = async () => {
-    if (!reason || !description.trim() || !file || submitting) return;
+    if (!canSubmit) return;
     setSubmitting(true);
     try {
-      const evidenceUrl = await uploadEvidence();
-      await apiPost("/disputes", { reason, description: description.trim(), evidenceUrl });
+      const evidenceUrl = file ? await uploadEvidence() : null;
+      await apiPost("/disputes", {
+        reason,
+        description: description.trim(),
+        evidenceUrl,
+        ...(sessionId ? { sessionId: Number(sessionId) } : {}),
+      });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       notify("Report Submitted", "Our support team will review your report and get back to you shortly.");
       router.back();
@@ -95,7 +110,17 @@ export default function SupportScreen() {
     }
   };
 
-  const canSubmit = !!reason && description.trim().length > 0 && !!file && !submitting;
+  /**
+   * Evidence is required only when there is nothing else to go on.
+   *
+   * Demanding a file from everybody was wrong for the case that matters most: a student whose
+   * teacher never turned up has nothing to photograph. When the report carries a class with
+   * it, the server already holds the record of who was in that room and when — better evidence
+   * than a screenshot, and evidence neither side can edit.
+   */
+  const needsEvidence = !sessionId;
+  const canSubmit =
+    !!reason && description.trim().length > 0 && (!needsEvidence || !!file) && !submitting;
 
   return (
     <ScrollView
@@ -112,8 +137,11 @@ export default function SupportScreen() {
       </View>
 
       <Text style={[styles.intro, { color: colors.mutedForeground }]}>
-        Report an issue or file a dispute. Please provide as much detail as possible along with supporting evidence
-        so our team can help you quickly.
+        {sessionId
+          ? "Tell us what went wrong with this class. We already have our own record of who was " +
+            "in the room and when, so you only need to attach something if you have it."
+          : "Report an issue or file a dispute. Please provide as much detail as possible along " +
+            "with supporting evidence so our team can help you quickly."}
       </Text>
 
       <View style={styles.field}>
@@ -166,7 +194,9 @@ export default function SupportScreen() {
       </View>
 
       <View style={styles.field}>
-        <Text style={[styles.label, { color: colors.foreground }]}>Evidence (required)</Text>
+        <Text style={[styles.label, { color: colors.foreground }]}>
+          {needsEvidence ? "Evidence (required)" : "Evidence (optional)"}
+        </Text>
         <TouchableOpacity
           style={[
             styles.uploadBtn,
@@ -178,7 +208,11 @@ export default function SupportScreen() {
         >
           <Feather name={file ? "check-circle" : "paperclip"} size={18} color={file ? colors.success : colors.mutedForeground} />
           <Text style={[styles.uploadText, { color: file ? colors.success : colors.mutedForeground }]} numberOfLines={1}>
-            {file ? file.name : "Attach a screenshot or document"}
+            {file
+              ? file.name
+              : needsEvidence
+                ? "Attach a screenshot or document"
+                : "Attach a photo or video, if you have one"}
           </Text>
         </TouchableOpacity>
       </View>
