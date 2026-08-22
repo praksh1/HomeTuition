@@ -21,7 +21,9 @@ const REASONS = ["Payment Issue", "Technical Failure", "Inappropriate Behavior",
 type Reason = (typeof REASONS)[number];
 
 interface UploadUrlResponse {
-  uploadUrl: string;
+  /** Note the capitalisation: the server returns `uploadURL`, and reading `uploadUrl` gets you
+   *  `undefined` and a PUT to nowhere. That was the second of two faults in this upload. */
+  uploadURL: string;
   objectPath: string;
 }
 
@@ -29,7 +31,19 @@ interface PickedFile {
   uri: string;
   name: string;
   mimeType: string;
+  /** Bytes. The upload endpoint requires it, and a missing one is a 400. */
+  size: number;
 }
+
+/**
+ * The largest file worth trying to send.
+ *
+ * The owner asked for video, which is the reason there is a limit at all — a phone camera
+ * produces tens of megabytes a minute, and the people using this app are on cheap Android
+ * handsets and poor connections. Twenty-five megabytes is roughly a minute of phone video:
+ * enough to show what went wrong, small enough to actually arrive.
+ */
+const MAX_EVIDENCE_BYTES = 25 * 1024 * 1024;
 
 export default function SupportScreen() {
   const colors = useColors();
@@ -52,25 +66,53 @@ export default function SupportScreen() {
 
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/*", "application/pdf"],
+      // Video included because the owner asked for it: "a customer service menu activates
+      // allowing a video attachment".
+      type: ["image/*", "video/*", "application/pdf"],
       copyToCacheDirectory: true,
     });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setFile({ uri: asset.uri, name: asset.name ?? "evidence", mimeType: asset.mimeType ?? "application/octet-stream" });
+
+    // Checked before anything is read, so a huge video is refused instantly rather than after
+    // the phone has spent a minute loading it into memory.
+    const size = asset.size ?? 0;
+    if (size > MAX_EVIDENCE_BYTES) {
+      notify(
+        "File too large",
+        `That file is ${Math.round(size / 1024 / 1024)} MB. Please attach something under ` +
+          `${MAX_EVIDENCE_BYTES / 1024 / 1024} MB — a short clip or a screenshot is enough.`,
+      );
+      return;
+    }
+
+    setFile({
+      uri: asset.uri,
+      name: asset.name ?? "evidence",
+      mimeType: asset.mimeType ?? "application/octet-stream",
+      size,
+    });
   };
 
   const uploadEvidence = async (): Promise<string> => {
     if (!file) throw new Error("No file selected");
-    const { uploadUrl, objectPath } = await apiPost<UploadUrlResponse>("/storage/uploads/request-url", {
-      fileName: file.name,
+    /**
+     * `name` and `size`, not `fileName`.
+     *
+     * This is why attaching anything to a report has never worked: the app sent `fileName` and
+     * no size, the endpoint requires `name`, `size` and `contentType`, and every upload came
+     * back 400 before a single byte left the phone. Nothing said so — the report simply failed.
+     */
+    const { uploadURL, objectPath } = await apiPost<UploadUrlResponse>("/storage/uploads/request-url", {
+      name: file.name,
+      size: file.size > 0 ? file.size : 1,
       contentType: file.mimeType,
     });
 
     if (Platform.OS === "web") {
       const fileResp = await fetch(file.uri);
       const blob = await fileResp.blob();
-      const putResp = await fetch(uploadUrl, {
+      const putResp = await fetch(uploadURL, {
         method: "PUT",
         headers: { "Content-Type": file.mimeType },
         body: blob,
@@ -78,7 +120,7 @@ export default function SupportScreen() {
       if (!putResp.ok) throw new Error("Upload failed");
     } else {
       const FileSystem = await import("expo-file-system");
-      const uploadResult = await FileSystem.uploadAsync(uploadUrl, file.uri, {
+      const uploadResult = await FileSystem.uploadAsync(uploadURL, file.uri, {
         httpMethod: "PUT",
         headers: { "Content-Type": file.mimeType },
       });
@@ -92,7 +134,24 @@ export default function SupportScreen() {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      const evidenceUrl = file ? await uploadEvidence() : null;
+      /**
+       * A failed upload must never swallow the complaint.
+       *
+       * File storage is not set up on the server — the upload endpoint is left over from the
+       * app's Replit origins and wants object-storage settings that do not exist on Railway.
+       * Until that is sorted out, a report with a file attached would fail completely, which
+       * is the worst possible outcome for the person filing it. So the words are sent either
+       * way, and the person is told plainly that the attachment did not go with them.
+       */
+      let evidenceUrl: string | null = null;
+      let attachmentFailed = false;
+      if (file) {
+        try {
+          evidenceUrl = await uploadEvidence();
+        } catch {
+          attachmentFailed = true;
+        }
+      }
       await apiPost("/disputes", {
         reason,
         description: description.trim(),
@@ -100,7 +159,13 @@ export default function SupportScreen() {
         ...(sessionId ? { sessionId: Number(sessionId) } : {}),
       });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      notify("Report Submitted", "Our support team will review your report and get back to you shortly.");
+      notify(
+        "Report Submitted",
+        attachmentFailed
+          ? "Your report has been sent, but we could not upload your file. Our support team " +
+            "will be in touch and can ask for it directly."
+          : "Our support team will review your report and get back to you shortly.",
+      );
       // Clear the form rather than navigating: on the tab there is nowhere to go back to.
       setDescription("");
       setFile(null);

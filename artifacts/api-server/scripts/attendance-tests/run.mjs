@@ -376,10 +376,14 @@ async function run() {
     check("a student can report a class without attaching a file", noFile.status === 201, `status=${noFile.status}`);
     check("the report remembers which class it is about", noFile.body?.sessionId === session.id, `sessionId=${noFile.body?.sessionId}`);
 
+    // A complaint with no file and no class attached still goes through. Requiring one on top
+    // of an uploader that has never worked made this a complaints box that refused complaints.
     const orphan = await api("/disputes", { method: "POST", token: student.token, body: {
       reason: "Other", description: "Something general.",
     } });
-    check("a report about nothing in particular still needs evidence", orphan.status === 400, `status=${orphan.status}`);
+    check("a report with nothing attached is still accepted", orphan.status === 201, `status=${orphan.status}`);
+    check("and is stored with no attachment rather than an empty string",
+      orphan.body?.evidenceUrl === null, JSON.stringify(orphan.body?.evidenceUrl));
 
     const withFile = await api("/disputes", { method: "POST", token: student.token, body: {
       reason: "Payment Issue", description: "Charged twice.", evidenceUrl: "uploads/receipt.png",
@@ -400,6 +404,28 @@ async function run() {
       sessionId: session.id,
     } });
     check("the class's own teacher can report it too", fromTeacher.status === 201, `status=${fromTeacher.status}`);
+
+    /**
+     * The shape the app actually sends when somebody attaches a file.
+     *
+     * It sent `fileName` and no size for as long as this form has existed, and the endpoint
+     * requires `name`, `size` and `contentType` — so every attachment came back 400 before a
+     * byte left the phone, and nothing said so. The distinction this pins down is 400 from
+     * anything else: a 400 means the app and the server disagree about the request, which is a
+     * bug in our code. A 500 here means file storage is not configured on this server, which
+     * is true locally and is a separate problem with its own answer.
+     */
+    const upload = await api("/storage/uploads/request-url", { method: "POST", token: student.token, body: {
+      name: "evidence.png", size: 2048, contentType: "image/png",
+    } });
+    check("the upload request the app sends is understood by the server",
+      upload.status !== 400, `status=${upload.status} ${JSON.stringify(upload.body)}`);
+
+    const oldShape = await api("/storage/uploads/request-url", { method: "POST", token: student.token, body: {
+      fileName: "evidence.png", contentType: "image/png",
+    } });
+    check("and the shape it used to send is still refused, so this cannot regress quietly",
+      oldShape.status === 400, `status=${oldShape.status}`);
 
     const mine = await api("/disputes/mine", { token: student.token });
     check("a student can read their own reports back", mine.status === 200 && Array.isArray(mine.body));

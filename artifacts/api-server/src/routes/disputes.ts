@@ -48,18 +48,20 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
   }
 
   /**
-   * A file is required only when there is nothing else to go on.
+   * A file is welcome and never required.
    *
-   * A report that names a class does not need one: the server's own record of who was in that
-   * room, and when, is better evidence than a photograph and neither side can edit it. Making
-   * it mandatory for everybody locked out exactly the person it should have served most — a
-   * student whose teacher never arrived, with nothing to photograph.
+   * It used to be mandatory, and that was wrong twice over. It locked out the person it should
+   * have served most — a student whose teacher never arrived has nothing to photograph — and,
+   * worse, uploading has never actually worked: the app asked for an upload URL with the wrong
+   * field names and every attempt came back 400 before a byte left the phone, and the endpoint
+   * behind it still wants object-storage settings left over from this app's Replit origins,
+   * which do not exist on the server it runs on now. A mandatory attachment on top of a broken
+   * uploader is a complaints box that quietly refuses complaints.
+   *
+   * A report that names a class needs no photograph anyway: the server's own record of who was
+   * in that room and when is better evidence, and neither side can edit it.
    */
   const evidence = typeof evidenceUrl === "string" ? evidenceUrl.trim() : "";
-  if (!evidence && about === null) {
-    res.status(400).json({ error: "Please attach a file, or report this from the class it is about." });
-    return;
-  }
 
   const [dispute] = await db.insert(disputesTable).values({
     userId,
