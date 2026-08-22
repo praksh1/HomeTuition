@@ -1208,3 +1208,40 @@ Real recording is a decision rather than a missing function. Daily can record a 
 feature; doing it would mean paying for storage, asking both people for consent, and holding
 video of children. `REFUNDS.md` sets out why it is not the obvious answer, and why the
 attendance record covers most of what a dispute actually needs.
+
+---
+
+## The support desk, 2026-08-22
+
+### How an agent account is made
+
+There is no way to become a customer-care agent through the app, and that is deliberate: a
+support tool that can create its own operators only has to be breached once. Registration
+accepts `teacher` and `student` and refuses anything else.
+
+An agent is made by the owner, directly against the database:
+
+```sql
+UPDATE users SET role = 'admin' WHERE email = 'agent@example.com';
+```
+
+The account is registered through the app first, like anyone else's, and then promoted. To take
+the powers away again, set the role back to `student`. That takes effect on the agent's **next
+request** — the role is re-read from the database each time rather than trusted from the token
+they signed in with, so a demotion does not wait for a token to expire.
+
+An agent cannot suspend themselves or another agent. Both of those are the owner's decision,
+made the same way.
+
+### What an agent can and cannot do
+
+Can: read and close tickets with the evidence attached, suspend and unsuspend accounts, issue
+password reset codes, approve or reject teaching credentials, and read the activity log.
+
+Cannot: see or set anybody's password. A reset issues a six-digit code that the agent reads out
+and the person redeems to choose their own password; only the code's hash is stored, and the
+code is never written to the audit log. The obvious shortcut — an agent typing a temporary
+password and reading *that* out — leaves every reset account known to somebody else.
+
+Every action an agent takes is recorded against them in the activity log, on the same terms as
+everybody else's.

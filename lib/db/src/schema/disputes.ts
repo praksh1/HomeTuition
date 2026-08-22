@@ -49,6 +49,17 @@ export const disputesTable = pgTable("disputes", {
    */
   evidenceUrl: text("evidence_url"),
   status: disputeStatusEnum("status").notNull().default("open"),
+  /**
+   * What the agent decided, and who decided it.
+   *
+   * A ticket that only moves from "open" to "resolved" tells the next person nothing: not what
+   * was found, not what was done about it, not who to ask. REFUNDS.md is explicit that the
+   * outcome of a dispute is a person's decision rather than a rule's, and a decision with no
+   * reasoning written down is one nobody can appeal against or learn from.
+   */
+  resolution: text("resolution"),
+  resolvedBy: integer("resolved_by"),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

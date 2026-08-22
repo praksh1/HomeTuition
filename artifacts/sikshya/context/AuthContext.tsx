@@ -60,7 +60,24 @@ export interface Student {
   avatarUrl?: string;
 }
 
-export type User = Teacher | Student;
+/**
+ * A customer-care agent.
+ *
+ * Kept deliberately thin: an agent has no profile, no classes and nothing to sell. There is
+ * also no way to become one through the app — registration accepts teacher and student only,
+ * and the role is set by the owner directly against the database. A support tool that can
+ * create its own operators is one that only has to be breached once.
+ */
+export interface Agent {
+  id: string;
+  userId: number;
+  name: string;
+  email: string;
+  role: "admin";
+  avatarUrl?: string;
+}
+
+export type User = Teacher | Student | Agent;
 
 interface RegisterData {
   name: string;
@@ -171,6 +188,16 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       bio: s?.bio ?? undefined,
       enrolledSessions: [],
       avatarUrl: s?.avatarUrl ?? undefined,
+    };
+  } else if (profile.role === "admin") {
+    // Nothing to map: an agent has no profile of their own. Returning null here would have
+    // signed them straight back out, which is how a new role usually announces itself.
+    return {
+      id: String(profile.id),
+      userId: profile.id,
+      name: profile.name,
+      email: profile.email,
+      role: "admin",
     };
   }
   return null;

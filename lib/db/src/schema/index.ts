@@ -8,6 +8,7 @@ export * from "./sessionBoard";
 export * from "./sessionParticipation";
 export * from "./sessionMessages";
 export * from "./activityLog";
+export * from "./passwordResets";
 export * from "./sessionEnrollments";
 export * from "./reviews";
 export * from "./studentTeacherSubscriptions";

@@ -45,3 +45,43 @@ export function attachUserIfPresent(req: Request, _res: Response, next: NextFunc
   }
   next();
 }
+
+/**
+ * Refuses anybody who is not a support agent.
+ *
+ * Runs after `requireAuth`, and re-reads the role from the database rather than trusting the
+ * token. A token is issued at sign-in and lives for a long time: an account demoted from admin
+ * this morning would otherwise keep every admin power until its token expired, which is
+ * exactly backwards for the one role that can suspend other people.
+ *
+ * There is deliberately no way to *become* an admin through the app. Registration accepts only
+ * teacher and student; an agent account is made by the owner directly against the database.
+ * A support tool that can create its own operators is one that only has to be breached once.
+ */
+export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const userId = req.user?.userId;
+  if (!userId) {
+    res.status(401).json({ error: "Missing or invalid Authorization header" });
+    return;
+  }
+
+  try {
+    const { db, usersTable } = await import("@workspace/db");
+    const { eq } = await import("drizzle-orm");
+    const [row] = await db
+      .select({ role: usersTable.role, suspendedAt: usersTable.suspendedAt })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId));
+
+    if (!row || row.role !== "admin" || row.suspendedAt !== null) {
+      // Deliberately the same answer as any other unauthorised request. "You are not an admin"
+      // confirms that an admin area exists and that this account is not in it.
+      res.status(403).json({ error: "You do not have access to this." });
+      return;
+    }
+    next();
+  } catch {
+    // A lookup that failed is not permission granted.
+    res.status(503).json({ error: "Could not check your access. Please try again." });
+  }
+}

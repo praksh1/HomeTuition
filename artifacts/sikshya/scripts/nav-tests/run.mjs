@@ -50,12 +50,16 @@ async function api(p, { method = "GET", token, body } = {}) {
 let seq = 0;
 async function register(role) {
   seq += 1;
+  // The address is returned too: register does not echo it, and half this suite signs people
+  // back in. Without it every login here sent `undefined` and came back "email and password
+  // are required" — which looks exactly like a broken login rather than a broken test.
+  const email = `nav_${Date.now()}_${seq}@example.com`;
   const res = await api("/auth/register", { method: "POST", body: {
     name: `${role === "teacher" ? "Teacher" : "Student"} ${seq}`,
-    email: `nav_${Date.now()}_${seq}@example.com`, password: "password123", role,
+    email, password: "password123", role,
     ...(role === "teacher" ? { subject: "Mathematics", bio: "x" } : { grade: "10" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status}`);
-  return res.body;
+  return { ...res.body, email };
 }
 
 if (!existsSync(path.join(appRoot, "web-build", "index.html"))) {
@@ -247,6 +251,122 @@ async function main() {
   await ctx3.close();
 
   await ctx2.close();
+  console.log("\nThe support desk");
+
+  /**
+   * An agent's screens, and the fact that nobody else can reach them.
+   *
+   * The server refuses every /admin route to anyone who is not an agent, re-reading the role
+   * on each request — that half is covered in the API's own suite. What only a browser can
+   * show is whether the screens exist, whether the evidence an agent decides on is actually on
+   * them, and whether a teacher who types the address gets bounced.
+   */
+  const agentAccount = await register("student");
+  sql(`update users set role = 'admin' where id = ${agentAccount.user.id}`);
+  const agentLogin = await api("/auth/login", { method: "POST", body: {
+    email: agentAccount.email, password: "password123" } });
+  const agentToken = agentLogin.body?.token;
+  check("an agent can sign in", !!agentToken, `status ${agentLogin.status}`);
+
+  // Something for them to look at.
+  const reporter = await register("student");
+  const subject = await register("teacher");
+  const klass = await api("/sessions", { method: "POST", token: subject.token, body: {
+    topic: "Disputed Class", subject: "Mathematics", description: "d",
+    date: new Date(Date.now() + 5 * 60_000).toISOString(), duration: 60, price: 500, maxStudents: 10 } });
+  await api(`/sessions/${klass.body.id}/book`, { method: "POST", token: reporter.token, body: { paymentMethod: "esewa" } });
+  await api(`/sessions/${klass.body.id}/messages`, { method: "POST", token: subject.token,
+    body: { body: "Sorry, I am running late." } });
+  const ticket = await api("/disputes", { method: "POST", token: reporter.token, body: {
+    reason: "Refund Request", description: "Nobody taught me anything.", sessionId: klass.body.id } });
+
+  const agentCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+  });
+  const agentPage = await agentCtx.newPage();
+  /**
+   * Suspending an account asks "are you sure?" first, and Playwright dismisses dialogs unless
+   * something says otherwise — so without this the suspension silently never happened and the
+   * failure looked like a broken route rather than an unanswered question.
+   */
+  agentPage.on("dialog", async (d) => { await d.accept(); });
+  await agentPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), agentToken);
+  await agentPage.goto(siteUrl, { waitUntil: "networkidle" });
+  await agentPage.waitForTimeout(4000);
+
+  const agentTabs = await tabLabels(agentPage);
+  check("an agent lands on the support desk, not a dashboard",
+    agentTabs.includes("Tickets") && agentTabs.includes("People") && agentTabs.includes("Activity"),
+    JSON.stringify(agentTabs));
+  check("and gets none of the teaching or learning tabs",
+    !agentTabs.includes("Discover") && !agentTabs.includes("Sessions") && !agentTabs.includes("Dashboard"),
+    JSON.stringify(agentTabs));
+
+  const queue = await agentPage.evaluate(() => document.body.innerText);
+  check("the queue shows the open ticket", /Refund Request/i.test(queue),
+    queue.slice(0, 240).replace(/\n/g, " | "));
+
+  await agentPage.locator(`[data-testid="admin-ticket-${ticket.body.id}"]`).click({ timeout: 15000 });
+  await agentPage.waitForTimeout(3000);
+  const detail = await agentPage.evaluate(() => document.body.innerText);
+  check("opening it shows what was reported", /Nobody taught me anything/i.test(detail),
+    detail.slice(0, 240).replace(/\n/g, " | "));
+  check("and the class it is about", /Disputed Class/i.test(detail));
+  check("and the class's messages, as evidence", /running late/i.test(detail),
+    detail.slice(0, 400).replace(/\n/g, " | "));
+  check("and says plainly that the decision is the agent's",
+    /not a decision/i.test(detail), detail.slice(0, 400).replace(/\n/g, " | "));
+
+  await agentPage.locator('[data-testid="admin-resolve"]').click({ timeout: 10000 });
+  await agentPage.waitForTimeout(2500);
+  check("closing it without a decision written is refused",
+    sql(`select status from disputes where id = ${ticket.body.id}`) === "open",
+    sql(`select status from disputes where id = ${ticket.body.id}`));
+
+  await agentPage.locator('[data-testid="admin-resolution"]').fill("Refunded; teacher warned.");
+  await agentPage.locator('[data-testid="admin-resolve"]').click({ timeout: 10000 });
+  await agentPage.waitForTimeout(3000);
+  check("with one, it closes", sql(`select status from disputes where id = ${ticket.body.id}`) === "resolved",
+    sql(`select status from disputes where id = ${ticket.body.id}`));
+  check("and the decision is kept",
+    /Refunded/.test(sql(`select coalesce(resolution,'') from disputes where id = ${ticket.body.id}`)));
+
+  // Suspending, and the code that resets a password without an agent learning it.
+  await agentPage.goto(`${siteUrl}/person/${subject.user.id}`, { waitUntil: "networkidle" });
+  await agentPage.waitForTimeout(3000);
+  await agentPage.locator('[data-testid="admin-issue-reset"]').click({ timeout: 10000 });
+  await agentPage.waitForTimeout(2000);
+  const shownCode = await agentPage.locator('[data-testid="admin-reset-code"]').innerText().catch(() => "");
+  check("an agent can issue a reset code", /^\d{6}$/.test(shownCode.trim()), shownCode);
+  check("and only its hash is stored",
+    sql(`select code_hash from password_resets where user_id=${subject.user.id} order by id desc limit 1`) !== shownCode.trim());
+
+  await agentPage.locator('[data-testid="admin-suspend-reason"]').fill("Did not turn up twice.");
+  await agentPage.locator('[data-testid="admin-suspend"]').click({ timeout: 10000 });
+  await agentPage.waitForTimeout(3000);
+  check("an account can be suspended from the screen",
+    sql(`select suspended_at is not null from users where id=${subject.user.id}`) === "t",
+    sql(`select coalesce(suspended_reason,'') from users where id=${subject.user.id}`));
+
+  const lockedOut = await api("/auth/login", { method: "POST", body: {
+    email: subject.email, password: "password123" } });
+  check("and they can no longer sign in", lockedOut.status === 403, `status ${lockedOut.status}`);
+
+  await agentCtx.close();
+
+  // A teacher who types the address is sent back where they belong.
+  const nosyCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+  });
+  const nosyPage = await nosyCtx.newPage();
+  await nosyPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+  await nosyPage.goto(`${siteUrl}/activity`, { waitUntil: "networkidle" });
+  await nosyPage.waitForTimeout(4000);
+  const nosyText = await nosyPage.evaluate(() => document.body.innerText);
+  check("a teacher typing the support desk's address is bounced out of it",
+    !/admin\.|Filter by action/i.test(nosyText), nosyText.slice(0, 200).replace(/\n/g, " | "));
+  await nosyCtx.close();
+
   await browser.close();
   stopServer();
 

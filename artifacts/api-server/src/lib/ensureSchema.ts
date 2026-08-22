@@ -304,3 +304,50 @@ export async function ensureDisputeReasons(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Brings the tables the support desk needs up to date.
+ *
+ * Additive and idempotent throughout: new nullable columns and a new table, nothing dropped,
+ * renamed or narrowed. Grouped into one call because they arrive together and are useless
+ * apart — an agent who can suspend an account but cannot record why has a worse tool than none.
+ */
+export async function ensureSupportDeskSchema(): Promise<void> {
+  try {
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "suspended_at" timestamp with time zone`);
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "suspended_reason" text`);
+    await db.execute(sql`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "suspended_by" integer`);
+
+    await db.execute(sql`ALTER TABLE "disputes" ADD COLUMN IF NOT EXISTS "resolution" text`);
+    await db.execute(sql`ALTER TABLE "disputes" ADD COLUMN IF NOT EXISTS "resolved_by" integer`);
+    await db.execute(sql`ALTER TABLE "disputes" ADD COLUMN IF NOT EXISTS "resolved_at" timestamp with time zone`);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "password_resets" (
+        "id" serial PRIMARY KEY,
+        "user_id" integer NOT NULL,
+        "code_hash" text NOT NULL,
+        "expires_at" timestamp with time zone NOT NULL,
+        "used_at" timestamp with time zone,
+        "issued_by" integer,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "password_resets_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE,
+        CONSTRAINT "password_resets_issued_by_users_id_fk"
+          FOREIGN KEY ("issued_by") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "password_resets_user_idx" ON "password_resets" ("user_id", "id")
+    `);
+    logger.info("support desk tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not prepare the support desk tables; run `pnpm run db:push`. " +
+        "The app works — but an agent cannot suspend an account, record a decision on a " +
+        "ticket, or issue a password reset until this succeeds.",
+    );
+  }
+}

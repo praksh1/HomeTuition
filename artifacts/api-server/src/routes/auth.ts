@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, usersTable, teacherProfilesTable, studentProfilesTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
+import { recordActivity } from "../lib/activityLog";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -25,6 +26,9 @@ const AUTH_COLUMNS = {
   role: usersTable.role,
   passwordHash: usersTable.passwordHash,
   createdAt: usersTable.createdAt,
+  /** Sign-in is where a suspension takes effect, so it has to be read here. */
+  suspendedAt: usersTable.suspendedAt,
+  suspendedReason: usersTable.suspendedReason,
 } as const;
 
 router.post("/auth/login", async (req, res): Promise<void> => {
@@ -43,6 +47,32 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
+
+  /**
+   * A suspended account cannot sign in, and is told so.
+   *
+   * Checked after the password rather than before, on purpose: refusing early would let anyone
+   * discover which accounts are suspended by trying an email with a wrong password. And the
+   * message says what happened and why, because somebody who does not know they have been
+   * suspended will simply believe the app is broken and try again all evening.
+   */
+  if (user.suspendedAt) {
+    recordActivity({
+      userId: user.id,
+      action: "auth.login.refused_suspended",
+      subjectType: "user",
+      subjectId: user.id,
+    });
+    res.status(403).json({
+      error:
+        "This account has been suspended." +
+        (user.suspendedReason ? ` Reason: ${user.suspendedReason}` : "") +
+        " Please contact support if you think this is a mistake.",
+      suspended: true,
+    });
+    return;
+  }
+
   const token = signToken({ userId: user.id, email: user.email, role: user.role });
   const profile = await buildUserProfile(user);
   res.json({ token, user: profile });

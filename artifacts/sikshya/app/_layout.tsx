@@ -56,9 +56,10 @@ function AuthGuard() {
 
     const inTeacherGroup = segments[0] === "(teacher)";
     const inStudentGroup = segments[0] === "(student)";
+    const inAdminGroup = segments[0] === "(admin)";
     const inAuthGroup = segments[0] === "(auth)";
     const onSharedScreen = SHARED_SCREENS.some(({ segment }) => segments[0] === segment);
-    const inProtectedGroup = inTeacherGroup || inStudentGroup;
+    const inProtectedGroup = inTeacherGroup || inStudentGroup || inAdminGroup;
 
     if (!user) {
       if (inProtectedGroup || onSharedScreen) router.replace("/welcome");
@@ -66,6 +67,10 @@ function AuthGuard() {
       if (!inTeacherGroup && !inAuthGroup && !onSharedScreen) router.replace("/(teacher)");
     } else if (user.role === "student") {
       if (!inStudentGroup && !inAuthGroup && !onSharedScreen) router.replace("/(student)");
+    } else if (user.role === "admin") {
+      // An agent has one place to be. They are not a teacher or a student, and the screens for
+      // those roles would show them somebody else's empty dashboard.
+      if (!inAdminGroup && !inAuthGroup) router.replace("/(admin)");
     }
   }, [user, isLoading, segments]);
 
@@ -82,6 +87,7 @@ function RootLayoutNav() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(teacher)" />
         <Stack.Screen name="(student)" />
+        <Stack.Screen name="(admin)" />
         {SHARED_SCREENS.map(({ name }) => (
           <Stack.Screen
             key={name}

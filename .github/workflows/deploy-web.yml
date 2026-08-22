@@ -158,6 +158,15 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:reviews
 
+      # The support desk. Half of this suite is spent trying to get in rather than on the
+      # features once inside: a tool that can suspend accounts and reset passwords is one where
+      # "who is allowed in here" has to be answered by the server on every request, not by
+      # whichever screen the app happens to show.
+      - name: The support desk and who may use it
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:admin
+
       # A class's own message thread, and the log of who did what. Both have to survive a
       # restart to be worth anything — a teacher's "running ten minutes late" and a refund
       # argued weeks later both depend on the words still being there — so this restarts the

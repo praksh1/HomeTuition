@@ -12,6 +12,7 @@ import {
   ensureSessionMessagesTable,
   ensureActivityLogTable,
   ensureDisputeReasons,
+  ensureSupportDeskSchema,
 } from "./lib/ensureSchema";
 
 const rawPort = process.env["PORT"];
@@ -41,6 +42,7 @@ server.listen(port, () => {
   void ensureSessionMessagesTable();
   void ensureActivityLogTable();
   void ensureDisputeReasons();
+  void ensureSupportDeskSchema();
   // Whether real money can move is too important to have to go and look up.
   if (paymentMode() === "simulated") logger.warn(describePaymentMode());
   else logger.info(describePaymentMode());

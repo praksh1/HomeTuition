@@ -16,7 +16,8 @@
     "test:board-persistence": "node scripts/board-persistence/run.mjs",
     "test:attendance": "node scripts/attendance-tests/run.mjs",
     "test:reviews": "node scripts/review-tests/run.mjs",
-    "test:thread": "node scripts/thread-tests/run.mjs"
+    "test:thread": "node scripts/thread-tests/run.mjs",
+    "test:admin": "node scripts/admin-tests/run.mjs"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",

@@ -9,6 +9,7 @@ import messagesRouter from "./messages";
 import disputesRouter from "./disputes";
 import notificationsRouter from "./notifications";
 import sessionMessagesRouter from "./sessionMessages";
+import adminRouter, { passwordResetRouter } from "./admin";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,7 @@ router.use(messagesRouter);
 router.use(disputesRouter);
 router.use(notificationsRouter);
 router.use(sessionMessagesRouter);
+router.use(adminRouter);
+router.use(passwordResetRouter);
 
 export default router;
