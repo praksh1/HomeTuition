@@ -1192,3 +1192,19 @@ attributed to real people who did not write them.
 
 `session_invite` emails have always pointed at `/session/:id`. There was no such route, so
 every invitation ever sent led to a "not found". The class's own page now lives there.
+
+### F5. The Rec button recorded nothing and said it had — **removed**
+
+In the teacher's classroom, next to End, sat a "Rec" button. It turned red, and on a second tap
+it announced "Recording saved to Sikshya cloud." Nothing was captured, nothing was stored, and
+there was nowhere for it to go.
+
+That is worse than a missing feature. A teacher could have relied on it in exactly the dispute
+this month's work is about — believing they had proof of what happened in a lesson — and found
+at the moment it mattered that there had never been anything to produce. So the button is gone
+rather than hidden, and the classroom suite now asserts it stays gone.
+
+Real recording is a decision rather than a missing function. Daily can record a call as a paid
+feature; doing it would mean paying for storage, asking both people for consent, and holding
+video of children. `REFUNDS.md` sets out why it is not the obvious answer, and why the
+attendance record covers most of what a dispute actually needs.

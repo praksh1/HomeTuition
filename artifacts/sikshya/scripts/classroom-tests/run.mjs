@@ -326,6 +326,20 @@ async function main() {
    * stays on the installed apps, where Daily has no chat panel at all and this is the only one
    * there is. See utils/classroomChat.ts.
    */
+  /**
+   * The Rec button is gone, and must stay gone.
+   *
+   * It recorded nothing and then said "Recording saved to Sikshya cloud." A teacher could have
+   * relied on that in a dispute and found there was never anything to produce. Checked here
+   * because a control that lies about evidence is the kind of thing that gets restored by
+   * accident, and nothing else would notice.
+   */
+  check(
+    "there is no Rec button pretending to record the lesson",
+    !/\bRec\b/.test(rejoin.text) && !/Recording saved/i.test(rejoin.text),
+    rejoin.text.slice(0, 200).replace(/\n/g, " | "),
+  );
+
   check(
     "the board has no second chat tab beside it on the web",
     !(await page2.getByText("Chat", { exact: false }).filter({ hasText: /^Chat/ }).count()),

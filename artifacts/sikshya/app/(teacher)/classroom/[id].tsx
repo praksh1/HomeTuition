@@ -92,7 +92,6 @@ export default function Classroom() {
 
   const [session, setSession] = useState<SessionData | null>(null);
   const [mode, setMode] = useState<Mode>("whiteboard");
-  const [isRecording, setIsRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [chatMsg, setChatMsg] = useState("");
   const [isLandscape, setIsLandscape] = useState(false);
@@ -475,14 +474,6 @@ export default function Classroom() {
     }
   };
 
-  const toggleRecording = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    const msg = !isRecording ? "Recording started." : "Recording saved to Sikshya cloud.";
-    if (Platform.OS === "web") window.alert(msg);
-    else Alert.alert(!isRecording ? "Recording Started" : "Recording Saved", msg);
-    setIsRecording((r) => !r);
-  };
-
   // Called when the teacher clicks Daily's native Leave button. No confirmation dialog
   // here — the user already made an explicit in-call gesture, so we just clean up
   // immediately: mark the session completed and return to the dashboard.
@@ -587,10 +578,22 @@ export default function Classroom() {
             <TouchableOpacity style={s.iconBtn} onPress={toggleLandscape} activeOpacity={0.8}>
               <Feather name={isLandscape ? "minimize-2" : "maximize-2"} size={16} color="#aaa" />
             </TouchableOpacity>
-            <TouchableOpacity style={[s.recBtn, { backgroundColor: isRecording ? colors.destructive : "#333" }]} onPress={toggleRecording} activeOpacity={0.8}>
-              <Feather name="circle" size={13} color="#fff" />
-              <Text style={s.recText}>{isRecording ? "Stop" : "Rec"}</Text>
-            </TouchableOpacity>
+            {/*
+              The Rec button used to be here, and it recorded nothing.
+
+              It turned red, and on a second tap it said "Recording saved to Sikshya cloud."
+              Nothing was captured, nothing was stored, and there was nowhere for it to go. A
+              teacher could have relied on that in a dispute — believing they had proof of what
+              happened in a lesson — and found there was never anything to produce. A control
+              that lies about evidence is worse than no control, so it is gone rather than
+              hidden.
+
+              Real recording is a decision, not a missing function: Daily can record a call as a
+              paid feature, and doing it here would mean paying for storage, asking both people
+              for consent, and holding video of children. REFUNDS.md says why it is not the
+              obvious answer, and why the attendance record covers most of what a dispute
+              actually needs.
+            */}
             <TouchableOpacity style={s.endBtn} onPress={endSession} activeOpacity={0.8}>
               <Feather name="phone-off" size={14} color="#EF4444" />
               <Text style={s.endBtnText}>End</Text>
@@ -957,8 +960,6 @@ const s = StyleSheet.create({
   liveText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff" },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 6 },
   iconBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
-  recBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 6 },
-  recText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
   endBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 10, backgroundColor: "#1A1A1A", paddingHorizontal: 9, paddingVertical: 6, borderWidth: 1, borderColor: "#EF4444" },
   endBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#EF4444" },
   presence: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 14, paddingBottom: 6 },
