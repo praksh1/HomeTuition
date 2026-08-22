@@ -224,6 +224,10 @@ jobs:
           # three-day-old class opened a classroom and asked the phone for its camera. A test
           # of a rule cannot see that; only this can.
           pnpm --filter @workspace/sikshya run test:classroom
+          # Which tabs each role gets. Moving a screen out of a tab bar is the change that
+          # quietly leaves it unreachable: the route still exists, everything compiles, and the
+          # only way to find out is to open the app and try to get to it.
+          pnpm --filter @workspace/sikshya run test:nav
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local

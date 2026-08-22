@@ -79,11 +79,19 @@ function ClassicTabLayout() {
           tabBarIcon: ({ color }) => <Feather name="users" size={22} color={color} />,
         }}
       />
+      {/*
+        Support takes the place Plan used to hold.
+
+        The owner's words: "the 'Plan' tab can be integrated inside the 'Profile' tab, and
+        maybe the Customer Service can be a separate tab". A subscription is something a
+        teacher sets up once and then forgets; support is what they reach for on the day
+        something goes wrong, and it was two taps deep inside Profile.
+      */}
       <Tabs.Screen
-        name="subscription"
+        name="support"
         options={{
-          title: "Plan",
-          tabBarIcon: ({ color }) => <Feather name="credit-card" size={22} color={color} />,
+          title: "Support",
+          tabBarIcon: ({ color }) => <Feather name="life-buoy" size={22} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -102,6 +110,8 @@ function ClassicTabLayout() {
           tabBarIcon: ({ color }) => <Feather name="user" size={22} color={color} />,
         }}
       />
+      {/* Still routable, and reached from Profile — just no longer a tab of its own. */}
+      <Tabs.Screen name="subscription" options={{ href: null }} />
       <Tabs.Screen name="session-create" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="classroom/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
     </Tabs>

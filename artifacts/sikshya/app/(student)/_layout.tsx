@@ -60,6 +60,14 @@ function ClassicStudentTabLayout() {
           tabBarIcon: ({ color }) => <Feather name="message-circle" size={22} color={color} />,
         }}
       />
+      {/* "same for students - the Customer Service needs to have a separate Tab!" */}
+      <Tabs.Screen
+        name="support"
+        options={{
+          title: "Support",
+          tabBarIcon: ({ color }) => <Feather name="life-buoy" size={22} color={color} />,
+        }}
+      />
       <Tabs.Screen
         name="profile"
         options={{

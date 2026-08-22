@@ -101,7 +101,11 @@ export default function SupportScreen() {
       });
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       notify("Report Submitted", "Our support team will review your report and get back to you shortly.");
-      router.back();
+      // Clear the form rather than navigating: on the tab there is nowhere to go back to.
+      setDescription("");
+      setFile(null);
+      setReason(null);
+      if (router.canGoBack()) router.back();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Something went wrong. Please try again.";
       notify("Submission Failed", msg);
@@ -129,9 +133,18 @@ export default function SupportScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} testID="support-back-btn">
-          <Feather name="arrow-left" size={22} color={colors.foreground} />
-        </TouchableOpacity>
+        {/*
+          No arrow when this is a tab. The same screen is reached three ways — from Profile,
+          from a class that went wrong, and now as a tab of its own — and a back arrow on the
+          tab would be a control that does nothing.
+        */}
+        {router.canGoBack() ? (
+          <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} testID="support-back-btn">
+            <Feather name="arrow-left" size={22} color={colors.foreground} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 22 }} />
+        )}
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Customer Support</Text>
         <View style={{ width: 22 }} />
       </View>

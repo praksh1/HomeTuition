@@ -171,6 +171,22 @@ export default function TeacherProfile() {
         </View>
       </View>
 
+      {/*
+        Plan lives here now rather than in the tab bar — the owner asked for it: "the 'Plan'
+        tab can be integrated inside the 'Profile' tab". A subscription is set up once and then
+        forgotten; it does not earn a permanent place on every screen.
+      */}
+      <TouchableOpacity
+        style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+        onPress={() => router.push("/(teacher)/subscription")}
+        activeOpacity={0.7}
+        testID="subscription-link"
+      >
+        <Feather name="credit-card" size={18} color={colors.foreground} />
+        <Text style={[styles.supportText, { color: colors.foreground }]}>My Plan</Text>
+        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+      </TouchableOpacity>
+
       <TouchableOpacity
         style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
         onPress={() => router.push("/notification-settings")}
