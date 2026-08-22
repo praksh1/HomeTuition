@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, lte, or, sql, type AnyColumn } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { db, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
-import { requireAuth } from "../middlewares/requireAuth";
+import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { notify } from "../lib/notify";
 
 const router: IRouter = Router();
@@ -393,7 +393,7 @@ router.get("/students/:id/followed-teachers", requireAuth, async (req, res): Pro
   res.json({ teachers });
 });
 
-router.get("/teachers/:id/reviews", async (req, res): Promise<void> => {
+router.get("/teachers/:id/reviews", attachUserIfPresent, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid teacher ID" }); return; }
@@ -410,8 +410,32 @@ router.get("/teachers/:id/reviews", async (req, res): Promise<void> => {
   if (!profile) { res.status(404).json({ error: "Teacher not found" }); return; }
 
   const { reviewsTable } = await import("@workspace/db");
-  const [reviews, [{ total }]] = await Promise.all([
-    db.select().from(reviewsTable)
+  /**
+   * Reviews go out without the reviewer.
+   *
+   * The owner's ask was narrower — "when a student reviews a teacher and the teacher sees it,
+   * it should be shown as anonymous" — but hiding the name only from the teacher's own screen
+   * would not be anonymity at all. This list is public: a teacher could read it signed out, or
+   * from any student account, and see every name. Half-anonymity is worse than none, because
+   * the student believes they are protected and they are not.
+   *
+   * So no name, and no student id either — an id can be matched against the teacher's own
+   * enrolment list, which gets to the same place by a longer route.
+   *
+   * The name is still stored. It is needed to investigate an abusive review, and it is what
+   * makes one-review-per-session enforceable. It simply never leaves the server.
+   */
+  const columns = {
+    id: reviewsTable.id,
+    rating: reviewsTable.rating,
+    comment: reviewsTable.comment,
+    createdAt: reviewsTable.createdAt,
+    // Only ever compared, never returned: lets a student recognise their own review without
+    // telling anybody else whose it is.
+    studentId: reviewsTable.studentId,
+  };
+  const [rows, [{ total }]] = await Promise.all([
+    db.select(columns).from(reviewsTable)
       .where(eq(reviewsTable.teacherId, profile.userId))
       .orderBy(desc(reviewsTable.createdAt))
       .limit(limitNum)
@@ -420,6 +444,14 @@ router.get("/teachers/:id/reviews", async (req, res): Promise<void> => {
       .from(reviewsTable)
       .where(eq(reviewsTable.teacherId, profile.userId)),
   ]);
+
+  // This route is open to signed-out visitors, so there may be no reader to compare against.
+  const readerId = req.user?.userId ?? null;
+  const reviews = rows.map(({ studentId, ...review }) => ({
+    ...review,
+    /** True only for the person who wrote it, so they can see their own words back. */
+    mine: readerId !== null && studentId === readerId,
+  }));
 
   res.json({ reviews, total, page: pageNum, limit: limitNum });
 });

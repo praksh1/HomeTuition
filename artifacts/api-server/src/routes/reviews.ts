@@ -8,6 +8,14 @@ const router: IRouter = Router();
 const RATING_WINDOW_DAYS = 7;
 
 /**
+ * How long a written review may be.
+ *
+ * Long enough for somebody to say what actually happened in a lesson, short enough that the
+ * teacher's page stays readable and a single review cannot fill a phone screen.
+ */
+const MAX_COMMENT_CHARS = 1000;
+
+/**
  * Finds a session that entitles this student to review this teacher: one they enrolled in,
  * that has finished, that finished within the last RATING_WINDOW_DAYS, and that they have
  * not already reviewed.
@@ -67,12 +75,29 @@ router.post("/reviews", requireAuth, async (req, res): Promise<void> => {
     teacherId?: number; rating?: number; comment?: string;
   };
 
-  if (!teacherId || rating === undefined || comment === undefined) {
-    res.status(400).json({ error: "teacherId, rating, and comment are required" });
+  if (!teacherId || rating === undefined) {
+    res.status(400).json({ error: "teacherId and rating are required" });
     return;
   }
   if (rating < 1 || rating > 5) {
     res.status(400).json({ error: "Rating must be between 1 and 5" });
+    return;
+  }
+
+  /**
+   * The student's own words, or nothing at all.
+   *
+   * A comment used to be mandatory, and the app met that by inventing one — every review in
+   * the database says "Great teacher! Rated 4 stars." in the student's name, whatever they
+   * actually thought. That is worse than having no comments: it is a fabricated opinion
+   * attributed to a real person, and it made the review list useless to read.
+   *
+   * So it is optional, and whatever arrives is the student's. Capped because this is displayed
+   * on a public page and there is no reason for an essay.
+   */
+  const text = typeof comment === "string" ? comment.trim() : "";
+  if (text.length > MAX_COMMENT_CHARS) {
+    res.status(400).json({ error: `Please keep your review under ${MAX_COMMENT_CHARS} characters.` });
     return;
   }
 
@@ -95,7 +120,7 @@ router.post("/reviews", requireAuth, async (req, res): Promise<void> => {
       sessionId: ratableSession.sessionId,
       studentName: studentUser?.name ?? "Anonymous",
       rating,
-      comment: comment ?? "",
+      comment: text,
     }).returning();
   } catch (err) {
     // Unique violation: a concurrent request already reviewed this session. The check above

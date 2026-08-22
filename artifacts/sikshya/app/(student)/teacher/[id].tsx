@@ -3,7 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { confirm, notify } from "@/utils/alerts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
@@ -42,10 +42,11 @@ interface SessionAccess {
 
 interface ApiReview {
   id: number;
-  studentName: string;
   rating: number;
   comment: string;
   createdAt: string;
+  /** True only for the review this reader wrote. Nobody is told whose the others are. */
+  mine?: boolean;
 }
 
 interface ApiSession {
@@ -91,6 +92,7 @@ export default function TeacherDetail() {
   const [sessionTab, setSessionTab] = useState<SessionTab>("upcoming");
   const [reviews, setReviews] = useState<ApiReview[]>([]);
   const [myRating, setMyRating] = useState(0);
+  const [myComment, setMyComment] = useState("");
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
   const [canRate, setCanRate] = useState(false);
   const [checkingRateEligibility, setCheckingRateEligibility] = useState(true);
@@ -259,7 +261,10 @@ Nothing has been charged and you are not enrolled.` : msg,
       await apiPost("/reviews", {
         teacherId: (teacher as Teacher & { userId: number }).userId,
         rating: myRating,
-        comment: `Great teacher! Rated ${myRating} star${myRating !== 1 ? "s" : ""}.`,
+        // What the student actually wrote. This used to send an invented sentence — every
+        // review in the database read "Great teacher! Rated 4 stars." in a real student's
+        // name, whatever they thought — which made the whole list worthless to read.
+        comment: myComment.trim(),
       });
       setRatingSubmitted(true);
       notify("Thank you!", `You rated ${teacher.name} ${myRating} star${myRating !== 1 ? "s" : ""}.`);
@@ -541,6 +546,24 @@ Nothing has been charged and you are not enrolled.` : msg,
               <View style={styles.starRow}>
                 <StarRating rating={myRating} size={36} interactive onRate={(r) => setMyRating(r)} />
               </View>
+              {/*
+                Optional on purpose. A star with nothing beside it is still a real opinion, and
+                demanding a sentence is how the app ended up writing them itself.
+              */}
+              <TextInput
+                testID="review-comment-input"
+                style={[styles.reviewInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                placeholder="Say what the class was like (optional)"
+                placeholderTextColor={colors.mutedForeground}
+                value={myComment}
+                onChangeText={setMyComment}
+                multiline
+                maxLength={1000}
+                textAlignVertical="top"
+              />
+              <Text style={[styles.reviewHint, { color: colors.mutedForeground }]}>
+                Your name is never shown with your review.
+              </Text>
               <TouchableOpacity
                 style={[styles.submitBtn, { backgroundColor: myRating > 0 ? colors.secondary : colors.muted }]}
                 onPress={submitRating}
@@ -572,17 +595,27 @@ Nothing has been charged and you are not enrolled.` : msg,
           <View key={review.id} style={[styles.reviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.reviewHeader}>
               <View style={[styles.reviewAvatar, { backgroundColor: colors.primary + "15" }]}>
-                <Text style={[styles.reviewAvatarText, { color: colors.primary }]}>{review.studentName[0]}</Text>
+                <Feather name="user" size={14} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.reviewName, { color: colors.foreground }]}>{review.studentName}</Text>
+                {/*
+                  No name, for anybody. The owner asked for reviews to be anonymous to the
+                  teacher, and anonymous only on the teacher's own screen is not anonymous —
+                  this page is public, and a teacher can read it signed out. The server does not
+                  send the name at all; see routes/teachers.ts.
+                */}
+                <Text style={[styles.reviewName, { color: colors.foreground }]}>
+                  {review.mine ? "Your review" : "A student"}
+                </Text>
                 <Text style={[styles.reviewDate, { color: colors.mutedForeground }]}>
                   {new Date(review.createdAt).toLocaleDateString("en-NP", { month: "short", year: "numeric" })}
                 </Text>
               </View>
               <StarRating rating={review.rating} size={14} />
             </View>
-            <Text style={[styles.reviewComment, { color: colors.mutedForeground }]}>"{review.comment}"</Text>
+            {review.comment ? (
+              <Text style={[styles.reviewComment, { color: colors.mutedForeground }]}>"{review.comment}"</Text>
+            ) : null}
           </View>
         ))}
         {reviews.length === 0 && (
@@ -666,5 +699,15 @@ const styles = StyleSheet.create({
   reviewAvatarText: { fontSize: 15, fontFamily: "Inter_700Bold" },
   reviewName: { fontSize: 14, fontFamily: "Inter_500Medium" },
   reviewDate: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  reviewInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    minHeight: 76,
+    fontSize: 14,
+    fontFamily: "Inter_400Regular",
+    marginBottom: 8,
+  },
+  reviewHint: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 12 },
   reviewComment: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 21, fontStyle: "italic" },
 });

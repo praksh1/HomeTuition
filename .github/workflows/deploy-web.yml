@@ -149,6 +149,15 @@ jobs:
           API_URL=http://127.0.0.1:8081 PAYMENT_WEBHOOK_SECRET=ci-only-webhook-secret \
             pnpm --filter @workspace/api-server run test:payments
 
+      # What a review says and who it says it about. The second half is the one that needs a
+      # server: anonymity that only covers the teacher's own screen is not anonymity, because
+      # the same list is public — so it is checked from a signed-out reader, another student,
+      # and the teacher, and none of them may be handed a name.
+      - name: Reviews say what the student wrote, and not who wrote it
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:reviews
+
       # Who was in the class, which is the evidence every refund rule in REFUNDS.md is argued
       # from. Only a real socket into a real database shows whether the classroom hub actually
       # writes any of it down — the arithmetic is covered by the unit tests above, the wiring
