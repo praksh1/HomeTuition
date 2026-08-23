@@ -393,6 +393,36 @@ async function run() {
       info.body?.studentRefund === 250, JSON.stringify(info.body));
   }
 
+  console.log("\nWhat a student who already left is shown\n");
+
+  {
+    const s = await makeSession(teacher, { price: 500 });
+    await book(student, s.id);
+    const dropped = await api(`/sessions/${s.id}/drop`, { method: "POST", token: student.token });
+    check("the drop this case depends on happened", dropped.status === 200, `status=${dropped.status}`);
+
+    const after = await api(`/sessions/${s.id}/drop-info`, { token: student.token });
+    check("they are told they have left, not that they were never here",
+      after.body?.left === true, JSON.stringify(after.body));
+    check("with the amount they are owed", after.body?.refundAmount === 250, JSON.stringify(after.body));
+    check("and that it is requested rather than paid",
+      after.body?.refundPaid === false && /requested/i.test(String(after.body?.detail)),
+      String(after.body?.detail));
+    check("no Drop button is offered to somebody already out", after.body?.canDrop === false);
+
+    // Somebody who genuinely never booked must not be told any of this.
+    const never = await api(`/sessions/${s.id}/drop-info`, { token: other.token });
+    check("and somebody who never booked is not told about a refund",
+      never.body?.left !== true && never.body?.enrolled === false, JSON.stringify(never.body));
+
+    // Once an agent settles it, the wording follows.
+    sql(`update refunds set status = 'paid', paid_at = now() where session_id = ${s.id} and student_id = ${student.user.id}`);
+    const settled = await api(`/sessions/${s.id}/drop-info`, { token: student.token });
+    check("once it is paid, they are told that instead",
+      settled.body?.refundPaid === true && /has been paid/i.test(String(settled.body?.detail)),
+      String(settled.body?.detail));
+  }
+
   console.log("\nThe thread a refunded student can still read\n");
 
   {

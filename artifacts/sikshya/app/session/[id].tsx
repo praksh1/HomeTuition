@@ -368,13 +368,15 @@ export default function SessionPage() {
       )}
 
       {/*
-        Getting out, for a student who has one.
+        Getting out, for a student who has one — and, for one who already has, what happened
+        to their money. The second is why this is no longer hidden on a finished class: a
+        refund is chased after the class, not before it.
 
         Below the thread on purpose: a student thinking about dropping should pass the teacher's
         "running ten minutes late, start without me" on the way, because that message is often
         the whole reason the thought went away.
       */}
-      {!isTeacher && session.status !== "completed" && (
+      {!isTeacher && (
         <DropClass sessionId={session.id} onDropped={() => void load()} />
       )}
 

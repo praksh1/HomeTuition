@@ -319,6 +319,19 @@ async function main() {
       (await page.locator('[data-testid="session-thread-input"]').count()) === 0);
     check("and they are told why",
       (await page.locator('[data-testid="session-thread-readonly"]').count()) > 0);
+
+    /**
+     * And the page says what happened to their money.
+     *
+     * It used to say nothing at all — identical to a class they had never booked — at the exact
+     * moment somebody is most likely to be checking on a refund they were promised.
+     */
+    check("the page tells them they have left",
+      (await page.locator('[data-testid="drop-class-left"]').count()) > 0, body.slice(0, 400).replace(/\n/g, " | "));
+    check("and names the amount and the wait",
+      /NPR\s*250/.test(body) && /5-7 business days/i.test(body), body.slice(0, 600).replace(/\n/g, " | "));
+    check("without claiming it has already been paid",
+      !/has been paid/i.test(body), body.slice(0, 600).replace(/\n/g, " | "));
     await ctx.close();
   }
 

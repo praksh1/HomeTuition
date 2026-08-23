@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   db,
@@ -69,6 +69,44 @@ router.get("/sessions/:id/drop-info", requireAuth, async (req, res): Promise<voi
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
 
   const enrolment = await paidEnrolment(id, user.userId);
+
+  /**
+   * Somebody who already left, and what happened to their money.
+   *
+   * Told apart from "never booked", which it otherwise looks exactly like. A student who
+   * dropped a class opened its page and found no acknowledgement of any of it — no note that
+   * they had left, no amount, no mention of the refund they had been promised — which reads as
+   * the app having forgotten, at the point where they are most likely to be checking.
+   */
+  if (enrolment?.paymentStatus === "refunded") {
+    const [refund] = await db
+      .select({
+        amount: refundsTable.amount,
+        status: refundsTable.status,
+        requestedAt: refundsTable.requestedAt,
+      })
+      .from(refundsTable)
+      .where(and(eq(refundsTable.sessionId, id), eq(refundsTable.studentId, user.userId)))
+      .orderBy(desc(refundsTable.id))
+      .limit(1);
+
+    res.json({
+      enrolled: false,
+      left: true,
+      canDrop: false,
+      refundAmount: refund?.amount ?? null,
+      refundPaid: refund?.status === "paid",
+      headline: "You are no longer in this class.",
+      detail: refund
+        ? refund.status === "paid"
+          ? `A refund of NPR ${refund.amount} has been paid.`
+          : `A refund of NPR ${refund.amount} has been requested. Our team processes refunds ` +
+            `within 5-7 business days.`
+        : "If you were expecting a refund and have not had it, report it from Support.",
+    });
+    return;
+  }
+
   if (!enrolment || enrolment.paymentStatus !== "paid") {
     res.json({ enrolled: false, canDrop: false, reason: "You are not booked into this class." });
     return;

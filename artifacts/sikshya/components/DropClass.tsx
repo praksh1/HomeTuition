@@ -28,6 +28,10 @@ import { confirm, notify } from "@/utils/alerts";
 
 export interface DropInfo {
   enrolled: boolean;
+  /** True for somebody who was in this class and dropped or was refunded out of it. */
+  left?: boolean;
+  refundAmount?: number | null;
+  refundPaid?: boolean;
   canDrop: boolean;
   reason: string | null;
   pricePaid: number;
@@ -68,6 +72,23 @@ export default function DropClass({ sessionId, onDropped }: Props) {
   useEffect(() => { void load(); }, [load]);
 
   if (loading) return <ActivityIndicator color={colors.primary} style={styles.loading} />;
+
+  /**
+   * Somebody who has already left, and what happened to their money.
+   *
+   * Shown instead of nothing. This page was blank for them — identical to a class they had
+   * never booked — which reads as the app having forgotten, exactly when they are most likely
+   * to be checking on a refund they were promised.
+   */
+  if (info?.left) {
+    return (
+      <View style={[styles.card, { borderColor: colors.border }]} testID="drop-class-left">
+        <Text style={[styles.title, { color: colors.foreground }]}>{info.headline}</Text>
+        <Text style={[styles.headline, { color: colors.mutedForeground }]}>{info.detail}</Text>
+      </View>
+    );
+  }
+
   // Not booked, or we could not tell. Either way there is nothing here to offer.
   if (!info?.enrolled) return null;
 
