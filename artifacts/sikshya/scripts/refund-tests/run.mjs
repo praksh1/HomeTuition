@@ -337,17 +337,38 @@ async function main() {
     const refundId = dropped.body?.refund?.id;
 
     const { ctx, page } = await open(browser, agentToken, "/refunds");
-    const body = await text(page);
+    const firstView = await text(page);
 
     check("Refunds is a tab an agent can reach",
       (await page.locator('[data-testid="admin-refunds-total"]').count()) > 0,
-      body.slice(0, 300).replace(/\n/g, " | "));
-    check("the drop is in the queue",
+      firstView.slice(0, 300).replace(/\n/g, " | "));
+    check("and the screen says plainly that it pays nothing",
+      /Nothing here moves money/i.test(firstView), firstView.slice(0, 300).replace(/\n/g, " | "));
+
+    /**
+     * Found by searching, not by scrolling.
+     *
+     * The queue is worked oldest-first a page at a time, so on any database with real history
+     * the newest refund is not on the first screen — which is the situation an agent answering
+     * "where is my money" about a named person is always in.
+     */
+    await page.locator('[data-testid="admin-refunds-search"]').fill("Owed Ojaswi");
+    await page.waitForTimeout(3000);
+    const body = await text(page);
+
+    check("searching a name finds that person's refund",
       (await page.locator(`[data-testid="admin-refund-${refundId}"]`).count()) > 0, `refund=${refundId}`);
     check("the student is named", /Owed Ojaswi/.test(body), body.slice(0, 500).replace(/\n/g, " | "));
     check("the amount is right", /NPR\s*400/.test(body), body.slice(0, 500).replace(/\n/g, " | "));
-    check("and the screen says plainly that it pays nothing",
-      /Nothing here moves money/i.test(body), body.slice(0, 300).replace(/\n/g, " | "));
+    check("and searching a name nobody has finds nothing rather than everything",
+      await (async () => {
+        await page.locator('[data-testid="admin-refunds-search"]').fill("Zzzz Nobody Here");
+        await page.waitForTimeout(3000);
+        const none = await page.locator('[data-testid^="admin-refund-"]').count();
+        await page.locator('[data-testid="admin-refunds-search"]').fill("Owed Ojaswi");
+        await page.waitForTimeout(3000);
+        return none === 0;
+      })());
 
     // Marking it paid without a reference must not go through.
     await page.locator(`[data-testid="admin-refund-paid-${refundId}"]`).click({ timeout: 15000 });

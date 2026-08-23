@@ -45,6 +45,9 @@ const router: IRouter = Router();
 /** Everything under /admin needs both: signed in, and an agent right now. */
 router.use("/admin", requireAuth, requireAdmin);
 
+/** How many refunds one page of the queue holds. */
+const PAGE = 100;
+
 /** How long a reset code read out over the phone stays good for. */
 const RESET_CODE_MINUTES = 30;
 
@@ -504,6 +507,8 @@ router.get("/admin/refunds", async (req, res): Promise<void> => {
    */
   const forStudent = Number(req.query.studentId);
   const student = Number.isInteger(forStudent) ? forStudent : null;
+  /** Search by the person's name or address, for finding one row in a long queue. */
+  const q = String(req.query.q ?? "").trim();
 
   try {
     const rows = await db
@@ -532,21 +537,37 @@ router.get("/admin/refunds", async (req, res): Promise<void> => {
         and(
           wanted ? eq(refundsTable.status, wanted) : sql`true`,
           student === null ? sql`true` : eq(refundsTable.studentId, student),
+          q ? or(ilike(usersTable.name, `%${q}%`), ilike(usersTable.email, `%${q}%`)) : sql`true`,
         ),
       )
       .orderBy(asc(refundsTable.id))
-      .limit(200);
+      .limit(PAGE + 1);
 
     const [owed] = await db
       .select({ n: sql<number>`coalesce(sum(${refundsTable.amount}), 0)::int` })
       .from(refundsTable)
       .where(eq(refundsTable.status, "owed"));
 
-    res.json({ refunds: rows, totalOwed: owed?.n ?? 0, known: true });
+    /**
+     * Say when there is more than fits.
+     *
+     * One row too many is fetched purely to answer this. A queue worked oldest-first that
+     * silently stops at a page means anything past that point is invisible to the agent, and a
+     * refund nobody can see is one nobody pays — so the screen has to be able to say "there are
+     * more, search for the person" rather than looking complete.
+     */
+    const truncated = rows.length > PAGE;
+
+    res.json({
+      refunds: rows.slice(0, PAGE),
+      totalOwed: owed?.n ?? 0,
+      truncated,
+      known: true,
+    });
   } catch (err) {
     // An empty queue and an unreadable one look identical on screen, and only one of them
     // means there is nothing to pay.
-    res.status(503).json({ refunds: [], totalOwed: 0, known: false });
+    res.status(503).json({ refunds: [], totalOwed: 0, truncated: false, known: false });
   }
 });
 

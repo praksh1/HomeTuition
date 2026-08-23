@@ -61,6 +61,9 @@ export default function AdminRefunds() {
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("owed");
   const [refunds, setRefunds] = useState<Refund[]>([]);
   const [totalOwed, setTotalOwed] = useState(0);
+  /** True when there are more owed refunds than one page holds — see the note by the search box. */
+  const [truncated, setTruncated] = useState(false);
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [references, setReferences] = useState<Record<number, string>>({});
@@ -69,12 +72,13 @@ export default function AdminRefunds() {
   const load = useCallback(async () => {
     setFailed(false);
     try {
-      const res = await apiGet<{ refunds: Refund[]; totalOwed: number; known: boolean }>(
-        `/admin/refunds?status=${filter}`,
-      );
+      const res = await apiGet<{
+        refunds: Refund[]; totalOwed: number; truncated?: boolean; known: boolean;
+      }>(`/admin/refunds?status=${filter}${search.trim() ? `&q=${encodeURIComponent(search.trim())}` : ""}`);
       if (!res.known) throw new Error("unreadable");
       setRefunds(res.refunds ?? []);
       setTotalOwed(res.totalOwed ?? 0);
+      setTruncated(res.truncated === true);
     } catch {
       // "Nothing to pay" and "we could not look" must never look the same to the person whose
       // job is to notice that money is waiting.
@@ -83,7 +87,7 @@ export default function AdminRefunds() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, search]);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
@@ -151,6 +155,31 @@ export default function AdminRefunds() {
           );
         })}
       </View>
+
+      {/*
+        Finding one person in a long queue.
+
+        The queue is worked oldest-first and shows a page at a time, so without this an agent
+        answering "where is my refund" about a named student has no way to reach their row once
+        there are more than a page of older ones ahead of it. A refund nobody can see is one
+        nobody pays.
+      */}
+      <TextInput
+        testID="admin-refunds-search"
+        style={[styles.search, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
+        placeholder="Search by name or email"
+        placeholderTextColor={colors.mutedForeground}
+        value={search}
+        onChangeText={setSearch}
+        autoCapitalize="none"
+      />
+
+      {truncated && (
+        <Text testID="admin-refunds-truncated" style={[styles.truncated, { color: colors.mutedForeground }]}>
+          Showing the oldest {refunds.length}. There are more — search for a name to find a
+          specific one.
+        </Text>
+      )}
 
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 24 }} />
@@ -250,6 +279,8 @@ const styles = StyleSheet.create({
   filter: { flex: 1, alignItems: "center", borderRadius: 12, borderWidth: 1, paddingVertical: 9 },
   filterText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   empty: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 20, lineHeight: 20 },
+  search: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, height: 44, fontSize: 14, fontFamily: "Inter_400Regular" },
+  truncated: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },
   card: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 5 },
   cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   amount: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
