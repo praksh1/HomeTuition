@@ -351,3 +351,77 @@ export async function ensureSupportDeskSchema(): Promise<void> {
     );
   }
 }
+
+
+/**
+ * Creates the tables behind rescheduling and refunds if they are not there yet.
+ *
+ * Same narrow licence as the others: create only, additive only, unable to stop the server
+ * starting. Grouped because they arrive together — a schedule change writes one row and may
+ * owe several refunds, and half of that working is worse than none of it.
+ */
+export async function ensureScheduleAndRefundTables(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "schedule_changes" (
+        "id" serial PRIMARY KEY,
+        "session_id" integer NOT NULL,
+        "teacher_id" integer NOT NULL,
+        "previous_date" timestamp with time zone NOT NULL,
+        "new_date" timestamp with time zone NOT NULL,
+        "affected_students" integer NOT NULL DEFAULT 0,
+        "changed_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "schedule_changes_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "schedule_changes_teacher_id_users_id_fk"
+          FOREIGN KEY ("teacher_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "schedule_changes_teacher_idx"
+        ON "schedule_changes" ("teacher_id", "changed_at")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "schedule_changes_session_idx"
+        ON "schedule_changes" ("session_id", "id")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "refunds" (
+        "id" serial PRIMARY KEY,
+        "session_id" integer NOT NULL,
+        "student_id" integer NOT NULL,
+        "price_paid" integer NOT NULL,
+        "amount" integer NOT NULL,
+        "teacher_share" integer NOT NULL DEFAULT 0,
+        "platform_share" integer NOT NULL DEFAULT 0,
+        "reason" text NOT NULL,
+        "status" text NOT NULL DEFAULT 'owed',
+        "note" text,
+        "requested_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "paid_at" timestamp with time zone,
+        "paid_by" integer,
+        CONSTRAINT "refunds_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "refunds_student_id_users_id_fk"
+          FOREIGN KEY ("student_id") REFERENCES "users"("id") ON DELETE CASCADE,
+        CONSTRAINT "refunds_paid_by_users_id_fk"
+          FOREIGN KEY ("paid_by") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "refunds_status_idx" ON "refunds" ("status", "id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "refunds_student_idx" ON "refunds" ("student_id", "id")
+    `);
+    logger.info("schedule change and refund tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the schedule and refund tables; run `pnpm run db:push`. " +
+        "Classes still run — but a teacher cannot move one and a student cannot drop one, " +
+        "and both will be refused rather than half-completed.",
+    );
+  }
+}

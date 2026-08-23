@@ -9,6 +9,8 @@ export * from "./sessionParticipation";
 export * from "./sessionMessages";
 export * from "./activityLog";
 export * from "./passwordResets";
+export * from "./scheduleChanges";
+export * from "./refunds";
 export * from "./sessionEnrollments";
 export * from "./reviews";
 export * from "./studentTeacherSubscriptions";
