@@ -52,6 +52,13 @@ export default function SessionThread({ sessionId, audienceHint }: Props) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Set by the server for somebody who was in this class and is not any more — they dropped
+   * it, or they were refunded. They keep the thread, because it is the record of the class
+   * they are usually arguing about, but the box to write in it goes away rather than being
+   * offered and then refused.
+   */
+  const [readOnly, setReadOnly] = useState(false);
 
   /** The newest id we hold, so a refresh asks only for what it has not seen. */
   const newestId = useRef(0);
@@ -71,8 +78,11 @@ export default function SessionThread({ sessionId, audienceHint }: Props) {
   const load = useCallback(async (sinceLast: boolean) => {
     try {
       const query = sinceLast && newestId.current > 0 ? `?after=${newestId.current}` : "";
-      const res = await apiGet<{ messages: ThreadMessage[] }>(`/sessions/${sessionId}/messages${query}`);
+      const res = await apiGet<{ messages: ThreadMessage[]; readOnly?: boolean }>(
+        `/sessions/${sessionId}/messages${query}`,
+      );
       merge(res.messages ?? []);
+      setReadOnly(res.readOnly === true);
       setError(null);
     } catch {
       // An empty thread and a thread we could not read look identical on screen otherwise, and
@@ -158,6 +168,11 @@ export default function SessionThread({ sessionId, audienceHint }: Props) {
 
       {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
 
+      {readOnly ? (
+        <Text style={[styles.hint, { color: colors.mutedForeground }]} testID="session-thread-readonly">
+          You are no longer in this class, so you can read this thread but not add to it.
+        </Text>
+      ) : (
       <View style={styles.composer}>
         <TextInput
           testID="session-thread-input"
@@ -183,6 +198,7 @@ export default function SessionThread({ sessionId, audienceHint }: Props) {
           <Feather name="send" size={16} color={draft.trim() && !sending ? "#fff" : colors.mutedForeground} />
         </TouchableOpacity>
       </View>
+      )}
     </KeyboardAvoidingView>
   );
 }

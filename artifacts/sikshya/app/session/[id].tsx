@@ -18,6 +18,8 @@ import { notify } from "@/utils/alerts";
 import { countdown, humanDuration, serverNow, waitingState } from "@/utils/sessionClock";
 import { joinState, startState } from "@/utils/sessionWindow";
 import SessionThread from "@/components/SessionThread";
+import DropClass from "@/components/DropClass";
+import RescheduleClass from "@/components/RescheduleClass";
 
 /**
  * A class's own page — the link the owner asked for.
@@ -266,6 +268,16 @@ export default function SessionPage() {
         </View>
       )}
 
+      {/*
+        The teacher's schedule, and what changing it costs.
+
+        Only for a class that has not happened: moving a lesson that was already taught is not
+        rescheduling, and the students who sat through it would be told their class had moved.
+      */}
+      {isTeacher && session.status === "upcoming" && (
+        <RescheduleClass sessionId={session.id} currentDate={session.date} onMoved={() => void load()} />
+      )}
+
       {/* The teacher's half: who is coming, without having to start the class to find out. */}
       {isTeacher && (
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -353,6 +365,17 @@ export default function SessionPage() {
             }
           />
         </View>
+      )}
+
+      {/*
+        Getting out, for a student who has one.
+
+        Below the thread on purpose: a student thinking about dropping should pass the teacher's
+        "running ten minutes late, start without me" on the way, because that message is often
+        the whole reason the thought went away.
+      */}
+      {!isTeacher && session.status !== "completed" && (
+        <DropClass sessionId={session.id} onDropped={() => void load()} />
       )}
 
       {/*

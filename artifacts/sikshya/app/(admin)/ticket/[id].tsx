@@ -5,8 +5,8 @@ import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOp
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
-import { apiGet, apiPatch } from "@/utils/api";
-import { notify } from "@/utils/alerts";
+import { apiGet, apiPatch, apiPost } from "@/utils/api";
+import { confirm, notify } from "@/utils/alerts";
 
 /**
  * One ticket, with everything behind it on the same screen.
@@ -42,6 +42,7 @@ export default function AdminTicket() {
   const [loading, setLoading] = useState(true);
   const [resolution, setResolution] = useState("");
   const [saving, setSaving] = useState(false);
+  const [refunding, setRefunding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -56,6 +57,46 @@ export default function AdminTicket() {
   }, [id]);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
+
+  /**
+   * The note is the reason, so it has to exist before the money does.
+   *
+   * The server refuses a refund with no note, but asking here saves an agent typing the
+   * decision, tapping the button, and being told to go back and type the decision.
+   */
+  const grantRefund = async () => {
+    if (!data?.session || data.ticket.reporterId === null) return;
+    const note = resolution.trim();
+    if (!note) {
+      notify(
+        "Write the decision first",
+        "A full refund needs a reason recorded against it. Put it in the decision box below.",
+      );
+      return;
+    }
+    const agreed = await confirm(
+      "Refund this student in full?",
+      `${data.ticket.reporterName ?? "This student"} will be refunded the whole price of ` +
+        `"${data.session.topic}". The refund is requested, not instant — it appears in the ` +
+        `Refunds queue for somebody to pay within 5-7 business days.`,
+      "Grant the refund",
+    );
+    if (!agreed) return;
+
+    setRefunding(true);
+    try {
+      await apiPost(`/admin/sessions/${data.session.id}/refund`, {
+        studentId: data.ticket.reporterId,
+        note,
+      });
+      notify("Refund recorded", "It is now in the Refunds queue, waiting to be paid.");
+      await load();
+    } catch (e) {
+      notify("Not recorded", e instanceof Error ? e.message : "Please try again.");
+    } finally {
+      setRefunding(false);
+    }
+  };
 
   const decide = async (status: "in_review" | "resolved") => {
     if (saving) return;
@@ -180,6 +221,40 @@ export default function AdminTicket() {
               {new Date(row.createdAt).toLocaleString()} — {row.action}
             </Text>
           ))}
+        </View>
+      )}
+
+      {/*
+        A full refund, for the reporter, for this class.
+
+        Deliberately here rather than on the refunds queue: the queue is for paying out what has
+        already been decided, and this is the deciding. An agent granting one has the attendance
+        record, the findings and the thread on the same screen, which is the whole point.
+
+        The owner drew the line narrowly — "it has to be for out of one's control type of
+        situations" — so the reason typed above is what is stored against it, and refusing
+        without one is the server's rule, not this screen's.
+      */}
+      {session && ticket.reporterId !== null && ticket.reporterRole === "student" && (
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Refund this student in full</Text>
+          <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+            For things outside the student's control — a teacher who never appeared, a power cut.
+            Not a way around the half-refund somebody accepts when they change their mind. Your
+            note below is stored as the reason and is what an appeal is judged against.
+          </Text>
+          <TouchableOpacity
+            testID="admin-grant-refund"
+            style={[styles.action, { borderColor: colors.destructive }]}
+            onPress={() => void grantRefund()}
+            disabled={refunding}
+            activeOpacity={0.8}
+          >
+            <Feather name="corner-up-left" size={15} color={colors.destructive} />
+            <Text style={[styles.actionText, { color: colors.destructive }]}>
+              {refunding ? "Recording…" : "Grant a full refund"}
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
 

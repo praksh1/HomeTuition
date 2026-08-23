@@ -161,6 +161,17 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:reviews
 
+      # Moving a class, getting out of one, and the money that follows. Held to a higher
+      # standard than the rest because every assertion here is about somebody's money: the
+      # three shares have to add back to the price exactly, an odd price has to round the
+      # student's way, and the same Drop tapped six times has to produce one refund and free
+      # one seat. Two real bugs came out of writing it — a limit of five that let seven
+      # through under load, and a class size of 0.5 that quietly became 1.
+      - name: Moving a class, dropping a class, and the money
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:refunds
+
       # The support desk. Half of this suite is spent trying to get in rather than on the
       # features once inside: a tool that can suspend accounts and reset passwords is one where
       # "who is allowed in here" has to be answered by the server on every request, not by

@@ -69,6 +69,10 @@ export default function AdminTabLayout() {
           options={{ title: "People", tabBarIcon: ({ color }) => <Feather name="users" size={22} color={color} /> }}
         />
         <Tabs.Screen
+          name="refunds"
+          options={{ title: "Refunds", tabBarIcon: ({ color }) => <Feather name="dollar-sign" size={22} color={color} /> }}
+        />
+        <Tabs.Screen
           name="activity"
           options={{ title: "Activity", tabBarIcon: ({ color }) => <Feather name="list" size={22} color={color} /> }}
         />
