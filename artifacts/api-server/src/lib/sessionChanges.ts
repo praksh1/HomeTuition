@@ -22,7 +22,12 @@
  * - **The student changed their mind.** Half back. The other half is split: a quarter to the
  *   teacher, who held the slot, and a quarter to the platform.
  *
- * A third way exists and is not decided here: a support agent can grant a full refund for
+ * A third way is the teacher calling the class off entirely. Same cause as moving it, so the
+ * same answer — everything back — and deliberately *not* rationed the way moving is. A teacher
+ * who is ill has to be able to cancel; making them keep a class they cannot teach in order to
+ * stay inside a quota would be worse for everybody in it.
+ *
+ * A fourth exists and is not decided here: a support agent can grant a full refund for
  * something outside anybody's control. That is a person's judgement and lives with the person.
  */
 
@@ -181,7 +186,11 @@ export function inScheduleChangeWindow(
   return now < changed + SCHEDULE_CHANGE_REFUND_HOURS * 3_600_000;
 }
 
-export type RefundReason = "schedule_change" | "student_drop" | "agent_discretion";
+export type RefundReason =
+  | "schedule_change"
+  | "teacher_cancelled"
+  | "student_drop"
+  | "agent_discretion";
 
 export interface RefundSplit {
   /** What goes back to the student. */
@@ -204,7 +213,7 @@ export interface RefundSplit {
 export function refundSplit(price: number, reason: RefundReason): RefundSplit {
   const total = Math.max(0, Math.round(price));
 
-  if (reason === "schedule_change" || reason === "agent_discretion") {
+  if (reason === "schedule_change" || reason === "teacher_cancelled" || reason === "agent_discretion") {
     // Not the student's doing: all of it back, and nobody keeps a share.
     return { studentRefund: total, teacherShare: 0, platformShare: 0, reason };
   }

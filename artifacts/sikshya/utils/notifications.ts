@@ -338,6 +338,36 @@ export async function notifySessionRescheduled(session: {
   await addInAppNotification({ title, body, type: "general", data });
 }
 
+/**
+ * A class somebody paid for is not happening.
+ *
+ * The refund is named in the notification itself. A student told only that their class is
+ * cancelled has to go and find out whether they are getting their money back, and the answer is
+ * always yes — so saying it here saves them the worry and saves Support the question.
+ */
+export async function notifySessionCancelled(session: {
+  topic: string;
+  teacherName?: string;
+  sessionId?: number | string;
+  amount?: number;
+}): Promise<void> {
+  const title = `"${session.topic}" has been cancelled`;
+  const body = session.amount
+    ? `${session.teacherName ?? "Your teacher"} cancelled it. A full refund of NPR ` +
+      `${session.amount.toLocaleString()} has been requested — it takes 5-7 business days.`
+    : `${session.teacherName ?? "Your teacher"} cancelled it.`;
+  const data = { type: "cancelled", sessionId: session.sessionId != null ? String(session.sessionId) : undefined };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({ content: { title, body, data, sound: true }, trigger: null });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
+  }
+  await addInAppNotification({ title, body, type: "general", data });
+}
+
 export async function addInAppNotification(
   notification: Omit<AppNotification, "id" | "read" | "createdAt">
 ): Promise<void> {

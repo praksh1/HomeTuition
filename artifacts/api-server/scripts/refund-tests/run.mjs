@@ -414,6 +414,87 @@ async function run() {
     check("and somebody who was never in it still sees nothing", outsider.status === 403, `status=${outsider.status}`);
   }
 
+  console.log("\nCalling the class off entirely\n");
+
+  {
+    /**
+     * The hole this closes: cancelling used to be the cheap way out of a class. No lock, no
+     * allowance, no refund and no notification — the students who paid were left with a class
+     * that had stopped existing, which made the whole regime for *moving* one pointless.
+     */
+    const offTeacher = await register("teacher", "Cancelling Chandra");
+    ageChanges(offTeacher.user.id);
+    const s = await makeSession(offTeacher, { price: 600 });
+    await book(student, s.id);
+    await book(other, s.id);
+
+    const cancelled = await api(`/sessions/${s.id}`, { method: "PATCH", token: offTeacher.token,
+      body: { status: "cancelled" } });
+    check("a teacher can call off a class they cannot teach", cancelled.status === 200, `status=${cancelled.status}`);
+    check("and everybody who paid is refunded",
+      sql(`select count(*) from refunds where session_id=${s.id}`) === "2");
+    check("in full, because it was not their doing",
+      sql(`select distinct amount from refunds where session_id=${s.id}`) === "600");
+    check("with nobody keeping a share",
+      sql(`select distinct teacher_share || '/' || platform_share from refunds where session_id=${s.id}`) === "0/0");
+    check("recorded as the teacher calling it off",
+      sql(`select distinct reason from refunds where session_id=${s.id}`) === "teacher_cancelled");
+    check("no enrolment is left reading as paid",
+      sql(`select count(*) from session_enrollments where session_id=${s.id} and payment_status='paid'`) === "0");
+    check("and the seats are all released",
+      sql(`select enrolled_count from sessions where id=${s.id}`) === "0");
+    check("it spends none of the month's five changes",
+      sql(`select count(*) from schedule_changes where teacher_id=${offTeacher.user.id}`) === "0");
+
+    await api(`/sessions/${s.id}`, { method: "PATCH", token: offTeacher.token, body: { status: "cancelled" } });
+    check("cancelling again pays nobody twice",
+      sql(`select count(*) from refunds where session_id=${s.id}`) === "2");
+  }
+
+  {
+    // Somebody who already dropped is not paid a second time by the cancellation.
+    const offTeacher = await register("teacher", "Late Cancelling Laxman");
+    ageChanges(offTeacher.user.id);
+    const s = await makeSession(offTeacher, { price: 600 });
+    await book(student, s.id);
+    await book(other, s.id);
+    const dropped = await api(`/sessions/${s.id}/drop`, { method: "POST", token: student.token });
+    check("the drop this case depends on happened", dropped.status === 200, `status=${dropped.status}`);
+
+    await api(`/sessions/${s.id}`, { method: "PATCH", token: offTeacher.token, body: { status: "cancelled" } });
+    check("a student who had already dropped is not refunded twice",
+      sql(`select count(*) from refunds where session_id=${s.id} and student_id=${student.user.id}`) === "1");
+    check("and still only gets the half they agreed to",
+      sql(`select amount from refunds where session_id=${s.id} and student_id=${student.user.id}`) === "300");
+    check("while the one still in the class gets all of it",
+      sql(`select amount from refunds where session_id=${s.id} and student_id=${other.user.id}`) === "600");
+  }
+
+  {
+    // A class that already happened is a dispute, not a cancellation. No automatic refund.
+    const offTeacher = await register("teacher", "Afterwards Anil");
+    const s = await makeSession(offTeacher, { price: 600 });
+    await book(student, s.id);
+    sql(`update sessions set status = 'completed' where id = ${s.id}`);
+    await api(`/sessions/${s.id}`, { method: "PATCH", token: offTeacher.token, body: { status: "cancelled" } });
+    check("cancelling a class that was already taught refunds nobody automatically",
+      sql(`select count(*) from refunds where session_id=${s.id}`) === "0");
+  }
+
+  console.log("\nNonsense numbers are refused rather than rounded\n");
+
+  {
+    const s = await makeSession(teacher);
+    for (const [field, value] of [["duration", 45.5], ["maxStudents", 3.5], ["price", 99.5]]) {
+      const res = await api(`/sessions/${s.id}`, { method: "PATCH", token: teacher.token, body: { [field]: value } });
+      check(`a fractional ${field} is refused, not rounded`, res.status === 400, `status=${res.status}`);
+    }
+    const created = await api("/sessions", { method: "POST", token: teacher.token, body: {
+      topic: "Fractional", subject: "Maths", description: "d",
+      date: new Date(Date.now() + 10 * DAY).toISOString(), duration: 60, price: 99.5, maxStudents: 10 } });
+    check("and a new class cannot be created with one either", created.status === 400, `status=${created.status}`);
+  }
+
   console.log("\nStill able to complain about it afterwards\n");
 
   {

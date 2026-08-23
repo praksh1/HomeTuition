@@ -18,6 +18,7 @@ import { canJoin, canStart } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
 import {
+  refundSplit,
   canReschedule,
   isAcceptableNewDate,
   scheduleMoved,
@@ -31,7 +32,7 @@ import {
   paidEnrolments,
   scheduleEditsUsed,
 } from "../lib/scheduleChanges";
-import { scheduleChangesTable } from "@workspace/db";
+import { refundsTable, scheduleChangesTable } from "@workspace/db";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -220,16 +221,18 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
   const when = date ? new Date(date) : null;
   if (!date || !when || Number.isNaN(when.getTime())) errors.push("A valid date and time is required.");
 
-  if (duration !== undefined && (!Number.isFinite(duration) || duration <= 0)) {
-    errors.push("Duration must be greater than zero.");
+  // Whole numbers, matching the edit route. Rounding a fractional value silently turns it into
+  // a different instruction from the one that was sent.
+  if (duration !== undefined && (!Number.isInteger(duration) || duration <= 0)) {
+    errors.push("Duration must be a whole number of minutes, greater than zero.");
   }
-  if (maxStudents !== undefined && (!Number.isFinite(maxStudents) || maxStudents <= 0)) {
-    errors.push("Maximum students must be greater than zero.");
+  if (maxStudents !== undefined && (!Number.isInteger(maxStudents) || maxStudents <= 0)) {
+    errors.push("Maximum students must be a whole number, greater than zero.");
   }
   // Amount is mandatory and must be a real charge — 0 was being accepted, which quietly
   // created free classes on a paid platform.
-  if (price === undefined || price === null || !Number.isFinite(price) || price <= 0) {
-    errors.push("Amount is required and must be greater than zero.");
+  if (price === undefined || price === null || !Number.isInteger(price) || price <= 0) {
+    errors.push("Amount is required and must be a whole number of rupees, greater than zero.");
   }
 
   if (errors.length > 0) {
@@ -388,6 +391,90 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
     res.status(502).json({ error: "Failed to set up video room" });
   }
 });
+
+/**
+ * Give everybody who paid for a cancelled class their money back, and tell them.
+ *
+ * Each student is written in their own transaction rather than all of them in one. Thirty
+ * students in a single transaction means one bad row loses the other twenty-nine refunds; they
+ * are independent of each other, and a partial success here is genuinely better than
+ * all-or-nothing.
+ *
+ * Nobody is paid twice. The guard is the `payment_status = 'paid'` condition inside the
+ * transaction: a student who dropped earlier already reads `refunded`, so the update matches
+ * nothing and no row is written. An `alreadyRefunded` lookup was here too, and removing it
+ * changed no test at all — a redundant check nothing can tell apart from a working one is worse
+ * than none, because it invites the belief that it is doing something.
+ */
+async function refundEveryoneFor(
+  sessionId: number,
+  topic: string,
+  price: number,
+  paying: { id: number; studentId: number }[],
+  teacherId: number,
+  req: Request,
+): Promise<void> {
+  const split = refundSplit(price, "teacher_cancelled");
+  const [teacherRow] = await db
+    .select({ name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, teacherId));
+
+  const told: number[] = [];
+  for (const enrolment of paying) {
+    try {
+      const written = await db.transaction(async (tx) => {
+        const freed = await tx
+          .update(sessionEnrollmentsTable)
+          .set({ paymentStatus: "refunded" })
+          .where(
+            and(
+              eq(sessionEnrollmentsTable.id, enrolment.id),
+              eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+            ),
+          )
+          .returning({ id: sessionEnrollmentsTable.id });
+        if (freed.length === 0) return false;
+
+        await tx
+          .update(sessionsTable)
+          .set({ enrolledCount: sql`GREATEST(0, ${sessionsTable.enrolledCount} - 1)` })
+          .where(eq(sessionsTable.id, sessionId));
+
+        await tx.insert(refundsTable).values({
+          sessionId,
+          studentId: enrolment.studentId,
+          pricePaid: price,
+          amount: split.studentRefund,
+          teacherShare: 0,
+          platformShare: 0,
+          reason: "teacher_cancelled",
+          status: "owed",
+        });
+        return true;
+      });
+
+      if (written) told.push(enrolment.studentId);
+    } catch (err) {
+      // One student's refund failing must not stop the rest of the class being repaid. Logged
+      // loudly, because it leaves somebody owed money with no row saying so.
+      req.log.error({ err, sessionId, studentId: enrolment.studentId },
+        "could not record a refund for a cancelled class");
+    }
+  }
+
+  if (told.length > 0) {
+    notifyMany(told, {
+      kind: "session_cancelled",
+      sessionId,
+      topic,
+      fromUserId: teacherId,
+      fromName: teacherRow?.name ?? "Your teacher",
+      amount: split.studentRefund,
+      at: new Date().toISOString(),
+    });
+  }
+}
 
 const ALLOWED_STATUSES = ["upcoming", "live", "completed", "cancelled"];
 
@@ -733,6 +820,25 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
         at: new Date().toISOString(),
       },
     );
+  }
+
+  /**
+   * Calling a class off is the same cause as moving it, so it gets the same answer.
+   *
+   * Without this a teacher walked straight past everything above: no 48-hour lock, no monthly
+   * allowance, no refund and no notification — just a class that quietly stopped existing while
+   * the people who paid for it were told nothing. That made the whole regime for *moving* a
+   * class pointless, because cancelling was the cheaper way out of one.
+   *
+   * Deliberately not rationed the way moving is. A teacher who is ill has to be able to cancel;
+   * making them keep a class they cannot teach in order to stay inside a quota would be worse
+   * for everybody in it. What it costs them is the fee, in full, every time.
+   *
+   * Only for a class that has not happened. Cancelling one already taught is not a cancellation,
+   * it is a dispute, and those are decided by a person from the evidence.
+   */
+  if (status === "cancelled" && existing.status === "upcoming" && paying.length > 0) {
+    await refundEveryoneFor(id, existing.topic, existing.price, paying, user.userId, req);
   }
 
   // Record when it stopped, so the restart window is measured from what actually happened

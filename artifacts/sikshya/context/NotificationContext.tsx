@@ -22,6 +22,7 @@ import {
   notifySessionInvite,
   notifySessionLive,
   notifySessionBooked,
+  notifySessionCancelled,
   notifySessionDropped,
   notifySessionMessage,
   notifySessionRescheduled,
@@ -187,6 +188,13 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             topic: event.topic ?? "your class",
             studentName: event.fromName,
             sessionId: event.sessionId,
+          });
+        } else if (event.kind === "session_cancelled") {
+          await notifySessionCancelled({
+            topic: event.topic ?? "Your class",
+            teacherName: event.fromName,
+            sessionId: event.sessionId,
+            amount: event.amount,
           });
         } else if (event.kind === "session_rescheduled") {
           await notifySessionRescheduled({

@@ -44,6 +44,7 @@ interface Refund {
 /** Why the money is going back, in words rather than a database value. */
 const WHY: Record<string, string> = {
   schedule_change: "The teacher moved the class",
+  teacher_cancelled: "The teacher cancelled the class",
   student_drop: "The student dropped the class",
   agent_discretion: "Granted by an agent",
 };

@@ -24,6 +24,7 @@ export type NotificationKind =
   | "session_invite"
   | "session_booked"
   | "session_dropped"
+  | "session_cancelled"
   | "session_rescheduled";
 
 /** Which preference switch governs each kind. */
@@ -40,6 +41,9 @@ const PREF_KEY: Record<NotificationKind, PrefKind> = {
   // A student leaving is the same news as one arriving, from the same switch: it is money and
   // a seat, and a teacher who wants to hear about one wants to hear about the other.
   session_dropped: "bookings",
+  // A class somebody paid for is not happening. Follows the "class" switch rather than the
+  // booking one, because the person who needs this most is the student, not the teacher.
+  session_cancelled: "sessionLive",
   // A class they paid for has moved and they have a day to decide about a refund. Follows the
   // same switch as a class going live because both are "something happened to a class of
   // yours", and this one is the more consequential of the two to miss.
@@ -139,6 +143,19 @@ function emailFor(event: NotificationEvent, recipientName: string): { subject: s
           `${hello}\n\n${event.fromName ?? "A student"} has dropped your class ` +
           `"${event.topic ?? ""}". Their place is back on sale.\n` +
           (link ? `\nSee who is coming: ${link}\n` : "") +
+          signoff,
+      };
+    }
+    case "session_cancelled": {
+      return {
+        subject: `"${event.topic ?? "Your class"}" has been cancelled`,
+        text:
+          `${hello}\n\n${event.fromName ?? "Your teacher"} has cancelled ` +
+          `"${event.topic ?? "your class"}".\n\n` +
+          (event.amount
+            ? `A full refund of NPR ${event.amount} has been requested for you. Our team will ` +
+              `process it within 5-7 business days.\n`
+            : "") +
           signoff,
       };
     }

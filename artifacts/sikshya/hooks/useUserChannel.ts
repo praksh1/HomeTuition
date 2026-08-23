@@ -18,6 +18,7 @@ export interface UserEvent {
     | "session_invite"
     | "session_booked"
     | "session_dropped"
+    | "session_cancelled"
     | "session_message"
     | "session_rescheduled";
   at?: string;
