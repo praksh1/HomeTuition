@@ -1315,6 +1315,24 @@ happened twelve times out of twelve. Closed at both ends: the booking transactio
 status under the row lock it already takes, and the cancellation reads who has paid after the
 write. — **fixed**
 
+### Still open, narrow, and named rather than quietly left
+
+**A booking that commits in the instant *after* a class is rescheduled is not told it moved.**
+The class still exists and the drop quote reads the change record when it is asked, so the money
+is right — the student can still take the whole price back within the 24 hours. What they miss is
+being told, and the twenty-four hours is no use to somebody who never hears it has started. They
+also do not appear in the `affected_students` count on the change record.
+
+The window is milliseconds and closing it properly is not a patch to the cancel or reschedule
+handler: it needs the booking to check the slot the student actually agreed to, which means the
+app sending the date it displayed and the server refusing a booking against a class that has
+moved since. That is a real design change and it is not being made on a guess about how often
+this happens.
+
+Everything that *can* be guaranteed is: every student holding a paid place at the moment of the
+move is counted and notified, and the equivalent hole on **cancellation** — which was a money
+hole, not a notification one — is closed at both ends (H6).
+
 ### And one caused by a fix in the same session
 
 **H4. A student who dropped lost the class thread.** Dropping marks the enrolment `refunded`,
@@ -1327,13 +1345,13 @@ refused. — **fixed**
 
 ### What it is tested with
 
-186 tests across two new suites, both in CI:
+190 tests across two new suites, both in CI:
 
-- `api-server/scripts/refund-tests` — 142 through real HTTP against a real database, including
+- `api-server/scripts/refund-tests` — 145 through real HTTP against a real database, including
   the arithmetic (three shares always summing back to the price, an odd price rounding the
   student's way) and two concurrency runs (six simultaneous drops → one refund and one freed
   seat; eight simultaneous moves → never more than five spent).
-- `sikshya/scripts/refund-tests` — 44 through a real browser, reading the figures off the
+- `sikshya/scripts/refund-tests` — 45 through a real browser, reading the figures off the
   rendered page and out of the confirmation dialog, because the number somebody agrees to lose
   is the number on their screen and not the one a component was passed.
 

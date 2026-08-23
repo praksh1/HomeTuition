@@ -529,6 +529,37 @@ async function run() {
       stranded === 0, `stranded=${stranded} across 8 rounds of 6`);
   }
 
+  {
+    /**
+     * Everybody holding a paid place when a class moves is counted and told.
+     *
+     * Deterministic on purpose: the bookings are settled before the move is sent. The count on
+     * the record is what a later argument about "they kept moving it" is read from, and it has
+     * to match who was actually in the class.
+     *
+     * Not asserted here, because it cannot be forced reliably from outside: a booking that
+     * commits in the instant *after* the move is not counted and is not told. The class still
+     * exists and the drop quote still reads the change record, so the money is right and only
+     * the notification is missed. Closing it properly means the booking checking the slot the
+     * student actually agreed to, which needs the app to send it. Recorded in ISSUES.md.
+     */
+    const moveTeacher = await register("teacher", "Counting Kamal");
+    ageChanges(moveTeacher.user.id);
+    const s = await makeSession(moveTeacher, { price: 400, maxStudents: 20 });
+    for (let i = 0; i < 5; i += 1) {
+      const buyer = await register("student", `Counted ${i}`);
+      await book(buyer, s.id);
+    }
+
+    const moved = await api(`/sessions/${s.id}`, { method: "PATCH", token: moveTeacher.token,
+      body: { date: new Date(Date.now() + 14 * DAY).toISOString() } });
+    check("the move goes through", moved.status === 200, `status=${moved.status}`);
+    check("and the record names how many it disrupted",
+      sql(`select affected_students from schedule_changes where session_id = ${s.id}`) === "5");
+    check("which matches who was actually holding a place",
+      sql(`select count(*) from session_enrollments where session_id = ${s.id} and payment_status = 'paid'`) === "5");
+  }
+
   console.log("\nNonsense numbers are refused rather than rounded\n");
 
   {

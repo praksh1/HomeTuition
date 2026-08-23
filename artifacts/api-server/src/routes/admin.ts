@@ -500,10 +500,9 @@ router.get("/admin/refunds", async (req, res): Promise<void> => {
   /**
    * One person's refunds, for an agent answering "where is my money" about a named student.
    *
-   * Also the only way to find a specific row once the queue is long: it is ordered oldest-first,
-   * because a payout queue is worked from the person who has waited longest, and it stops at
-   * 200. Without this filter a refund past that point is invisible until the ones before it are
-   * settled.
+   * The queue is ordered oldest-first, because a payout queue is worked from whoever has waited
+   * longest, and it shows one page at a time — so a row past that page can only be reached by
+   * naming who it belongs to, either with this or with the search below.
    */
   const forStudent = Number(req.query.studentId);
   const student = Number.isInteger(forStudent) ? forStudent : null;

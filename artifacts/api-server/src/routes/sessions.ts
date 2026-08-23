@@ -724,6 +724,8 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
    * they did not do.
    */
   let session: typeof existing;
+  /** Who was actually in the class when it moved. Empty unless it moved. */
+  let movedAffected: { studentId: number }[] = [];
   if (moving) {
     const outcome = await db.transaction(async (tx) => {
       // Nobody else may spend this teacher's allowance until this transaction ends. Per teacher,
@@ -741,14 +743,35 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
         .set(updates)
         .where(eq(sessionsTable.id, id))
         .returning();
+
+      /**
+       * Who to tell, read here rather than at the top of the handler.
+       *
+       * The list gathered before the write is already out of date by this point: a student who
+       * booked in between is not in it, so they would not be told their class had moved and
+       * would never hear that they had a day to take the whole price back. Reading it after the
+       * update is safe because that update holds the session's row lock, which the booking
+       * transaction also takes — so a concurrent booking is either committed and visible here,
+       * or blocked until this transaction ends.
+       */
+      const affected = await tx
+        .select({ studentId: sessionEnrollmentsTable.studentId })
+        .from(sessionEnrollmentsTable)
+        .where(
+          and(
+            eq(sessionEnrollmentsTable.sessionId, id),
+            eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+          ),
+        );
+
       await tx.insert(scheduleChangesTable).values({
         sessionId: id,
         teacherId: user.userId,
         previousDate: new Date(existing.date),
         newDate: newDate!,
-        affectedStudents: paying.length,
+        affectedStudents: affected.length,
       });
-      return { updated };
+      return { updated, affected };
     });
 
     if ("blocked" in outcome) {
@@ -760,6 +783,7 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       return;
     }
     session = outcome.updated;
+    movedAffected = outcome.affected;
   } else {
     [session] = await db.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
   }
@@ -770,13 +794,13 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
    * Not a courtesy. The refund window is twenty-four hours from this moment, so a student who
    * is not told loses the choice by being kept in the dark.
    */
-  if (moving && paying.length > 0) {
+  if (moving && movedAffected.length > 0) {
     const [teacherRow] = await db
       .select({ name: usersTable.name })
       .from(usersTable)
       .where(eq(usersTable.id, user.userId));
     notifyMany(
-      paying.map((p) => p.studentId),
+      movedAffected.map((p) => p.studentId),
       {
         kind: "session_rescheduled",
         sessionId: id,
