@@ -218,11 +218,15 @@ export interface StartState {
 export function startState(session: SessionWindowInput, now: number = Date.now()): StartState {
   const check = canOpenSession(session, now);
   if (!check.ok) {
-    return {
-      enabled: false,
-      label: session.status === "cancelled" ? "Cancelled" : "Session expired",
-      reason: check.message,
-    };
+    /**
+     * The label says which refusal this is, rather than "Session expired" for all of them.
+     *
+     * It used to say that for every case, so a class ten days away was labelled expired — the
+     * exact complaint the owner raised twice, still true on the button after the navigation
+     * around it was fixed. A class that has not started yet has not expired, and telling
+     * somebody it has reads as their class having been taken away.
+     */
+    return { enabled: false, label: check.title, reason: check.message };
   }
 
   if (session.status === "live") return { enabled: true, label: "Rejoin the session", reason: null };
@@ -238,13 +242,9 @@ export function startState(session: SessionWindowInput, now: number = Date.now()
 /** What the student's button should look like right now. */
 export function joinState(session: SessionWindowInput, now: number = Date.now()): StartState {
   const check = canJoinSession(session, now);
-  if (!check.ok) {
-    return {
-      enabled: false,
-      label: session.status === "cancelled" ? "Cancelled" : "Session Expired",
-      reason: check.message,
-    };
-  }
+  // Same as above: "Not open yet" for a class still ahead, "Session expired" only once it is
+  // genuinely over.
+  if (!check.ok) return { enabled: false, label: check.title, reason: check.message };
   return { enabled: true, label: "Join the Class", reason: null };
 }
 

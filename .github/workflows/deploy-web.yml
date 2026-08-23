@@ -308,6 +308,12 @@ jobs:
           # quietly leaves it unreachable: the route still exists, everything compiles, and the
           # only way to find out is to open the app and try to get to it.
           pnpm --filter @workspace/sikshya run test:nav
+          # Moving a class and dropping one, through the screens rather than the API. The
+          # figures are read off the rendered page and out of the confirmation dialog, because
+          # the number somebody agrees to lose is the number on their screen — not the one the
+          # component was passed. It caught the Drop control being reachable but the class
+          # thread vanishing for the student who had just used it.
+          pnpm --filter @workspace/sikshya run test:refunds
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local

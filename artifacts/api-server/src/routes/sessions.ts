@@ -1013,8 +1013,17 @@ router.get("/sessions/:id/attendance", requireAuth, async (req, res): Promise<vo
   const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
 
+  /**
+   * A place in the class, not a place in the room — and a place they used to have counts.
+   *
+   * Somebody who dropped or was refunded keeps this for the same reason they keep the message
+   * thread: it is the record of the class they are usually arguing about. Cutting them off at
+   * the moment of the refund took the evidence away exactly when they needed it, and on the
+   * class's own page it took the whole thread with it, because this call is what tells that
+   * page the reader has a place there at all.
+   */
   const membership = await getSessionMembership(id, req.user!.userId);
-  if (!membership || (!membership.isSessionTeacher && !membership.hasPaid)) {
+  if (!membership || (!membership.isSessionTeacher && !membership.hasPaid && !membership.wasRefunded)) {
     res.status(403).json({ error: "You do not have access to this session." });
     return;
   }

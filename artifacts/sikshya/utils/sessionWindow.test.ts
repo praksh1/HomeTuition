@@ -97,8 +97,27 @@ test("the teacher's button says what it will do", () => {
 test("the teacher's button is greyed out before the doors open, with the reason showing", () => {
   const state = startState(session(), START - 30 * MIN);
   assert.equal(state.enabled, false);
-  assert.equal(state.label, "Session expired");
+  // Not "Session expired". This assertion used to say exactly that, which pinned down the bug
+  // rather than the behaviour: a class thirty minutes from opening has not expired, and the
+  // owner reported being told it had. The label now names which refusal this is.
+  assert.equal(state.label, "Not open yet");
   assert.match(state.reason ?? "", /opens 10 minutes before/);
+});
+
+test("a class still days away is never labelled expired, for either of them", () => {
+  const days = START - 10 * 24 * 60 * MIN;
+  assert.equal(startState(session(), days).label, "Not open yet");
+  assert.equal(joinState(session(), days).label, "Not open yet");
+});
+
+test("a class held and ended before its slot says so, rather than `not open yet`", () => {
+  const held = session({ status: "completed", startedAt: new Date(START - 9 * 24 * 60 * MIN) });
+  assert.equal(startState(held, START - 8 * 24 * 60 * MIN).label, "Session held and ended");
+});
+
+test("expired means expired: only after the door has actually shut", () => {
+  assert.equal(startState(session(), END + (OVERTIME_CUTOFF_MINUTES + 1) * MIN).label, "Session expired");
+  assert.equal(joinState(session(), END + (STUDENT_GRACE_MINUTES + 1) * MIN).label, "Session expired");
 });
 
 test("the student's button reads Join the Class while the door is open", () => {
@@ -107,16 +126,18 @@ test("the student's button reads Join the Class while the door is open", () => {
   assert.equal(state.label, "Join the Class");
 });
 
-test("and greys out to Session Expired six minutes past the finish", () => {
+test("and greys out to Session expired six minutes past the finish", () => {
   const state = joinState(session(), END + (STUDENT_GRACE_MINUTES + 1) * MIN);
   assert.equal(state.enabled, false);
-  assert.equal(state.label, "Session Expired");
+  assert.equal(state.label, "Session expired");
   assert.match(state.reason ?? "", /report it from Support/);
 });
 
 test("a cancelled class is greyed out for both", () => {
-  assert.equal(startState(session({ status: "cancelled" }), START).label, "Cancelled");
-  assert.equal(joinState(session({ status: "cancelled" }), START).label, "Cancelled");
+  assert.equal(startState(session({ status: "cancelled" }), START).label, "Session cancelled");
+  assert.equal(joinState(session({ status: "cancelled" }), START).label, "Session cancelled");
+  assert.equal(startState(session({ status: "cancelled" }), START).enabled, false);
+  assert.equal(joinState(session({ status: "cancelled" }), START).enabled, false);
 });
 
 test("a call is over one minute past the cutoff and not before", () => {
