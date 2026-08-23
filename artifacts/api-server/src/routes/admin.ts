@@ -494,6 +494,16 @@ router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> 
 router.get("/admin/refunds", async (req, res): Promise<void> => {
   const status = String(req.query.status ?? "owed");
   const wanted = status === "all" ? null : status === "paid" ? "paid" : "owed";
+  /**
+   * One person's refunds, for an agent answering "where is my money" about a named student.
+   *
+   * Also the only way to find a specific row once the queue is long: it is ordered oldest-first,
+   * because a payout queue is worked from the person who has waited longest, and it stops at
+   * 200. Without this filter a refund past that point is invisible until the ones before it are
+   * settled.
+   */
+  const forStudent = Number(req.query.studentId);
+  const student = Number.isInteger(forStudent) ? forStudent : null;
 
   try {
     const rows = await db
@@ -518,7 +528,12 @@ router.get("/admin/refunds", async (req, res): Promise<void> => {
       .from(refundsTable)
       .leftJoin(usersTable, eq(usersTable.id, refundsTable.studentId))
       .leftJoin(sessionsTable, eq(sessionsTable.id, refundsTable.sessionId))
-      .where(wanted ? eq(refundsTable.status, wanted) : sql`true`)
+      .where(
+        and(
+          wanted ? eq(refundsTable.status, wanted) : sql`true`,
+          student === null ? sql`true` : eq(refundsTable.studentId, student),
+        ),
+      )
       .orderBy(asc(refundsTable.id))
       .limit(200);
 

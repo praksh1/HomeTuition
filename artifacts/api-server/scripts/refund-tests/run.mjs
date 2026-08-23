@@ -481,6 +481,54 @@ async function run() {
       sql(`select count(*) from refunds where session_id=${s.id}`) === "0");
   }
 
+  {
+    /**
+     * Booking and cancelling at the same instant.
+     *
+     * The narrow window: the cancel handler listed who had paid, and *then* wrote the status.
+     * A booking committing in between was not on that list, so a student ended up paid into a
+     * class that no longer existed, with no refund and no notification — the worst outcome this
+     * whole feature exists to prevent, reachable by nothing more than bad timing.
+     *
+     * Both ends are closed now: the booking transaction re-reads the status under its own lock,
+     * and the refund reads who has paid *after* the write. Either alone would leave a smaller
+     * version of the same hole.
+     */
+    const raceTeacher = await register("teacher", "Racing Ramesh");
+    ageChanges(raceTeacher.user.id);
+
+    /**
+     * Several buyers per round, not one.
+     *
+     * With a single booking the timing is too tidy: it always commits before the cancel reads
+     * back who has paid, so the post-write re-read alone is enough and the lock re-check looks
+     * redundant. It is not — it covers the other ordering, where a booking transaction is still
+     * open when that read happens. Six at once makes some of them commit late, which is what
+     * puts that half of the fix under test rather than taking it on trust.
+     */
+    const buyers = [];
+    for (let i = 0; i < 6; i += 1) buyers.push(await register("student", `Buyer ${i}`));
+
+    let stranded = 0;
+    for (let round = 0; round < 8; round += 1) {
+      const s = await makeSession(raceTeacher, { price: 400, maxStudents: 20 });
+      // Fired together, so which lands first is genuinely up to the database.
+      await Promise.all([
+        ...buyers.map((b) =>
+          api(`/sessions/${s.id}/book`, { method: "POST", token: b.token, body: { paymentMethod: "esewa" } })),
+        api(`/sessions/${s.id}`, { method: "PATCH", token: raceTeacher.token, body: { status: "cancelled" } }),
+      ]);
+      // Anybody still reading as paid on a cancelled class has been stranded.
+      const left = sql(
+        `select count(*) from session_enrollments e join sessions x on x.id = e.session_id ` +
+        `where e.session_id = ${s.id} and e.payment_status = 'paid' and x.status = 'cancelled'`,
+      );
+      stranded += Number(left);
+    }
+    check("nobody is left paid into a class that was cancelled underneath them",
+      stranded === 0, `stranded=${stranded} across 8 rounds of 6`);
+  }
+
   console.log("\nNonsense numbers are refused rather than rounded\n");
 
   {
@@ -549,7 +597,9 @@ async function run() {
     const asTeacher = await api("/admin/refunds", { token: teacher.token });
     check("nor can a teacher", asTeacher.status === 403, `status=${asTeacher.status}`);
 
-    const queue = await api("/admin/refunds", { token: agent.token });
+    // Filtered to this student. The queue is oldest-first and capped, so an unfiltered read is
+    // only deterministic while the database is nearly empty — which it is not, by this point.
+    const queue = await api(`/admin/refunds?studentId=${student.user.id}`, { token: agent.token });
     check("an agent can", queue.status === 200, `status=${queue.status}`);
     check("and is told whether it was readable", queue.body?.known === true);
     const row = (queue.body?.refunds ?? []).find((r) => r.id === owedRefundId);
@@ -577,10 +627,10 @@ async function run() {
       body: { reference: "ESEWA-99882" } });
     check("paying it twice is refused", twice.status === 409, `status=${twice.status}`);
 
-    const settled = await api("/admin/refunds?status=paid", { token: agent.token });
+    const settled = await api(`/admin/refunds?status=paid&studentId=${student.user.id}`, { token: agent.token });
     check("and it moves to the settled list",
       (settled.body?.refunds ?? []).some((r) => r.id === owedRefundId));
-    const stillOwed = await api("/admin/refunds", { token: agent.token });
+    const stillOwed = await api(`/admin/refunds?studentId=${student.user.id}`, { token: agent.token });
     check("and off the one still to pay",
       !(stillOwed.body?.refunds ?? []).some((r) => r.id === owedRefundId));
   }

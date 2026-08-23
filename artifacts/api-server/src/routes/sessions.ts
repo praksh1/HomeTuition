@@ -837,8 +837,19 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
    * Only for a class that has not happened. Cancelling one already taught is not a cancellation,
    * it is a dispute, and those are decided by a person from the evidence.
    */
-  if (status === "cancelled" && existing.status === "upcoming" && paying.length > 0) {
-    await refundEveryoneFor(id, existing.topic, existing.price, paying, user.userId, req);
+  if (status === "cancelled" && existing.status === "upcoming") {
+    /**
+     * Read again, *after* the class is marked cancelled rather than before.
+     *
+     * The list gathered at the top of this handler is from before the write, and a booking that
+     * landed in between would not be in it — a student paid into a class that was cancelled a
+     * moment later, and no refund. Nothing new can be booked once the status is written (the
+     * booking transaction re-reads it under its own lock), so this read is the final answer.
+     */
+    const stillPaid = await paidEnrolments(id);
+    if (stillPaid.length > 0) {
+      await refundEveryoneFor(id, existing.topic, existing.price, stillPaid, user.userId, req);
+    }
   }
 
   // Record when it stopped, so the restart window is measured from what actually happened
@@ -886,12 +897,23 @@ async function bookSession(req: Request, res: Response): Promise<void> {
       // Re-read the row inside the transaction and lock it, so two students booking the last
       // seat at the same instant cannot both be let in.
       const [locked] = await tx
-        .select({ enrolledCount: sessionsTable.enrolledCount, maxStudents: sessionsTable.maxStudents })
+        .select({
+          enrolledCount: sessionsTable.enrolledCount,
+          maxStudents: sessionsTable.maxStudents,
+          // Read again under the lock. The check above ran before this transaction opened, so
+          // on its own it lets a booking commit against a class that was cancelled in between —
+          // leaving a student paid into a class that no longer exists, and missed by the refund
+          // the cancellation wrote, because that refund had already listed who had paid.
+          status: sessionsTable.status,
+        })
         .from(sessionsTable)
         .where(eq(sessionsTable.id, id))
         .for("update");
 
       if (!locked) return { kind: "gone" as const };
+      if (locked.status === "completed" || locked.status === "cancelled") {
+        return { kind: "closed" as const };
+      }
 
       const [existing] = await tx
         .select({ id: sessionEnrollmentsTable.id, paymentStatus: sessionEnrollmentsTable.paymentStatus })
@@ -953,6 +975,11 @@ async function bookSession(req: Request, res: Response): Promise<void> {
     switch (result.kind) {
       case "gone":
         res.status(404).json({ error: "Session not found" });
+        return;
+      case "closed":
+        // Cancelled or finished between the check above and the lock. Same message as that
+        // check, because from the student's side it is the same thing.
+        res.status(409).json({ error: "This session is no longer available." });
         return;
       case "full":
         res.status(409).json({ error: "This session is full." });
