@@ -32,20 +32,54 @@ function startOfMonth(now: number): Date {
  */
 export async function scheduleEditsUsed(teacherId: number, now: number = Date.now()): Promise<number | null> {
   try {
-    const [row] = await db
-      .select({ n: sql<number>`count(*)::int` })
-      .from(scheduleChangesTable)
-      .where(
-        and(
-          eq(scheduleChangesTable.teacherId, teacherId),
-          gte(scheduleChangesTable.changedAt, startOfMonth(now)),
-        ),
-      );
-    return row?.n ?? 0;
+    return await countScheduleEdits(db, teacherId, now);
   } catch (err) {
     logger.warn({ err, teacherId }, "could not count this month's schedule changes");
     return null;
   }
+}
+
+/** Anything that can run a query: the pool, or a transaction inside the lock below. */
+type Executor = Pick<typeof db, "select">;
+
+/** The count itself, so the same query can be run inside a transaction. Throws on failure. */
+export async function countScheduleEdits(
+  tx: Executor,
+  teacherId: number,
+  now: number = Date.now(),
+): Promise<number> {
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(scheduleChangesTable)
+    .where(
+      and(
+        eq(scheduleChangesTable.teacherId, teacherId),
+        gte(scheduleChangesTable.changedAt, startOfMonth(now)),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/**
+ * An arbitrary but fixed number naming this lock, so it cannot collide with another one taken
+ * elsewhere in the database. Postgres advisory locks are only a pair of integers; the meaning
+ * is entirely in agreeing on the pair.
+ */
+const SCHEDULE_QUOTA_LOCK = 838_201;
+
+/**
+ * Hold the teacher's schedule allowance still for the length of a transaction.
+ *
+ * Counting and then inserting is two steps, and eight requests arriving together all counted
+ * before any of them had inserted — so a limit of five let seven through, which a test caught.
+ * The lock is per teacher, so two teachers never wait on each other, and Postgres releases it
+ * when the transaction ends however it ends.
+ */
+export async function lockScheduleQuota(
+  tx: { execute: (query: ReturnType<typeof sql>) => Promise<unknown> },
+  teacherId: number,
+): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(${SCHEDULE_QUOTA_LOCK}, ${teacherId})`);
 }
 
 /** When this class was last moved, or null if it never has been. */

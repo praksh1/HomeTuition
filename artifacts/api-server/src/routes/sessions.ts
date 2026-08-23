@@ -25,7 +25,12 @@ import {
   SCHEDULE_EDITS_PER_MONTH,
   RESCHEDULE_LOCK_HOURS,
 } from "../lib/sessionChanges";
-import { paidEnrolments, scheduleEditsUsed } from "../lib/scheduleChanges";
+import {
+  countScheduleEdits,
+  lockScheduleQuota,
+  paidEnrolments,
+  scheduleEditsUsed,
+} from "../lib/scheduleChanges";
 import { scheduleChangesTable } from "@workspace/db";
 
 
@@ -425,19 +430,26 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     if (!String(subject).trim()) { res.status(400).json({ error: "Subject cannot be empty." }); return; }
     updates.subject = String(subject).trim();
   }
+  /**
+   * Whole numbers only, rather than rounding whatever arrives.
+   *
+   * `Math.round` turned a limit of 0.5 students into 1, which is a different instruction from
+   * the one that was sent. Silently reinterpreting a nonsense number is worse than refusing it:
+   * the caller believes something happened that did not.
+   */
   if (duration !== undefined) {
-    if (!Number.isFinite(duration) || duration <= 0) {
-      res.status(400).json({ error: "Duration must be greater than zero." });
+    if (!Number.isInteger(duration) || duration <= 0) {
+      res.status(400).json({ error: "Duration must be a whole number of minutes, greater than zero." });
       return;
     }
-    updates.duration = Math.round(duration);
+    updates.duration = duration;
   }
   if (maxStudents !== undefined) {
-    if (!Number.isFinite(maxStudents) || maxStudents <= 0) {
-      res.status(400).json({ error: "Maximum students must be greater than zero." });
+    if (!Number.isInteger(maxStudents) || maxStudents <= 0) {
+      res.status(400).json({ error: "Maximum students must be a whole number, greater than zero." });
       return;
     }
-    updates.maxStudents = Math.round(maxStudents);
+    updates.maxStudents = maxStudents;
   }
 
   let newDate: Date | null = null;
@@ -476,11 +488,11 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
    * honest answer. Before the first booking it is simply a number on an unsold class.
    */
   if (price !== undefined) {
-    if (!Number.isFinite(price) || price <= 0) {
-      res.status(400).json({ error: "Amount must be greater than zero." });
+    if (!Number.isInteger(price) || price <= 0) {
+      res.status(400).json({ error: "Amount must be a whole number of rupees, greater than zero." });
       return;
     }
-    if (Math.round(price) !== existing.price && paying.length > 0) {
+    if (price !== existing.price && paying.length > 0) {
       res.status(409).json({
         error:
           "The price cannot be changed once a student has paid it. Cancel this class and " +
@@ -488,11 +500,11 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       });
       return;
     }
-    updates.price = Math.round(price);
+    updates.price = price;
   }
 
   // A class cannot be shrunk below the number of people already in it.
-  if (maxStudents !== undefined && Math.round(maxStudents) < existing.enrolledCount) {
+  if (maxStudents !== undefined && maxStudents < existing.enrolledCount) {
     res.status(409).json({
       error:
         `${existing.enrolledCount} student${existing.enrolledCount === 1 ? " has" : "s have"} ` +
@@ -511,11 +523,7 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
    * does not open a refund window — those are the owner's rule, and this is only a guard
    * against the obvious hole. Shortening a class is always allowed: nobody's day gets harder.
    */
-  if (
-    duration !== undefined &&
-    Math.round(duration) > existing.duration &&
-    paying.length > 0
-  ) {
+  if (duration !== undefined && duration > existing.duration && paying.length > 0) {
     const room = canReschedule(existing);
     if (!room.ok) {
       res.status(409).json({
@@ -542,6 +550,12 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     const acceptable = isAcceptableNewDate(newDate!);
     if (!acceptable.ok) { res.status(400).json({ error: acceptable.reason }); return; }
 
+    /**
+     * A first look at the allowance, so a teacher who has plainly run out is told so without
+     * waiting on a lock. It is not the check that decides — that one is inside the transaction
+     * below, because counting and then inserting is two steps and requests arriving together
+     * all counted before any of them had inserted.
+     */
     const used = await scheduleEditsUsed(user.userId);
     if (used === null) {
       // An unknown count is not zero. Refusing for a minute is recoverable; an allowance that
@@ -624,7 +638,17 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
    */
   let session: typeof existing;
   if (moving) {
-    session = await db.transaction(async (tx) => {
+    const outcome = await db.transaction(async (tx) => {
+      // Nobody else may spend this teacher's allowance until this transaction ends. Per teacher,
+      // so two teachers moving classes at the same moment never wait on each other.
+      await lockScheduleQuota(tx, user.userId);
+
+      // Counted again, now that the count cannot change underneath us. This is the check that
+      // decides; the one above the write only saves a lock when the answer is already no.
+      const spent = await countScheduleEdits(tx, user.userId);
+      const room = hasEditsLeft(spent);
+      if (!room.ok) return { blocked: room.reason, spent };
+
       const [updated] = await tx
         .update(sessionsTable)
         .set(updates)
@@ -637,8 +661,18 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
         newDate: newDate!,
         affectedStudents: paying.length,
       });
-      return updated;
+      return { updated };
     });
+
+    if ("blocked" in outcome) {
+      res.status(409).json({
+        error: outcome.blocked,
+        editsUsed: outcome.spent,
+        editsAllowed: SCHEDULE_EDITS_PER_MONTH,
+      });
+      return;
+    }
+    session = outcome.updated;
   } else {
     [session] = await db.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
   }
