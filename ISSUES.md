@@ -1306,6 +1306,15 @@ a class only means something if calling it off costs at least as much. Cancellin
 paid class now refunds everybody in full, releases the seats and tells them; cancelling one
 already taught refunds nobody automatically, because that is a dispute. — **fixed**
 
+**H6. A booking could land on a class as it was being cancelled.** The cancel handler listed who
+had paid and *then* wrote the status; the booking route checked the status before opening its
+transaction. A booking committing between those two points was on neither side of the fence —
+the student paid, the class stopped existing, and no refund was written because the list of who
+had paid was already taken. It needed nothing but bad timing, and with the fix reverted it
+happened twelve times out of twelve. Closed at both ends: the booking transaction re-reads the
+status under the row lock it already takes, and the cancellation reads who has paid after the
+write. — **fixed**
+
 ### And one caused by a fix in the same session
 
 **H4. A student who dropped lost the class thread.** Dropping marks the enrolment `refunded`,
@@ -1318,9 +1327,9 @@ refused. — **fixed**
 
 ### What it is tested with
 
-185 tests across two new suites, both in CI:
+186 tests across two new suites, both in CI:
 
-- `api-server/scripts/refund-tests` — 141 through real HTTP against a real database, including
+- `api-server/scripts/refund-tests` — 142 through real HTTP against a real database, including
   the arithmetic (three shares always summing back to the price, an odd price rounding the
   student's way) and two concurrency runs (six simultaneous drops → one refund and one freed
   seat; eight simultaneous moves → never more than five spent).
