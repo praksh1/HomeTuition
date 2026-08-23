@@ -22,6 +22,11 @@ is cheap next to what it costs afterwards. Tick them off in order.
       conversations that cannot see each other, and both look like they are working. Either
       bridge them or turn Daily's chat back off and fix the app's own panel. See
       `.agents/memory/one-chat-per-class.md`.
+- [ ] **Somebody has to actually pay the refunds.** The Refunds tab in the support desk is the
+      payment system: every row is a debt an agent settles by hand and then records a reference
+      against. Students are told a refund is *requested* and takes 5-7 business days, which is
+      true and will stay true until a provider exists. Decide who does this and how often, or
+      the queue grows and the promise stops being kept. See REFUNDS.md section 2b.
 - [ ] **Wire a real payment provider.** Today bookings approve themselves and no money moves.
       Setting `PAYMENT_WEBHOOK_SECRET`, `ESEWA_MERCHANT_ID` or `KHALTI_SECRET_KEY` closes that
       door and declines every booking, because the eSewa/Khalti branch is not written. See A1.
@@ -1245,3 +1250,77 @@ password and reading *that* out — leaves every reset account known to somebody
 
 Every action an agent takes is recorded against them in the activity log, on the same terms as
 everybody else's.
+
+---
+
+## Moving a class and dropping one, 2026-08-23
+
+### The rules, in one place
+
+`REFUNDS.md` section 2b is the full statement. The short version, for anybody who only needs
+the numbers:
+
+- a teacher may move a class up to **48 hours** before it starts, and only to a slot at least
+  **48 hours** away
+- **five schedule changes a calendar month**, counted per change and not per class
+- a "schedule change" is the **date or the time** — everything else stays freely editable
+- a student may drop up to **24 hours** before, or within **24 hours** of the teacher moving it
+- teacher moved it → **all of it back**; student changed their mind → **half**, with a quarter
+  each to the teacher and the platform as a **cancellation fee**
+- an agent may grant a full refund for something outside the student's control, with a written
+  reason
+- a dropped seat goes **back on sale**
+
+**No money moves.** A refund is a debt written into `refunds` and settled by a person, who
+records a reference. Every message a student sees says *requested* and names the 5-7 business
+days.
+
+### Three bugs found while building it, none of them reported
+
+**H1. A limit of five let seven through.** Counting the month's changes and then inserting one
+is two steps, and eight requests arriving together all counted before any of them had inserted.
+Found by a concurrency test written before the code was believed. The count that decides now
+happens inside the transaction, behind a per-teacher Postgres advisory lock. — **fixed**
+
+**H2. A class size of 0.5 was accepted and quietly became 1.** `Math.round` turned a nonsense
+number into a different instruction from the one that was sent, which is worse than refusing it:
+the caller believes something happened that did not. Duration, class size and price now require
+whole numbers. — **fixed**
+
+**H3. A class ten days away was labelled "Session Expired".** Both buttons on the class page
+threw away *which* refusal had happened and printed "expired" for every one of them. This is the
+same shape as the two cases reported on 2026-08-21 and 2026-08-22, and it survived the fix for
+those, because that fix was about which page opens and this is about what the button on it says.
+A student who had just paid for a class next week was told it had expired.
+
+The unit test covering that assertion had asserted `"Session expired"` for a class thirty
+minutes from opening — it pinned down the bug rather than the behaviour, which is why a covered
+line stayed wrong. The label now names the actual refusal: "Not open yet", "Session held and
+ended", "Session cancelled", and "Session expired" only once the door has really shut.
+— **fixed**
+
+### And one caused by a fix in the same session
+
+**H4. A student who dropped lost the class thread.** Dropping marks the enrolment `refunded`,
+and both the thread and the attendance record refused anybody who was not currently paid — so
+the record of the class disappeared at exactly the moment it became the thing being argued
+about. The thread was fixed first; the class page then still drew a blank, because it decides
+whether to show the thread at all from the attendance call, which had not been changed. Both now
+allow a refunded student to **read** — the thread's composer is hidden rather than offered and
+refused. — **fixed**
+
+### What it is tested with
+
+162 tests across two new suites, both in CI:
+
+- `api-server/scripts/refund-tests` — 118 through real HTTP against a real database, including
+  the arithmetic (three shares always summing back to the price, an odd price rounding the
+  student's way) and two concurrency runs (six simultaneous drops → one refund and one freed
+  seat; eight simultaneous moves → never more than five spent).
+- `sikshya/scripts/refund-tests` — 44 through a real browser, reading the figures off the
+  rendered page and out of the confirmation dialog, because the number somebody agrees to lose
+  is the number on their screen and not the one a component was passed.
+
+Both were proved by deliberately breaking five things in turn — the advisory lock, the seat
+going back on sale, the price lock, the refunded student's thread access, and the button label —
+and confirming each was caught by exactly the tests that should catch it.

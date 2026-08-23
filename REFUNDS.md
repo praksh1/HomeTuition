@@ -106,6 +106,79 @@ refunded without anyone having to argue about it.
 
 ---
 
+## 2b. Cancellations — a different thing from disputes, and now built
+
+The policy above is about a class that **happened badly**. This is about a class that **has not
+happened yet** and one side wants out of. The owner settled every rule in it, and all of them
+are live.
+
+They are kept apart on purpose. A dispute is an accusation that needs evidence and a person's
+judgement. A cancellation is a clock and a subtraction: nobody is accused of anything, nothing
+needs deciding, and the answer is the same for everybody. Running the second through the
+machinery of the first would make a student wait days for arithmetic.
+
+```
+  ← 5 changes a month, per change, not per class →
+  ─────────────────────┬──────────────┬──────────────── T
+     teacher may        │   locked     │
+     move the class     │              │
+                   T-48h              T-24h
+                        └ student may still drop ┘
+```
+
+**A teacher may move a class** until 48 hours before it starts, and only to a slot at least 48
+hours away. Without that second half the promise below can be broken by moving a class
+*forward*: a lesson pushed from next Friday to tomorrow leaves nobody time to react.
+
+**Five schedule changes a calendar month**, counted per change and not per class — moving one
+lesson five times spends the whole allowance. The owner was explicit: *"it is strictly 5 edits
+for any session — this way the teacher is not abusing the system"*. A change means the **date or
+the time**; everything else about a class stays freely editable.
+
+**A student may drop** up to 24 hours before the class, or within 24 hours of the teacher moving
+it, whichever gives them more.
+
+**What comes back:**
+
+| Who caused it | Student gets | Teacher gets | Platform gets |
+|---|---|---|---|
+| The teacher moved the class | all of it | nothing | nothing |
+| The student changed their mind | half | a quarter | a quarter |
+| An agent decided (below) | all of it | nothing | nothing |
+
+The quarter each is a **cancellation fee**, not a "processing fee" — a processing fee is the two
+or three percent a card network takes, and calling 25% by that name would be misleading in a
+way that matters when somebody reads it on a screen. An odd price rounds **up** in the student's
+favour, and the other two shares are whatever is left, so the three always add back to exactly
+what was paid.
+
+**A dropped seat goes back on sale.** Confirmed by the owner. The enrolment stops being paid and
+the class's count comes down in the same transaction, so the next student can take the place.
+
+**An agent may grant a full refund**, and the owner scoped it narrowly: *"It has to be for out of
+one's control type of situations"* — a teacher who never appeared, a power cut across the
+valley. Not a way around the half a student accepts when they change their mind. It requires a
+written reason, which is what makes that scope reviewable rather than a matter of trust, and it
+is granted from the ticket, next to the attendance record and the class's thread, because that
+is where the deciding happens.
+
+**Nothing here moves money.** A refund is a row in `refunds` marked `owed`, and a person pays it
+and records a reference. Every message says **requested** and names the 5-7 business days. That
+is the honest shape of it until there is a provider, and it does not change when there is one:
+the row is still written the same way, and settling it stops being manual.
+
+Two things the owner has not ruled on, decided provisionally and flagged here rather than
+buried:
+
+- **Duration.** The owner defined the schedule as the date and the time. A class made *longer*
+  is held to the same 48 hours as a move — a sixty-minute class turned into a three-hour one
+  the night before is the same broken promise by another route — but it spends no edit and opens
+  no refund window. Making a class **shorter** is always allowed; nobody's day gets harder.
+- **Price.** Locked the moment anybody has paid it. Changing it afterwards either charges a
+  student more than they agreed to or leaves the platform owing a difference nobody asked for.
+
+---
+
 ## 3. What the app can actually prove
 
 This is the foundation and it is worth building first, because every decision above rests on
@@ -135,7 +208,7 @@ in charge of somebody's income.
 
 ## 4. Where this starts
 
-In order, each useful on its own. The first three are built.
+In order, each useful on its own. The first five are built.
 
 1. ~~**The evidence ledger** (section 3).~~ **Built.** `session_participation` records, per
    class and per person, when they arrived, when they were last seen, how long they were
@@ -154,13 +227,23 @@ In order, each useful on its own. The first three are built.
    invent them — and anonymous to everybody rather than only to the teacher, because a public
    list a teacher can read signed out is not made anonymous by hiding the name on their own
    screen.
-4. **The dispute record** — next. A refund request against a session, with its state, its
+4. ~~**The support desk**~~ **Built.** A separate role that cannot be reached through the app
+   at all — registration accepts teacher and student only, and an agent is made by promoting an
+   account directly in the database. Tickets arrive with the class's attendance record, its
+   findings and its whole thread attached, because REFUNDS.md's own principle is that a person
+   decides and a person deciding needs the evidence rather than a verdict. Agents can reset a
+   password (as a one-time code the person redeems themselves — an agent never sees or sets
+   one), review teacher credentials, suspend and unsuspend, and read an activity log of every
+   action anybody took. Every action they take is itself logged.
+5. ~~**Cancellations**~~ **Built** — section 2b. Moving a class, dropping one, the split, the
+   seat going back on sale, and the queue of what is owed.
+6. **The dispute record** — next. A refund request against a session, with its state, its
    deadlines and its evidence. Decisions recorded, nothing paid or refunded, because nothing
    can be. Half of this exists already: a report can now name the class it is about, may only
    be filed by somebody who was in that class, and no longer demands an attachment. What is
    missing is the *process* — the 3-day teacher response, the 2-day notification, the appeal,
    and the state a request moves through.
-5. **Money**, when there is a provider and an answer on licensing.
+7. **Money**, when there is a provider and an answer on licensing.
 
 ### A fourth thing that has to be said, found while building the above
 
