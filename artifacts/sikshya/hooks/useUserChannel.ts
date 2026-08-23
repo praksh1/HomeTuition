@@ -11,13 +11,26 @@ export interface UserEvent {
    * preferences — `session_message` is one, because a class's own thread is not something a
    * teacher's "class starting" switch should silence.
    */
-  kind: "message" | "follower" | "session_live" | "session_invite" | "session_booked" | "session_message";
+  kind:
+    | "message"
+    | "follower"
+    | "session_live"
+    | "session_invite"
+    | "session_booked"
+    | "session_dropped"
+    | "session_message"
+    | "session_rescheduled";
   at?: string;
   fromUserId?: number;
   fromName?: string;
   preview?: string;
   sessionId?: number | string;
   topic?: string;
+  /** What was paid, when the news is about money. */
+  amount?: number;
+  /** Where a moved class now is, and where it was. ISO strings. */
+  newDate?: string;
+  previousDate?: string;
 }
 
 /** Reconnect delays, in ms. Backs off, then keeps trying every 30s. */

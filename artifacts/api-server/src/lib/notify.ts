@@ -23,6 +23,7 @@ export type NotificationKind =
   | "session_live"
   | "session_invite"
   | "session_booked"
+  | "session_dropped"
   | "session_rescheduled";
 
 /** Which preference switch governs each kind. */
@@ -36,6 +37,9 @@ const PREF_KEY: Record<NotificationKind, PrefKind> = {
   // Its own switch rather than sharing one. A teacher turning off "class starting" reminders
   // has not asked to stop being told that somebody paid them.
   session_booked: "bookings",
+  // A student leaving is the same news as one arriving, from the same switch: it is money and
+  // a seat, and a teacher who wants to hear about one wants to hear about the other.
+  session_dropped: "bookings",
   // A class they paid for has moved and they have a day to decide about a refund. Follows the
   // same switch as a class going live because both are "something happened to a class of
   // yours", and this one is the more consequential of the two to miss.
@@ -50,6 +54,8 @@ export interface NotificationEvent {
   preview?: string;
   sessionId?: number;
   topic?: string;
+  /** What was paid, for the notifications about money arriving or going back. */
+  amount?: number;
   /** When a class has been moved: where it is now, as an ISO string. */
   newDate?: string;
   /** When a class has been moved: where it was before. */
@@ -122,6 +128,17 @@ function emailFor(event: NotificationEvent, recipientName: string): { subject: s
           `You did not ask for this change, so if the new time does not suit you, you can ` +
           `drop the class for a full refund. That option is open for 24 hours.\n` +
           (link ? `\nSee the class: ${link}\n` : "") +
+          signoff,
+      };
+    }
+    case "session_dropped": {
+      const link = appUrl(`/session/${event.sessionId ?? ""}`);
+      return {
+        subject: `${event.fromName ?? "A student"} dropped "${event.topic ?? "your class"}"`,
+        text:
+          `${hello}\n\n${event.fromName ?? "A student"} has dropped your class ` +
+          `"${event.topic ?? ""}". Their place is back on sale.\n` +
+          (link ? `\nSee who is coming: ${link}\n` : "") +
           signoff,
       };
     }

@@ -208,32 +208,59 @@ export async function notifySessionInvite(session: {
   await addInAppNotification({ title, body, type: "general", data });
 }
 
-export async function notifyPaymentReceived(amount: number, studentName: string): Promise<void> {
-  if (Platform.OS === "web") {
-    await addInAppNotification({
-      title: "Payment Received",
-      body: `NPR ${amount.toLocaleString()} received from ${studentName} via eSewa`,
-      type: "payment",
-    });
-    return;
+/**
+ * Somebody paid for a class.
+ *
+ * This is the notification a teacher most wants, and until now the app dropped it on the floor:
+ * the server sent `session_booked` down the socket and the handler had no branch for it, so a
+ * teacher was told by email if email was configured, and otherwise not at all.
+ *
+ * It replaces a `notifyPaymentReceived` that nothing ever called and that said "via eSewa"
+ * regardless — a payment method the app cannot know, and today never true, because no provider
+ * is wired up.
+ */
+export async function notifySessionBooked(booking: {
+  topic: string;
+  studentName?: string;
+  sessionId?: number | string;
+  amount?: number;
+}): Promise<void> {
+  const who = booking.studentName ?? "A student";
+  const title = `${who} booked your class`;
+  const body = booking.amount
+    ? `NPR ${booking.amount.toLocaleString()} for "${booking.topic}".`
+    : `"${booking.topic}" — tap to see who is coming.`;
+  const data = { type: "booked", sessionId: booking.sessionId != null ? String(booking.sessionId) : undefined };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({ content: { title, body, data, sound: true }, trigger: null });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
   }
-  try {
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: "Payment Received",
-        body: `NPR ${amount.toLocaleString()} received from ${studentName} via eSewa`,
-        data: { type: "payment" },
-        sound: true,
-      },
-      trigger: null,
-    });
-  } catch (_e) {
+  await addInAppNotification({ title, body, type: "payment", data });
+}
+
+/** And somebody leaving — the same news from the other direction, and the seat is back on sale. */
+export async function notifySessionDropped(booking: {
+  topic: string;
+  studentName?: string;
+  sessionId?: number | string;
+}): Promise<void> {
+  const who = booking.studentName ?? "A student";
+  const title = `${who} dropped your class`;
+  const body = `"${booking.topic}" — their place is back on sale.`;
+  const data = { type: "dropped", sessionId: booking.sessionId != null ? String(booking.sessionId) : undefined };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({ content: { title, body, data, sound: true }, trigger: null });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
   }
-  await addInAppNotification({
-    title: "Payment Received",
-    body: `NPR ${amount.toLocaleString()} received from ${studentName} via eSewa`,
-    type: "payment",
-  });
+  await addInAppNotification({ title, body, type: "general", data });
 }
 
 export async function notifyCredentialStatus(status: "approved" | "rejected", reason?: string): Promise<void> {
@@ -275,6 +302,40 @@ export async function notifySessionLive(session: {
     }
   }
   await addInAppNotification({ title, body, type: "live", data });
+}
+
+/**
+ * A class somebody paid for has been moved.
+ *
+ * The wording carries the consequence, not just the fact. A student told only that their class
+ * moved has been told the least useful half: the 24 hours in which they can take the whole
+ * price back starts at that moment, and one who reads this tomorrow has lost the choice by not
+ * having been told what it was.
+ */
+export async function notifySessionRescheduled(session: {
+  topic: string;
+  teacherName?: string;
+  sessionId?: number | string;
+  newDate?: string;
+}): Promise<void> {
+  const when = session.newDate ? new Date(session.newDate) : null;
+  const readable = when && !Number.isNaN(when.getTime())
+    ? when.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    : "a new time";
+  const title = `"${session.topic}" has been moved`;
+  const body =
+    `${session.teacherName ?? "Your teacher"} moved it to ${readable}. ` +
+    `If that does not suit you, you can drop it for a full refund within 24 hours.`;
+  const data = { type: "rescheduled", sessionId: session.sessionId != null ? String(session.sessionId) : undefined };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({ content: { title, body, data, sound: true }, trigger: null });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
+  }
+  await addInAppNotification({ title, body, type: "general", data });
 }
 
 export async function addInAppNotification(

@@ -201,12 +201,11 @@ router.post("/sessions/:id/drop", requireAuth, async (req, res): Promise<void> =
     .from(usersTable)
     .where(eq(usersTable.id, user.userId));
   notify(session.teacherId, {
-    kind: "session_booked",
+    kind: "session_dropped",
     sessionId: id,
     topic: session.topic,
     fromUserId: user.userId,
     fromName: studentRow?.name ?? "A student",
-    preview: `${studentRow?.name ?? "A student"} has dropped "${session.topic}". The place is back on sale.`,
     at: new Date().toISOString(),
   });
 

@@ -883,6 +883,9 @@ async function bookSession(req: Request, res: Response): Promise<void> {
           topic: session.topic,
           fromUserId: user.userId,
           fromName: studentRow?.name ?? "A student",
+          // The number is the point of this notification. A teacher wants to know they were
+          // paid, not merely that somebody clicked something.
+          amount: session.price,
           at: new Date().toISOString(),
         });
         res.status(201).json({ ...result.enrolment, paid: true });

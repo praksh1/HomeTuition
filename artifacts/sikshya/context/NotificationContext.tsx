@@ -21,7 +21,10 @@ import {
   notifyNewMessage,
   notifySessionInvite,
   notifySessionLive,
+  notifySessionBooked,
+  notifySessionDropped,
   notifySessionMessage,
+  notifySessionRescheduled,
   requestNotificationPermissions,
   type AppNotification,
 } from "@/utils/notifications";
@@ -169,6 +172,28 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             body: event.preview ?? "",
             sessionId: event.sessionId ?? 0,
             topic: event.topic,
+          });
+        } else if (event.kind === "session_booked") {
+          // Money arriving. The server has always sent this and the app has always ignored it,
+          // so a teacher only heard about a booking if email happened to be configured.
+          await notifySessionBooked({
+            topic: event.topic ?? "your class",
+            studentName: event.fromName,
+            sessionId: event.sessionId,
+            amount: event.amount,
+          });
+        } else if (event.kind === "session_dropped") {
+          await notifySessionDropped({
+            topic: event.topic ?? "your class",
+            studentName: event.fromName,
+            sessionId: event.sessionId,
+          });
+        } else if (event.kind === "session_rescheduled") {
+          await notifySessionRescheduled({
+            topic: event.topic ?? "Your class",
+            teacherName: event.fromName,
+            sessionId: event.sessionId,
+            newDate: event.newDate,
           });
         } else if (event.kind === "session_live") {
           await notifySessionLive({
