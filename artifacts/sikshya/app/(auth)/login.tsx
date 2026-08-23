@@ -56,6 +56,19 @@ export default function Login() {
         setError("Login failed. Please try again.");
         return;
       }
+      /**
+       * A support agent goes through whichever door they used.
+       *
+       * The check below refuses an account whose role does not match the door — which is right
+       * for a teacher arriving at the student login, and was quietly fatal for an agent: there
+       * is no agent door, so both doors logged them straight back out and the support desk
+       * could not be reached at all. The guard in app/_layout.tsx sends them to `(admin)` from
+       * here.
+       */
+      if (loggedInUser.role === "admin") {
+        router.replace("/");
+        return;
+      }
       if (loggedInUser.role !== resolvedRole) {
         await logout();
         const actualHome = loggedInUser.role === "teacher" ? "teacher" : "student";

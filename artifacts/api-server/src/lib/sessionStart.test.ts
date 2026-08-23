@@ -163,3 +163,27 @@ test("a brief network drop does not end the class", () => {
     false,
   );
 });
+
+test("a class held and ended before its booked slot reads as over, not as not-yet-open", () => {
+  const held = session({
+    date: new Date(START + 7 * 24 * 60 * MIN),
+    status: "completed",
+    startedAt: new Date(START),
+    endedAt: new Date(START + 30 * MIN),
+  });
+  const result = canStart(held, START + 60 * MIN);
+  assert.equal(result.ok, false);
+  assert.match(result.ok === false ? result.reason : "", /opened and ended early/);
+});
+
+test("a class still upcoming is not treated as held just because it is in the future", () => {
+  const later = session({ date: new Date(START + 7 * 24 * 60 * MIN) });
+  const result = canStart(later, START);
+  assert.equal(result.ok, false);
+  assert.match(result.ok === false ? result.reason : "", /opens 10 minutes before/);
+});
+
+test("a completed class inside its reopen window can still be reopened", () => {
+  const ended = session({ status: "completed", startedAt: new Date(START), endedAt: new Date(END - 10 * MIN) });
+  assert.equal(canStart(ended, END + 5 * MIN).ok, true);
+});

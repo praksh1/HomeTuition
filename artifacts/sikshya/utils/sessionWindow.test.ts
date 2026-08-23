@@ -180,3 +180,28 @@ test("an unreadable date never cuts a call off", () => {
   assert.equal(state.pastWarning, false);
   assert.equal(state.minutesLeft, 0);
 });
+
+test("a class held and ended before its booked slot reads as over, not as not-yet-open", () => {
+  // Reported: a teacher opened a class booked for next week, ended it, and tapping it said
+  // "Not open yet" — technically true of its calendar entry and nonsense about a lesson they
+  // had just taught.
+  const future = new Date(START + 7 * 24 * 60 * MIN);
+  const held = { date: future, duration: 60, status: "completed", startedAt: new Date(START), endedAt: new Date(START + 30 * MIN) };
+  const check = canOpenSession(held, START + 60 * MIN);
+  assert.equal(check.ok, false);
+  assert.equal(check.ok === false ? check.title : "", "Session held and ended");
+  assert.match(check.ok === false ? check.message : "", /opened and ended early/);
+});
+
+test("a class still upcoming is not treated as held just because it is in the future", () => {
+  const future = new Date(START + 7 * 24 * 60 * MIN);
+  const check = canOpenSession({ date: future, duration: 60, status: "upcoming", startedAt: null, endedAt: null }, START);
+  assert.equal(check.ok, false);
+  assert.equal(check.ok === false ? check.title : "", "Not open yet");
+});
+
+test("a completed class inside its reopen window can still be reopened", () => {
+  // The recovery case must survive the new check: ended by accident, still within ten minutes.
+  const ended = { date: new Date(START), duration: 60, status: "completed", startedAt: new Date(START), endedAt: new Date(START + 50 * MIN) };
+  assert.equal(canOpenSession(ended, START + 65 * MIN).ok, true);
+});

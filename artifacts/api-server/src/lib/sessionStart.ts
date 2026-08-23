@@ -145,6 +145,20 @@ export function canStart(session: StartableSession, now: number = Date.now()): S
   // A date we cannot read is not a reason to refuse a teacher their class.
   if (opensAt === null) return { ok: true };
 
+  /**
+   * A class held and ended before its own booked slot.
+   *
+   * Narrow on purpose: only when a finished class is *also* still ahead of its doors, which is
+   * the one state where "not open yet" is nonsense to say about a lesson that has been taught.
+   * Everything else falls through to the ordinary checks, which say how long ago it finished.
+   */
+  if (session.status === "completed" && session.startedAt && now < opensAt) {
+    return {
+      ok: false,
+      reason: "This class was opened and ended early. Create a new session for it instead.",
+    };
+  }
+
   if (now < opensAt) {
     return {
       ok: false,

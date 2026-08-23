@@ -110,6 +110,23 @@ export function canOpenSession(session: SessionWindowInput, now: number = Date.n
   // server still has the final say.
   if (opensAt === null) return { ok: true };
 
+  /**
+   * A class held and ended before its own booked slot.
+   *
+   * Narrow on purpose: it fires only when a finished class is *also* still ahead of its doors,
+   * the one state where "not open yet" is nonsense. A teacher opened a class booked for next
+   * week, ended it, and tapping it said the class had not opened yet — about a lesson they had
+   * just taught. Everything else falls through to the ordinary checks below, which say how
+   * long ago a class finished and are more useful than this.
+   */
+  if (session.status === "completed" && session.startedAt && now < opensAt) {
+    return {
+      ok: false,
+      title: "Session held and ended",
+      message: "This class was opened and ended early. Please create a new one.",
+    };
+  }
+
   if (now < opensAt) {
     return {
       ok: false,

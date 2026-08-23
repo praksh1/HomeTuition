@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
-import { canOpenSession } from "@/utils/sessionWindow";
 import SessionCard from "@/components/SessionCard";
 import { useColors } from "@/hooks/useColors";
 import type { Teacher } from "@/context/AuthContext";
@@ -104,24 +103,21 @@ export default function TeacherSessions() {
    * and microphone. The refusal happens here, before any of that — decided from the date and
    * length already in this list, so it is immediate and needs no round trip.
    */
+  /**
+   * Tapping a class always opens the class.
+   *
+   * It used to check whether the class could be *opened* and refuse with an alert when it
+   * could not. That was right when a tap went straight into a video call; it is wrong now that
+   * a tap goes to a page, and refusing to open a page helps nobody. Reported twice: a finished
+   * class said "Session Expired" and showed nothing, and a class that had been opened and
+   * ended said "Not open yet" — and those are exactly the classes a teacher wants to look at,
+   * to see who enrolled, who attended, and what was said.
+   *
+   * The page carries the refusal instead, as a greyed-out button with the reason beside it.
+   * That is where it belongs: next to the thing it is about, not in a dialog that takes the
+   * class away with it.
+   */
   const openSession = (item: Session) => {
-    const check = canOpenSession(item);
-    if (!check.ok) {
-      if (Platform.OS === "web") window.alert(`${check.title}\n\n${check.message}`);
-      else Alert.alert(check.title, check.message, [{ text: "OK" }]);
-      return;
-    }
-    /**
-     * To the class's own page, not straight into the classroom.
-     *
-     * The owner's ask: "the teacher should be able to click on it and see the students that
-     * have enrolled... The start option should come after this". Seeing who is coming before
-     * going live is the point — and a class opened by accident from this list used to put a
-     * teacher on camera in front of whoever was already there.
-     *
-     * The dashboard still has a one-tap Start on the class that is about to begin, so the
-     * common path has not grown a step.
-     */
     router.push(`/session/${item.id}`);
   };
 
