@@ -425,6 +425,89 @@ async function main() {
 
   await ctx3.close();
 
+  console.log("\nEvery class opens its own page, however old it is");
+
+  /**
+   * Two reports, one cause: the list checked whether a class could be *opened* and refused to
+   * navigate at all when it could not. That was right when a tap went straight into a video
+   * call; it is wrong now that a tap goes to a page. The classes a teacher most wants to look
+   * at — the finished one, the expired one — were the ones it would not show them.
+   */
+  const pageCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const pagePage = await pageCtx.newPage();
+  const pageDialogs = [];
+  pagePage.on("dialog", async (d) => { pageDialogs.push(d.message()); await d.dismiss(); });
+  await pagePage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+
+  await pagePage.goto(siteUrl, { waitUntil: "networkidle" });
+  await pagePage.waitForTimeout(3500);
+  await pagePage.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
+  await pagePage.waitForTimeout(2500);
+  await pagePage.click('text="Completed"', { timeout: 5000 }).catch(() => {});
+  await pagePage.waitForTimeout(2500);
+
+  // The three-day-old class from the first block is in this list.
+  await pagePage.locator('text="Stress 14"').first().click({ timeout: 10000 });
+  await pagePage.waitForTimeout(3500);
+
+  const expiredPage = await pagePage.evaluate(() => ({ url: location.pathname, text: document.body.innerText }));
+  check("tapping a long-finished class opens its page", /\/session\//.test(expiredPage.url), expiredPage.url);
+  check("rather than refusing with a dialog", pageDialogs.length === 0, JSON.stringify(pageDialogs));
+  check("the page shows the class's own details", /Stress 14/.test(expiredPage.text),
+    expiredPage.text.slice(0, 200).replace(/\n/g, " | "));
+  check("and who attended it", /Who attended|Nobody has booked/i.test(expiredPage.text),
+    expiredPage.text.slice(0, 300).replace(/\n/g, " | "));
+  check("with the button greyed out and saying why",
+    /Session expired/i.test(expiredPage.text) && /create a new one/i.test(expiredPage.text),
+    expiredPage.text.slice(0, 300).replace(/\n/g, " | "));
+
+  /**
+   * And the one that said "Not open yet" about a class it had already taught: opened and ended
+   * ahead of its own booked slot.
+   */
+  /**
+   * A teacher of their own, because a teacher may only have one class live at a time.
+   *
+   * The first version of this reused the teacher from the blocks above, who still had a live
+   * class — so taking this one live was refused, `started_at` was never set, and the checks
+   * below failed for a reason that had nothing to do with what they were testing. The step is
+   * asserted now rather than assumed, which is what would have said so.
+   */
+  const soloTeacher = await register("teacher");
+  sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${soloTeacher.user.id}`);
+
+  const heldEarlyClass = await api("/sessions", { method: "POST", token: soloTeacher.token, body: {
+    topic: "Held Early", subject: "Mathematics", description: "d",
+    date: new Date(Date.now() + 5 * 60_000).toISOString(),
+    duration: 60, price: 500, maxStudents: 20 } });
+  check("the class to be held early is created", heldEarlyClass.status === 201, `status ${heldEarlyClass.status}`);
+  const wentLiveEarly = await api(`/sessions/${heldEarlyClass.body.id}`, { method: "PATCH", token: soloTeacher.token, body: { status: "live" } });
+  check("and can be taken live", wentLiveEarly.status === 200, `status ${wentLiveEarly.status} ${JSON.stringify(wentLiveEarly.body ?? {})}`);
+  const endedEarly = await api(`/sessions/${heldEarlyClass.body.id}`, { method: "PATCH", token: soloTeacher.token, body: { status: "completed" } });
+  check("and ended", endedEarly.status === 200, `status ${endedEarly.status}`);
+  // Its booked slot is moved a week out, leaving a finished class still ahead of its doors.
+  sql(`update sessions set date = now() + interval '7 days' where id = ${heldEarlyClass.body.id}`);
+
+  const soloCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const soloPage = await soloCtx.newPage();
+  await soloPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), soloTeacher.token);
+  await soloPage.goto(`${siteUrl}/session/${heldEarlyClass.body.id}`, { waitUntil: "networkidle" });
+  await soloPage.waitForTimeout(3500);
+  const heldEarly = await soloPage.evaluate(() => document.body.innerText);
+  check("a class held and ended early does not claim it has not opened yet",
+    !/opens 10 minutes before/i.test(heldEarly), heldEarly.slice(0, 300).replace(/\n/g, " | "));
+  check("it says it was opened and ended", /opened and ended early/i.test(heldEarly),
+    heldEarly.slice(0, 300).replace(/\n/g, " | "));
+
+  await soloCtx.close();
+  await pageCtx.close();
+
   console.log("\nA class that is running out of time");
 
   /**

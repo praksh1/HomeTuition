@@ -268,6 +268,35 @@ async function main() {
   const agentToken = agentLogin.body?.token;
   check("an agent can sign in", !!agentToken, `status ${agentLogin.status}`);
 
+  /**
+   * Through the real login screen, not just the endpoint.
+   *
+   * The endpoint always worked; the *screen* refused. It checks that the account's role
+   * matches the door it came through — right for a teacher at the student login, and fatal for
+   * an agent, because there is no agent door. Both doors logged them out again and the support
+   * desk could not be reached at all. Only driving the screen shows that.
+   */
+  const doorCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+  });
+  const doorPage = await doorCtx.newPage();
+  const doorDialogs = [];
+  doorPage.on("dialog", async (d) => { doorDialogs.push(d.message()); await d.dismiss(); });
+  await doorPage.goto(`${siteUrl}/login?role=student`, { waitUntil: "networkidle" });
+  await doorPage.waitForTimeout(3000);
+  await doorPage.locator('input[type="email"], input[inputmode="email"]').first().fill(agentAccount.email);
+  await doorPage.locator('input[type="password"]').first().fill("password123");
+  await doorPage.locator('text=/^(Log In|Sign In|Login)$/i').first().click({ timeout: 10000 });
+  await doorPage.waitForTimeout(5000);
+
+  const landed = await doorPage.evaluate(() => ({ url: location.pathname, text: document.body.innerText }));
+  check("signing in through the student door does not throw an agent out",
+    !/registered as a/i.test(doorDialogs.join(" ")) && !/registered as a/i.test(landed.text),
+    `${JSON.stringify(doorDialogs)} ${landed.text.slice(0, 160).replace(/\n/g, " | ")}`);
+  check("and they land on the support desk", /Support|Tickets/i.test(landed.text),
+    `${landed.url} ${landed.text.slice(0, 200).replace(/\n/g, " | ")}`);
+  await doorCtx.close();
+
   // Something for them to look at.
   const reporter = await register("student");
   const subject = await register("teacher");
