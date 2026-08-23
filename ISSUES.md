@@ -1299,6 +1299,13 @@ line stayed wrong. The label now names the actual refusal: "Not open yet", "Sess
 ended", "Session cancelled", and "Session expired" only once the door has really shut.
 — **fixed**
 
+**H5. Cancelling a class was the way round all of the above.** A teacher could set a class to
+`cancelled` with no lock, no monthly allowance, no refund and no notification — the students who
+had paid were left with a class that had simply stopped existing. The 48-hour rule for *moving*
+a class only means something if calling it off costs at least as much. Cancelling an upcoming
+paid class now refunds everybody in full, releases the seats and tells them; cancelling one
+already taught refunds nobody automatically, because that is a dispute. — **fixed**
+
 ### And one caused by a fix in the same session
 
 **H4. A student who dropped lost the class thread.** Dropping marks the enrolment `refunded`,
@@ -1311,9 +1318,9 @@ refused. — **fixed**
 
 ### What it is tested with
 
-162 tests across two new suites, both in CI:
+185 tests across two new suites, both in CI:
 
-- `api-server/scripts/refund-tests` — 118 through real HTTP against a real database, including
+- `api-server/scripts/refund-tests` — 141 through real HTTP against a real database, including
   the arithmetic (three shares always summing back to the price, an odd price rounding the
   student's way) and two concurrency runs (six simultaneous drops → one refund and one freed
   seat; eight simultaneous moves → never more than five spent).
@@ -1321,6 +1328,13 @@ refused. — **fixed**
   rendered page and out of the confirmation dialog, because the number somebody agrees to lose
   is the number on their screen and not the one a component was passed.
 
-Both were proved by deliberately breaking five things in turn — the advisory lock, the seat
-going back on sale, the price lock, the refunded student's thread access, and the button label —
-and confirming each was caught by exactly the tests that should catch it.
+Both were proved by deliberately breaking seven things in turn — the advisory lock, the seat
+going back on sale, the price lock, the refunded student's thread access, the button label,
+the cancellation refund, and the exclusion of classes already taught — and confirming each was
+caught by exactly the tests that should catch it and no others.
+
+One of those breaks caught a *test* rather than the code: removing the `alreadyRefunded` lookup
+from the cancellation loop changed nothing, because the `payment_status = 'paid'` condition
+inside the transaction was already doing all the work. The lookup was removed. A redundant guard
+that nothing can distinguish from a working one is worse than none — it invites the belief that
+it is doing something.

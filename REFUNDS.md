@@ -143,6 +143,7 @@ it, whichever gives them more.
 | Who caused it | Student gets | Teacher gets | Platform gets |
 |---|---|---|---|
 | The teacher moved the class | all of it | nothing | nothing |
+| The teacher called it off | all of it | nothing | nothing |
 | The student changed their mind | half | a quarter | a quarter |
 | An agent decided (below) | all of it | nothing | nothing |
 
@@ -151,6 +152,17 @@ or three percent a card network takes, and calling 25% by that name would be mis
 way that matters when somebody reads it on a screen. An odd price rounds **up** in the student's
 favour, and the other two shares are whatever is left, so the three always add back to exactly
 what was paid.
+
+**A teacher may cancel a class outright**, and everybody who paid gets all of it back, is told,
+and has their seat released. This is deliberately *not* rationed the way moving is: a teacher who
+is ill has to be able to cancel, and making them keep a class they cannot teach in order to stay
+inside a quota would be worse for everybody in it. What it costs them is the fee, in full, every
+time.
+
+Without that rule the rest of this section did nothing: cancelling was the cheap way out of a
+class, with no lock, no allowance, no refund and no notification. Cancelling a class that was
+*already taught* refunds nobody automatically — that is a dispute, and disputes are decided by a
+person from the evidence.
 
 **A dropped seat goes back on sale.** Confirmed by the owner. The enrolment stops being paid and
 the class's count comes down in the same transaction, so the next student can take the place.
