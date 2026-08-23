@@ -41,8 +41,21 @@ const DEFAULT_LIMIT = 200;
 async function threadAccess(sessionId: number, userId: number) {
   const membership = await getSessionMembership(sessionId, userId);
   if (!membership) return null;
-  if (!membership.isSessionTeacher && !membership.hasPaid) return null;
+  // A student who dropped or was refunded keeps the thread they were part of — read-only, see
+  // `mayPost`. Cutting them off at the moment of the refund would take away the record of the
+  // class exactly when they most need it, which is when they are arguing about that refund.
+  if (!membership.isSessionTeacher && !membership.hasPaid && !membership.wasRefunded) return null;
   return membership;
+}
+
+/**
+ * Reading is not writing.
+ *
+ * Somebody who is no longer in the class may still read what was said in it, but posting into
+ * a class you have left is neither theirs to do nor something the people still in it asked for.
+ */
+function mayPost(membership: { isSessionTeacher: boolean; hasPaid: boolean }): boolean {
+  return membership.isSessionTeacher || membership.hasPaid;
 }
 
 /** Everyone who should hear about a new message: the teacher and every paying student. */
@@ -102,6 +115,8 @@ router.get("/sessions/:id/messages", requireAuth, async (req, res): Promise<void
 
     res.json({
       messages: messages.map((m) => ({ ...m, mine: m.senderId === req.user!.userId })),
+      // So the app hides the composer rather than offering a box whose Send button is refused.
+      readOnly: !mayPost(membership),
       // Told apart from "no messages" so the app can say "we could not load these" rather than
       // showing an empty thread, which reads as "nobody said anything".
       known: true,
@@ -120,6 +135,12 @@ router.post("/sessions/:id/messages", requireAuth, async (req, res): Promise<voi
   const membership = await threadAccess(id, req.user!.userId);
   if (!membership) {
     res.status(403).json({ error: "You do not have access to this session." });
+    return;
+  }
+  if (!mayPost(membership)) {
+    res.status(403).json({
+      error: "You are no longer in this class, so you can read this thread but not post to it.",
+    });
     return;
   }
 

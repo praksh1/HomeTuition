@@ -5,6 +5,8 @@ import {
   db,
   disputesTable,
   passwordResetsTable,
+  refundsTable,
+  sessionEnrollmentsTable,
   sessionMessagesTable,
   sessionsTable,
   teacherProfilesTable,
@@ -17,6 +19,7 @@ import { findingsFor } from "../lib/sessionEvidence";
 import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
 import { notify } from "../lib/notify";
+import { refundSplit } from "../lib/sessionChanges";
 
 /**
  * The support desk.
@@ -54,15 +57,31 @@ function callerIp(req: { headers: Record<string, unknown>; ip?: string }): strin
 
 router.get("/admin/overview", async (_req, res): Promise<void> => {
   try {
-    const [[open], [pending], [suspended]] = await Promise.all([
+    const [[open], [pending], [suspended], [refunds], [owed]] = await Promise.all([
       db.select({ n: sql<number>`count(*)::int` }).from(disputesTable).where(eq(disputesTable.status, "open")),
       db.select({ n: sql<number>`count(*)::int` }).from(teacherProfilesTable).where(eq(teacherProfilesTable.approvalStatus, "pending")),
       db.select({ n: sql<number>`count(*)::int` }).from(usersTable).where(sql`${usersTable.suspendedAt} is not null`),
+      db.select({ n: sql<number>`count(*)::int` }).from(refundsTable).where(eq(refundsTable.status, "owed")),
+      db.select({ n: sql<number>`coalesce(sum(${refundsTable.amount}), 0)::int` }).from(refundsTable).where(eq(refundsTable.status, "owed")),
     ]);
-    res.json({ openTickets: open?.n ?? 0, pendingTeachers: pending?.n ?? 0, suspendedAccounts: suspended?.n ?? 0, known: true });
+    res.json({
+      openTickets: open?.n ?? 0,
+      pendingTeachers: pending?.n ?? 0,
+      suspendedAccounts: suspended?.n ?? 0,
+      refundsOwed: refunds?.n ?? 0,
+      refundsOwedTotal: owed?.n ?? 0,
+      known: true,
+    });
   } catch (err) {
     // An agent must be able to tell "nothing to do" from "we could not look".
-    res.status(503).json({ openTickets: 0, pendingTeachers: 0, suspendedAccounts: 0, known: false });
+    res.status(503).json({
+      openTickets: 0,
+      pendingTeachers: 0,
+      suspendedAccounts: 0,
+      refundsOwed: 0,
+      refundsOwedTotal: 0,
+      known: false,
+    });
   }
 });
 
@@ -464,6 +483,231 @@ router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> 
  * Filterable by person, by thing, and by action, because the two ways this is actually read
  * are "everything this person did" and "everything that happened to this class".
  */
+/**
+ * Money the platform owes people.
+ *
+ * **This queue is the payment system.** There is no provider — see REFUNDS.md — so every row
+ * here is a debt somebody settles by hand, and marking it paid is a person saying they did it,
+ * not the app saying it happened. Naming that plainly in the code is the only thing keeping the
+ * two from being confused later.
+ */
+router.get("/admin/refunds", async (req, res): Promise<void> => {
+  const status = String(req.query.status ?? "owed");
+  const wanted = status === "all" ? null : status === "paid" ? "paid" : "owed";
+
+  try {
+    const rows = await db
+      .select({
+        id: refundsTable.id,
+        sessionId: refundsTable.sessionId,
+        studentId: refundsTable.studentId,
+        studentName: usersTable.name,
+        studentEmail: usersTable.email,
+        topic: sessionsTable.topic,
+        sessionDate: sessionsTable.date,
+        pricePaid: refundsTable.pricePaid,
+        amount: refundsTable.amount,
+        teacherShare: refundsTable.teacherShare,
+        platformShare: refundsTable.platformShare,
+        reason: refundsTable.reason,
+        status: refundsTable.status,
+        note: refundsTable.note,
+        requestedAt: refundsTable.requestedAt,
+        paidAt: refundsTable.paidAt,
+      })
+      .from(refundsTable)
+      .leftJoin(usersTable, eq(usersTable.id, refundsTable.studentId))
+      .leftJoin(sessionsTable, eq(sessionsTable.id, refundsTable.sessionId))
+      .where(wanted ? eq(refundsTable.status, wanted) : sql`true`)
+      .orderBy(asc(refundsTable.id))
+      .limit(200);
+
+    const [owed] = await db
+      .select({ n: sql<number>`coalesce(sum(${refundsTable.amount}), 0)::int` })
+      .from(refundsTable)
+      .where(eq(refundsTable.status, "owed"));
+
+    res.json({ refunds: rows, totalOwed: owed?.n ?? 0, known: true });
+  } catch (err) {
+    // An empty queue and an unreadable one look identical on screen, and only one of them
+    // means there is nothing to pay.
+    res.status(503).json({ refunds: [], totalOwed: 0, known: false });
+  }
+});
+
+/**
+ * Mark a refund settled.
+ *
+ * Requires a reference — a transaction id, a bank slip number, something. A refund marked paid
+ * with nothing to point at is indistinguishable from one that was never paid, and the student
+ * asking about it a week later has to be answerable.
+ */
+router.post("/admin/refunds/:id/paid", async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid refund id" }); return; }
+
+  const { reference } = req.body as { reference?: string };
+  const text = typeof reference === "string" ? reference.trim() : "";
+  if (!text) {
+    res.status(400).json({ error: "Please record how this was paid — a transaction id or receipt number." });
+    return;
+  }
+
+  const [existing] = await db.select().from(refundsTable).where(eq(refundsTable.id, id));
+  if (!existing) { res.status(404).json({ error: "Refund not found" }); return; }
+  if (existing.status === "paid") {
+    res.status(409).json({ error: "This refund is already marked paid." });
+    return;
+  }
+
+  const [updated] = await db
+    .update(refundsTable)
+    .set({ status: "paid", paidAt: new Date(), paidBy: req.user!.userId, note: text })
+    .where(and(eq(refundsTable.id, id), eq(refundsTable.status, "owed")))
+    .returning();
+  if (!updated) { res.status(409).json({ error: "This refund is already marked paid." }); return; }
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.refund.paid",
+    subjectType: "refund",
+    subjectId: id,
+    detail: { amount: updated.amount, reference: text },
+    ip: callerIp(req),
+  });
+
+  notify(updated.studentId, {
+    kind: "message",
+    fromUserId: req.user!.userId,
+    fromName: "Sikshya Support",
+    preview: `Your refund of NPR ${updated.amount} has been paid. Reference: ${text}`,
+    at: new Date().toISOString(),
+  });
+
+  res.json({ paid: true, refund: updated });
+});
+
+/**
+ * A full refund an agent decides on.
+ *
+ * The owner drew the line and it is a narrow one: "It has to be for out of one's control type
+ * of situations!" — a teacher who never appeared, a power cut across the valley, something that
+ * happened *to* the student rather than something they chose. It is not a way around the
+ * half-refund a student accepts when they change their mind, and the required note is what
+ * makes that reviewable afterwards rather than a matter of trust.
+ *
+ * It refunds the whole price. An agent reaching for this has already decided the student did
+ * nothing wrong, and a partial version of that would only invite arguing over the fraction.
+ */
+router.post("/admin/sessions/:sessionId/refund", async (req, res): Promise<void> => {
+  const sessionId = parseInt(String(req.params.sessionId), 10);
+  if (isNaN(sessionId)) { res.status(400).json({ error: "Invalid session id" }); return; }
+
+  const { studentId, note } = req.body as { studentId?: number; note?: string };
+  const student = Number(studentId);
+  if (!Number.isInteger(student)) { res.status(400).json({ error: "Which student?" }); return; }
+
+  const text = typeof note === "string" ? note.trim() : "";
+  if (!text) {
+    res.status(400).json({
+      error:
+        "Please say why this refund is being given in full. Full refunds are for things " +
+        "outside the student's control, and the reason is what makes that reviewable.",
+    });
+    return;
+  }
+
+  const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
+  if (!session) { res.status(404).json({ error: "Session not found" }); return; }
+
+  const [enrolment] = await db
+    .select({ id: sessionEnrollmentsTable.id, paymentStatus: sessionEnrollmentsTable.paymentStatus })
+    .from(sessionEnrollmentsTable)
+    .where(
+      and(
+        eq(sessionEnrollmentsTable.sessionId, sessionId),
+        eq(sessionEnrollmentsTable.studentId, student),
+      ),
+    );
+  if (!enrolment) { res.status(404).json({ error: "That student is not booked into this class." }); return; }
+
+  const [already] = await db
+    .select({ id: refundsTable.id })
+    .from(refundsTable)
+    .where(and(eq(refundsTable.sessionId, sessionId), eq(refundsTable.studentId, student)))
+    .limit(1);
+  if (already) {
+    res.status(409).json({ error: "A refund is already recorded for this student and class." });
+    return;
+  }
+
+  const split = refundSplit(session.price, "agent_discretion");
+
+  const refund = await db.transaction(async (tx) => {
+    /**
+     * The seat only goes back on sale if there is still a class to sell it into.
+     *
+     * Most refunds an agent grants are for a class that already happened badly, and quietly
+     * decrementing the count on a finished class would leave its record saying fewer people
+     * were there than actually were — which is the record the next dispute is argued from.
+     */
+    const freed = await tx
+      .update(sessionEnrollmentsTable)
+      .set({ paymentStatus: "refunded" })
+      .where(
+        and(
+          eq(sessionEnrollmentsTable.id, enrolment.id),
+          eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+        ),
+      )
+      .returning({ id: sessionEnrollmentsTable.id });
+
+    if (freed.length > 0 && session.status === "upcoming") {
+      await tx
+        .update(sessionsTable)
+        .set({ enrolledCount: sql`GREATEST(0, ${sessionsTable.enrolledCount} - 1)` })
+        .where(eq(sessionsTable.id, sessionId));
+    }
+
+    const [row] = await tx
+      .insert(refundsTable)
+      .values({
+        sessionId,
+        studentId: student,
+        pricePaid: session.price,
+        amount: split.studentRefund,
+        teacherShare: split.teacherShare,
+        platformShare: split.platformShare,
+        reason: "agent_discretion",
+        status: "owed",
+        note: text,
+      })
+      .returning();
+    return row;
+  });
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.refund.granted",
+    subjectType: "session",
+    subjectId: sessionId,
+    detail: { studentId: student, amount: refund.amount, note: text },
+    ip: callerIp(req),
+  });
+
+  notify(student, {
+    kind: "message",
+    fromUserId: req.user!.userId,
+    fromName: "Sikshya Support",
+    preview:
+      `A full refund of NPR ${refund.amount} has been requested for "${session.topic}". ` +
+      `It will be processed within 5-7 business days.`,
+    at: new Date().toISOString(),
+  });
+
+  res.json({ refund });
+});
+
 router.get("/admin/activity", async (req, res): Promise<void> => {
   const num = (value: unknown) => {
     const parsed = parseInt(String(value ?? ""), 10);

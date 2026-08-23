@@ -17,6 +17,16 @@ import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
 import { canJoin, canStart } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
+import {
+  canReschedule,
+  isAcceptableNewDate,
+  scheduleMoved,
+  hasEditsLeft,
+  SCHEDULE_EDITS_PER_MONTH,
+  RESCHEDULE_LOCK_HOURS,
+} from "../lib/sessionChanges";
+import { paidEnrolments, scheduleEditsUsed } from "../lib/scheduleChanges";
+import { scheduleChangesTable } from "@workspace/db";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -387,7 +397,15 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const { status, topic } = req.body as { status?: string; topic?: string };
+  const { status, topic, subject, date, duration, maxStudents, price } = req.body as {
+    status?: string;
+    topic?: string;
+    subject?: string;
+    date?: string;
+    duration?: number;
+    maxStudents?: number;
+    price?: number;
+  };
   const updates: Record<string, unknown> = {};
   if (status !== undefined) {
     if (!ALLOWED_STATUSES.includes(status)) {
@@ -399,9 +417,40 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     // class actually began rather than the slot it was booked into.
     if (status === "live") updates.startedAt = new Date();
   }
-  if (topic !== undefined) updates.topic = topic;
+  if (topic !== undefined) {
+    if (!String(topic).trim()) { res.status(400).json({ error: "Topic cannot be empty." }); return; }
+    updates.topic = String(topic).trim();
+  }
+  if (subject !== undefined) {
+    if (!String(subject).trim()) { res.status(400).json({ error: "Subject cannot be empty." }); return; }
+    updates.subject = String(subject).trim();
+  }
+  if (duration !== undefined) {
+    if (!Number.isFinite(duration) || duration <= 0) {
+      res.status(400).json({ error: "Duration must be greater than zero." });
+      return;
+    }
+    updates.duration = Math.round(duration);
+  }
+  if (maxStudents !== undefined) {
+    if (!Number.isFinite(maxStudents) || maxStudents <= 0) {
+      res.status(400).json({ error: "Maximum students must be greater than zero." });
+      return;
+    }
+    updates.maxStudents = Math.round(maxStudents);
+  }
 
-  if (Object.keys(updates).length === 0) {
+  let newDate: Date | null = null;
+  if (date !== undefined) {
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) {
+      res.status(400).json({ error: "A valid date and time is required." });
+      return;
+    }
+    newDate = parsed;
+  }
+
+  if (Object.keys(updates).length === 0 && newDate === null && price === undefined) {
     res.status(400).json({ error: "No valid fields to update" });
     return;
   }
@@ -411,6 +460,107 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
   if (existing.teacherId !== user.userId) {
     res.status(403).json({ error: "You can only update your own sessions" });
     return;
+  }
+
+  /**
+   * How many people this change lands on. Needed before anything is written, because several
+   * of the rules below only bite once somebody has paid.
+   */
+  const paying = await paidEnrolments(id);
+
+  /**
+   * The price stops being editable the moment anyone has paid it.
+   *
+   * A student agreed to a number. Changing it afterwards either charges them more than they
+   * agreed to or leaves the platform owing a difference nobody asked for, and neither has an
+   * honest answer. Before the first booking it is simply a number on an unsold class.
+   */
+  if (price !== undefined) {
+    if (!Number.isFinite(price) || price <= 0) {
+      res.status(400).json({ error: "Amount must be greater than zero." });
+      return;
+    }
+    if (Math.round(price) !== existing.price && paying.length > 0) {
+      res.status(409).json({
+        error:
+          "The price cannot be changed once a student has paid it. Cancel this class and " +
+          "create a new one if you need a different price.",
+      });
+      return;
+    }
+    updates.price = Math.round(price);
+  }
+
+  // A class cannot be shrunk below the number of people already in it.
+  if (maxStudents !== undefined && Math.round(maxStudents) < existing.enrolledCount) {
+    res.status(409).json({
+      error:
+        `${existing.enrolledCount} student${existing.enrolledCount === 1 ? " has" : "s have"} ` +
+        `already booked, so the limit cannot go below ${existing.enrolledCount}.`,
+    });
+    return;
+  }
+
+  /**
+   * Making a class *longer* is held to the same notice as moving it.
+   *
+   * The owner defined "the schedule" as the date and the time, and that is what the monthly
+   * allowance and the refund window follow. Duration is not covered by that wording, but a
+   * sixty-minute class turned into a three-hour one the night before is the same broken promise
+   * by another route, so a longer class needs the same notice. It does not spend an edit and
+   * does not open a refund window — those are the owner's rule, and this is only a guard
+   * against the obvious hole. Shortening a class is always allowed: nobody's day gets harder.
+   */
+  if (
+    duration !== undefined &&
+    Math.round(duration) > existing.duration &&
+    paying.length > 0
+  ) {
+    const room = canReschedule(existing);
+    if (!room.ok) {
+      res.status(409).json({
+        error:
+          `A class can only be made longer more than ${RESCHEDULE_LOCK_HOURS} hours before it ` +
+          `starts. You can still make it shorter.`,
+      });
+      return;
+    }
+  }
+
+  /**
+   * Moving the class: the change that costs somebody something.
+   *
+   * Three gates, in the order that gives the most useful refusal first — whether this class can
+   * be moved at all, whether the new time is far enough away, and whether the teacher has any
+   * of this month's five changes left.
+   */
+  const moving = newDate !== null && scheduleMoved(existing.date, newDate);
+  if (moving) {
+    const room = canReschedule(existing);
+    if (!room.ok) { res.status(409).json({ error: room.reason }); return; }
+
+    const acceptable = isAcceptableNewDate(newDate!);
+    if (!acceptable.ok) { res.status(400).json({ error: acceptable.reason }); return; }
+
+    const used = await scheduleEditsUsed(user.userId);
+    if (used === null) {
+      // An unknown count is not zero. Refusing for a minute is recoverable; an allowance that
+      // silently stops applying during an outage is not.
+      res.status(503).json({
+        error: "We could not check your remaining schedule changes just now. Please try again.",
+      });
+      return;
+    }
+    const left = hasEditsLeft(used);
+    if (!left.ok) {
+      res.status(409).json({ error: left.reason, editsUsed: used, editsAllowed: SCHEDULE_EDITS_PER_MONTH });
+      return;
+    }
+
+    updates.date = newDate;
+  } else if (newDate !== null) {
+    // Same instant sent back unchanged — accept it silently rather than spending an edit.
+    updates.date = newDate;
   }
 
   if (status === "live") {
@@ -464,7 +614,60 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  const [session] = await db.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
+  /**
+   * The class and the record of the move are written together or not at all.
+   *
+   * They have to be. The row is what counts against the allowance and what starts the students'
+   * twenty-four hours to ask for their money back — a moved class with no row is a free move
+   * and a refund window that never opens, and a row with no move accuses a teacher of something
+   * they did not do.
+   */
+  let session: typeof existing;
+  if (moving) {
+    session = await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(sessionsTable)
+        .set(updates)
+        .where(eq(sessionsTable.id, id))
+        .returning();
+      await tx.insert(scheduleChangesTable).values({
+        sessionId: id,
+        teacherId: user.userId,
+        previousDate: new Date(existing.date),
+        newDate: newDate!,
+        affectedStudents: paying.length,
+      });
+      return updated;
+    });
+  } else {
+    [session] = await db.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
+  }
+
+  /**
+   * Tell everyone who paid, and tell them what it means for them.
+   *
+   * Not a courtesy. The refund window is twenty-four hours from this moment, so a student who
+   * is not told loses the choice by being kept in the dark.
+   */
+  if (moving && paying.length > 0) {
+    const [teacherRow] = await db
+      .select({ name: usersTable.name })
+      .from(usersTable)
+      .where(eq(usersTable.id, user.userId));
+    notifyMany(
+      paying.map((p) => p.studentId),
+      {
+        kind: "session_rescheduled",
+        sessionId: id,
+        topic: existing.topic,
+        fromUserId: user.userId,
+        fromName: teacherRow?.name ?? "Your teacher",
+        previousDate: new Date(existing.date).toISOString(),
+        newDate: newDate!.toISOString(),
+        at: new Date().toISOString(),
+      },
+    );
+  }
 
   if (status !== undefined) {
     broadcastSessionStatus(String(id), status);

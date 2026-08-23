@@ -22,7 +22,8 @@ export type NotificationKind =
   | "follower"
   | "session_live"
   | "session_invite"
-  | "session_booked";
+  | "session_booked"
+  | "session_rescheduled";
 
 /** Which preference switch governs each kind. */
 const PREF_KEY: Record<NotificationKind, PrefKind> = {
@@ -35,6 +36,10 @@ const PREF_KEY: Record<NotificationKind, PrefKind> = {
   // Its own switch rather than sharing one. A teacher turning off "class starting" reminders
   // has not asked to stop being told that somebody paid them.
   session_booked: "bookings",
+  // A class they paid for has moved and they have a day to decide about a refund. Follows the
+  // same switch as a class going live because both are "something happened to a class of
+  // yours", and this one is the more consequential of the two to miss.
+  session_rescheduled: "sessionLive",
 };
 
 export interface NotificationEvent {
@@ -45,6 +50,10 @@ export interface NotificationEvent {
   preview?: string;
   sessionId?: number;
   topic?: string;
+  /** When a class has been moved: where it is now, as an ISO string. */
+  newDate?: string;
+  /** When a class has been moved: where it was before. */
+  previousDate?: string;
 }
 
 /** Where a person is sent when they act on the email. Falls back to the app's own domain. */
@@ -99,6 +108,20 @@ function emailFor(event: NotificationEvent, recipientName: string): { subject: s
           `${hello}\n\n${event.fromName ?? "A student"} has booked and paid for your class ` +
           `"${event.topic ?? ""}".\n` +
           (link ? `\nSee who is coming: ${link}\n` : "") +
+          signoff,
+      };
+    }
+    case "session_rescheduled": {
+      const link = appUrl(`/session/${event.sessionId ?? ""}`);
+      const when = event.newDate ? new Date(event.newDate).toUTCString() : "a new time";
+      return {
+        subject: `"${event.topic ?? "Your class"}" has been moved`,
+        text:
+          `${hello}\n\n${event.fromName ?? "Your teacher"} has moved your class ` +
+          `"${event.topic ?? ""}" to ${when}.\n\n` +
+          `You did not ask for this change, so if the new time does not suit you, you can ` +
+          `drop the class for a full refund. That option is open for 24 hours.\n` +
+          (link ? `\nSee the class: ${link}\n` : "") +
           signoff,
       };
     }

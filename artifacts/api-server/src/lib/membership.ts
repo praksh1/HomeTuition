@@ -18,6 +18,12 @@ export interface SessionMembership {
   isEnrolledStudent: boolean;
   /** True once that enrolment has been paid for. Free sessions count as paid. */
   hasPaid: boolean;
+  /**
+   * True when this student paid and then got their money back — they dropped the class, or an
+   * agent refunded them. They are no longer in the class, but they were, and what was said in
+   * it is often the evidence for why they are not.
+   */
+  wasRefunded: boolean;
   status: string;
   /** Scheduled start, used to decide whether the early-join window is open. */
   scheduledFor: Date | null;
@@ -57,6 +63,7 @@ export async function getSessionMembership(
       isSessionTeacher: true,
       isEnrolledStudent: false,
       hasPaid: true,
+      wasRefunded: false,
       status: session.status,
       scheduledFor,
       duration: session.duration,
@@ -80,6 +87,7 @@ export async function getSessionMembership(
     isSessionTeacher: false,
     isEnrolledStudent: !!enrollment,
     hasPaid,
+    wasRefunded: enrollment?.paymentStatus === "refunded",
     status: session.status,
     scheduledFor,
     duration: session.duration,
