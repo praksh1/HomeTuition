@@ -414,6 +414,46 @@ async function run() {
     check("and somebody who was never in it still sees nothing", outsider.status === 403, `status=${outsider.status}`);
   }
 
+  console.log("\nStill able to complain about it afterwards\n");
+
+  {
+    /**
+     * The sequence this exists for: a student drops a class, the refund does not arrive, and
+     * they want to chase it. Every filter on the way to Support asked for a *paid* enrolment,
+     * so the class vanished from their support form at exactly the moment it became worth
+     * reporting, leaving them only "Not session related".
+     */
+    const s = await makeSession(teacher, { price: 500 });
+    await book(student, s.id);
+
+    /**
+     * Drop first, *then* age the class. The other order does not work and does not say so: a
+     * class dated yesterday is inside the 24-hour deadline, so the drop is refused, the
+     * enrolment stays paid, and every assertion below passes without testing anything. That is
+     * how this was first written, and putting the paid-only filter back changed nothing.
+     */
+    const dropped = await api(`/sessions/${s.id}/drop`, { method: "POST", token: student.token });
+    check("the drop this section depends on actually happened", dropped.status === 200, `status=${dropped.status}`);
+    check("and the enrolment really is refunded",
+      sql(`select payment_status from session_enrollments where session_id=${s.id} and student_id=${student.user.id}`) === "refunded");
+
+    // Yesterday, so it falls inside the seven days the support dropdown offers.
+    sql(`update sessions set date = now() - interval '1 day' where id = ${s.id}`);
+
+    const offered = await api("/support/sessions", { token: student.token });
+    check("a dropped class is still in the support dropdown",
+      (offered.body?.sessions ?? []).some((row) => row.id === s.id),
+      JSON.stringify((offered.body?.sessions ?? []).map((r) => r.id)));
+
+    const filed = await api("/disputes", { method: "POST", token: student.token, body: {
+      sessionId: s.id, reason: "Payment Issue", description: "My refund has not arrived." } });
+    check("and they can still file a report about it", filed.status <= 201, `status=${filed.status}`);
+
+    const outsider = await api("/disputes", { method: "POST", token: other.token, body: {
+      sessionId: s.id, reason: "Payment Issue", description: "Nothing to do with me." } });
+    check("while somebody who was never in it still cannot", outsider.status === 403, `status=${outsider.status}`);
+  }
+
   console.log("\nThe queue of what is owed\n");
 
   let owedRefundId = null;

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNotNull, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, or } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   db,
@@ -55,8 +55,15 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
       res.status(400).json({ error: "sessionId must be a number" });
       return;
     }
+    /**
+     * A place in the class, including one they used to have.
+     *
+     * A refunded student is the person most likely to need this: they dropped a class or an
+     * agent refunded them, and now the money has not arrived. Refusing them here would leave
+     * the only complaint they have no way to attach to the class it is about.
+     */
     const membership = await getSessionMembership(id, userId);
-    if (!membership || (!membership.isSessionTeacher && !membership.hasPaid)) {
+    if (!membership || (!membership.isSessionTeacher && !membership.hasPaid && !membership.wasRefunded)) {
       res.status(403).json({ error: "You can only report a class you took part in." });
       return;
     }
@@ -129,7 +136,10 @@ router.get("/support/sessions", requireAuth, async (req, res): Promise<void> => 
         and(
           eq(sessionEnrollmentsTable.sessionId, sessionsTable.id),
           eq(sessionEnrollmentsTable.studentId, userId),
-          eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+          // `refunded` too, for the same reason the filing check above accepts it: a refund
+          // that never arrived is a complaint about a specific class, and without this the
+          // class disappears from the dropdown at the moment it becomes worth reporting.
+          inArray(sessionEnrollmentsTable.paymentStatus, ["paid", "refunded"]),
         ),
       )
       .where(
