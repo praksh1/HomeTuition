@@ -11,6 +11,7 @@ import notificationsRouter from "./notifications";
 import sessionMessagesRouter from "./sessionMessages";
 import adminRouter, { passwordResetRouter } from "./admin";
 import dropsRouter from "./drops";
+import monthlyRouter from "./monthly";
 
 const router: IRouter = Router();
 
@@ -25,6 +26,7 @@ router.use(disputesRouter);
 router.use(notificationsRouter);
 router.use(sessionMessagesRouter);
 router.use(dropsRouter);
+router.use(monthlyRouter);
 router.use(adminRouter);
 router.use(passwordResetRouter);
 

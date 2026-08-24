@@ -97,6 +97,44 @@ export async function chargeForSession(args: {
 }
 
 /**
+ * Attempts to take payment for something in the monthly tier — a teacher's tier subscription
+ * or a student's place in a recurring class.
+ *
+ * A sibling of `chargeForSession` rather than a generalisation of it, because the thing being
+ * bought is genuinely different and the log line a human reads when a simulated payment goes
+ * through should say which. The mode rule is identical and deliberately not re-derived here:
+ * both call `paymentMode()`, so configuring a real provider disables the free door for the
+ * monthly tier at exactly the same moment it disables it for ordinary classes. There is no way
+ * to end up with one switched on and the other not.
+ */
+export async function chargeForMonthly(args: {
+  purpose: "teacher-plan" | "student-place";
+  /** The plan or recurring class being paid for; only for the audit trail. */
+  referenceId: number;
+  userId: number;
+  amount: number;
+  method: string;
+  log?: { warn: (o: object, m: string) => void };
+}): Promise<ChargeResult> {
+  if (paymentMode() === "simulated") {
+    args.log?.warn(
+      { purpose: args.purpose, referenceId: args.referenceId, userId: args.userId, amount: args.amount },
+      "SIMULATED PAYMENT approved for the monthly tier — no money moved. " +
+        "Configure a payment provider before launch.",
+    );
+    return { ok: true, reference: `SIM-M-${Date.now()}-${args.referenceId}-${args.userId}` };
+  }
+
+  return {
+    ok: false,
+    message:
+      args.purpose === "teacher-plan"
+        ? "Online payment isn't available yet, so the monthly plan can't be bought here. Please contact Sikshya to arrange it."
+        : "Online payment isn't available yet. Please contact your teacher to arrange payment for this class.",
+  };
+}
+
+/**
  * Verifies an HMAC-SHA256 signature over the exact bytes the provider sent.
  *
  * The raw body matters: re-serialising parsed JSON can reorder keys or change spacing and
