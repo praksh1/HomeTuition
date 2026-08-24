@@ -1,7 +1,8 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db,
+  recurringDaysTable,
   recurringEnrollmentsTable,
   recurringSessionsTable,
   teacherPlansTable,
@@ -12,11 +13,15 @@ import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { chargeForMonthly } from "../lib/payments";
 import { notify, notifyMany } from "../lib/notify";
 import {
+  MAKEUP_DEADLINE_HOURS,
+  MAX_ABUSES_PER_CYCLE,
   MAX_DAILY_MINUTES,
+  MAX_MAKEUPS_PER_CYCLE,
   MAX_STUDENTS,
   PLATFORM_SHARE,
   TEACHER_TIER_PRICE,
   TIME_CHANGE_NOTICE_HOURS,
+  SUSPENSION_DAYS,
   abuseStanding,
   canChangeTime,
   canEnrol,
@@ -31,15 +36,21 @@ import {
   countEnrolled,
   countRegularDays,
   countRemainingDays,
+  abusesIn,
+  addMakeup,
   changeDailyTime,
   cycleOf,
   enrolInMaterialisedDays,
   enrolmentFor,
   generateCycle,
+  enforceStanding,
+  ensureCycleGenerated,
   ledgerFor,
+  makeupsIn,
   materialiseDueDays,
   nextClassDay,
   settleDueDays,
+  settleFinishedCycles,
 } from "../lib/monthlyStore";
 
 const router: IRouter = Router();
@@ -72,8 +83,59 @@ function idParam(req: Request): number | null {
  */
 async function bringUpToDate(klass: RecurringSession, log?: Request["log"]): Promise<void> {
   try {
-    await settleDueDays(klass);
-    await materialiseDueDays(klass);
+    const [plan] = await db.select().from(teacherPlansTable).where(eq(teacherPlansTable.id, klass.planId));
+    if (!plan) return;
+    const now = Date.now();
+    const cycle = await cycleOf(plan, now);
+
+    // Order matters. Judging what became of yesterday has to happen before counting black
+    // marks, and a month cannot be closed before the classes in it have been judged.
+    await settleDueDays(klass, now);
+    if (cycle) {
+      await ensureCycleGenerated(klass, cycle.index, cycle.start);
+      await materialiseDueDays(klass, now);
+
+      const standing = await enforceStanding(klass, plan, cycle.index, now);
+
+      if (standing.warnAt !== null) {
+        /*
+         * The warning the owner asked to be strong.
+         *
+         * Sent once per new black mark, not on every read: `warnedAtAbuses` remembers, and a
+         * warning that arrives ten times a day is one nobody reads — which would defeat the
+         * whole point of insisting on it.
+         */
+        notify(klass.teacherId, {
+          kind: "session_cancelled",
+          at: new Date(now).toISOString(),
+          topic:
+            `WARNING: ${standing.warnAt} of your classes were missed this month with no make-up ` +
+            `arranged. At ${MAX_ABUSES_PER_CYCLE}, your monthly class is suspended for ` +
+            `${SUSPENSION_DAYS} days and your students are refunded. You can still arrange a ` +
+            `make-up for each missed class within ${MAKEUP_DEADLINE_HOURS} hours of it.`,
+        });
+      }
+
+      if (standing.justSuspended) {
+        notify(klass.teacherId, {
+          kind: "session_cancelled",
+          at: new Date(now).toISOString(),
+          topic:
+            `Your monthly class has been suspended for ${SUSPENSION_DAYS} days, and your ` +
+            `students have been refunded for the rest of the month.`,
+        });
+      }
+
+      const settled = await settleFinishedCycles(klass, plan, cycle.index, now);
+      for (const month of settled) {
+        if (month.refunded > 0) {
+          log?.warn(
+            { recurringId: klass.id, ...month },
+            "a monthly class fell short and refunds are owed",
+          );
+        }
+      }
+    }
   } catch (err) {
     log?.warn({ err, recurringId: klass.id }, "could not bring a monthly class up to date");
   }
@@ -223,9 +285,24 @@ router.get("/monthly/plan", requireAuth, async (req: Request, res: Response) => 
 
   const klass = await classForPlan(plan.id);
   if (klass) await bringUpToDate(klass, req.log);
-  const cycle = await cycleOf(plan);
+
+  // Re-read: the sweep above may have suspended them, and telling a suspended teacher they are
+  // fine because the row was read a moment earlier is exactly the sort of stale answer this
+  // project has had to fix before.
+  const fresh = (await activePlanFor(user.userId)) ?? plan;
+  const cycle = await cycleOf(fresh);
   const ledger = klass && cycle ? await ledgerFor(klass.id, cycle.index) : null;
-  const standing = ledger ? abuseStanding(ledger.missed) : null;
+
+  /*
+   * Counted, not read off the ledger's "missed".
+   *
+   * A missed class is not yet a black mark — the teacher has forty-eight hours to arrange a
+   * make-up, and one arranged clears it. Showing the raw missed count as their standing would
+   * tell a teacher who has made up every class that they are about to be suspended.
+   */
+  const abuses = klass && cycle ? await abusesIn(klass.id, cycle.index) : 0;
+  const standing = klass && cycle ? abuseStanding(abuses) : null;
+  const makeupsUsed = klass && cycle ? await makeupsIn(klass.id, cycle.index) : 0;
 
   res.json({
     plan: {
@@ -247,8 +324,173 @@ router.get("/monthly/plan", requireAuth, async (req: Request, res: Response) => 
     class: klass ? await describeClass(klass, user.userId) : null,
     ledger,
     standing,
+    makeups: { used: makeupsUsed, allowed: MAX_MAKEUPS_PER_CYCLE, left: Math.max(0, MAX_MAKEUPS_PER_CYCLE - makeupsUsed) },
+    makeupDeadlineHours: MAKEUP_DEADLINE_HOURS,
+    suspensionDays: SUSPENSION_DAYS,
     tierPrice: TEACHER_TIER_PRICE,
     platformShare: PLATFORM_SHARE,
+  });
+});
+
+/**
+ * The classes this teacher missed, and which of them still need making up.
+ *
+ * Separate from the plan view because it is a list a teacher acts on rather than a number they
+ * read, and because it has to say *per class* how long is left — the forty-eight hours run from
+ * each miss, not from the month.
+ */
+router.get("/monthly/classes/:id/missed", requireAuth, async (req: Request, res: Response) => {
+  const id = idParam(req);
+  if (id === null) {
+    res.status(400).json({ error: "Invalid class id" });
+    return;
+  }
+  const user = req.user!;
+  const klass = await classById(id);
+  if (!klass) {
+    res.status(404).json({ error: "Class not found" });
+    return;
+  }
+  if (klass.teacherId !== user.userId) {
+    res.status(403).json({ error: "Only the teacher can see this." });
+    return;
+  }
+  await bringUpToDate(klass, req.log);
+
+  const [plan] = await db.select().from(teacherPlansTable).where(eq(teacherPlansTable.id, klass.planId));
+  const cycle = plan ? await cycleOf(plan) : null;
+  if (!cycle) {
+    res.json({ missed: [], makeups: { used: 0, allowed: MAX_MAKEUPS_PER_CYCLE, left: MAX_MAKEUPS_PER_CYCLE } });
+    return;
+  }
+
+  const now = Date.now();
+  const rows = await db
+    .select()
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, klass.id),
+        eq(recurringDaysTable.cycleIndex, cycle.index),
+        eq(recurringDaysTable.status, "missed"),
+      ),
+    )
+    .orderBy(desc(recurringDaysTable.scheduledFor));
+
+  const makeups = await db
+    .select({ makeupForId: recurringDaysTable.makeupForId, at: recurringDaysTable.scheduledFor })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, klass.id),
+        eq(recurringDaysTable.kind, "makeup"),
+        sql`status <> 'cancelled'`,
+      ),
+    );
+  const byMissed = new Map(makeups.filter((m) => m.makeupForId !== null).map((m) => [m.makeupForId!, m.at]));
+
+  const used = await makeupsIn(klass.id, cycle.index);
+  res.json({
+    missed: rows.map((row) => {
+      const deadline = row.missedAt ? row.missedAt.getTime() + MAKEUP_DEADLINE_HOURS * 3_600_000 : null;
+      const madeUpAt = byMissed.get(row.id) ?? null;
+      return {
+        id: row.id,
+        wasAt: row.scheduledFor.toISOString(),
+        missedAt: row.missedAt ? row.missedAt.toISOString() : null,
+        madeUpAt: madeUpAt ? madeUpAt.toISOString() : null,
+        /** True once this one counts against them. Cleared by arranging a make-up, even late. */
+        countsAgainstYou: madeUpAt === null && deadline !== null && now > deadline,
+        deadline: deadline === null ? null : new Date(deadline).toISOString(),
+        hoursLeft: deadline === null ? null : Math.max(0, Math.round((deadline - now) / 3_600_000)),
+      };
+    }),
+    makeups: { used, allowed: MAX_MAKEUPS_PER_CYCLE, left: Math.max(0, MAX_MAKEUPS_PER_CYCLE - used) },
+    makeupDeadlineHours: MAKEUP_DEADLINE_HOURS,
+  });
+});
+
+/** Puts a make-up class on the calendar for one that was missed. */
+router.post("/monthly/classes/:id/makeups", requireAuth, async (req: Request, res: Response) => {
+  const id = idParam(req);
+  if (id === null) {
+    res.status(400).json({ error: "Invalid class id" });
+    return;
+  }
+  const user = req.user!;
+  const klass = await classById(id);
+  if (!klass) {
+    res.status(404).json({ error: "Class not found" });
+    return;
+  }
+  if (klass.teacherId !== user.userId) {
+    res.status(403).json({ error: "Only the teacher can arrange a make-up." });
+    return;
+  }
+
+  const { missedDayId, at } = req.body as { missedDayId?: number; at?: string };
+  const dayId = Number(missedDayId);
+  if (!Number.isInteger(dayId)) {
+    res.status(400).json({ error: "Say which missed class this is making up." });
+    return;
+  }
+  const when = at ? new Date(at) : null;
+  if (!when || Number.isNaN(when.getTime())) {
+    res.status(400).json({ error: "Pick a date and time for the make-up class." });
+    return;
+  }
+  if (when.getTime() <= Date.now()) {
+    res.status(400).json({ error: "A make-up class has to be in the future." });
+    return;
+  }
+
+  const [plan] = await db.select().from(teacherPlansTable).where(eq(teacherPlansTable.id, klass.planId));
+  if (!plan || plan.status !== "active") {
+    res.status(403).json({ error: plan?.suspendedReason ?? "This plan is not running." });
+    return;
+  }
+  const cycle = await cycleOf(plan);
+  if (!cycle) {
+    res.status(409).json({ error: "That class has not started its first month yet." });
+    return;
+  }
+
+  const made = await addMakeup(klass, dayId, when, cycle.index);
+  if (!made.ok) {
+    res.status(409).json({ error: made.reason });
+    return;
+  }
+
+  // Everybody in the month is told, the same way they are told a class moved. A make-up
+  // nobody hears about is a class the teacher holds alone.
+  const students = await db
+    .select({ studentId: recurringEnrollmentsTable.studentId })
+    .from(recurringEnrollmentsTable)
+    .where(
+      and(
+        eq(recurringEnrollmentsTable.recurringId, klass.id),
+        eq(recurringEnrollmentsTable.cycleIndex, cycle.index),
+        eq(recurringEnrollmentsTable.status, "active"),
+      ),
+    );
+  if (students.length > 0) {
+    notifyMany(
+      students.map((x) => x.studentId),
+      {
+        kind: "session_rescheduled",
+        at: new Date().toISOString(),
+        fromUserId: user.userId,
+        topic: `Make-up class: ${klass.subject} — ${klass.topic}`,
+        newDate: when.toISOString(),
+      },
+    );
+  }
+
+  const used = await makeupsIn(klass.id, cycle.index);
+  res.status(201).json({
+    makeup: { id: made.id, at: when.toISOString(), forMissedDayId: dayId },
+    makeups: { used, allowed: MAX_MAKEUPS_PER_CYCLE, left: Math.max(0, MAX_MAKEUPS_PER_CYCLE - used) },
+    studentsTold: students.length,
   });
 });
 
