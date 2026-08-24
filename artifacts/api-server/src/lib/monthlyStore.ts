@@ -301,6 +301,14 @@ export async function materialiseDueDays(
         eq(recurringDaysTable.status, "planned"),
         isNull(recurringDaysTable.sessionId),
         lt(recurringDaysTable.scheduledFor, new Date(now + MATERIALISE_AHEAD_MS)),
+        // And not one that is already over. Settling normally takes past days out of "planned"
+        // before this runs, but the two must not depend on each other's order: without a floor
+        // here, a settle that failed would have this create a class for every day of a month
+        // that finished weeks ago.
+        gt(
+          recurringDaysTable.scheduledFor,
+          new Date(now - klass.durationMinutes * 60_000 - SETTLE_GRACE_MS),
+        ),
       ),
     )
     .orderBy(asc(recurringDaysTable.scheduledFor));

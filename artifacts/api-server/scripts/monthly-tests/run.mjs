@@ -83,8 +83,6 @@ function ageClass(klassId, planId, days) {
   const FAR = 4000;
   sql(`update recurring_days set scheduled_for = scheduled_for - interval '${FAR} days' where recurring_id = ${klassId}`);
   sql(`update recurring_days set scheduled_for = scheduled_for + interval '${FAR - days} days' where recurring_id = ${klassId}`);
-
-  sql(`update recurring_days set status = 'held' where recurring_id = ${klassId} and scheduled_for < now() and status = 'planned'`);
 }
 
 /**
@@ -257,8 +255,8 @@ async function proRatingTests() {
   const { klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
 
   ageClass(klass.id, planId, 20);
-  const held = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and status = 'held'`));
-  check("setup: twenty classes are behind us", held === 20, `got ${held}`);
+  const behind = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and scheduled_for < now()`));
+  check("setup: twenty classes are behind us", behind === 20, `got ${behind}`);
 
   const student = await register("student");
   const seen = await api(`/monthly/classes/${klass.id}`, { token: student.token });
@@ -272,8 +270,8 @@ async function proRatingTests() {
 
   // Now run the month right down. Nobody may buy a month that has no classes left in it.
   ageClass(klass.id, planId, 10);
-  const left = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and status = 'planned'`));
-  check("setup: no classes remain", left === 0, `${left} still planned`);
+  const left = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and scheduled_for > now()`));
+  check("setup: no classes remain", left === 0, `${left} still ahead`);
 
   const late = await register("student");
   const lateSeen = await api(`/monthly/classes/${klass.id}`, { token: late.token });
@@ -376,6 +374,124 @@ async function concurrencyTests() {
   check("and they are charged for one month at most", overCharged <= oneMonth, `paid ${overCharged} against a fee of ${oneMonth}`);
 }
 
+/* ------------------------------------------- the class-day becoming a real class */
+
+async function classDayTests() {
+  console.log("\nA class-day becoming a real class");
+
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+
+  // Nothing is due for a day yet, so nothing has been created.
+  const early = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and session_id is not null`));
+  check("class-days far ahead are not created yet", early <= 1, `${early} already materialised`);
+
+  // Bring tomorrow's class within the window and read the class, which runs the sweep.
+  ageClass(klass.id, planId, 1);
+  await api(`/monthly/classes/${klass.id}`, { token: student.token });
+
+  const sessionId = Number(sql(`select session_id from recurring_days where recurring_id = ${klass.id}
+      and session_id is not null order by scheduled_for asc limit 1`) || 0);
+  check("the next class-day becomes a real class", sessionId > 0, `session_id ${sessionId}`);
+
+  const sess = sql(`select teacher_id, price, duration, subject from sessions where id = ${sessionId}`).split("|");
+  check("it belongs to the teacher", Number(sess[0]) === teacher.user.id, `teacher ${sess[0]}`);
+  check("and costs nothing at this door", Number(sess[1]) === 0, `price ${sess[1]}`);
+  check("and runs for the class's length", Number(sess[2]) === 60, `duration ${sess[2]}`);
+
+  const enrolled = Number(sql(`select count(*) from session_enrollments where session_id = ${sessionId}
+      and student_id = ${student.user.id} and payment_status = 'paid'`));
+  check("the monthly student is already enrolled and paid", enrolled === 1, `found ${enrolled}`);
+
+  // The door the whole tier depends on: nobody buys their way in one class at a time.
+  const outsider = await register("student");
+  const bought = await api(`/sessions/${sessionId}/book`, { method: "POST", token: outsider.token, body: { paymentMethod: "esewa" } });
+  check("an outsider cannot buy a single day of a monthly course", bought.status === 409, `status ${bought.status} ${JSON.stringify(bought.body)?.slice(0, 120)}`);
+  const sneaked = Number(sql(`select count(*) from session_enrollments where session_id = ${sessionId} and student_id = ${outsider.user.id}`));
+  check("and no enrolment was written for them", sneaked === 0, `found ${sneaked}`);
+
+  const discover = await api("/sessions?limit=100");
+  const listed = (discover.body?.sessions ?? discover.body ?? []).some?.((x) => x.id === sessionId);
+  check("monthly class-days are not offered in Discover", listed !== true, `session ${sessionId} was listed`);
+
+  const mine = await api(`/sessions?studentId=${student.user.id}&limit=100`);
+  const inMine = (mine.body?.sessions ?? mine.body ?? []).some?.((x) => x.id === sessionId);
+  check("but the student does see it among their own classes", inMine === true, `session ${sessionId} missing from their list`);
+
+  // Running the sweep twice must not create the class twice.
+  await api(`/monthly/classes/${klass.id}`, { token: student.token });
+  const twice = Number(sql(`select count(*) from sessions s join recurring_days rd on rd.session_id = s.id
+      where rd.recurring_id = ${klass.id}`));
+  const linked = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and session_id is not null`));
+  check("reading twice does not create the class twice", twice === linked, `${twice} classes for ${linked} days`);
+}
+
+async function lateJoinerTests() {
+  console.log("\nA student joining after tomorrow's class already exists");
+
+  const { klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const early = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: early.token, body: {} });
+
+  ageClass(klass.id, planId, 1);
+  await api(`/monthly/classes/${klass.id}`, { token: early.token });
+  const sessionId = Number(sql(`select session_id from recurring_days where recurring_id = ${klass.id}
+      and session_id is not null and status = 'planned' order by scheduled_for asc limit 1`) || 0);
+  check("setup: a class exists already", sessionId > 0, `session_id ${sessionId}`);
+
+  const late = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: late.token, body: {} });
+
+  const inIt = Number(sql(`select count(*) from session_enrollments where session_id = ${sessionId}
+      and student_id = ${late.user.id} and payment_status = 'paid'`));
+  check("the late joiner is put into the class that already existed", inIt === 1, `found ${inIt}`);
+
+  const counted = Number(sql(`select enrolled_count from sessions where id = ${sessionId}`));
+  const actual = Number(sql(`select count(*) from session_enrollments where session_id = ${sessionId}`));
+  check("and the class's headcount matches its enrolments", counted === actual, `${counted} counted, ${actual} rows`);
+}
+
+async function ledgerTests() {
+  console.log("\nWriting down what became of a class");
+
+  const { klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+
+  // Two days on: yesterday's class exists, and nobody started it.
+  ageClass(klass.id, planId, 1);
+  await api(`/monthly/classes/${klass.id}`, { token: student.token });
+  const first = Number(sql(`select session_id from recurring_days where recurring_id = ${klass.id}
+      and session_id is not null order by scheduled_for asc limit 1`) || 0);
+  check("setup: a class was created", first > 0, `session_id ${first}`);
+
+  ageClass(klass.id, planId, 2);
+  await api(`/monthly/classes/${klass.id}`, { token: student.token });
+  const missed = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and status = 'missed'`));
+  check("a class nobody started is written down as missed", missed >= 1, `${missed} missed`);
+
+  // A class the teacher did start is held, not missed.
+  const { klass: k2, planId: p2 } = await teacherWithClass({ monthlyPrice: 3000 });
+  const s2 = await register("student");
+  await api(`/monthly/classes/${k2.id}/join`, { method: "POST", token: s2.token, body: {} });
+  ageClass(k2.id, p2, 1);
+  await api(`/monthly/classes/${k2.id}`, { token: s2.token });
+  const started = Number(sql(`select session_id from recurring_days where recurring_id = ${k2.id}
+      and session_id is not null order by scheduled_for asc limit 1`) || 0);
+  sql(`update sessions set started_at = date::timestamptz + interval '3 minutes' where id = ${started}`);
+  ageClass(k2.id, p2, 2);
+  await api(`/monthly/classes/${k2.id}`, { token: s2.token });
+
+  const heldRow = sql(`select status from recurring_days where session_id = ${started}`);
+  check("a class the teacher started is written down as held", heldRow === "held", `status "${heldRow}"`);
+  const heldAt = sql(`select held_at is not null from recurring_days where session_id = ${started}`);
+  check("and when they started it is kept", heldAt === "t", `held_at ${heldAt}`);
+
+  const ledger = await api(`/monthly/classes/${k2.id}`, { token: s2.token });
+  check("the ledger is reported back", (ledger.body?.class?.ledger?.held ?? 0) >= 1, JSON.stringify(ledger.body?.class?.ledger));
+}
+
 /* ---------------------------------------------------------- the rules */
 
 async function ruleTests() {
@@ -390,7 +506,7 @@ async function ruleTests() {
   check("somebody else cannot move the class", notMine.status === 403, `status ${notMine.status}`);
 
   // Eighteen hours' notice, judged against the next class.
-  sql(`update recurring_days set status = 'held' where recurring_id = ${klass.id} and scheduled_for < now() + interval '10 hours'`);
+  sql(`update recurring_days set status = 'cancelled' where recurring_id = ${klass.id} and scheduled_for < now() + interval '10 hours'`);
   const soon = await api(`/monthly/classes/${klass.id}/time`, { method: "PATCH", token: teacher.token, body: { startMinute: 600 } });
   check("a class inside eighteen hours cannot be moved", soon.status === 409 || soon.status === 501,
     `status ${soon.status} ${JSON.stringify(soon.body)?.slice(0, 120)}`);
@@ -458,6 +574,9 @@ async function main() {
   await syncTests();
   await capacityTests();
   await concurrencyTests();
+  await classDayTests();
+  await lateJoinerTests();
+  await ledgerTests();
   await ruleTests();
   await moneyInvariants();
 
