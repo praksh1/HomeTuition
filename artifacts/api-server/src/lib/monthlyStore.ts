@@ -840,8 +840,15 @@ export async function settleFinishedCycles(
   const done: Settlement[] = [];
   for (let index = from; index < currentCycleIndex; index += 1) {
     const settlement = await db.transaction(async (tx) => {
-      // Re-read the counter under a lock: two readers arriving together must not both close
-      // the same month and write two sets of refunds.
+      /*
+       * Re-read the counter under a lock: two readers arriving together must not both close
+       * the same month and write two sets of refunds.
+       *
+       * This and the `status = 'active'` filter below are **two independent guards**, and
+       * either one alone is enough — which is why removing just one does not fail the suite.
+       * Removing both, with ten readers arriving at once, pays every student ten times. Keep
+       * both: neither is redundant, they are simply each sufficient.
+       */
       const [locked] = await tx
         .select({ settledThroughCycle: teacherPlansTable.settledThroughCycle })
         .from(teacherPlansTable)
@@ -964,7 +971,13 @@ export async function enforceStanding(
       .from(teacherPlansTable)
       .where(eq(teacherPlansTable.id, plan.id))
       .for("update");
-    // Somebody else got here first. Suspending twice would refund every student twice.
+    /*
+     * Somebody else got here first. Suspending twice would refund every student twice.
+     *
+     * As with closing a month: this and the `status = 'active'` filter on the enrolments are
+     * two independent guards, each sufficient on its own. Removing both and letting ten
+     * readers arrive together refunds everybody ten times over.
+     */
     if (!locked || locked.status !== "active") return null;
 
     await tx
