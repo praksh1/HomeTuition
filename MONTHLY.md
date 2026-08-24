@@ -107,8 +107,8 @@ that stopped.
 | Local time of day → instants | ✅ `lib/monthlySchedule.ts` — 11 tests |
 | Four tables + boot guard | ✅ and a script proving both ways of creating them agree |
 | Buy the tier, create the class, join it | ✅ 7 routes — 74 end-to-end checks |
-| The daily class actually running | ❌ class-days are planned, not yet real classes |
-| Changing the daily time | ⚠️ refused with a clear message; the rule is enforced, the move is not written |
+| The daily class actually running | ✅ becomes an ordinary class, students pre-enrolled and paid |
+| Changing the daily time | ✅ 18 hours' notice, every class still to come moves, students told |
 | Make-ups, abuse counting, suspension | ❌ |
 | Homework portal, group chat | ❌ |
 | Anything in the app | ❌ API only so far |
@@ -117,19 +117,47 @@ Run the tests:
 
 ```
 node --test --experimental-strip-types artifacts/api-server/src/lib/monthly*.test.ts
-pnpm --filter @workspace/api-server run test:monthly     # needs the API running
+pnpm --filter @workspace/api-server run test:monthly     # 118 checks, needs the API running
 artifacts/api-server/scripts/monthly-schema/compare.sh   # schema agreement
 ```
 
 ---
 
+## How a class-day becomes a class
+
+A day before it is due, each class-day is turned into an ordinary `sessions` row and every
+student holding a place that month is enrolled in it and marked paid. That is the point: once
+the row exists the class **is** an ordinary class, so the video room, the whiteboard, the chat
+and `membership.ts` all work on it untouched.
+
+Which leaves exactly one hole, and it is the one that matters most: a materialised class-day
+costs nothing, because the month was paid for once. So `POST /sessions/:id/book` **refuses** it
+outright, and those days are hidden from Discover. The class also being full is a second
+barrier and deliberately not the guarantee — three students in a class that takes 45 leaves 42
+seats that would otherwise be free to anyone who asked.
+
+Held or missed is read from `sessions.startedAt`, never from anything the teacher confirms. The
+delivery floor and the abuse count are both counted from these rows, and a teacher should not
+be the one telling the ledger whether they turned up.
+
+It all runs as a lazy sweep off reads. There is no scheduler in this project, and inventing one
+to create a row a day would be a lot of moving parts to get wrong.
+
+---
+
 ## Two traps for whoever picks this up
 
-**Shifting existing class-days collides with itself.** Moving a month of them by twenty days
-lands some on instants their own neighbours still hold, and `recurring_days_slot_idx` refuses
-it — correctly. Whether it refuses depends on the order Postgres updates rows in, so the naive
-version passes several times before failing. Hop the whole set clear of its own range and back.
-This is exactly what "change the daily time" has to do.
+**Shifting class-days by whole days collides with itself.** Moving a month of them back twenty
+days lands some on instants their own neighbours still hold, and `recurring_days_slot_idx`
+refuses it — correctly. Whether it refuses depends on the order Postgres updates rows in, so
+the naive version passes several times before failing. Hop the whole set clear of its own range
+and back. (Changing the *time of day* is safe: a class runs once a day, so no two class-days
+share a local date and none can land on an instant another holds.)
+
+**A restart that silently fails makes every later test a lie.** Killing by a stale pidfile
+leaves the old server up, the new one dies on `EADDRINUSE`, and the suite goes on passing
+against an old build. Five deliberate breaks in a row reported "not caught" that way. See
+`.agents/memory/ci-restart-by-pid.md`.
 
 **The tables get created two different ways.** `db:push` from the schema files when the owner
 runs it, and hand-written DDL in the boot guard when Railway redeploys. Those are never in
