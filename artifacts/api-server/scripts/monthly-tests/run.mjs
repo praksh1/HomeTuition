@@ -11,9 +11,42 @@
  * Usage: API_URL=http://127.0.0.1:8080 node scripts/monthly-tests/run.mjs
  */
 import { execFileSync } from "node:child_process";
+import { WebSocket } from "ws";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
+const WS = API.replace(/^http/, "ws");
+
+/**
+ * A real socket, held open, collecting everything the server pushes to one person.
+ *
+ * Copied from the alert suite, for the reason recorded there: reading the database or trusting
+ * that the route returned 200 proves the server meant to tell somebody, not that it did. The
+ * first version of the time-change test checked a count in the response body, and disabling the
+ * notification entirely did not disturb it.
+ */
+function listen(token) {
+  const ws = new WebSocket(`${WS}/api/ws?token=${encodeURIComponent(token)}`);
+  const events = [];
+  ws.on("message", (raw) => { try { events.push(JSON.parse(String(raw))); } catch { /* not ours */ } });
+  ws.on("error", () => {});
+  return {
+    events,
+    open: () => new Promise((res, rej) => { ws.once("open", res); ws.once("error", rej); }),
+    close: () => { try { ws.close(); } catch { /* already gone */ } },
+  };
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function until(events, test, ms = 4000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (test(events)) return true;
+    await wait(50);
+  }
+  return test(events);
+}
 
 let passed = 0;
 let failed = 0;
@@ -634,6 +667,12 @@ async function timeChangeTests() {
   check("setup: the next class is past the notice window but inside a day", hoursOut > 18 && hoursOut < 24, `${hoursOut} hours away`);
   const existing = Number(sql(`select session_id from recurring_days where recurring_id = ${klass.id}
       and session_id is not null and status = 'planned' order by scheduled_for asc limit 1`) || 0);
+  // Asserted, not assumed. The check that this class moves used to sit inside `if (existing)`,
+  // so leaving every already-created class behind passed the suite in silence.
+  check("setup: a class is already on the calendar to be moved", existing > 0, `session_id ${existing}`);
+
+  const ear = listen(student.token);
+  await ear.open().catch(() => {});
 
   const before = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
       and status = 'planned' and scheduled_for > now()`));
@@ -645,7 +684,11 @@ async function timeChangeTests() {
   const wasText = `${String(Math.floor(wasMinute / 60)).padStart(2, "0")}:${String(wasMinute % 60).padStart(2, "0")}`;
   check("and what the time was before", moved.body?.previousStartTime === wasText, `was ${moved.body?.previousStartTime}, expected ${wasText}`);
   check("and what it is now", moved.body?.startTime === "17:00", `now ${moved.body?.startTime}`);
-  check("the students holding a place are told", moved.body?.studentsTold >= 1, `told ${moved.body?.studentsTold}`);
+  check("the response says the students were told", moved.body?.studentsTold >= 1, `told ${moved.body?.studentsTold}`);
+  const heard = await until(ear.events, (e) => e.some((x) => x?.kind === "session_rescheduled" || x?.event?.kind === "session_rescheduled"));
+  ear.close();
+  check("and the student's own connection actually receives it", heard === true,
+    `events seen: ${JSON.stringify(ear.events.map((x) => x?.kind ?? x?.event?.kind ?? x?.type)).slice(0, 160)}`);
 
   const atFive = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
       and status = 'planned' and scheduled_for > now()
@@ -659,10 +702,8 @@ async function timeChangeTests() {
   check("setup: there are classes behind us to leave alone", behind > 0, `${behind} behind`);
   check("classes already behind us are left where they were", untouched === behind, `${untouched} of ${behind} still at ${wasText}`);
 
-  if (existing > 0) {
-    const sessionAt = sql(`select to_char(date at time zone 'Asia/Kathmandu', 'HH24:MI') from sessions where id = ${existing}`);
-    check("a class already on the calendar moves with it", sessionAt === "17:00", `class is at ${sessionAt}`);
-  }
+  const sessionAt = sql(`select to_char(date at time zone 'Asia/Kathmandu', 'HH24:MI') from sessions where id = ${existing}`);
+  check("a class already on the calendar moves with it", sessionAt === "17:00", `class is at ${sessionAt}`);
 
   const dupes = Number(sql(`select count(*) from (
       select scheduled_for, kind from recurring_days where recurring_id = ${klass.id}
@@ -672,6 +713,68 @@ async function timeChangeTests() {
   const stored = Number(sql(`select start_minute from recurring_sessions where id = ${klass.id}`));
   check("the class remembers its new time", stored === 17 * 60, `start_minute ${stored}`);
 
+}
+
+async function timeChangeEdgeTests() {
+  console.log("\nMoving the time: the two classes that must not move");
+
+  /*
+   * A class that started twenty minutes ago is still running, and people are in it.
+   *
+   * It is still "planned" — settling waits for the scheduled finish plus an hour, precisely so
+   * a teacher who starts late is not marked absent — so only the "still to come" filter keeps
+   * the time change off it. Without that filter this class moves out from under the people
+   * sitting in it.
+   */
+  const nowMin = kathmanduMinuteNow();
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 0, startMinute: (nowMin - 180 + 1440) % 1440 });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+  ageClass(klass.id, planId, 2);
+  await api(`/monthly/classes/${klass.id}`, { token: student.token });
+
+  const running = sql(`select id from recurring_days where recurring_id = ${klass.id}
+      and status = 'planned' and scheduled_for < now() order by scheduled_for desc limit 1`);
+  let runningId = Number(running || 0);
+  if (!runningId) {
+    // Put one inside the grace window by hand if the clock did not hand us one.
+    const anyPast = sql(`select id from recurring_days where recurring_id = ${klass.id}
+        and scheduled_for < now() order by scheduled_for desc limit 1`);
+    runningId = Number(anyPast || 0);
+    if (runningId) sql(`update recurring_days set status = 'planned',
+        scheduled_for = now() - interval '20 minutes' where id = ${runningId}`);
+  }
+  check("setup: a class is running right now", runningId > 0, `id ${runningId}`);
+  const wasRunningAt = sql(`select scheduled_for from recurring_days where id = ${runningId}`);
+
+  await api(`/monthly/classes/${klass.id}/time`, { method: "PATCH", token: teacher.token, body: { startMinute: 17 * 60 } });
+  const nowRunningAt = sql(`select scheduled_for from recurring_days where id = ${runningId}`);
+  check("a class that is already running is not moved", wasRunningAt === nowRunningAt,
+    `was ${wasRunningAt}, now ${nowRunningAt}`);
+
+  /*
+   * And the class that sits at the very end of a month.
+   *
+   * Moving the daily time later can carry a month's last class past the moment that month
+   * ends. Its cycle_index has to follow it: a class-day filed under the wrong month is counted
+   * against the wrong delivery floor and against the wrong students' money.
+   */
+  const { teacher: t2, klass: k2, planId: p2 } = await teacherWithClass({ monthlyPrice: 0, startMinute: 60 });
+  // Put the month's boundary an hour after the last class, so moving the time later crosses it.
+  const anchor = sql(`select cycle_anchor from teacher_plans where id = ${p2}`);
+  check("setup: the month has an anchor", Boolean(anchor), `anchor ${anchor}`);
+
+  const lastBefore = sql(`select cycle_index from recurring_days where recurring_id = ${k2.id}
+      and kind = 'regular' order by scheduled_for desc limit 1`);
+  await api(`/monthly/classes/${k2.id}/time`, { method: "PATCH", token: t2.token, body: { startMinute: 23 * 60 + 30 } });
+
+  const wrongMonth = Number(sql(`select count(*) from recurring_days rd
+      join recurring_sessions r on r.id = rd.recurring_id
+      join teacher_plans tp on tp.id = r.plan_id
+      where rd.recurring_id = ${k2.id}
+        and rd.cycle_index <> floor(extract(epoch from (rd.scheduled_for - tp.cycle_anchor)) / (30 * 86400))`));
+  check("every class-day is filed under the month it actually falls in", wrongMonth === 0,
+    `${wrongMonth} filed under the wrong month (last was cycle ${lastBefore})`);
 }
 
 /* ------------------------------------------------------- money invariants */
@@ -733,6 +836,7 @@ async function main() {
   await ledgerTests();
   await ruleTests();
   await timeChangeTests();
+  await timeChangeEdgeTests();
   await moneyInvariants();
 
   console.log(`\n${passed} passed, ${failed} failed`);
