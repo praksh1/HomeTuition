@@ -87,6 +87,17 @@ function ageClass(klassId, planId, days) {
   sql(`update recurring_days set status = 'held' where recurring_id = ${klassId} and scheduled_for < now() and status = 'planned'`);
 }
 
+/**
+ * Every class this run created.
+ *
+ * The invariant sweep at the end is scoped to these. It used to read the whole table, which
+ * looks stricter and is worse: one deliberately broken run leaves a bad row behind and every
+ * later run fails on it, so the failure becomes something to explain away rather than to act
+ * on. An invariant nobody believes is not an invariant.
+ */
+const createdClasses = [];
+const scope = () => (createdClasses.length ? createdClasses.join(",") : "-1");
+
 /** A teacher holding the tier with a running monthly class. */
 async function teacherWithClass(opts = {}) {
   const teacher = await register("teacher");
@@ -100,6 +111,7 @@ async function teacherWithClass(opts = {}) {
     maxStudents: opts.maxStudents ?? 45,
   } });
   if (made.status > 201) throw new Error(`create class: ${made.status} ${JSON.stringify(made.body)}`);
+  createdClasses.push(made.body.class.id);
   return { teacher, klass: made.body.class, planId: Number(sql(`select id from teacher_plans where teacher_id = ${teacher.user.id}`)) };
 }
 
@@ -398,30 +410,42 @@ async function ruleTests() {
 async function moneyInvariants() {
   console.log("\nMoney invariants across everything written so far");
 
-  const bad = sql(`select count(*) from recurring_enrollments where platform_share + teacher_share <> amount_paid`);
+  const mine = `recurring_id in (${scope()})`;
+
+  const written = Number(sql(`select count(*) from recurring_enrollments where ${mine}`));
+  check("the sweep has rows to sweep", written > 0, `${written} enrolments from this run`);
+
+  const bad = sql(`select count(*) from recurring_enrollments where ${mine} and platform_share + teacher_share <> amount_paid`);
   check("every place's two shares add back to what was paid", Number(bad) === 0, `${bad} rows do not`);
 
-  const negative = sql(`select count(*) from recurring_enrollments where amount_paid < 0 or platform_share < 0 or teacher_share < 0`);
+  const negative = sql(`select count(*) from recurring_enrollments where ${mine}
+      and (amount_paid < 0 or platform_share < 0 or teacher_share < 0)`);
   check("nothing is negative", Number(negative) === 0, `${negative} rows are`);
 
   const overPaid = sql(`select count(*) from recurring_enrollments e
                         join recurring_sessions r on r.id = e.recurring_id
-                        where e.amount_paid > r.monthly_price`);
+                        where e.${mine} and e.amount_paid > r.monthly_price`);
   check("nobody paid more than a full month", Number(overPaid) === 0, `${overPaid} rows did`);
 
-  const overCount = sql(`select count(*) from recurring_enrollments where sessions_paid_for > sessions_planned`);
+  const overCount = sql(`select count(*) from recurring_enrollments where ${mine} and sessions_paid_for > sessions_planned`);
   check("nobody bought more classes than the month holds", Number(overCount) === 0, `${overCount} rows did`);
 
   const dupes = sql(`select count(*) from (
-      select recurring_id, student_id, cycle_index from recurring_enrollments
+      select recurring_id, student_id, cycle_index from recurring_enrollments where ${mine}
       group by 1,2,3 having count(*) > 1) d`);
   check("nobody holds two places in one month", Number(dupes) === 0, `${dupes} duplicates`);
 
   const overSold = sql(`select count(*) from (
-      select e.recurring_id, e.cycle_index, count(*) n, max(r.max_students) cap
+      select e.recurring_id, e.cycle_index
       from recurring_enrollments e join recurring_sessions r on r.id = e.recurring_id
-      where e.status = 'active' group by 1,2 having count(*) > max(r.max_students)) d`);
+      where e.${mine} and e.status = 'active'
+      group by 1,2 having count(*) > max(r.max_students)) d`);
   check("no class holds more students than it has places", Number(overSold) === 0, `${overSold} oversold`);
+
+  const ghostDays = sql(`select count(*) from (
+      select recurring_id, scheduled_for, kind from recurring_days where ${mine}
+      group by 1,2,3 having count(*) > 1) d`);
+  check("no class-day exists twice", Number(ghostDays) === 0, `${ghostDays} duplicated`);
 }
 
 async function main() {
