@@ -123,8 +123,10 @@ export default function TeacherDetail() {
     // the student had never studied with (and stayed hidden for ones they had).
     let teacherUserId: number | null = null;
     try {
-      const query = studentId ? `?studentId=${studentId}` : "";
-      const apiTeacher = await apiGet<Teacher & { userId: number; isFollowing?: boolean }>(`/teachers/${id}${query}`);
+      // No `?studentId=` any more. The server answers "do you follow this teacher" from the
+      // token, because the id this screen holds is the student's *profile* row and the follow
+      // table keys on their *users* row — so the two only ever matched by coincidence.
+      const apiTeacher = await apiGet<Teacher & { userId: number; isFollowing?: boolean }>(`/teachers/${id}`);
       teacherUserId = apiTeacher.userId;
       setTeacher({ ...apiTeacher, id: String(apiTeacher.id), credentials: [] });
 

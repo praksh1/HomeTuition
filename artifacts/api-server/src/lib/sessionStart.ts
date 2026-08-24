@@ -83,6 +83,22 @@ function ms(value: Date | string | null | undefined): number | null {
 }
 
 /** When the doors open: `DOORS_OPEN_MINUTES` before the booked start. Null if unreadable. */
+/**
+ * How far into the past a newly created class may be dated, in minutes.
+ *
+ * Not zero, because "Create & Go Live Now" sends the current time and a request takes a moment
+ * to arrive — a strict comparison would reject the teacher's own clock. Small enough that a
+ * class dated yesterday is impossible.
+ */
+export const BACKDATE_GRACE_MINUTES = 5;
+
+/** Whether a class may be created at this time at all. */
+export function isCreatableAt(date: Date | string, now: number = Date.now()): boolean {
+  const at = new Date(date).getTime();
+  if (!Number.isFinite(at)) return false;
+  return at >= now - BACKDATE_GRACE_MINUTES * 60_000;
+}
+
 export function doorsOpenAt(session: StartableSession): number | null {
   const scheduled = ms(session.date);
   return scheduled === null ? null : scheduled - DOORS_OPEN_MINUTES * 60_000;

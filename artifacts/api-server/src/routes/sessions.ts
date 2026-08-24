@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
@@ -14,7 +14,7 @@ import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
-import { canJoin, canStart } from "../lib/sessionStart";
+import { canJoin, canStart, isCreatableAt } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
 import {
@@ -63,20 +63,35 @@ router.get("/sessions", async (req, res): Promise<void> => {
   if (teacherId) conditions.push(eq(sessionsTable.teacherId, parseInt(teacherId, 10)));
   if (status) conditions.push(eq(sessionsTable.status, status));
 
+  /**
+   * How this student stands with each of their classes, so the list can label them.
+   *
+   * Empty unless a studentId was asked for. Keyed by session id.
+   */
+  let enrolmentBySession = new Map<number, string>();
+
   if (studentId) {
-    // Only paid enrolments count as "my sessions". An unpaid row used to appear in the
-    // student's Upcoming list, so they saw a class they believed they owned and were then
-    // refused at the door. Booking is atomic now, so these should not exist at all — this is
-    // the second lock on the same door.
+    /**
+     * Paid classes, and ones they paid for and left.
+     *
+     * An *unpaid* row still never appears: a student used to see a class they believed they
+     * owned and be refused at the door. But a **dropped** class disappearing entirely was
+     * wrong too — it is where the refund is chased from, and losing it at the moment the money
+     * is owed reads as the app having forgotten. It comes back tagged instead.
+     */
     const enrolled = await db
-      .select({ sessionId: sessionEnrollmentsTable.sessionId })
+      .select({
+        sessionId: sessionEnrollmentsTable.sessionId,
+        paymentStatus: sessionEnrollmentsTable.paymentStatus,
+      })
       .from(sessionEnrollmentsTable)
       .where(
         and(
           eq(sessionEnrollmentsTable.studentId, parseInt(studentId, 10)),
-          eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+          inArray(sessionEnrollmentsTable.paymentStatus, ["paid", "refunded"]),
         ),
       );
+    enrolmentBySession = new Map(enrolled.map((e) => [e.sessionId, e.paymentStatus]));
     const sessionIds = enrolled.map((e) => e.sessionId);
     if (sessionIds.length === 0) {
       res.json({ sessions: [], total: 0, page: pageNum, limit: limitNum });
@@ -123,7 +138,15 @@ router.get("/sessions", async (req, res): Promise<void> => {
     db.select({ total: sql<number>`count(*)::int` }).from(sessionsTable).where(where),
   ]);
 
-  res.json({ sessions, total, page: pageNum, limit: limitNum });
+  // `enrolment` is attached to the response rather than stored on the class: it is this
+  // student's relationship to it, not a property of the class, and `sessions` is read with a
+  // bare select() in six routes — a column added there is a 500 in all of them until the
+  // schema is pushed by hand.
+  const withEnrolment = enrolmentBySession.size
+    ? sessions.map((row) => ({ ...row, enrolment: enrolmentBySession.get(row.id) ?? null }))
+    : sessions;
+
+  res.json({ sessions: withEnrolment, total, page: pageNum, limit: limitNum });
 });
 
 /**
@@ -219,7 +242,22 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
   if (!topic?.trim()) errors.push("Topic is required.");
 
   const when = date ? new Date(date) : null;
-  if (!date || !when || Number.isNaN(when.getTime())) errors.push("A valid date and time is required.");
+  if (!date || !when || Number.isNaN(when.getTime())) {
+    errors.push("A valid date and time is required.");
+  } else if (!isCreatableAt(when)) {
+    /**
+     * A class cannot be created in the past.
+     *
+     * It could, and the result was a class nobody could use and nobody could get rid of: it sat
+     * in the Upcoming list, said "Session Expired" when opened, and a student who booked it was
+     * told their teacher was two thousand minutes late. Every one of those is downstream of a
+     * date that should never have been accepted.
+     *
+     * The grace exists for "Create & Go Live Now", which sends the current time and takes a
+     * moment to arrive — a strict comparison would reject the teacher's own clock.
+     */
+    errors.push("A class cannot be scheduled in the past. Please pick a date and time from now on.");
+  }
 
   // Whole numbers, matching the edit route. Rounding a fractional value silently turns it into
   // a different instruction from the one that was sent.
@@ -911,6 +949,26 @@ async function bookSession(req: Request, res: Response): Promise<void> {
   }
   if (session.status === "completed" || session.status === "cancelled") {
     res.status(409).json({ error: "This session is no longer available." });
+    return;
+  }
+
+  /**
+   * A class that has already begun cannot be bought.
+   *
+   * The owner was explicit: "A student should never be allowed to enroll in any past date
+   * classes/session." A student did book one two days old, and the class page then told them
+   * their teacher was 2,279 minutes late and offered them a refund form — for a lesson that
+   * was never going to happen and that they should never have been sold.
+   *
+   * The line is the scheduled start, not the end. Selling somebody the back half of a lesson
+   * that is already running is a worse deal than they think they are getting, and it is not
+   * something this platform has been asked to do.
+   */
+  if (new Date(session.date).getTime() <= Date.now()) {
+    res.status(409).json({
+      error: "This class has already started, so it can no longer be booked.",
+      started: true,
+    });
     return;
   }
 

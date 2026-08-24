@@ -122,7 +122,7 @@ router.get("/teachers", async (req, res): Promise<void> => {
   res.json({ teachers, total, page: pageNum, limit: limitNum });
 });
 
-router.get("/teachers/:id", async (req, res): Promise<void> => {
+router.get("/teachers/:id", attachUserIfPresent, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid teacher ID" }); return; }
@@ -159,19 +159,30 @@ router.get("/teachers/:id", async (req, res): Promise<void> => {
 
   if (!row) { res.status(404).json({ error: "Teacher not found" }); return; }
 
+  /**
+   * Whether *this* caller follows this teacher, answered from who they are signed in as.
+   *
+   * It used to come from a `?studentId=` query parameter, and that was wrong twice over.
+   *
+   * It never worked: the app sent the student's **profile** row id while this table keys on
+   * their **users** row id, so the two matched only by coincidence. The Subscribe button was
+   * therefore never green on load — it went green on the tap, from local state, and reverted
+   * the moment the screen was rebuilt. Reported exactly that way.
+   *
+   * And it should never have been a parameter. Anyone could ask whether any student followed
+   * any teacher by putting a number in a URL. Identity comes from the token now, so there is
+   * nothing to get wrong and nothing to probe.
+   */
   let isFollowing = false;
-  const studentIdRaw = req.query.studentId as string | undefined;
-  if (studentIdRaw) {
-    const studentId = parseInt(studentIdRaw, 10);
-    if (!isNaN(studentId)) {
-      const [follow] = await db.select({ id: studentTeacherSubscriptionsTable.id })
-        .from(studentTeacherSubscriptionsTable)
-        .where(and(
-          eq(studentTeacherSubscriptionsTable.studentId, studentId),
-          eq(studentTeacherSubscriptionsTable.teacherId, row.userId),
-        ));
-      isFollowing = !!follow;
-    }
+  const viewer = req.user;
+  if (viewer && viewer.role === "student") {
+    const [follow] = await db.select({ id: studentTeacherSubscriptionsTable.id })
+      .from(studentTeacherSubscriptionsTable)
+      .where(and(
+        eq(studentTeacherSubscriptionsTable.studentId, viewer.userId),
+        eq(studentTeacherSubscriptionsTable.teacherId, row.userId),
+      ));
+    isFollowing = !!follow;
   }
 
   res.json({ ...row, isFollowing });
