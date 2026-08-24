@@ -177,14 +177,33 @@ async function main() {
     const session = await makeSession(teacher, { price: 500 });
     await api(`/sessions/${session.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
 
-    const { ctx, page, dialogs } = await open(browser, student.token, `/session/${session.id}`);
+    const { ctx, page } = await open(browser, student.token, `/session/${session.id}`);
     await page.locator('[data-testid="drop-class-btn"]').click({ timeout: 15000 });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(1500);
 
-    check("the confirmation names the amount rather than asking `are you sure`",
-      dialogs.some((d) => /250/.test(d)), JSON.stringify(dialogs));
-    check("and says the place goes to somebody else",
-      dialogs.some((d) => /offered to someone else/i.test(d)), JSON.stringify(dialogs));
+    /**
+     * The warning is an in-app panel now, not the browser's confirm box.
+     *
+     * The owner asked for it "a little bigger and bold" with "simpler word choices", and a
+     * system dialog cannot be either — one type size, no emphasis, and on a cheap Android
+     * phone a grey strip most people tap through. So it is read off the page.
+     */
+    const warned = await text(page);
+    check("a warning panel opens rather than a system dialog",
+      (await page.locator('[data-testid="drop-warning"]').count()) > 0, warned.slice(0, 300).replace(/\n/g, " | "));
+    check("the amount coming back is the biggest thing on it",
+      /You get NPR\s*250 back/.test(warned), warned.slice(0, 600).replace(/\n/g, " | "));
+    check("it says plainly what is not coming back",
+      /do not get NPR\s*250 back/i.test(warned), warned.slice(0, 800).replace(/\n/g, " | "));
+    check("and that somebody else can take the place",
+      /take your place/i.test(warned), warned.slice(0, 800).replace(/\n/g, " | "));
+    check("and that it cannot be undone",
+      /cannot undo/i.test(warned), warned.slice(0, 800).replace(/\n/g, " | "));
+    check("the confirm button says what it does, not OK",
+      /Yes, drop it/.test(warned) && !/\bOK\b/.test(warned), warned.slice(0, 800).replace(/\n/g, " | "));
+
+    await page.locator('[data-testid="warning-confirm"]').click({ timeout: 15000 });
+    await page.waitForTimeout(3000);
     check("the drop actually happened",
       sql(`select payment_status from session_enrollments where session_id=${session.id} and student_id=${student.user.id}`) === "refunded");
     check("the seat is back on sale",
@@ -207,11 +226,13 @@ async function main() {
     const session = await makeSession(teacher, { price: 500 });
     await api(`/sessions/${session.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
 
-    const { ctx, page } = await open(browser, student.token, `/session/${session.id}`, { onDialog: "dismiss" });
+    const { ctx, page } = await open(browser, student.token, `/session/${session.id}`);
     await page.locator('[data-testid="drop-class-btn"]').click({ timeout: 15000 });
+    await page.waitForTimeout(1500);
+    await page.locator('[data-testid="warning-cancel"]').click({ timeout: 15000 });
     await page.waitForTimeout(2500);
 
-    check("cancelling the confirmation drops nothing",
+    check("backing out of the warning drops nothing",
       sql(`select payment_status from session_enrollments where session_id=${session.id} and student_id=${student.user.id}`) === "paid");
     check("and writes no refund",
       sql(`select count(*) from refunds where session_id=${session.id}`) === "0");
@@ -228,7 +249,7 @@ async function main() {
     const session = await makeSession(quotaTeacher, { price: 500 });
     await api(`/sessions/${session.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
 
-    const { ctx, page, dialogs } = await open(browser, quotaTeacher.token, `/session/${session.id}`);
+    const { ctx, page } = await open(browser, quotaTeacher.token, `/session/${session.id}`);
     const body = await text(page);
 
     check("the teacher is not told their future class expired either",
@@ -250,12 +271,21 @@ async function main() {
       `${to.getFullYear()}-${pad(to.getMonth() + 1)}-${pad(to.getDate())}`);
     await page.locator('[data-testid="reschedule-time"]').fill("14:30");
     await page.locator('[data-testid="reschedule-save-btn"]').click({ timeout: 15000 });
-    await page.waitForTimeout(3500);
+    await page.waitForTimeout(1500);
 
-    check("the confirmation warns that students can now get a full refund",
-      dialogs.some((d) => /full refund within 24 hours/i.test(d)), JSON.stringify(dialogs));
-    check("and that it costs one of five",
-      dialogs.some((d) => /5 schedule changes this month/i.test(d)), JSON.stringify(dialogs));
+    const teacherWarned = await text(page);
+    check("a warning panel opens for the teacher too",
+      (await page.locator('[data-testid="reschedule-warning"]').count()) > 0,
+      teacherWarned.slice(0, 300).replace(/\n/g, " | "));
+    check("it warns that students can leave with all their money",
+      /ALL their money/.test(teacherWarned), teacherWarned.slice(0, 800).replace(/\n/g, " | "));
+    check("and that they have 24 hours to decide",
+      /24 hours/.test(teacherWarned), teacherWarned.slice(0, 800).replace(/\n/g, " | "));
+    check("and that it costs one of the month's changes",
+      /uses 1 of your 5 changes/.test(teacherWarned), teacherWarned.slice(0, 800).replace(/\n/g, " | "));
+
+    await page.locator('[data-testid="warning-confirm"]').click({ timeout: 15000 });
+    await page.waitForTimeout(3500);
     check("the class really moved",
       sql(`select count(*) from schedule_changes where session_id=${session.id}`) === "1");
     check("and the allowance went down",
@@ -333,6 +363,61 @@ async function main() {
     check("without claiming it has already been paid",
       !/has been paid/i.test(body), body.slice(0, 600).replace(/\n/g, " | "));
     await ctx.close();
+  }
+
+  console.log("\nWhere a dropped class goes, and a finished one");
+
+  {
+    const listTeacher = await register("teacher", "Listing Lila");
+    sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${listTeacher.user.id}`);
+    const student = await register("student", "Listing Laxmi");
+
+    const dropped = await makeSession(listTeacher, { price: 500 });
+    await api(`/sessions/${dropped.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
+    await api(`/sessions/${dropped.id}/drop`, { method: "POST", token: student.token });
+
+    // A class that happened, so it lands under Past rather than Upcoming.
+    const finished = await makeSession(listTeacher, { price: 500 });
+    await api(`/sessions/${finished.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
+    sql(`update sessions set date = now() - interval '3 days', status = 'completed' where id = ${finished.id}`);
+
+    const { ctx, page } = await open(browser, student.token, "/sessions");
+    const body = await text(page);
+
+    check("a dropped class is still in the student's list",
+      (await page.locator(`[data-testid="dropped-session-${dropped.id}"]`).count()) > 0,
+      body.slice(0, 600).replace(/\n/g, " | "));
+    check("under its own Dropped heading",
+      /Dropped/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
+    check("and it is not sitting in Upcoming",
+      !new RegExp(`Upcoming[\\s\\S]{0,200}${dropped.topic}`).test(body),
+      body.slice(0, 800).replace(/\n/g, " | "));
+
+    /**
+     * Tapping a finished class used to do nothing at all — those cards had no onPress. Its
+     * page is where the messages and any refund live, and both are wanted after the class.
+     */
+    await page.locator(`[data-testid="dropped-session-${dropped.id}"]`).click({ timeout: 15000 });
+    await page.waitForTimeout(3000);
+    const droppedPage = await text(page);
+    check("tapping it opens the class",
+      /Class details/i.test(droppedPage), droppedPage.slice(0, 300).replace(/\n/g, " | "));
+    check("which says they have left it",
+      (await page.locator('[data-testid="drop-class-left"]').count()) > 0,
+      droppedPage.slice(0, 600).replace(/\n/g, " | "));
+    check("names the refund",
+      /NPR\s*250/.test(droppedPage), droppedPage.slice(0, 600).replace(/\n/g, " | "));
+    check("and counts the business days until it lands",
+      (await page.locator('[data-testid="drop-refund-days"]').count()) > 0 &&
+        /business day/i.test(droppedPage),
+      droppedPage.slice(0, 800).replace(/\n/g, " | "));
+
+    await ctx.close();
+
+    const second = await open(browser, student.token, `/session/${finished.id}`);
+    check("and a finished class opens too, rather than doing nothing",
+      /Class details/i.test(await text(second.page)));
+    await second.ctx.close();
   }
 
   console.log("\nThe agent's queue");

@@ -88,12 +88,20 @@ async function main() {
   const teacher = await register("teacher");
   sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
 
-  // A class that finished three days ago — the case in the report.
+  /**
+   * A class that finished three days ago — the case in the report.
+   *
+   * Created ahead and then aged, because the API refuses a back-dated class now. It has to:
+   * a teacher made one, it sat in Upcoming saying "Session Expired", and a student bought it
+   * and was told their teacher was 2,279 minutes late. Ageing it is also how a real class gets
+   * old, so this is the more faithful setup anyway.
+   */
   const old = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: "Stress 14", subject: "Mathematics", description: "d",
-    date: new Date(Date.now() - 72 * 3600_000).toISOString(),
+    date: new Date(Date.now() + 3600_000).toISOString(),
     duration: 60, price: 500, maxStudents: 20 } });
-  sql(`update sessions set status = 'completed' where id = ${old.body.id}`);
+  if (old.status > 201) throw new Error(`could not create the old class: ${old.status} ${JSON.stringify(old.body)}`);
+  sql(`update sessions set date = now() - interval '72 hours', status = 'completed' where id = ${old.body.id}`);
 
   const chromium = await getChromium();
   const browser = await chromium.launch();
