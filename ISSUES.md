@@ -1365,3 +1365,91 @@ from the cancellation loop changed nothing, because the `payment_status = 'paid'
 inside the transaction was already doing all the work. The lookup was removed. A redundant guard
 that nothing can distinguish from a working one is worse than none — it invites the belief that
 it is doing something.
+
+---
+
+## Reported 2026-08-24 (fifth run) — past-dated classes, and a button that forgot
+
+### J1. A teacher could create a class in the past — **FIXED**
+
+And three of the round's other complaints were downstream of it. The class sat in the Upcoming
+list, said "Session Expired" when opened, a student was able to buy it, and the class page then
+told them their teacher was **2,279 minutes late** and offered them a refund form — for a lesson
+that was never going to happen and that they should never have been sold.
+
+`POST /sessions` refuses a date in the past, with five minutes of grace so that "Create & Go
+Live Now" — which sends the current time and takes a moment to arrive — is not rejected by the
+teacher's own clock.
+
+### J2. A student could enrol in a class that had already started — **FIXED**
+
+The line is the **start**, not the end. Selling somebody the back half of a lesson already
+running is a worse deal than they think they are getting, and it is not something this platform
+has been asked to do. If that turns out to cost bookings on live classes, it is one number to
+change.
+
+### J3. A class whose time had passed sat under "Upcoming" forever — **FIXED**
+
+The student's list decided which pile a class belonged in from its `status` alone, so a class
+nobody had marked finished stayed Upcoming indefinitely. It reads the clock too now, and
+re-checks every thirty seconds while the screen is open.
+
+### J4. The Subscribe button was never green — **FIXED**
+
+It went green on the tap and reverted the moment the screen was rebuilt. The server worked out
+"do you follow this teacher" from a `?studentId=` **query parameter** carrying the student's
+*profile* row id, while `student_teacher_subscriptions` keys on their *users* row id. Two
+different numbers, matching only by coincidence.
+
+It now comes from the token, which fixes the bug and closes a leak in the same move: anybody
+could previously ask whether any named student followed any named teacher by putting a number in
+a URL.
+
+### J5. Tapping a finished class did nothing — **FIXED**
+
+Those cards had no `onPress` at all. Their page is where the messages, the attendance record and
+any refund live, and all three are wanted after the class rather than before it.
+
+### J6. A dropped class disappeared from the student's list — **FIXED**
+
+Worst at exactly the moment the money is owed. It comes back under its own **Dropped** heading,
+and its page shows the amount, whether it is still owed, and how many business days remain —
+counted over weekends rather than divided, because a refund asked for on a Friday is not two days
+from landing on a Sunday.
+
+### J7. The Profile "Security" card was invented, top to bottom — **FIXED**
+
+Found while checking which notification channels exist. It claimed:
+
+- **Two-factor authentication: Enabled.** There is none, and there never has been.
+- **Password: Last changed 30 days ago.** Read from nothing.
+- **Session alerts: SMS + Email.** There is no SMS code in this product at all.
+
+The first is the one that matters. Somebody who believes they have a second factor makes
+different decisions about their password, and they would have been wrong. Same fault as the Rec
+button that announced "Recording saved to Sikshya cloud" while saving nothing, and the same
+treatment: removed, not hidden.
+
+### The warnings before a drop or a schedule change are now in-app panels
+
+The owner asked for "a little bigger and bold" with "simpler word choices". A system confirm box
+can be neither — one type size, no emphasis, and on a cheap Android phone a grey strip most
+people tap through. Both are panels now: the amount or the new date in the largest type on
+screen, consequences as short lines that each start with what happens, and a confirm button that
+says "Yes, drop it" rather than "OK".
+
+### What was tested, and what does not exist
+
+`api-server/scripts/alert-tests` fires each event **twenty times** and counts deliveries down a
+real socket, because a notification that arrives nineteen times in twenty works every time you
+try it by hand and fails for somebody else.
+
+| Channel | State |
+|---|---|
+| On-screen toast and OS banner | works — 20/20 on every event |
+| In-app list and unread badge | works — same socket event feeds both |
+| Email | **real, but off** until `RESEND_API_KEY` and `EMAIL_FROM` are set |
+| Phone / SMS | **does not exist.** No SMS code has ever been written |
+
+The SMS row is asserted, not just noted: a preference for it inserted directly into the database
+is ignored, so no switch can ever appear for something that will never send.
