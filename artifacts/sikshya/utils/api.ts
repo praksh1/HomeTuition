@@ -90,3 +90,33 @@ export async function apiDelete<T>(path: string): Promise<T> {
   if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
   return data as T;
 }
+
+/**
+ * A link that opens one attachment, good for a few minutes.
+ *
+ * The server is asked rather than the bucket directly, for two reasons: it decides whether this
+ * person may see the file at all, and the signed link it returns expires — so a URL that ends up
+ * in a screenshot or a chat log stops working almost immediately.
+ *
+ * The redirect is followed manually so the signed target can be handed to the browser or the
+ * phone's own viewer. Following it here would download the bytes into the app for nothing.
+ */
+export async function attachmentUrl(key: string): Promise<string> {
+  const token = await getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${getApiBase()}/storage/file?key=${encodeURIComponent(key)}`, {
+    headers,
+    redirect: "manual",
+  });
+
+  // 302 is the happy path: the signed link is in Location.
+  const location = res.headers.get("location");
+  if (location) return location;
+
+  // Some runtimes follow the redirect regardless; the final URL is then the signed one.
+  if (res.ok && res.url && !res.url.includes("/storage/file")) return res.url;
+
+  const data = await res.json().catch(() => ({}) as { error?: string });
+  throw new ApiError(res.status, data.error ?? "That file could not be opened.", data);
+}

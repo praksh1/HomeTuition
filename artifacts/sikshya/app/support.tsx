@@ -206,33 +206,40 @@ export default function SupportScreen() {
       /**
        * A failed upload must never swallow the complaint.
        *
-       * File storage is not set up on the server — the upload endpoint is left over from the
-       * app's Replit origins and wants object-storage settings that do not exist on Railway.
-       * Until that is sorted out, a report with a file attached would fail completely, which
-       * is the worst possible outcome for the person filing it. So the words are sent either
-       * way, and the person is told plainly that the attachment did not go with them.
+       * The words are the report; the photo is a help. Somebody whose upload goes wrong still
+       * gets their case filed and is told plainly that the file did not go with it — losing
+       * both would be the worst outcome for the person least able to do anything about it.
+       *
+       * This used to be the *normal* path rather than the exception: storage was left over
+       * from the app's Replit origins and every attachment failed on Railway. It is Cloudflare
+       * R2 now, and the failure reason comes back from the server so the message is specific
+       * ("larger than 10 MB") rather than a shrug.
        */
       let evidenceUrl: string | null = null;
-      let attachmentFailed = false;
+      let uploadProblem: string | null = null;
       if (file) {
         try {
           evidenceUrl = await uploadEvidence();
-        } catch {
-          attachmentFailed = true;
+        } catch (e) {
+          uploadProblem = e instanceof Error && e.message
+            ? e.message
+            : "We could not upload your file.";
         }
       }
-      await apiPost("/disputes", {
+      const filed = await apiPost<{ attachmentProblem?: string | null }>("/disputes", {
         reason,
         description: description.trim(),
         evidenceUrl,
         ...(chosenSession !== null ? { sessionId: chosenSession } : {}),
       });
+      // The server has the last word: it checks the file that actually landed.
+      const problem = filed?.attachmentProblem ?? uploadProblem;
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       notify(
         "Report Submitted",
-        attachmentFailed
-          ? "Your report has been sent, but we could not upload your file. Our support team " +
-            "will be in touch and can ask for it directly."
+        problem
+          ? `Your report has been sent — but your file did not go with it. ${problem}\n\n` +
+            "Our support team will be in touch and can ask for it directly."
           : "Our support team will review your report and get back to you shortly.",
       );
       // Clear the form rather than navigating: on the tab there is nowhere to go back to.

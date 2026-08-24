@@ -20,7 +20,8 @@
     "test:admin": "node scripts/admin-tests/run.mjs",
     "test:refunds": "node scripts/refund-tests/run.mjs",
     "test:round": "node scripts/round-tests/run.mjs",
-    "test:alerts": "node scripts/alert-tests/run.mjs"
+    "test:alerts": "node scripts/alert-tests/run.mjs",
+    "test:uploads": "node scripts/upload-tests/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",

@@ -1,11 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
-import { apiGet, apiPatch, apiPost } from "@/utils/api";
+import { apiGet, apiPatch, apiPost, attachmentUrl } from "@/utils/api";
 import { confirm, notify } from "@/utils/alerts";
 
 /**
@@ -98,6 +98,26 @@ export default function AdminTicket() {
     }
   };
 
+  /**
+   * Open an attachment in whatever the agent's device uses for photos and PDFs.
+   *
+   * The server is asked rather than the bucket: it checks that this person may see the file and
+   * only then hands back a signed link, which lasts ten minutes. Nothing durable is stored on
+   * this screen, so a screenshot of it is not a way in.
+   */
+  const openAttachment = async (key: string) => {
+    try {
+      const url = await attachmentUrl(key);
+      if (Platform.OS === "web") {
+        window.open(url, "_blank", "noopener");
+      } else {
+        await Linking.openURL(url);
+      }
+    } catch (e) {
+      notify("Could not open the file", e instanceof Error ? e.message : "Please try again.");
+    }
+  };
+
   const decide = async (status: "in_review" | "resolved") => {
     if (saving) return;
     setSaving(true);
@@ -153,8 +173,25 @@ export default function AdminTicket() {
             <Text style={[styles.link, { color: colors.secondary }]}>Open this person's record →</Text>
           </TouchableOpacity>
         )}
+        {/*
+          The attachment, openable rather than printed.
+          
+          This used to render the storage key as plain text — "evidence/42/9f3c…png" — which is
+          no use to an agent deciding a refund. It opens the file now, through the server, which
+          hands back a link that dies in ten minutes.
+        */}
         {ticket.evidenceUrl && (
-          <Text style={[styles.meta, { color: colors.mutedForeground }]}>Attachment: {ticket.evidenceUrl}</Text>
+          <TouchableOpacity
+            testID="admin-open-attachment"
+            onPress={() => void openAttachment(ticket.evidenceUrl!)}
+            activeOpacity={0.8}
+            style={[styles.attachment, { borderColor: colors.border }]}
+          >
+            <Feather name="paperclip" size={15} color={colors.secondary} />
+            <Text style={[styles.attachmentText, { color: colors.secondary }]}>
+              Open the attachment
+            </Text>
+          </TouchableOpacity>
         )}
       </View>
 
@@ -308,6 +345,11 @@ const styles = StyleSheet.create({
   subTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginTop: 8 },
   body: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
   meta: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
+  attachment: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    borderWidth: 1, borderRadius: 10, paddingVertical: 11, paddingHorizontal: 14, marginTop: 6,
+  },
+  attachmentText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   caveat: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16, fontStyle: "italic" },
   link: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   findingRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },

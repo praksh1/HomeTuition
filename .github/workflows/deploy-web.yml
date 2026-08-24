@@ -190,6 +190,20 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:alerts
 
+      # Attaching a file, end to end. This is the feature that had never once worked - the
+      # storage code was left over from Replit and asked a credential sidecar on
+      # 127.0.0.1:1106 for a token, which does not exist on Railway. It runs against a
+      # stand-in that verifies the AWS signature with its own implementation written from the
+      # spec, so a pass means two independent implementations agree rather than that the URL
+      # merely looks signed. It caught the content type not actually being signed, which the
+      # code claimed it was.
+      - name: Attaching a file
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+        run: pnpm --filter @workspace/api-server run test:uploads
+
       # The support desk. Half of this suite is spent trying to get in rather than on the
       # features once inside: a tool that can suspend accounts and reset passwords is one where
       # "who is allowed in here" has to be answered by the server on every request, not by

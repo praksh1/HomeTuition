@@ -161,7 +161,20 @@ export async function signUpload(args: {
   const uploadURL = await getSignedUrl(
     c.client,
     new PutObjectCommand({ Bucket: c.config.bucket, Key: key, ContentType: args.contentType }),
-    { expiresIn: UPLOAD_URL_MINUTES * 60 },
+    {
+      expiresIn: UPLOAD_URL_MINUTES * 60,
+      /**
+       * `content-type` has to be named here or it is **not signed**.
+       *
+       * Passing ContentType to the command sets the header but the presigner signs only `host`
+       * by default, so the link would happily accept an executable. A test caught it: the same
+       * link uploaded an `application/x-msdownload` and the stand-in said 200.
+       *
+       * With it signed, the client must send exactly this type or the signature fails — which
+       * is what makes the check at the top of the route worth anything.
+       */
+      signableHeaders: new Set(["content-type"]),
+    },
   );
   return { uploadURL, key };
 }

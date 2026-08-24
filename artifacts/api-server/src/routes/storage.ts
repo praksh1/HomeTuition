@@ -34,6 +34,21 @@ const router: IRouter = Router();
  * upload something else. The key comes back in `objectPath`, which is what the caller stores.
  */
 router.post("/storage/uploads/request-url", requireAuth, async (req: Request, res: Response) => {
+  /**
+   * The request is judged before the server's own configuration is.
+   *
+   * A malformed request is the caller's to fix and the answer is the same whether or not a
+   * bucket exists, so it must not change to 503 the day one is added — a test caught exactly
+   * that, guarding the field names that made every attachment fail for months.
+   */
+  const parsed = RequestUploadUrlBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "A file name, size and type are all required." });
+    return;
+  }
+
+  const { name, size, contentType } = parsed.data;
+
   if (!isFileStoreConfigured()) {
     /**
      * Said plainly rather than failing obscurely.
@@ -48,14 +63,6 @@ router.post("/storage/uploads/request-url", requireAuth, async (req: Request, re
     });
     return;
   }
-
-  const parsed = RequestUploadUrlBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: "A file name, size and type are all required." });
-    return;
-  }
-
-  const { name, size, contentType } = parsed.data;
 
   if (!ALLOWED_UPLOAD_TYPES.includes(contentType as (typeof ALLOWED_UPLOAD_TYPES)[number])) {
     res.status(400).json({
