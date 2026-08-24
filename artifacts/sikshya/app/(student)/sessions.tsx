@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -9,6 +9,7 @@ import { apiGet } from "@/utils/api";
 import SessionCard from "@/components/SessionCard";
 import { useColors } from "@/hooks/useColors";
 import type { Student } from "@/context/AuthContext";
+import { joinState } from "@/utils/sessionWindow";
 
 interface Session {
   id: string;
@@ -22,6 +23,8 @@ interface Session {
   enrolledStudents: string[];
   price: number;
   status: "upcoming" | "live" | "completed" | "cancelled";
+  /** How this student stands with the class: still in it, or dropped out of it. */
+  enrolment?: "paid" | "refunded" | null;
 }
 
 /** How often the session list re-checks for classes going live while the screen is open. */
@@ -33,6 +36,11 @@ export default function StudentSessions() {
   const insets = useSafeAreaInsets();
   const student = user as Student;
   const [sessions, setSessions] = useState<Session[]>([]);
+  /**
+   * A ticking clock, so a class that runs out while this screen is open moves itself out of
+   * Upcoming rather than sitting there until the next fetch.
+   */
+  const [tick, setTick] = useState(Date.now());
   /**
    * True until the first fetch answers.
    *
@@ -55,20 +63,25 @@ export default function StudentSessions() {
     }, [student?.userId])
   );
 
+  useEffect(() => {
+    const timer = setInterval(() => setTick(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const loadSessions = async () => {
     try {
       const [myRes, liveRes] = await Promise.all([
         student?.userId
-          ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string }[] }>(
+          ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null }[] }>(
               `/sessions?studentId=${student.userId}&limit=50`
             )
           : Promise.resolve({ sessions: [] }),
-        apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string }[] }>(
+        apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null }[] }>(
           "/sessions?status=live&limit=10"
         ),
       ]);
 
-      const mapSession = (s: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string }): Session => ({
+      const mapSession = (s: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null }): Session => ({
         id: String(s.id),
         teacherId: "",
         teacherName: s.teacherName,
@@ -80,6 +93,7 @@ export default function StudentSessions() {
         enrolledStudents: Array(s.enrolledCount).fill(""),
         price: s.price,
         status: s.status as Session["status"],
+        enrolment: (s.enrolment as Session["enrolment"]) ?? null,
       });
 
       const allSessions = [
@@ -117,9 +131,23 @@ export default function StudentSessions() {
   };
 
 
-  const liveSessions = sessions.filter((s) => s.status === "live");
-  const upcomingSessions = sessions.filter((s) => s.status === "upcoming");
-  const pastSessions = sessions.filter((s) => s.status === "completed" || s.status === "cancelled");
+  /**
+   * Which pile a class belongs in, decided by the clock and not only by its status.
+   *
+   * A class whose time has passed sat under "Upcoming" forever if nobody had marked it
+   * finished — which is exactly what a teacher's back-dated class did, and what a class the
+   * teacher simply never opened does. The status still wins when it says the class is over;
+   * the clock catches the ones it does not.
+   */
+  const isOver = (s: Session) =>
+    s.status === "completed" || s.status === "cancelled" || !joinState(s, tick).enabled;
+
+  const dropped = sessions.filter((s) => s.enrolment === "refunded");
+  const held = sessions.filter((s) => s.enrolment !== "refunded");
+
+  const liveSessions = held.filter((s) => s.status === "live" && !isOver(s));
+  const upcomingSessions = held.filter((s) => s.status === "upcoming" && !isOver(s));
+  const pastSessions = held.filter((s) => s.status !== "live" && isOver(s));
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -168,8 +196,34 @@ export default function StudentSessions() {
             {pastSessions.length > 0 && (
               <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Past Sessions</Text>
+                {/*
+                  Tappable, which they were not. A finished class had no onPress at all, so
+                  pressing one did nothing whatsoever — reported as exactly that. Its page is
+                  where the messages, the attendance and any refund live, and all three are
+                  wanted most after the class rather than before it.
+                */}
                 {pastSessions.map((s) => (
-                  <SessionCard key={s.id} session={s} showTeacher />
+                  <SessionCard key={s.id} session={s} showTeacher onPress={() => openSession(s)} />
+                ))}
+              </View>
+            )}
+
+            {dropped.length > 0 && (
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Dropped</Text>
+                <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
+                  Classes you left. Open one to see where its refund has got to.
+                </Text>
+                {dropped.map((s) => (
+                  <View key={s.id} testID={`dropped-session-${s.id}`}>
+                    <SessionCard session={s} showTeacher onPress={() => openSession(s)} />
+                    <View style={[styles.droppedFlag, { backgroundColor: colors.muted }]}>
+                      <Feather name="corner-up-left" size={12} color={colors.mutedForeground} />
+                      <Text style={[styles.droppedFlagText, { color: colors.mutedForeground }]}>
+                        Dropped — tap for refund status
+                      </Text>
+                    </View>
+                  </View>
                 ))}
               </View>
             )}
@@ -214,6 +268,12 @@ const styles = StyleSheet.create({
   section: { gap: 4, marginBottom: 20 },
   sectionHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   liveIndicator: { width: 10, height: 10, borderRadius: 5 },
+  sectionNote: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 8, lineHeight: 17 },
+  droppedFlag: {
+    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
+    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, marginTop: -6, marginBottom: 12,
+  },
+  droppedFlagText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", marginBottom: 8 },
   joinBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 12, marginTop: -4, marginBottom: 8 },
   joinBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },

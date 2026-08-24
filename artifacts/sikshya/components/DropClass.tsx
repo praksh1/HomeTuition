@@ -3,7 +3,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPost } from "@/utils/api";
-import { confirm, notify } from "@/utils/alerts";
+import { notify } from "@/utils/alerts";
+import WarningModal from "@/components/WarningModal";
 
 /**
  * Getting out of a class you paid for.
@@ -32,6 +33,9 @@ export interface DropInfo {
   left?: boolean;
   refundAmount?: number | null;
   refundPaid?: boolean;
+  /** Business days still to run on the promised wait. Null once it is paid. */
+  businessDaysLeft?: number | null;
+  businessDaysTotal?: number;
   canDrop: boolean;
   reason: string | null;
   pricePaid: number;
@@ -56,6 +60,7 @@ export default function DropClass({ sessionId, onDropped }: Props) {
   const [info, setInfo] = useState<DropInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [asking, setAsking] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -81,9 +86,34 @@ export default function DropClass({ sessionId, onDropped }: Props) {
    * to be checking on a refund they were promised.
    */
   if (info?.left) {
+    const days = info.businessDaysLeft;
     return (
       <View style={[styles.card, { borderColor: colors.border }]} testID="drop-class-left">
         <Text style={[styles.title, { color: colors.foreground }]}>{info.headline}</Text>
+
+        {info.refundAmount != null && (
+          <View style={[styles.refundBox, { borderColor: colors.border, backgroundColor: colors.muted }]}>
+            <Text style={[styles.refundAmount, { color: colors.foreground }]}>
+              NPR {info.refundAmount.toLocaleString()}
+            </Text>
+            <Text style={[styles.refundState, { color: info.refundPaid ? colors.success : colors.mutedForeground }]}>
+              {info.refundPaid ? "Paid" : "Refund requested"}
+            </Text>
+            {/*
+              A countdown, not a policy sentence. "Five to seven business days" means nothing on
+              day six to somebody who cannot remember which day they dropped the class — which
+              is the day they are most likely to be looking at this.
+            */}
+            {!info.refundPaid && days != null && (
+              <Text testID="drop-refund-days" style={[styles.refundDays, { color: colors.mutedForeground }]}>
+                {days > 0
+                  ? `Expected within ${days} more business day${days === 1 ? "" : "s"}.`
+                  : "This is now past our usual window — please contact Support."}
+              </Text>
+            )}
+          </View>
+        )}
+
         <Text style={[styles.headline, { color: colors.mutedForeground }]}>{info.detail}</Text>
       </View>
     );
@@ -93,19 +123,7 @@ export default function DropClass({ sessionId, onDropped }: Props) {
   if (!info?.enrolled) return null;
 
   const drop = async () => {
-    /**
-     * The confirmation repeats the exact figures rather than asking "are you sure?".
-     *
-     * "Are you sure" is answerable without reading anything. The number is not, and this is
-     * the last moment before it is irreversible.
-     */
-    const agreed = await confirm(
-      info.full ? "Drop this class?" : `Drop this class and lose NPR ${info.pricePaid - info.studentRefund}?`,
-      `${info.detail}\n\nYour place will be offered to someone else.`,
-      "Drop the class",
-    );
-    if (!agreed) return;
-
+    setAsking(false);
     setWorking(true);
     try {
       const res = await apiPost<{ message: string }>(`/sessions/${sessionId}/drop`, {});
@@ -121,8 +139,44 @@ export default function DropClass({ sessionId, onDropped }: Props) {
     }
   };
 
+  /**
+   * The warning, in the plainest words the facts allow.
+   *
+   * Each line says what happens, not why. Somebody skimming reads the first few words of each
+   * and should still come away with the right idea — which is the whole test the owner set:
+   * "simpler word choices to make sure they understand the results of their action".
+   */
+  const lost = info.pricePaid - info.studentRefund;
+  const consequences = info.full
+    ? [
+        `You get all NPR ${info.pricePaid.toLocaleString()} back.`,
+        "You lose your place in this class.",
+        "Someone else can take your place.",
+        "The money is not instant. It comes back in 5-7 business days.",
+      ]
+    : [
+        `You get NPR ${info.studentRefund.toLocaleString()} back.`,
+        `You do not get NPR ${lost.toLocaleString()} back. That is the cancellation fee.`,
+        "You lose your place in this class.",
+        "Someone else can take your place.",
+        "You cannot undo this.",
+        "The money is not instant. It comes back in 5-7 business days.",
+      ];
+
   return (
     <View style={[styles.card, { borderColor: colors.border }]} testID="drop-class">
+      <WarningModal
+        testID="drop-warning"
+        visible={asking}
+        title="Are you sure you want to leave this class?"
+        headline={`You get NPR ${info.studentRefund.toLocaleString()} back`}
+        headlineNote={`You paid NPR ${info.pricePaid.toLocaleString()}.`}
+        consequences={consequences}
+        confirmLabel="Yes, drop it"
+        busy={working}
+        onConfirm={() => void drop()}
+        onCancel={() => setAsking(false)}
+      />
       <Text style={[styles.title, { color: colors.foreground }]}>
         {info.full ? "This class was moved" : "Changed your mind?"}
       </Text>
@@ -147,7 +201,7 @@ export default function DropClass({ sessionId, onDropped }: Props) {
         <>
           <TouchableOpacity
             testID="drop-class-btn"
-            onPress={() => void drop()}
+            onPress={() => setAsking(true)}
             disabled={working}
             activeOpacity={0.85}
             style={[styles.btn, { borderColor: colors.destructive, opacity: working ? 0.6 : 1 }]}
@@ -199,6 +253,10 @@ const styles = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 12, padding: 16, gap: 8 },
   title: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   headline: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  refundBox: { borderWidth: 1, borderRadius: 10, padding: 12, gap: 2, marginTop: 4 },
+  refundAmount: { fontSize: 22, fontFamily: "Inter_600SemiBold" },
+  refundState: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  refundDays: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17, marginTop: 4 },
   breakdown: { borderTopWidth: 1, paddingTop: 10, marginTop: 4, gap: 6 },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 },
   rowLabel: { fontSize: 13, fontFamily: "Inter_400Regular", flex: 1 },

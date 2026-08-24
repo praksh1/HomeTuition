@@ -3,7 +3,8 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPatch } from "@/utils/api";
-import { confirm, notify } from "@/utils/alerts";
+import { notify } from "@/utils/alerts";
+import WarningModal from "@/components/WarningModal";
 
 /**
  * Moving a class after people have booked it.
@@ -56,6 +57,7 @@ export default function RescheduleClass({ sessionId, currentDate, onMoved }: Pro
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
+  const [asking, setAsking] = useState<Date | null>(null);
   const initial = splitLocal(currentDate);
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time);
@@ -86,28 +88,14 @@ export default function RescheduleClass({ sessionId, currentDate, onMoved }: Pro
       return;
     }
 
-    /**
-     * The confirmation names the consequence rather than asking "are you sure?".
-     *
-     * Two things happen that a teacher may not have connected: it spends one of five, and it
-     * hands everybody who paid a full refund if they want one. Both belong in front of them
-     * before they agree, not in a notification afterwards.
-     */
-    const agreed = await confirm(
-      "Move this class?",
-      `New time: ${when.toLocaleString()}\n\n` +
-        (info.paidStudents > 0
-          ? `${info.paidStudents} student${info.paidStudents === 1 ? "" : "s"} already paid for this class. ` +
-            `They will be told, and each of them can drop it for a full refund within 24 hours.\n\n`
-          : "Nobody has booked this class yet.\n\n") +
-        (info.editsLeft === null
-          ? "This uses one of your five schedule changes this month."
-          : `This uses one of your ${info.editsAllowed} schedule changes this month. ` +
-            `You have ${info.editsLeft} left.`),
-      "Move the class",
-    );
-    if (!agreed) return;
+    // Everything the teacher needs to weigh is on the warning that opens next.
+    setAsking(when);
+  };
 
+  const confirmMove = async () => {
+    const when = asking;
+    if (!when) return;
+    setAsking(null);
     setWorking(true);
     try {
       await apiPatch(`/sessions/${sessionId}`, { date: when.toISOString() });
@@ -123,8 +111,44 @@ export default function RescheduleClass({ sessionId, currentDate, onMoved }: Pro
     }
   };
 
+  /**
+   * What moving the class costs, in the plainest words the facts allow.
+   *
+   * Two of these a teacher will not have connected on their own: it spends one of five for the
+   * month, and it hands everybody who paid the right to leave with all their money. Both belong
+   * in front of them before they agree, not in a notification afterwards.
+   */
+  const consequences = [
+    ...(info.paidStudents > 0
+      ? [
+          `${info.paidStudents} student${info.paidStudents === 1 ? "" : "s"} already paid for this class.`,
+          "They will all be told straight away.",
+          "Any of them can leave and get ALL their money back. They have 24 hours to decide.",
+        ]
+      : ["Nobody has booked this class yet, so this affects no one."]),
+    info.editsLeft === null
+      ? "This uses one of your changes for this month."
+      : `This uses 1 of your ${info.editsAllowed} changes this month. You will have ` +
+        `${Math.max(0, info.editsLeft - 1)} left.`,
+    "You cannot undo this.",
+  ];
+
   return (
     <View style={[styles.card, { borderColor: colors.border }]} testID="reschedule-class">
+      <WarningModal
+        testID="reschedule-warning"
+        visible={asking !== null}
+        title="Are you sure you want to move this class?"
+        headline={asking ? asking.toLocaleString([], {
+          weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+        }) : ""}
+        headlineNote="The new date and time."
+        consequences={consequences}
+        confirmLabel="Yes, move it"
+        busy={working}
+        onConfirm={() => void confirmMove()}
+        onCancel={() => setAsking(null)}
+      />
       <View style={styles.headerRow}>
         <Text style={[styles.title, { color: colors.foreground }]}>Schedule</Text>
         <Text testID="reschedule-edits-left" style={[styles.quota, { color: colors.mutedForeground }]}>

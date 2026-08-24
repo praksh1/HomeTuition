@@ -32,6 +32,39 @@ import { notify } from "../lib/notify";
  * lying about the one thing it must not lie about.
  */
 
+/**
+ * How long a refund takes to reach somebody.
+ *
+ * One promise, in one place, because every screen that mentions it is talking about the same
+ * person's money and they must not be able to disagree. The countdown uses the outer bound: it
+ * is better to arrive early than to have told somebody a day that then passes.
+ */
+export const REFUND_BUSINESS_DAYS_MAX = 7;
+export const REFUND_WAIT_PHRASE = "5-7 business days";
+
+/**
+ * Business days still to run, counted forward from when the refund was asked for.
+ *
+ * Walks day by day rather than dividing, because weekends do not count and a refund requested
+ * on a Friday is not two days from landing on a Sunday. Zero means the promised window is up —
+ * which is the point at which somebody should be chasing it, so it never goes negative and
+ * never disappears.
+ */
+function businessDaysRemaining(requestedAt: Date | string | null, now: number = Date.now()): number {
+  if (!requestedAt) return REFUND_BUSINESS_DAYS_MAX;
+  const start = new Date(requestedAt);
+  if (Number.isNaN(start.getTime())) return REFUND_BUSINESS_DAYS_MAX;
+
+  let elapsed = 0;
+  const cursor = new Date(start);
+  while (cursor.getTime() < now && elapsed < REFUND_BUSINESS_DAYS_MAX) {
+    cursor.setDate(cursor.getDate() + 1);
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) elapsed += 1;
+  }
+  return Math.max(0, REFUND_BUSINESS_DAYS_MAX - elapsed);
+}
+
 const router: IRouter = Router();
 
 function sessionId(raw: string | string[] | undefined): number {
@@ -96,12 +129,26 @@ router.get("/sessions/:id/drop-info", requireAuth, async (req, res): Promise<voi
       canDrop: false,
       refundAmount: refund?.amount ?? null,
       refundPaid: refund?.status === "paid",
+      requestedAt: refund?.requestedAt ? new Date(refund.requestedAt).toISOString() : null,
+      /**
+       * Business days left, counted from when it was asked for.
+       *
+       * The owner asked for "the number of days before the refund will be deposited". A
+       * countdown is worth more than a policy sentence: five to seven business days means
+       * nothing on day six to somebody who cannot remember which day they dropped it.
+       *
+       * Weekends do not count, so this walks the calendar rather than dividing by 86,400,000.
+       */
+      businessDaysLeft: refund && refund.status !== "paid"
+        ? businessDaysRemaining(refund.requestedAt)
+        : null,
+      businessDaysTotal: REFUND_BUSINESS_DAYS_MAX,
       headline: "You are no longer in this class.",
       detail: refund
         ? refund.status === "paid"
           ? `A refund of NPR ${refund.amount} has been paid.`
           : `A refund of NPR ${refund.amount} has been requested. Our team processes refunds ` +
-            `within 5-7 business days.`
+            `within ${REFUND_WAIT_PHRASE}.`
         : "If you were expecting a refund and have not had it, report it from Support.",
     });
     return;
@@ -139,11 +186,11 @@ router.get("/sessions/:id/drop-info", requireAuth, async (req, res): Promise<voi
       : "Dropping a class you booked returns half of what you paid.",
     detail: quote.full
       ? `NPR ${quote.studentRefund} will be requested for you. Our team processes refunds ` +
-        `within 5-7 business days.`
+        `within ${REFUND_WAIT_PHRASE}.`
       : `NPR ${quote.studentRefund} of the NPR ${session.price} you paid will be requested for ` +
         `you. The rest is a cancellation fee: NPR ${quote.teacherShare} to your teacher, who ` +
         `held the place for you, and NPR ${quote.platformShare} to Sikshya. Refunds are ` +
-        `processed within 5-7 business days.`,
+        `processed within ${REFUND_WAIT_PHRASE}.`,
   });
 });
 
@@ -261,7 +308,7 @@ router.post("/sessions/:id/drop", requireAuth, async (req, res): Promise<void> =
      */
     message:
       `You have been removed from "${session.topic}". A refund of NPR ${refund.amount} has been ` +
-      `requested. Our team will process it within 5-7 business days.`,
+      `requested. Our team will process it within ${REFUND_WAIT_PHRASE}.`,
   });
 });
 
