@@ -14,7 +14,7 @@ import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
-import { canJoin, canStart, isCreatableAt } from "../lib/sessionStart";
+import { canJoin, canStart, isCreatableAt, studentDoorClosesAt } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
 import {
@@ -967,11 +967,22 @@ async function bookSession(req: Request, res: Response): Promise<void> {
    * sold, which is what the original complaint was about. A class in progress can, and the app
    * says how long ago it started so the choice is an informed one rather than a surprise.
    */
-  const doorShut = canJoin(
-    { date: session.date, duration: session.duration, startedAt: null, endedAt: null, status: session.status },
-    Date.now(),
-  );
-  if (!doorShut.ok) {
+  /**
+   * Only the *closing* edge of the door, never the opening one.
+   *
+   * `canJoin` was the obvious thing to reach for and it is wrong here: it is false before the
+   * doors open as well as after they shut, so using it made every class more than ten minutes
+   * away unbookable — which is nearly all of them. Caught by the tests immediately, and worth
+   * the comment because the mistake reads as correct.
+   */
+  const closesAt = studentDoorClosesAt({
+    date: session.date,
+    duration: session.duration,
+    startedAt: session.startedAt,
+    endedAt: null,
+    status: session.status,
+  });
+  if (session.status === "cancelled" || (closesAt !== null && Date.now() > closesAt)) {
     res.status(409).json({
       error: "This class is over, so it can no longer be booked.",
       started: true,

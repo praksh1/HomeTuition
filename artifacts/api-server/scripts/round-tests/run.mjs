@@ -102,8 +102,8 @@ async function run() {
     const booked = await api(`/sessions/${s.id}/book`, { method: "POST", token: student.token,
       body: { paymentMethod: "esewa" } });
     check("a class from two days ago cannot be booked", booked.status === 409, `status=${booked.status}`);
-    check("and the refusal says it has started",
-      /already started/i.test(String(booked.body?.error)), String(booked.body?.error));
+    check("and the refusal says the class is over",
+      /is over/i.test(String(booked.body?.error)), String(booked.body?.error));
     check("nothing was written",
       sql(`select count(*) from session_enrollments where session_id=${s.id}`) === "0");
     check("and no money was taken",
@@ -118,11 +118,15 @@ async function run() {
       body: { paymentMethod: "esewa" } });
     check("a class a minute away can still be booked", justInTime.status <= 201, `status=${justInTime.status}`);
 
+    /**
+     * A minute past the start is still on sale — the class is running and there is a lesson to
+     * attend. It is the *finish* plus the grace that closes it, which the next block covers.
+     */
     const t = await makeSession(teacher, { price: 500 });
     sql(`update sessions set date = now() - interval '1 minute' where id = ${t.id}`);
-    const justTooLate = await api(`/sessions/${t.id}/book`, { method: "POST", token: other.token,
+    const justStarted = await api(`/sessions/${t.id}/book`, { method: "POST", token: other.token,
       body: { paymentMethod: "esewa" } });
-    check("a class a minute past its start cannot", justTooLate.status === 409, `status=${justTooLate.status}`);
+    check("a class a minute into its lesson is still on sale", justStarted.status <= 201, `status=${justStarted.status}`);
   }
 
   console.log("\nThe Subscribe button knows whether you already subscribed\n");
@@ -220,6 +224,83 @@ async function run() {
     const stranger = await api(`/sessions?studentId=${other.user.id}&limit=50`);
     check("and it is not in anybody else's list",
       !(stranger.body?.sessions ?? []).some((row) => row.id === s.id));
+  }
+
+  console.log("\nA dropped class stops saying you are in it\n");
+
+  {
+    /**
+     * The reported flapping: after dropping, the button went on reading "Booked & paid".
+     * Refreshing sometimes cleared it — only because the check had failed and the screen fell
+     * back to offering the booking — and signing back in showed "Book" for a moment before it
+     * flipped back. All of it because `isEnrolled` meant "a row exists", and dropping leaves
+     * the row behind marked refunded.
+     */
+    const t = await register("teacher", "Flapping Farid");
+    const s2 = await makeSession(t, { price: 500 });
+    const bought = await api(`/sessions/${s2.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
+    check("the booking this case depends on happened", bought.status <= 201, `status=${bought.status} ${JSON.stringify(bought.body)}`);
+
+    const held = await api(`/sessions/${s2.id}/access`, { token: student.token });
+    check("while they hold it, the class says so", held.body?.isEnrolled === true, JSON.stringify(held.body));
+
+    const dropped = await api(`/sessions/${s2.id}/drop`, { method: "POST", token: student.token });
+    check("the drop goes through", dropped.status === 200, `status=${dropped.status}`);
+
+    const after = await api(`/sessions/${s2.id}/access`, { token: student.token });
+    check("afterwards it does not", after.body?.isEnrolled === false, JSON.stringify(after.body));
+    check("and does not claim they paid", after.body?.hasPaid === false, JSON.stringify(after.body));
+    check("the enrolment row is still there, which is what hid this",
+      sql(`select payment_status from session_enrollments where session_id=${s2.id} and student_id=${student.user.id}`) === "refunded");
+
+    // Asked ten times, because the report was of an answer that flapped.
+    let steady = 0;
+    for (let i = 0; i < 10; i += 1) {
+      const again = await api(`/sessions/${s2.id}/access`, { token: student.token });
+      if (again.body?.isEnrolled === false) steady += 1;
+    }
+    check("and the answer is the same every time it is asked", steady === 10, `steady=${steady}/10`);
+
+    // Including on a brand new sign-in, which is the case that flipped back.
+    const signedIn = await api("/auth/login", { method: "POST", body: { email: student.email, password: "password123" } });
+    const fresh = await api(`/sessions/${s2.id}/access`, { token: signedIn.body?.token });
+    check("including straight after signing back in", fresh.body?.isEnrolled === false, JSON.stringify(fresh.body));
+
+    // And they can buy the seat back, which is the whole point of it being released.
+    const rebooked = await api(`/sessions/${s2.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
+    check("so the class can be booked again", rebooked.status <= 201, `status=${rebooked.status} ${JSON.stringify(rebooked.body)}`);
+  }
+
+  console.log("\nA class in progress can still be bought; one that is over cannot\n");
+
+  {
+    /**
+     * The rule was the scheduled start, which also caught a class running right now: a teacher
+     * scheduled one two minutes out, went live, and nobody could buy in — the student paid and
+     * was told "the class has already started". That makes "Schedule & Go Live" unsellable.
+     */
+    const t = await register("teacher", "Live Lekhnath");
+    const running = await makeSession(t, { price: 500 });
+    sql(`update sessions set date = now() - interval '5 minutes', status = 'live' where id = ${running.id}`);
+    const joinLate = await api(`/sessions/${running.id}/book`, { method: "POST", token: other.token,
+      body: { paymentMethod: "esewa" } });
+    check("a class that started five minutes ago can still be bought", joinLate.status <= 201,
+      `status=${joinLate.status} ${JSON.stringify(joinLate.body)}`);
+
+    const finished = await makeSession(t, { price: 500 });
+    // Past the student's door: the booked finish plus the five-minute grace.
+    sql(`update sessions set date = now() - interval '70 minutes' where id = ${finished.id}`);
+    const tooLate = await api(`/sessions/${finished.id}/book`, { method: "POST", token: other.token,
+      body: { paymentMethod: "esewa" } });
+    check("a class that has finished cannot", tooLate.status === 409, `status=${tooLate.status}`);
+    check("and is told it is over, not that it started",
+      /is over/i.test(String(tooLate.body?.error)), String(tooLate.body?.error));
+
+    const ancient = await makeSession(t, { price: 500 });
+    sql(`update sessions set date = now() - interval '2 days' where id = ${ancient.id}`);
+    const dead = await api(`/sessions/${ancient.id}/book`, { method: "POST", token: other.token,
+      body: { paymentMethod: "esewa" } });
+    check("and the two-day-old class from the original report still cannot", dead.status === 409, `status=${dead.status}`);
   }
 
   console.log("\nAn unpaid enrolment still never appears\n");
