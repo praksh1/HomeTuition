@@ -452,6 +452,40 @@ async function lateJoinerTests() {
   check("and the class's headcount matches its enrolments", counted === actual, `${counted} counted, ${actual} rows`);
 }
 
+async function concurrentMaterialiseTest() {
+  console.log("\nTen people opening the same class at the same instant");
+
+  /*
+   * The class-day is created on the read path, so ten students opening the class at once are
+   * ten attempts to create the same class. Each class-day is locked and re-checked before its
+   * class is written; without that re-check this makes a second, orphaned class — invisible,
+   * because only one of them ends up linked to the class-day.
+   *
+   * Counted off the teacher's sessions rather than off the link, for exactly that reason. The
+   * teacher is new and runs nothing but this monthly class, so every class of theirs came from
+   * here, linked or not.
+   */
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+  ageClass(klass.id, planId, 1);
+
+  await Promise.all(
+    Array.from({ length: 10 }, () => api(`/monthly/classes/${klass.id}`, { token: student.token })),
+  );
+
+  const theirClasses = Number(sql(`select count(*) from sessions where teacher_id = ${teacher.user.id}`));
+  const linkedDays = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and session_id is not null`));
+  check("a class-day is created once, however many people are looking", theirClasses === linkedDays,
+    `${theirClasses} classes for ${linkedDays} class-days`);
+  check("and at least one was created", linkedDays >= 1, `${linkedDays} linked`);
+
+  const enrolments = Number(sql(`select count(*) from session_enrollments se
+      join recurring_days rd on rd.session_id = se.session_id
+      where rd.recurring_id = ${klass.id} and se.student_id = ${student.user.id}`));
+  check("the student is enrolled once, not ten times", enrolments === linkedDays, `${enrolments} enrolments`);
+}
+
 async function ledgerTests() {
   console.log("\nWriting down what became of a class");
 
@@ -468,8 +502,18 @@ async function ledgerTests() {
 
   ageClass(klass.id, planId, 2);
   await api(`/monthly/classes/${klass.id}`, { token: student.token });
-  const missed = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and status = 'missed'`));
-  check("a class nobody started is written down as missed", missed >= 1, `${missed} missed`);
+
+  /*
+   * Judged on the one class-day that actually became a class and was never started.
+   *
+   * Counting missed days across the whole class does not test this: the days further back were
+   * never materialised at all, and they are missed whatever the rule about starting says. That
+   * looser check passed with the rule changed to count every past class as held.
+   */
+  const firstStatus = sql(`select status from recurring_days where session_id = ${first}`);
+  check("a class nobody started is written down as missed", firstStatus === "missed", `status "${firstStatus}"`);
+  const missedAt = sql(`select missed_at is not null from recurring_days where session_id = ${first}`);
+  check("and when it was judged is kept", missedAt === "t", `missed_at ${missedAt}`);
 
   // A class the teacher did start is held, not missed.
   const { klass: k2, planId: p2 } = await teacherWithClass({ monthlyPrice: 3000 });
@@ -576,6 +620,7 @@ async function main() {
   await concurrencyTests();
   await classDayTests();
   await lateJoinerTests();
+  await concurrentMaterialiseTest();
   await ledgerTests();
   await ruleTests();
   await moneyInvariants();
