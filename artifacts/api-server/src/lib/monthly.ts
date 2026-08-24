@@ -249,41 +249,90 @@ export function proRatedShortfall(amountPaid: number, sessionsPaidFor: number, s
 /**
  * Did the teacher clear the delivery floor for a cycle?
  *
- * One line, on its own, because it is the single sentence in this file most likely to change.
- * The owner set a flat floor: twenty-five classes held, judged on the teacher's cycle. That
- * leaves one sharp edge — a student who joined late, bought nine classes and received six is
- * owed nothing if the teacher still cleared twenty-five overall. If that is ever judged too
- * harsh, scaling the floor to the student's share (nine bought × 25/30 ≈ eight) is a change
- * here and nowhere else.
+ * The owner's flat floor: twenty-five classes held, judged across the whole cycle, regardless
+ * of who was enrolled for how much of it.
  */
 export function metDeliveryFloor(cycleSessionsHeld: number): boolean {
   return Math.max(0, Math.round(cycleSessionsHeld)) >= MIN_SESSIONS_PER_CYCLE;
 }
 
 /**
- * What one student is owed at the end of a cycle the teacher under-delivered.
+ * Did *this student* get the share of classes the floor promises?
  *
- * The owner's rule, in their words: no refunds unless the teacher delivers fewer than
- * twenty-five classes in the month. So a teacher who held twenty-nine of thirty owes nothing —
- * the floor is the promise, not the plan. Below the floor the whole shortfall comes back, not
- * merely the part beneath twenty-five; missing the floor voids the month's promise rather than
- * discounting it.
+ * The cycle floor on its own has a sharp edge: a student who joined late, bought nine classes
+ * and lost three of them is owed nothing if the teacher still cleared twenty-five overall. The
+ * teacher kept their promise to the month; they did not keep it to this student, who received
+ * two thirds of what they paid for. The owner agreed that was too harsh.
  *
- * `cycleSessionsHeld` is the **teacher's** count for the cycle and is what the floor is judged
- * on. `sessionsReceived` is the **student's**, and is what the money is worked out from. For a
- * student who was there the whole cycle the two are the same number, but a student who joined
- * half-way through received far fewer classes than the teacher held — reading the floor off
- * their count would refund them for a month the teacher actually delivered. They are separate
- * arguments, both required, precisely so that can never be nodded through.
+ * So the floor is also read as a **rate**. Twenty-five of thirty is a promise to hold five
+ * sixths of the classes, and a student is owed when the classes they actually received fall
+ * below five sixths of the classes they bought.
+ *
+ * Compared by cross-multiplying rather than by working out a share and rounding it. A share of
+ * nine classes is seven and a half, and rounding that either way quietly changes who gets paid;
+ * the comparison below has no rounding in it at all, and for a student who bought the whole
+ * month it reduces to exactly "twenty-five of thirty" — the owner's rule, unchanged, for the
+ * case it was written about.
  */
-export function shortfallRefund(
-  amountPaid: number,
-  sessionsPaidFor: number,
+export function metStudentShare(
   sessionsReceived: number,
-  cycleSessionsHeld: number,
-): number {
-  if (metDeliveryFloor(cycleSessionsHeld)) return 0;
-  return proRatedShortfall(amountPaid, sessionsPaidFor, sessionsReceived);
+  sessionsPaidFor: number,
+  cycleSessionsPlanned: number,
+): boolean {
+  const got = Math.max(0, Math.round(sessionsReceived));
+  const bought = Math.max(0, Math.round(sessionsPaidFor));
+  const planned = Math.max(0, Math.round(cycleSessionsPlanned));
+  // A month with no classes planned promises nothing, so nothing can fall short of it.
+  if (bought === 0 || planned === 0) return true;
+  return got * planned >= MIN_SESSIONS_PER_CYCLE * bought;
+}
+
+/** One student's claim at the end of a cycle. */
+export interface RefundClaim {
+  /** What this student handed over for the cycle. */
+  amountPaid: number;
+  /** Classes this student bought — the numerator they were charged on. */
+  sessionsPaidFor: number;
+  /** Classes this student actually received. */
+  sessionsReceived: number;
+  /** Classes the teacher held across the whole cycle, whoever was enrolled. */
+  cycleSessionsHeld: number;
+  /** Classes the cycle set out to hold. Counted, never assumed to be thirty. */
+  cycleSessionsPlanned: number;
+}
+
+/**
+ * What one student is owed at the end of a cycle.
+ *
+ * Two ways to be owed, and either is enough:
+ *
+ * 1. **The teacher missed the floor.** Fewer than twenty-five classes held in the month — the
+ *    owner's rule, in their words. A teacher who held twenty-nine of thirty owes nothing; the
+ *    floor is the promise, not the plan. Below it the *whole* shortfall comes back rather than
+ *    only the part beneath twenty-five, because missing the floor voids the month's promise
+ *    rather than discounting it.
+ * 2. **This student got less than their share of it.** See `metStudentShare`. Added after the
+ *    owner agreed rule 1 alone was too harsh on somebody who joined late and then lost most of
+ *    what they had bought.
+ *
+ * Either, rather than replacing the first with the second, deliberately. The second protects a
+ * late joiner the first misses, but the first also protects somebody the second would miss — a
+ * student who received nearly all of their few classes from a teacher who badly under-delivered
+ * the month. Taking either alone would leave one of them worse off than the rule already
+ * agreed, and nobody should lose cover to a change meant to add it.
+ *
+ * A claim rather than five numbers in a row: every field here is a count, they are easy to
+ * transpose, and transposing two of them silently changes what somebody is paid.
+ */
+export function shortfallRefund(claim: RefundClaim): number {
+  const teacherKeptTheMonth = metDeliveryFloor(claim.cycleSessionsHeld);
+  const studentGotTheirShare = metStudentShare(
+    claim.sessionsReceived,
+    claim.sessionsPaidFor,
+    claim.cycleSessionsPlanned,
+  );
+  if (teacherKeptTheMonth && studentGotTheirShare) return 0;
+  return proRatedShortfall(claim.amountPaid, claim.sessionsPaidFor, claim.sessionsReceived);
 }
 
 /**

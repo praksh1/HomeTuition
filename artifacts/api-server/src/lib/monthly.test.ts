@@ -16,6 +16,8 @@ import {
   deliveryVerdict,
   isAbuse,
   isAllowedDuration,
+  metDeliveryFloor,
+  metStudentShare,
   planCycleAnchor,
   proRatedShortfall,
   quoteJoin,
@@ -146,7 +148,7 @@ test("the floor is twenty-five classes", () => {
 
 test("a teacher who fell short owes back the classes that did not happen", () => {
   // Paid 3000 for 30, received 20: ten thirtieths back. Twenty is under the floor, so it is due.
-  assert.equal(shortfallRefund(3000, 30, 20, 20), 1000);
+  assert.equal(shortfallRefund({ amountPaid: 3000, sessionsPaidFor: 30, sessionsReceived: 20, cycleSessionsHeld: 20, cycleSessionsPlanned: 30 }), 1000);
 });
 
 test("a shortfall refund rounds up, because it is money going to somebody", () => {
@@ -160,8 +162,8 @@ test("and can never exceed what was paid, whatever it is asked to believe", () =
 });
 
 test("a teacher who delivered everything owes nothing", () => {
-  assert.equal(shortfallRefund(3000, 30, 30, 30), 0);
-  assert.equal(shortfallRefund(3000, 30, 31, 31), 0);
+  assert.equal(shortfallRefund({ amountPaid: 3000, sessionsPaidFor: 30, sessionsReceived: 30, cycleSessionsHeld: 30, cycleSessionsPlanned: 30 }), 0);
+  assert.equal(shortfallRefund({ amountPaid: 3000, sessionsPaidFor: 30, sessionsReceived: 31, cycleSessionsHeld: 31, cycleSessionsPlanned: 30 }), 0);
 });
 
 test("nothing is owed above the floor, and the whole shortfall below it", () => {
@@ -170,8 +172,60 @@ test("nothing is owed above the floor, and the whole shortfall below it", () => 
    * fewer than 25 sessions". So twenty-five owes nothing and twenty-four owes for all six
    * classes that did not happen — not for the one below the floor.
    */
-  assert.equal(shortfallRefund(3000, 30, 25, 25), 0);
-  assert.equal(shortfallRefund(3000, 30, 24, 24), 600);
+  assert.equal(shortfallRefund({ amountPaid: 3000, sessionsPaidFor: 30, sessionsReceived: 25, cycleSessionsHeld: 25, cycleSessionsPlanned: 30 }), 0);
+  assert.equal(shortfallRefund({ amountPaid: 3000, sessionsPaidFor: 30, sessionsReceived: 24, cycleSessionsHeld: 24, cycleSessionsPlanned: 30 }), 600);
+});
+
+test("a student who fell below their share of the floor is owed, even in a month that met it", () => {
+  /**
+   * The softening the owner agreed to.
+   *
+   * A student joined with nine classes left and the teacher then missed three of them. Those
+   * three cost the teacher three off their cycle too — twenty-seven held, which clears the flat
+   * floor, so rule 1 says nothing is owed. But this student received six of the nine they paid
+   * for, which is two thirds against a promise of five sixths, so rule 2 says they are.
+   *
+   * They get back the classes *they* lost — three ninths of what they paid — not the teacher's
+   * whole shortfall.
+   */
+  const quote = quoteJoin(3000, 9, 30);
+  assert.equal(metDeliveryFloor(27), true, "the teacher kept the month");
+  assert.equal(metStudentShare(6, 9, 30), false, "but not to this student");
+  assert.equal(
+    shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 6, cycleSessionsHeld: 27, cycleSessionsPlanned: 30 }),
+    Math.ceil((quote.amount * 3) / 9),
+  );
+});
+
+test("a share is a rate, and reduces to the owner's own rule for a full month", () => {
+  // Whoever bought the whole month is asking exactly "did the teacher hold twenty-five?".
+  assert.equal(metStudentShare(25, 30, 30), true);
+  assert.equal(metStudentShare(24, 30, 30), false);
+  // Nine classes bought promises seven and a half. Seven is short of it; eight is not.
+  assert.equal(metStudentShare(7, 9, 30), false, "seven of nine is below five sixths");
+  assert.equal(metStudentShare(8, 9, 30), true, "eight of nine is above it");
+  assert.equal(metStudentShare(9, 9, 30), true);
+  // A month that planned no classes promised nothing, so nothing falls short of it.
+  assert.equal(metStudentShare(0, 5, 0), true);
+  assert.equal(metStudentShare(0, 0, 30), true);
+});
+
+test("neither rule takes cover away from somebody the other one protected", () => {
+  /**
+   * Why it is "either", not "instead of".
+   *
+   * This student bought nine classes and received eight — above their share — but the teacher
+   * held only twenty of thirty across the month. Rule 2 alone would pay them nothing; the rule
+   * the owner originally set pays them for the one class they lost. Softening the rule must
+   * not quietly remove cover from anybody.
+   */
+  const quote = quoteJoin(3000, 9, 30);
+  assert.equal(metStudentShare(8, 9, 30), true, "this student got their share");
+  assert.equal(metDeliveryFloor(20), false, "but the teacher missed the month");
+  assert.equal(
+    shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 8, cycleSessionsHeld: 20, cycleSessionsPlanned: 30 }),
+    Math.ceil((quote.amount * 1) / 9),
+  );
 });
 
 test("the floor is judged on the teacher's cycle, not on one student's share of it", () => {
@@ -188,10 +242,12 @@ test("the floor is judged on the teacher's cycle, not on one student's share of 
    * the owner rather than quietly changed — see `metDeliveryFloor` in monthly.ts.
    */
   const quote = quoteJoin(3000, 9, 30);
-  assert.equal(shortfallRefund(quote.amount, 9, 6, 27), 0);
+  // A student who got everything they bought is owed nothing, however the month went for
+  // anybody else: reading the flat floor off their nine would pay them for a month delivered.
+  assert.equal(shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 9, cycleSessionsHeld: 30, cycleSessionsPlanned: 30 }), 0);
   // The same student, in a cycle the teacher genuinely under-delivered: they get back the
   // classes *they* missed, not the teacher's whole shortfall.
-  assert.equal(shortfallRefund(quote.amount, 9, 6, 20), Math.ceil((quote.amount * 3) / 9));
+  assert.equal(shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 6, cycleSessionsHeld: 20, cycleSessionsPlanned: 30 }), Math.ceil((quote.amount * 3) / 9));
 });
 
 test("a missed class is not a black mark until the make-up window has passed", () => {
@@ -260,14 +316,14 @@ test("scenario: a teacher misses six and makes up five", () => {
   // 30 planned, 6 missed, 5 made up → 29 held, one black mark. Not suspended, but warned.
   assert.equal(deliveryVerdict(29, 1).met, true);
   assert.equal(abuseStanding(1).suspended, false);
-  assert.equal(shortfallRefund(3000, 30, 29, 29), 0, "a teacher who met the floor owes nothing");
+  assert.equal(shortfallRefund({ amountPaid: 3000, sessionsPaidFor: 30, sessionsReceived: 29, cycleSessionsHeld: 29, cycleSessionsPlanned: 30 }), 0, "a teacher who met the floor owes nothing");
 });
 
 test("scenario: a teacher misses ten and makes up five", () => {
   // 25 held: exactly the floor, five black marks, so suspended even though nobody is owed.
   const verdict = deliveryVerdict(25, 5);
   assert.equal(verdict.met, true);
-  assert.equal(shortfallRefund(3000, 30, 25, 25), 0);
+  assert.equal(shortfallRefund({ amountPaid: 3000, sessionsPaidFor: 30, sessionsReceived: 25, cycleSessionsHeld: 25, cycleSessionsPlanned: 30 }), 0);
   // Meeting the floor is not the same as behaving well. Five unmade-up misses is a suspension.
   assert.equal(abuseStanding(5).suspended, true);
 });
@@ -313,7 +369,7 @@ test("scenario: a teacher suspended late in the cycle still owes the days that r
    * stopping early is judged on what was left, never on the floor.
    */
   const full = quoteJoin(3000, 30, 30);
-  assert.equal(shortfallRefund(full.amount, 30, 25, 25), 0, "the end-of-cycle rule lets 25 pass");
+  assert.equal(shortfallRefund({ amountPaid: full.amount, sessionsPaidFor: 30, sessionsReceived: 25, cycleSessionsHeld: 25, cycleSessionsPlanned: 30 }), 0, "the end-of-cycle rule lets 25 pass");
   assert.equal(stoppedEarlyRefund(full.amount, 30, 25), 500, "stopping early does not");
   // And a teacher suspended having held twenty-seven owes for three, not for nothing.
   assert.equal(stoppedEarlyRefund(full.amount, 30, 27), 300);
@@ -326,6 +382,6 @@ test("scenario: nobody is charged twice for the same class", () => {
    * three classes' worth. Pricing in days and judging in classes would leave a gap here.
    */
   const quote = quoteJoin(3000, 9, 30);
-  assert.equal(shortfallRefund(quote.amount, 9, 9, 30), 0);
-  assert.equal(shortfallRefund(quote.amount, 9, 6, 20), Math.ceil((quote.amount * 3) / 9));
+  assert.equal(shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 9, cycleSessionsHeld: 30, cycleSessionsPlanned: 30 }), 0);
+  assert.equal(shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 6, cycleSessionsHeld: 20, cycleSessionsPlanned: 30 }), Math.ceil((quote.amount * 3) / 9));
 });
