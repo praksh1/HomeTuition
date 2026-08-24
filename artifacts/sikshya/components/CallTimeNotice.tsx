@@ -70,7 +70,15 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: Platform.OS === "web" ? 12 : 52,
     left: 12,
-    right: 12,
+    /**
+     * A clear gutter on the right, so Daily's own corner controls stay reachable.
+     *
+     * This banner is drawn over the call, and Daily puts the close button for its Chat and
+     * People panels in that corner. Full width, it covered them — which during the last five
+     * minutes of a class meant a panel that could not be closed, the same trap the video's
+     * size control used to set permanently.
+     */
+    right: 64,
     alignItems: "center",
     // Above the video and any of Daily's own furniture.
     zIndex: 40,

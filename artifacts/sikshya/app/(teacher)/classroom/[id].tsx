@@ -601,7 +601,34 @@ export default function Classroom() {
             )}
           </View>
           <View style={s.headerRight}>
-            <TouchableOpacity style={s.iconBtn} onPress={toggleLandscape} activeOpacity={0.8}>
+            {/*
+              The video's own size control, in **our** header rather than floating on the call.
+
+              It used to sit at the top-right corner of the video pane, which is exactly where
+              Daily puts the close button for its Chat and People panels. The two stacked, ours
+              on top, so the panel could not be closed at all: every press shrank the video and
+              grew the board instead, and there was no way back to the call. Reported with the
+              overlap circled in a screenshot.
+
+              Nothing of ours is drawn over the Daily iframe's corners any more. Daily owns that
+              surface and changes it between versions; our controls live on our own chrome,
+              where they cannot be covered and cannot cover anything.
+            */}
+            <TouchableOpacity
+              style={s.iconBtn}
+              onPress={() => setVideoExpanded((v) => !v)}
+              activeOpacity={0.8}
+              testID="video-size-btn"
+              accessibilityLabel={videoExpanded ? "Show the whiteboard" : "Make the video bigger"}
+            >
+              <Feather name={videoExpanded ? "chevron-down" : "chevron-up"} size={16} color="#aaa" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={s.iconBtn}
+              onPress={toggleLandscape}
+              activeOpacity={0.8}
+              accessibilityLabel={isLandscape ? "Leave full screen" : "Full screen"}
+            >
               <Feather name={isLandscape ? "minimize-2" : "maximize-2"} size={16} color="#aaa" />
             </TouchableOpacity>
             {/*
@@ -709,9 +736,6 @@ export default function Classroom() {
               </Text>
             </View>
           )}
-          <TouchableOpacity style={s.videoExpandBtn} onPress={() => setVideoExpanded((v) => !v)} activeOpacity={0.8}>
-            <Feather name={videoExpanded ? "minimize-2" : "maximize-2"} size={13} color="#fff" />
-          </TouchableOpacity>
 
           {/* Over the video, covering nothing that matters. See components/CallTimeNotice.tsx. */}
           {timeLimit.overtime ? (
@@ -1093,8 +1117,4 @@ const s = StyleSheet.create({
   // The board is the thing being judged, so it gets the larger share when side by side.
   boardAreaSide: { flex: 1.4 },
   chatCover: { backgroundColor: "#0A0A0A", zIndex: 9999, position: "relative" },
-  videoExpandBtn: {
-    position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", alignItems: "center", zIndex: 5,
-  },
 });
