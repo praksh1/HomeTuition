@@ -22,6 +22,17 @@ interface PaymentSheetProps {
   label?: string;
   initialMethod?: PaymentMethod;
   onClose: () => void;
+  /**
+   * Actually take the booking. Resolve for success, **throw for failure**.
+   *
+   * This sheet used to claim the payment had gone through after a fixed delay and call this
+   * afterwards, so a booking that failed — a class already started, a class now full, a server
+   * that was down — landed on a student who had just been told "Payment Successful, NPR 500
+   * paid via eSewa". Nothing had been paid and nothing had been booked.
+   *
+   * So the order is reversed: this runs first, and the success screen is only reached if it
+   * resolves. A rejection is shown here, on the sheet, with the sheet still open.
+   */
   onSuccess: (method: PaymentMethod) => void | Promise<void>;
 }
 
@@ -81,15 +92,25 @@ export default function PaymentSheet({
     setError("");
     setStage("processing");
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    const t1 = setTimeout(() => {
+
+    /**
+     * The booking is attempted **now**, and the success screen only appears if it worked.
+     *
+     * The old order was: pause, announce "Payment Successful", pause again, then try. Which
+     * meant every possible failure arrived after the student had been told their money was
+     * taken. On a product where no money moves yet, that was the app inventing a receipt.
+     */
+    try {
+      await onSuccess(method);
       setStage("done");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      const t2 = setTimeout(() => {
-        void onSuccess(method);
-      }, 800);
-      timers.current.push(t2);
-    }, 1500);
-    timers.current.push(t1);
+    } catch (e) {
+      // Back to the form with the reason, rather than closing over it. Whatever went wrong,
+      // they are not booked and nothing was taken — which the message says.
+      setStage("form");
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+      setError(e instanceof Error ? e.message : "That did not go through. Nothing has been charged.");
+    }
   };
 
   return (
@@ -103,13 +124,13 @@ export default function PaymentSheet({
             <View style={[styles.grabber, { backgroundColor: colors.border }]} />
 
             {stage === "done" ? (
-              <View style={styles.center}>
+              <View style={styles.center} testID="payment-done">
                 <View style={[styles.successCircle, { backgroundColor: colors.success + "20" }]}>
                   <Feather name="check" size={40} color={colors.success} />
                 </View>
-                <Text style={[styles.successTitle, { color: colors.foreground }]}>Payment Successful</Text>
+                <Text style={[styles.successTitle, { color: colors.foreground }]}>You're booked</Text>
                 <Text style={[styles.successSub, { color: colors.mutedForeground }]}>
-                  NPR {amount.toLocaleString()} paid via {meta.name}
+                  NPR {amount.toLocaleString()} via {meta.name}
                 </Text>
               </View>
             ) : (

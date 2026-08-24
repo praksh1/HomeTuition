@@ -953,20 +953,27 @@ async function bookSession(req: Request, res: Response): Promise<void> {
   }
 
   /**
-   * A class that has already begun cannot be bought.
+   * A class can be bought while it is still possible to attend it, and not after.
    *
-   * The owner was explicit: "A student should never be allowed to enroll in any past date
-   * classes/session." A student did book one two days old, and the class page then told them
-   * their teacher was 2,279 minutes late and offered them a refund form — for a lesson that
-   * was never going to happen and that they should never have been sold.
+   * The line was the scheduled **start**, which came from the owner's "a student should never
+   * be allowed to enroll in any past date classes/session" — but the class that prompted that
+   * was two days dead, and this rule also caught a class that was *running right now*. A
+   * teacher scheduled one two minutes out, went live, and nobody could buy their way in: the
+   * student paid and was told "the class has already started". That makes "Schedule & Go Live"
+   * unsellable, which cannot be what was meant.
    *
-   * The line is the scheduled start, not the end. Selling somebody the back half of a lesson
-   * that is already running is a worse deal than they think they are getting, and it is not
-   * something this platform has been asked to do.
+   * So the line is the moment the student's door shuts — the booked finish plus five minutes,
+   * the same instant they would stop being able to walk in. A class that is over cannot be
+   * sold, which is what the original complaint was about. A class in progress can, and the app
+   * says how long ago it started so the choice is an informed one rather than a surprise.
    */
-  if (new Date(session.date).getTime() <= Date.now()) {
+  const doorShut = canJoin(
+    { date: session.date, duration: session.duration, startedAt: null, endedAt: null, status: session.status },
+    Date.now(),
+  );
+  if (!doorShut.ok) {
     res.status(409).json({
-      error: "This class has already started, so it can no longer be booked.",
+      error: "This class is over, so it can no longer be booked.",
       started: true,
     });
     return;

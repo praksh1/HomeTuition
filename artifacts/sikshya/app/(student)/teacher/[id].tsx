@@ -197,8 +197,15 @@ export default function TeacherDetail() {
     }
   };
 
+  /**
+   * Take the booking, and let a failure reach the payment sheet.
+   *
+   * The sheet used to be closed on the way in and told nothing afterwards, so it announced
+   * "Payment Successful" and this then popped a separate "Booking failed" over the top of it.
+   * It stays open now and this rethrows, so one screen tells the truth instead of two
+   * contradicting each other.
+   */
   const confirmBooking = async (session: Session, paymentMethod: PaymentMethod) => {
-    setPaySession(null);
     if (bookingSessionId === session.id) return;
     setBookingSessionId(session.id);
     try {
@@ -212,6 +219,7 @@ export default function TeacherDetail() {
       await refreshAccess(session.id);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
+      setPaySession(null);
       if (res?.alreadyBooked) {
         notify("Already booked", "You have already paid for this session. Check your Sessions tab to join.");
         return;
@@ -228,17 +236,12 @@ You can join from your Sessions tab — the class opens a few minutes before it 
         router.push("/(student)/sessions");
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Booking failed. Please try again.";
-      // A decline is a normal outcome with a clear next step, not a crash.
-      const declined = /declin|payment|card/i.test(msg);
-      notify(
-        declined ? "Payment declined" : "Booking failed",
-        declined ? `${msg}
-
-Nothing has been charged and you are not enrolled.` : msg,
-      );
       // The attempt may have raced with another device; re-sync rather than assume.
       await refreshAccess(session.id);
+      // Rethrown so the payment sheet shows this instead of a success it has not earned.
+      // Nothing was charged and nothing was booked, which is what the sheet says.
+      const msg = e instanceof Error ? e.message : "That did not go through. Please try again.";
+      throw new Error(`${msg} Nothing has been charged.`);
     } finally {
       setBookingSessionId(null);
     }

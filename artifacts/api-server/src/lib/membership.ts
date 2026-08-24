@@ -14,7 +14,18 @@ export const JOIN_WINDOW_MINUTES = DOORS_OPEN_MINUTES;
 export interface SessionMembership {
   /** True only for the teacher who owns this session — not merely any teacher account. */
   isSessionTeacher: boolean;
-  /** True if the user holds an enrolment row for this session, paid or not. */
+  /**
+   * True while the user actually holds a place in this class.
+   *
+   * It used to mean "an enrolment row exists", which is not the same thing and caused a real
+   * bug: dropping a class leaves the row behind marked `refunded`, so the student's screen went
+   * on saying "Booked & paid" for a class they had left. Refreshing sometimes cleared it — only
+   * because the check had failed and the screen fell back to offering the booking — and signing
+   * back in showed "Book" for a moment before it flipped back.
+   *
+   * Somebody who has left is `wasRefunded`, which is what the read-only access to the thread and
+   * the attendance record hangs off.
+   */
   isEnrolledStudent: boolean;
   /** True once that enrolment has been paid for. Free sessions count as paid. */
   hasPaid: boolean;
@@ -85,7 +96,7 @@ export async function getSessionMembership(
 
   return {
     isSessionTeacher: false,
-    isEnrolledStudent: !!enrollment,
+    isEnrolledStudent: !!enrollment && enrollment.paymentStatus !== "refunded",
     hasPaid,
     wasRefunded: enrollment?.paymentStatus === "refunded",
     status: session.status,

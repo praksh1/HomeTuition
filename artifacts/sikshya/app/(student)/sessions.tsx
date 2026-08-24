@@ -70,15 +70,12 @@ export default function StudentSessions() {
 
   const loadSessions = async () => {
     try {
-      const [myRes, liveRes] = await Promise.all([
+      const [myRes] = await Promise.all([
         student?.userId
           ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null }[] }>(
               `/sessions?studentId=${student.userId}&limit=50`
             )
           : Promise.resolve({ sessions: [] }),
-        apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null }[] }>(
-          "/sessions?status=live&limit=10"
-        ),
       ]);
 
       const mapSession = (s: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null }): Session => ({
@@ -96,11 +93,17 @@ export default function StudentSessions() {
         enrolment: (s.enrolment as Session["enrolment"]) ?? null,
       });
 
-      const allSessions = [
-        ...myRes.sessions.map(mapSession),
-        ...liveRes.sessions.filter((ls) => !myRes.sessions.some((ms) => ms.id === ls.id)).map(mapSession),
-      ];
-      setSessions(allSessions);
+      /**
+       * Only classes this student actually holds.
+       *
+       * Every live class on the platform used to be merged in here, so one the student had
+       * never booked appeared under "Live Now" with a green "Join Live Session" — no mention of
+       * paying. Tapping it got as far as the video room, which refused it, and the student was
+       * told "Couldn't set up the video room" for a class they simply had not bought.
+       *
+       * Classes to buy belong in Discover. This screen is the ones they own.
+       */
+      setSessions(myRes.sessions.map(mapSession));
     } catch (_e) {
       // Offline: fall through to whatever was last known rather than emptying the list.
     } finally {
