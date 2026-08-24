@@ -2,9 +2,11 @@ import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet, apiPatch } from "@/utils/api";
 import { notify } from "@/utils/alerts";
 import WarningModal from "@/components/WarningModal";
+import NepaliDatePicker from "@/components/NepaliDatePicker";
 
 /**
  * Moving a class after people have booked it.
@@ -53,11 +55,13 @@ function splitLocal(iso: string): { date: string; time: string } {
 
 export default function RescheduleClass({ sessionId, currentDate, onMoved }: Props) {
   const colors = useColors();
+  const dates = useDates();
   const [info, setInfo] = useState<ScheduleInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
   const [asking, setAsking] = useState<Date | null>(null);
+  const [pickingDate, setPickingDate] = useState(false);
   const initial = splitLocal(currentDate);
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(initial.time);
@@ -135,13 +139,24 @@ export default function RescheduleClass({ sessionId, currentDate, onMoved }: Pro
 
   return (
     <View style={[styles.card, { borderColor: colors.border }]} testID="reschedule-class">
+      <NepaliDatePicker
+        visible={pickingDate}
+        value={date ? new Date(`${date}T00:00:00`) : null}
+        // A moved class must be at least two days out, so nearer days are not offered.
+        minDate={new Date(Date.now() + info.minNoticeHours * 3_600_000)}
+        title="Move the class to"
+        onCancel={() => setPickingDate(false)}
+        onPick={(picked) => {
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setDate(`${picked.getFullYear()}-${pad(picked.getMonth() + 1)}-${pad(picked.getDate())}`);
+          setPickingDate(false);
+        }}
+      />
       <WarningModal
         testID="reschedule-warning"
         visible={asking !== null}
         title="Are you sure you want to move this class?"
-        headline={asking ? asking.toLocaleString([], {
-          weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
-        }) : ""}
+        headline={asking ? dates.formatBoth(asking, { withWeekday: true, withTime: true }) : ""}
         headlineNote="The new date and time."
         consequences={consequences}
         confirmLabel="Yes, move it"
@@ -188,26 +203,17 @@ export default function RescheduleClass({ sessionId, currentDate, onMoved }: Pro
             booked have time to decide whether it suits them.
           </Text>
           <View style={styles.fields}>
-            <Field icon="calendar" colors={colors}>
-              {Platform.OS === "web" ? (
-                React.createElement("input", {
-                  type: "date",
-                  value: date,
-                  "data-testid": "reschedule-date",
-                  onChange: (e: any) => setDate(e.target.value),
-                  style: webInput(colors),
-                })
-              ) : (
-                <TextInput
-                  testID="reschedule-date"
-                  style={[styles.input, { color: colors.foreground }]}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor={colors.mutedForeground}
-                  value={date}
-                  onChangeText={setDate}
-                />
-              )}
-            </Field>
+            <TouchableOpacity
+              testID="reschedule-date"
+              onPress={() => setPickingDate(true)}
+              activeOpacity={0.8}
+              style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}
+            >
+              <Feather name="calendar" size={16} color={colors.mutedForeground} style={{ marginRight: 8 }} />
+              <Text style={[styles.input, { color: date ? colors.foreground : colors.mutedForeground }]}>
+                {date ? dates.format(`${date}T00:00:00`) : "Choose a date"}
+              </Text>
+            </TouchableOpacity>
             <Field icon="clock" colors={colors}>
               {Platform.OS === "web" ? (
                 React.createElement("input", {

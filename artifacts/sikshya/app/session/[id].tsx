@@ -18,6 +18,7 @@ import { notify } from "@/utils/alerts";
 import { countdown, humanDuration, serverNow, waitingState } from "@/utils/sessionClock";
 import { joinState, startState } from "@/utils/sessionWindow";
 import SessionThread from "@/components/SessionThread";
+import { useDates } from "@/context/DatePreferenceContext";
 import DropClass from "@/components/DropClass";
 import RescheduleClass from "@/components/RescheduleClass";
 
@@ -104,6 +105,7 @@ export default function SessionPage() {
    * Both ends of that subtraction come from the same handset, so the elapsed time is right
    * even when the handset's absolute time is not.
    */
+  const dates = useDates();
   const heardAt = useRef(Date.now());
   const [tick, setTick] = useState(Date.now());
 
@@ -230,10 +232,13 @@ export default function SessionPage() {
           <Feather name="clock" size={14} color={colors.mutedForeground} />
           <View style={{ flex: 1 }}>
             <Text style={[styles.clockPrimary, { color: colors.foreground }]}>
-              {scheduled.toLocaleString("en-NP", {
-                weekday: "short", day: "numeric", month: "short",
-                hour: "2-digit", minute: "2-digit",
-              })}
+              {/*
+                Both calendars here, unlike the lists. This is the page somebody opens to be
+                sure of a date — before a refund, before rearranging their day — and a reader
+                who thinks in one calendar but has to coordinate in the other should not have to
+                convert it themselves.
+              */}
+              {dates.formatBoth(scheduled, { withWeekday: true, withTime: true })}
             </Text>
             <Text style={[styles.clockSecondary, { color: colors.mutedForeground }]}>
               {countdown(session.date, now)} · {session.duration} min · now{" "}

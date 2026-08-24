@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useDates } from "@/context/DatePreferenceContext";
 
 interface Session {
   id: string;
@@ -28,17 +29,13 @@ export default function SessionCard({ session, onPress, showTeacher = false }: S
   const isLive = session.status === "live";
   const isCompleted = session.status === "completed";
 
+  const dates = useDates();
   const statusColor = isLive ? colors.success : isCompleted ? colors.mutedForeground : colors.accent;
   const statusBg = isLive ? colors.success + "15" : isCompleted ? colors.muted : colors.accent + "15";
   const statusLabel = isLive ? "LIVE" : isCompleted ? "Completed" : "Upcoming";
 
-  const formatted = date.toLocaleDateString("en-NP", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  // Bikram Sambat unless this person has asked for Gregorian. See context/DatePreferenceContext.
+  const formatted = dates.format(date, { withWeekday: true, withTime: true });
 
   return (
     <TouchableOpacity

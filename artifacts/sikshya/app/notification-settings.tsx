@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { PREF_LABELS, PREF_ORDER, type PrefChannel, type PrefKind } from "@/utils/notificationPrefs";
+import DateSystemSetting from "@/components/DateSystemSetting";
 
 /** Every switch, in a deliberate order. See utils/notificationPrefs.ts for why it lives there. */
 const ORDER: PrefKind[] = PREF_ORDER;
@@ -47,7 +48,16 @@ export default function NotificationSettingsScreen() {
     return (
       <View key={`${channel}:${kind}`} style={[styles.row, { borderBottomColor: colors.border }]}>
         <View style={styles.rowText}>
-          <Text style={[styles.rowTitle, { color: disabled ? colors.mutedForeground : colors.foreground }]}>
+          {/*
+        The calendar sits with the notification switches rather than in a screen of its own.
+        
+        Both are "how this app behaves for me", both are reached from Profile, and a settings
+        screen with one item on it is a screen nobody finds.
+      */}
+      <DateSystemSetting />
+      <View style={{ height: 20 }} />
+
+      <Text style={[styles.rowTitle, { color: disabled ? colors.mutedForeground : colors.foreground }]}>
             {label.title}
           </Text>
           <Text style={[styles.rowHelp, { color: colors.mutedForeground }]}>{label.help}</Text>

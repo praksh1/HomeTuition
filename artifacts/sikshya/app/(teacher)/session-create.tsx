@@ -16,6 +16,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch, apiPost } from "@/utils/api";
+import { useDates } from "@/context/DatePreferenceContext";
+import NepaliDatePicker from "@/components/NepaliDatePicker";
 import { useColors } from "@/hooks/useColors";
 import { useNotifications } from "@/context/NotificationContext";
 import { scheduleSessionReminder } from "@/utils/notifications";
@@ -49,6 +51,7 @@ export default function SessionCreate() {
   const [maxStudents, setMaxStudents] = useState(20);
   const [price, setPrice] = useState("500");
   const [date, setDate] = useState("");
+  const [pickingDate, setPickingDate] = useState(false);
   const [time, setTime] = useState("");
   const [saving, setSaving] = useState(false);
   /**
@@ -192,6 +195,8 @@ export default function SessionCreate() {
     }
   };
 
+  const dates = useDates();
+
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView
@@ -272,35 +277,30 @@ export default function SessionCreate() {
         <View style={styles.row}>
           <View style={{ flex: 1 }}>
             <Section title="Date *">
-              <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+              {/*
+                A Bikram Sambat calendar, not a Gregorian input.
+                
+                Nepal keeps its diary in Bikram Sambat, and a teacher looking at a Gregorian
+                field has to convert their own date before they can type it — every time, with a
+                wrong class date waiting at the end of any slip. The picker shows the Gregorian
+                equivalent underneath, so nothing is hidden from anybody who wants it.
+              */}
+              <TouchableOpacity
+                testID="session-date-btn"
+                onPress={() => setPickingDate(true)}
+                activeOpacity={0.8}
+                style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              >
                 <Feather name="calendar" size={16} color={colors.mutedForeground} style={{ marginRight: 8 }} />
-                {Platform.OS === "web" ? (
-                  React.createElement("input", {
-                    type: "date",
-                    value: date,
-                    onChange: (e: any) => setDate(e.target.value),
-                    style: {
-                      flex: 1,
-                      border: "none",
-                      outline: "none",
-                      background: "transparent",
-                      fontSize: 15,
-                      fontFamily: "Inter_400Regular",
-                      color: colors.foreground,
-                      width: "100%",
-                      colorScheme: colors.background === "#0A0A0A" || colors.background === "#000000" ? "dark" : "light",
-                    },
-                  })
-                ) : (
-                  <TextInput
-                    style={[styles.input, { color: colors.foreground }]}
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor={colors.mutedForeground}
-                    value={date}
-                    onChangeText={setDate}
-                  />
-                )}
-              </View>
+                <Text
+                  style={[
+                    styles.input,
+                    { color: date ? colors.foreground : colors.mutedForeground, paddingVertical: 12 },
+                  ]}
+                >
+                  {date ? dates.format(`${date}T00:00:00`, { withWeekday: true }) : "Choose a date"}
+                </Text>
+              </TouchableOpacity>
             </Section>
           </View>
           <View style={{ flex: 1 }}>
@@ -477,7 +477,20 @@ export default function SessionCreate() {
           <Feather name="calendar" size={20} color="#fff" />
           <Text style={styles.createBtnText}>{saving ? "Saving..." : "Schedule for Later"}</Text>
         </TouchableOpacity>
-      </ScrollView>
+        <NepaliDatePicker
+        visible={pickingDate}
+        value={date ? new Date(`${date}T00:00:00`) : null}
+        // A class cannot be scheduled in the past, so those days cannot be chosen at all.
+        minDate={new Date()}
+        title="When is the class?"
+        onCancel={() => setPickingDate(false)}
+        onPick={(picked) => {
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setDate(`${picked.getFullYear()}-${pad(picked.getMonth() + 1)}-${pad(picked.getDate())}`);
+          setPickingDate(false);
+        }}
+      />
+    </ScrollView>
     </KeyboardAvoidingView>
   );
 }
