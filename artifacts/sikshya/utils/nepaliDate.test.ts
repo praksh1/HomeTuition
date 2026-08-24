@@ -117,6 +117,19 @@ test("both calendars together, for the places where being sure matters", () => {
   assert.match(written, /2026/);
 });
 
+test("and the reader's own calendar comes first, whichever it is", () => {
+  const nepaliFirst = formatDateBoth(at("2026-08-24"), { system: "bs" });
+  assert.ok(nepaliFirst.indexOf("Bhadra") < nepaliFirst.indexOf("("), nepaliFirst);
+
+  /**
+   * The half that was wrong: this ignored the preference and always led with Bikram Sambat, so
+   * somebody who had chosen Gregorian still met a Nepali date on the page they open to be sure.
+   */
+  const gregorianFirst = formatDateBoth(at("2026-08-24"), { system: "ad" });
+  assert.ok(!gregorianFirst.startsWith("8 Bhadra"), gregorianFirst);
+  assert.match(gregorianFirst, /\(8 Bhadra 2083\)/);
+});
+
 test("an unreadable date produces nothing rather than a wrong something", () => {
   assert.equal(formatDate("not a date"), "");
   assert.equal(toBikramSambat("not a date"), null);

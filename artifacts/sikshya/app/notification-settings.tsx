@@ -48,16 +48,7 @@ export default function NotificationSettingsScreen() {
     return (
       <View key={`${channel}:${kind}`} style={[styles.row, { borderBottomColor: colors.border }]}>
         <View style={styles.rowText}>
-          {/*
-        The calendar sits with the notification switches rather than in a screen of its own.
-        
-        Both are "how this app behaves for me", both are reached from Profile, and a settings
-        screen with one item on it is a screen nobody finds.
-      */}
-      <DateSystemSetting />
-      <View style={{ height: 20 }} />
-
-      <Text style={[styles.rowTitle, { color: disabled ? colors.mutedForeground : colors.foreground }]}>
+          <Text style={[styles.rowTitle, { color: disabled ? colors.mutedForeground : colors.foreground }]}>
             {label.title}
           </Text>
           <Text style={[styles.rowHelp, { color: colors.mutedForeground }]}>{label.help}</Text>
@@ -92,6 +83,15 @@ export default function NotificationSettingsScreen() {
         contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 32 }]}
         showsVerticalScrollIndicator={false}
       >
+        {/*
+          The calendar sits with the notification switches rather than in a screen of its own.
+
+          Both are "how this app behaves for me", both are reached from Profile, and a settings
+          screen with one item on it is a screen nobody finds.
+        */}
+        <DateSystemSetting />
+        <View style={{ height: 24 }} />
+
         {error && (
           <View style={[styles.notice, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "30" }]}>
             <Feather name="alert-circle" size={16} color={colors.destructive} />

@@ -265,10 +265,20 @@ async function main() {
     await page.waitForTimeout(1500);
     check("the form opens", (await page.locator('[data-testid="reschedule-date"]').count()) > 0);
 
-    const to = new Date(Date.now() + 15 * DAY);
-    const pad = (n) => String(n).padStart(2, "0");
-    await page.locator('[data-testid="reschedule-date"]').fill(
-      `${to.getFullYear()}-${pad(to.getMonth() + 1)}-${pad(to.getDate())}`);
+    /**
+     * The date comes from the Bikram Sambat calendar now, not a typed Gregorian string.
+     *
+     * A month forward puts every day comfortably past the 48-hour notice, so nothing in the
+     * grid is disabled and any day can be picked.
+     */
+    await page.locator('[data-testid="reschedule-date"]').click({ timeout: 15000 });
+    await page.waitForTimeout(1200);
+    await page.locator('[data-testid="bs-next-month"]').click({ timeout: 10000 });
+    await page.waitForTimeout(800);
+    await page.locator('[data-testid="bs-day-15"]').click({ timeout: 10000 });
+    await page.waitForTimeout(500);
+    await page.locator('[data-testid="bs-confirm"]').click({ timeout: 10000 });
+    await page.waitForTimeout(1000);
     await page.locator('[data-testid="reschedule-time"]').fill("14:30");
     await page.locator('[data-testid="reschedule-save-btn"]').click({ timeout: 15000 });
     await page.waitForTimeout(1500);

@@ -218,8 +218,21 @@ export function formatDate(value: Date | string | number, options: FormatOptions
 export function formatDateBoth(value: Date | string | number, options: FormatOptions = {}): string {
   const at = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(at.getTime())) return "";
-  const bs = formatDate(at, { ...options, system: "bs" });
-  const ad = formatDate(at, { ...options, system: "ad", withTime: false, withWeekday: false });
-  if (!toBikramSambat(at)) return bs;
-  return `${bs} (${ad})`;
+  /**
+   * The reader's own calendar first, the other one in brackets.
+   *
+   * This used to put Bikram Sambat first regardless, ignoring the preference entirely — so
+   * somebody who had chosen Gregorian still met a Nepali date on the one page they open to be
+   * sure of one. Found by setting the default back to Gregorian and watching a browser test
+   * that should have failed carry on passing.
+   */
+  const preferred = options.system ?? "bs";
+  const other: DateSystem = preferred === "bs" ? "ad" : "bs";
+
+  const main = formatDate(at, { ...options, system: preferred });
+  const aside = formatDate(at, { ...options, system: other, withTime: false, withWeekday: false });
+
+  // No conversion available for this date: both halves would say the same thing.
+  if (!toBikramSambat(at)) return main;
+  return `${main} (${aside})`;
 }

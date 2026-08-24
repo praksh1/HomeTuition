@@ -351,6 +351,10 @@ jobs:
           # and reports the refusal as "Load failed" and nothing more. The app has to notice
           # and send the file through our own API instead.
           pnpm --filter @workspace/sikshya run test:uploads
+          # The Nepali calendar, through the screens. The conversion is unit-tested; this is
+          # whether a Nepali teacher can schedule a class without converting a date in their
+          # head, and whether a student sees the date they recognise.
+          pnpm --filter @workspace/sikshya run test:calendar
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local
