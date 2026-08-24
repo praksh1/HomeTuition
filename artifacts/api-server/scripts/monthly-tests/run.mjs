@@ -66,7 +66,24 @@ const TIER = 6500;
  */
 function ageClass(klassId, planId, days) {
   sql(`update teacher_plans set cycle_anchor = cycle_anchor - interval '${days} days' where id = ${planId}`);
-  sql(`update recurring_days set scheduled_for = scheduled_for - interval '${days} days' where recurring_id = ${klassId}`);
+
+  /*
+   * Moved in two hops, both far longer than the month the classes span.
+   *
+   * One shift of twenty days looks obviously right and is not: the row on day twenty lands on
+   * day zero, where its own neighbour still sits, and `recurring_days_slot_idx` refuses it.
+   * Whether it refuses depends on the order Postgres happens to update the rows in — ascending
+   * is fine, descending collides — so a single shift is a coin toss that passed several times
+   * before failing. Hopping the whole set out of its own range and back cannot overlap itself
+   * in either order.
+   *
+   * Worth knowing outside this file: moving the daily time will have to move real class-days
+   * the same way. See the 501 on PATCH /monthly/classes/:id/time.
+   */
+  const FAR = 4000;
+  sql(`update recurring_days set scheduled_for = scheduled_for - interval '${FAR} days' where recurring_id = ${klassId}`);
+  sql(`update recurring_days set scheduled_for = scheduled_for + interval '${FAR - days} days' where recurring_id = ${klassId}`);
+
   sql(`update recurring_days set status = 'held' where recurring_id = ${klassId} and scheduled_for < now() and status = 'planned'`);
 }
 

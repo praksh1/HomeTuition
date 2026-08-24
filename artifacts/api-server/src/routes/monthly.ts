@@ -550,6 +550,17 @@ router.patch("/monthly/classes/:id/time", requireAuth, async (req: Request, res:
     return;
   }
 
+  /*
+   * Not finished, and refused clearly rather than half-done.
+   *
+   * The classes already on the calendar have to move with the time, and that move is not a
+   * single UPDATE: shifting a set of class-days by a few hours lands some of them on instants
+   * their own neighbours still hold, which `recurring_days_slot_idx` refuses — and whether it
+   * refuses depends on the order Postgres updates the rows in, so the naive version passes
+   * until it doesn't. It has to hop the whole set clear of its own range and back, inside one
+   * transaction, and students holding places have to be told what moved. Half of that would
+   * leave a class split across two times with students at both.
+   */
   res.status(501).json({
     error:
       "Changing the daily time is not finished yet — the classes already on the calendar have " +
