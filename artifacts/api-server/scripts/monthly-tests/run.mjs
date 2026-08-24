@@ -39,6 +39,39 @@ function listen(token) {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Reads an id out of a response, or fails the check and stops this section.
+ *
+ * Reaching straight into `res.body.enrolment.id` reads fine until the request is refused for a
+ * reason the test did not expect — then the suite dies on a TypeError and every check after it
+ * simply never runs. That happened while breaking the forty-eight hour rule on purpose: the
+ * rule change suspended a teacher three sections earlier, and the report was a stack trace
+ * instead of a failure.
+ */
+function idFrom(res, path, what) {
+  const value = path.split(".").reduce((o, k) => (o == null ? o : o[k]), res?.body);
+  if (typeof value !== "number") {
+    check(`could read ${what}`, false, `status ${res?.status}: ${JSON.stringify(res?.body)?.slice(0, 160)}`);
+    throw new SectionAborted(what);
+  }
+  return value;
+}
+
+class SectionAborted extends Error {}
+
+/** Runs a section, and lets a failed read end that section without ending the suite. */
+async function section(name, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    if (err instanceof SectionAborted) {
+      console.log(`  ---- "${name}" stopped early: ${err.message} could not be read`);
+      return;
+    }
+    throw err;
+  }
+}
+
 async function until(events, test, ms = 4000) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
@@ -269,7 +302,7 @@ async function joinTests() {
     `quoted ${quoted?.amount}, charged ${joined.body?.enrolment?.amountPaid}`);
 
   const row = sql(`select amount_paid, platform_share, teacher_share, sessions_paid_for, sessions_planned
-                   from recurring_enrollments where id = ${joined.body.enrolment.id}`).split("|");
+                   from recurring_enrollments where id = ${idFrom(joined, "enrolment.id", "the student's place")}`).split("|");
   const [paid, platform, teacherShare, paidFor, planned] = row.map(Number);
   check("the two shares add back to what was paid", platform + teacherShare === paid, `${platform} + ${teacherShare} ≠ ${paid}`);
   check("Sikshya's share is thirty per cent", platform === Math.round(paid * 0.3), `${platform} of ${paid}`);
@@ -314,7 +347,7 @@ async function roundingTest() {
 
   const joined = await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
   check("and that rounded price is what is charged", joined.body?.enrolment?.amountPaid === 233, `charged ${joined.body?.enrolment?.amountPaid}`);
-  const [platform, teacherShare] = sql(`select platform_share, teacher_share from recurring_enrollments where id = ${joined.body.enrolment.id}`).split("|").map(Number);
+  const [platform, teacherShare] = sql(`select platform_share, teacher_share from recurring_enrollments where id = ${idFrom(joined, "enrolment.id", "the student's place")}`).split("|").map(Number);
   check("the shares still add back exactly, with no rupee lost or invented", platform + teacherShare === 233, `${platform} + ${teacherShare} ≠ 233`);
 }
 
@@ -390,7 +423,7 @@ async function syncTests() {
   check("and the student's month-one place no longer counts as current", later.body?.class?.enrolment === null, JSON.stringify(later.body?.class?.enrolment));
   check("so they are quoted for month two", typeof later.body?.class?.quote?.amount === "number", JSON.stringify(later.body?.class?.quote));
 
-  const oldRow = Number(sql(`select cycle_index from recurring_enrollments where id = ${joined.body.enrolment.id}`));
+  const oldRow = Number(sql(`select cycle_index from recurring_enrollments where id = ${idFrom(joined, "enrolment.id", "the student's place")}`));
   check("their month-one place is kept on the record, not deleted", oldRow === 0, `got ${oldRow}`);
 }
 
@@ -868,13 +901,29 @@ async function makeupTests() {
   const first = list.body?.missed?.find((m) => m.id === missed[0]);
   check("a class missed three days ago counts against them", first?.countsAgainstYou === true, JSON.stringify(first));
 
+  /*
+   * And one missed an hour ago does not — the teacher still has time to arrange a make-up.
+   *
+   * Asked of the server rather than of the database. Reading `missed_at` and doing the
+   * arithmetic here would only prove the suite can subtract; this is the rule the teacher is
+   * actually shown, and removing the deadline from the query has to fail it.
+   */
+  const fresh = missMore(klass.id, 1, 1);
+  await judge(klass.id, teacher.token);
+  const soonList = await api(`/monthly/classes/${klass.id}/missed`, { token: teacher.token });
+  const recent = soonList.body?.missed?.find((m) => m.id === fresh[0]);
+  check("a class missed an hour ago does not count against them yet", recent?.countsAgainstYou === false, JSON.stringify(recent));
+  check("and they are told how long they have", (recent?.hoursLeft ?? 0) > 40, `${recent?.hoursLeft} hours left`);
+  const standingNow = await api("/monthly/plan", { token: teacher.token });
+  check("so it is not a black mark either", standingNow.body?.standing?.abuses === 2, `${standingNow.body?.standing?.abuses} marks`);
+
   const at = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString();
   const made = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[0], at } });
   check("a make-up can be arranged", made.status === 201, `status ${made.status} ${JSON.stringify(made.body)?.slice(0, 140)}`);
   check("and it is counted against the five", made.body?.makeups?.used === 1, `used ${made.body?.makeups?.used}`);
   check("the students are told about it", made.body?.studentsTold >= 1, `told ${made.body?.studentsTold}`);
 
-  const row = sql(`select kind, status, makeup_for_id from recurring_days where id = ${made.body.makeup.id}`).split("|");
+  const row = sql(`select kind, status, makeup_for_id from recurring_days where id = ${idFrom(made, "makeup.id", "the make-up class")}`).split("|");
   check("it is written down as a make-up for that class", row[0] === "makeup" && Number(row[2]) === missed[0], row.join("|"));
 
   const again = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[0], at: new Date(Date.now() + 6 * 24 * 3600 * 1000).toISOString() } });
@@ -1194,28 +1243,28 @@ async function moneyInvariants() {
 
 async function main() {
   console.log(`Monthly tier suite → ${API}`);
-  await planTests();
-  await classTests();
-  await joinTests();
-  await roundingTest();
-  await proRatingTests();
-  await syncTests();
-  await capacityTests();
-  await concurrencyTests();
-  await classDayTests();
-  await lateJoinerTests();
-  await concurrentMaterialiseTest();
-  await ledgerTests();
-  await ruleTests();
-  await timeChangeTests();
-  await timeChangeEdgeTests();
-  await makeupTests();
-  await makeupLimitTests();
-  await abuseAndSuspensionTests();
-  await cycleCloseTests();
-  await deliveredMonthTests();
-  await enforcementConcurrencyTests();
-  await moneyInvariants();
+  await section("planTests", planTests);
+  await section("classTests", classTests);
+  await section("joinTests", joinTests);
+  await section("roundingTest", roundingTest);
+  await section("proRatingTests", proRatingTests);
+  await section("syncTests", syncTests);
+  await section("capacityTests", capacityTests);
+  await section("concurrencyTests", concurrencyTests);
+  await section("classDayTests", classDayTests);
+  await section("lateJoinerTests", lateJoinerTests);
+  await section("concurrentMaterialiseTest", concurrentMaterialiseTest);
+  await section("ledgerTests", ledgerTests);
+  await section("ruleTests", ruleTests);
+  await section("timeChangeTests", timeChangeTests);
+  await section("timeChangeEdgeTests", timeChangeEdgeTests);
+  await section("makeupTests", makeupTests);
+  await section("makeupLimitTests", makeupLimitTests);
+  await section("abuseAndSuspensionTests", abuseAndSuspensionTests);
+  await section("cycleCloseTests", cycleCloseTests);
+  await section("deliveredMonthTests", deliveredMonthTests);
+  await section("enforcementConcurrencyTests", enforcementConcurrencyTests);
+  await section("moneyInvariants", moneyInvariants);
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failures.length) {
