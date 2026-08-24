@@ -181,6 +181,15 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:round
 
+      # Does the student actually hear that their class moved, and the teacher that somebody
+      # left? Each event twenty times over, watched down a real socket, because a notification
+      # that arrives nineteen times out of twenty works every time you try it by hand and
+      # fails for somebody else.
+      - name: Notifications people are waiting on
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:alerts
+
       # The support desk. Half of this suite is spent trying to get in rather than on the
       # features once inside: a tool that can suspend accounts and reset passwords is one where
       # "who is allowed in here" has to be answered by the server on every request, not by

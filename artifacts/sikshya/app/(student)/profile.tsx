@@ -109,28 +109,22 @@ export default function StudentProfile() {
         </View>
       </View>
 
-      <View style={[styles.securityCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.cardTitle, { color: colors.foreground }]}>Security</Text>
-        {[
-          { icon: "shield", label: "Two-factor authentication", value: "Enabled" },
-          { icon: "lock", label: "Password", value: "Last changed 30 days ago" },
-          { icon: "bell", label: "Session alerts", value: "SMS + Email" },
-        ].map((item) => (
-          <TouchableOpacity
-            key={item.label}
-            style={styles.secRow}
-            onPress={() => notify(item.label, `Manage your ${item.label.toLowerCase()} settings.`)}
-            activeOpacity={0.7}
-          >
-            <Feather name={item.icon as "shield"} size={16} color={colors.mutedForeground} />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.secLabel, { color: colors.foreground }]}>{item.label}</Text>
-              <Text style={[styles.secValue, { color: colors.mutedForeground }]}>{item.value}</Text>
-            </View>
-            <Feather name="chevron-right" size={16} color={colors.border} />
-          </TouchableOpacity>
-        ))}
-      </View>
+      {/*
+        A "Security" card used to sit here, and every line of it was invented.
+
+        It said two-factor authentication was **Enabled** — there is none, and none has ever
+        been built. It said the password was "Last changed 30 days ago", read from nothing. It
+        said session alerts went by "SMS + Email", and this product cannot send a text message
+        at all: there is no SMS code anywhere in it.
+
+        The first of those is the one that mattered. Somebody who believes they have a second
+        factor makes different decisions about their password, and they would have been wrong.
+        This is the same fault as the Rec button that announced "Recording saved to Sikshya
+        cloud" while saving nothing, and it gets the same treatment: removed, not hidden.
+
+        What replaces it is the one control here that is real. When there is 2FA, or a password
+        changed date worth reading, they can be shown — because they will be true.
+      */}
 
       <TouchableOpacity
         style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
@@ -197,10 +191,6 @@ const styles = StyleSheet.create({
   pmAccount: { fontSize: 12, fontFamily: "Inter_400Regular" },
   verifiedBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 4 },
   verifiedText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  securityCard: { marginHorizontal: 20, borderRadius: 18, borderWidth: 1, padding: 18, gap: 4 },
-  secRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10 },
-  secLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  secValue: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   followBtn: { marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 },
   followBtnText: { fontSize: 13.5, fontFamily: "Inter_600SemiBold", color: "#fff" },
   logoutBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15 },
