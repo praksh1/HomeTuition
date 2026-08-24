@@ -172,6 +172,15 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:refunds
 
+      # The fourth testing round's bugs, each pinned so it cannot come back. Three of them
+      # chained: a teacher created a class in the past, it sat in Upcoming saying "Session
+      # Expired", a student bought it, and the page told them their teacher was 2,279 minutes
+      # late and offered a refund form for a lesson that was never going to happen.
+      - name: A class in the past, and the Subscribe button
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:round
+
       # The support desk. Half of this suite is spent trying to get in rather than on the
       # features once inside: a tool that can suspend accounts and reset passwords is one where
       # "who is allowed in here" has to be answered by the server on every request, not by

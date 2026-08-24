@@ -54,12 +54,28 @@ async function register(role) {
   return res.body;
 }
 
+/**
+ * A class, at any point on the clock.
+ *
+ * A class **in the past is aged into it afterwards**, not created there. The API refuses a
+ * back-dated class now, and rightly: a teacher created one, it sat in the Upcoming list saying
+ * "Session Expired", and a student bought it and was told their teacher was 2,279 minutes late.
+ *
+ * So the only honest way to get an old class is the way a real one gets old — it is created
+ * ahead and the clock passes it. That is what the update below stands in for.
+ */
 async function createSession(teacher, { minutesFromNow = 5, duration = 60 } = {}) {
+  const backdated = minutesFromNow < 0;
   const res = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: `Class ${++seq}`, subject: "Maths", description: "d",
-    date: new Date(Date.now() + minutesFromNow * 60_000).toISOString(),
+    date: new Date(Date.now() + (backdated ? 60 : minutesFromNow) * 60_000).toISOString(),
     duration, price: 500, maxStudents: 10 } });
   if (res.status > 201) throw new Error(`create session: ${res.status} ${JSON.stringify(res.body)}`);
+
+  if (backdated) {
+    sql(`update sessions set date = now() - interval '${Math.abs(minutesFromNow)} minutes' where id = ${res.body.id}`);
+    return { ...res.body, date: new Date(Date.now() + minutesFromNow * 60_000).toISOString() };
+  }
   return res.body;
 }
 
