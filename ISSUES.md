@@ -1453,3 +1453,72 @@ try it by hand and fails for somebody else.
 
 The SMS row is asserted, not just noted: a preference for it inserted directly into the database
 is ignored, so no switch can ever appear for something that will never send.
+
+---
+
+## Reported 2026-08-24 (sixth run) — a receipt for a payment that never happened
+
+### K1. The payment sheet announced success before it tried — **FIXED**
+
+The worst thing found in this codebase so far, and worth reading in order. The sheet collected an
+MPIN, paused 1.5 seconds, showed **"Payment Successful — NPR 500 paid via eSewa"**, paused
+another 0.8 seconds, and *only then* attempted the booking.
+
+So every possible failure — class already started, class full, server down — arrived on somebody
+who had just been shown a receipt. On a product where no money moves at all yet, that was the app
+inventing one. Reported as "it says 'Payment Successful' and immediately pops 'Booking failed'".
+
+The order is reversed: the booking runs first, the success screen is only reached if it worked,
+and a failure is shown on the sheet itself, still open, saying nothing has been charged. The
+success screen says **"You're booked"**, because that is the thing that actually happened.
+
+**And the fix was not enough on its own.** The sheet still showed success for a full class,
+because the caller started the booking without returning its promise — the sheet awaited
+`undefined`, resolved instantly, and the rejection became an unhandled promise nobody saw. Every
+server test passed throughout: the 409 was correct and no enrolment was written. Only a browser
+driving the real sheet could see the screen saying otherwise.
+
+The teacher's Pro subscription had the same disease: it swallowed the server error and marked the
+plan active locally, so a subscription that never reached the server still told the teacher it was
+live. Fixed the same way, minimally, since the payment plans are about to be reworked.
+
+### K2. A dropped class kept saying "Booked & paid" — **FIXED**
+
+`isEnrolled` meant "an enrolment row exists", and dropping leaves the row behind marked
+`refunded`. That explains the flapping in the report exactly: refreshing sometimes cleared it,
+but only because the check had failed and the screen fell back to offering the booking; signing
+back in showed "Book" for a moment before it flipped. It means "holds a place" now.
+
+### K3. Every live class on the platform appeared in My Sessions — **FIXED**
+
+A class the student had never booked showed under "Live Now" with a green **Join Live Session**
+and no mention of paying. Tapping it reached the video room, which refused it, and reported
+"Couldn't set up the video room" — for a class they simply had not bought. Classes to buy belong
+in Discover; that screen is the ones they own.
+
+### K4. "Schedule & Go Live" was unsellable, and that was my doing — **FIXED**
+
+The previous round set the booking cutoff at the scheduled **start**, on the instruction that a
+student should never enrol in a past class. But the class that prompted that instruction was two
+days dead, and the rule also caught one running *right now*: a teacher scheduled a class two
+minutes out, went live, and nobody could buy in.
+
+The cutoff is now the moment the student's door shuts — the booked finish plus five minutes — so
+a class in progress can still be joined and one that is over cannot. The original complaint is
+still covered, and there is a test naming the two-day-old class from that report.
+
+The first attempt at this used `canJoin`, which is false *before* the doors open as well as
+after they shut, and made every class more than ten minutes away unbookable. The tests caught it
+on the first run.
+
+### K5. The video size control sat on top of Daily's panel close — **FIXED**
+
+It floated at the top-right corner of the video pane, which is exactly where Daily puts the close
+button for its Chat and People panels. The two stacked, ours on top, so the panel could not be
+closed at all: every press shrank the video and grew the board instead, with no way back to the
+call. Reported with the overlap circled.
+
+**The rule now: nothing of ours is drawn over the Daily iframe's corners.** Daily owns that
+surface and changes it between versions. The size control lives on our own header, where it
+cannot be covered and cannot cover anything, and the five-minute wrap-up banner leaves a gutter
+on the right for the same reason.
