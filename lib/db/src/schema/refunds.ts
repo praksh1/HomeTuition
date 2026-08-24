@@ -20,9 +20,15 @@ export const refundsTable = pgTable(
   "refunds",
   {
     id: serial("id").primaryKey(),
-    sessionId: integer("session_id")
-      .notNull()
-      .references(() => sessionsTable.id, { onDelete: "cascade" }),
+    /**
+     * The class this is about — null for a monthly refund.
+     *
+     * A monthly refund is owed for a *month*, not for one class: the teacher fell short across
+     * thirty of them, or was suspended part-way through. Pointing it at one arbitrary class of
+     * the month would be a lie in the one table an agent uses to decide what to pay somebody.
+     * `recurringId` and `cycleIndex` below say what it is really about.
+     */
+    sessionId: integer("session_id").references(() => sessionsTable.id, { onDelete: "cascade" }),
     studentId: integer("student_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
@@ -34,8 +40,15 @@ export const refundsTable = pgTable(
     teacherShare: integer("teacher_share").notNull().default(0),
     /** What the platform keeps — a cancellation fee, not a processing fee. */
     platformShare: integer("platform_share").notNull().default(0),
-    /** `schedule_change` | `student_drop` | `agent_discretion`. */
+    /**
+     * `schedule_change` | `student_drop` | `agent_discretion` | `monthly_shortfall` |
+     * `monthly_suspension`.
+     */
     reason: text("reason").notNull(),
+    /** The monthly class this is about, when it is about one. */
+    recurringId: integer("recurring_id"),
+    /** Which month of it. Null alongside `recurringId`. */
+    cycleIndex: integer("cycle_index"),
     /** `owed` until somebody pays it, then `paid`. Never `refunded` — nothing here refunds. */
     status: text("status").notNull().default("owed"),
     /** An agent's explanation, when the refund was their judgement rather than a rule's. */

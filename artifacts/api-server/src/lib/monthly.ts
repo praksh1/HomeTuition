@@ -335,6 +335,55 @@ export function shortfallRefund(claim: RefundClaim): number {
   return proRatedShortfall(claim.amountPaid, claim.sessionsPaidFor, claim.sessionsReceived);
 }
 
+export interface Clawback {
+  /** Back to the student. */
+  refunded: number;
+  /** Taken out of what the teacher had coming. */
+  fromTeacher: number;
+  /** Taken out of Sikshya's fee, once the teacher's share is exhausted. */
+  fromPlatform: number;
+  /** What the teacher still keeps. */
+  teacherKeeps: number;
+  /** What Sikshya still keeps. */
+  platformKeeps: number;
+}
+
+/**
+ * Where a monthly refund's money comes from.
+ *
+ * The owner was specific: it comes out of the teacher's share, which Sikshya is holding, and
+ * then out of Sikshya's own fee. In that order — the teacher did not deliver, so the teacher
+ * carries it first, and Sikshya carries the rest rather than the student carrying any of it.
+ *
+ * That ordering only means anything because the money is **held**. A student's fee is not paid
+ * out at the moment they join; it sits until the month has been delivered, which is what makes
+ * a refund possible at all. If it were paid straight through, there would be nothing to take
+ * back and this would be a bill to send a teacher rather than a refund to make.
+ *
+ * The four numbers always add back: what goes to the student plus what each side keeps is
+ * exactly what the student paid.
+ */
+export function refundClawback(
+  amountRefunded: number,
+  teacherShareHeld: number,
+  platformShareHeld: number,
+): Clawback {
+  const teacherHeld = Math.max(0, Math.round(teacherShareHeld));
+  const platformHeld = Math.max(0, Math.round(platformShareHeld));
+  const refunded = Math.min(Math.max(0, Math.round(amountRefunded)), teacherHeld + platformHeld);
+
+  const fromTeacher = Math.min(refunded, teacherHeld);
+  const fromPlatform = refunded - fromTeacher;
+
+  return {
+    refunded,
+    fromTeacher,
+    fromPlatform,
+    teacherKeeps: teacherHeld - fromTeacher,
+    platformKeeps: platformHeld - fromPlatform,
+  };
+}
+
 /**
  * Whether a missed class has become a mark against the teacher.
  *

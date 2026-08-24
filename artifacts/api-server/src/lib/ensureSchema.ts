@@ -575,3 +575,39 @@ export async function ensureMonthlyTierTables(): Promise<void> {
     );
   }
 }
+
+/**
+ * Brings the tables the monthly tier's enforcement writes to up to date.
+ *
+ * Two changes, both additive, and one of them is an `ALTER` — same licence as
+ * `ensureDisputeColumns`, which already drops a NOT NULL at boot for the same reason: the API
+ * redeploys itself and `db:push` is run by hand, and the gap between them is where a 500 lives.
+ *
+ * Dropping NOT NULL from `refunds.session_id` cannot break a reader. The agent's queue already
+ * left-joins the class, so it is already written for a row that has none, and the one place
+ * that matches on `session_id` is asking about a specific class — a monthly row simply is not
+ * an answer to that question.
+ */
+export async function ensureMonthlyEnforcementColumns(): Promise<void> {
+  try {
+    await db.execute(sql`ALTER TABLE "refunds" ALTER COLUMN "session_id" DROP NOT NULL`);
+    await db.execute(sql`ALTER TABLE "refunds" ADD COLUMN IF NOT EXISTS "recurring_id" integer`);
+    await db.execute(sql`ALTER TABLE "refunds" ADD COLUMN IF NOT EXISTS "cycle_index" integer`);
+    await db.execute(sql`
+      ALTER TABLE "teacher_plans"
+        ADD COLUMN IF NOT EXISTS "warned_at_abuses" integer NOT NULL DEFAULT 0
+    `);
+    await db.execute(sql`
+      ALTER TABLE "teacher_plans"
+        ADD COLUMN IF NOT EXISTS "settled_through_cycle" integer NOT NULL DEFAULT -1
+    `);
+    logger.info("monthly enforcement columns are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not update the tables the monthly tier settles money in; run `pnpm run db:push`. " +
+        "Classes still run and students can still join — but a month cannot be closed, so no " +
+        "refund is written and nobody is suspended, and both wait rather than half-happening.",
+    );
+  }
+}

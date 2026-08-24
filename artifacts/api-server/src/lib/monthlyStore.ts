@@ -4,6 +4,7 @@ import {
   recurringDaysTable,
   recurringEnrollmentsTable,
   recurringSessionsTable,
+  refundsTable,
   sessionEnrollmentsTable,
   sessionsTable,
   teacherPlansTable,
@@ -11,7 +12,21 @@ import {
   type RecurringSession,
   type TeacherPlan,
 } from "@workspace/db";
-import { CYCLE_DAYS, cycleAt, cycleEnd, planCycleAnchor } from "./monthly";
+import {
+  CYCLE_DAYS,
+  MAKEUP_DEADLINE_HOURS,
+  SUSPENSION_DAYS,
+  abuseStanding,
+  canAddMakeup,
+  cycleAt,
+  cycleEnd,
+  planCycleAnchor,
+  refundClawback,
+  shortfallRefund,
+  stoppedEarlyRefund,
+  suspensionEnds,
+  type Clawback,
+} from "./monthly";
 import { classInstants, instantOfLocalTime, localDayKey } from "./monthlySchedule";
 
 /** Anything that can run a query — the database, or a transaction on it. */
@@ -616,5 +631,443 @@ export async function changeDailyTime(
       studentIds: [...new Set(students.map((s) => s.studentId))],
       nextAt,
     };
+  });
+}
+
+/* ------------------------------------------------------------------ enforcement */
+
+/**
+ * Black marks against a teacher this month.
+ *
+ * Counted from the ledger rather than stored. A missed class is a mark only once the
+ * forty-eight hours the owner allowed for putting a make-up on the calendar have run out, and
+ * a make-up added later clears it — which is what `isAbuse` says, and deriving the count means
+ * the two can never drift apart. Suspension, by contrast, *is* recorded: once it has happened
+ * it has happened, and a make-up bought afterwards does not undo it.
+ */
+export async function abusesIn(
+  recurringId: number,
+  cycleIndex: number,
+  now: number = Date.now(),
+  conn: Db = db,
+): Promise<number> {
+  const deadline = new Date(now - MAKEUP_DEADLINE_HOURS * 60 * 60 * 1000);
+  const [row] = await conn
+    .select({ n: count() })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, recurringId),
+        eq(recurringDaysTable.cycleIndex, cycleIndex),
+        eq(recurringDaysTable.status, "missed"),
+        lt(recurringDaysTable.missedAt, deadline),
+        sql`not exists (
+          select 1 from recurring_days m
+           where m.makeup_for_id = ${recurringDaysTable.id}
+             and m.status <> 'cancelled'
+        )`,
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/** How many make-up classes a month has used. */
+export async function makeupsIn(
+  recurringId: number,
+  cycleIndex: number,
+  conn: Db = db,
+): Promise<number> {
+  const [row] = await conn
+    .select({ n: count() })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, recurringId),
+        eq(recurringDaysTable.cycleIndex, cycleIndex),
+        eq(recurringDaysTable.kind, "makeup"),
+        sql`status <> 'cancelled'`,
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/**
+ * Makes sure the month a class is currently in has its class-days.
+ *
+ * Only month zero is written when the class is created. Without this, a class rolls into its
+ * second month and has nothing in it: no classes to attend, and — because a price is a count
+ * of the classes still to come — nothing to sell either.
+ */
+export async function ensureCycleGenerated(
+  klass: RecurringSession,
+  cycleIndex: number,
+  cycleStartMs: number,
+): Promise<number> {
+  const existing = await countRegularDays(klass.id, cycleIndex);
+  if (existing > 0) return existing;
+  return generateCycle(klass, cycleIndex, cycleStartMs);
+}
+
+/** What one student actually received of what they bought, and what the month held overall. */
+async function receiptFor(
+  recurringId: number,
+  cycleIndex: number,
+  joinedAt: Date,
+  conn: Db = db,
+): Promise<number> {
+  const [row] = await conn
+    .select({ n: count() })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, recurringId),
+        eq(recurringDaysTable.cycleIndex, cycleIndex),
+        eq(recurringDaysTable.status, "held"),
+        gt(recurringDaysTable.scheduledFor, joinedAt),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+/** Classes held in a month, counting make-ups: a make-up is a class that happened. */
+async function heldIn(recurringId: number, cycleIndex: number, conn: Db = db): Promise<number> {
+  const [row] = await conn
+    .select({ n: count() })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, recurringId),
+        eq(recurringDaysTable.cycleIndex, cycleIndex),
+        eq(recurringDaysTable.status, "held"),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+export interface Settlement {
+  cycleIndex: number;
+  students: number;
+  refunded: number;
+  fromTeacher: number;
+  fromPlatform: number;
+}
+
+/**
+ * Writes one student's refund and closes their place.
+ *
+ * The refund row is a debt written down, not money moved — see the note on `refunds`. It is the
+ * same table and the same queue an agent already works through, because a monthly refund is not
+ * a different kind of promise to somebody and should not need a different person to notice it.
+ */
+async function settleStudent(
+  tx: Db,
+  args: {
+    recurringId: number;
+    cycleIndex: number;
+    enrolment: { id: number; studentId: number; amountPaid: number; teacherShare: number; platformShare: number };
+    refund: number;
+    reason: string;
+    now: Date;
+  },
+): Promise<Clawback> {
+  const claw = refundClawback(args.refund, args.enrolment.teacherShare, args.enrolment.platformShare);
+
+  if (claw.refunded > 0) {
+    await tx.insert(refundsTable).values({
+      sessionId: null,
+      studentId: args.enrolment.studentId,
+      pricePaid: args.enrolment.amountPaid,
+      amount: claw.refunded,
+      teacherShare: claw.teacherKeeps,
+      platformShare: claw.platformKeeps,
+      reason: args.reason,
+      recurringId: args.recurringId,
+      cycleIndex: args.cycleIndex,
+      status: "owed",
+    });
+  }
+
+  await tx
+    .update(recurringEnrollmentsTable)
+    .set({ status: claw.refunded > 0 ? "refunded" : "ended", endedAt: args.now })
+    .where(eq(recurringEnrollmentsTable.id, args.enrolment.id));
+
+  return claw;
+}
+
+/**
+ * Closes every month that has finished and not yet been paid up.
+ *
+ * Idempotent through `settledThroughCycle` on the plan, and that matters more here than
+ * anywhere else in this file: closing a month writes refunds, so closing it twice pays twice.
+ * The counter is written in the same transaction as the refunds it accounts for.
+ *
+ * Only months strictly before the current one are closed. A month still running has classes
+ * left in it, and judging a teacher on a month they are still teaching would refund students
+ * for classes that are about to happen.
+ */
+export async function settleFinishedCycles(
+  klass: RecurringSession,
+  plan: TeacherPlan,
+  currentCycleIndex: number,
+  now: number = Date.now(),
+): Promise<Settlement[]> {
+  const from = plan.settledThroughCycle + 1;
+  if (currentCycleIndex <= from - 1) return [];
+
+  const done: Settlement[] = [];
+  for (let index = from; index < currentCycleIndex; index += 1) {
+    const settlement = await db.transaction(async (tx) => {
+      // Re-read the counter under a lock: two readers arriving together must not both close
+      // the same month and write two sets of refunds.
+      const [locked] = await tx
+        .select({ settledThroughCycle: teacherPlansTable.settledThroughCycle })
+        .from(teacherPlansTable)
+        .where(eq(teacherPlansTable.id, plan.id))
+        .for("update");
+      if (!locked || locked.settledThroughCycle >= index) return null;
+
+      const planned = await countRegularDays(klass.id, index, tx);
+      const held = await heldIn(klass.id, index, tx);
+
+      const enrolments = await tx
+        .select()
+        .from(recurringEnrollmentsTable)
+        .where(
+          and(
+            eq(recurringEnrollmentsTable.recurringId, klass.id),
+            eq(recurringEnrollmentsTable.cycleIndex, index),
+            eq(recurringEnrollmentsTable.status, "active"),
+          ),
+        );
+
+      const out: Settlement = { cycleIndex: index, students: 0, refunded: 0, fromTeacher: 0, fromPlatform: 0 };
+      for (const enrolment of enrolments) {
+        const received = Math.min(
+          enrolment.sessionsPaidFor,
+          await receiptFor(klass.id, index, enrolment.joinedAt, tx),
+        );
+        const owed = shortfallRefund({
+          amountPaid: enrolment.amountPaid,
+          sessionsPaidFor: enrolment.sessionsPaidFor,
+          sessionsReceived: received,
+          cycleSessionsHeld: held,
+          cycleSessionsPlanned: planned,
+        });
+        const claw = await settleStudent(tx, {
+          recurringId: klass.id,
+          cycleIndex: index,
+          enrolment,
+          refund: owed,
+          reason: "monthly_shortfall",
+          now: new Date(now),
+        });
+        out.students += 1;
+        out.refunded += claw.refunded;
+        out.fromTeacher += claw.fromTeacher;
+        out.fromPlatform += claw.fromPlatform;
+      }
+
+      await tx
+        .update(teacherPlansTable)
+        .set({ settledThroughCycle: index })
+        .where(eq(teacherPlansTable.id, plan.id));
+
+      return out;
+    });
+    if (settlement) done.push(settlement);
+  }
+  return done;
+}
+
+export interface StandingResult {
+  abuses: number;
+  suspended: boolean;
+  /** Set when this call is the one that suspended them. */
+  justSuspended: boolean;
+  /** Set when this call is the one that should warn them, with how many marks they have. */
+  warnAt: number | null;
+  /** Students refunded because the suspension ended their month early. */
+  refundedStudents: number;
+  refundedTotal: number;
+}
+
+/**
+ * Counts the black marks, warns, and suspends.
+ *
+ * The warning is the part the owner was most insistent about: a teacher must be told, in the
+ * strongest terms, before the fifth mark takes their class away. It is sent once per new mark
+ * rather than on every read — `warnedAtAbuses` is what remembers, and a warning that arrives
+ * ten times a day is one nobody reads.
+ *
+ * Suspending ends the month early for everybody in it, so their money comes back for the part
+ * that will not now happen. That is `stoppedEarlyRefund`, not the delivery floor: a teacher
+ * suspended on day twenty-eight has usually held exactly twenty-five, and the floor would say
+ * they owe nothing while their students still have days left they paid for.
+ */
+export async function enforceStanding(
+  klass: RecurringSession,
+  plan: TeacherPlan,
+  cycleIndex: number,
+  now: number = Date.now(),
+): Promise<StandingResult> {
+  const abuses = await abusesIn(klass.id, cycleIndex, now);
+  const standing = abuseStanding(abuses);
+
+  const result: StandingResult = {
+    abuses,
+    suspended: plan.status === "suspended",
+    justSuspended: false,
+    warnAt: null,
+    refundedStudents: 0,
+    refundedTotal: 0,
+  };
+
+  if (plan.status === "suspended") return result;
+
+  if (standing.warn && abuses > plan.warnedAtAbuses) {
+    await db
+      .update(teacherPlansTable)
+      .set({ warnedAtAbuses: abuses })
+      .where(and(eq(teacherPlansTable.id, plan.id), lt(teacherPlansTable.warnedAtAbuses, abuses)));
+    result.warnAt = abuses;
+  }
+
+  if (!standing.suspended) return result;
+
+  const until = suspensionEnds(now);
+  const suspended = await db.transaction(async (tx) => {
+    const [locked] = await tx
+      .select({ status: teacherPlansTable.status })
+      .from(teacherPlansTable)
+      .where(eq(teacherPlansTable.id, plan.id))
+      .for("update");
+    // Somebody else got here first. Suspending twice would refund every student twice.
+    if (!locked || locked.status !== "active") return null;
+
+    await tx
+      .update(teacherPlansTable)
+      .set({
+        status: "suspended",
+        suspendedUntil: until === null ? null : new Date(until),
+        suspendedReason:
+          `Your monthly class is suspended for ${SUSPENSION_DAYS} days. ` +
+          `${abuses} classes were missed this month without a make-up being arranged. ` +
+          `Your students have been refunded for the rest of the month.`,
+      })
+      .where(eq(teacherPlansTable.id, plan.id));
+
+    await tx
+      .update(recurringSessionsTable)
+      .set({ status: "ended" })
+      .where(eq(recurringSessionsTable.id, klass.id));
+
+    const enrolments = await tx
+      .select()
+      .from(recurringEnrollmentsTable)
+      .where(
+        and(
+          eq(recurringEnrollmentsTable.recurringId, klass.id),
+          eq(recurringEnrollmentsTable.cycleIndex, cycleIndex),
+          eq(recurringEnrollmentsTable.status, "active"),
+        ),
+      );
+
+    let students = 0;
+    let total = 0;
+    for (const enrolment of enrolments) {
+      const received = Math.min(
+        enrolment.sessionsPaidFor,
+        await receiptFor(klass.id, cycleIndex, enrolment.joinedAt, tx),
+      );
+      const owed = stoppedEarlyRefund(enrolment.amountPaid, enrolment.sessionsPaidFor, received);
+      const claw = await settleStudent(tx, {
+        recurringId: klass.id,
+        cycleIndex,
+        enrolment,
+        refund: owed,
+        reason: "monthly_suspension",
+        now: new Date(now),
+      });
+      students += 1;
+      total += claw.refunded;
+    }
+
+    // The suspended month is settled, so closing it later must not pay again.
+    await tx
+      .update(teacherPlansTable)
+      .set({ settledThroughCycle: cycleIndex })
+      .where(and(eq(teacherPlansTable.id, plan.id), lt(teacherPlansTable.settledThroughCycle, cycleIndex)));
+
+    return { students, total };
+  });
+
+  if (suspended) {
+    result.suspended = true;
+    result.justSuspended = true;
+    result.refundedStudents = suspended.students;
+    result.refundedTotal = suspended.total;
+  }
+  return result;
+}
+
+/**
+ * Puts a make-up class on the calendar for a class that was missed.
+ *
+ * Refuses rather than half-doing it: the allowances are the owner's — five make-ups a month,
+ * forty classes a month including them — and a make-up for a class that already has one, or
+ * for a class that was never missed, is a mistake rather than a request.
+ */
+export async function addMakeup(
+  klass: RecurringSession,
+  missedDayId: number,
+  at: Date,
+  cycleIndex: number,
+): Promise<{ ok: true; id: number } | { ok: false; reason: string }> {
+  return db.transaction(async (tx) => {
+    const [missed] = await tx
+      .select()
+      .from(recurringDaysTable)
+      .where(and(eq(recurringDaysTable.id, missedDayId), eq(recurringDaysTable.recurringId, klass.id)))
+      .for("update");
+
+    if (!missed) return { ok: false as const, reason: "That class is not one of yours." };
+    if (missed.status !== "missed") {
+      return { ok: false as const, reason: "That class was not missed, so it does not need making up." };
+    }
+
+    const [already] = await tx
+      .select({ id: recurringDaysTable.id })
+      .from(recurringDaysTable)
+      .where(and(eq(recurringDaysTable.makeupForId, missedDayId), sql`status <> 'cancelled'`));
+    if (already) return { ok: false as const, reason: "A make-up class is already arranged for that one." };
+
+    const used = await makeupsIn(klass.id, cycleIndex, tx);
+    const [total] = await tx
+      .select({ n: count() })
+      .from(recurringDaysTable)
+      .where(
+        and(eq(recurringDaysTable.recurringId, klass.id), eq(recurringDaysTable.cycleIndex, cycleIndex)),
+      );
+    const allowed = canAddMakeup(used, total?.n ?? 0);
+    if (!allowed.ok) return { ok: false as const, reason: allowed.reason };
+
+    const [created] = await tx
+      .insert(recurringDaysTable)
+      .values({
+        recurringId: klass.id,
+        cycleIndex,
+        kind: "makeup",
+        scheduledFor: at,
+        status: "planned",
+        makeupForId: missedDayId,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (!created) {
+      return { ok: false as const, reason: "There is already a class at that time." };
+    }
+    return { ok: true as const, id: created.id };
   });
 }

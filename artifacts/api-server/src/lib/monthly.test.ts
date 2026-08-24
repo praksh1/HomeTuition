@@ -21,6 +21,7 @@ import {
   planCycleAnchor,
   proRatedShortfall,
   quoteJoin,
+  refundClawback,
   shortfallRefund,
   stoppedEarlyRefund,
 } from "./monthly.ts";
@@ -384,4 +385,48 @@ test("scenario: nobody is charged twice for the same class", () => {
   const quote = quoteJoin(3000, 9, 30);
   assert.equal(shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 9, cycleSessionsHeld: 30, cycleSessionsPlanned: 30 }), 0);
   assert.equal(shortfallRefund({ amountPaid: quote.amount, sessionsPaidFor: 9, sessionsReceived: 6, cycleSessionsHeld: 20, cycleSessionsPlanned: 30 }), Math.ceil((quote.amount * 3) / 9));
+});
+
+
+test("a refund comes out of the teacher's share first, then Sikshya's fee", () => {
+  // 3000 paid, split 2100/900. A 1000 refund is entirely the teacher's to carry.
+  const small = refundClawback(1000, 2100, 900);
+  assert.equal(small.fromTeacher, 1000);
+  assert.equal(small.fromPlatform, 0);
+  assert.equal(small.teacherKeeps, 1100);
+  assert.equal(small.platformKeeps, 900);
+
+  // A refund larger than the teacher's share spills into Sikshya's fee, and no further.
+  const big = refundClawback(2500, 2100, 900);
+  assert.equal(big.fromTeacher, 2100);
+  assert.equal(big.fromPlatform, 400);
+  assert.equal(big.teacherKeeps, 0);
+  assert.equal(big.platformKeeps, 500);
+});
+
+test("a clawback's four numbers always add back to what was paid", () => {
+  for (const [refund, teacher, platform] of [
+    [0, 2100, 900],
+    [1, 2100, 900],
+    [3000, 2100, 900],
+    [5000, 2100, 900],
+    [700, 0, 900],
+    [700, 2100, 0],
+  ] as const) {
+    const c = refundClawback(refund, teacher, platform);
+    assert.equal(
+      c.refunded + c.teacherKeeps + c.platformKeeps,
+      teacher + platform,
+      `refunding ${refund} of ${teacher}+${platform} did not add back`,
+    );
+    assert.equal(c.fromTeacher + c.fromPlatform, c.refunded);
+    assert.ok(c.teacherKeeps >= 0 && c.platformKeeps >= 0, "somebody kept a negative amount");
+  }
+});
+
+test("nobody can be refunded more than was collected", () => {
+  const c = refundClawback(99999, 2100, 900);
+  assert.equal(c.refunded, 3000);
+  assert.equal(c.teacherKeeps, 0);
+  assert.equal(c.platformKeeps, 0);
 });

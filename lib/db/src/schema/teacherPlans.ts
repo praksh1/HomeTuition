@@ -48,6 +48,22 @@ export const teacherPlansTable = pgTable(
     suspendedUntil: timestamp("suspended_until", { withTimezone: true }),
     /** Why, in words a teacher can read. Shown to them, so it is not a code. */
     suspendedReason: text("suspended_reason"),
+    /**
+     * The highest number of black marks this teacher has already been warned about.
+     *
+     * Abuses themselves are counted from the ledger rather than stored, so they cannot drift
+     * from what actually happened. But "have we already said this?" is not in the ledger, and
+     * without it every read would warn again — and a warning that arrives ten times a day is
+     * one nobody reads, which defeats the point of the owner asking for a strong one.
+     */
+    warnedAtAbuses: integer("warned_at_abuses").notNull().default(0),
+    /**
+     * The last month whose money has been settled up.
+     *
+     * Closing a month writes refunds, so doing it twice pays twice. Starts at -1 because month
+     * zero is a real month.
+     */
+    settledThroughCycle: integer("settled_through_cycle").notNull().default(-1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
