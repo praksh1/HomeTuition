@@ -1,4 +1,6 @@
 import { dailyProvider } from "./dailyProvider";
+import { echoProvider } from "./echoProvider";
+import { selectProvider } from "./select";
 import type { VideoProvider } from "./types";
 
 export type { JoinOptions, RoomGrant, VideoCapabilities, VideoProvider } from "./types";
@@ -15,11 +17,15 @@ export type { JoinOptions, RoomGrant, VideoCapabilities, VideoProvider } from ".
  */
 const PROVIDERS: Record<string, VideoProvider> = {
   daily: dailyProvider,
+  // Carries no video. Present so the seam can be proved against the real server rather than
+  // asserted — see scripts/video-tests. Nothing selects it unless the environment names it.
+  echo: echoProvider,
 };
 
 export function videoProvider(): VideoProvider {
-  const wanted = (process.env.VIDEO_PROVIDER ?? "daily").trim().toLowerCase();
-  return PROVIDERS[wanted] ?? dailyProvider;
+  // Read at call time rather than frozen at import, so the provider can be switched without a
+  // rebuild — and so it can be switched inside a test at all.
+  return selectProvider(process.env.VIDEO_PROVIDER, PROVIDERS, dailyProvider);
 }
 
 /** Every provider this build knows how to use. For diagnostics, not for choosing. */

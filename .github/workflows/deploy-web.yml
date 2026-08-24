@@ -204,6 +204,17 @@ jobs:
           SESSION_SECRET: ci-only-not-a-real-secret
         run: pnpm --filter @workspace/api-server run test:uploads
 
+      # Swapping the video provider. Daily.co is unlikely to survive the monthly tier's
+      # economics, so the seam went in before anything was built on top of it. This starts the
+      # real server twice — once on Daily, once on a provider that carries no video — and
+      # checks every rule around the room behaves identically, moderator rights included.
+      - name: The video provider can be swapped
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+        run: pnpm --filter @workspace/api-server run test:video
+
       # The support desk. Half of this suite is spent trying to get in rather than on the
       # features once inside: a tool that can suspend accounts and reset passwords is one where
       # "who is allowed in here" has to be answered by the server on every request, not by
