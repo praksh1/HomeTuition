@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership } from "../lib/membership";
+import { verifyUpload } from "../lib/fileStore";
 import { endedEarlyWithoutReturning } from "../lib/sessionEvidence";
 
 const router: IRouter = Router();
@@ -86,15 +87,40 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
    */
   const evidence = typeof evidenceUrl === "string" ? evidenceUrl.trim() : "";
 
+  /**
+   * A file only becomes evidence once we have looked at what actually landed.
+   *
+   * Everything the client said when it asked for the upload link was a claim. This reads the
+   * object in the bucket: who it belongs to, how big it really is, what type it really is. A
+   * file that fails is deleted rather than left sitting in the bucket costing money.
+   *
+   * A bad attachment does **not** sink the report. The words are the complaint; the photo is
+   * a help. Somebody whose upload went wrong still gets their case filed, and is told the
+   * attachment did not make it — losing both would be the worst outcome for the person least
+   * able to do anything about it.
+   */
+  let attachment: string | null = null;
+  let attachmentProblem: string | null = null;
+  if (evidence) {
+    const verdict = await verifyUpload(evidence, userId);
+    if (verdict.ok) {
+      attachment = evidence;
+    } else {
+      attachmentProblem = verdict.reason;
+      req.log.warn({ userId, key: evidence, reason: verdict.reason }, "an attachment was refused");
+    }
+  }
+
   const [dispute] = await db.insert(disputesTable).values({
     userId,
     sessionId: about,
     reason: reason as typeof disputeReasonEnum.enumValues[number],
     description: description.trim(),
-    evidenceUrl: evidence || null,
+    evidenceUrl: attachment,
   }).returning();
 
-  res.status(201).json(dispute);
+  // The problem travels with the reply, so the app can say the report went and the photo did not.
+  res.status(201).json({ ...dispute, attachmentProblem });
 });
 
 /**
