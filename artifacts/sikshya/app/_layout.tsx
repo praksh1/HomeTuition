@@ -17,6 +17,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { applyWebViewportFix } from "@/utils/webViewport";
 import { NotificationProvider } from "@/context/NotificationContext";
+import { DatePreferenceProvider } from "@/context/DatePreferenceContext";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -125,6 +126,7 @@ export default function RootLayout() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
+            <DatePreferenceProvider>
             <NotificationProvider>
               <GestureHandlerRootView style={{ flex: 1 }}>
                 <KeyboardProvider>
@@ -132,6 +134,7 @@ export default function RootLayout() {
                 </KeyboardProvider>
               </GestureHandlerRootView>
             </NotificationProvider>
+            </DatePreferenceProvider>
           </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>

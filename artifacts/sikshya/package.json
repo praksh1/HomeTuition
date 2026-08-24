@@ -89,6 +89,7 @@
     "expo-file-system": "^19.0.23",
     "expo-notifications": "^0.32.17",
     "expo-screen-orientation": "^9.0.9",
+    "nepali-date-converter": "^3.4.0",
     "pdfjs-dist": "5.5.207",
     "react": "19.1.0",
     "react-native": "0.81.5",
