@@ -1,10 +1,13 @@
-import { and, asc, count, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   db,
   recurringDaysTable,
   recurringEnrollmentsTable,
   recurringSessionsTable,
+  sessionEnrollmentsTable,
+  sessionsTable,
   teacherPlansTable,
+  usersTable,
   type RecurringSession,
   type TeacherPlan,
 } from "@workspace/db";
@@ -248,3 +251,252 @@ export async function nextClassDay(recurringId: number, now: number = Date.now()
 
 /** The cycle length in days, re-exported so route code has one place to read it from. */
 export { CYCLE_DAYS };
+
+
+/**
+ * How far ahead a class-day is turned into a real class.
+ *
+ * A day, so a student opening the app in the evening sees tomorrow's class sitting in their
+ * list where every other class of theirs sits. Further ahead would fill the list with a month
+ * of identical rows; much less and the class would appear only minutes before it starts, which
+ * reads as the app having forgotten about it.
+ */
+export const MATERIALISE_AHEAD_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * How long after a class should have finished before it is judged.
+ *
+ * A teacher who starts twenty minutes late is still teaching. Judged from the scheduled finish
+ * plus an hour, for the same reason `sessions.startedAt` exists at all: staleness measured
+ * against the slot rather than against what happened ejects a class that is running.
+ */
+const SETTLE_GRACE_MS = 60 * 60 * 1000;
+
+/**
+ * Turns the class-days that are nearly due into real classes.
+ *
+ * A monthly class-day becomes an ordinary `sessions` row, and every student holding a place
+ * that month is enrolled in it and marked paid. That is deliberate and is the whole reason the
+ * monthly tier needs so little new machinery: once the row exists, the class *is* an ordinary
+ * class. The video room, the whiteboard, the chat and — most importantly — `membership.ts` all
+ * work on it untouched, so there is no second answer to "may this user be in this class?".
+ *
+ * Runs as a lazy sweep off reads rather than from a scheduler, because this project has no
+ * scheduler and inventing one to create a row a day would be a lot of moving parts to get
+ * wrong. It is safe to call from anywhere and safe to call at the same time as itself: each
+ * class-day is locked and re-checked before its class is created.
+ *
+ * Returns the ids of the class-days it materialised.
+ */
+export async function materialiseDueDays(
+  klass: RecurringSession,
+  now: number = Date.now(),
+): Promise<number[]> {
+  const due = await db
+    .select({ id: recurringDaysTable.id })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, klass.id),
+        eq(recurringDaysTable.status, "planned"),
+        isNull(recurringDaysTable.sessionId),
+        lt(recurringDaysTable.scheduledFor, new Date(now + MATERIALISE_AHEAD_MS)),
+      ),
+    )
+    .orderBy(asc(recurringDaysTable.scheduledFor));
+
+  if (due.length === 0) return [];
+
+  const [teacher] = await db
+    .select({ name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, klass.teacherId));
+
+  const made: number[] = [];
+  for (const day of due) {
+    const createdId = await db.transaction(async (tx) => {
+      // Re-read under a lock. Two readers hitting this at the same instant would otherwise
+      // both see an unmaterialised day and create two classes for it.
+      const [locked] = await tx
+        .select({
+          id: recurringDaysTable.id,
+          sessionId: recurringDaysTable.sessionId,
+          status: recurringDaysTable.status,
+          cycleIndex: recurringDaysTable.cycleIndex,
+          scheduledFor: recurringDaysTable.scheduledFor,
+        })
+        .from(recurringDaysTable)
+        .where(eq(recurringDaysTable.id, day.id))
+        .for("update");
+
+      if (!locked || locked.sessionId !== null || locked.status !== "planned") return null;
+
+      const students = await tx
+        .select({ studentId: recurringEnrollmentsTable.studentId })
+        .from(recurringEnrollmentsTable)
+        .where(
+          and(
+            eq(recurringEnrollmentsTable.recurringId, klass.id),
+            eq(recurringEnrollmentsTable.cycleIndex, locked.cycleIndex),
+            eq(recurringEnrollmentsTable.status, "active"),
+          ),
+        );
+
+      const [created] = await tx
+        .insert(sessionsTable)
+        .values({
+          teacherId: klass.teacherId,
+          teacherName: teacher?.name ?? "",
+          subject: klass.subject,
+          topic: klass.topic,
+          date: locked.scheduledFor,
+          duration: klass.durationMinutes,
+          maxStudents: klass.maxStudents,
+          enrolledCount: students.length,
+          // Nobody pays at this door. The month was paid for once, and this class is not for
+          // sale on its own — see `isRecurringDay`, which is what refuses the sale.
+          price: 0,
+          status: "upcoming",
+        })
+        .returning();
+
+      if (students.length > 0) {
+        await tx.insert(sessionEnrollmentsTable).values(
+          students.map((s) => ({
+            sessionId: created!.id,
+            studentId: s.studentId,
+            paymentStatus: "paid" as const,
+            paymentMethod: "monthly" as const,
+          })),
+        );
+      }
+
+      await tx
+        .update(recurringDaysTable)
+        .set({ sessionId: created!.id })
+        .where(eq(recurringDaysTable.id, day.id));
+
+      return day.id;
+    });
+    if (createdId !== null) made.push(createdId);
+  }
+  return made;
+}
+
+/**
+ * Puts a student into the classes of theirs that already exist.
+ *
+ * Somebody joining a monthly class part-way through arrives after tomorrow's class has already
+ * been materialised, and materialising only creates enrolments for the students who were there
+ * at the time. Without this they would hold a place in the month and be refused at the door of
+ * the very next class — the exact shape of bug this project has had before.
+ */
+export async function enrolInMaterialisedDays(
+  recurringId: number,
+  cycleIndex: number,
+  studentId: number,
+  now: number = Date.now(),
+): Promise<number> {
+  const days = await db
+    .select({ sessionId: recurringDaysTable.sessionId })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, recurringId),
+        eq(recurringDaysTable.cycleIndex, cycleIndex),
+        eq(recurringDaysTable.status, "planned"),
+        gt(recurringDaysTable.scheduledFor, new Date(now)),
+      ),
+    );
+
+  const ids = days.map((d) => d.sessionId).filter((id): id is number => id !== null);
+  if (ids.length === 0) return 0;
+
+  let added = 0;
+  for (const sessionId of ids) {
+    const [existing] = await db
+      .select({ id: sessionEnrollmentsTable.id })
+      .from(sessionEnrollmentsTable)
+      .where(
+        and(
+          eq(sessionEnrollmentsTable.sessionId, sessionId),
+          eq(sessionEnrollmentsTable.studentId, studentId),
+        ),
+      );
+    if (existing) continue;
+
+    await db.insert(sessionEnrollmentsTable).values({
+      sessionId,
+      studentId,
+      paymentStatus: "paid",
+      paymentMethod: "monthly",
+    });
+    await db
+      .update(sessionsTable)
+      .set({ enrolledCount: sql`${sessionsTable.enrolledCount} + 1` })
+      .where(eq(sessionsTable.id, sessionId));
+    added += 1;
+  }
+  return added;
+}
+
+/**
+ * Writes down what became of the class-days that are now in the past.
+ *
+ * Held if the teacher actually started the class, missed if they did not. Read from
+ * `sessions.startedAt` rather than from anything the teacher is asked to confirm, because the
+ * delivery floor and the abuse count are both counted from these rows and a teacher should not
+ * be the one telling the ledger whether they turned up.
+ */
+export async function settleDueDays(
+  klass: RecurringSession,
+  now: number = Date.now(),
+): Promise<{ held: number; missed: number }> {
+  const cutoff = new Date(now - klass.durationMinutes * 60_000 - SETTLE_GRACE_MS);
+
+  const held = await db.execute(sql`
+    update recurring_days rd
+       set status = 'held', held_at = s.started_at
+      from sessions s
+     where rd.session_id = s.id
+       and rd.recurring_id = ${klass.id}
+       and rd.status = 'planned'
+       and rd.scheduled_for < ${cutoff}
+       and s.started_at is not null
+  `);
+
+  const missed = await db.execute(sql`
+    update recurring_days rd
+       set status = 'missed', missed_at = now()
+     where rd.recurring_id = ${klass.id}
+       and rd.status = 'planned'
+       and rd.scheduled_for < ${cutoff}
+       and (rd.session_id is null
+            or exists (select 1 from sessions s
+                        where s.id = rd.session_id and s.started_at is null))
+  `);
+
+  return { held: held.rowCount ?? 0, missed: missed.rowCount ?? 0 };
+}
+
+/**
+ * Is this ordinary-looking class actually a day of somebody's monthly class?
+ *
+ * The one question that keeps the monthly tier's door shut. A materialised class-day has a
+ * price of zero, because the month was paid for once — so if it could be booked like any other
+ * class, anybody could take a seat in a paid course for nothing. `POST /sessions/:id/book`
+ * asks this and refuses.
+ */
+export async function isRecurringDay(sessionId: number): Promise<boolean> {
+  const [found] = await db
+    .select({ id: recurringDaysTable.id })
+    .from(recurringDaysTable)
+    .where(eq(recurringDaysTable.sessionId, sessionId))
+    .limit(1);
+  return Boolean(found);
+}
+
+/** Keeps materialised class-days out of the public list of classes for sale. */
+export const notARecurringDay = sql`not exists (
+  select 1 from recurring_days rd where rd.session_id = ${sessionsTable.id}
+)`;

@@ -33,6 +33,7 @@ import {
   scheduleEditsUsed,
 } from "../lib/scheduleChanges";
 import { refundsTable, scheduleChangesTable } from "@workspace/db";
+import { isRecurringDay, notARecurringDay } from "../lib/monthlyStore";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -62,6 +63,18 @@ router.get("/sessions", async (req, res): Promise<void> => {
   const conditions = [];
   if (teacherId) conditions.push(eq(sessionsTable.teacherId, parseInt(teacherId, 10)));
   if (status) conditions.push(eq(sessionsTable.status, status));
+
+  /**
+   * Days of a monthly class are hidden from the browsing list, and only from that one.
+   *
+   * Asked without a teacher or a student, this is Discover — classes for sale. A monthly
+   * class-day cannot be bought (see `POST /sessions/:id/book`), so offering one there is
+   * offering something that will be refused, thirty times over for the same course.
+   *
+   * Asked *with* a teacher or a student it is somebody's own list of classes, where these
+   * belong: the student paid for them and the teacher is teaching them.
+   */
+  if (!teacherId && !studentId) conditions.push(notARecurringDay);
 
   /**
    * How this student stands with each of their classes, so the list can label them.
@@ -969,6 +982,28 @@ async function bookSession(req: Request, res: Response): Promise<void> {
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
   if (session.teacherId === user.userId) {
     res.status(400).json({ error: "You cannot book your own session." });
+    return;
+  }
+
+  /**
+   * A day of somebody's monthly class is not for sale on its own.
+   *
+   * It looks like an ordinary class here — that is the point, so that the video room, the
+   * whiteboard and `membership.ts` all work on it unchanged — but its price is zero, because
+   * the month was paid for once. Without this check anybody could take a seat in a paid course
+   * for nothing, which is the one thing the owner has been clearest about.
+   *
+   * Checked here rather than trusted to the seat count. The class being full is a second
+   * barrier and not the guarantee: a month with three students in a class that takes
+   * forty-five leaves forty-two seats that would otherwise be free to anyone who asked.
+   */
+  if (await isRecurringDay(id)) {
+    res.status(409).json({
+      error:
+        "This class is part of a monthly course, so it isn't sold one class at a time. " +
+        "Join the monthly class to get every class in it.",
+      monthly: true,
+    });
     return;
   }
   if (session.status === "completed" || session.status === "cancelled") {

@@ -6,6 +6,7 @@ import {
   recurringSessionsTable,
   teacherPlansTable,
   usersTable,
+  type RecurringSession,
 } from "@workspace/db";
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { chargeForMonthly } from "../lib/payments";
@@ -31,10 +32,13 @@ import {
   countRegularDays,
   countRemainingDays,
   cycleOf,
+  enrolInMaterialisedDays,
   enrolmentFor,
   generateCycle,
   ledgerFor,
+  materialiseDueDays,
   nextClassDay,
+  settleDueDays,
 } from "../lib/monthlyStore";
 
 const router: IRouter = Router();
@@ -54,6 +58,26 @@ function idParam(req: Request): number | null {
  * "24 Bhadra" here would be a server that had an opinion about somebody's calendar, and that
  * opinion would end up next to a price.
  */
+/**
+ * Brings a class up to date before anybody is told anything about it.
+ *
+ * Two jobs, both lazy: turn the class-days that are nearly due into real classes, and write
+ * down what became of the ones now in the past. Neither can wait for a scheduler, because
+ * there isn't one — and both have to have happened before a price is quoted, since the price
+ * is a count of the classes still to come.
+ *
+ * Failures are swallowed on purpose. This runs on the read path, and a class nobody can look
+ * at is worse than a class whose ledger is a few minutes stale; the next read tries again.
+ */
+async function bringUpToDate(klass: RecurringSession, log?: Request["log"]): Promise<void> {
+  try {
+    await settleDueDays(klass);
+    await materialiseDueDays(klass);
+  } catch (err) {
+    log?.warn({ err, recurringId: klass.id }, "could not bring a monthly class up to date");
+  }
+}
+
 async function describeClass(klass: Awaited<ReturnType<typeof classById>>, viewerId: number | null) {
   if (!klass) return null;
   const [plan] = await db.select().from(teacherPlansTable).where(eq(teacherPlansTable.id, klass.planId));
@@ -197,6 +221,7 @@ router.get("/monthly/plan", requireAuth, async (req: Request, res: Response) => 
   }
 
   const klass = await classForPlan(plan.id);
+  if (klass) await bringUpToDate(klass, req.log);
   const cycle = await cycleOf(plan);
   const ledger = klass && cycle ? await ledgerFor(klass.id, cycle.index) : null;
   const standing = ledger ? abuseStanding(ledger.missed) : null;
@@ -352,6 +377,7 @@ router.get("/monthly/classes", attachUserIfPresent, async (req: Request, res: Re
     .orderBy(desc(recurringSessionsTable.id));
 
   const viewerId = req.user?.userId ?? null;
+  await Promise.all(classes.map((k) => bringUpToDate(k, req.log)));
   const described = await Promise.all(classes.map((k) => describeClass(k, viewerId)));
   res.json({ classes: described.filter(Boolean) });
 });
@@ -363,7 +389,14 @@ router.get("/monthly/classes/:id", attachUserIfPresent, async (req: Request, res
     res.status(400).json({ error: "Invalid class id" });
     return;
   }
-  const described = await describeClass(await classById(id), req.user?.userId ?? null);
+  const found = await classById(id);
+  if (!found) {
+    res.status(404).json({ error: "Class not found" });
+    return;
+  }
+  await bringUpToDate(found, req.log);
+
+  const described = await describeClass(found, req.user?.userId ?? null);
   if (!described) {
     res.status(404).json({ error: "Class not found" });
     return;
@@ -483,6 +516,23 @@ router.post("/monthly/classes/:id/join", requireAuth, async (req: Request, res: 
         return;
       default:
         break;
+    }
+
+    /*
+     * Into the classes of theirs that already exist.
+     *
+     * Tomorrow's class may already have been materialised, with enrolments for whoever was
+     * enrolled at the time. Without this the student holds a place in the month and is refused
+     * at the door of the very next class — which is exactly the shape of the bug this project
+     * had when the socket and the room route disagreed about membership.
+     *
+     * Outside the transaction and tolerant of failure: they have paid and hold their place, and
+     * the sweep that runs on every read will put them into anything this missed.
+     */
+    try {
+      await enrolInMaterialisedDays(klass.id, cycle.index, user.userId, now);
+    } catch (err) {
+      req.log?.warn({ err, klass: klass.id, student: user.userId }, "could not add a new monthly student to the classes already created");
     }
 
     // The same switch a teacher gets ordinary bookings on. Somebody paying them is somebody
