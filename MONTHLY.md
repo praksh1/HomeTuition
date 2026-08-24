@@ -72,18 +72,30 @@ nothing, so after seven days the clock starts anyway.
 
 ### Refunds
 
-No refund while a teacher holds **25 classes or more** in the month. Below that, the whole
-shortfall comes back — missing the floor voids the month's promise rather than discounting it.
+There are **two ways to be owed**, and either is enough:
+
+1. **The teacher missed the floor** — fewer than 25 classes held in the month. Below it the
+   *whole* shortfall comes back, not merely the part beneath 25: missing the floor voids the
+   month's promise rather than discounting it.
+2. **You got less than your share of it.** 25 of 30 is a promise to hold five sixths of the
+   classes, so a student is owed when what they received falls below five sixths of what they
+   *bought*. A student who joined with 9 classes left and received 6 is owed for 3, even though
+   the teacher held 27 across the month and cleared the flat floor.
+
+Rule 2 was added after the owner agreed rule 1 alone was too harsh on a late joiner. It is
+*added*, not substituted: the flat floor still protects somebody rule 2 would miss — a student
+who received nearly all of their few classes from a teacher who badly under-delivered the
+month. Either alone would leave one of them worse off.
+
+For a student who bought the whole month, rule 2 reduces to exactly "25 of 30", so the owner's
+original rule is untouched for the case it was written about. The comparison cross-multiplies
+rather than working out a share and rounding it — nine classes' share is seven and a half, and
+rounding that either way quietly decides who gets paid.
 
 **Stopping early is judged differently, on purpose.** A teacher suspended on day 28 has usually
 held exactly 25 — the floor — but their students have days left that will now never happen, so
 they are owed for them. The floor governs a month that ran and fell short; this governs a month
 that stopped.
-
-> **Open decision.** A student who joined late, bought 9 classes and lost 3 of them gets nothing
-> back if the teacher still cleared 25 overall. That is the rule exactly as stated, and it is
-> the rule at its harshest. Scaling the floor to the student's share is a one-line change in
-> `metDeliveryFloor()`.
 
 ---
 
