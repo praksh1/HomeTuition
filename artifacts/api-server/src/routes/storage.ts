@@ -1,4 +1,4 @@
-import { Router, type IRouter, type Request, type Response } from "express";
+import express, { Router, type IRouter, type Request, type Response } from "express";
 import { and, eq } from "drizzle-orm";
 import { db, disputesTable } from "@workspace/db";
 import { RequestUploadUrlBody, RequestUploadUrlResponse } from "@workspace/api-zod";
@@ -8,6 +8,7 @@ import {
   MAX_UPLOAD_BYTES,
   isFileStoreConfigured,
   ownerOf,
+  putObject,
   signUpload,
   signView,
 } from "../lib/fileStore";
@@ -107,6 +108,62 @@ router.post("/storage/uploads/request-url", requireAuth, async (req: Request, re
 });
 
 /**
+ * Upload through this server, when the phone cannot reach the bucket directly.
+ *
+ * The browser refuses a cross-origin PUT to R2 unless the bucket names the site's origin in a
+ * CORS rule, and reports the refusal as "Load failed" with no further detail. That is what a
+ * student saw the first time they attached a photo to a report on the live site.
+ *
+ * Adding the CORS rule is the right fix and makes the fast path work. This is the path that
+ * works regardless — including after the app is renamed, which is coming, and which would
+ * otherwise silently break a rule naming the old domain.
+ *
+ * Bounded deliberately: one file, at most `MAX_UPLOAD_BYTES`, of a type on the list, from
+ * somebody signed in. Express refuses anything larger before it reaches this handler.
+ */
+router.put(
+  "/storage/upload",
+  requireAuth,
+  express.raw({ type: () => true, limit: MAX_UPLOAD_BYTES }),
+  async (req: Request, res: Response) => {
+    const contentType = String(req.headers["content-type"] ?? "").split(";")[0].trim();
+    if (!ALLOWED_UPLOAD_TYPES.includes(contentType as (typeof ALLOWED_UPLOAD_TYPES)[number])) {
+      res.status(400).json({ error: "Only photos and PDFs can be attached." });
+      return;
+    }
+
+    if (!isFileStoreConfigured()) {
+      res.status(503).json({ error: "File uploads are not set up on this server yet.", unavailable: true });
+      return;
+    }
+
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({ error: "That file arrived empty." });
+      return;
+    }
+    if (body.length > MAX_UPLOAD_BYTES) {
+      res.status(400).json({
+        error: `That file is larger than ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.`,
+      });
+      return;
+    }
+
+    try {
+      const key = await putObject({ kind: "evidence", userId: req.user!.userId, contentType, body });
+      if (!key) {
+        res.status(503).json({ error: "File uploads are not set up on this server yet.", unavailable: true });
+        return;
+      }
+      res.status(201).json({ objectPath: key });
+    } catch (error) {
+      req.log.error({ err: error }, "could not store an upload sent through the server");
+      res.status(502).json({ error: "We could not store that file. Please try again." });
+    }
+  },
+);
+
+/**
  * Look at a file somebody attached.
  *
  * Two people may: whoever uploaded it, and a support agent — which is the whole point of an
@@ -151,8 +208,18 @@ router.get("/storage/file", requireAuth, async (req: Request, res: Response) => 
   try {
     const url = await signView(key);
     if (!url) { res.status(503).json({ error: "File uploads are not set up on this server yet." }); return; }
-    // 302 rather than proxying: the bytes go from Cloudflare to the viewer, not through here.
-    res.redirect(302, url);
+    /**
+     * The link comes back as JSON, not as a 302.
+     *
+     * A redirect reads well in a browser address bar and is useless to the app: `fetch` with
+     * `redirect: "manual"` gives a browser an opaque response with no readable Location, so the
+     * agent's "Open the attachment" would have failed on web while passing in Node — where
+     * manual redirects *are* readable. A test that only ever ran in Node would have missed it.
+     *
+     * The bytes still never pass through here. The app opens this link itself, and it dies in
+     * ten minutes.
+     */
+    res.json({ url });
   } catch (error) {
     req.log.error({ err: error, key }, "could not sign a file view");
     res.status(500).json({ error: "Could not open that file." });

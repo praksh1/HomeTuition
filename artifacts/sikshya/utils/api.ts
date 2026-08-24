@@ -2,6 +2,10 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const TOKEN_KEY = "@sikshya_token";
 
+export function apiBase(): string {
+  return getApiBase();
+}
+
 function getApiBase(): string {
   // Explicit API origin, e.g. http://localhost:8080. Needed whenever the app and the API are
   // not served from a single origin — Replit's router merged them, a local dev setup does not,
@@ -102,21 +106,20 @@ export async function apiDelete<T>(path: string): Promise<T> {
  * phone's own viewer. Following it here would download the bytes into the app for nothing.
  */
 export async function attachmentUrl(key: string): Promise<string> {
+  const { url } = await apiGet<{ url: string }>(`/storage/file?key=${encodeURIComponent(key)}`);
+  return url;
+}
+
+/**
+ * Send raw bytes to our own API — the fallback when a browser will not upload straight to the
+ * bucket. Kept here beside the other callers so the auth header and base URL cannot drift.
+ */
+export async function apiPutBinary<T>(path: string, body: Blob, contentType: string): Promise<T> {
   const token = await getToken();
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { "Content-Type": contentType };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const res = await fetch(`${getApiBase()}/storage/file?key=${encodeURIComponent(key)}`, {
-    headers,
-    redirect: "manual",
-  });
-
-  // 302 is the happy path: the signed link is in Location.
-  const location = res.headers.get("location");
-  if (location) return location;
-
-  // Some runtimes follow the redirect regardless; the final URL is then the signed one.
-  if (res.ok && res.url && !res.url.includes("/storage/file")) return res.url;
-
+  const res = await fetch(`${getApiBase()}${path}`, { method: "PUT", headers, body });
   const data = await res.json().catch(() => ({}) as { error?: string });
-  throw new ApiError(res.status, data.error ?? "That file could not be opened.", data);
+  if (!res.ok) throw new ApiError(res.status, data.error ?? "That file could not be sent.", data);
+  return data as T;
 }

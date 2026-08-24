@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { notify } from "@/utils/alerts";
 import { useColors } from "@/hooks/useColors";
-import { apiGet, apiPost } from "@/utils/api";
+import { apiBase, apiGet, apiPost, apiPutBinary, getToken } from "@/utils/api";
 
 const REASONS = [
   "Payment Issue",
@@ -168,7 +168,7 @@ export default function SupportScreen() {
     /**
      * `name` and `size`, not `fileName`.
      *
-     * This is why attaching anything to a report has never worked: the app sent `fileName` and
+     * This is why attaching anything to a report failed for months: the app sent `fileName` and
      * no size, the endpoint requires `name`, `size` and `contentType`, and every upload came
      * back 400 before a single byte left the phone. Nothing said so — the report simply failed.
      */
@@ -178,25 +178,83 @@ export default function SupportScreen() {
       contentType: file.mimeType,
     });
 
+    /**
+     * Straight to Cloudflare first, through this server only if that is refused.
+     *
+     * The direct path is much better on a slow connection — the file goes to the nearest
+     * Cloudflare edge instead of to Railway and out again — but a browser will not make that
+     * request unless the bucket names this site's origin in a CORS rule. With no rule, Safari
+     * says "Load failed" and nothing else, which is exactly what a student saw on the live site.
+     *
+     * So a refusal is not fatal. It falls back to uploading through our own API, which is
+     * slower and always works: same size cap, same allowed types, same bucket. It also means
+     * renaming the app cannot silently break uploads, and that rename is coming.
+     */
+    try {
+      await putDirect(uploadURL, file);
+      return objectPath;
+    } catch (directFailure) {
+      try {
+        return await putViaServer(file);
+      } catch (fallbackFailure) {
+        // The direct failure is the more informative of the two, so it is the one reported.
+        throw fallbackFailure instanceof Error && /larger than|photos and PDFs/i.test(fallbackFailure.message)
+          ? fallbackFailure
+          : new Error(
+              directFailure instanceof Error && directFailure.message
+                ? `${directFailure.message}. We also could not send it through our server.`
+                : "We could not upload your file.",
+            );
+      }
+    }
+  };
+
+  /** Upload straight to the bucket with the signed link. */
+  const putDirect = async (uploadURL: string, chosen: PickedFile): Promise<void> => {
     if (Platform.OS === "web") {
-      const fileResp = await fetch(file.uri);
+      const fileResp = await fetch(chosen.uri);
       const blob = await fileResp.blob();
       const putResp = await fetch(uploadURL, {
         method: "PUT",
-        headers: { "Content-Type": file.mimeType },
+        headers: { "Content-Type": chosen.mimeType },
         body: blob,
       });
-      if (!putResp.ok) throw new Error("Upload failed");
-    } else {
-      const FileSystem = await import("expo-file-system");
-      const uploadResult = await FileSystem.uploadAsync(uploadURL, file.uri, {
-        httpMethod: "PUT",
-        headers: { "Content-Type": file.mimeType },
-      });
-      if (uploadResult.status < 200 || uploadResult.status >= 300) throw new Error("Upload failed");
+      if (!putResp.ok) throw new Error(`The upload was refused (${putResp.status}).`);
+      return;
     }
+    const FileSystem = await import("expo-file-system");
+    const uploadResult = await FileSystem.uploadAsync(uploadURL, chosen.uri, {
+      httpMethod: "PUT",
+      headers: { "Content-Type": chosen.mimeType },
+    });
+    if (uploadResult.status < 200 || uploadResult.status >= 300) {
+      throw new Error(`The upload was refused (${uploadResult.status}).`);
+    }
+  };
 
-    return objectPath;
+  /** Upload through our own API, which no browser rule can block. */
+  const putViaServer = async (chosen: PickedFile): Promise<string> => {
+    if (Platform.OS === "web") {
+      const fileResp = await fetch(chosen.uri);
+      const blob = await fileResp.blob();
+      const res = await apiPutBinary<{ objectPath: string }>("/storage/upload", blob, chosen.mimeType);
+      return res.objectPath;
+    }
+    const FileSystem = await import("expo-file-system");
+    const token = await getToken();
+    const result = await FileSystem.uploadAsync(`${apiBase()}/storage/upload`, chosen.uri, {
+      httpMethod: "PUT",
+      headers: {
+        "Content-Type": chosen.mimeType,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (result.status < 200 || result.status >= 300) {
+      let reason = "We could not send your file.";
+      try { reason = JSON.parse(result.body ?? "{}").error ?? reason; } catch { /* not JSON */ }
+      throw new Error(reason);
+    }
+    return JSON.parse(result.body).objectPath as string;
   };
 
   const submit = async () => {

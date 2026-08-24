@@ -179,6 +179,40 @@ export async function signUpload(args: {
   return { uploadURL, key };
 }
 
+/**
+ * Put a file into the bucket from here, rather than from the phone.
+ *
+ * The slower path, and the one that always works. A browser uploading straight to R2 needs the
+ * bucket to allow its origin — and a bucket with no CORS rule simply refuses, which a browser
+ * reports as "Load failed" and nothing more. That is what happened on the live site the first
+ * time somebody attached a photo.
+ *
+ * So this exists as a fallback the app reaches for when the direct upload is refused. It costs
+ * a round trip through this server, which on a Nepali connection is real, and it is bounded by
+ * the same size cap. The direct path stays the default because phone-to-Cloudflare beats
+ * phone-to-Railway-to-Cloudflare every time — this is only the safety net.
+ *
+ * It also means the product does not quietly break the day the domain changes, which it will:
+ * the name is not settled, and a CORS rule naming the old origin would stop working silently.
+ */
+export async function putObject(args: {
+  kind: UploadKind;
+  userId: number;
+  contentType: string;
+  body: Buffer;
+}): Promise<string | null> {
+  const c = client();
+  if (!c) return null;
+  const key = makeKey(args.kind, args.userId, args.contentType);
+  await c.client.send(new PutObjectCommand({
+    Bucket: c.config.bucket,
+    Key: key,
+    Body: args.body,
+    ContentType: args.contentType,
+  }));
+  return key;
+}
+
 /** A short-lived link to look at one file. Handed out per view, never stored. */
 export async function signView(key: string): Promise<string | null> {
   const c = client();
