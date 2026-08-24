@@ -411,9 +411,23 @@ async function classDayTests() {
   const sneaked = Number(sql(`select count(*) from session_enrollments where session_id = ${sessionId} and student_id = ${outsider.user.id}`));
   check("and no enrolment was written for them", sneaked === 0, `found ${sneaked}`);
 
-  const discover = await api("/sessions?limit=100");
-  const listed = (discover.body?.sessions ?? discover.body ?? []).some?.((x) => x.id === sessionId);
-  check("monthly class-days are not offered in Discover", listed !== true, `session ${sessionId} was listed`);
+  /*
+   * Counted, not paged through.
+   *
+   * The first version asked for a hundred classes and checked this one was not among them,
+   * which passed with the filter removed: by then the database held hundreds of class-days and
+   * the one under test simply was not on the first page. `total` is computed from the same
+   * where clause as the rows, so comparing it against the database is exact and cannot depend
+   * on where a row happens to land.
+   */
+  const discover = await api("/sessions?limit=1");
+  const forSale = Number(sql(`select count(*) from sessions s
+      where not exists (select 1 from recurring_days rd where rd.session_id = s.id)`));
+  const allClasses = Number(sql(`select count(*) from sessions`));
+  check("setup: there are monthly class-days that could have been counted", allClasses > forSale,
+    `${allClasses} classes, ${forSale} of them for sale`);
+  check("monthly class-days are not offered in Discover", discover.body?.total === forSale,
+    `Discover counted ${discover.body?.total}, ${forSale} are actually for sale`);
 
   const mine = await api(`/sessions?studentId=${student.user.id}&limit=100`);
   const inMine = (mine.body?.sessions ?? mine.body ?? []).some?.((x) => x.id === sessionId);
