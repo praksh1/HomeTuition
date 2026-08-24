@@ -29,3 +29,26 @@ failing log the whole time, one line long — and it took three runs to see beca
 output was thrown away and the local reproduction ran from the repo root, where the relative
 path happens to work. Reproduce a CI failure with **CI's working directory**, not just CI's
 command.
+
+## The pidfile can be stale, and then every later result is a lie
+
+The two rules above assume the pidfile names the running server. It does not if *something else*
+started one. That happened while building the monthly tier: a break-testing script started the
+API itself, a later script killed only what `/tmp/api.pid` named, the replacement died on
+`EADDRINUSE` — and the suite kept passing, against a build from several changes earlier.
+
+The damage is not the failed restart. It is that five deliberate breaks in a row all reported
+"not caught", which reads as five weak tests, and a real check reported a bug that did not
+exist. Half an hour went into strengthening tests that were already fine.
+
+So:
+
+- **Kill what is actually running**, not what a file claims: `ps -eo pid,cmd | grep "[d]ist/index\.mjs"`
+  and kill those pids. (The `[d]` keeps the pattern from matching the caller's own argv — the
+  same trap `pkill -f` falls into.)
+- **Fail loudly.** If `EADDRINUSE` appears in the log, stop and say so. A restart that quietly
+  did nothing is worse than one that crashes.
+- **Rebuild after restoring.** A script that edits a file, builds, tests, then `git checkout`s
+  the file leaves `dist` holding the edit. The next run inherits it.
+
+If a break you are certain about reports "not caught", suspect the server before the test.
