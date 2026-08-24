@@ -209,13 +209,68 @@ async function main() {
       check("and it is deleted rather than left costing money", !r2.objects.has(bigKey));
     }
 
+    console.log("\nUploading through the server, the way a blocked browser has to\n");
+
+    {
+      /**
+       * The live-site failure this exists for: a browser will not PUT to R2 unless the bucket
+       * names its origin in a CORS rule, and Safari reports the refusal as "Load failed" and
+       * nothing more. This path goes through our own API, which no browser rule can block.
+       */
+      const viaServer = await fetch(`${API}/api/storage/upload`, {
+        method: "PUT",
+        headers: { "Content-Type": "image/png", Authorization: `Bearer ${student.token}` },
+        body: PNG,
+      });
+      const body = await viaServer.json().catch(() => ({}));
+      check("a file sent through the server is stored", viaServer.status === 201,
+        `status=${viaServer.status} ${JSON.stringify(body)}`);
+      const serverKey = body?.objectPath ?? "";
+      check("under a key that belongs to the uploader",
+        serverKey.startsWith(`evidence/${student.user.id}/`), serverKey);
+      check("and the bytes really are in the bucket",
+        r2.objects.get(serverKey)?.body.equals(PNG) === true);
+
+      const filedViaServer = await api("/disputes", { method: "POST", token: student.token, body: {
+        reason: "Technical Failure", description: "Uploaded the slow way.", evidenceUrl: serverKey } });
+      check("and it can be attached to a report like any other",
+        filedViaServer.body?.evidenceUrl === serverKey, JSON.stringify(filedViaServer.body?.evidenceUrl));
+
+      const wrongType = await fetch(`${API}/api/storage/upload`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/x-msdownload", Authorization: `Bearer ${student.token}` },
+        body: PNG,
+      });
+      check("the same rules apply — an executable is refused", wrongType.status === 400,
+        `status=${wrongType.status}`);
+
+      const anonPut = await fetch(`${API}/api/storage/upload`, {
+        method: "PUT", headers: { "Content-Type": "image/png" }, body: PNG,
+      });
+      check("and it is not an open door", anonPut.status === 401, `status=${anonPut.status}`);
+
+      const huge = await fetch(`${API}/api/storage/upload`, {
+        method: "PUT",
+        headers: { "Content-Type": "image/png", Authorization: `Bearer ${student.token}` },
+        body: Buffer.alloc(11 * 1024 * 1024, 1),
+      });
+      check("something over the cap does not get through", huge.status >= 400, `status=${huge.status}`);
+    }
+
     console.log("\nWho may look at it afterwards\n");
 
     {
-      const mine = await api(`/storage/file?key=${encodeURIComponent(key)}`, { token: student.token, redirect: "manual" });
-      check("the person who uploaded it can", mine.status === 302, `status=${mine.status}`);
-      const target = mine.headers.get("location") ?? "";
-      check("and is sent to a signed link", /X-Amz-Signature=/.test(target), target.slice(0, 120));
+      const mine = await api(`/storage/file?key=${encodeURIComponent(key)}`, { token: student.token });
+      check("the person who uploaded it can", mine.status === 200, `status=${mine.status}`);
+      const target = mine.body?.url ?? "";
+      /**
+       * A link in the body, not a 302.
+       *
+       * A redirect is unreadable to a browser: `fetch` with `redirect: "manual"` returns an
+       * opaque response with no Location. Node exposes it, so a 302 passed here and would have
+       * failed on the web — a test green in the wrong environment.
+       */
+      check("and is given a signed link it can actually read", /X-Amz-Signature=/.test(target), target.slice(0, 120));
       check("that dies within the hour", /X-Amz-Expires=([1-9]\d{0,3})(&|$)/.test(target),
         (target.match(/X-Amz-Expires=\d+/) ?? [""])[0]);
 
@@ -224,22 +279,22 @@ async function main() {
       check("and it is the file that was uploaded",
         Buffer.from(await view.arrayBuffer()).equals(PNG));
 
-      const nosy = await api(`/storage/file?key=${encodeURIComponent(key)}`, { token: other.token, redirect: "manual" });
+      const nosy = await api(`/storage/file?key=${encodeURIComponent(key)}`, { token: other.token });
       check("somebody else cannot", nosy.status === 403, `status=${nosy.status}`);
 
-      const signedOut = await api(`/storage/file?key=${encodeURIComponent(key)}`, { redirect: "manual" });
+      const signedOut = await api(`/storage/file?key=${encodeURIComponent(key)}`);
       check("nor can somebody signed out", signedOut.status === 401, `status=${signedOut.status}`);
 
       const agentAccount = await register("student", "Support Agent");
       sql(`update users set role = 'admin' where id = ${agentAccount.user.id}`);
       const agentLogin = await api("/auth/login", { method: "POST", body: { email: agentAccount.email, password: "password123" } });
       const asAgent = await api(`/storage/file?key=${encodeURIComponent(key)}`, {
-        token: agentLogin.body?.token, redirect: "manual" });
-      check("a support agent can, which is the point of an attachment", asAgent.status === 302,
+        token: agentLogin.body?.token });
+      check("a support agent can, which is the point of an attachment", asAgent.status === 200,
         `status=${asAgent.status}`);
 
       const madeUp = await api(`/storage/file?key=${encodeURIComponent("../../etc/passwd")}`, {
-        token: student.token, redirect: "manual" });
+        token: student.token });
       check("and a key that is not one of ours is refused", madeUp.status === 400, `status=${madeUp.status}`);
     }
 

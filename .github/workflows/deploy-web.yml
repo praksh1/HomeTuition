@@ -346,6 +346,11 @@ jobs:
           # component was passed. It caught the Drop control being reachable but the class
           # thread vanishing for the student who had just used it.
           pnpm --filter @workspace/sikshya run test:refunds
+          # Attaching a photo with the bucket refusing the direct upload — the live-site
+          # failure. A browser will not PUT to R2 unless the bucket names the site's origin,
+          # and reports the refusal as "Load failed" and nothing more. The app has to notice
+          # and send the file through our own API instead.
+          pnpm --filter @workspace/sikshya run test:uploads
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local
