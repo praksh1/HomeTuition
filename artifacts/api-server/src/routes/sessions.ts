@@ -10,7 +10,7 @@ import {
 } from "../lib/membership";
 import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/payments";
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
-import { ensureDailyRoom, createMeetingToken } from "../lib/daily";
+import { videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
@@ -411,21 +411,44 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
     return;
   }
 
+  /**
+   * Asked of whichever provider is carrying the video, not of Daily by name.
+   *
+   * Daily is the only one today and this behaves exactly as it did. The seam is here because
+   * replacing it is decided future work — forty-five people in a daily ninety-minute call does
+   * not survive per-participant-minute pricing — and a swap should mean writing one file, not
+   * editing every route and classroom screen. See lib/video/types.ts and VIDEO.md.
+   */
+  const video = videoProvider();
   try {
-    const roomUrl = await ensureDailyRoom(id);
+    const roomUrl = await video.ensureRoom(id);
     // Only this session's teacher gets an owner token, and only the server can mint one, so
     // moderator powers cannot be granted by anything the client says about itself.
     const [userRow] = await db
       .select({ name: usersTable.name })
       .from(usersTable)
       .where(eq(usersTable.id, req.user!.userId));
-    const token = await createMeetingToken(id, {
+    const token = await video.joinToken(id, {
       isOwner: membership!.isSessionTeacher,
       userName: userRow?.name ?? "Guest",
     });
-    res.json({ roomUrl, token, isOwner: membership!.isSessionTeacher });
+    /**
+     * `roomUrl`, `token` and `isOwner` keep their names.
+     *
+     * The app already reads them and they are what every candidate provider actually gives you
+     * — a place to join and something that authorises one person to join it. `provider` and
+     * `capabilities` are added so the app can mount the right call UI and stop guessing at what
+     * a provider can do; nothing that exists today has to change.
+     */
+    res.json({
+      roomUrl,
+      token,
+      isOwner: membership!.isSessionTeacher,
+      provider: video.name,
+      capabilities: video.capabilities,
+    });
   } catch (err) {
-    req.log.error({ err, sessionId: id }, "Failed to ensure Daily room");
+    req.log.error({ err, sessionId: id, provider: video.name }, "could not set up the video room");
     res.status(502).json({ error: "Failed to set up video room" });
   }
 });
@@ -744,12 +767,13 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     // without hanging up on students already waiting in the room.
     if (status === "live") resetBoardFor(String(id));
 
-    // Proactively create the Daily.co room the moment the teacher starts the session,
-    // so it already exists by the time either side's WebView tries to join it.
+    // Make the room the moment the teacher starts the class, so it already exists by the time
+    // either side tries to join it. Through the provider, so this is not a second place that
+    // has to change when Daily is replaced.
     try {
-      await ensureDailyRoom(id);
+      await videoProvider().ensureRoom(id);
     } catch (err) {
-      req.log.error({ err, sessionId: id }, "Failed to pre-create Daily room on session start");
+      req.log.error({ err, sessionId: id }, "could not pre-create the video room on session start");
     }
   }
 

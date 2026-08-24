@@ -20,7 +20,7 @@ import { useAuth } from "@/context/AuthContext";
 import type { Student } from "@/context/AuthContext";
 import { ApiError, apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
-import DailyEmbed from "@/components/DailyEmbed";
+import VideoCall from "@/components/VideoCall";
 import SmartBoard from "@/components/SmartBoard";
 import { showsOwnChatTab } from "@/utils/classroomChat";
 import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
@@ -58,6 +58,8 @@ export default function StudentClassroom() {
   const [isLandscape, setIsLandscape] = useState(false);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
+  /** Which implementation carries this call. The server decides; the app just mounts it. */
+  const [videoProvider, setVideoProvider] = useState<string>("daily");
   const [roomError, setRoomError] = useState(false);
   /** Set when the server refuses a room because the class is over. */
   const [roomExpired, setRoomExpired] = useState<string | null>(null);
@@ -92,7 +94,8 @@ export default function StudentClassroom() {
   // own "start session" call has run, since the room is created idempotently either way.
   const loadRoom = async () => {
     try {
-      const { roomUrl: url, token } = await apiGet<{ roomUrl: string; token?: string | null }>(`/sessions/${id}/room`);
+      const { roomUrl: url, token, provider } = await apiGet<{ roomUrl: string; token?: string | null; provider?: string }>(`/sessions/${id}/room`);
+      if (provider) setVideoProvider(provider);
       setRoomUrl(url);
       setMeetingToken(token ?? null);
       setRoomError(false);
@@ -323,9 +326,10 @@ export default function StudentClassroom() {
             is the only reliable way to keep it from clashing with the chat tab. */}
         <View style={[s.videoArea, videoExpanded && s.videoAreaExpanded, (mode === "chat" || boardExpanded) && s.videoAreaHidden]}>
           {roomUrl ? (
-            <DailyEmbed
+            <VideoCall
+              provider={videoProvider}
               roomUrl={roomUrl}
-              meetingToken={meetingToken}
+              token={meetingToken}
               chatMessages={messages}
               onSendChat={sendChat}
               displayName={studentName}

@@ -23,7 +23,7 @@ import { useAuth } from "@/context/AuthContext";
 import type { Teacher } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
-import DailyEmbed from "@/components/DailyEmbed";
+import VideoCall from "@/components/VideoCall";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import PdfViewer from "@/components/PdfViewer";
@@ -123,6 +123,8 @@ export default function Classroom() {
   const [localPdfUri, setLocalPdfUri] = useState<string | null>(null);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
+  /** Which implementation carries this call. The server decides; the app just mounts it. */
+  const [videoProvider, setVideoProvider] = useState<string>("daily");
   const [roomError, setRoomError] = useState(false);
   /**
    * Set when this class is too old to open. Nothing about the call is set up while it is —
@@ -215,7 +217,8 @@ export default function Classroom() {
     if (roomInFlight.current) return;
     roomInFlight.current = true;
     try {
-      const { roomUrl: url, token } = await apiGet<{ roomUrl: string; token?: string | null }>(`/sessions/${id}/room`);
+      const { roomUrl: url, token, provider } = await apiGet<{ roomUrl: string; token?: string | null; provider?: string }>(`/sessions/${id}/room`);
+      if (provider) setVideoProvider(provider);
       setRoomUrl(url);
       setMeetingToken(token ?? null);
       setRoomError(false);
@@ -727,7 +730,7 @@ export default function Classroom() {
             is the only reliable way to keep it from clashing with the chat tab. */}
         <View style={[s.videoArea, sideBySide && s.videoAreaSide, videoExpanded && s.videoAreaExpanded, (mode === "chat" || boardExpanded) && s.videoAreaHidden]}>
           {roomUrl ? (
-            <DailyEmbed chatMessages={messages} onSendChat={sendChat} roomUrl={roomUrl} meetingToken={meetingToken} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
+            <VideoCall provider={videoProvider} chatMessages={messages} onSendChat={sendChat} roomUrl={roomUrl} token={meetingToken} displayName={teacherName} style={StyleSheet.absoluteFill} onLeft={handleDailyLeft} canScreenShare />
           ) : (
             <View style={[StyleSheet.absoluteFill, s.permissionGate]}>
               <ActivityIndicator color="#fff" />
