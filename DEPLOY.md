@@ -184,6 +184,84 @@ The same applies to `npx`: use **`npx.cmd wrangler deploy`**. This doc previousl
 
 ---
 
+## 3b. Uploaded files → Cloudflare R2
+
+**Do this when you want support attachments to work.** Everything else runs without it — the app
+simply says "File uploads are not set up on this server yet", and a report still goes through
+with its words, just not its photo.
+
+R2 was chosen over Amazon S3 for two reasons: **there are no egress charges, ever** (S3 bills you
+every time somebody downloads a file, which is the line item that surprises people), and you
+already have a Cloudflare account for the web app. The free tier is 10 GB of storage, 1 million
+uploads a month and 10 million downloads a month. For support attachments you will not come close.
+
+### Make the bucket
+
+1. Go to **dash.cloudflare.com** and sign in.
+2. In the left sidebar, click **R2 Object Storage**. The first time, it asks you to agree to the
+   R2 terms and add a payment card. **Adding the card does not charge you** — it is there so you
+   are not cut off the day you exceed the free tier. You can set a spend alert on the same page.
+3. Click **Create bucket**.
+4. Name it `hometuition-uploads`. Any name works, but it must match the variable below exactly.
+5. Location: **Automatic** is fine. If you want to pin it, choose **Asia-Pacific**.
+6. Click **Create bucket**. Leave it **private** — do not enable public access. Files are served
+   through short-lived signed links, which is what keeps a student's evidence photo private.
+
+### Make the keys
+
+1. Still in **R2**, click **Manage R2 API Tokens** (top right of the R2 page), then
+   **Create API token**.
+2. Name it `hometuition-api`.
+3. Permission: **Object Read & Write**.
+4. Under *Specify bucket*, choose **Apply to specific buckets** and pick `hometuition-uploads`.
+   A token that can only touch this one bucket is worth the extra click.
+5. TTL: leave as **Forever**.
+6. Click **Create API Token**.
+7. You now see three things **once**. Copy all three somewhere safe before leaving the page:
+   - **Access Key ID**
+   - **Secret Access Key**
+   - the **endpoint**, which looks like `https://<a long hex string>.r2.cloudflarestorage.com`
+
+   That long hex string is your **Account ID**. It is also shown on the R2 overview page.
+
+### Put them on Railway
+
+1. **railway.app** → your project → the **api-server** service → **Variables**.
+2. Add four:
+
+   | Name | Value |
+   |---|---|
+   | `R2_ACCOUNT_ID` | the long hex string from the endpoint |
+   | `R2_ACCESS_KEY_ID` | the Access Key ID |
+   | `R2_SECRET_ACCESS_KEY` | the Secret Access Key |
+   | `R2_BUCKET` | `hometuition-uploads` |
+
+3. Railway restarts the service on its own, in about a minute.
+
+### Check it worked
+
+Open the live site, go to **Support**, write anything, attach a photo, and submit. If it says
+"Our support team will review your report" you are done. If it says "your file did not go with
+it", the message names the reason.
+
+To see it from the other side: an agent opening that ticket now gets **Open the attachment**
+rather than a line of gibberish.
+
+### Things worth knowing
+
+- **Never paste these keys into a chat, an issue, or the repo.** They can read and write every
+  file in that bucket. If one leaks, delete the token in Cloudflare and make a new one — the
+  four variables above are the only place it lives.
+- **10 MB per file, photos and PDFs only.** Both are enforced on the server, and a file that
+  breaks either rule is deleted from the bucket rather than left sitting there costing you.
+- **A view link lasts ten minutes.** That is deliberate: a URL that ends up in a screenshot or a
+  forwarded message stops working almost immediately.
+- **Costs, honestly.** At the free tier you pay nothing. Past it, R2 is about $0.015 per GB per
+  month with no charge for downloads. A thousand support photos at 3 MB each is 3 GB — roughly
+  five US cents a month.
+
+---
+
 ## 4. After the first deploy
 
 **Create the database tables** (once, from your laptop, pointed at the same Neon database):

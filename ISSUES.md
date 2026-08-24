@@ -32,7 +32,12 @@ is cheap next to what it costs afterwards. Tick them off in order.
       door and declines every booking, because the eSewa/Khalti branch is not written. See A1.
 - [ ] **Set the email variables** if you want email notifications: `RESEND_API_KEY`,
       `EMAIL_FROM`, and `APP_URL` for the links inside them.
-- [ ] **Decide where uploaded files go.** Attaching anything to a Customer Support report has
+- [ ] **Create the Cloudflare R2 bucket and set four variables on Railway.** The code is done
+      and tested; it needs a bucket. Until then the app says "File uploads are not set up on
+      this server yet" and reports still go through without their attachment. Step by step in
+      `DEPLOY.md` under *Uploaded files*.
+- [x] ~~**Decide where uploaded files go.**~~ Cloudflare R2, chosen for no egress charges and
+      the account already existing. Attaching anything to a Customer Support report had
       never worked — the app asked for an upload URL with the wrong field names and every
       attempt returned 400 before a byte left the phone. That part is fixed, but the endpoint
       behind it still wants object-storage settings left over from this app's Replit origins
