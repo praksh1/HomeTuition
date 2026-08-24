@@ -10,7 +10,7 @@ import {
 } from "@workspace/db";
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { chargeForMonthly } from "../lib/payments";
-import { notify } from "../lib/notify";
+import { notify, notifyMany } from "../lib/notify";
 import {
   MAX_DAILY_MINUTES,
   MAX_STUDENTS,
@@ -31,6 +31,7 @@ import {
   countEnrolled,
   countRegularDays,
   countRemainingDays,
+  changeDailyTime,
   cycleOf,
   enrolInMaterialisedDays,
   enrolmentFor,
@@ -600,21 +601,52 @@ router.patch("/monthly/classes/:id/time", requireAuth, async (req: Request, res:
     return;
   }
 
+  const [plan] = await db.select().from(teacherPlansTable).where(eq(teacherPlansTable.id, klass.planId));
+  const cycle = plan ? await cycleOf(plan) : null;
+  if (!plan || !cycle) {
+    res.status(409).json({ error: "That class has not started its first month yet." });
+    return;
+  }
+  const anchorMs = plan.cycleAnchor ? plan.cycleAnchor.getTime() : cycle.start;
+
+  const was = klass.startMinute;
+  let change;
+  try {
+    change = await changeDailyTime(klass, anchorMs, startMinute!);
+  } catch (err) {
+    req.log?.error({ err, klass: klass.id }, "could not move a monthly class's daily time");
+    res.status(500).json({ error: "Could not move the class. Nothing was changed — please try again." });
+    return;
+  }
+
   /*
-   * Not finished, and refused clearly rather than half-done.
+   * Told, not left to notice.
    *
-   * The classes already on the calendar have to move with the time, and that move is not a
-   * single UPDATE: shifting a set of class-days by a few hours lands some of them on instants
-   * their own neighbours still hold, which `recurring_days_slot_idx` refuses — and whether it
-   * refuses depends on the order Postgres updates the rows in, so the naive version passes
-   * until it doesn't. It has to hop the whole set clear of its own range and back, inside one
-   * transaction, and students holding places have to be told what moved. Half of that would
-   * leave a class split across two times with students at both.
+   * Everybody holding a place is sent the same notification an ordinary rescheduled class
+   * sends, with where it was and where it is now. A student who does not hear about this turns
+   * up to an empty room, which is the single most damaging thing a class can do to somebody
+   * who paid for it.
    */
-  res.status(501).json({
-    error:
-      "Changing the daily time is not finished yet — the classes already on the calendar have " +
-      "to move with it, and half-moving them would strand students.",
+  if (change.studentIds.length > 0) {
+    notifyMany(change.studentIds, {
+      kind: "session_rescheduled",
+      at: new Date().toISOString(),
+      fromUserId: user.userId,
+      topic: `${klass.subject} — ${klass.topic}`,
+      previousDate: formatStartMinute(was),
+      newDate: formatStartMinute(startMinute!),
+    });
+  }
+
+  const updated = await classById(klass.id);
+  res.json({
+    class: await describeClass(updated, user.userId),
+    moved: change.moved,
+    classesMoved: change.classesMoved,
+    studentsTold: change.studentIds.length,
+    previousStartTime: formatStartMinute(was),
+    startTime: formatStartMinute(startMinute!),
+    nextClassAt: change.nextAt ? change.nextAt.toISOString() : null,
     noticeHours: TIME_CHANGE_NOTICE_HOURS,
     maxDailyMinutes: MAX_DAILY_MINUTES,
   });

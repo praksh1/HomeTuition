@@ -12,7 +12,7 @@ import {
   type TeacherPlan,
 } from "@workspace/db";
 import { CYCLE_DAYS, cycleAt, cycleEnd, planCycleAnchor } from "./monthly";
-import { classInstants } from "./monthlySchedule";
+import { classInstants, instantOfLocalTime, localDayKey } from "./monthlySchedule";
 
 /** Anything that can run a query — the database, or a transaction on it. */
 type Db = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -508,3 +508,113 @@ export async function isRecurringDay(sessionId: number): Promise<boolean> {
 export const notARecurringDay = sql`not exists (
   select 1 from recurring_days rd where rd.session_id = ${sessionsTable.id}
 )`;
+
+
+export interface TimeChange {
+  /** Class-days that moved. */
+  moved: number;
+  /** Already-created classes whose start moved with them. */
+  classesMoved: number;
+  /** Students who should be told, across every cycle affected. */
+  studentIds: number[];
+  /** Where the next class now is, so the teacher can be shown it. */
+  nextAt: Date | null;
+}
+
+/**
+ * Moves the daily time, and every class still to come with it.
+ *
+ * Each class-day keeps its own local date and changes only its time of day. That cannot
+ * collide with `recurring_days_slot_idx`, because a class runs once a day: no two regular
+ * class-days of one class share a local date, so no row can land on an instant another row
+ * holds. (An earlier note here claimed this needed the same hop-out-and-back that shifting
+ * days by whole days does. It does not — that hazard is real only when rows move *across* each
+ * other's dates, which a time-of-day change never does.)
+ *
+ * `cycle_index` is recomputed from the new instant rather than carried over. Moving a class
+ * later in the day can carry the last class of a month past the moment that month ends, and a
+ * class-day filed under the wrong month is counted against the wrong delivery floor and the
+ * wrong set of students' money.
+ *
+ * Classes already created move too. Leaving those behind is what "half-moving them would
+ * strand students" meant: the students would be sitting in a room at the old time while the
+ * teacher's class said the new one.
+ */
+export async function changeDailyTime(
+  klass: RecurringSession,
+  cycleAnchorMs: number,
+  newStartMinute: number,
+  now: number = Date.now(),
+): Promise<TimeChange> {
+  return db.transaction(async (tx) => {
+    const days = await tx
+      .select({
+        id: recurringDaysTable.id,
+        sessionId: recurringDaysTable.sessionId,
+        scheduledFor: recurringDaysTable.scheduledFor,
+        cycleIndex: recurringDaysTable.cycleIndex,
+      })
+      .from(recurringDaysTable)
+      .where(
+        and(
+          eq(recurringDaysTable.recurringId, klass.id),
+          eq(recurringDaysTable.status, "planned"),
+          gt(recurringDaysTable.scheduledFor, new Date(now)),
+        ),
+      )
+      .orderBy(asc(recurringDaysTable.scheduledFor));
+
+    const cycles = new Set<number>();
+    let classesMoved = 0;
+    let nextAt: Date | null = null;
+
+    for (const day of days) {
+      const was = day.scheduledFor.getTime();
+      const [year, month, date] = localDayKey(was, klass.timeZone).split("-").map(Number);
+      const at = instantOfLocalTime(year!, month!, date!, newStartMinute, klass.timeZone);
+      const moved = new Date(at);
+
+      const cycle = cycleAt(cycleAnchorMs, at);
+      const cycleIndex = cycle ? cycle.index : day.cycleIndex;
+
+      await tx
+        .update(recurringDaysTable)
+        .set({ scheduledFor: moved, cycleIndex })
+        .where(eq(recurringDaysTable.id, day.id));
+
+      if (day.sessionId !== null) {
+        await tx.update(sessionsTable).set({ date: moved }).where(eq(sessionsTable.id, day.sessionId));
+        classesMoved += 1;
+      }
+
+      cycles.add(day.cycleIndex);
+      cycles.add(cycleIndex);
+      if (nextAt === null || moved < nextAt) nextAt = moved;
+    }
+
+    await tx
+      .update(recurringSessionsTable)
+      .set({ startMinute: newStartMinute, timeChangedAt: new Date(now) })
+      .where(eq(recurringSessionsTable.id, klass.id));
+
+    const students = cycles.size
+      ? await tx
+          .select({ studentId: recurringEnrollmentsTable.studentId })
+          .from(recurringEnrollmentsTable)
+          .where(
+            and(
+              eq(recurringEnrollmentsTable.recurringId, klass.id),
+              inArray(recurringEnrollmentsTable.cycleIndex, [...cycles]),
+              eq(recurringEnrollmentsTable.status, "active"),
+            ),
+          )
+      : [];
+
+    return {
+      moved: days.length,
+      classesMoved,
+      studentIds: [...new Set(students.map((s) => s.studentId))],
+      nextAt,
+    };
+  });
+}

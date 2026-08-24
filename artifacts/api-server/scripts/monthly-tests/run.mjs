@@ -51,6 +51,25 @@ async function register(role, name) {
 }
 
 const TIER = 6500;
+const KTM = "Asia/Kathmandu";
+
+/** The minute of the day it is right now in Kathmandu, 0–1439. */
+function kathmanduMinuteNow() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: KTM, hour12: false, hour: "2-digit", minute: "2-digit",
+  }).formatToParts(new Date());
+  const read = (t) => Number(parts.find((x) => x.type === t).value);
+  return (read("hour") % 24) * 60 + read("minute");
+}
+
+/** Puts the single next class this many hours away, without disturbing any other day. */
+function nextClassIn(klassId, hours) {
+  const id = sql(`select id from recurring_days where recurring_id = ${klassId}
+      and status = 'planned' and scheduled_for > now() order by scheduled_for asc limit 1`);
+  if (!id) return null;
+  sql(`update recurring_days set scheduled_for = now() + interval '${hours} hours' where id = ${id}`);
+  return Number(id);
+}
 
 /**
  * Winds a class back in time by whole days.
@@ -563,11 +582,19 @@ async function ruleTests() {
   const notMine = await api(`/monthly/classes/${klass.id}/time`, { method: "PATCH", token: stranger.token, body: { startMinute: 600 } });
   check("somebody else cannot move the class", notMine.status === 403, `status ${notMine.status}`);
 
-  // Eighteen hours' notice, judged against the next class.
-  sql(`update recurring_days set status = 'cancelled' where recurring_id = ${klass.id} and scheduled_for < now() + interval '10 hours'`);
+  /*
+   * Eighteen hours' notice, judged against the next class.
+   *
+   * This used to cancel every class within ten hours, which pushes the next class *further*
+   * away — the opposite of the situation being tested. It passed anyway because the route was
+   * still a 501 and refused everything. Implementing the route is what exposed it.
+   */
+  const wasAt = Number(sql(`select start_minute from recurring_sessions where id = ${klass.id}`));
+  nextClassIn(klass.id, 2);
   const soon = await api(`/monthly/classes/${klass.id}/time`, { method: "PATCH", token: teacher.token, body: { startMinute: 600 } });
-  check("a class inside eighteen hours cannot be moved", soon.status === 409 || soon.status === 501,
-    `status ${soon.status} ${JSON.stringify(soon.body)?.slice(0, 120)}`);
+  check("a class inside eighteen hours cannot be moved", soon.status === 409, `status ${soon.status} ${JSON.stringify(soon.body)?.slice(0, 120)}`);
+  const stillAt = Number(sql(`select start_minute from recurring_sessions where id = ${klass.id}`));
+  check("and the refusal changes nothing", wasAt === stillAt, `${wasAt} became ${stillAt}`);
 
   const missing = await api("/monthly/classes/999999");
   check("an unknown class is a 404, not a crash", missing.status === 404, `status ${missing.status}`);
@@ -577,6 +604,74 @@ async function ruleTests() {
 
   const anon = await api(`/monthly/classes/${klass.id}/join`, { method: "POST", body: {} });
   check("a signed-out visitor cannot join", anon.status === 401, `status ${anon.status}`);
+}
+
+async function timeChangeTests() {
+  console.log("\nMoving the daily time");
+
+  /*
+   * The class time is set three hours ago, so today's class has been and gone and the next one
+   * is about twenty-one hours away: past the eighteen-hour notice window, so the move is
+   * allowed, but inside the twenty-four hours in which a class-day becomes a real class — so
+   * there is a class on the calendar to move as well as a schedule.
+   *
+   * Ageing the class by a day instead put the next class within eighteen hours and the move was
+   * correctly refused, which tested the notice rule for a second time and the move not at all.
+   */
+  const wasMinute = (kathmanduMinuteNow() - 180 + 1440) % 1440;
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 3000, startMinute: wasMinute });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+
+  // Two days on, so there are classes behind us as well as ahead. A time change must not
+  // rewrite history: the delivery ledger is counted from those, and moving them would move
+  // classes that already happened.
+  ageClass(klass.id, planId, 2);
+  await api(`/monthly/classes/${klass.id}`, { token: student.token });
+
+  const hoursOut = Number(sql(`select round(extract(epoch from (min(scheduled_for) - now())) / 3600)
+      from recurring_days where recurring_id = ${klass.id} and status = 'planned' and scheduled_for > now()`));
+  check("setup: the next class is past the notice window but inside a day", hoursOut > 18 && hoursOut < 24, `${hoursOut} hours away`);
+  const existing = Number(sql(`select session_id from recurring_days where recurring_id = ${klass.id}
+      and session_id is not null and status = 'planned' order by scheduled_for asc limit 1`) || 0);
+
+  const before = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
+      and status = 'planned' and scheduled_for > now()`));
+  check("setup: there are classes still to come", before > 0, `${before} ahead`);
+
+  const moved = await api(`/monthly/classes/${klass.id}/time`, { method: "PATCH", token: teacher.token, body: { startMinute: 17 * 60 } });
+  check("the teacher can move the daily time", moved.status === 200, `status ${moved.status} ${JSON.stringify(moved.body)?.slice(0, 140)}`);
+  check("and is told how many classes moved", moved.body?.moved === before, `moved ${moved.body?.moved} of ${before}`);
+  const wasText = `${String(Math.floor(wasMinute / 60)).padStart(2, "0")}:${String(wasMinute % 60).padStart(2, "0")}`;
+  check("and what the time was before", moved.body?.previousStartTime === wasText, `was ${moved.body?.previousStartTime}, expected ${wasText}`);
+  check("and what it is now", moved.body?.startTime === "17:00", `now ${moved.body?.startTime}`);
+  check("the students holding a place are told", moved.body?.studentsTold >= 1, `told ${moved.body?.studentsTold}`);
+
+  const atFive = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
+      and status = 'planned' and scheduled_for > now()
+      and to_char(scheduled_for at time zone 'Asia/Kathmandu', 'HH24:MI') = '17:00'`));
+  check("every class still to come is at the new time", atFive === before, `${atFive} of ${before}`);
+
+  const untouched = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
+      and scheduled_for < now()
+      and to_char(scheduled_for at time zone 'Asia/Kathmandu', 'HH24:MI') = '${wasText}'`));
+  const behind = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and scheduled_for < now()`));
+  check("setup: there are classes behind us to leave alone", behind > 0, `${behind} behind`);
+  check("classes already behind us are left where they were", untouched === behind, `${untouched} of ${behind} still at ${wasText}`);
+
+  if (existing > 0) {
+    const sessionAt = sql(`select to_char(date at time zone 'Asia/Kathmandu', 'HH24:MI') from sessions where id = ${existing}`);
+    check("a class already on the calendar moves with it", sessionAt === "17:00", `class is at ${sessionAt}`);
+  }
+
+  const dupes = Number(sql(`select count(*) from (
+      select scheduled_for, kind from recurring_days where recurring_id = ${klass.id}
+      group by 1,2 having count(*) > 1) d`));
+  check("moving them did not land two classes on one instant", dupes === 0, `${dupes} collisions`);
+
+  const stored = Number(sql(`select start_minute from recurring_sessions where id = ${klass.id}`));
+  check("the class remembers its new time", stored === 17 * 60, `start_minute ${stored}`);
+
 }
 
 /* ------------------------------------------------------- money invariants */
@@ -637,6 +732,7 @@ async function main() {
   await concurrentMaterialiseTest();
   await ledgerTests();
   await ruleTests();
+  await timeChangeTests();
   await moneyInvariants();
 
   console.log(`\n${passed} passed, ${failed} failed`);
