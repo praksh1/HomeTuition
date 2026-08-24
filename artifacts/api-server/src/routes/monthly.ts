@@ -32,6 +32,7 @@ import { formatStartMinute, isValidStartMinute } from "../lib/monthlySchedule";
 import {
   activePlanFor,
   classById,
+  currentPlanFor,
   classForPlan,
   countEnrolled,
   countRegularDays,
@@ -277,7 +278,10 @@ router.post("/monthly/plan", requireAuth, async (req: Request, res: Response) =>
 /** The teacher's own plan, their class, and how they are standing this cycle. */
 router.get("/monthly/plan", requireAuth, async (req: Request, res: Response) => {
   const user = req.user!;
-  const plan = await activePlanFor(user.userId);
+  // Whatever state it is in. A suspended teacher was being shown no plan at all, as though they
+  // had never bought one — hiding the suspension, its reason and the date it lifts at exactly
+  // the moment those are the only things worth reading.
+  const plan = await currentPlanFor(user.userId);
   if (!plan) {
     res.json({ plan: null, class: null, tierPrice: TEACHER_TIER_PRICE });
     return;
@@ -289,7 +293,7 @@ router.get("/monthly/plan", requireAuth, async (req: Request, res: Response) => 
   // Re-read: the sweep above may have suspended them, and telling a suspended teacher they are
   // fine because the row was read a moment earlier is exactly the sort of stale answer this
   // project has had to fix before.
-  const fresh = (await activePlanFor(user.userId)) ?? plan;
+  const fresh = (await currentPlanFor(user.userId)) ?? plan;
   const cycle = await cycleOf(fresh);
   const ledger = klass && cycle ? await ledgerFor(klass.id, cycle.index) : null;
 
@@ -509,13 +513,15 @@ router.post("/monthly/classes", requireAuth, async (req: Request, res: Response)
     return;
   }
 
-  const plan = await activePlanFor(user.userId);
+  // Read whatever they have, so a suspended teacher is told they are suspended rather than
+  // told to buy a plan they already own.
+  const plan = await currentPlanFor(user.userId);
   if (!plan) {
     res.status(402).json({ error: "You need the monthly plan before you can create a monthly class." });
     return;
   }
-  if (plan.status === "suspended") {
-    res.status(403).json({ error: plan.suspendedReason ?? "This plan is suspended." });
+  if (plan.status !== "active") {
+    res.status(403).json({ error: plan.suspendedReason ?? "This plan is not running at the moment." });
     return;
   }
 

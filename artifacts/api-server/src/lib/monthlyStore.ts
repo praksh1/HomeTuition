@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   db,
   recurringDaysTable,
@@ -41,12 +41,34 @@ export async function activePlanFor(teacherId: number, conn: Db = db): Promise<T
   return plan ?? null;
 }
 
+/**
+ * The teacher's plan whatever state it is in — including suspended.
+ *
+ * `activePlanFor` deliberately answers "may they act?", and every route that lets a teacher do
+ * something asks that one. But a suspended teacher opening their app was shown *no plan at
+ * all*, as though they had never bought it: the suspension, the reason and the date it lifts
+ * all vanished at the moment they most needed reading. Screens that report state ask this one.
+ */
+export async function currentPlanFor(teacherId: number, conn: Db = db): Promise<TeacherPlan | null> {
+  const [plan] = await conn
+    .select()
+    .from(teacherPlansTable)
+    .where(eq(teacherPlansTable.teacherId, teacherId))
+    .orderBy(desc(teacherPlansTable.id))
+    .limit(1);
+  return plan ?? null;
+}
+
 /** The recurring class a plan runs, or null before the teacher has created it. */
 export async function classForPlan(planId: number, conn: Db = db): Promise<RecurringSession | null> {
+  // Not filtered by status: suspending a plan ends its class, and a teacher still has to be
+  // able to see the class that was taken away from them and what happened in it.
   const [found] = await conn
     .select()
     .from(recurringSessionsTable)
-    .where(and(eq(recurringSessionsTable.planId, planId), eq(recurringSessionsTable.status, "active")));
+    .where(eq(recurringSessionsTable.planId, planId))
+    .orderBy(desc(recurringSessionsTable.id))
+    .limit(1);
   return found ?? null;
 }
 

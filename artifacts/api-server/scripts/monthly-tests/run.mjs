@@ -86,6 +86,14 @@ async function register(role, name) {
 const TIER = 6500;
 const KTM = "Asia/Kathmandu";
 
+/** An agent, made the only way there is: by promoting an account in the database. */
+async function makeAgent() {
+  const account = await register("student", "Support Agent");
+  sql(`update users set role = 'admin' where id = ${account.user.id}`);
+  const signedIn = await api("/auth/login", { method: "POST", body: { email: account.email, password: "password123" } });
+  return { ...account, token: signedIn.body?.token ?? account.token };
+}
+
 /** The minute of the day it is right now in Kathmandu, 0–1439. */
 function kathmanduMinuteNow() {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -135,6 +143,17 @@ function ageClass(klassId, planId, days) {
   const FAR = 4000;
   sql(`update recurring_days set scheduled_for = scheduled_for - interval '${FAR} days' where recurring_id = ${klassId}`);
   sql(`update recurring_days set scheduled_for = scheduled_for + interval '${FAR - days} days' where recurring_id = ${klassId}`);
+
+  /*
+   * The students move with the calendar too.
+   *
+   * What a student received is counted as the classes held *after they joined*, so winding the
+   * classes back without winding the join back leaves everybody having joined after every class
+   * of the month. That is not a world that can happen, and it made a teacher who held twenty of
+   * thirty look like one who held none — the suite reported a full refund and the arithmetic
+   * was innocent.
+   */
+  sql(`update recurring_enrollments set joined_at = joined_at - interval '${days} days' where recurring_id = ${klassId}`);
 }
 
 /**
@@ -320,10 +339,22 @@ async function proRatingTests() {
   check("the denominator is frozen at the full month", joined.body?.enrolment?.sessionsPlanned === 30, `got ${joined.body?.enrolment?.sessionsPlanned}`);
   check("the numerator is what is left", joined.body?.enrolment?.sessionsPaidFor === 10, `got ${joined.body?.enrolment?.sessionsPaidFor}`);
 
-  // Now run the month right down. Nobody may buy a month that has no classes left in it.
-  ageClass(klass.id, planId, 10);
-  const left = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and scheduled_for > now()`));
-  check("setup: no classes remain", left === 0, `${left} still ahead`);
+  /*
+   * Now empty the month without ending it.
+   *
+   * Winding on another ten days used to leave a class with nothing in it. It no longer does,
+   * and that is the point of month two existing: the class rolls over and has thirty fresh
+   * classes. So the month is emptied the way it really empties — the teacher cancels what is
+   * left of it — with nine days still on the clock.
+   */
+  ageClass(klass.id, planId, 9);
+  sql(`update recurring_days set status = 'cancelled'
+       where recurring_id = ${klass.id} and cycle_index = 0 and status = 'planned'`);
+  const stillIn = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
+      and cycle_index = 0 and status = 'planned' and scheduled_for > now()`));
+  check("setup: no classes remain in this month", stillIn === 0, `${stillIn} still ahead`);
+  const monthNow = (await api(`/monthly/classes/${klass.id}`)).body?.class?.cycle?.index;
+  check("setup: and the month has not ended", monthNow === 0, `month ${monthNow}`);
 
   const late = await register("student");
   const lateSeen = await api(`/monthly/classes/${klass.id}`, { token: late.token });
@@ -777,6 +808,272 @@ async function timeChangeEdgeTests() {
     `${wrongMonth} filed under the wrong month (last was cycle ${lastBefore})`);
 }
 
+/* --------------------------------------------------------------- enforcement */
+
+/**
+ * Ages a class and forces the sweep to judge what became of it.
+ *
+ * Reading the class is what runs the sweep, so nothing is written down until somebody looks.
+ * That is by design — there is no scheduler — but it means every test here has to look.
+ */
+async function judge(klassId, token) {
+  await api(`/monthly/classes/${klassId}`, { token });
+}
+
+/**
+ * Makes `n` classes of a month be missed, and old enough to count against the teacher.
+ *
+ * Winds the month on far enough that there are `n` classes behind us to miss — asking for seven
+ * after moving three days on silently produced three, and every count downstream was then
+ * quietly wrong rather than failing.
+ */
+function missClasses(klassId, planId, n, hoursAgo = 72) {
+  ageClass(klassId, planId, n + 1);
+  const ids = sql(`select id from recurring_days where recurring_id = ${klassId}
+      and scheduled_for < now() and status <> 'missed' order by scheduled_for asc limit ${n}`)
+    .split("\n").filter(Boolean);
+  if (ids.length) {
+    sql(`update recurring_days set status = 'missed', missed_at = now() - interval '${hoursAgo} hours'
+         where id in (${ids.join(",")})`);
+  }
+  return ids.map(Number);
+}
+
+/** Marks `n` more classes of a month missed, without moving the calendar again. */
+function missMore(klassId, n, hoursAgo = 72) {
+  const ids = sql(`select id from recurring_days where recurring_id = ${klassId}
+      and status = 'planned' and kind = 'regular' order by scheduled_for asc limit ${n}`)
+    .split("\n").filter(Boolean);
+  if (ids.length) {
+    sql(`update recurring_days set status = 'missed', missed_at = now() - interval '${hoursAgo} hours'
+         where id in (${ids.join(",")})`);
+  }
+  return ids.map(Number);
+}
+
+async function makeupTests() {
+  console.log("\nMake-up classes");
+
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+
+  const missed = missClasses(klass.id, planId, 2);
+  check("setup: two classes were missed", missed.length === 2, `${missed.length} missed`);
+  await judge(klass.id, teacher.token);
+
+  const list = await api(`/monthly/classes/${klass.id}/missed`, { token: teacher.token });
+  check("the teacher can see what they missed", (list.body?.missed ?? []).length >= 2, JSON.stringify(list.body)?.slice(0, 140));
+  check("and how many make-ups they have left", list.body?.makeups?.left === 5, `${list.body?.makeups?.left} left`);
+  const first = list.body?.missed?.find((m) => m.id === missed[0]);
+  check("a class missed three days ago counts against them", first?.countsAgainstYou === true, JSON.stringify(first));
+
+  const at = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString();
+  const made = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[0], at } });
+  check("a make-up can be arranged", made.status === 201, `status ${made.status} ${JSON.stringify(made.body)?.slice(0, 140)}`);
+  check("and it is counted against the five", made.body?.makeups?.used === 1, `used ${made.body?.makeups?.used}`);
+  check("the students are told about it", made.body?.studentsTold >= 1, `told ${made.body?.studentsTold}`);
+
+  const row = sql(`select kind, status, makeup_for_id from recurring_days where id = ${made.body.makeup.id}`).split("|");
+  check("it is written down as a make-up for that class", row[0] === "makeup" && Number(row[2]) === missed[0], row.join("|"));
+
+  const again = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[0], at: new Date(Date.now() + 6 * 24 * 3600 * 1000).toISOString() } });
+  check("a class cannot be made up twice", again.status === 409, `status ${again.status}`);
+
+  const notMissed = sql(`select id from recurring_days where recurring_id = ${klass.id} and status = 'planned' limit 1`);
+  const bogus = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: Number(notMissed), at } });
+  check("a class that was not missed cannot be made up", bogus.status === 409, `status ${bogus.status}`);
+
+  const past = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[1], at: new Date(Date.now() - 3600_000).toISOString() } });
+  check("a make-up cannot be in the past", past.status === 400, `status ${past.status}`);
+
+  const stranger = await register("teacher");
+  const notYours = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: stranger.token, body: { missedDayId: missed[1], at } });
+  check("somebody else cannot arrange one", notYours.status === 403, `status ${notYours.status}`);
+
+  // And the make-up clears the black mark it answers for.
+  const after = await api(`/monthly/classes/${klass.id}/missed`, { token: teacher.token });
+  const cleared = after.body?.missed?.find((m) => m.id === missed[0]);
+  check("arranging a make-up clears that black mark", cleared?.countsAgainstYou === false, JSON.stringify(cleared));
+  check("and records when the make-up is", Boolean(cleared?.madeUpAt), JSON.stringify(cleared));
+}
+
+async function makeupLimitTests() {
+  console.log("\nThe five make-ups, and the forty-class ceiling");
+
+  /*
+   * Missed an hour ago, not three days ago.
+   *
+   * Seven classes missed three days ago is seven black marks, which suspends the teacher before
+   * the fifth make-up is even asked for — correct behaviour, and it tests suspension for a
+   * second time rather than testing the make-up allowance at all. Inside the forty-eight hours
+   * they are still classes to put right, which is the situation this limit is about.
+   */
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 0 });
+  const missed = missClasses(klass.id, planId, 7, 1);
+  check("setup: seven classes were missed", missed.length === 7, `${missed.length}`);
+  const marks = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
+      and status = 'missed' and missed_at < now() - interval '48 hours'`));
+  check("setup: and none of them counts against the teacher yet", marks === 0, `${marks} already count`);
+  await judge(klass.id, teacher.token);
+
+  const results = [];
+  for (let i = 0; i < 6; i += 1) {
+    const at = new Date(Date.now() + (i + 2) * 24 * 3600 * 1000).toISOString();
+    results.push(await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[i], at } }));
+  }
+  const allowed = results.filter((r) => r.status === 201).length;
+  check("five make-ups are allowed", allowed === 5, `${allowed} allowed`);
+  check("and the sixth is refused", results[5].status === 409, `status ${results[5].status}`);
+  check("with a reason a teacher can read", /make-up/i.test(results[5].body?.error ?? ""), results[5].body?.error);
+
+  const written = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and kind = 'makeup'`));
+  check("and no sixth make-up was written", written === 5, `${written} written`);
+}
+
+async function abuseAndSuspensionTests() {
+  console.log("\nFive black marks and a suspension");
+
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const students = await Promise.all([register("student"), register("student")]);
+  for (const s of students) {
+    await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: s.token, body: {} });
+  }
+  const paid = Number(sql(`select amount_paid from recurring_enrollments where recurring_id = ${klass.id} limit 1`));
+  check("setup: the students paid for the month", paid > 0, `paid ${paid}`);
+
+  // Four marks: warned, not suspended.
+  missClasses(klass.id, planId, 4);
+  await judge(klass.id, teacher.token);
+  const four = await api("/monthly/plan", { token: teacher.token });
+  check("four missed classes are four black marks", four.body?.standing?.abuses === 4, `${four.body?.standing?.abuses}`);
+  check("and they are warned", four.body?.standing?.warn === true, JSON.stringify(four.body?.standing));
+  check("but not suspended", four.body?.standing?.suspended === false, JSON.stringify(four.body?.standing));
+  check("the plan is still running", four.body?.plan?.status === "active", `status ${four.body?.plan?.status}`);
+
+  // A make-up takes one back off, which must un-warn them at three.
+  const at = new Date(Date.now() + 4 * 24 * 3600 * 1000).toISOString();
+  const missedIds = sql(`select id from recurring_days where recurring_id = ${klass.id} and status = 'missed' order by scheduled_for asc limit 1`);
+  await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: Number(missedIds), at } });
+  const three = await api("/monthly/plan", { token: teacher.token });
+  check("arranging a make-up takes a black mark back off", three.body?.standing?.abuses === 3, `${three.body?.standing?.abuses}`);
+
+  // Now push to five.
+  const more = missMore(klass.id, 2);
+  check("setup: two more classes were missed", more.length === 2, `${more.length}`);
+  await judge(klass.id, teacher.token);
+
+  const five = await api("/monthly/plan", { token: teacher.token });
+  check("five black marks suspends the class", five.body?.plan?.status === "suspended", `status ${five.body?.plan?.status}`);
+  check("for thirty days", Boolean(five.body?.plan?.suspendedUntil), `until ${five.body?.plan?.suspendedUntil}`);
+  check("with a reason in words a teacher can read", /suspended/i.test(five.body?.plan?.suspendedReason ?? ""), five.body?.plan?.suspendedReason);
+
+  const refunds = Number(sql(`select count(*) from refunds where recurring_id = ${klass.id} and reason = 'monthly_suspension'`));
+  check("every student is refunded", refunds === students.length, `${refunds} refunds for ${students.length} students`);
+
+  const owed = Number(sql(`select coalesce(sum(amount),0) from refunds where recurring_id = ${klass.id}`));
+  check("and the refunds are worth something", owed > 0, `${owed} owed`);
+
+  const stillActive = Number(sql(`select count(*) from recurring_enrollments where recurring_id = ${klass.id} and status = 'active'`));
+  check("no student is left holding a place in a suspended class", stillActive === 0, `${stillActive} still active`);
+
+  const closed = sql(`select status from recurring_sessions where id = ${klass.id}`);
+  check("the class itself is ended", closed === "ended", `status "${closed}"`);
+
+  // Reading again must not refund anybody a second time.
+  await judge(klass.id, teacher.token);
+  await judge(klass.id, teacher.token);
+  const twice = Number(sql(`select count(*) from refunds where recurring_id = ${klass.id}`));
+  check("reading again does not refund anybody twice", twice === refunds, `${twice} refunds after re-reading, was ${refunds}`);
+
+  const newStudent = await register("student");
+  const barred = await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: newStudent.token, body: {} });
+  check("and nobody can join a suspended class", barred.status >= 400, `status ${barred.status}`);
+}
+
+async function cycleCloseTests() {
+  console.log("\nClosing a month that fell short");
+
+  const { teacher, klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const student = await register("student");
+  const joined = await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+  const paid = joined.body?.enrolment?.amountPaid ?? 0;
+  check("setup: the student paid a full month", paid === 3000, `paid ${paid}`);
+
+  // The teacher holds twenty of thirty, then the month ends.
+  const all = sql(`select id from recurring_days where recurring_id = ${klass.id} and cycle_index = 0
+      order by scheduled_for asc`).split("\n").filter(Boolean);
+  ageClass(klass.id, planId, 31);
+  sql(`update recurring_days set status = 'held', held_at = scheduled_for
+       where id in (${all.slice(0, 20).join(",")})`);
+  sql(`update recurring_days set status = 'missed', missed_at = scheduled_for
+       where id in (${all.slice(20).join(",")})`);
+
+  await judge(klass.id, student.token);
+
+  const settled = Number(sql(`select settled_through_cycle from teacher_plans where id = ${planId}`));
+  check("the finished month is settled", settled === 0, `settled through ${settled}`);
+
+  const refund = sql(`select amount, teacher_share, platform_share, reason, session_id from refunds
+      where recurring_id = ${klass.id} and cycle_index = 0`).split("|");
+  check("a refund is written for the shortfall", refund[3] === "monthly_shortfall", `reason "${refund[3]}"`);
+  check("worth ten thirtieths of the month", Number(refund[0]) === 1000, `${refund[0]}`);
+  check("and it is not pinned to any one class", refund[4] === "", `session_id "${refund[4]}"`);
+  check("what the two sides keep adds back to what was paid",
+    Number(refund[0]) + Number(refund[1]) + Number(refund[2]) === paid,
+    `${refund[0]} + ${refund[1]} + ${refund[2]} ≠ ${paid}`);
+  check("and it comes out of the teacher's share first", Number(refund[1]) === 2100 - 1000, `teacher keeps ${refund[1]}`);
+
+  // Closing again must not pay again.
+  await judge(klass.id, student.token);
+  await judge(klass.id, student.token);
+  const rows = Number(sql(`select count(*) from refunds where recurring_id = ${klass.id}`));
+  check("a month is only ever closed once", rows === 1, `${rows} refunds`);
+
+  // It also appears in the queue an agent actually works.
+  /*
+   * Scoped to this student, not paged through.
+   *
+   * The queue is ordered oldest-first and cuts off at a page; asking for the whole thing and
+   * looking for one row passed for the wrong reason once already, on Discover. Asking for the
+   * student names the row.
+   */
+  const agent = await makeAgent();
+  const queue = await api(`/admin/refunds?studentId=${student.user.id}`, { token: agent.token });
+  const rowsFor = queue.body?.refunds ?? [];
+  check("the agent's refund queue shows it", rowsFor.some((r) => r.reason === "monthly_shortfall"),
+    `${rowsFor.length} rows for this student: ${JSON.stringify(rowsFor.map((r) => r.reason))}`);
+  check("and it says what it is worth", rowsFor.some((r) => r.amount === 1000),
+    JSON.stringify(rowsFor.map((r) => r.amount)));
+}
+
+async function deliveredMonthTests() {
+  console.log("\nClosing a month that was delivered");
+
+  const { klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+
+  const all = sql(`select id from recurring_days where recurring_id = ${klass.id} and cycle_index = 0
+      order by scheduled_for asc`).split("\n").filter(Boolean);
+  ageClass(klass.id, planId, 31);
+  // Twenty-eight held, two missed: over the floor, so nothing is owed.
+  sql(`update recurring_days set status = 'held', held_at = scheduled_for where id in (${all.slice(0, 28).join(",")})`);
+  sql(`update recurring_days set status = 'missed', missed_at = scheduled_for where id in (${all.slice(28).join(",")})`);
+
+  await judge(klass.id, student.token);
+
+  const rows = Number(sql(`select count(*) from refunds where recurring_id = ${klass.id}`));
+  check("a teacher who delivered the month owes nothing", rows === 0, `${rows} refunds written`);
+  const settled = Number(sql(`select settled_through_cycle from teacher_plans where id = ${planId}`));
+  check("but the month is still closed", settled === 0, `settled through ${settled}`);
+  const ended = sql(`select status from recurring_enrollments where recurring_id = ${klass.id} limit 1`);
+  check("and the student's place is closed rather than left open", ended === "ended", `status "${ended}"`);
+
+  const second = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and cycle_index = 1`));
+  check("the next month has its classes", second > 0, `${second} class-days in month two`);
+}
+
 /* ------------------------------------------------------- money invariants */
 
 async function moneyInvariants() {
@@ -837,6 +1134,11 @@ async function main() {
   await ruleTests();
   await timeChangeTests();
   await timeChangeEdgeTests();
+  await makeupTests();
+  await makeupLimitTests();
+  await abuseAndSuspensionTests();
+  await cycleCloseTests();
+  await deliveredMonthTests();
   await moneyInvariants();
 
   console.log(`\n${passed} passed, ${failed} failed`);
