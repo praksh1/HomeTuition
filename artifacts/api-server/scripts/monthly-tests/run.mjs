@@ -1074,6 +1074,67 @@ async function deliveredMonthTests() {
   check("the next month has its classes", second > 0, `${second} class-days in month two`);
 }
 
+async function enforcementConcurrencyTests() {
+  console.log("\nTen people opening a class at the moment it is settled");
+
+  /*
+   * Settling happens on the read path, so ten people opening the class at the instant its month
+   * ends are ten attempts to close the same month — and closing a month writes refunds.
+   *
+   * Calling it twice in a row is caught by a cheaper guard: the second call re-reads the plan,
+   * sees the month already settled, and does nothing. Only the lock inside the transaction
+   * stops ten *simultaneous* calls, and nothing exercised it — removing that lock left the
+   * whole suite green.
+   */
+  {
+    const { klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+    const students = await Promise.all(Array.from({ length: 3 }, () => register("student")));
+    for (const s of students) {
+      await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: s.token, body: {} });
+    }
+
+    const all = sql(`select id from recurring_days where recurring_id = ${klass.id} and cycle_index = 0
+        order by scheduled_for asc`).split("\n").filter(Boolean);
+    ageClass(klass.id, planId, 31);
+    sql(`update recurring_days set status = 'held', held_at = scheduled_for where id in (${all.slice(0, 20).join(",")})`);
+    sql(`update recurring_days set status = 'missed', missed_at = scheduled_for where id in (${all.slice(20).join(",")})`);
+
+    await Promise.all(Array.from({ length: 10 }, () => api(`/monthly/classes/${klass.id}`)));
+
+    const refunds = Number(sql(`select count(*) from refunds where recurring_id = ${klass.id} and cycle_index = 0`));
+    check("a month closed by ten readers at once pays each student once", refunds === students.length,
+      `${refunds} refunds for ${students.length} students`);
+    const total = Number(sql(`select coalesce(sum(amount),0) from refunds where recurring_id = ${klass.id}`));
+    check("and pays each of them the right amount, once", total === students.length * 1000,
+      `${total} owed, expected ${students.length * 1000}`);
+  }
+
+  /*
+   * The same for suspension, which also refunds everybody.
+   */
+  {
+    const { klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+    const students = await Promise.all(Array.from({ length: 3 }, () => register("student")));
+    for (const s of students) {
+      await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: s.token, body: {} });
+    }
+    missClasses(klass.id, planId, 5);
+
+    await Promise.all(Array.from({ length: 10 }, () => api(`/monthly/classes/${klass.id}`)));
+
+    const status = sql(`select status from teacher_plans where id = ${planId}`);
+    check("ten readers at once still suspend the teacher exactly once", status === "suspended", `status "${status}"`);
+    const refunds = Number(sql(`select count(*) from refunds where recurring_id = ${klass.id}`));
+    check("and refund each student exactly once", refunds === students.length,
+      `${refunds} refunds for ${students.length} students`);
+
+    const perStudent = sql(`select count(*) from (
+        select student_id from refunds where recurring_id = ${klass.id}
+        group by student_id having count(*) > 1) d`);
+    check("nobody is paid twice", Number(perStudent) === 0, `${perStudent} students paid more than once`);
+  }
+}
+
 /* ------------------------------------------------------- money invariants */
 
 async function moneyInvariants() {
@@ -1111,6 +1172,20 @@ async function moneyInvariants() {
       group by 1,2 having count(*) > max(r.max_students)) d`);
   check("no class holds more students than it has places", Number(overSold) === 0, `${overSold} oversold`);
 
+  const paidTwice = sql(`select count(*) from (
+      select recurring_id, student_id, cycle_index from refunds
+      where recurring_id in (${scope()})
+      group by 1,2,3 having count(*) > 1) d`);
+  check("nobody is refunded twice for the same month", Number(paidTwice) === 0, `${paidTwice} paid twice`);
+
+  const overRefunded = sql(`select count(*) from refunds
+      where recurring_id in (${scope()}) and amount > price_paid`);
+  check("nobody is refunded more than they paid", Number(overRefunded) === 0, `${overRefunded} rows`);
+
+  const shares = sql(`select count(*) from refunds
+      where recurring_id in (${scope()}) and amount + teacher_share + platform_share <> price_paid`);
+  check("every refund's three parts add back to what was paid", Number(shares) === 0, `${shares} rows do not`);
+
   const ghostDays = sql(`select count(*) from (
       select recurring_id, scheduled_for, kind from recurring_days where ${mine}
       group by 1,2,3 having count(*) > 1) d`);
@@ -1139,6 +1214,7 @@ async function main() {
   await abuseAndSuspensionTests();
   await cycleCloseTests();
   await deliveredMonthTests();
+  await enforcementConcurrencyTests();
   await moneyInvariants();
 
   console.log(`\n${passed} passed, ${failed} failed`);
