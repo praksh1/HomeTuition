@@ -420,6 +420,65 @@ async function main() {
     await second.ctx.close();
   }
 
+  console.log("\nThe payment sheet, and what it claims");
+
+  {
+    const payTeacher = await register("teacher", "Paying Prem");
+    sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${payTeacher.user.id}`);
+    const profileId = sql(`select id from teacher_profiles where user_id = ${payTeacher.user.id}`);
+    const student = await register("student", "Wallet Wangchuk");
+    const filler = await register("student", "First Fiona");
+
+    /**
+     * A class with one seat, already taken.
+     *
+     * It has to be a failure that leaves the class looking bookable — an aged-out class simply
+     * has no Book button, so the test would click a different one and prove nothing, which is
+     * exactly what the first version of this did. A full class stays in Upcoming with its
+     * button showing and refuses at the server, which is the path being tested.
+     */
+    const full = await api("/sessions", { method: "POST", token: payTeacher.token, body: {
+      topic: "One seat only", subject: "Mathematics", description: "d",
+      date: new Date(Date.now() + 6 * DAY).toISOString(),
+      duration: 60, price: 500, maxStudents: 1 } });
+    check("the one-seat class was created", full.status <= 201, `status=${full.status}`);
+    const taken = await api(`/sessions/${full.body.id}/book`, { method: "POST", token: filler.token,
+      body: { paymentMethod: "esewa" } });
+    check("and its only seat is taken", taken.status <= 201, `status=${taken.status}`);
+
+    const { ctx, page } = await open(browser, student.token, `/teacher/${profileId}`);
+    await page.waitForTimeout(2500);
+
+    const bookBtn = page.locator('text=/Book & Pay/i').first();
+    check("the full class still offers a booking, which is the point",
+      (await bookBtn.count()) > 0, (await text(page)).slice(0, 300).replace(/\n/g, " | "));
+
+    await bookBtn.click({ timeout: 15000 });
+    await page.waitForTimeout(1500);
+
+    const inputs = page.locator('input');
+    await inputs.first().fill("9812345678");
+    if ((await inputs.count()) > 1) await inputs.nth(1).fill("1234");
+    await page.locator('[data-testid="pay-confirm"]').click({ timeout: 15000 });
+    await page.waitForTimeout(4500);
+
+    const after = await text(page);
+    /**
+     * The whole bug: this used to say "Payment Successful — NPR 500 paid via eSewa" and then
+     * drop a "Booking failed" alert over the top of it.
+     */
+    check("a failed booking never shows a payment receipt",
+      !/Payment Successful/i.test(after), after.slice(-700).replace(/\n/g, " | "));
+    check("nor claims they are booked",
+      !/You're booked/i.test(after), after.slice(-700).replace(/\n/g, " | "));
+    check("the sheet says plainly that nothing was charged",
+      /nothing has been charged/i.test(after), after.slice(-700).replace(/\n/g, " | "));
+    check("and no enrolment was written for them",
+      sql(`select count(*) from session_enrollments where session_id = ${full.body.id} and student_id = ${student.user.id}`) === "0");
+
+    await ctx.close();
+  }
+
   console.log("\nThe agent's queue");
 
   {

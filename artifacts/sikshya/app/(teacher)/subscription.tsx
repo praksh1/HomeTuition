@@ -66,16 +66,20 @@ export default function Subscription() {
   };
 
   const handlePaymentSuccess = async (method: PaymentMethod) => {
-    setPayVisible(false);
 
     // Phase 3 sandbox bypass: the local mock eSewa/Khalti UI already simulated the
     // charge (no OTP, no real gateway). We persist the result server-side here instead
     // of redirecting to any external SDK.
+    /**
+     * A failure here used to be swallowed, and the plan was then marked active locally
+     * regardless — so a teacher whose subscription never reached the server was told their
+     * Pro plan was live. It is rethrown now, and the payment sheet shows it instead of a
+     * success screen it has not earned.
+     */
     if (teacher?.id) {
-      try {
-        await apiPost(`/teachers/${teacher.id}/subscribe`, { tier: selectedTier });
-      } catch (_e) {}
+      await apiPost(`/teachers/${teacher.id}/subscribe`, { tier: selectedTier });
     }
+    setPayVisible(false);
     await updateUser({
       subscriptionActive: true,
       approvalStatus: "approved",

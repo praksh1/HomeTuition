@@ -636,9 +636,15 @@ You can join from your Sessions tab — the class opens a few minutes before it 
         amount={paySession?.price ?? 0}
         label={paySession ? `Book · ${paySession.topic}` : "Book Session"}
         onClose={() => setPaySession(null)}
-        onSuccess={(method) => {
-          if (paySession) confirmBooking(paySession, method);
-        }}
+        /**
+         * The promise is **returned**, not just started.
+         *
+         * Without the return, the sheet awaited `undefined`, resolved immediately and showed
+         * its success screen while the real booking was still in flight — so a class that was
+         * full still produced "You're booked", and the rejection became an unhandled promise
+         * nobody saw. Caught by a browser test; no server test could have seen it.
+         */
+        onSuccess={(method) => (paySession ? confirmBooking(paySession, method) : Promise.resolve())}
       />
     </ScrollView>
   );
