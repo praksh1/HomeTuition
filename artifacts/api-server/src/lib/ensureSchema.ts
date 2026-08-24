@@ -425,3 +425,153 @@ export async function ensureScheduleAndRefundTables(): Promise<void> {
     );
   }
 }
+
+/**
+ * Creates the monthly tier's four tables if they are not there yet.
+ *
+ * Same narrow licence as everything above: create only, additive only, unable to stop the
+ * server starting. It matters as much as `ensureSessionActivityTable` did, and for the same
+ * measured reason — the routes that read these sit in the path a teacher takes to **buy the
+ * tier and set up their class**, and without the tables that is a 500 rather than a message.
+ *
+ * The unique indexes are created here as well as in the schema, deliberately. They are not
+ * tidiness: `recurring_enrollments_once_idx` is what actually stops a student being charged
+ * twice for one cycle, and `recurring_days_slot_idx` is what stops a retried cycle generation
+ * doubling the ledger every refund is counted from. Both must exist from the first boot after
+ * a deploy, not from whenever `db:push` is next run by hand.
+ */
+export async function ensureMonthlyTierTables(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "teacher_plans" (
+        "id" serial PRIMARY KEY,
+        "teacher_id" integer NOT NULL,
+        "price" integer NOT NULL,
+        "platform_share" integer NOT NULL DEFAULT 0,
+        "purchased_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "cycle_anchor" timestamp with time zone,
+        "status" text NOT NULL DEFAULT 'active',
+        "suspended_until" timestamp with time zone,
+        "suspended_reason" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "teacher_plans_teacher_id_users_id_fk"
+          FOREIGN KEY ("teacher_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "teacher_plans_active_idx"
+        ON "teacher_plans" ("teacher_id") WHERE status = 'active'
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "teacher_plans_teacher_idx" ON "teacher_plans" ("teacher_id", "id")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "recurring_sessions" (
+        "id" serial PRIMARY KEY,
+        "plan_id" integer NOT NULL,
+        "teacher_id" integer NOT NULL,
+        "subject" text NOT NULL,
+        "topic" text NOT NULL,
+        "start_minute" integer NOT NULL,
+        "duration_minutes" integer NOT NULL DEFAULT 60,
+        "time_zone" text NOT NULL DEFAULT 'Asia/Kathmandu',
+        "monthly_price" integer NOT NULL,
+        "max_students" integer NOT NULL DEFAULT 45,
+        "status" text NOT NULL DEFAULT 'active',
+        "time_changed_at" timestamp with time zone,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "recurring_sessions_plan_id_teacher_plans_id_fk"
+          FOREIGN KEY ("plan_id") REFERENCES "teacher_plans"("id") ON DELETE CASCADE,
+        CONSTRAINT "recurring_sessions_teacher_id_users_id_fk"
+          FOREIGN KEY ("teacher_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "recurring_sessions_teacher_idx"
+        ON "recurring_sessions" ("teacher_id", "status")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "recurring_sessions_plan_idx" ON "recurring_sessions" ("plan_id")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "recurring_days" (
+        "id" serial PRIMARY KEY,
+        "recurring_id" integer NOT NULL,
+        "session_id" integer,
+        "cycle_index" integer NOT NULL,
+        "kind" text NOT NULL DEFAULT 'regular',
+        "scheduled_for" timestamp with time zone NOT NULL,
+        "status" text NOT NULL DEFAULT 'planned',
+        "held_at" timestamp with time zone,
+        "missed_at" timestamp with time zone,
+        "makeup_for_id" integer,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "recurring_days_recurring_id_recurring_sessions_id_fk"
+          FOREIGN KEY ("recurring_id") REFERENCES "recurring_sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "recurring_days_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "recurring_days_cycle_idx"
+        ON "recurring_days" ("recurring_id", "cycle_index", "status")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "recurring_days_schedule_idx"
+        ON "recurring_days" ("recurring_id", "scheduled_for")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "recurring_days_makeup_idx" ON "recurring_days" ("makeup_for_id")
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "recurring_days_slot_idx"
+        ON "recurring_days" ("recurring_id", "scheduled_for", "kind")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "recurring_enrollments" (
+        "id" serial PRIMARY KEY,
+        "recurring_id" integer NOT NULL,
+        "student_id" integer NOT NULL,
+        "cycle_index" integer NOT NULL,
+        "joined_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "amount_paid" integer NOT NULL,
+        "platform_share" integer NOT NULL DEFAULT 0,
+        "teacher_share" integer NOT NULL DEFAULT 0,
+        "sessions_paid_for" integer NOT NULL,
+        "sessions_planned" integer NOT NULL,
+        "status" text NOT NULL DEFAULT 'active',
+        "ended_at" timestamp with time zone,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "recurring_enrollments_recurring_id_recurring_sessions_id_fk"
+          FOREIGN KEY ("recurring_id") REFERENCES "recurring_sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "recurring_enrollments_student_id_users_id_fk"
+          FOREIGN KEY ("student_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "recurring_enrollments_once_idx"
+        ON "recurring_enrollments" ("recurring_id", "student_id", "cycle_index")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "recurring_enrollments_student_idx"
+        ON "recurring_enrollments" ("student_id", "status")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "recurring_enrollments_cycle_idx"
+        ON "recurring_enrollments" ("recurring_id", "cycle_index")
+    `);
+    logger.info("monthly tier tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the monthly tier tables; run `pnpm run db:push`. " +
+        "Ordinary classes still run — only the monthly recurring tier is affected, and it " +
+        "refuses rather than half-completing.",
+    );
+  }
+}
