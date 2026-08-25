@@ -1040,6 +1040,50 @@ async function abuseAndSuspensionTests() {
   check("and nobody can join a suspended class", barred.status >= 400, `status ${barred.status}`);
 }
 
+async function suspendedLateTests() {
+  console.log("\nSuspended near the end of a month the teacher had otherwise delivered");
+
+  /*
+   * The case where the two refund rules disagree, and the only one that proves which is used.
+   *
+   * A teacher held twenty-five of thirty — exactly the floor — and then five misses catch up
+   * with them on day twenty-five. The delivery floor says they owe nothing. But the month has
+   * stopped with five days still on it, and the owner was explicit that a suspended teacher's
+   * students get the remaining period back.
+   *
+   * Every other suspension test has a teacher who held almost nothing, where both rules give
+   * the same answer and neither is being tested.
+   */
+  const { klass, planId } = await teacherWithClass({ monthlyPrice: 3000 });
+  const student = await register("student");
+  await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: student.token, body: {} });
+
+  const all = sql(`select id from recurring_days where recurring_id = ${klass.id} and cycle_index = 0
+      order by scheduled_for asc`).split("\n").filter(Boolean);
+  ageClass(klass.id, planId, 25);
+  sql(`update recurring_days set status = 'held', held_at = scheduled_for where id in (${all.slice(0, 25).join(",")})`);
+  sql(`update recurring_days set status = 'missed', missed_at = now() - interval '72 hours'
+       where id in (${all.slice(20, 25).join(",")})`);
+  // Twenty held, five missed and unmade-up, five still to come.
+  const held = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and status = 'held'`));
+  check("setup: twenty classes were held", held === 20, `${held} held`);
+  const ahead = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
+      and status = 'planned' and scheduled_for > now()`));
+  check("setup: five classes are still to come", ahead === 5, `${ahead} ahead`);
+
+  await api(`/monthly/classes/${klass.id}`, { token: student.token });
+
+  const status = sql(`select status from teacher_plans where id = ${planId}`);
+  check("five unmade-up misses suspend them", status === "suspended", `status "${status}"`);
+
+  const refund = sql(`select amount, reason from refunds where recurring_id = ${klass.id}`).split("|");
+  check("the student is refunded for the days that will not now happen", Number(refund[0]) > 0,
+    `refund ${refund[0]} — the delivery floor would have said nothing was owed`);
+  check("and it is recorded as a suspension refund", refund[1] === "monthly_suspension", `reason "${refund[1]}"`);
+  // Twenty of the thirty they paid for actually happened, so ten thirtieths comes back.
+  check("worth the classes they will not get", Number(refund[0]) === 1000, `${refund[0]}, expected 1000`);
+}
+
 async function cycleCloseTests() {
   console.log("\nClosing a month that fell short");
 
@@ -1261,6 +1305,7 @@ async function main() {
   await section("makeupTests", makeupTests);
   await section("makeupLimitTests", makeupLimitTests);
   await section("abuseAndSuspensionTests", abuseAndSuspensionTests);
+  await section("suspendedLateTests", suspendedLateTests);
   await section("cycleCloseTests", cycleCloseTests);
   await section("deliveredMonthTests", deliveredMonthTests);
   await section("enforcementConcurrencyTests", enforcementConcurrencyTests);
