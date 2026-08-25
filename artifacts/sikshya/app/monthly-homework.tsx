@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet, apiPost, ApiError } from "@/utils/api";
+import { openAttachment } from "@/utils/openAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 interface Submission {
@@ -619,15 +620,11 @@ function OpenFileButton({ fileKey, label }: { fileKey: string; label: string }) 
   const open = async () => {
     setBusy(true);
     setProblem(null);
-    try {
-      const { url } = await apiGet<{ url: string }>(`/storage/file?key=${encodeURIComponent(fileKey)}`);
-      if (Platform.OS === "web") window.open(url, "_blank");
-      else await Linking.openURL(url);
-    } catch (e) {
-      setProblem(e instanceof Error ? e.message : "Could not open that file.");
-    } finally {
-      setBusy(false);
-    }
+    // See utils/openAttachment.ts: the tab has to be claimed inside the tap, before the link
+    // is fetched, or Safari refuses to open it and nothing at all happens.
+    const result = await openAttachment(fileKey);
+    if (!result.ok) setProblem(result.reason ?? "Could not open that file.");
+    setBusy(false);
   };
 
   return (

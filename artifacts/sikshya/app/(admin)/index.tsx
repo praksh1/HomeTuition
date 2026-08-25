@@ -5,6 +5,8 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, Toucha
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
+import { useAuth } from "@/context/AuthContext";
+import { confirm } from "@/utils/alerts";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet } from "@/utils/api";
 
@@ -53,6 +55,20 @@ export default function AdminTickets() {
   const colors = useColors();
   const dates = useDates();
   const insets = useSafeAreaInsets();
+  const { logout } = useAuth();
+
+  /**
+   * Signing out, confirmed first.
+   *
+   * A support desk is the kind of thing that gets left open on a shared machine, and an agent
+   * who taps this by accident mid-ticket loses their place — so it asks.
+   */
+  const signOut = async () => {
+    const sure = await confirm("Sign out of the support desk?", "You will need your password to get back in.");
+    if (!sure) return;
+    await logout();
+    router.replace("/welcome");
+  };
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("active");
   const [whose, setWhose] = useState<(typeof WHOSE)[number]["id"]>("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -87,7 +103,23 @@ export default function AdminTickets() {
       contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 100 }]}
       refreshControl={<RefreshControl refreshing={false} onRefresh={() => void load()} tintColor={colors.primary} />}
     >
-      <Text style={[styles.title, { color: colors.foreground }]}>Support</Text>
+      {/*
+        An agent has no Profile tab — the desk is a different app with a different tab bar —
+        so without this there was no way off a shared machine at the end of a shift.
+      */}
+      <View style={styles.titleRow}>
+        <Text style={[styles.title, { color: colors.foreground }]}>Support</Text>
+        <TouchableOpacity
+          testID="admin-logout"
+          onPress={() => void signOut()}
+          activeOpacity={0.7}
+          hitSlop={10}
+          style={[styles.logoutBtn, { borderColor: colors.destructive + "40" }]}
+        >
+          <Feather name="log-out" size={14} color={colors.destructive} />
+          <Text style={[styles.logoutText, { color: colors.destructive }]}>Sign out</Text>
+        </TouchableOpacity>
+      </View>
 
       {/*
         Can this server actually store a file?
@@ -322,6 +354,9 @@ function Stat({ label, value, colors }: { label: string; value: number | string;
 const styles = StyleSheet.create({
   container: { paddingHorizontal: 20, gap: 12 },
   title: { fontSize: 24, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
+  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  logoutBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
+  logoutText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   checkCard: { borderRadius: 14, borderWidth: 1, padding: 12 },
   checkRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   checkTitle: { flex: 1, fontSize: 14, fontFamily: "Inter_500Medium" },

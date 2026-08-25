@@ -275,18 +275,28 @@ export default function SupportScreen() {
         ) : (
           <View style={{ width: 22 }} />
         )}
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Customer Support</Text>
+        <Text style={[styles.headerTitle, { color: colors.foreground, flex: 1, textAlign: "center" }]}>
+          Support
+        </Text>
         {/*
           The way back to what you already sent.
           Support stays one tab with one door — this is the same errand, not a second one.
+        */}
+        {/*
+          Labelled, not just an icon.
+          
+          The owner could not find their own requests behind a bare inbox glyph — and they knew
+          the feature existed, which a student would not. An icon on its own is a guess.
         */}
         <TouchableOpacity
           testID="support-my-requests-btn"
           onPress={() => router.push("/requests")}
           activeOpacity={0.7}
           hitSlop={10}
+          style={[styles.myRequests, { borderColor: colors.border }]}
         >
-          <Feather name="inbox" size={22} color={colors.foreground} />
+          <Feather name="inbox" size={15} color={colors.secondary} />
+          <Text style={[styles.myRequestsText, { color: colors.secondary }]}>My Requests</Text>
         </TouchableOpacity>
       </View>
 
@@ -480,6 +490,8 @@ const styles = StyleSheet.create({
   container: { paddingHorizontal: 20, gap: 20 },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
+  myRequests: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  myRequestsText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   intro: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 21 },
   optionNote: { fontSize: 12, fontFamily: "Inter_400Regular", paddingHorizontal: 14, paddingBottom: 10, lineHeight: 17 },
   flag: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, marginLeft: 8 },

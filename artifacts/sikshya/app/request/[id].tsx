@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { confirm, notify } from "@/utils/alerts";
 import { useColors } from "@/hooks/useColors";
 import { useDates } from "@/context/DatePreferenceContext";
-import { apiGet, apiPost, attachmentUrl } from "@/utils/api";
+import { apiGet, apiPost } from "@/utils/api";
+import { openAttachment } from "@/utils/openAttachment";
 import { STATUS_TONE, type Ticket, type TicketEvent } from "@/utils/tickets";
 
 interface RequestDetail {
@@ -63,12 +64,10 @@ export default function RequestScreen() {
   };
 
   const openFile = async (key: string) => {
-    try {
-      const url = await attachmentUrl(key);
-      await Linking.openURL(url);
-    } catch {
-      notify("Could not open", "We could not open that file. Please try again in a moment.");
-    }
+    // See utils/openAttachment.ts — Linking.openURL is window.open on the web, and after an
+    // await Safari refuses it.
+    const result = await openAttachment(key);
+    if (!result.ok) notify("Could not open", result.reason ?? "We could not open that file.");
   };
 
   if (problem) {

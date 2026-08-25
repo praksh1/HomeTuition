@@ -7,6 +7,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPatch, apiPost, attachmentUrl } from "@/utils/api";
 import { confirm, notify } from "@/utils/alerts";
+import { openAttachment as openFile } from "@/utils/openAttachment";
 import type { TicketEvent } from "@/utils/tickets";
 
 /**
@@ -112,16 +113,10 @@ export default function AdminTicket() {
    * this screen, so a screenshot of it is not a way in.
    */
   const openAttachment = async (key: string) => {
-    try {
-      const url = await attachmentUrl(key);
-      if (Platform.OS === "web") {
-        window.open(url, "_blank", "noopener");
-      } else {
-        await Linking.openURL(url);
-      }
-    } catch (e) {
-      notify("Could not open the file", e instanceof Error ? e.message : "Please try again.");
-    }
+    // See utils/openAttachment.ts. This used to call window.open after awaiting the link,
+    // which Safari blocks, so an agent's "Open the attachment" did nothing on a phone.
+    const result = await openFile(key);
+    if (!result.ok) notify("Could not open the file", result.reason ?? "Please try again.");
   };
 
   /**
