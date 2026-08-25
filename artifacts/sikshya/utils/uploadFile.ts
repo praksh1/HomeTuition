@@ -41,6 +41,22 @@ interface UploadUrlResponse {
  */
 export async function uploadFile(file: UploadableFile): Promise<string> {
   /**
+   * The file is read once, up front, and its real size is what the server is told.
+   *
+   * It used to send `file.size > 0 ? file.size : 1` — so a picker that does not report a size,
+   * which is normal on iOS, had the app claim one byte. The server's size check then passed on
+   * a claim rather than a fact, the real bytes went up anyway, and a file over the cap was
+   * refused by the body parser at the far end with an HTML error page nobody could read. What
+   * the person saw was "Load failed. We also could not send it through our server", which names
+   * neither the size nor the limit.
+   *
+   * Measuring first means an oversized file is refused before it is sent, with a sentence
+   * saying how big it was allowed to be.
+   */
+  const blob = Platform.OS === "web" ? await (await fetch(file.uri)).blob() : null;
+  const size = blob && blob.size > 0 ? blob.size : file.size;
+
+  /**
    * `name` and `size`, not `fileName`.
    *
    * This is why attaching anything failed for months: the app sent `fileName` and no size, the
@@ -49,35 +65,37 @@ export async function uploadFile(file: UploadableFile): Promise<string> {
    */
   const { uploadURL, objectPath } = await apiPost<UploadUrlResponse>("/storage/uploads/request-url", {
     name: file.name,
-    size: file.size > 0 ? file.size : 1,
+    size: size > 0 ? size : 1,
     contentType: file.mimeType,
   });
 
   try {
-    await putDirect(uploadURL, file);
+    await putDirect(uploadURL, file, blob);
     return objectPath;
   } catch (directFailure) {
     try {
-      return await putViaServer(file);
+      return await putViaServer(file, blob);
     } catch (fallbackFailure) {
-      // The direct failure is the more informative of the two, so it is the one reported —
-      // unless the server gave a real reason, which beats a network shrug.
-      throw fallbackFailure instanceof Error && /larger than|photos and PDFs/i.test(fallbackFailure.message)
-        ? fallbackFailure
-        : new Error(
-            directFailure instanceof Error && directFailure.message
-              ? `${directFailure.message}. We also could not send it through our server.`
-              : "We could not upload your file.",
-          );
+      /**
+       * The fallback's reason is the one worth having.
+       *
+       * The direct attempt is *expected* to fail — a bucket with no CORS rule refuses it and
+       * Safari says only "Load failed" — so leading with that told everybody the thing that was
+       * always going to happen and hid the thing that actually went wrong. This reports what
+       * the server said, and mentions the direct attempt only as context.
+       */
+      const reason = fallbackFailure instanceof Error && fallbackFailure.message
+        ? fallbackFailure.message
+        : "We could not send it through our server either.";
+      throw new Error(reason);
     }
   }
 }
 
 /** Straight to the bucket with the signed link. */
-async function putDirect(uploadURL: string, chosen: UploadableFile): Promise<void> {
+async function putDirect(uploadURL: string, chosen: UploadableFile, blob: Blob | null): Promise<void> {
   if (Platform.OS === "web") {
-    const fileResp = await fetch(chosen.uri);
-    const blob = await fileResp.blob();
+    if (!blob) throw new Error("We could not read that file.");
     const putResp = await fetch(uploadURL, {
       method: "PUT",
       headers: { "Content-Type": chosen.mimeType },
@@ -97,10 +115,9 @@ async function putDirect(uploadURL: string, chosen: UploadableFile): Promise<voi
 }
 
 /** Through our own API, which no browser rule can block. */
-async function putViaServer(chosen: UploadableFile): Promise<string> {
+async function putViaServer(chosen: UploadableFile, blob: Blob | null): Promise<string> {
   if (Platform.OS === "web") {
-    const fileResp = await fetch(chosen.uri);
-    const blob = await fileResp.blob();
+    if (!blob) throw new Error("We could not read that file.");
     const res = await apiPutBinary<{ objectPath: string }>("/storage/upload", blob, chosen.mimeType);
     return res.objectPath;
   }

@@ -8,20 +8,35 @@
  * Chromium is made to refuse the direct PUT the same way, by failing the request to the bucket
  * host outright. If the fallback works, the report still carries its attachment.
  *
- * Usage: API_URL=http://127.0.0.1:8080 node scripts/upload-browser/run.mjs
+ * It starts **its own API**, with the file store pointed at the same stand-in bucket the
+ * server-side upload suite uses. It used to talk to whatever API was already running, and in CI
+ * that one has no file store configured — so every request for an upload link came back "not
+ * set up", the browser never reached the bucket at all, and this suite failed on every push.
+ * It had never once passed there. Because it is one of the steps the deploy waits on, the site
+ * stopped being deployed and nobody was told why.
+ *
+ * Usage: node scripts/upload-browser/run.mjs
  */
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { startFakeR2 } from "../../../api-server/scripts/upload-tests/fake-r2.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
+const repoRoot = path.resolve(appRoot, "..", "..");
+const serverRoot = path.resolve(repoRoot, "artifacts", "api-server");
 const PORT = Number(process.env.UPLOAD_SITE_PORT ?? 8095);
 const siteUrl = `http://localhost:${PORT}`;
-const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
-const PGURL = process.env.PGURL ?? "postgres://postgres@127.0.0.1:55432/ht";
+const R2_PORT = Number(process.env.UPLOAD_R2_PORT ?? 9401);
+const API_PORT = Number(process.env.UPLOAD_API_PORT ?? 8097);
+const API = `http://127.0.0.1:${API_PORT}`;
+const BUCKET = "hometuition-test";
+const KEY_ID = "test-access-key";
+const SECRET = "test-secret-key-not-a-real-one";
+const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
 
 let passed = 0, failed = 0;
 const failures = [];
@@ -59,8 +74,39 @@ if (!existsSync(path.join(appRoot, "web-build", "index.html"))) {
 const server = spawn(process.execPath, [path.join(appRoot, "server", "serve.js")], {
   cwd: appRoot, env: { ...process.env, PORT: String(PORT) }, stdio: "ignore",
 });
-const stopServer = () => { try { server.kill(); } catch { /* gone */ } };
+
+let apiProcess = null;
+let r2 = null;
+const stopServer = () => {
+  try { server.kill(); } catch { /* gone */ }
+  try { apiProcess?.kill("SIGKILL"); } catch { /* gone */ }
+  try { r2?.close(); } catch { /* gone */ }
+};
 process.on("exit", stopServer);
+
+/** The API this suite drives, with a file store that really signs and really stores. */
+async function startApi() {
+  r2 = await startFakeR2({ port: R2_PORT, bucket: BUCKET, secret: SECRET });
+  apiProcess = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
+    cwd: repoRoot,
+    env: {
+      ...process.env,
+      PORT: String(API_PORT),
+      DATABASE_URL: PGURL,
+      SESSION_SECRET: process.env.SESSION_SECRET ?? "upload-browser-test-secret",
+      R2_ACCESS_KEY_ID: KEY_ID,
+      R2_SECRET_ACCESS_KEY: SECRET,
+      R2_BUCKET: BUCKET,
+      R2_ENDPOINT: `http://127.0.0.1:${R2_PORT}`,
+    },
+    stdio: "ignore",
+  });
+  for (let i = 0; i < 80; i += 1) {
+    try { if ((await fetch(`${API}/api/healthz`)).ok) return; } catch { /* not yet */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error("the API never came up");
+}
 
 async function waitForSite() {
   for (let i = 0; i < 40; i += 1) {
@@ -71,6 +117,7 @@ async function waitForSite() {
 }
 
 async function main() {
+  await startApi();
   await waitForSite();
   const chromium = await getChromium();
   const browser = await chromium.launch();
@@ -91,10 +138,22 @@ async function main() {
     await route.abort("failed");
   });
   // The local stand-in stands in for the bucket in this environment.
-  await page.route("**/127.0.0.1:9401/**", async (route) => {
+  await page.route(`**/127.0.0.1:${R2_PORT}/**`, async (route) => {
     directAttempts += 1;
     await route.abort("failed");
   });
+
+  /*
+   * The bundle was built against whatever API the build used, which is not the one this suite
+   * just started. Rather than rebuild for one port, every call to that origin is sent here.
+   */
+  const builtApi = (process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
+  if (builtApi !== API) {
+    await page.route(`${builtApi}/**`, async (route) => {
+      const url = route.request().url().replace(builtApi, API);
+      await route.continue({ url });
+    });
+  }
 
   const dialogs = [];
   page.on("dialog", async (d) => { dialogs.push(d.message()); await d.accept(); });

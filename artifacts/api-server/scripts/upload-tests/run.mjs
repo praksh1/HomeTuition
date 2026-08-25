@@ -298,6 +298,37 @@ async function main() {
       check("and a key that is not one of ours is refused", madeUp.status === 400, `status=${madeUp.status}`);
     }
 
+    /*
+     * A file over the cap, sent through our own server.
+     *
+     * This is the failure a teacher actually hit. The body parser refuses an oversized body
+     * before any route runs, so the upload route's own polite message never got a chance — and
+     * with no error handler on the app, Express answered with an HTML page. The app asked for
+     * JSON, could not read a reason, and said "Load failed. We also could not send it through
+     * our server", which names neither the size nor the limit nor anything to do about it.
+     */
+    {
+      console.log("\nA file too big to accept, sent through our own server\n");
+      const oversized = Buffer.alloc(12 * 1024 * 1024, 7);
+      const res = await fetch(`${API}/api/storage/upload`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/pdf", Authorization: `Bearer ${student.token}` },
+        body: oversized,
+      });
+      check("it is refused", res.status === 413, `status=${res.status}`);
+      check("the answer is JSON, not an HTML error page",
+        (res.headers.get("content-type") ?? "").includes("application/json"),
+        res.headers.get("content-type") ?? "none");
+
+      const text = await res.text();
+      check("nothing leaks a stack trace", !/\bat \w+ \(|PayloadTooLargeError/.test(text), text.slice(0, 160));
+
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch { /* not JSON */ }
+      check("and it says how big a file may be", /larger than 10 MB/i.test(parsed?.error ?? ""),
+        JSON.stringify(parsed) ?? text.slice(0, 160));
+    }
+
     console.log("\nWith no bucket configured, it says so instead of failing strangely\n");
 
     {
