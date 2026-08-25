@@ -173,7 +173,18 @@ async function run() {
   check("and the person who reported it can see that",
     reporterSees.body?.history?.some((h) => h.status === "opened"),
     JSON.stringify(reporterSees.body?.history?.map((h) => h.status)));
-  check("including which agent", reporterSees.body?.history?.find((h) => h.status === "opened")?.by === "Bina Karki");
+  /*
+   * A human read it, but not which human. The support team here is small enough that a full
+   * name is enough to find somebody, and the person reading this may have just been told no
+   * about money. The desk below still sees the real name.
+   */
+  check("but is not told which agent, by name",
+    reporterSees.body?.history?.find((h) => h.status === "opened")?.by === "Sikshya Support",
+    reporterSees.body?.history?.find((h) => h.status === "opened")?.by);
+  const deskSees = await api(`/admin/tickets/${first.body.id}`, { token: agent.token });
+  check("while the desk sees exactly who",
+    deskSees.body?.history?.some((h) => h.by === "Bina Karki"),
+    JSON.stringify(deskSees.body?.history?.map((h) => h.by)));
 
   const reopened = await api(`/admin/tickets/${first.body.id}`, { token: other.token });
   check("a second agent reading it does not record it twice",

@@ -180,6 +180,11 @@ export interface TicketHistoryEntry {
  * Internal notes are left out. An agent writing to other agents has not written to the
  * reporter, and showing it anyway would either stop agents writing anything down or hand
  * somebody half a conversation about themselves.
+ *
+ * Agents' names are left out too, for the same audience. The person reading this may have just
+ * been told no about money, and the support team here is small enough that a full name is
+ * enough to find someone. They are told a human read it and what was decided, which is what
+ * they actually need; who exactly it was stays inside the desk, where `includeInternal` is on.
  */
 export async function historyFor(
   ticketId: number,
@@ -198,7 +203,7 @@ export async function historyFor(
       at: row.at.toISOString(),
       status: row.toStatus,
       label: statusLabel(row.toStatus),
-      by: row.actorName,
+      by: includeInternal || row.actorRole !== "agent" ? row.actorName : "Sikshya Support",
       byRole: row.actorRole,
       note: row.note,
       fileKey: row.fileKey,
@@ -220,7 +225,8 @@ export function describeTicket(row: typeof disputesTable.$inferSelect) {
     statusLabel: statusLabel(status),
     statusExplains: statusExplains(status),
     resolution: row.resolution,
-    assignedTo: row.assignedTo,
+    /** That somebody has it, not which somebody — see historyFor above. */
+    assigned: row.assignedTo !== null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     resolvedAt: row.resolvedAt,

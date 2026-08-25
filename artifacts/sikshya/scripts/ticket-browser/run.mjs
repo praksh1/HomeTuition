@@ -158,6 +158,12 @@ await page.waitForTimeout(3500);
 body = await page.evaluate(() => document.body.innerText);
 check("the reporter sees the decision", /Refunded in full/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
 check("and that an agent read it before deciding", /Opened by an agent/i.test(body), body.slice(0, 600).replace(/\n/g, " | "));
+/*
+ * A human read it, but not which human: the team here is small enough that a full name is
+ * enough to find somebody, and this person has just been told about money.
+ */
+check("without being handed the agent's name",
+  !/Bina Karki/.test(body), body.slice(0, 700).replace(/\n/g, " | "));
 check("but never the note the agents wrote to each other",
   !/Checked the ledger/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
 check("and can no longer withdraw it",

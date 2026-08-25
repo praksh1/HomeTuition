@@ -18,7 +18,8 @@ export interface Ticket {
   statusLabel: string;
   statusExplains: string;
   resolution: string | null;
-  assignedTo: number | null;
+  /** That somebody has it, not which somebody. The desk sees the name; the reporter does not. */
+  assigned: boolean;
   createdAt: string;
   updatedAt: string;
   resolvedAt: string | null;
