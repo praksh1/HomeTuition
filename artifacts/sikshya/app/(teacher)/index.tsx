@@ -219,6 +219,31 @@ export default function TeacherDashboard() {
         </TouchableOpacity>
       </View>
 
+      {/*
+        The way in to the monthly class.
+
+        A full-width row rather than a third small button: it is a different kind of thing from
+        "New Session" — a class that runs every day for a month — and a teacher who has one
+        lives in it. It reads as an offer until they have one, and as a door afterwards.
+      */}
+      <TouchableOpacity
+        testID="teacher-monthly-entry"
+        style={[styles.monthlyEntry, { backgroundColor: colors.card, borderColor: colors.border }]}
+        onPress={() => router.push("/(teacher)/monthly")}
+        activeOpacity={0.85}
+      >
+        <View style={[styles.monthlyIcon, { backgroundColor: colors.primary + "14" }]}>
+          <Feather name="repeat" size={20} color={colors.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.monthlyTitle, { color: colors.foreground }]}>Monthly class</Text>
+          <Text style={[styles.monthlySub, { color: colors.mutedForeground }]}>
+            Teach the same class every day. Students buy the month.
+          </Text>
+        </View>
+        <Feather name="chevron-right" size={20} color={colors.mutedForeground} />
+      </TouchableOpacity>
+
       <View style={styles.sectionHeader}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Upcoming Sessions</Text>
         {sessionsLoading && <ActivityIndicator size="small" color={colors.primary} />}
@@ -309,6 +334,19 @@ const styles = StyleSheet.create({
   actionBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
   actionBtnOutline: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, paddingVertical: 14, borderWidth: 1 },
   actionBtnOutlineText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  monthlyEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    marginHorizontal: 20,
+    marginBottom: 8,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  monthlyIcon: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  monthlyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  monthlySub: { fontSize: 12.5, fontFamily: "Inter_400Regular", marginTop: 2, lineHeight: 17 },
   sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", marginTop: 4 },
   emptyCard: { borderRadius: 16, borderWidth: 1, padding: 20, flexDirection: "row", alignItems: "center", gap: 12 },

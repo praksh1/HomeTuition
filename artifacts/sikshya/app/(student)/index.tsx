@@ -344,7 +344,35 @@ export default function Discover() {
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          !isSearching && topPick ? (
+          <>
+          {/*
+            The way in to monthly classes, above the teacher list.
+
+            A monthly class is bought differently from everything else on this screen — once a
+            month rather than one lesson at a time — so it is a door of its own rather than
+            another card in the list, where it would look like a lesson and be priced like a
+            month.
+          */}
+          {!isSearching && (
+            <TouchableOpacity
+              testID="student-monthly-entry"
+              style={[styles.monthlyEntry, { backgroundColor: colors.card, borderColor: colors.border }]}
+              onPress={() => router.push("/(student)/monthly")}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.monthlyIcon, { backgroundColor: colors.primary + "14" }]}>
+                <Feather name="repeat" size={20} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.monthlyTitle, { color: colors.foreground }]}>Monthly classes</Text>
+                <Text style={[styles.monthlySub, { color: colors.mutedForeground }]}>
+                  Every day at the same time. Pay once a month.
+                </Text>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.mutedForeground} />
+            </TouchableOpacity>
+          )}
+          {!isSearching && topPick ? (
             <View style={styles.featuredSection}>
               <View style={styles.sectionHeader}>
                 <View style={[styles.sectionDot, { backgroundColor: colors.accent }]} />
@@ -396,7 +424,8 @@ export default function Discover() {
                 <Text style={[styles.sectionLabel, { color: colors.foreground }]}>All Teachers</Text>
               </View>
             </View>
-          ) : null
+          ) : null}
+          </>
         }
         renderItem={({ item }) => (
           <TeacherCard
@@ -607,6 +636,18 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 20, paddingTop: 16 },
 
   featuredSection: { marginBottom: 4 },
+  monthlyEntry: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    marginBottom: 16,
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  monthlyIcon: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  monthlyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  monthlySub: { fontSize: 12.5, fontFamily: "Inter_400Regular", marginTop: 2, lineHeight: 17 },
   sectionHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 },
   sectionDot: { width: 8, height: 8, borderRadius: 4 },
   sectionLabel: { fontSize: 15, fontFamily: "Inter_700Bold" },
