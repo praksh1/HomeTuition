@@ -113,7 +113,7 @@ that stopped.
 | Closing a month and paying refunds | ✅ into the same queue an agent already works |
 | Group chat with pinning | ✅ one thread per course, teacher-only pins |
 | Homework: set, hand in, mark, hand back | ✅ words, a marked-up file, or marking drawn in the app |
-| Anything in the app | ❌ API only so far |
+| The app screens | ✅ buy, set up, find, join, chat, homework |
 
 Run the tests:
 
@@ -123,6 +123,7 @@ pnpm --filter @workspace/api-server run test:monthly     # 187 checks, needs the
 pnpm --filter @workspace/api-server run test:portal      # 72 checks, starts its own API
 artifacts/api-server/scripts/monthly-schema/compare.sh  # tables built both ways, diffed
 artifacts/api-server/scripts/monthly-schema/agree.sh    # and the columns only the guard adds
+pnpm --filter @workspace/sikshya run test:monthly-browser  # 32 checks, needs a web build
 ```
 
 ---
@@ -210,6 +211,34 @@ further use must be checked explicitly. `lib/homeworkAccess.ts` is that check: a
 the question sheet their teacher uploaded, a teacher opens the answers handed in, and the
 marked-up copy follows the answer it marks. Nobody else opens anything. Forty-five students able
 to read each other's work is not a portal, it is a leak.
+
+---
+
+## On screen
+
+A teacher reaches it from their Dashboard, a student from Discover. Neither gets a tab: six is
+already a lot on a cheap Android phone, which is the same argument that moved Plan off the bar.
+
+The teacher's screen is **one screen with three states** — no plan, a plan with no class, a
+class that is running — because they are three moments in one thing. The delivery floor appears
+as a count ("5 more classes to go"), not as a rule, because that is the number they can act on
+and the same one their students' refunds hang off.
+
+The student's screen has one job: **the price**. It shows what they pay now *and* what a full
+month costs, because showing only the smaller number looks like a discount and only the bigger
+one looks like an overcharge. The app never works a price out — it shows the one the server
+quoted, and the browser suite reads that number off the button and compares it.
+
+Dates on screen go through the reader's own calendar: *"This month runs to 8 Ashwin 2083
+(Sep 24, 2026)"*. The class's **time** never touches a calendar at all — it is a time of day,
+and the two calendars disagree about which day it is while agreeing entirely about what four in
+the afternoon means.
+
+### What is not built yet
+
+Marking drawn **in the app** is stored and handed back, but there is no drawing surface for it
+yet — a teacher marks with words or by uploading a marked-up file. Changing a make-up's date is
+not offered either: arranging one puts it three days out at the usual time.
 
 ---
 
