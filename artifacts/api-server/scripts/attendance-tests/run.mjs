@@ -428,9 +428,18 @@ async function run() {
       oldShape.status === 400, `status=${oldShape.status}`);
 
     const mine = await api("/disputes/mine", { token: student.token });
-    check("a student can read their own reports back", mine.status === 200 && Array.isArray(mine.body));
+    check("a student can read their own reports back",
+      mine.status === 200 && Array.isArray(mine.body?.tickets), `status=${mine.status}`);
+    // Each one carries the number they would quote, and the list says how many they have left
+    // of the day's three. See scripts/ticket-tests for the lifecycle itself.
+    check("with the number they would quote for each",
+      (mine.body?.tickets ?? []).every((t) => /^HT-\d{6}$/.test(t.ref ?? "")),
+      JSON.stringify((mine.body?.tickets ?? []).map((t) => t.ref)));
+    check("and how many more they may send today",
+      typeof mine.body?.allowance?.remaining === "number", JSON.stringify(mine.body?.allowance));
     check("the report filed with no file reads back with no file",
-      mine.body?.some((d) => d.sessionId === session.id && d.evidenceUrl === null));
+      (mine.body?.tickets ?? []).some((d) => d.sessionId === session.id && d.evidenceUrl === null),
+      JSON.stringify((mine.body?.tickets ?? []).map((t) => [t.sessionId, t.evidenceUrl])));
   }
 
   console.log("\nA full room, all moving at once\n");

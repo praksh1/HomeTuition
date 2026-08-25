@@ -191,7 +191,16 @@ async function main() {
     console.log("\nA file that is too big is caught after it lands, and deleted\n");
 
     {
-      const big = await api("/storage/uploads/request-url", { method: "POST", token: student.token,
+      /**
+       * Its own reporter, because a person may only file three requests a day.
+       *
+       * That limit is real and deliberate — see lib/tickets.ts — and this suite is about what
+       * happens to an attachment, not about the limit. Sharing one account across every block
+       * here would mean a later block failing for a reason that has nothing to do with files,
+       * which is exactly how a suite starts lying about what it covers.
+       */
+      const bigReporter = await register("student", "Oversized Om");
+      const big = await api("/storage/uploads/request-url", { method: "POST", token: bigReporter.token,
         body: { name: "big.png", size: 1000, contentType: "image/png" } });
       const bigKey = big.body?.objectPath;
       // Eleven megabytes: the claim said 1000 bytes, so only reading the real object catches it.
@@ -200,7 +209,7 @@ async function main() {
       });
       check("the oversized file did upload, because the claim was a lie", r2.objects.has(bigKey));
 
-      const filedBig = await api("/disputes", { method: "POST", token: student.token, body: {
+      const filedBig = await api("/disputes", { method: "POST", token: bigReporter.token, body: {
         reason: "Technical Failure", description: "Too big.", evidenceUrl: bigKey } });
       check("it is refused as evidence", filedBig.body?.evidenceUrl === null);
       check("with the size given as the reason",
@@ -217,9 +226,10 @@ async function main() {
        * names its origin in a CORS rule, and Safari reports the refusal as "Load failed" and
        * nothing more. This path goes through our own API, which no browser rule can block.
        */
+      const slowReporter = await register("student", "Slow-path Sarita");
       const viaServer = await fetch(`${API}/api/storage/upload`, {
         method: "PUT",
-        headers: { "Content-Type": "image/png", Authorization: `Bearer ${student.token}` },
+        headers: { "Content-Type": "image/png", Authorization: `Bearer ${slowReporter.token}` },
         body: PNG,
       });
       const body = await viaServer.json().catch(() => ({}));
@@ -227,18 +237,18 @@ async function main() {
         `status=${viaServer.status} ${JSON.stringify(body)}`);
       const serverKey = body?.objectPath ?? "";
       check("under a key that belongs to the uploader",
-        serverKey.startsWith(`evidence/${student.user.id}/`), serverKey);
+        serverKey.startsWith(`evidence/${slowReporter.user.id}/`), serverKey);
       check("and the bytes really are in the bucket",
         r2.objects.get(serverKey)?.body.equals(PNG) === true);
 
-      const filedViaServer = await api("/disputes", { method: "POST", token: student.token, body: {
+      const filedViaServer = await api("/disputes", { method: "POST", token: slowReporter.token, body: {
         reason: "Technical Failure", description: "Uploaded the slow way.", evidenceUrl: serverKey } });
       check("and it can be attached to a report like any other",
         filedViaServer.body?.evidenceUrl === serverKey, JSON.stringify(filedViaServer.body?.evidenceUrl));
 
       const wrongType = await fetch(`${API}/api/storage/upload`, {
         method: "PUT",
-        headers: { "Content-Type": "application/x-msdownload", Authorization: `Bearer ${student.token}` },
+        headers: { "Content-Type": "application/x-msdownload", Authorization: `Bearer ${slowReporter.token}` },
         body: PNG,
       });
       check("the same rules apply — an executable is refused", wrongType.status === 400,
