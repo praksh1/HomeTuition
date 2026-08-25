@@ -385,6 +385,11 @@ jobs:
           # correct screen can be unreachable — which is exactly what had happened to
           # "My Requests" before this suite caught it.
           pnpm --filter @workspace/sikshya run test:tickets
+          # The Sessions screens with enough on them to crowd: ten classes to come, six that
+          # came and went unstarted, one finished, and a monthly class. A filter checked
+          # against three rows proves nothing, and monthly classes had no place on either
+          # screen at all until this.
+          pnpm --filter @workspace/sikshya run test:filters
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local
