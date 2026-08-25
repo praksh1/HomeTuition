@@ -12,6 +12,15 @@ import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership } from "../lib/membership";
 import { verifyUpload } from "../lib/fileStore";
 import { endedEarlyWithoutReturning } from "../lib/sessionEvidence";
+import { MAX_TICKETS_PER_DAY, isTerminal, ticketRef } from "../lib/tickets";
+import {
+  allowanceFor,
+  describeTicket,
+  historyFor,
+  moveTicket,
+  nameOf,
+  recordOpened,
+} from "../lib/ticketStore";
 
 const router: IRouter = Router();
 
@@ -37,6 +46,30 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
   }
   if (!description || !description.trim()) {
     res.status(400).json({ error: "description is required" });
+    return;
+  }
+
+  /**
+   * Three a day, and then a wait.
+   *
+   * The owner asked for this having watched the app take several hundred requests from one
+   * person without ever telling them what happened to any of them. Both halves of that are
+   * being fixed: the history below gives an answer to look at, and this stops the pile
+   * growing faster than anybody can answer it.
+   *
+   * It counts a rolling twenty-four hours rather than a calendar day, so the limit cannot be
+   * doubled by filing three before midnight and three after. Nothing has been written at this
+   * point, so a refused request costs the reporter nothing but the wait.
+   */
+  const allowance = await allowanceFor(userId);
+  if (!allowance.ok) {
+    res.status(429).json({
+      error: allowance.reason,
+      used: allowance.used,
+      limit: MAX_TICKETS_PER_DAY,
+      remaining: 0,
+      nextAllowedAt: allowance.nextAllowedAt,
+    });
     return;
   }
 
@@ -119,8 +152,23 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
     evidenceUrl: attachment,
   }).returning();
 
+  /**
+   * The history starts where the request does.
+   *
+   * Without this first entry a ticket's trail begins at whatever an agent did to it, which
+   * reads as though nothing happened until somebody looked — the exact impression the
+   * reporter already has and this is meant to correct.
+   */
+  await recordOpened(dispute!.id, userId, req.user!.role, await nameOf(userId));
+
   // The problem travels with the reply, so the app can say the report went and the photo did not.
-  res.status(201).json({ ...dispute, attachmentProblem });
+  res.status(201).json({
+    ...dispute,
+    /** The number they quote when they ask about it. */
+    ref: ticketRef(dispute!.id),
+    attachmentProblem,
+    remaining: allowance.remaining - 1,
+  });
 });
 
 /**
@@ -207,12 +255,92 @@ router.get("/support/sessions", requireAuth, async (req, res): Promise<void> => 
   }
 });
 
+/**
+ * Everything this person has reported, and whether they may report anything else.
+ *
+ * The allowance travels with the list on purpose. A limit somebody only meets at the moment
+ * they are refused is a limit that reads as a fault; shown alongside their own requests it
+ * reads as what it is.
+ */
 router.get("/disputes/mine", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
   const rows = await db.select().from(disputesTable)
     .where(eq(disputesTable.userId, userId))
     .orderBy(desc(disputesTable.createdAt));
-  res.json(rows);
+
+  const allowance = await allowanceFor(userId);
+  res.json({
+    tickets: rows.map(describeTicket),
+    allowance: {
+      used: allowance.used,
+      limit: MAX_TICKETS_PER_DAY,
+      remaining: allowance.remaining,
+      nextAllowedAt: allowance.nextAllowedAt,
+      reason: allowance.reason,
+    },
+  });
+});
+
+/**
+ * One request, and what has happened to it.
+ *
+ * Only the person who reported it may read it. An agent reading the same ticket goes through
+ * /admin/tickets/:id, which carries the evidence and the internal notes this deliberately
+ * leaves out.
+ */
+router.get("/disputes/:id", requireAuth, async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid request id" }); return; }
+
+  const [row] = await db.select().from(disputesTable).where(eq(disputesTable.id, id));
+  // A stranger and a missing ticket get the same answer, so the endpoint cannot be used to
+  // count how many requests other people have filed.
+  if (!row || row.userId !== req.user!.userId) {
+    res.status(404).json({ error: "That request was not found." });
+    return;
+  }
+
+  res.json({
+    ticket: describeTicket(row),
+    history: await historyFor(id, false),
+    canCancel: !isTerminal(row.status),
+  });
+});
+
+/**
+ * Withdrawing a request.
+ *
+ * Somebody who solved their own problem, or filed twice by accident, should be able to take it
+ * back rather than wait for an agent to close it — and taking it back frees up one of their
+ * three, which is the difference between a limit and a trap.
+ */
+router.post("/disputes/:id/cancel", requireAuth, async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id)) { res.status(400).json({ error: "Invalid request id" }); return; }
+
+  const [row] = await db.select().from(disputesTable).where(eq(disputesTable.id, id));
+  if (!row || row.userId !== req.user!.userId) {
+    res.status(404).json({ error: "That request was not found." });
+    return;
+  }
+
+  const { note } = req.body as { note?: string };
+  const moved = await moveTicket({
+    ticketId: id,
+    to: "cancelled",
+    actorId: req.user!.userId,
+    actorRole: req.user!.role === "teacher" ? "teacher" : "student",
+    actorName: await nameOf(req.user!.userId),
+    note: typeof note === "string" ? note : null,
+  });
+
+  if (!moved.ok) { res.status(moved.status).json({ error: moved.reason }); return; }
+
+  res.json({
+    ticket: describeTicket(moved.ticket),
+    history: await historyFor(id, false),
+    canCancel: false,
+  });
 });
 
 export default router;
