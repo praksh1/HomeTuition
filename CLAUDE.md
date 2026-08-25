@@ -2,6 +2,20 @@
 
 Orientation for anyone — human or AI — picking this up fresh.
 
+## Read this first
+
+**`.agents/memory/MEMORY.md` is the index of everything learned the hard way on this project,
+including decisions the owner has already made.** Read it before planning any work, and reach
+for the individual note before re-deriving something.
+
+This is not optional politeness. A cloud session's context gets summarised and its container
+gets reset, so what the owner said three hours ago may not be in front of you — but it is in
+there. Not reading it is how a settled decision gets re-argued as if it were still open, which
+has happened and wasted the owner's time.
+
+When the owner decides something, **write it to a note and add it to the index in the same
+change.** A decision that lives only in a chat has already been lost.
+
 ---
 
 ## What it is

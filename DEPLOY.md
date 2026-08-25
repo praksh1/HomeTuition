@@ -8,10 +8,8 @@ Everything below assumes the code is pushed to GitHub (HomeTuition).
 ---
 
 > **Before a public launch — iOS, Android, or telling real users about the web app — read the
-> checklist at the top of `ISSUES.md`.** The one that must not be skipped: **rotate the
-> Daily.co API key**. It was pasted into a chat transcript early in this project, so it has to
-> be treated as public. Anyone holding it can create and join rooms on your account and bill
-> you for it. Daily dashboard → Developers → rotate, then update `DAILY_API_KEY` on Railway.
+> checklist at the top of `ISSUES.md`.** The Daily.co API key that used to head that list was
+> rotated by the owner on 2026-08-24 and is no longer outstanding.
 
 
 ## Why this matters beyond "being live"

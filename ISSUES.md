@@ -12,11 +12,11 @@ Status key: **open** · **in progress** · **fixed** · **won't fix**
 Not a wish list — these are the things that are *unsafe or wrong* to launch with, and each one
 is cheap next to what it costs afterwards. Tick them off in order.
 
-- [ ] **Rotate the Daily.co API key.** It was pasted into a chat transcript earlier in this
-      project's life, so it must be treated as public. Daily dashboard → Developers → rotate,
-      then update `DAILY_API_KEY` on Railway. Whoever holds that key can create and join rooms
-      on your account and bill you for it. **Do this before the first public build**, not
-      after — see A4.
+- [x] ~~**Rotate the Daily.co API key.**~~ Done by the owner on 2026-08-24: rotated in the Daily
+      dashboard and updated in Railway. The old key had been pasted into a chat transcript, so
+      it was public and anyone holding it could create rooms and bill the account. The lesson
+      outlives the task — never put a key, connection string or token in chat; hand over the
+      variable name and let the owner set the value. See A4.
 - [ ] **Decide what happens to chat.** Daily's chat is web-only. The moment an installed app
       is in someone's hands, a class mixing an app user and a browser user has two
       conversations that cannot see each other, and both look like they are working. Either
