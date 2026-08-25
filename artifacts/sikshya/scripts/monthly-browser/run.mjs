@@ -138,8 +138,26 @@ async function main() {
   {
     const { ctx, page } = await open(browser, teacher.token, "/(teacher)/monthly");
 
+    /*
+     * A time the app cannot read has to be refused, out loud.
+     *
+     * The failure this guards against is silent: "half four" quietly becoming 00:00 and a
+     * teacher finding out from a student, in the morning. The parser is unit-tested; this is
+     * about whether the screen acts on what it says.
+     */
     await page.locator('[data-testid="monthly-subject"]').fill("Mathematics");
     await page.locator('[data-testid="monthly-topic"]').fill("Algebra for Grade 10");
+    await page.locator('[data-testid="monthly-time"]').fill("half four");
+    await page.locator('[data-testid="monthly-fee"]').fill("3000");
+    await page.waitForTimeout(300);
+    await page.locator('[data-testid="monthly-create"]').click({ timeout: 15000 });
+    await page.waitForTimeout(2500);
+
+    const madeAnyway = Number(sql(`select count(*) from recurring_sessions where teacher_id = ${teacher.user.id}`));
+    check("a time the app cannot read does not create a class", madeAnyway === 0, `${madeAnyway} classes created`);
+    const complaint = await text(page);
+    check("and the teacher is told why", /HH:MM|16:00/.test(complaint), complaint.slice(0, 400).replace(/\n/g, " | "));
+
     await page.locator('[data-testid="monthly-time"]').fill("16:00");
     await page.locator('[data-testid="monthly-fee"]').fill("3000");
     await page.waitForTimeout(400);
