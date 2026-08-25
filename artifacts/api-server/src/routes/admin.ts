@@ -1,7 +1,7 @@
 import { createHash, randomInt } from "node:crypto";
 import { and, asc, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import {
   db,
   disputesTable,
@@ -46,7 +46,45 @@ import { historyFor, moveTicket, nameOf } from "../lib/ticketStore";
 const router: IRouter = Router();
 
 /** Everything under /admin needs both: signed in, and an agent right now. */
-router.use("/admin", requireAuth, requireAdmin);
+/**
+ * An operator still holding their one-time password may do nothing but replace it.
+ *
+ * Enforced here rather than by the login screen, because a forced change the app merely
+ * insists on is a suggestion: the token issued at sign-in is a perfectly good token, and
+ * anything that can send an HTTP request could simply skip the screen. This is the gate that
+ * makes "the administrator never knows your password" true rather than aspirational — until
+ * the operator has chosen one, the credential the administrator read out opens nothing.
+ *
+ * `/operator/password` is deliberately not behind this router, so the way out is always open.
+ */
+async function requirePasswordChanged(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { operatorByUserId } = await import("../lib/operatorStore");
+    const operator = await operatorByUserId(req.user!.userId);
+
+    // Not an operator record at all: an account promoted directly in the database, which is how
+    // every agent was made before operator IDs existed. Those keep working.
+    if (!operator) { next(); return; }
+
+    if (operator.disabledAt) {
+      res.status(403).json({ error: "This operator ID has been switched off.", code: "operator_disabled" });
+      return;
+    }
+    if (operator.mustChangePassword) {
+      res.status(403).json({
+        error: "Choose your own password before using the support desk.",
+        code: "must_change_password",
+      });
+      return;
+    }
+    next();
+  } catch {
+    // A lookup that failed is not permission granted.
+    res.status(503).json({ error: "Could not check your access. Please try again." });
+  }
+}
+
+router.use("/admin", requireAuth, requireAdmin, requirePasswordChanged);
 
 /** How many refunds one page of the queue holds. */
 const PAGE = 100;

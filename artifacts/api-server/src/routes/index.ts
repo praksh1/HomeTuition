@@ -10,6 +10,7 @@ import disputesRouter from "./disputes";
 import notificationsRouter from "./notifications";
 import sessionMessagesRouter from "./sessionMessages";
 import adminRouter, { passwordResetRouter } from "./admin";
+import operatorsRouter from "./operators";
 import dropsRouter from "./drops";
 import monthlyRouter from "./monthly";
 import monthlyPortalRouter from "./monthlyPortal";
@@ -29,6 +30,7 @@ router.use(sessionMessagesRouter);
 router.use(dropsRouter);
 router.use(monthlyRouter);
 router.use(monthlyPortalRouter);
+router.use(operatorsRouter);
 router.use(adminRouter);
 router.use(passwordResetRouter);
 
