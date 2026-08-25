@@ -1,5 +1,7 @@
 # Memory Index
 
+**Open backlog:** [.agents/backlog/](../backlog/) holds work the owner has raised that is not finished. Read the newest file there before planning; a list that lives only in a chat gets half-done, and this project's container has been reset mid-session more than once.
+
 - [Expo native-tabs nav pitfall](expo-native-tabs-nav.md) — NativeTabs only register tab triggers; non-tab pushed routes silently no-op on iOS.
 - [AuthGuard async-redirect role-cast crash](authguard-role-cast-crash.md) — guard role-specific screens; a wrong-role user renders briefly before the effect redirects.
 - [Expo tabs absolute bar overlaps full-screen screens](expo-tabs-overlap.md) — absolute-positioned tab bar covers classroom chat/input unless tabBarStyle display:none is set per screen.
