@@ -1,4 +1,4 @@
-import { integer, pgEnum, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, index, integer, pgEnum, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -16,7 +16,23 @@ export const disputeReasonEnum = pgEnum("dispute_reason", [
   "Other",
 ]);
 
-export const disputeStatusEnum = pgEnum("dispute_status", ["open", "in_review", "resolved"]);
+/**
+ * Where a request is in its life.
+ *
+ * `in_review` is kept because rows already carry it, and is not offered any more — it means the
+ * same thing as `processing`, and two words for one state is how somebody ends up asking what
+ * the difference is. See lib/tickets.ts, which holds the rules about what may follow what.
+ */
+export const disputeStatusEnum = pgEnum("dispute_status", [
+  "open",
+  "opened",
+  "assigned",
+  "processing",
+  "in_review",
+  "resolved",
+  "denied",
+  "cancelled",
+]);
 
 export const disputesTable = pgTable("disputes", {
   id: serial("id").primaryKey(),
@@ -60,8 +76,62 @@ export const disputesTable = pgTable("disputes", {
   resolution: text("resolution"),
   resolvedBy: integer("resolved_by"),
   resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  /**
+   * The agent who has taken this on.
+   *
+   * Separate from `resolvedBy`, which is whoever finished it. A queue where nobody can see who
+   * picked something up is one where two agents work the same ticket and neither knows.
+   */
+  assignedTo: integer("assigned_to").references(() => usersTable.id, { onDelete: "set null" }),
+  assignedAt: timestamp("assigned_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
 });
+
+/**
+ * Everything that has happened to a request, in order.
+ *
+ * This is what the person who reported it reads. Without it a ticket is a single word that
+ * changes when somebody happens to look, and "you can create several hundred requests without
+ * knowing the status" is the result — so it is a log, not a column, and every move writes a row.
+ *
+ * An agent's justification and any supporting file live here rather than on the ticket, because
+ * a ticket has one outcome and several steps, and the reason for each step is worth keeping.
+ */
+export const ticketEventsTable = pgTable(
+  "ticket_events",
+  {
+    id: serial("id").primaryKey(),
+    ticketId: integer("ticket_id")
+      .notNull()
+      .references(() => disputesTable.id, { onDelete: "cascade" }),
+    /** Who did it. Null when the system did, rather than pretending a person did. */
+    actorId: integer("actor_id").references(() => usersTable.id, { onDelete: "set null" }),
+    /** `student` | `teacher` | `agent` | `system` — their part in this, not their account type. */
+    actorRole: text("actor_role").notNull(),
+    /** The name at the time, so a history read months later says who, not a number. */
+    actorName: text("actor_name"),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status").notNull(),
+    /** The agent's reasoning. Required on the endings somebody will argue with. */
+    note: text("note"),
+    /** A file the agent attached to justify it. */
+    fileKey: text("file_key"),
+    fileType: text("file_type"),
+    /** True for a note the reporter should not see — an agent talking to other agents. */
+    internal: boolean("internal").notNull().default(false),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // Every read is "this ticket's history, oldest first".
+    index("ticket_events_ticket_idx").on(table.ticketId, table.id),
+  ],
+);
+
+export type TicketEvent = typeof ticketEventsTable.$inferSelect;
 
 export const insertDisputeSchema = createInsertSchema(disputesTable).omit({
   id: true,

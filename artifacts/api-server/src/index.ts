@@ -17,6 +17,7 @@ import {
   ensureMonthlyTierTables,
   ensureMonthlyEnforcementColumns,
   ensureMonthlyPortalTables,
+  ensureTicketLifecycle,
 } from "./lib/ensureSchema";
 
 const rawPort = process.env["PORT"];
@@ -51,6 +52,7 @@ server.listen(port, () => {
   void ensureMonthlyTierTables();
   void ensureMonthlyEnforcementColumns();
   void ensureMonthlyPortalTables();
+  void ensureTicketLifecycle();
   // Whether real money can move is too important to have to go and look up.
   if (paymentMode() === "simulated") logger.warn(describePaymentMode());
   else logger.info(describePaymentMode());

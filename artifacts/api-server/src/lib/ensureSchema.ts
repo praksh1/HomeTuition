@@ -713,3 +713,71 @@ export async function ensureMonthlyPortalTables(): Promise<void> {
     );
   }
 }
+
+/**
+ * Adds the ticket lifecycle: the new statuses, who a ticket is assigned to, and its history.
+ *
+ * Same licence as everything above: additive only, and unable to stop the server starting.
+ *
+ * `ALTER TYPE ... ADD VALUE IF NOT EXISTS` is the one statement here that is not a plain create.
+ * It cannot remove a value or change one, and a status a row already carries keeps working — so
+ * a deploy that lands before `db:push` widens the enum and nothing narrows.
+ */
+export async function ensureTicketLifecycle(): Promise<void> {
+  try {
+    for (const value of ["opened", "assigned", "processing", "denied", "cancelled"]) {
+      await db.execute(sql.raw(`ALTER TYPE "dispute_status" ADD VALUE IF NOT EXISTS '${value}'`));
+    }
+
+    await db.execute(sql`ALTER TABLE "disputes" ADD COLUMN IF NOT EXISTS "assigned_to" integer`);
+    await db.execute(sql`
+      ALTER TABLE "disputes" ADD COLUMN IF NOT EXISTS "assigned_at" timestamp with time zone
+    `);
+    await db.execute(sql`
+      ALTER TABLE "disputes"
+        ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone NOT NULL DEFAULT now()
+    `);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        ALTER TABLE "disputes"
+          ADD CONSTRAINT "disputes_assigned_to_users_id_fk"
+          FOREIGN KEY ("assigned_to") REFERENCES "users"("id") ON DELETE SET NULL;
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "ticket_events" (
+        "id" serial PRIMARY KEY,
+        "ticket_id" integer NOT NULL,
+        "actor_id" integer,
+        "actor_role" text NOT NULL,
+        "actor_name" text,
+        "from_status" text,
+        "to_status" text NOT NULL,
+        "note" text,
+        "file_key" text,
+        "file_type" text,
+        "internal" boolean NOT NULL DEFAULT false,
+        "at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "ticket_events_ticket_id_disputes_id_fk"
+          FOREIGN KEY ("ticket_id") REFERENCES "disputes"("id") ON DELETE CASCADE,
+        CONSTRAINT "ticket_events_actor_id_users_id_fk"
+          FOREIGN KEY ("actor_id") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "ticket_events_ticket_idx" ON "ticket_events" ("ticket_id", "id")
+    `);
+    logger.info("ticket lifecycle is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not add the ticket lifecycle; run `pnpm run db:push`. " +
+        "Support requests can still be filed and read — but they cannot be moved through their " +
+        "stages, so an agent's update is refused rather than half-recorded.",
+    );
+  }
+}
