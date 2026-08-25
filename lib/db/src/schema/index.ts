@@ -8,6 +8,7 @@ export * from "./sessionBoard";
 export * from "./sessionParticipation";
 export * from "./sessionMessages";
 export * from "./activityLog";
+export * from "./operatorAccounts";
 export * from "./passwordResets";
 export * from "./scheduleChanges";
 export * from "./refunds";

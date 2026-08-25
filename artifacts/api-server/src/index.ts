@@ -17,6 +17,7 @@ import {
   ensureMonthlyTierTables,
   ensureMonthlyEnforcementColumns,
   ensureMonthlyPortalTables,
+  ensureOperatorAccounts,
   ensureTicketLifecycle,
 } from "./lib/ensureSchema";
 
@@ -53,6 +54,7 @@ server.listen(port, () => {
   void ensureMonthlyEnforcementColumns();
   void ensureMonthlyPortalTables();
   void ensureTicketLifecycle();
+  void ensureOperatorAccounts();
   // Whether real money can move is too important to have to go and look up.
   if (paymentMode() === "simulated") logger.warn(describePaymentMode());
   else logger.info(describePaymentMode());

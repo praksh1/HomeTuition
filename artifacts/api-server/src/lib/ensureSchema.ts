@@ -781,3 +781,54 @@ export async function ensureTicketLifecycle(): Promise<void> {
     );
   }
 }
+
+/**
+ * The operators' own accounts.
+ *
+ * Create-only, like every guard in this file, and a new table rather than columns on `users`
+ * for the reason recorded in the schema itself: a new column on `users` takes sign-in down for
+ * everybody until `db:push` runs, and the API redeploys itself while `db:push` does not.
+ */
+export async function ensureOperatorAccounts(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "operator_accounts" (
+        "id" serial PRIMARY KEY,
+        "user_id" integer NOT NULL,
+        "login_id" text NOT NULL,
+        "is_administrator" boolean NOT NULL DEFAULT false,
+        "must_change_password" boolean NOT NULL DEFAULT true,
+        "created_by" integer,
+        "disabled_at" timestamp with time zone,
+        "disabled_by" integer,
+        "last_sign_in_at" timestamp with time zone,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "operator_accounts_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE,
+        CONSTRAINT "operator_accounts_created_by_users_id_fk"
+          FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE SET NULL,
+        CONSTRAINT "operator_accounts_disabled_by_users_id_fk"
+          FOREIGN KEY ("disabled_by") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    // One operator account per person, and one person per login ID — enforced by the database
+    // rather than by a check-then-insert, which two administrators can both pass at once.
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "operator_accounts_user_idx" ON "operator_accounts" ("user_id")
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "operator_accounts_login_idx" ON "operator_accounts" ("login_id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "operator_accounts_created_idx" ON "operator_accounts" ("created_at")
+    `);
+    logger.info("operator accounts are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not create the operator accounts table; run `pnpm run db:push`. " +
+        "The support desk still works for whoever can already sign in — but no new operator " +
+        "can be issued an ID, and nobody can be forced to change a one-time password.",
+    );
+  }
+}
