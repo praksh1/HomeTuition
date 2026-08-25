@@ -21,6 +21,7 @@ import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
 import { notify } from "../lib/notify";
 import { refundSplit } from "../lib/sessionChanges";
+import { checkStorage, storageSettingsPresent } from "../lib/fileStore";
 import { TICKET_STATUSES, displayStatus, nextStatuses, statusLabel, ticketRef } from "../lib/tickets";
 import { historyFor, moveTicket, nameOf } from "../lib/ticketStore";
 
@@ -461,6 +462,42 @@ router.patch("/admin/tickets/:id", async (req, res): Promise<void> => {
     ticket: { ...updated, ref: ticketRef(id), statusLabel: statusLabel(now) },
     history: await historyFor(id, true),
     nextStatuses: nextStatuses(now).map((next) => ({ value: next, label: statusLabel(next) })),
+  });
+});
+
+/**
+ * Can this server actually store a file?
+ *
+ * Not "are the settings present" — every R2 variable can be set and the API token still be
+ * read-only, which is exactly far enough to pass every configuration check and fail every
+ * upload. So this writes a small object, reads it back, and deletes it, and says which of
+ * those three failed and what to change.
+ *
+ * Behind the support desk because the answer names environment variables. It never returns a
+ * value, only which names are set — see `storageSettingsPresent`.
+ */
+router.get("/admin/storage/check", async (req, res): Promise<void> => {
+  const result = await checkStorage();
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.storage.checked",
+    detail: { ok: result.ok, ...(result.ok ? {} : { code: result.failure.code, failedAt: result.failedAt }) },
+    ip: callerIp(req),
+  });
+
+  res.json({
+    ok: result.ok,
+    settings: storageSettingsPresent(),
+    // "write", "read", "delete" — how far it got before it stopped.
+    completed: result.steps,
+    ...(result.ok
+      ? { bucket: result.bucket, message: "A file can be written, read back and deleted." }
+      : {
+          failedAt: result.failedAt,
+          code: result.failure.code,
+          advice: result.failure.advice,
+          detail: result.failure.detail,
+        }),
   });
 });
 

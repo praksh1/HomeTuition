@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { logger } from "./logger";
+import { describeStorageFailure, type StorageFailure } from "./storageErrors";
+
+// Re-exported so callers have one place to import storage things from.
+export { describeStorageFailure, type StorageFailure };
 
 /**
  * Where uploaded files go: Cloudflare R2.
@@ -289,4 +293,86 @@ export async function verifyUpload(key: string, userId: number): Promise<UploadV
     return { ok: false, reason: "Only photos and PDFs can be attached." };
   }
   return { ok: true, size: facts.size, contentType: facts.contentType };
+}
+
+export type StorageCheck =
+  | { ok: true; bucket: string; steps: string[] }
+  | { ok: false; failedAt: string; failure: StorageFailure; steps: string[] };
+
+/**
+ * Actually write, read and delete a small object, and report which step failed.
+ *
+ * Configuration that merely *exists* proves nothing — every variable can be present and the
+ * token still be read-only. This is the difference between "the settings look right" and "a
+ * file can be stored", and only the second one matters to somebody attaching a photo.
+ */
+export async function checkStorage(): Promise<StorageCheck> {
+  const steps: string[] = [];
+  const c = client();
+  if (!c) {
+    return {
+      ok: false,
+      failedAt: "configuration",
+      steps,
+      failure: {
+        code: "NotConfigured",
+        detail: "",
+        advice:
+          "R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET and R2_ACCOUNT_ID must all be set " +
+          "on the API service. Uploads are switched off until they are.",
+        publicMessage: "File uploads are not set up on this server yet.",
+      },
+    };
+  }
+
+  const key = `health/${Date.now()}-${Math.random().toString(36).slice(2)}.txt`;
+  const body = Buffer.from("storage check");
+
+  try {
+    await c.client.send(new PutObjectCommand({
+      Bucket: c.config.bucket, Key: key, Body: body, ContentType: "text/plain",
+    }));
+    steps.push("write");
+  } catch (err) {
+    return { ok: false, failedAt: "write", failure: describeStorageFailure(err), steps };
+  }
+
+  try {
+    const head = await c.client.send(new HeadObjectCommand({ Bucket: c.config.bucket, Key: key }));
+    if (Number(head.ContentLength ?? 0) !== body.length) {
+      return {
+        ok: false, failedAt: "read", steps,
+        failure: {
+          code: "SizeMismatch", detail: `wrote ${body.length}, read back ${head.ContentLength}`,
+          advice: "The bucket accepted the file but read it back at a different size.",
+          publicMessage: "We could not save that file just now. Please try again in a moment.",
+        },
+      };
+    }
+    steps.push("read");
+  } catch (err) {
+    return { ok: false, failedAt: "read", failure: describeStorageFailure(err), steps };
+  }
+
+  try {
+    await c.client.send(new DeleteObjectCommand({ Bucket: c.config.bucket, Key: key }));
+    steps.push("delete");
+  } catch (err) {
+    // Writing and reading is what uploads need; a bucket that cannot delete still works, but
+    // the failed cleanups become litter that costs money, so it is reported rather than hidden.
+    return { ok: false, failedAt: "delete", failure: describeStorageFailure(err), steps };
+  }
+
+  return { ok: true, bucket: c.config.bucket, steps };
+}
+
+/** Which R2 settings are present. Names and presence only — never a value. */
+export function storageSettingsPresent(): Record<string, boolean> {
+  return {
+    R2_ACCOUNT_ID: !!process.env.R2_ACCOUNT_ID,
+    R2_ACCESS_KEY_ID: !!process.env.R2_ACCESS_KEY_ID,
+    R2_SECRET_ACCESS_KEY: !!process.env.R2_SECRET_ACCESS_KEY,
+    R2_BUCKET: !!process.env.R2_BUCKET,
+    R2_ENDPOINT: !!process.env.R2_ENDPOINT,
+  };
 }

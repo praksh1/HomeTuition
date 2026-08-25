@@ -7,6 +7,7 @@ import { mayOpenHomeworkFile } from "../lib/homeworkAccess";
 import {
   ALLOWED_UPLOAD_TYPES,
   MAX_UPLOAD_BYTES,
+  describeStorageFailure,
   isFileStoreConfigured,
   ownerOf,
   putObject,
@@ -103,8 +104,12 @@ router.post("/storage/uploads/request-url", requireAuth, async (req: Request, re
       }),
     );
   } catch (error) {
-    req.log.error({ err: error }, "could not sign an upload");
-    res.status(500).json({ error: "Could not prepare the upload. Please try again." });
+    const failure = describeStorageFailure(error);
+    req.log.error(
+      { err: error, code: failure.code, advice: failure.advice },
+      "could not sign an upload",
+    );
+    res.status(500).json({ error: failure.publicMessage, code: failure.code });
   }
 });
 
@@ -158,8 +163,20 @@ router.put(
       }
       res.status(201).json({ objectPath: key });
     } catch (error) {
-      req.log.error({ err: error }, "could not store an upload sent through the server");
-      res.status(502).json({ error: "We could not store that file. Please try again." });
+      /**
+       * Say which failure this is, rather than "please try again".
+       *
+       * Trying again does not fix a read-only API token, and the owner met exactly that on the
+       * live site with no way to tell a missing bucket from a wrong key. The reason goes to the
+       * log with the code that names it; the reporter gets a sentence that does not mention
+       * configuration, because a student attaching a photo cannot act on it either way.
+       */
+      const failure = describeStorageFailure(error);
+      req.log.error(
+        { err: error, code: failure.code, advice: failure.advice },
+        "could not store an upload sent through the server",
+      );
+      res.status(502).json({ error: failure.publicMessage, code: failure.code });
     }
   },
 );
