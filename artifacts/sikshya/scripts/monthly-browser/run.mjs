@@ -162,9 +162,32 @@ async function main() {
 
   const classId = Number(sql(`select id from recurring_sessions where teacher_id = ${teacher.user.id}`));
 
+  /**
+   * Winds the month on, so what a student owes stops being the same number as a full month.
+   *
+   * Without this the student joins a class created moments ago, every class is still to come,
+   * and the pro-rated price *is* the monthly price — so a screen showing either passes. Putting
+   * the full month on the button instead of what is owed went unnoticed exactly that way.
+   *
+   * Two hops, both far longer than the month the classes span: one shift of twenty days lands
+   * rows on instants their own neighbours still hold, which the unique index refuses.
+   */
+  function ageClassByDays(days) {
+    const planId = Number(sql(`select plan_id from recurring_sessions where id = ${classId}`));
+    sql(`update teacher_plans set cycle_anchor = cycle_anchor - interval '${days} days' where id = ${planId}`);
+    sql(`update recurring_days set scheduled_for = scheduled_for - interval '4000 days' where recurring_id = ${classId}`);
+    sql(`update recurring_days set scheduled_for = scheduled_for + interval '${4000 - days} days' where recurring_id = ${classId}`);
+  }
+
   console.log("\nA student finds it and sees what it costs");
   const student = await register("student");
   {
+    ageClassByDays(20);
+    const quotedNow = (await api(`/monthly/classes/${classId}`)).body?.class?.quote?.amount;
+    const monthly = Number(sql(`select monthly_price from recurring_sessions where id = ${classId}`));
+    check("setup: the month is part-way through, so the two prices differ",
+      quotedNow > 0 && quotedNow !== monthly, `owed ${quotedNow}, a month is ${monthly}`);
+
     const { ctx, page } = await open(browser, student.token, "/(student)");
     check("Discover offers monthly classes",
       (await page.locator('[data-testid="student-monthly-entry"]').count()) > 0,
@@ -194,10 +217,15 @@ async function main() {
      * button itself, not off the page: the page also carries "a full month is NPR 3,000".
      */
     const quoted = (await api(`/monthly/classes/${classId}`)).body?.class?.quote?.amount;
+    const monthPrice = Number(sql(`select monthly_price from recurring_sessions where id = ${classId}`));
     const buttonText = await page.locator(`[data-testid="monthly-join-${classId}"]`).innerText();
+    const onButton = buttonText.replace(/[,\s]/g, "");
     check("the price the server quotes is on the button itself",
-      buttonText.replace(/[,\s]/g, "").includes(String(quoted)),
+      onButton.includes(String(quoted)),
       `server says ${quoted}, button says "${buttonText}"`);
+    check("and it is not quietly charging for a whole month",
+      !onButton.includes(String(monthPrice)),
+      `a full month is ${monthPrice} and the button says "${buttonText}"`);
 
     await page.locator(`[data-testid="monthly-join-${classId}"]`).click({ timeout: 15000 });
     await page.waitForTimeout(1500);
