@@ -346,14 +346,22 @@ async function main() {
   check("and says plainly that the decision is the agent's",
     /not a decision/i.test(detail), detail.slice(0, 400).replace(/\n/g, " | "));
 
-  await agentPage.locator('[data-testid="admin-resolve"]').click({ timeout: 10000 });
+  /*
+   * The buttons are drawn from what the server says the ticket may become, so the one that
+   * closes it is named after the state rather than after the act. See lib/tickets.ts.
+   */
+  await agentPage.locator('[data-testid="admin-move-resolved"]').click({ timeout: 10000 });
   await agentPage.waitForTimeout(2500);
+  /*
+   * Still "opened", not "open": reading it at the desk is itself a step and is recorded as one.
+   * What matters here is that the refused close left the ticket exactly where it was.
+   */
   check("closing it without a decision written is refused",
-    sql(`select status from disputes where id = ${ticket.body.id}`) === "open",
+    sql(`select status from disputes where id = ${ticket.body.id}`) === "opened",
     sql(`select status from disputes where id = ${ticket.body.id}`));
 
   await agentPage.locator('[data-testid="admin-resolution"]').fill("Refunded; teacher warned.");
-  await agentPage.locator('[data-testid="admin-resolve"]').click({ timeout: 10000 });
+  await agentPage.locator('[data-testid="admin-move-resolved"]').click({ timeout: 10000 });
   await agentPage.waitForTimeout(3000);
   check("with one, it closes", sql(`select status from disputes where id = ${ticket.body.id}`) === "resolved",
     sql(`select status from disputes where id = ${ticket.body.id}`));
