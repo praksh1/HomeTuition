@@ -234,6 +234,17 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:tickets
 
+      # The upgrade the owner's own server has to survive. The live database has three ticket
+      # statuses, none of the new columns and no history table, and nobody is going to run a
+      # migration by hand on it — Railway redeploys on push and the server has to come up
+      # regardless. This builds a database in exactly that shape, with a request already sitting
+      # in it, and checks the boot guard brings it forward without that request being lost.
+      - name: A live database can be upgraded without touching it
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+          UPGRADE_PORT: "8091"
+        run: pnpm --filter @workspace/api-server run test:upgrade
+
       # A class's own message thread, and the log of who did what. Both have to survive a
       # restart to be worth anything — a teacher's "running ten minutes late" and a refund
       # argued weeks later both depend on the words still being there — so this restarts the

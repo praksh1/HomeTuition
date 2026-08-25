@@ -140,6 +140,17 @@ export default function RequestScreen() {
       </View>
 
       <Text style={[styles.section, { color: colors.mutedForeground }]}>Progress</Text>
+      {/*
+        A request filed before any of this existed has nothing recorded against it, and a bare
+        "Progress" heading with nothing underneath reads as a screen that failed to load. Said
+        plainly instead: the trail starts now, and it is not their request that is broken.
+      */}
+      {history.length === 0 ? (
+        <Text style={[styles.body, { color: colors.mutedForeground, marginBottom: 18 }]} testID="request-no-history">
+          This request was sent before we started keeping a record of each step. Anything that
+          happens from now on will appear here.
+        </Text>
+      ) : null}
       <View style={styles.timeline}>
         {history.map((event, i) => (
           <View key={event.id} style={styles.event} testID={`request-event-${event.status}`}>
