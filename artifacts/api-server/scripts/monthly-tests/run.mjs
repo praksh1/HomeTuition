@@ -566,9 +566,21 @@ async function lateJoinerTests() {
 
   ageClass(klass.id, planId, 1);
   await api(`/monthly/classes/${klass.id}`, { token: early.token });
+
+  /*
+   * Tomorrow's class, not one that has already started.
+   *
+   * Both get created — the window reaches a couple of hours back so a class running right now
+   * is not missed — and picking the earliest picked whichever the wall clock happened to
+   * produce. When that was one already under way, the late joiner was correctly *not* added to
+   * it: they did not pay for a class that started before they joined, and their
+   * sessionsPaidFor says so. The check failed for a real reason about a case it was not about,
+   * and only between the class's time of day and two hours later.
+   */
   const sessionId = Number(sql(`select session_id from recurring_days where recurring_id = ${klass.id}
-      and session_id is not null and status = 'planned' order by scheduled_for asc limit 1`) || 0);
-  check("setup: a class exists already", sessionId > 0, `session_id ${sessionId}`);
+      and session_id is not null and status = 'planned' and scheduled_for > now()
+      order by scheduled_for asc limit 1`) || 0);
+  check("setup: a class still to come exists already", sessionId > 0, `session_id ${sessionId}`);
 
   const late = await register("student");
   await api(`/monthly/classes/${klass.id}/join`, { method: "POST", token: late.token, body: {} });
