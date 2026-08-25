@@ -61,7 +61,9 @@ async function register(role) {
   seq += 1;
   const email = `ub_${Date.now()}_${seq}@example.com`;
   const res = await api("/auth/register", { method: "POST", body: {
-    name: `Student ${seq}`, email, password: "password123", role, grade: "10" } });
+    name: role === "teacher" ? `Teacher ${seq}` : `Student ${seq}`,
+    email, password: "password123", role,
+    ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10" }) } });
   if (res.status > 201) throw new Error(`register: ${res.status}`);
   return { ...res.body, email };
 }
@@ -220,6 +222,83 @@ async function main() {
   }
 
   await ctx.close();
+
+  /**
+   * Homework, which is where the owner actually met this.
+   *
+   * It goes through the same `utils/uploadFile.ts` as a support report, but not through the
+   * same screen: the report has its own upload button and homework has a `FilePickerRow`. A
+   * shared function is not a shared control, and the control is where the last one broke — so
+   * this drives the real one, with the bucket refusing direct uploads exactly as before.
+   */
+  const teacher = await register("teacher");
+  sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
+  await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+  const made = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
+    subject: "Maths", topic: "Daily algebra hour", startMinute: 17 * 60, durationMinutes: 60,
+    timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20,
+  } });
+  const classId = made.body?.id ?? made.body?.class?.id;
+  check("a monthly class exists to set homework on", !!classId,
+    `status=${made.status} ${JSON.stringify(made.body).slice(0, 160)}`);
+
+  if (classId) {
+    const hwCtx = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
+    const hw = await hwCtx.newPage();
+    let hwDirect = 0;
+    await hw.route("**/*r2.cloudflarestorage.com/**", async (route) => { hwDirect += 1; await route.abort("failed"); });
+    await hw.route(`**/127.0.0.1:${R2_PORT}/**`, async (route) => { hwDirect += 1; await route.abort("failed"); });
+    if (builtApi !== API) {
+      await hw.route(`${builtApi}/**`, async (route) => {
+        await route.continue({ url: route.request().url().replace(builtApi, API) });
+      });
+    }
+    const hwDialogs = [];
+    hw.on("dialog", async (d) => { hwDialogs.push(d.message()); await d.accept(); });
+    await hw.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+    await hw.goto(`${siteUrl}/monthly-homework?id=${classId}`, { waitUntil: "networkidle" });
+    await hw.waitForTimeout(4000);
+
+    // The form is behind a "new homework" toggle when the list is on screen.
+    const newBtn = hw.locator('[data-testid="homework-new"]');
+    if (await newBtn.count() > 0) { await newBtn.first().click(); await hw.waitForTimeout(1200); }
+
+    await hw.locator('[data-testid="homework-title"]').fill("Chapter 3");
+    await hw.locator('[data-testid="homework-instructions"]').fill("Questions 1 to 10 on page 62.");
+
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
+    const [hwChooser] = await Promise.all([
+      hw.waitForEvent("filechooser", { timeout: 20000 }).catch(() => null),
+      hw.locator('[data-testid="homework-file"]').click({ timeout: 15000 }),
+    ]);
+    check("the homework form opens a file picker", hwChooser !== null);
+
+    if (hwChooser) {
+      // A PDF, because that is what the owner was attaching when it failed.
+      await hwChooser.setFiles({ name: "worksheet.pdf", mimeType: "application/pdf", buffer: pdf });
+      await hw.waitForTimeout(1500);
+      check("the chosen worksheet is shown", /worksheet\.pdf/.test(await hw.evaluate(() => document.body.innerText)));
+
+      const beforeHw = Number(sql("select coalesce(max(id), 0) from homework"));
+      await hw.locator('[data-testid="homework-set"]').click({ timeout: 15000 });
+      await hw.waitForTimeout(9000);
+
+      check("the browser tried the bucket directly for homework too", hwDirect > 0, `attempts=${hwDirect}`);
+      const afterHw = Number(sql("select coalesce(max(id), 0) from homework"));
+      check("the homework was set", afterHw > beforeHw, `before=${beforeHw} after=${afterHw}`);
+
+      const key = afterHw > beforeHw
+        ? sql(`select coalesce(file_key, '') from homework where id = ${afterHw}`)
+        : "";
+      check("and the worksheet went with it, through the server",
+        key.startsWith("evidence/"),
+        key ? `file_key=${key}` : "the homework was set with no file at all");
+      check("nothing told the teacher their file was lost",
+        !hwDialogs.some((d) => /could not store|did not go with it/i.test(d)), JSON.stringify(hwDialogs));
+    }
+    await hwCtx.close();
+  }
+
   await browser.close();
   stopServer();
   console.log(`\n${passed} passed, ${failed} failed`);
