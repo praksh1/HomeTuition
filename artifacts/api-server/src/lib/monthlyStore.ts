@@ -693,6 +693,83 @@ export async function abusesIn(
   return row?.n ?? 0;
 }
 
+export interface MissedDay {
+  id: number;
+  scheduledFor: Date;
+  missedAt: Date | null;
+  madeUpAt: Date | null;
+  /** True once this one counts against the teacher. */
+  countsAgainstYou: boolean;
+  /** When it stops being fixable, or null if it was never judged. */
+  deadline: Date | null;
+}
+
+/**
+ * Every class missed this month, and whether each one counts against the teacher.
+ *
+ * The same predicate `abusesIn` counts with, so what a teacher is *shown* and what they are
+ * *judged on* cannot disagree. They used to: the route did its own arithmetic on `missedAt`,
+ * which meant changing the rule in one place silently left the other telling teachers something
+ * else. That is the shape of the bug this project already had once, when the whiteboard socket
+ * and the video room route each decided for themselves who was allowed in a class.
+ */
+export async function missedDaysIn(
+  recurringId: number,
+  cycleIndex: number,
+  now: number = Date.now(),
+  conn: Db = db,
+): Promise<MissedDay[]> {
+  const deadlineMs = MAKEUP_DEADLINE_HOURS * 60 * 60 * 1000;
+  const rows = await conn
+    .select({
+      id: recurringDaysTable.id,
+      scheduledFor: recurringDaysTable.scheduledFor,
+      missedAt: recurringDaysTable.missedAt,
+      /*
+       * The outer column is written out in full, deliberately, and must not be interpolated.
+       *
+       * Drizzle renders `${'${recurringDaysTable.id}'}` as a *bare* `"id"` inside a select
+       * projection — it only qualifies it as `"recurring_days"."id"` in a where clause. Inside
+       * a subquery that selects from the same table, a bare `"id"` binds to the **subquery's**
+       * row, so the correlation quietly became `m.makeup_for_id = m.id`, which is never true.
+       *
+       * Nothing errors. Every make-up simply stops existing: a teacher who had put every missed
+       * class right was still shown five black marks and would have been suspended for them.
+       * `abusesIn` has the same subquery and is correct only because it sits in a where clause.
+       */
+      madeUpAt: sql<Date | null>`(
+        select m.scheduled_for from recurring_days m
+         where m.makeup_for_id = recurring_days.id and m.status <> 'cancelled'
+         limit 1
+      )`,
+      counts: sql<boolean>`(
+        recurring_days.missed_at < ${new Date(now - deadlineMs)}
+        and not exists (
+          select 1 from recurring_days m
+           where m.makeup_for_id = recurring_days.id and m.status <> 'cancelled'
+        )
+      )`,
+    })
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, recurringId),
+        eq(recurringDaysTable.cycleIndex, cycleIndex),
+        eq(recurringDaysTable.status, "missed"),
+      ),
+    )
+    .orderBy(desc(recurringDaysTable.scheduledFor));
+
+  return rows.map((row) => ({
+    id: row.id,
+    scheduledFor: row.scheduledFor,
+    missedAt: row.missedAt,
+    madeUpAt: row.madeUpAt ? new Date(row.madeUpAt) : null,
+    countsAgainstYou: row.counts === true,
+    deadline: row.missedAt ? new Date(row.missedAt.getTime() + deadlineMs) : null,
+  }));
+}
+
 /** How many make-up classes a month has used. */
 export async function makeupsIn(
   recurringId: number,

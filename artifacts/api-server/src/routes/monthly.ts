@@ -49,6 +49,7 @@ import {
   ledgerFor,
   makeupsIn,
   materialiseDueDays,
+  missedDaysIn,
   nextClassDay,
   settleDueDays,
   settleFinishedCycles,
@@ -369,46 +370,21 @@ router.get("/monthly/classes/:id/missed", requireAuth, async (req: Request, res:
   }
 
   const now = Date.now();
-  const rows = await db
-    .select()
-    .from(recurringDaysTable)
-    .where(
-      and(
-        eq(recurringDaysTable.recurringId, klass.id),
-        eq(recurringDaysTable.cycleIndex, cycle.index),
-        eq(recurringDaysTable.status, "missed"),
-      ),
-    )
-    .orderBy(desc(recurringDaysTable.scheduledFor));
-
-  const makeups = await db
-    .select({ makeupForId: recurringDaysTable.makeupForId, at: recurringDaysTable.scheduledFor })
-    .from(recurringDaysTable)
-    .where(
-      and(
-        eq(recurringDaysTable.recurringId, klass.id),
-        eq(recurringDaysTable.kind, "makeup"),
-        sql`status <> 'cancelled'`,
-      ),
-    );
-  const byMissed = new Map(makeups.filter((m) => m.makeupForId !== null).map((m) => [m.makeupForId!, m.at]));
+  // Asked of the same code that judges them, so what a teacher is shown and what they are
+  // judged on cannot drift apart.
+  const rows = await missedDaysIn(klass.id, cycle.index, now);
 
   const used = await makeupsIn(klass.id, cycle.index);
   res.json({
-    missed: rows.map((row) => {
-      const deadline = row.missedAt ? row.missedAt.getTime() + MAKEUP_DEADLINE_HOURS * 3_600_000 : null;
-      const madeUpAt = byMissed.get(row.id) ?? null;
-      return {
-        id: row.id,
-        wasAt: row.scheduledFor.toISOString(),
-        missedAt: row.missedAt ? row.missedAt.toISOString() : null,
-        madeUpAt: madeUpAt ? madeUpAt.toISOString() : null,
-        /** True once this one counts against them. Cleared by arranging a make-up, even late. */
-        countsAgainstYou: madeUpAt === null && deadline !== null && now > deadline,
-        deadline: deadline === null ? null : new Date(deadline).toISOString(),
-        hoursLeft: deadline === null ? null : Math.max(0, Math.round((deadline - now) / 3_600_000)),
-      };
-    }),
+    missed: rows.map((row) => ({
+      id: row.id,
+      wasAt: row.scheduledFor.toISOString(),
+      missedAt: row.missedAt ? row.missedAt.toISOString() : null,
+      madeUpAt: row.madeUpAt ? row.madeUpAt.toISOString() : null,
+      countsAgainstYou: row.countsAgainstYou,
+      deadline: row.deadline ? row.deadline.toISOString() : null,
+      hoursLeft: row.deadline === null ? null : Math.max(0, Math.round((row.deadline.getTime() - now) / 3_600_000)),
+    })),
     makeups: { used, allowed: MAX_MAKEUPS_PER_CYCLE, left: Math.max(0, MAX_MAKEUPS_PER_CYCLE - used) },
     makeupDeadlineHours: MAKEUP_DEADLINE_HOURS,
   });
