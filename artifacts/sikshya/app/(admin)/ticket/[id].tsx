@@ -7,6 +7,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPatch, apiPost, attachmentUrl } from "@/utils/api";
 import { confirm, notify } from "@/utils/alerts";
+import type { TicketEvent } from "@/utils/tickets";
 
 /**
  * One ticket, with everything behind it on the same screen.
@@ -22,11 +23,16 @@ import { confirm, notify } from "@/utils/alerts";
 
 interface TicketDetail {
   ticket: {
-    id: number; reason: string; description: string; evidenceUrl: string | null;
-    status: string; resolution: string | null; createdAt: string; sessionId: number | null;
+    id: number; ref: string; reason: string; description: string; evidenceUrl: string | null;
+    status: string; statusLabel: string; resolution: string | null; createdAt: string;
+    sessionId: number | null; assignedTo: number | null;
     reporterId: number | null; reporterName: string | null; reporterEmail: string | null;
     reporterRole: string | null; reporterSuspendedAt: string | null;
   };
+  /** Everything that has happened to it, internal notes included — this is the agents' view. */
+  history: TicketEvent[];
+  /** Where it may go from here, taken from the same rules the server enforces. */
+  nextStatuses: { value: string; label: string }[];
   session: { id: number; topic: string; subject: string; date: string; duration: number; status: string; teacherName: string } | null;
   attendance: { known: boolean; rows: { userId: number; name: string; role: string; presentMs: number; joinCount: number }[] };
   findings: { code: string; detail: string }[];
@@ -42,13 +48,13 @@ export default function AdminTicket() {
   const [loading, setLoading] = useState(true);
   const [resolution, setResolution] = useState("");
   const [saving, setSaving] = useState(false);
+  const [internal, setInternal] = useState(false);
   const [refunding, setRefunding] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const res = await apiGet<TicketDetail>(`/admin/tickets/${id}`);
       setData(res);
-      setResolution(res.ticket.resolution ?? "");
     } catch {
       setData(null);
     } finally {
@@ -118,15 +124,49 @@ export default function AdminTicket() {
     }
   };
 
-  const decide = async (status: "in_review" | "resolved") => {
+  /**
+   * Move the ticket, or just write on it.
+   *
+   * Passing no status writes a note and leaves the state alone, which is what an agent
+   * part-way through a case needs. Either way the server records who did it and when, and the
+   * reporter can read it — unless the note is marked internal, which never leaves the desk.
+   */
+  const decide = async (status?: string) => {
     if (saving) return;
     setSaving(true);
     try {
-      await apiPatch(`/admin/tickets/${id}`, { status, resolution: resolution.trim() || undefined });
+      const res = await apiPatch<TicketDetail>(`/admin/tickets/${id}`, {
+        ...(status ? { status } : {}),
+        resolution: resolution.trim() || undefined,
+        internal,
+      });
       await load();
-      notify("Saved", status === "resolved" ? "The ticket is closed and the reporter has been told." : "Marked as in review.");
+      setResolution("");
+      setInternal(false);
+      notify(
+        "Saved",
+        status
+          ? `${res.ticket.ref} is now "${res.ticket.statusLabel}"${internal ? "." : ", and the reporter has been told."}`
+          : internal
+            ? "Noted for other agents. The reporter cannot see this."
+            : "Noted. The reporter can see this.",
+      );
     } catch (e) {
       notify("Could not save", e instanceof Error ? e.message : "Please try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Taking it on, which is a different act from moving it along. */
+  const takeOn = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await apiPost(`/admin/tickets/${id}/assign`, {});
+      await load();
+    } catch (e) {
+      notify("Could not take it on", e instanceof Error ? e.message : "Please try again.");
     } finally {
       setSaving(false);
     }
@@ -143,7 +183,8 @@ export default function AdminTicket() {
     );
   }
 
-  const { ticket, session, attendance, findings, messages, reporterActivity } = data;
+  const { ticket, session, attendance, findings, messages, reporterActivity, history, nextStatuses } = data;
+  const finished = nextStatuses.length === 0;
   const minutes = (ms: number) => Math.round(ms / 60_000);
 
   return (
@@ -155,12 +196,23 @@ export default function AdminTicket() {
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Ticket #{ticket.id}</Text>
+        <Text style={[styles.headerTitle, { color: colors.foreground }]}>{ticket.ref}</Text>
         <View style={{ width: 22 }} />
       </View>
 
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.reason, { color: colors.primary }]}>{ticket.reason}</Text>
+        <View style={styles.reasonRow}>
+          <Text style={[styles.reason, { color: colors.primary }]}>{ticket.reason}</Text>
+          <Text
+            testID="admin-ticket-status"
+            style={[styles.statusChip, {
+              color: finished ? colors.mutedForeground : colors.secondary,
+              borderColor: finished ? colors.border : colors.secondary,
+            }]}
+          >
+            {ticket.statusLabel}
+          </Text>
+        </View>
         <Text style={[styles.body, { color: colors.foreground }]}>{ticket.description}</Text>
         <Text style={[styles.meta, { color: colors.mutedForeground }]}>
           {ticket.reporterName ?? "Unknown"} ({ticket.reporterRole}) · {new Date(ticket.createdAt).toLocaleString()}
@@ -308,27 +360,114 @@ export default function AdminTicket() {
           textAlignVertical="top"
         />
         <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
-          This is what the reporter is told, and what an appeal is judged against. A ticket
-          cannot be closed without it.
+          {internal
+            ? "Only other agents will see this. The reporter will not."
+            : "This is what the reporter is told, and what an appeal is judged against. A ticket cannot be closed or turned down without it."}
         </Text>
+
+        {/*
+          Who the note is for.
+
+          An agent needs both: something the reporter reads, and something they write to the
+          next agent. Without the second the first gets used for both, and somebody ends up
+          reading half a conversation about themselves.
+        */}
+        <TouchableOpacity
+          testID="admin-internal-toggle"
+          onPress={() => setInternal((v) => !v)}
+          activeOpacity={0.7}
+          style={styles.internalRow}
+        >
+          <Feather
+            name={internal ? "check-square" : "square"}
+            size={16}
+            color={internal ? colors.secondary : colors.mutedForeground}
+          />
+          <Text style={[styles.internalText, { color: colors.mutedForeground }]}>
+            Keep this between agents
+          </Text>
+        </TouchableOpacity>
+
         <View style={styles.actions}>
           <TouchableOpacity
-            testID="admin-in-review"
-            style={[styles.action, { borderColor: colors.border }]}
-            onPress={() => void decide("in_review")}
+            testID="admin-note"
+            disabled={saving || finished}
+            style={[styles.action, { borderColor: colors.border, opacity: saving || finished ? 0.5 : 1 }]}
+            onPress={() => void decide()}
             activeOpacity={0.8}
           >
-            <Text style={[styles.actionText, { color: colors.foreground }]}>Mark in review</Text>
+            <Text style={[styles.actionText, { color: colors.foreground }]}>Save note</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            testID="admin-resolve"
-            style={[styles.action, { backgroundColor: colors.primary, borderColor: colors.primary }]}
-            onPress={() => void decide("resolved")}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.actionText, { color: "#fff" }]}>Close ticket</Text>
-          </TouchableOpacity>
+          {/*
+            The buttons come from the server.
+
+            What an agent can reach and what the server will accept cannot be allowed to drift
+            apart — a button that produces a 409 is worse than no button. So the states are
+            listed by lib/tickets.ts and rendered from that list.
+          */}
+          {nextStatuses.map((next) => (
+            <TouchableOpacity
+              key={next.value}
+              testID={`admin-move-${next.value}`}
+              disabled={saving}
+              style={[styles.action, next.value === "resolved"
+                ? { backgroundColor: colors.primary, borderColor: colors.primary }
+                : { borderColor: colors.border }, { opacity: saving ? 0.5 : 1 }]}
+              onPress={() => void decide(next.value)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.actionText, { color: next.value === "resolved" ? "#fff" : colors.foreground }]}>
+                {next.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
+
+        {ticket.assignedTo === null && !finished ? (
+          <TouchableOpacity
+            testID="admin-take-on"
+            disabled={saving}
+            onPress={() => void takeOn()}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.link, { color: colors.secondary }]}>Take this on →</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {/*
+        The trail.
+
+        Last, because an agent opening a ticket reads the complaint and the evidence first. But
+        never absent: what the previous agent did, and why, is the difference between a decision
+        and a second opinion formed from scratch.
+      */}
+      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>What has happened</Text>
+        {history.map((event) => (
+          <View key={event.id} style={styles.event} testID={`admin-event-${event.status}`}>
+            <Text style={[styles.eventLabel, { color: colors.foreground }]}>
+              {event.label}
+              {event.by ? <Text style={{ color: colors.mutedForeground }}>{`  ${event.by}`}</Text> : null}
+            </Text>
+            <Text style={[styles.meta, { color: colors.mutedForeground }]}>
+              {new Date(event.at).toLocaleString()}
+            </Text>
+            {event.note ? (
+              <Text style={[styles.body, { color: colors.foreground }]}>{event.note}</Text>
+            ) : null}
+            {event.fileKey ? (
+              <TouchableOpacity
+                onPress={() => void openAttachment(event.fileKey!)}
+                activeOpacity={0.8}
+                style={styles.attachment}
+              >
+                <Feather name="paperclip" size={14} color={colors.secondary} />
+                <Text style={[styles.attachmentText, { color: colors.secondary }]}>Supporting document</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ))}
       </View>
     </ScrollView>
   );
@@ -341,6 +480,12 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
   card: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 8 },
   reason: { fontSize: 12, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.4 },
+  reasonRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  statusChip: { fontSize: 11, fontFamily: "Inter_600SemiBold", borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, overflow: "hidden" },
+  internalRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  internalText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  event: { gap: 2, paddingTop: 10 },
+  eventLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   sectionTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   subTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginTop: 8 },
   body: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },

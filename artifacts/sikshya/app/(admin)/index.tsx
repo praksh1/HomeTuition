@@ -5,31 +5,56 @@ import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, Toucha
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
+import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet } from "@/utils/api";
 
 /** The queue: what has been reported and is waiting for somebody. */
 
 interface Ticket {
   id: number;
+  /** The number the reporter quotes on the phone. */
+  ref: string;
   reason: string;
   description: string;
-  status: "open" | "in_review" | "resolved";
+  status: string;
+  statusLabel: string;
   createdAt: string;
   sessionId: number | null;
   reporterName: string | null;
   reporterRole: string | null;
+  assignedTo: number | null;
+  assigneeName: string | null;
 }
 
+/**
+ * How an agent narrows the queue.
+ *
+ * The owner's complaint about every list in this app lands here first: "I have only been
+ * testing for less than a month and already my pages look overcrowded." A support queue gets
+ * worse than any other list, because nothing ever leaves it.
+ *
+ * Two axes rather than one long row of states. What an agent actually asks is "what is still
+ * waiting" and "what is mine" — not "show me everything that is currently assigned".
+ */
 const FILTERS = [
-  { id: "open", label: "Open" },
-  { id: "in_review", label: "In review" },
+  { id: "active", label: "Waiting" },
+  { id: "open", label: "New" },
   { id: "resolved", label: "Resolved" },
+  { id: "denied", label: "Denied" },
+] as const;
+
+const WHOSE = [
+  { id: "", label: "Everyone" },
+  { id: "me", label: "Mine" },
+  { id: "unassigned", label: "Nobody's" },
 ] as const;
 
 export default function AdminTickets() {
   const colors = useColors();
+  const dates = useDates();
   const insets = useSafeAreaInsets();
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("open");
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("active");
+  const [whose, setWhose] = useState<(typeof WHOSE)[number]["id"]>("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [counts, setCounts] = useState<{ openTickets: number; pendingTeachers: number; suspendedAccounts: number; known: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -39,7 +64,7 @@ export default function AdminTickets() {
     setFailed(false);
     try {
       const [list, overview] = await Promise.all([
-        apiGet<{ tickets: Ticket[] }>(`/admin/tickets?status=${filter}`),
+        apiGet<{ tickets: Ticket[] }>(`/admin/tickets?status=${filter}&assigned=${whose}`),
         apiGet<{ openTickets: number; pendingTeachers: number; suspendedAccounts: number; known: boolean }>("/admin/overview"),
       ]);
       setTickets(list.tickets ?? []);
@@ -52,7 +77,7 @@ export default function AdminTickets() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, whose]);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
@@ -89,6 +114,23 @@ export default function AdminTickets() {
         })}
       </View>
 
+      <View style={styles.filters}>
+        {WHOSE.map((w) => {
+          const active = whose === w.id;
+          return (
+            <TouchableOpacity
+              key={w.id || "all"}
+              testID={`admin-whose-${w.id || "all"}`}
+              onPress={() => setWhose(w.id)}
+              activeOpacity={0.75}
+              style={[styles.filter, { borderColor: active ? colors.secondary : colors.border, backgroundColor: active ? colors.secondary + "12" : colors.muted }]}
+            >
+              <Text style={[styles.filterText, { color: active ? colors.secondary : colors.mutedForeground }]}>{w.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
       {loading ? (
         <ActivityIndicator color={colors.primary} style={{ marginTop: 24 }} />
       ) : failed ? (
@@ -109,7 +151,7 @@ export default function AdminTickets() {
             <View style={styles.cardHead}>
               <Text style={[styles.reason, { color: colors.primary }]}>{ticket.reason}</Text>
               <Text style={[styles.when, { color: colors.mutedForeground }]}>
-                {new Date(ticket.createdAt).toLocaleDateString()}
+                {ticket.ref}
               </Text>
             </View>
             <Text style={[styles.body, { color: colors.foreground }]} numberOfLines={2}>{ticket.description}</Text>
@@ -117,12 +159,22 @@ export default function AdminTickets() {
               <Feather name="user" size={12} color={colors.mutedForeground} />
               <Text style={[styles.meta, { color: colors.mutedForeground }]}>
                 {ticket.reporterName ?? "Unknown"}{ticket.reporterRole ? ` · ${ticket.reporterRole}` : ""}
+                {` · ${dates.format(ticket.createdAt)}`}
               </Text>
               {ticket.sessionId !== null && (
-                <View style={[styles.pill, { backgroundColor: colors.muted }]}>
+                <View style={[styles.pill, { backgroundColor: colors.muted, marginLeft: 0 }]}>
                   <Text style={[styles.pillText, { color: colors.mutedForeground }]}>About a class</Text>
                 </View>
               )}
+              {/*
+                The state, and who holds it. Both, because "somebody is on this" and "nobody has
+                picked this up" are the two things an agent scanning a queue needs to tell apart.
+              */}
+              <View style={[styles.pill, { backgroundColor: colors.secondary + "14" }]}>
+                <Text style={[styles.pillText, { color: colors.secondary }]} testID={`admin-ticket-status-${ticket.id}`}>
+                  {ticket.assigneeName ? `${ticket.statusLabel} · ${ticket.assigneeName}` : ticket.statusLabel}
+                </Text>
+              </View>
             </View>
           </TouchableOpacity>
         ))
@@ -159,5 +211,6 @@ const styles = StyleSheet.create({
   cardFoot: { flexDirection: "row", alignItems: "center", gap: 6 },
   meta: { fontSize: 12, fontFamily: "Inter_400Regular" },
   pill: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3, marginLeft: "auto" },
+  cardDate: { fontSize: 11, fontFamily: "Inter_400Regular" },
   pillText: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
 });
