@@ -18,6 +18,9 @@ export default function Index() {
 
   if (user?.role === "teacher") return <Redirect href="/(teacher)" />;
   if (user?.role === "student") return <Redirect href="/(student)" />;
+  // The guard in app/_layout.tsx would send an agent to the desk anyway; sending them straight
+  // there saves a bounce through the welcome screen, which they would otherwise see flash.
+  if (user?.role === "admin") return <Redirect href="/(admin)" />;
   return <Redirect href="/welcome" />;
 }
 

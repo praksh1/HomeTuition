@@ -49,6 +49,14 @@ const SHARED_SCREENS = [
   // open the same conversation and the same homework, from opposite sides of it.
   { name: "monthly-chat", segment: "monthly-chat" },
   { name: "monthly-homework", segment: "monthly-homework" },
+  // What somebody has reported, and what happened to it. Shared because both roles report
+  // things and both need to follow the answer — and because without this the guard below
+  // would bounce a student straight back to their dashboard.
+  { name: "requests", segment: "requests" },
+  { name: "request/[id]", segment: "request" },
+  // The address an agent bookmarks. Shared so that whoever opens it gets the explanation on
+  // app/desk.tsx rather than being bounced somewhere with no reason given.
+  { name: "desk", segment: "desk" },
 ] as const;
 
 function AuthGuard() {
