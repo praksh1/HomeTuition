@@ -15,7 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { notify } from "@/utils/alerts";
 import { useColors } from "@/hooks/useColors";
-import { apiGet, apiPost } from "@/utils/api";
+import { ApiError, apiGet, apiPost } from "@/utils/api";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 const REASONS = [
@@ -198,7 +198,7 @@ export default function SupportScreen() {
             : "We could not upload your file.";
         }
       }
-      const filed = await apiPost<{ attachmentProblem?: string | null }>("/disputes", {
+      const filed = await apiPost<{ attachmentProblem?: string | null; ref?: string }>("/disputes", {
         reason,
         description: description.trim(),
         evidenceUrl,
@@ -207,12 +207,20 @@ export default function SupportScreen() {
       // The server has the last word: it checks the file that actually landed.
       const problem = filed?.attachmentProblem ?? uploadProblem;
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      /**
+       * The number, said back to them.
+       *
+       * This is the whole reason the reference exists: somebody who has sent three reports and
+       * is asking about one of them needs a way to say which. It is also how they find it
+       * again under "My Requests".
+       */
+      const ref = filed?.ref ? `${filed.ref}\n\n` : "";
       notify(
         "Report Submitted",
         problem
-          ? `Your report has been sent — but your file did not go with it. ${problem}\n\n` +
+          ? `${ref}Your report has been sent — but your file did not go with it. ${problem}\n\n` +
             "Our support team will be in touch and can ask for it directly."
-          : "Our support team will review your report and get back to you shortly.",
+          : `${ref}You can follow what happens to it under My Requests.`,
       );
       // Clear the form rather than navigating: on the tab there is nowhere to go back to.
       setDescription("");
@@ -221,8 +229,16 @@ export default function SupportScreen() {
       setChosenSession(null);
       if (router.canGoBack()) router.back();
     } catch (e: unknown) {
+      /**
+       * Being over the daily limit is not a failure, and must not read as one.
+       *
+       * "Submission Failed" on a limit sends somebody straight back to try again, which is
+       * exactly what the limit is there to stop. The server's own words say how many they have
+       * used and when they may send another, so they are shown rather than replaced.
+       */
+      const overLimit = e instanceof ApiError && e.status === 429;
       const msg = e instanceof Error ? e.message : "Something went wrong. Please try again.";
-      notify("Submission Failed", msg);
+      notify(overLimit ? "That is today's third request" : "Submission Failed", msg);
     } finally {
       setSubmitting(false);
     }
@@ -260,7 +276,18 @@ export default function SupportScreen() {
           <View style={{ width: 22 }} />
         )}
         <Text style={[styles.headerTitle, { color: colors.foreground }]}>Customer Support</Text>
-        <View style={{ width: 22 }} />
+        {/*
+          The way back to what you already sent.
+          Support stays one tab with one door — this is the same errand, not a second one.
+        */}
+        <TouchableOpacity
+          testID="support-my-requests-btn"
+          onPress={() => router.push("/requests")}
+          activeOpacity={0.7}
+          hitSlop={10}
+        >
+          <Feather name="inbox" size={22} color={colors.foreground} />
+        </TouchableOpacity>
       </View>
 
       <Text style={[styles.intro, { color: colors.mutedForeground }]}>

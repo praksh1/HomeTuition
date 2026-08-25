@@ -129,7 +129,9 @@ async function run() {
   const resolved = await api(`/admin/tickets/${ticketId}`, { method: "PATCH", token: agent.token,
     body: { status: "resolved", resolution: "Refunded in full; teacher warned." } });
   check("with a decision, it closes", resolved.status === 200, `status=${resolved.status}`);
-  check("and the decision is kept", /Refunded in full/.test(resolved.body?.resolution ?? ""));
+  // The reply carries the ticket, its history and what may follow — see scripts/ticket-tests,
+  // which is where the lifecycle itself is checked.
+  check("and the decision is kept", /Refunded in full/.test(resolved.body?.ticket?.resolution ?? ""));
 
   const closing = sql(`select count(*) from activity_log where action='admin.ticket.resolved' and subject_id=${ticketId}`);
   check("closing it is written down against the agent", Number(closing) === 1, closing);
