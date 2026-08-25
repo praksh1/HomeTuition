@@ -20,3 +20,4 @@ export * from "./teacherPlans";
 export * from "./recurringSessions";
 export * from "./recurringDays";
 export * from "./recurringEnrollments";
+export * from "./homework";

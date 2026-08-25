@@ -611,3 +611,105 @@ export async function ensureMonthlyEnforcementColumns(): Promise<void> {
     );
   }
 }
+
+/**
+ * Creates the homework tables and opens the class thread to a monthly course.
+ *
+ * Same licence as everything above: create only, additive only, unable to stop the server
+ * starting. Dropping NOT NULL from `session_messages.session_id` is safe for the same reason it
+ * was on `refunds`: the one other reader matches on a specific class, and a monthly row is
+ * simply not an answer to that question.
+ */
+export async function ensureMonthlyPortalTables(): Promise<void> {
+  try {
+    await db.execute(sql`ALTER TABLE "session_messages" ALTER COLUMN "session_id" DROP NOT NULL`);
+    await db.execute(sql`ALTER TABLE "session_messages" ADD COLUMN IF NOT EXISTS "recurring_id" integer`);
+    await db.execute(sql`
+      ALTER TABLE "session_messages" ADD COLUMN IF NOT EXISTS "pinned_at" timestamp with time zone
+    `);
+    await db.execute(sql`ALTER TABLE "session_messages" ADD COLUMN IF NOT EXISTS "pinned_by" integer`);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        ALTER TABLE "session_messages"
+          ADD CONSTRAINT "session_messages_pinned_by_users_id_fk"
+          FOREIGN KEY ("pinned_by") REFERENCES "users"("id") ON DELETE SET NULL;
+      EXCEPTION
+        WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_messages_recurring_idx"
+        ON "session_messages" ("recurring_id", "id")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "homework" (
+        "id" serial PRIMARY KEY,
+        "recurring_id" integer NOT NULL,
+        "teacher_id" integer NOT NULL,
+        "cycle_index" integer NOT NULL,
+        "title" text NOT NULL,
+        "instructions" text,
+        "file_key" text,
+        "file_type" text,
+        "due_at" timestamp with time zone,
+        "status" text NOT NULL DEFAULT 'open',
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "homework_recurring_id_recurring_sessions_id_fk"
+          FOREIGN KEY ("recurring_id") REFERENCES "recurring_sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "homework_teacher_id_users_id_fk"
+          FOREIGN KEY ("teacher_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "homework_class_idx" ON "homework" ("recurring_id", "cycle_index")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "homework_teacher_idx" ON "homework" ("teacher_id", "id")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "homework_submissions" (
+        "id" serial PRIMARY KEY,
+        "homework_id" integer NOT NULL,
+        "student_id" integer NOT NULL,
+        "file_key" text NOT NULL,
+        "file_type" text NOT NULL,
+        "note" text,
+        "submitted_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "status" text NOT NULL DEFAULT 'submitted',
+        "feedback" text,
+        "annotated_key" text,
+        "annotated_type" text,
+        "annotation" text,
+        "returned_at" timestamp with time zone,
+        CONSTRAINT "homework_submissions_homework_id_homework_id_fk"
+          FOREIGN KEY ("homework_id") REFERENCES "homework"("id") ON DELETE CASCADE,
+        CONSTRAINT "homework_submissions_student_id_users_id_fk"
+          FOREIGN KEY ("student_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "homework_submissions_once_idx"
+        ON "homework_submissions" ("homework_id", "student_id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "homework_submissions_student_idx"
+        ON "homework_submissions" ("student_id", "id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "homework_submissions_status_idx"
+        ON "homework_submissions" ("homework_id", "status")
+    `);
+    logger.info("monthly portal tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the monthly portal tables; run `pnpm run db:push`. " +
+        "Classes still run — only the monthly course's group chat and homework are affected, " +
+        "and both refuse rather than half-working.",
+    );
+  }
+}

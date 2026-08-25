@@ -24,9 +24,17 @@ export const sessionMessagesTable = pgTable(
   "session_messages",
   {
     id: serial("id").primaryKey(),
-    sessionId: integer("session_id")
-      .notNull()
-      .references(() => sessionsTable.id, { onDelete: "cascade" }),
+    /**
+     * The class this thread belongs to — null for a monthly course's thread.
+     *
+     * A monthly course has thirty classes and **one** conversation, which is the point: a
+     * teacher saying "bring your compass tomorrow" should not have to pick which of thirty
+     * threads to say it in, and a student should not have to hunt for it. So a monthly thread
+     * hangs off `recurringId` instead, and the two never both apply.
+     */
+    sessionId: integer("session_id").references(() => sessionsTable.id, { onDelete: "cascade" }),
+    /** The monthly course this thread belongs to, when it is one. */
+    recurringId: integer("recurring_id"),
     senderId: integer("sender_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
@@ -41,12 +49,23 @@ export const sessionMessagesTable = pgTable(
     /** Their part in this class — "teacher" only for the teacher who owns it. */
     senderRole: text("sender_role").notNull(),
     body: text("body").notNull(),
+    /**
+     * When a teacher pinned this, if they did.
+     *
+     * Pinning exists because a monthly thread runs for a month and the thing that matters —
+     * the exam date, what to bring, the homework — scrolls away in a day. Only the teacher can
+     * pin: a class of forty-five where anybody may pin has nothing pinned.
+     */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
+    pinnedBy: integer("pinned_by").references(() => usersTable.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     // Every read is "this class's messages, oldest first" — often "since message N", when a
     // page that is already open is catching up.
     index("session_messages_session_id_idx").on(table.sessionId, table.id),
+    // The same read, for a monthly course's one thread.
+    index("session_messages_recurring_idx").on(table.recurringId, table.id),
   ],
 );
 
