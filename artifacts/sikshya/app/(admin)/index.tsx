@@ -204,6 +204,10 @@ interface CheckResult {
   code?: string;
   advice?: string;
   detail?: string;
+  /** The address the server actually used — where a wrong setting shows itself. */
+  endpoint?: string | null;
+  /** Set when a setting had to be interpreted rather than taken as given. */
+  note?: string | null;
 }
 
 /**
@@ -275,6 +279,22 @@ function StorageCheck({ colors }: { colors: ReturnType<typeof useColors> }) {
             <Text style={[styles.checkMeta, { color: colors.mutedForeground }]}>
               Storage said: {result.code}
               {result.detail ? ` — ${result.detail}` : ""}
+            </Text>
+          ) : null}
+
+          {/*
+            What was corrected, if anything. A setting quietly interpreted and never mentioned
+            is a typo that survives for months.
+          */}
+          {result.note ? (
+            <Text style={[styles.checkBody, { color: colors.foreground }]} testID="admin-storage-note">
+              {result.note}
+            </Text>
+          ) : null}
+
+          {result.endpoint ? (
+            <Text style={[styles.checkMeta, { color: colors.mutedForeground }]}>
+              Using: {result.endpoint}
             </Text>
           ) : null}
 

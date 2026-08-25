@@ -490,6 +490,13 @@ router.get("/admin/storage/check", async (req, res): Promise<void> => {
     settings: storageSettingsPresent(),
     // "write", "read", "delete" — how far it got before it stopped.
     completed: result.steps,
+    /**
+     * The address it actually used, which is the thing a wrong setting shows up in. A hostname
+     * is not a secret — the bucket is reached by credentials, not by obscurity — and without it
+     * "could not reach R2" is unactionable.
+     */
+    endpoint: result.endpoint ?? null,
+    note: result.note ?? null,
     ...(result.ok
       ? { bucket: result.bucket, message: "A file can be written, read back and deleted." }
       : {

@@ -3,6 +3,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, Delete
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { logger } from "./logger";
 import { describeStorageFailure, type StorageFailure } from "./storageErrors";
+import { resolveEndpoint } from "./storageEndpoint";
 
 // Re-exported so callers have one place to import storage things from.
 export { describeStorageFailure, type StorageFailure };
@@ -61,18 +62,48 @@ export interface FileStoreConfig {
   bucket: string;
   /** Overridable so the tests can point this at a local stand-in. */
   endpoint: string;
+  /** Set when a setting had to be interpreted rather than taken as given. */
+  note?: string | null;
 }
 
 export function fileStoreConfig(): FileStoreConfig | null {
-  const accountId = process.env.R2_ACCOUNT_ID ?? "";
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID ?? "";
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY ?? "";
-  const bucket = process.env.R2_BUCKET ?? "";
+  const accountId = (process.env.R2_ACCOUNT_ID ?? "").trim();
+  const accessKeyId = (process.env.R2_ACCESS_KEY_ID ?? "").trim();
+  const secretAccessKey = (process.env.R2_SECRET_ACCESS_KEY ?? "").trim();
+  const bucket = (process.env.R2_BUCKET ?? "").trim();
   if (!accessKeyId || !secretAccessKey || !bucket) return null;
-  // The account id is only needed to build the default endpoint; an explicit one wins.
-  const endpoint = process.env.R2_ENDPOINT || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "");
-  if (!endpoint) return null;
-  return { accountId, accessKeyId, secretAccessKey, bucket, endpoint };
+
+  /**
+   * Where the bucket is, worked out rather than concatenated. See `storageEndpoint.ts`.
+   *
+   * This used to be `https://${accountId}.r2.cloudflarestorage.com`, which is right only if
+   * what is in the setting is a bare account id. Cloudflare's bucket page shows an S3 API URL
+   * — the obvious thing to copy — and pasting that built `https://https://…`, a URL whose
+   * hostname is the literal string `https`. That is absorbed now instead of being fatal.
+   */
+  const resolved = resolveEndpoint(accountId, process.env.R2_ENDPOINT ?? "");
+  if (!resolved.endpoint) return null;
+  return { accountId, accessKeyId, secretAccessKey, bucket, endpoint: resolved.endpoint, note: resolved.note };
+}
+
+/**
+ * Say once, at boot, if a setting had to be interpreted.
+ *
+ * Silently correcting somebody's configuration and never mentioning it is how a typo survives
+ * for months: everything works, nobody knows the value is wrong, and the day it matters the
+ * message makes no sense.
+ */
+let notedOnce = false;
+export function noteStorageConfig(): void {
+  if (notedOnce) return;
+  notedOnce = true;
+  const config = fileStoreConfig();
+  if (!config) {
+    logger.info("file uploads are switched off — R2 is not configured");
+    return;
+  }
+  if (config.note) logger.warn({ endpoint: config.endpoint }, config.note);
+  else logger.info({ endpoint: config.endpoint }, "file storage is configured");
 }
 
 export function isFileStoreConfigured(): boolean {
@@ -296,8 +327,8 @@ export async function verifyUpload(key: string, userId: number): Promise<UploadV
 }
 
 export type StorageCheck =
-  | { ok: true; bucket: string; steps: string[] }
-  | { ok: false; failedAt: string; failure: StorageFailure; steps: string[] };
+  | { ok: true; bucket: string; steps: string[]; endpoint: string; note: string | null }
+  | { ok: false; failedAt: string; failure: StorageFailure; steps: string[]; endpoint?: string; note?: string | null };
 
 /**
  * Actually write, read and delete a small object, and report which step failed.
@@ -334,7 +365,10 @@ export async function checkStorage(): Promise<StorageCheck> {
     }));
     steps.push("write");
   } catch (err) {
-    return { ok: false, failedAt: "write", failure: describeStorageFailure(err), steps };
+    return {
+      ok: false, failedAt: "write", failure: describeStorageFailure(err), steps,
+      endpoint: c.config.endpoint, note: c.config.note ?? null,
+    };
   }
 
   try {
@@ -363,7 +397,7 @@ export async function checkStorage(): Promise<StorageCheck> {
     return { ok: false, failedAt: "delete", failure: describeStorageFailure(err), steps };
   }
 
-  return { ok: true, bucket: c.config.bucket, steps };
+  return { ok: true, bucket: c.config.bucket, steps, endpoint: c.config.endpoint, note: c.config.note ?? null };
 }
 
 /** Which R2 settings are present. Names and presence only — never a value. */

@@ -1,6 +1,7 @@
 import http from "http";
 import app from "./app";
 import { logger } from "./lib/logger";
+import { noteStorageConfig } from "./lib/fileStore";
 import { attachClassroomHub } from "./ws/classroomHub";
 import { describePaymentMode, paymentMode } from "./lib/payments";
 import {
@@ -55,6 +56,8 @@ server.listen(port, () => {
   void ensureMonthlyPortalTables();
   void ensureTicketLifecycle();
   void ensureOperatorAccounts();
+  // Says once whether uploads can work, and whether a setting had to be interpreted.
+  noteStorageConfig();
   // Whether real money can move is too important to have to go and look up.
   if (paymentMode() === "simulated") logger.warn(describePaymentMode());
   else logger.info(describePaymentMode());
