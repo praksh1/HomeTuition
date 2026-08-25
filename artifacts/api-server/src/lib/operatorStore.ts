@@ -16,6 +16,23 @@ import {
  * directly. This is the half that touches the database.
  */
 
+/**
+ * Postgres's "this already exists", found however deep the driver buried it.
+ *
+ * Drizzle's own message is only `Failed query: insert into "users" ...` — the actual
+ * `duplicate key value violates unique constraint` sits on the error's `cause`, so matching on
+ * `err.message` alone silently misses it and a taken ID comes back as a 500. Matching on the
+ * SQLSTATE rather than on English also survives a server running in another locale.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; current && depth < 5; depth += 1) {
+    if (typeof current === "object" && (current as { code?: string }).code === "23505") return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 /** A placeholder address, because an operator signs in with an ID and `users.email` is unique. */
 function placeholderEmail(loginId: string): string {
   return `${loginId}@operators.invalid`;
@@ -77,8 +94,7 @@ export async function createOperator(input: {
   } catch (err) {
     // The unique indexes are the arbiter, not a check-then-insert: two administrators adding
     // the same ID at the same moment both pass a prior check and only one may win.
-    const message = err instanceof Error ? err.message : String(err);
-    if (/operator_accounts_login_idx|users_email_unique|duplicate key/i.test(message)) {
+    if (isUniqueViolation(err)) {
       return { ok: false, status: 409, reason: "That operator ID is already taken." };
     }
     throw err;

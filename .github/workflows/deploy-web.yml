@@ -245,6 +245,16 @@ jobs:
           UPGRADE_PORT: "8091"
         run: pnpm --filter @workspace/api-server run test:upgrade
 
+      # The support desk's own door. The half that cannot be unit-tested is the enforcement: a
+      # forced password change that only the screen insists on is a suggestion, because the
+      # token handed out at sign-in is a real token and anything that can send a request could
+      # skip the screen. Every check that matters here goes straight at the API with that token
+      # and expects to be refused.
+      - name: An operator ID is issued, and buys nothing until its password is replaced
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:operators
+
       # A class's own message thread, and the log of who did what. Both have to survive a
       # restart to be worth anything — a teacher's "running ten minutes late" and a refund
       # argued weeks later both depend on the words still being there — so this restarts the
