@@ -872,6 +872,28 @@ function missClasses(klassId, planId, n, hoursAgo = 72) {
   return ids.map(Number);
 }
 
+/**
+ * Moves the class-days without moving the month.
+ *
+ * A month is thirty times twenty-four hours and its classes are a day apart, so the last class
+ * normally lands a few hours before the month ends. Nudging the classes on by a day models
+ * that gap — the month still running with all its classes behind it — which is the only
+ * situation in which a teacher can have cleared the twenty-five-class floor *and* still owe
+ * their students for days they will not get.
+ *
+ * The students move with the classes, and only the month's clock stays put. A student joins and
+ * *then* their classes follow; leaving the join behind puts the first class before the student
+ * existed, and it stops counting as one they received.
+ *
+ * Two hops, for the reason ageClass gives.
+ */
+function shiftDaysOnly(klassId, days) {
+  const FAR = 4000;
+  sql(`update recurring_days set scheduled_for = scheduled_for - interval '${FAR} days' where recurring_id = ${klassId}`);
+  sql(`update recurring_days set scheduled_for = scheduled_for + interval '${FAR - days} days' where recurring_id = ${klassId}`);
+  sql(`update recurring_enrollments set joined_at = joined_at - interval '${days} days' where recurring_id = ${klassId}`);
+}
+
 /** Marks `n` more classes of a month missed, without moving the calendar again. */
 function missMore(klassId, n, hoursAgo = 72) {
   const ids = sql(`select id from recurring_days where recurring_id = ${klassId}
@@ -1060,16 +1082,21 @@ async function suspendedLateTests() {
 
   const all = sql(`select id from recurring_days where recurring_id = ${klass.id} and cycle_index = 0
       order by scheduled_for asc`).split("\n").filter(Boolean);
-  ageClass(klass.id, planId, 25);
+  // The month is on day twenty-nine and its classes finished yesterday.
+  ageClass(klass.id, planId, 29);
+  shiftDaysOnly(klass.id, 1);
   sql(`update recurring_days set status = 'held', held_at = scheduled_for where id in (${all.slice(0, 25).join(",")})`);
   sql(`update recurring_days set status = 'missed', missed_at = now() - interval '72 hours'
-       where id in (${all.slice(20, 25).join(",")})`);
-  // Twenty held, five missed and unmade-up, five still to come.
+       where id in (${all.slice(25, 30).join(",")})`);
+
   const held = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id} and status = 'held'`));
-  check("setup: twenty classes were held", held === 20, `${held} held`);
-  const ahead = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
-      and status = 'planned' and scheduled_for > now()`));
-  check("setup: five classes are still to come", ahead === 5, `${ahead} ahead`);
+  check("setup: twenty-five classes were held — exactly the floor", held === 25, `${held} held`);
+  const marks = Number(sql(`select count(*) from recurring_days where recurring_id = ${klass.id}
+      and status = 'missed' and missed_at < now() - interval '48 hours'`));
+  check("setup: and five went unmade-up", marks === 5, `${marks} marks`);
+  const monthLeft = Number(sql(`select round(extract(epoch from (cycle_anchor + interval '30 days' - now())) / 3600)
+      from teacher_plans where id = ${planId}`));
+  check("setup: the month has not ended", monthLeft > 0, `${monthLeft} hours left of the month`);
 
   await api(`/monthly/classes/${klass.id}`, { token: student.token });
 
@@ -1080,8 +1107,13 @@ async function suspendedLateTests() {
   check("the student is refunded for the days that will not now happen", Number(refund[0]) > 0,
     `refund ${refund[0]} — the delivery floor would have said nothing was owed`);
   check("and it is recorded as a suspension refund", refund[1] === "monthly_suspension", `reason "${refund[1]}"`);
-  // Twenty of the thirty they paid for actually happened, so ten thirtieths comes back.
-  check("worth the classes they will not get", Number(refund[0]) === 1000, `${refund[0]}, expected 1000`);
+  /*
+   * Twenty-five of the thirty they paid for happened, so five thirtieths comes back: 500.
+   *
+   * The delivery floor would say nothing is owed, because twenty-five *is* the floor. That is
+   * the whole point of this test — swapping the rule here has to change this number.
+   */
+  check("worth the classes they will not get", Number(refund[0]) === 500, `${refund[0]}, expected 500`);
 }
 
 async function cycleCloseTests() {
