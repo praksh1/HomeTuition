@@ -111,7 +111,8 @@ that stopped.
 | Changing the daily time | ✅ 18 hours' notice, every class still to come moves, students told |
 | Make-ups, abuse counting, suspension | ✅ 5 make-ups, 48-hour deadline, warnings, 30-day suspension |
 | Closing a month and paying refunds | ✅ into the same queue an agent already works |
-| Homework portal, group chat | ❌ |
+| Group chat with pinning | ✅ one thread per course, teacher-only pins |
+| Homework: set, hand in, mark, hand back | ✅ words, a marked-up file, or marking drawn in the app |
 | Anything in the app | ❌ API only so far |
 
 Run the tests:
@@ -119,7 +120,9 @@ Run the tests:
 ```
 node --test --experimental-strip-types artifacts/api-server/src/lib/monthly*.test.ts
 pnpm --filter @workspace/api-server run test:monthly     # 187 checks, needs the API running
-artifacts/api-server/scripts/monthly-schema/compare.sh   # schema agreement
+pnpm --filter @workspace/api-server run test:portal      # 72 checks, starts its own API
+artifacts/api-server/scripts/monthly-schema/compare.sh  # tables built both ways, diffed
+artifacts/api-server/scripts/monthly-schema/agree.sh    # and the columns only the guard adds
 ```
 
 ---
@@ -177,6 +180,36 @@ Closing a month twice would pay twice, so it is guarded two independent ways —
 plan and the student's own enrolment status. Either alone is enough, which means removing one
 does not fail the tests. Removing both, with ten people opening the class at once, pays every
 student ten times. That was measured. Keep both.
+
+---
+
+## The portal
+
+**One conversation for the whole course**, not one per class-day. A teacher saying "bring your
+compass tomorrow" should not have to choose which of thirty threads to say it in. Only the
+teacher can pin — a class of forty-five where anybody may pin has nothing pinned — and pinned
+messages come back separately from the page, because a pin from three weeks ago is not on it.
+
+The thread opens on the **newest** messages. The class thread it was copied from opens on the
+oldest, which is harmless for one lesson and precisely backwards for a month.
+
+**Homework** goes out (with or without a file — a teacher on a cheap phone can set "exercise 4,
+page 62"), comes in, and goes back marked. One answer per student: handing in again *replaces*
+it, and clears any marking with it, because marking that refers to a page nobody can see is
+worse than none.
+
+A teacher can answer three ways and any combination of them: words, the work marked up and
+re-uploaded, or marking drawn in the app and stored as data so the student's original is never
+overwritten. What they cannot do is hand work back with none of the three, which would tell a
+student their homework was looked at and show them nothing.
+
+### Who can open a file
+
+`GET /storage/file` allows the uploader, an agent, and the subject of a dispute — and says any
+further use must be checked explicitly. `lib/homeworkAccess.ts` is that check: a student opens
+the question sheet their teacher uploaded, a teacher opens the answers handed in, and the
+marked-up copy follows the answer it marks. Nobody else opens anything. Forty-five students able
+to read each other's work is not a portal, it is a leak.
 
 ---
 
