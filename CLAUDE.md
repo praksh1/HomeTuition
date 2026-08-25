@@ -196,7 +196,21 @@ with its class, attendance, thread and findings on the same screen, and the four
 agent can do — close a ticket with a written decision, suspend an account with a reason, issue
 a password reset code whose result they never see, and review teaching credentials. An agent
 account is made by promoting a registered account directly in the database; `ISSUES.md` says
-how, and why there is no way to do it from inside the app.
+how, and why there is no way to do it from inside the app. Agents reach it at `/desk`, which
+is a signpost rather than a second login — the same form, their own account, and the app
+routes them by role.
+
+**A request has a number and a life.** `HT-000123`, and a trail from Request Created through
+Opened by an agent, Assigned and Being worked on to Resolved, Denied or Cancelled. Resolving
+or denying takes a written reason, an agent may attach a supporting document, and agents can
+write notes to each other that the reporter never sees. Every move is recorded in
+`ticket_events` in the same transaction that changes the status, because a status that changed
+with nothing behind it is what the owner was looking at when they said "a user can create
+several hundred requests without knowing the status of their requests". The rules live in
+`api-server/src/lib/tickets.ts` — forward-only, and the desk draws its buttons from them, so a
+button that would be refused is never shown. Three requests per person per rolling 24 hours;
+a refused one writes nothing at all. To the reporter an agent is "Sikshya Support": the team
+is small and a full name is enough to find somebody.
 
 Everything anybody does that changes something is written to an activity log, by a middleware
 rather than by hand-written calls per route — a claim of "every action" that depends on
@@ -235,15 +249,16 @@ Known gaps, in rough priority order:
 7. **The bundle identifier has not been confirmed by the owner.** It is `com.sikshya.app` on
    both platforms, which is free to change now and permanent after the first store publish.
    On the pre-launch checklist in `ISSUES.md`.
-8. **There is nowhere to put an uploaded file.** Attaching evidence to a support report never
-   worked — the app asked for an upload URL with the wrong field names, so every attempt was
-   refused before a byte left the phone. That is fixed, but the endpoint behind it wants
-   object-storage settings inherited from this app's Replit origins that Railway does not
-   have. Reports now go through without the file and say so. `ISSUES.md` → F1.
-9. **A dispute has no process.** A report can name a class and is checked against who was
-   actually in it, but the workflow the owner specified — three days for the teacher to
-   respond, two days to tell the student, the appeal — does not exist yet, and no money can
-   move regardless. `REFUNDS.md` section 4.
+8. **A refund that is agreed still has to be paid by a person.** A ticket can be resolved with
+   "Refunded in full" and the reporter reads it, but no money moves: the Refunds tab is the
+   payment system, and every row is a debt somebody settles by hand and records a reference
+   against. Students are told a refund is *requested* and takes 5-7 business days, which is
+   true and stays true until a provider exists. `REFUNDS.md` section 2b, and the pre-launch
+   checklist at the top of `ISSUES.md`.
+9. **The dispute workflow around a ticket does not exist.** The ticket itself now has a
+   lifecycle, a number and a history. What is still missing is the timetable the owner
+   specified on top of it — three days for the teacher to respond, two days to tell the
+   student, the appeal. `REFUNDS.md` section 4.
 
 ## Testing expectations
 
