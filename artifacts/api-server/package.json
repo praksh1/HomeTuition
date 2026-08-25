@@ -24,7 +24,8 @@
     "test:uploads": "node scripts/upload-tests/run.mjs",
     "test:video": "node scripts/video-tests/run.mjs",
     "test:monthly": "node scripts/monthly-tests/run.mjs",
-    "test:portal": "node scripts/portal-tests/run.mjs"
+    "test:portal": "node scripts/portal-tests/run.mjs",
+    "test:tickets": "node scripts/ticket-tests/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",

@@ -43,7 +43,7 @@ export const TERMINAL_STATUSES: readonly TicketStatus[] = ["resolved", "denied",
 
 /** Words for the person who reported it, not names from a database. */
 const LABELS: Record<TicketStatus, string> = {
-  open: "Created",
+  open: "Request Created",
   opened: "Opened by an agent",
   assigned: "Assigned to an agent",
   processing: "Being worked on",
@@ -66,16 +66,22 @@ const EXPLAINS: Record<TicketStatus, string> = {
 };
 
 export function statusLabel(status: string): string {
-  return LABELS[status as TicketStatus] ?? "Created";
+  return LABELS[displayStatus(status)];
 }
 
 export function statusExplains(status: string): string {
-  return EXPLAINS[status as TicketStatus] ?? EXPLAINS.open;
+  return EXPLAINS[displayStatus(status)];
 }
 
-/** Folds the legacy `in_review` into `processing`, so one state has one name. */
+/**
+ * Folds the legacy `in_review` into `processing`, so one state has one name.
+ *
+ * Anything this app has never heard of reads as `open`. That is not tidiness: `NEXT` is keyed
+ * by status, and a word that is not a key turns "may this move?" into a crash rather than a no.
+ */
 export function displayStatus(status: string): TicketStatus {
-  return status === "in_review" ? "processing" : ((status as TicketStatus) ?? "open");
+  if (status === "in_review") return "processing";
+  return TICKET_STATUSES.includes(status as TicketStatus) ? (status as TicketStatus) : "open";
 }
 
 export function isTerminal(status: string): boolean {
@@ -110,10 +116,12 @@ export type Allowed = { ok: true } | { ok: false; reason: string };
  * get skipped by not being used at all.
  */
 export function canTransition(from: string, to: string): Allowed {
+  // The word asked for is checked before it is folded, so a status this app has never heard of
+  // is refused as one rather than quietly becoming the nearest thing that is.
+  if (!TICKET_STATUSES.includes(to as TicketStatus)) return { ok: false, reason: "That is not a status." };
+
   const current = displayStatus(from);
   const next = displayStatus(to);
-
-  if (!TICKET_STATUSES.includes(next)) return { ok: false, reason: "That is not a status." };
   if (current === next) return { ok: false, reason: `This request is already ${statusLabel(next).toLowerCase()}.` };
   if (isTerminal(current)) {
     return { ok: false, reason: `This request is ${statusLabel(current).toLowerCase()} and cannot be changed.` };

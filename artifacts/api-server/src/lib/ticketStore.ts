@@ -114,7 +114,9 @@ export async function moveTicket(move: MoveTicket): Promise<MoveResult> {
     const [updated] = await tx
       .update(disputesTable)
       .set({
-        ...(move.noteOnly ? {} : { status: to }),
+        // A note is still a change to the ticket, and an update that sets nothing at all is
+        // one Drizzle refuses outright. Touching the timestamp says both.
+        ...(move.noteOnly ? { updatedAt: new Date() } : { status: to }),
         ...(move.assignTo !== undefined && move.assignTo !== null
           ? { assignedTo: move.assignTo, assignedAt: new Date() }
           : {}),

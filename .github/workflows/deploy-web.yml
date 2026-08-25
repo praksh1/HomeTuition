@@ -224,6 +224,16 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:admin
 
+      # A reported problem, from filing it to reading the answer. The owner's complaint was
+      # that "a user can create several hundred requests without knowing the status" — so this
+      # checks both halves: that the limit refuses without writing anything, and that the
+      # history behind a status is true, visible to the reporter, and cannot be rewritten
+      # after a decision has been made.
+      - name: A request can be followed from filing to answer
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:tickets
+
       # A class's own message thread, and the log of who did what. Both have to survive a
       # restart to be worth anything — a teacher's "running ten minutes late" and a refund
       # argued weeks later both depend on the words still being there — so this restarts the
