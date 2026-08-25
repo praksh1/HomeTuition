@@ -10,6 +10,7 @@ import SessionCard from "@/components/SessionCard";
 import { useColors } from "@/hooks/useColors";
 import type { Student } from "@/context/AuthContext";
 import { joinState } from "@/utils/sessionWindow";
+import type { MonthlyClass } from "@/utils/monthly";
 
 interface Session {
   id: string;
@@ -62,6 +63,29 @@ export default function StudentSessions() {
       return () => clearInterval(timer);
     }, [student?.userId])
   );
+
+  /**
+   * The monthly classes, fetched on focus but not polled.
+   *
+   * A standing arrangement does not change minute to minute the way a class going live does,
+   * and this app is built for a cheap phone on a poor connection — polling something that only
+   * changes when the student themselves changes it would spend their data for nothing.
+   */
+  const [myMonthly, setMyMonthly] = useState<MonthlyClass[]>([]);
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await apiGet<{ classes: MonthlyClass[] }>("/monthly/classes");
+        // `enrolment` is what the server says about this viewer's own place, so a class they
+        // are only browsing never turns up under "My Sessions".
+        if (alive) setMyMonthly((res.classes ?? []).filter((k) => k.enrolment !== null));
+      } catch {
+        if (alive) setMyMonthly([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [student?.userId]));
 
   useEffect(() => {
     const timer = setInterval(() => setTick(Date.now()), 30_000);
@@ -145,6 +169,18 @@ export default function StudentSessions() {
   const isOver = (s: Session) =>
     s.status === "completed" || s.status === "cancelled" || !joinState(s, tick).enabled;
 
+  /**
+   * The monthly classes this student has joined.
+   *
+   * A standing arrangement is not one of the one-off classes above and does not belong mixed in
+   * with them — the owner asked for it as "a separate section under Sessions (Upcoming/Live/Past
+   * and Monthly Classes or something)", which is right: a monthly class has no single date to
+   * sort it by, so any pile it landed in would be sorted wrongly.
+   *
+   * Only the ones they hold a place in. `/monthly/classes` lists every class on offer, and
+   * `enrolment` is what the server says about this viewer's place in each — so a class they are
+   * merely browsing never appears under "My Sessions".
+   */
   const dropped = sessions.filter((s) => s.enrolment === "refunded");
   const held = sessions.filter((s) => s.enrolment !== "refunded");
 
@@ -162,9 +198,44 @@ export default function StudentSessions() {
         data={sessions}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
-        scrollEnabled={!!sessions.length}
+        scrollEnabled={!!sessions.length || myMonthly.length > 0}
         ListHeaderComponent={
           <View>
+            {myMonthly.length > 0 && (
+              <View style={styles.section} testID="student-monthly-section">
+                <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Monthly Classes</Text>
+                {myMonthly.map((k) => (
+                  <TouchableOpacity
+                    key={k.id}
+                    testID={`student-monthly-${k.id}`}
+                    activeOpacity={0.85}
+                    onPress={() => router.push("/(student)/monthly")}
+                    style={[styles.monthlyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                  >
+                    <View style={styles.monthlyTop}>
+                      <Text style={[styles.monthlyTopic, { color: colors.foreground }]} numberOfLines={1}>
+                        {k.topic}
+                      </Text>
+                      <Text style={[styles.monthlyPrice, { color: colors.primary }]}>
+                        NPR {k.monthlyPrice.toLocaleString()}/mo
+                      </Text>
+                    </View>
+                    <Text style={[styles.monthlyMeta, { color: colors.mutedForeground }]}>
+                      {k.subject} · {k.teacherName}
+                    </Text>
+                    <Text style={[styles.monthlyMeta, { color: colors.mutedForeground }]}>
+                      Every day at {k.startTime} · {k.durationMinutes} min
+                    </Text>
+                    {k.sessionsRemaining > 0 ? (
+                      <Text style={[styles.monthlyMeta, { color: colors.mutedForeground }]}>
+                        {k.sessionsRemaining} {k.sessionsRemaining === 1 ? "class" : "classes"} left this month
+                      </Text>
+                    ) : null}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
             {liveSessions.length > 0 && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
@@ -244,9 +315,18 @@ export default function StudentSessions() {
           ) : (
           <View style={styles.empty}>
             <Feather name="calendar" size={48} color={colors.border} />
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>No sessions yet</Text>
+            {/*
+              A student who holds a monthly class but has booked no single lessons has a class
+              listed directly above this. Telling them "No sessions yet" underneath it would be
+              the app contradicting itself on one screen.
+            */}
+            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+              {myMonthly.length > 0 ? "No single classes booked" : "No sessions yet"}
+            </Text>
             <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Browse teachers and book your first session
+              {myMonthly.length > 0
+                ? "Your monthly class is above. You can also book one-off classes."
+                : "Browse teachers and book your first session"}
             </Text>
             <TouchableOpacity
               style={[styles.discoverBtn, { backgroundColor: colors.secondary }]}
@@ -278,6 +358,11 @@ const styles = StyleSheet.create({
   },
   droppedFlagText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", marginBottom: 8 },
+  monthlyCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 4, marginBottom: 10 },
+  monthlyTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  monthlyTopic: { flex: 1, fontSize: 16, fontFamily: "Inter_600SemiBold" },
+  monthlyPrice: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
+  monthlyMeta: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   joinBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 12, marginTop: -4, marginBottom: 8 },
   joinBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
   empty: { alignItems: "center", paddingTop: 80, gap: 12 },

@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
@@ -9,6 +9,7 @@ import { apiGet } from "@/utils/api";
 import SessionCard from "@/components/SessionCard";
 import { useColors } from "@/hooks/useColors";
 import type { Teacher } from "@/context/AuthContext";
+import type { MonthlyPlanView } from "@/utils/monthly";
 
 interface Session {
   id: string;
@@ -22,9 +23,25 @@ interface Session {
   enrolledStudents: string[];
   price: number;
   status: "upcoming" | "live" | "completed" | "cancelled";
+  /** Its start time has been and gone and nobody started it. Decided by the server. */
+  expired?: boolean;
 }
 
-type FilterTab = "all" | "upcoming" | "live" | "completed";
+/**
+ * The tabs, and why there are now six.
+ *
+ * The owner's words: "I have only been testing for less than a month and already my pages look
+ * overcrowded." The answer to a crowded list is not a shorter list — a teacher needs every
+ * class they ever ran — it is a way to ask for the part they came for.
+ *
+ * "Expired" is the one they named. Classes whose time came and went unstarted used to sit in
+ * Upcoming, so a teacher scrolling for tomorrow's lesson scrolled through last week's misses
+ * first. They are their own tab now: still there, out of the way, and honestly labelled.
+ *
+ * "Monthly" is not a status at all — a monthly class is a standing arrangement, not one lesson
+ * — which is why it is fetched separately below rather than being another value of `status`.
+ */
+type FilterTab = "all" | "upcoming" | "live" | "completed" | "expired" | "monthly";
 
 export default function TeacherSessions() {
   const { user } = useAuth();
@@ -50,9 +67,14 @@ export default function TeacherSessions() {
     if (!teacher?.userId) return;
     setLoading(true);
     setLoadError(false);
-    const statusParam = filter === "all" ? "" : `&status=${filter}`;
+    // "Expired" is upcoming classes whose time has passed, so it asks for the same status and
+    // sifts by what the server says about each one. "Monthly" asks a different endpoint
+    // entirely — see loadPlan.
+    const statusParam = filter === "all" || filter === "monthly" ? ""
+      : filter === "expired" ? "&status=upcoming"
+      : `&status=${filter}`;
     try {
-      const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string }[] }>(
+      const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; expired?: boolean }[] }>(
         `/sessions?teacherId=${teacher.userId}${statusParam}&limit=100`
       );
       setSessions(res.sessions.map((s) => ({
@@ -67,6 +89,7 @@ export default function TeacherSessions() {
         enrolledStudents: Array(s.enrolledCount).fill(""),
         price: s.price,
         status: s.status as Session["status"],
+        expired: s.expired === true,
       })));
     } catch (_e) {
       // An empty list and a failed request used to look identical: both showed "No sessions
@@ -84,15 +107,52 @@ export default function TeacherSessions() {
     }, [loadSessions]),
   );
 
+  /**
+   * The monthly plan, fetched once and kept.
+   *
+   * Separate from the list because it is a different kind of thing: one standing arrangement
+   * rather than a row among many. The owner asked for it to be findable from here — "for
+   * Teacher it must also show in 'My Plan' ... maybe create a new Filter/Section for Monthly
+   * Recurring Classes" — and this is the screen a teacher already opens to see their teaching.
+   */
+  const [plan, setPlan] = useState<MonthlyPlanView | null>(null);
+  const [planKnown, setPlanKnown] = useState(false);
+
+  useFocusEffect(useCallback(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const res = await apiGet<MonthlyPlanView>("/monthly/plan");
+        if (alive) { setPlan(res); setPlanKnown(true); }
+      } catch {
+        // A plan that could not be loaded is not the same as not having one, so the tab says
+        // so rather than showing the "you have no monthly class" pitch to somebody who has one.
+        if (alive) { setPlan(null); setPlanKnown(false); }
+      }
+    })();
+    return () => { alive = false; };
+  }, []));
+
   const TABS: { key: FilterTab; label: string }[] = [
     { key: "all", label: "All" },
     { key: "live", label: "Live" },
     { key: "upcoming", label: "Upcoming" },
     { key: "completed", label: "Completed" },
+    { key: "expired", label: "Expired" },
+    { key: "monthly", label: "Monthly" },
   ];
 
-  // The server has already filtered by status; sifting again here is what made the tab wrong.
-  const filtered = sessions;
+  /**
+   * The server has already filtered by status; sifting again here is what made the tab wrong.
+   *
+   * The two exceptions are the two tabs the server has no status for. Expired and Upcoming are
+   * both `status=upcoming` rows told apart by whether their time has passed — which the server
+   * decides and sends, so the two tabs cannot disagree with each other or with the dashboard.
+   */
+  const filtered =
+    filter === "expired" ? sessions.filter((s) => s.expired)
+    : filter === "upcoming" ? sessions.filter((s) => !s.expired)
+    : sessions;
 
   /**
    * Opening a class from this list.
@@ -135,7 +195,15 @@ export default function TeacherSessions() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.tabs}>
+      {/*
+        Six chips do not fit across a cheap Android phone, and squashing them makes every label
+        unreadable rather than one of them off-screen. So the row scrolls.
+      */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabs}
+      >
         {TABS.map((tab) => (
           <TouchableOpacity
             key={tab.key}
@@ -148,8 +216,77 @@ export default function TeacherSessions() {
             </Text>
           </TouchableOpacity>
         ))}
-      </View>
+      </ScrollView>
 
+      {/*
+        My Plan.
+
+        A monthly class is one standing arrangement, not a row in a list, so it gets a panel
+        rather than a card in the FlatList below. Everything a teacher would come here to check
+        is on it — the time it runs, what they charge, how many have joined and how far through
+        the month they are — and the panel opens the full screen for anything else.
+      */}
+      {filter === "monthly" ? (
+        <View style={[styles.list, { paddingBottom: insets.bottom + 100 }]}>
+          {plan?.class ? (
+            <TouchableOpacity
+              testID="teacher-monthly-plan"
+              activeOpacity={0.85}
+              onPress={() => router.push("/(teacher)/monthly")}
+              style={[styles.planCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+            >
+              <View style={styles.planTop}>
+                <Text style={[styles.planTopic, { color: colors.foreground }]}>{plan.class.topic}</Text>
+                <Text style={[styles.planPrice, { color: colors.primary }]}>
+                  NPR {plan.class.monthlyPrice.toLocaleString()}/mo
+                </Text>
+              </View>
+              <Text style={[styles.planMeta, { color: colors.mutedForeground }]}>
+                {plan.class.subject} · every day at {plan.class.startTime} · {plan.class.durationMinutes} min
+              </Text>
+              <Text style={[styles.planMeta, { color: colors.mutedForeground }]}>
+                {plan.class.enrolled} {plan.class.enrolled === 1 ? "student" : "students"}
+                {plan.class.seatsLeft > 0 ? ` · ${plan.class.seatsLeft} seats left` : " · full"}
+              </Text>
+              {plan.class.sessionsPlanned > 0 ? (
+                <Text style={[styles.planMeta, { color: colors.mutedForeground }]}>
+                  {plan.class.sessionsPlanned - plan.class.sessionsRemaining} of {plan.class.sessionsPlanned} classes
+                  held this cycle
+                </Text>
+              ) : null}
+              {plan.plan?.status && plan.plan.status !== "active" ? (
+                <Text style={[styles.planWarn, { color: colors.destructive }]} testID="teacher-monthly-suspended">
+                  {plan.plan.suspendedReason ?? "This plan is not currently running."}
+                </Text>
+              ) : null}
+              <Text style={[styles.planLink, { color: colors.secondary }]}>Open My Plan →</Text>
+            </TouchableOpacity>
+          ) : !planKnown ? (
+            <View style={styles.empty}>
+              <Feather name="wifi-off" size={44} color={colors.border} />
+              {/* Not the same as having no plan, and must never be shown as if it were. */}
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                We could not check your monthly plan. Pull to try again.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.empty}>
+              <Feather name="repeat" size={44} color={colors.border} />
+              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                You do not run a monthly class yet
+              </Text>
+              <TouchableOpacity
+                testID="teacher-monthly-start"
+                activeOpacity={0.85}
+                onPress={() => router.push("/(teacher)/monthly")}
+                style={[styles.createBtn, { backgroundColor: colors.primary, marginTop: 12 }]}
+              >
+                <Text style={styles.createBtnText}>Set one up</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      ) : (
       <FlatList
         data={filtered}
         keyExtractor={(item) => item.id}
@@ -187,7 +324,9 @@ export default function TeacherSessions() {
           <View style={styles.empty}>
             <Feather name="calendar" size={48} color={colors.border} />
             <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-              {filter === "all" ? "No sessions yet" : `No ${filter} sessions`}
+              {filter === "all" ? "No sessions yet"
+                : filter === "expired" ? "Nothing has been missed"
+                : `No ${filter} sessions`}
             </Text>
             <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
               Create your first session to start teaching
@@ -203,6 +342,7 @@ export default function TeacherSessions() {
           )
         }
       />
+      )}
     </View>
   );
 }
@@ -214,6 +354,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1,
   },
   title: { fontSize: 24, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
+  planCard: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 6 },
+  planTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  planTopic: { flex: 1, fontSize: 17, fontFamily: "Inter_600SemiBold" },
+  planPrice: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
+  planMeta: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  planWarn: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 19, marginTop: 4 },
+  planLink: { fontSize: 14, fontFamily: "Inter_500Medium", marginTop: 8 },
   createBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
   createBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#fff" },
   tabs: { flexDirection: "row", paddingHorizontal: 20, paddingVertical: 12, gap: 8 },
