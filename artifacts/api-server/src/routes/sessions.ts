@@ -14,7 +14,7 @@ import { videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
-import { canJoin, canStart, isCreatableAt, studentDoorClosesAt } from "../lib/sessionStart";
+import { canJoin, canStart, isCreatableAt, isPastCutoff, studentDoorClosesAt } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
 import {
@@ -159,7 +159,28 @@ router.get("/sessions", async (req, res): Promise<void> => {
     ? sessions.map((row) => ({ ...row, enrolment: enrolmentBySession.get(row.id) ?? null }))
     : sessions;
 
-  res.json({ sessions: withEnrolment, total, page: pageNum, limit: limitNum });
+  /**
+   * Which of these are over without ever having happened.
+   *
+   * A class nobody started keeps `status = 'upcoming'` forever, so a teacher's dashboard listed
+   * classes from last week under "Upcoming Sessions", each with a Start button — and starting
+   * one is refused, because `canStart` knows perfectly well that it is over. The two disagreed
+   * only because the list never asked.
+   *
+   * Computed here rather than stored. It is a fact about the clock, not about the row, so a
+   * column would need writing by something and would be wrong the moment nothing did.
+   * `sessions` is also read with a bare select() in six routes, where a new column is a 500
+   * until the schema is pushed by hand.
+   */
+  const now = Date.now();
+  const withState = withEnrolment.map((row) => ({
+    ...row,
+    expired:
+      row.status === "upcoming" &&
+      isPastCutoff({ date: row.date, duration: row.duration, startedAt: row.startedAt, endedAt: null, status: row.status }, now),
+  }));
+
+  res.json({ sessions: withState, total, page: pageNum, limit: limitNum });
 });
 
 /**

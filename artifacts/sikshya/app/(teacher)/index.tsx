@@ -9,6 +9,7 @@ import { useAuth } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import { useNotifications } from "@/context/NotificationContext";
+import { useDates } from "@/context/DatePreferenceContext";
 import type { Teacher } from "@/context/AuthContext";
 
 interface ApiSession {
@@ -20,15 +21,19 @@ interface ApiSession {
   maxStudents: number;
   enrolledCount: number;
   status: string;
+  /** Over, and never started. Worked out by the server from the clock. */
+  expired?: boolean;
 }
 
 export default function TeacherDashboard() {
   const { user, logout } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { format: formatDate } = useDates();
   const { unreadCount, refresh: refreshNotifs } = useNotifications();
   const teacher = user as Teacher;
   const [upcomingSessions, setUpcomingSessions] = useState<ApiSession[]>([]);
+  const [expiredCount, setExpiredCount] = useState(0);
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
   useFocusEffect(
@@ -42,10 +47,22 @@ export default function TeacherDashboard() {
     if (!teacher?.userId) return;
     setSessionsLoading(true);
     try {
+      /*
+       * More than five are asked for, because some of them are not upcoming.
+       *
+       * A class nobody started keeps `status = 'upcoming'` for ever, so the five newest could
+       * all be from last week — which is what a teacher was looking at: classes from days ago,
+       * each with a Start button that refuses when pressed. They are dropped here and shown in
+       * their own section on the Sessions tab instead.
+       */
       const res = await apiGet<{ sessions: ApiSession[] }>(
-        `/sessions?teacherId=${teacher.userId}&status=upcoming&limit=5`
+        `/sessions?teacherId=${teacher.userId}&status=upcoming&limit=40`
       );
-      setUpcomingSessions(res.sessions);
+      const stillToCome = (res.sessions ?? []).filter((session) => !session.expired);
+      setUpcomingSessions(
+        [...stillToCome].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).slice(0, 5),
+      );
+      setExpiredCount((res.sessions ?? []).length - stillToCome.length);
     } catch {}
     setSessionsLoading(false);
   };
@@ -100,6 +117,14 @@ export default function TeacherDashboard() {
   const isPending = teacher.approvalStatus === "pending";
   const isRejected = teacher.approvalStatus === "rejected";
 
+  /**
+   * The date in the reader's own calendar.
+   *
+   * This wrote `toLocaleDateString("en-NP")`, which is a Gregorian date with a Nepali locale —
+   * so a teacher who had chosen Bikram Sambat everywhere else met "Aug 24" on the one screen
+   * they open every day. "Today" and "Tomorrow" are kept: they are the same word in both
+   * calendars and are easier to read than either.
+   */
   const formatSessionTime = (dateStr: string) => {
     const d = new Date(dateStr);
     const now = new Date();
@@ -107,7 +132,7 @@ export default function TeacherDashboard() {
     const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     if (diffDays === 0) return `Today, ${timeStr}`;
     if (diffDays === 1) return `Tomorrow, ${timeStr}`;
-    return `${d.toLocaleDateString("en-NP", { month: "short", day: "numeric" })}, ${timeStr}`;
+    return `${formatDate(d, { withTime: false })}, ${timeStr}`;
   };
 
   return (
@@ -249,6 +274,28 @@ export default function TeacherDashboard() {
         {sessionsLoading && <ActivityIndicator size="small" color={colors.primary} />}
       </View>
 
+      {/*
+        Said, not silently dropped.
+
+        Classes that are over and were never started used to fill this list. Removing them
+        without a word would leave a teacher looking at an empty dashboard wondering where a
+        fortnight of classes went, so the count is shown with a way to reach them.
+      */}
+      {expiredCount > 0 && (
+        <TouchableOpacity
+          testID="teacher-expired-note"
+          style={[styles.expiredNote, { backgroundColor: colors.card, borderColor: colors.border }]}
+          onPress={() => router.push("/(teacher)/sessions")}
+          activeOpacity={0.8}
+        >
+          <Feather name="clock" size={15} color={colors.mutedForeground} />
+          <Text style={[styles.expiredNoteText, { color: colors.mutedForeground }]}>
+            {expiredCount} {expiredCount === 1 ? "class" : "classes"} passed without being started.
+            Tap to see them.
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {!sessionsLoading && upcomingSessions.length === 0 && (
         <View style={[styles.emptyCard, { backgroundColor: colors.muted, borderColor: colors.border }]}>
           <Feather name="calendar" size={24} color={colors.mutedForeground} />
@@ -334,6 +381,18 @@ const styles = StyleSheet.create({
   actionBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
   actionBtnOutline: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, paddingVertical: 14, borderWidth: 1 },
   actionBtnOutlineText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  expiredNote: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginHorizontal: 20,
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  expiredNoteText: { flex: 1, fontSize: 12.5, fontFamily: "Inter_400Regular", lineHeight: 17 },
   monthlyEntry: {
     flexDirection: "row",
     alignItems: "center",

@@ -26,7 +26,8 @@
     "test:refunds": "node scripts/refund-tests/run.mjs",
     "test:uploads": "node scripts/upload-browser/run.mjs",
     "test:calendar": "node scripts/calendar-tests/run.mjs",
-    "test:monthly-browser": "node scripts/monthly-browser/run.mjs"
+    "test:monthly-browser": "node scripts/monthly-browser/run.mjs",
+    "test:dashboard": "node scripts/dashboard-tests/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
