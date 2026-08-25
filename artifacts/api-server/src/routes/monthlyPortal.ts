@@ -137,16 +137,36 @@ router.get("/monthly/classes/:id/messages", requireAuth, async (req: Request, re
       createdAt: sessionMessagesTable.createdAt,
     };
 
-    const messages = await db
-      .select(columns)
-      .from(sessionMessagesTable)
-      .where(
-        Number.isFinite(after)
-          ? and(eq(sessionMessagesTable.recurringId, id), gt(sessionMessagesTable.id, after))
-          : eq(sessionMessagesTable.recurringId, id),
-      )
-      .orderBy(asc(sessionMessagesTable.id))
-      .limit(DEFAULT_LIMIT);
+    /*
+     * The **latest** page, not the first.
+     *
+     * A class thread covers one lesson and rarely fills a page, so reading the oldest two
+     * hundred is the same as reading all of them. A monthly course's thread runs for a month:
+     * asking for the oldest two hundred there opens the chat on messages from four weeks ago
+     * and hides everything said today, which is precisely backwards for the thing a student
+     * checks to find out where their class is.
+     *
+     * So it is read newest-first and turned back the right way round. `after` is different and
+     * stays ascending: that is a page already open catching up on what it has not seen, and it
+     * genuinely wants the oldest of those first.
+     */
+    const catchingUp = Number.isFinite(after);
+    const found = catchingUp
+      ? await db
+          .select(columns)
+          .from(sessionMessagesTable)
+          .where(and(eq(sessionMessagesTable.recurringId, id), gt(sessionMessagesTable.id, after)))
+          .orderBy(asc(sessionMessagesTable.id))
+          .limit(DEFAULT_LIMIT)
+      : (
+          await db
+            .select(columns)
+            .from(sessionMessagesTable)
+            .where(eq(sessionMessagesTable.recurringId, id))
+            .orderBy(desc(sessionMessagesTable.id))
+            .limit(DEFAULT_LIMIT)
+        ).reverse();
+    const messages = found;
 
     /*
      * Pinned messages come back separately as well as in the thread.
@@ -161,10 +181,28 @@ router.get("/monthly/classes/:id/messages", requireAuth, async (req: Request, re
       .where(and(eq(sessionMessagesTable.recurringId, id), isNotNull(sessionMessagesTable.pinnedAt)))
       .orderBy(desc(sessionMessagesTable.pinnedAt));
 
+    /*
+     * Whether there is older conversation above this page.
+     *
+     * Told apart from "this is the whole thread" so the app can offer to fetch earlier messages
+     * rather than silently presenting a month-long conversation as if it began two hundred
+     * messages ago.
+     */
+    const oldest = messages[0]?.id;
+    const earlier = oldest === undefined
+      ? 0
+      : (
+          await db
+            .select({ n: sql<number>`count(*)::int` })
+            .from(sessionMessagesTable)
+            .where(and(eq(sessionMessagesTable.recurringId, id), sql`${sessionMessagesTable.id} < ${oldest}`))
+        )[0]?.n ?? 0;
+
     const mine = (m: { senderId: number }) => m.senderId === req.user!.userId;
     res.json({
       messages: messages.map((m) => ({ ...m, mine: mine(m) })),
       pinned: pinned.map((m) => ({ ...m, mine: mine(m) })),
+      earlier,
       readOnly: !mayWrite(access),
       canPin: access.isTeacher,
       known: true,
