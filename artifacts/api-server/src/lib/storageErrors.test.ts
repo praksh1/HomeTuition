@@ -57,6 +57,12 @@ test("an unrecognised refusal still carries its code rather than a shrug", () =>
   assert.equal(failure.code, "EntityTooLarge");
   assert.match(failure.advice, /EntityTooLarge/);
   assert.match(failure.advice, /400/);
+  /*
+   * And does not claim to know which operation failed. This branch is reached by reads and
+   * deletes too — the storage check hit it on a failed *read* and reported "refused the write",
+   * which would send somebody looking at the wrong permission.
+   */
+  assert.doesNotMatch(failure.advice, /\bthe write\b/i);
 });
 
 test("nothing key-shaped survives into the detail a log will keep", () => {

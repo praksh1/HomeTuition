@@ -411,6 +411,12 @@ jobs:
           # against three rows proves nothing, and monthly classes had no place on either
           # screen at all until this.
           pnpm --filter @workspace/sikshya run test:filters
+          # The file-storage check, driven from the button rather than the endpoint. It
+          # exists because the owner was told to open the endpoint in their phone's browser
+          # and got "Missing or invalid Authorization header" — the only thing it could ever
+          # have said, since this API takes a Bearer token the app holds and a browser tab
+          # has none. A diagnostic nobody can run is not a diagnostic.
+          pnpm --filter @workspace/sikshya run test:storage-check
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local

@@ -89,6 +89,17 @@ export default function AdminTickets() {
     >
       <Text style={[styles.title, { color: colors.foreground }]}>Support</Text>
 
+      {/*
+        Can this server actually store a file?
+        
+        Here rather than at a URL, because the API takes a Bearer token the app holds and a
+        browser tab has none — the owner was sent to open the endpoint directly and got
+        "Missing or invalid Authorization header", which is the only thing it could ever have
+        said. A button on a screen that is already signed in is the only version of this that
+        works on a phone.
+      */}
+      <StorageCheck colors={colors} />
+
       {counts && (
         <View style={styles.stats}>
           <Stat label="Open tickets" value={counts.known ? counts.openTickets : "—"} colors={colors} />
@@ -183,6 +194,102 @@ export default function AdminTickets() {
   );
 }
 
+interface CheckResult {
+  ok: boolean;
+  settings: Record<string, boolean>;
+  completed: string[];
+  bucket?: string;
+  message?: string;
+  failedAt?: string;
+  code?: string;
+  advice?: string;
+  detail?: string;
+}
+
+/**
+ * The file-storage check, on a button.
+ *
+ * It writes a small file, reads it back and deletes it, rather than reporting whether the
+ * settings look present — every setting can be set and the API token still be read-only, which
+ * is exactly far enough to pass a settings check and fail every upload somebody tries.
+ *
+ * Collapsed until asked. An agent working tickets does not need it; the owner needs it on the
+ * one day uploads stop working.
+ */
+function StorageCheck({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const [result, setResult] = useState<CheckResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const run = async () => {
+    setRunning(true);
+    setProblem(null);
+    try {
+      setResult(await apiGet<CheckResult>("/admin/storage/check"));
+    } catch (e) {
+      setResult(null);
+      setProblem(e instanceof Error ? e.message : "The check could not be run.");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const missing = result ? Object.entries(result.settings).filter(([, set]) => !set).map(([k]) => k) : [];
+
+  return (
+    <View style={[styles.checkCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <TouchableOpacity
+        testID="admin-storage-check"
+        onPress={() => void run()}
+        disabled={running}
+        activeOpacity={0.8}
+        style={styles.checkRow}
+      >
+        <Feather name="upload-cloud" size={16} color={colors.secondary} />
+        <Text style={[styles.checkTitle, { color: colors.foreground }]}>
+          {running ? "Checking file uploads…" : "Check file uploads"}
+        </Text>
+        {running ? <ActivityIndicator size="small" color={colors.secondary} /> : null}
+      </TouchableOpacity>
+
+      {problem ? (
+        <Text style={[styles.checkBody, { color: colors.destructive }]}>{problem}</Text>
+      ) : null}
+
+      {result ? (
+        <View style={{ gap: 6, marginTop: 8 }}>
+          <Text
+            testID="admin-storage-verdict"
+            style={[styles.checkVerdict, { color: result.ok ? colors.success : colors.destructive }]}
+          >
+            {result.ok
+              ? `Working — a file can be written, read back and deleted${result.bucket ? ` in "${result.bucket}"` : ""}.`
+              : `Not working — it failed at "${result.failedAt}".`}
+          </Text>
+
+          {!result.ok && result.advice ? (
+            <Text style={[styles.checkBody, { color: colors.foreground }]}>{result.advice}</Text>
+          ) : null}
+
+          {!result.ok && result.code ? (
+            <Text style={[styles.checkMeta, { color: colors.mutedForeground }]}>
+              Storage said: {result.code}
+              {result.detail ? ` — ${result.detail}` : ""}
+            </Text>
+          ) : null}
+
+          {/* Names only, never values: this screen must never become a place to read a secret. */}
+          <Text style={[styles.checkMeta, { color: colors.mutedForeground }]}>
+            {missing.length === 0
+              ? "All storage settings are present."
+              : `Not set: ${missing.join(", ")}`}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function Stat({ label, value, colors }: { label: string; value: number | string; colors: ReturnType<typeof useColors> }) {
   return (
     <View style={[styles.stat, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -195,6 +302,12 @@ function Stat({ label, value, colors }: { label: string; value: number | string;
 const styles = StyleSheet.create({
   container: { paddingHorizontal: 20, gap: 12 },
   title: { fontSize: 24, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
+  checkCard: { borderRadius: 14, borderWidth: 1, padding: 12 },
+  checkRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  checkTitle: { flex: 1, fontSize: 14, fontFamily: "Inter_500Medium" },
+  checkVerdict: { fontSize: 14, fontFamily: "Inter_600SemiBold", lineHeight: 20 },
+  checkBody: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  checkMeta: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16 },
   stats: { flexDirection: "row", gap: 10 },
   stat: { flex: 1, borderRadius: 14, borderWidth: 1, padding: 12, alignItems: "center", gap: 2 },
   statValue: { fontSize: 20, fontFamily: "Inter_600SemiBold" },

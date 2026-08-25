@@ -111,9 +111,12 @@ export function describeStorageFailure(err: unknown): StorageFailure {
     };
   }
 
+  // Deliberately does not name an operation. This is reached by reads and deletes as well as
+  // writes, and telling somebody "R2 refused the write" about a failed read sends them looking
+  // in the wrong place — caught when the check failed at "read" and said exactly that.
   return {
     code, detail,
-    advice: `R2 refused the write with ${code}${status ? ` (HTTP ${status})` : ""}.`,
+    advice: `Storage refused it with ${code}${status ? ` (HTTP ${status})` : ""}.`,
     publicMessage: generic,
   };
 }
