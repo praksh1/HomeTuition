@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db, disputesTable } from "@workspace/db";
 import { RequestUploadUrlBody, RequestUploadUrlResponse } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/requireAuth";
+import { mayOpenHomeworkFile } from "../lib/homeworkAccess";
 import {
   ALLOWED_UPLOAD_TYPES,
   MAX_UPLOAD_BYTES,
@@ -202,6 +203,16 @@ router.get("/storage/file", requireAuth, async (req: Request, res: Response) => 
       .limit(1);
     allowed = !!attached;
   }
+
+  /**
+   * Homework, which is the second thing to keep files here and needed its own answer.
+   *
+   * A student has to be able to open the question sheet their teacher uploaded, and a teacher
+   * has to be able to open the answers their students hand in — neither of them is the
+   * uploader of the other's file. Kept in `lib/homeworkAccess.ts` rather than inlined here so
+   * the rule sits with the tables it is about, and so this route keeps refusing by default.
+   */
+  if (!allowed) allowed = await mayOpenHomeworkFile(key, user.userId);
 
   if (!allowed) { res.status(403).json({ error: "You cannot open this file." }); return; }
 
