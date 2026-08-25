@@ -1,5 +1,6 @@
 import { createHash, randomInt } from "node:crypto";
 import { and, asc, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { Router, type IRouter } from "express";
 import {
   db,
@@ -20,6 +21,8 @@ import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
 import { notify } from "../lib/notify";
 import { refundSplit } from "../lib/sessionChanges";
+import { TICKET_STATUSES, displayStatus, nextStatuses, statusLabel, ticketRef } from "../lib/tickets";
+import { historyFor, moveTicket, nameOf } from "../lib/ticketStore";
 
 /**
  * The support desk.
@@ -88,8 +91,29 @@ router.get("/admin/overview", async (_req, res): Promise<void> => {
   }
 });
 
+/**
+ * The queue.
+ *
+ * Filtered rather than paged, because the owner's complaint about every other list in this app
+ * applies here first: "I have only been testing for less than a month and already my pages look
+ * overcrowded." `open` is the filter an agent starts a shift on; `mine` is the one they work
+ * from after that.
+ */
 router.get("/admin/tickets", async (req, res): Promise<void> => {
   const status = String(req.query.status ?? "");
+  const mine = String(req.query.assigned ?? "");
+
+  const filters = [];
+  if (status === "active") {
+    // Everything still waiting on somebody, which is what a queue actually is.
+    filters.push(sql`${disputesTable.status} not in ('resolved', 'denied', 'cancelled')`);
+  } else if ((TICKET_STATUSES as readonly string[]).includes(status)) {
+    filters.push(eq(disputesTable.status, status as (typeof TICKET_STATUSES)[number]));
+  }
+  if (mine === "me") filters.push(eq(disputesTable.assignedTo, req.user!.userId));
+  else if (mine === "unassigned") filters.push(isNull(disputesTable.assignedTo));
+
+  const assignee = alias(usersTable, "assignee");
   const rows = await db
     .select({
       id: disputesTable.id,
@@ -97,19 +121,29 @@ router.get("/admin/tickets", async (req, res): Promise<void> => {
       description: disputesTable.description,
       status: disputesTable.status,
       createdAt: disputesTable.createdAt,
+      updatedAt: disputesTable.updatedAt,
       sessionId: disputesTable.sessionId,
       reporterId: disputesTable.userId,
       reporterName: usersTable.name,
       reporterRole: usersTable.role,
+      assignedTo: disputesTable.assignedTo,
+      assigneeName: assignee.name,
     })
     .from(disputesTable)
     .leftJoin(usersTable, eq(usersTable.id, disputesTable.userId))
-    .where(status === "open" || status === "in_review" || status === "resolved"
-      ? eq(disputesTable.status, status)
-      : sql`true`)
+    .leftJoin(assignee, eq(assignee.id, disputesTable.assignedTo))
+    .where(filters.length ? and(...filters) : sql`true`)
     .orderBy(desc(disputesTable.id))
     .limit(100);
-  res.json({ tickets: rows });
+
+  res.json({
+    tickets: rows.map((row) => ({
+      ...row,
+      /** The number the reporter quotes on the phone. */
+      ref: ticketRef(row.id),
+      statusLabel: statusLabel(row.status),
+    })),
+  });
 });
 
 /**
@@ -145,6 +179,26 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
     .where(eq(disputesTable.id, id));
 
   if (!ticket) { res.status(404).json({ error: "Ticket not found" }); return; }
+
+  /**
+   * Reading a new request is itself a step, and the reporter should see it.
+   *
+   * "Operator Opened" was in the owner's own list of states, and it is the one that answers the
+   * question behind this whole feature — has a human looked at this yet. Recording it when an
+   * agent actually opens the ticket is the only way it can be true; a button for it would be a
+   * button nobody presses.
+   */
+  let status = ticket.status;
+  if (status === "open") {
+    const opened = await moveTicket({
+      ticketId: id,
+      to: "opened",
+      actorId: req.user!.userId,
+      actorRole: "agent",
+      actorName: await nameOf(req.user!.userId),
+    });
+    if (opened.ok) status = opened.ticket.status;
+  }
 
   let session = null;
   let attendance: Awaited<ReturnType<typeof attendanceFor>> = { known: false, rows: [] };
@@ -195,63 +249,181 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
     ip: callerIp(req),
   });
 
-  res.json({ ticket, session, attendance, findings, messages, reporterActivity });
+  res.json({
+    ticket: {
+      ...ticket,
+      status,
+      ref: ticketRef(ticket.id),
+      statusLabel: statusLabel(status),
+    },
+    /** Internal notes included: this is the agents' own view of the ticket. */
+    history: await historyFor(id, true),
+    /** What the desk may do next, taken from the same rules the server enforces. */
+    nextStatuses: nextStatuses(status).map((next) => ({ value: next, label: statusLabel(next) })),
+    session,
+    attendance,
+    findings,
+    messages,
+    reporterActivity,
+  });
 });
 
+/**
+ * Taking a ticket on.
+ *
+ * Separate from the status change because they are different acts: an agent can pick up a
+ * ticket they are not ready to work on yet, and a ticket can move on without changing hands.
+ */
+router.post("/admin/tickets/:id/assign", async (req, res): Promise<void> => {
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ticket id" }); return; }
+
+  const { agentId } = req.body as { agentId?: number };
+  const to = agentId === undefined || agentId === null ? req.user!.userId : Number(agentId);
+  if (!Number.isFinite(to)) { res.status(400).json({ error: "Invalid agent id" }); return; }
+
+  // Only an agent may hold a ticket. Assigning one to a student would put a support queue in
+  // front of somebody with no way to see it and no business seeing it.
+  const [agent] = await db.select({ role: usersTable.role, name: usersTable.name })
+    .from(usersTable).where(eq(usersTable.id, to));
+  if (!agent || agent.role !== "admin") {
+    res.status(400).json({ error: "A ticket can only be assigned to a support agent." });
+    return;
+  }
+
+  const moved = await moveTicket({
+    ticketId: id,
+    to: "assigned",
+    actorId: req.user!.userId,
+    actorRole: "agent",
+    actorName: await nameOf(req.user!.userId),
+    note: to === req.user!.userId ? null : `Assigned to ${agent.name}.`,
+    assignTo: to,
+  });
+  if (!moved.ok) { res.status(moved.status).json({ error: moved.reason }); return; }
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.ticket.assigned",
+    subjectType: "dispute",
+    subjectId: id,
+    detail: { assignedTo: to },
+    ip: callerIp(req),
+  });
+
+  res.json({
+    ticket: { ...moved.ticket, ref: ticketRef(id), statusLabel: statusLabel(moved.ticket.status) },
+    history: await historyFor(id, true),
+    nextStatuses: nextStatuses(moved.ticket.status).map((next) => ({ value: next, label: statusLabel(next) })),
+  });
+});
+
+/**
+ * Moving a ticket along, or writing a note on it.
+ *
+ * Both go through lib/ticketStore.ts, which changes the status and records the move in one
+ * transaction. The pair is the point: a status that changed with nothing behind it is what the
+ * reporter is currently looking at, and it tells them nothing about what is being done.
+ *
+ * An agent may also attach a document. The owner asked for "Justification/Supporting Documents
+ * attached by the Agents" — the justification is the note, the document is the file, and a
+ * decision that rests on a payment record or a screenshot should carry it.
+ */
 router.patch("/admin/tickets/:id", async (req, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ticket id" }); return; }
 
-  const { status, resolution } = req.body as { status?: string; resolution?: string };
-  if (status !== undefined && !["open", "in_review", "resolved"].includes(status)) {
-    res.status(400).json({ error: "status must be open, in_review or resolved" });
-    return;
-  }
-  /**
-   * Closing a ticket takes an explanation.
-   *
-   * A ticket that moves to "resolved" with nothing written tells the next person nothing —
-   * not what was found, not what was done, not who to ask. It is also what an appeal is
-   * argued against, and REFUNDS.md promises the student one.
-   */
+  const { status, resolution, fileKey, internal } = req.body as {
+    status?: string; resolution?: string; fileKey?: string | null; internal?: boolean;
+  };
   const text = typeof resolution === "string" ? resolution.trim() : "";
-  if (status === "resolved" && !text) {
-    res.status(400).json({ error: "Please say what was decided before closing this ticket." });
+
+  /**
+   * A note without a status change is a note, not a move.
+   *
+   * An agent part-way through a case needs somewhere to write what they have found so far, and
+   * forcing that into a status change would either invent states nobody wants or lose the note.
+   */
+  if (status === undefined || status === null || status === "") {
+    if (!text) { res.status(400).json({ error: "Write something before saving." }); return; }
+
+    const noted = await moveTicket({
+      ticketId: id,
+      to: "",
+      noteOnly: true,
+      actorId: req.user!.userId,
+      actorRole: "agent",
+      actorName: await nameOf(req.user!.userId),
+      note: text,
+      fileKey: typeof fileKey === "string" && fileKey ? fileKey : null,
+      internal: internal === true,
+    });
+    if (!noted.ok) { res.status(noted.status).json({ error: noted.reason }); return; }
+
+    recordActivity({
+      userId: req.user!.userId,
+      action: "admin.ticket.noted",
+      subjectType: "dispute",
+      subjectId: id,
+      detail: { internal: internal === true },
+      ip: callerIp(req),
+    });
+
+    const after = noted.ticket;
+    res.json({
+      ticket: { ...after, ref: ticketRef(id), statusLabel: statusLabel(after.status) },
+      history: await historyFor(id, true),
+      nextStatuses: nextStatuses(after.status).map((next) => ({ value: next, label: statusLabel(next) })),
+    });
     return;
   }
 
-  const [updated] = await db
-    .update(disputesTable)
-    .set({
-      ...(status ? { status: status as "open" | "in_review" | "resolved" } : {}),
-      ...(text ? { resolution: text, resolvedBy: req.user!.userId, resolvedAt: new Date() } : {}),
-    })
-    .where(eq(disputesTable.id, id))
-    .returning();
+  const moved = await moveTicket({
+    ticketId: id,
+    to: status,
+    actorId: req.user!.userId,
+    actorRole: "agent",
+    actorName: await nameOf(req.user!.userId),
+    note: text || null,
+    fileKey: typeof fileKey === "string" && fileKey ? fileKey : null,
+    internal: internal === true,
+  });
+  if (!moved.ok) { res.status(moved.status).json({ error: moved.reason }); return; }
 
-  if (!updated) { res.status(404).json({ error: "Ticket not found" }); return; }
+  const updated = moved.ticket;
+  const now = displayStatus(updated.status);
 
   recordActivity({
     userId: req.user!.userId,
-    action: `admin.ticket.${status ?? "noted"}`,
+    action: `admin.ticket.${now}`,
     subjectType: "dispute",
     subjectId: id,
-    detail: { status, resolution: text || undefined },
+    detail: { status: now, resolution: text || undefined },
     ip: callerIp(req),
   });
 
-  // The person who reported it is told there is an answer, which is the half of a support
-  // system people actually notice.
-  if (updated.userId) {
+  /**
+   * The person who reported it is told, and told which request.
+   *
+   * The ticket number is in the message because somebody with three open requests reading "your
+   * report has been updated" learns nothing from it.
+   */
+  if (updated.userId && !(internal === true)) {
     notify(updated.userId, {
       kind: "message",
       fromName: "Sikshya Support",
-      preview: text ? `Your report has been reviewed: ${text.slice(0, 120)}` : "Your report has been updated.",
+      preview: text
+        ? `${ticketRef(id)} — ${statusLabel(now)}: ${text.slice(0, 100)}`
+        : `${ticketRef(id)} — ${statusLabel(now)}`,
       at: new Date().toISOString(),
     });
   }
 
-  res.json(updated);
+  res.json({
+    ticket: { ...updated, ref: ticketRef(id), statusLabel: statusLabel(now) },
+    history: await historyFor(id, true),
+    nextStatuses: nextStatuses(now).map((next) => ({ value: next, label: statusLabel(next) })),
+  });
 });
 
 router.get("/admin/users", async (req, res): Promise<void> => {

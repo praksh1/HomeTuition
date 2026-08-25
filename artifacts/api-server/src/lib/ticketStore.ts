@@ -4,6 +4,7 @@ import {
   TICKET_COOLDOWN_HOURS,
   canTransition,
   displayStatus,
+  isTerminal,
   needsJustification,
   statusExplains,
   statusLabel,
@@ -36,6 +37,14 @@ export interface MoveTicket {
   internal?: boolean;
   /** Set when this move is an agent taking the ticket on. */
   assignTo?: number | null;
+  /**
+   * Write the note, leave the status where it is.
+   *
+   * An agent part-way through a case needs somewhere to put what they have found. Forcing that
+   * into a status change would either invent states nobody asked for or lose the note, and a
+   * note is the thing the reporter most wants to read.
+   */
+  noteOnly?: boolean;
 }
 
 export type MoveResult =
@@ -55,7 +64,11 @@ export type MoveResult =
 export async function moveTicket(move: MoveTicket): Promise<MoveResult> {
   const note = typeof move.note === "string" ? move.note.trim() : "";
 
-  if (needsJustification(move.to) && !note) {
+  if (move.noteOnly && !note) {
+    return { ok: false, status: 400, reason: "Write something before saving." };
+  }
+
+  if (!move.noteOnly && needsJustification(move.to) && !note) {
     return {
       ok: false,
       status: 400,
@@ -75,16 +88,33 @@ export async function moveTicket(move: MoveTicket): Promise<MoveResult> {
 
     if (!current) return { ok: false as const, status: 404, reason: "That request was not found." };
 
-    const verdict = canTransition(current.status, move.to);
-    if (!verdict.ok) return { ok: false as const, status: 409, reason: verdict.reason };
+    /**
+     * A note still cannot be added to something that is finished.
+     *
+     * Once a request is resolved, denied or withdrawn its history is what an appeal is argued
+     * against. Letting anybody keep writing on it would leave the reporter unable to tell what
+     * the decision actually rested on.
+     */
+    if (move.noteOnly) {
+      if (isTerminal(current.status)) {
+        return {
+          ok: false as const,
+          status: 409,
+          reason: `This request is ${statusLabel(current.status).toLowerCase()} and cannot be changed.`,
+        };
+      }
+    } else {
+      const verdict = canTransition(current.status, move.to);
+      if (!verdict.ok) return { ok: false as const, status: 409, reason: verdict.reason };
+    }
 
-    const to = displayStatus(move.to);
-    const finishing = to === "resolved" || to === "denied";
+    const to = move.noteOnly ? displayStatus(current.status) : displayStatus(move.to);
+    const finishing = !move.noteOnly && (to === "resolved" || to === "denied");
 
     const [updated] = await tx
       .update(disputesTable)
       .set({
-        status: to,
+        ...(move.noteOnly ? {} : { status: to }),
         ...(move.assignTo !== undefined && move.assignTo !== null
           ? { assignedTo: move.assignTo, assignedAt: new Date() }
           : {}),

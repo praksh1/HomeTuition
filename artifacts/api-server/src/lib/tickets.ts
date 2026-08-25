@@ -207,3 +207,14 @@ export function ticketIdFromRef(ref: string): number | null {
   const id = Number(match[1]);
   return Number.isInteger(id) && id > 0 ? id : null;
 }
+
+/**
+ * The buttons an agent should see on a ticket.
+ *
+ * Handed to the desk rather than hard-coded there, so the states an agent can reach and the
+ * states the server will accept cannot drift apart — a button that produces a 409 is worse
+ * than no button.
+ */
+export function nextStatuses(from: string): readonly TicketStatus[] {
+  return NEXT[displayStatus(from)];
+}
