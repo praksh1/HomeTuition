@@ -14,14 +14,19 @@
  * Usage: PGURL=... node scripts/storage-check/run.mjs
  */
 import { spawn, execFileSync } from "node:child_process";
+import http from "node:http";
 import path from "node:path";
 import { getChromium } from "../board-tests/harness.mjs";
 
 const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const PORT = Number(process.env.CHECK_SITE_PORT ?? 8096);
 const siteUrl = `http://localhost:${PORT}`;
-const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
+const API_PORT = Number(process.env.CHECK_API_PORT ?? 8094);
+const API = `http://127.0.0.1:${API_PORT}`;
+const R2_PORT = Number(process.env.CHECK_R2_PORT ?? 9496);
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
+const serverRoot = path.resolve(appRoot, "..", "api-server");
+const repoRoot = path.resolve(appRoot, "..", "..");
 
 let passed = 0, failed = 0; const failures = [];
 const check = (n, ok, d = "") => { if (ok) { passed++; console.log(`   PASS  ${n}`); } else { failed++; failures.push(`${n} — ${d}`); console.log(`   FAIL  ${n} — ${d}`); } };
@@ -35,10 +40,58 @@ async function api(p, o = {}) {
   return { status: r.status, body: b };
 }
 
+/**
+ * This suite starts its own API and its own bucket.
+ *
+ * It used to drive whichever API happened to be running, with whatever R2 settings were in the
+ * developer's `.env`. That passed on a machine where R2 was pointed at a stand-in and would
+ * have failed everywhere else — including CI, which configures no R2 at all, so the check
+ * would report "not configured" and every assertion about a *refusal* would be wrong. The
+ * upload suite learned this the hard way and its header says so; this is the same lesson.
+ *
+ * The bucket here refuses writes and answers everything else, which is what a read-only R2 API
+ * token does — the failure this whole screen was built to explain.
+ */
+const readOnlyBucket = http.createServer((req, res) => {
+  if (req.method === "PUT") {
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.writeHead(403, { "Content-Type": "application/xml" });
+      res.end('<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>');
+    });
+    return;
+  }
+  res.writeHead(200).end();
+});
+await new Promise((r) => readOnlyBucket.listen(R2_PORT, "127.0.0.1", r));
+
+const apiProcess = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
+  cwd: repoRoot,
+  env: {
+    ...process.env,
+    PORT: String(API_PORT),
+    DATABASE_URL: PGURL,
+    SESSION_SECRET: process.env.SESSION_SECRET ?? "storage-check-test-secret",
+    // Every setting present, as it is in production — so a failure here can only be the token
+    // or the bucket, which is the distinction the screen exists to draw.
+    R2_ACCOUNT_ID: "abc123def456abc123def456abc123de",
+    R2_ACCESS_KEY_ID: "test-access-key",
+    R2_SECRET_ACCESS_KEY: "test-secret-key-not-a-real-one",
+    R2_BUCKET: "hometuition-test",
+    R2_ENDPOINT: `http://127.0.0.1:${R2_PORT}`,
+  },
+  stdio: "ignore",
+});
+
 const server = spawn(process.execPath, [path.join(appRoot, "server", "serve.js")], { cwd: appRoot, env: { ...process.env, PORT: String(PORT) }, stdio: "ignore" });
-const stop = () => { try { server.kill(); } catch {} };
+const stop = () => {
+  try { server.kill(); } catch {}
+  try { apiProcess.kill(); } catch {}
+  try { readOnlyBucket.close(); } catch {}
+};
 process.on("exit", stop);
 for (let i = 0; i < 40; i++) { try { if ((await fetch(siteUrl)).ok) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
+for (let i = 0; i < 80; i++) { try { if ((await fetch(`${API}/api/healthz`)).ok) break; } catch {} await new Promise(r => setTimeout(r, 250)); }
 
 const stamp = Date.now();
 const account = (await api("/auth/register", { method: "POST", body: {
@@ -62,6 +115,12 @@ const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
 const page = await ctx.newPage();
 page.on("dialog", async (d) => { await d.accept(); });
+const builtApi = (process.env.EXPO_PUBLIC_API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
+if (builtApi !== API) {
+  await page.route(`${builtApi}/**`, async (route) => {
+    await route.continue({ url: route.request().url().replace(builtApi, API) });
+  });
+}
 await page.addInitScript((tok) => window.localStorage.setItem("@sikshya_token", tok), agent.token);
 await page.goto(`${siteUrl}/(admin)`, { waitUntil: "networkidle" });
 await page.waitForTimeout(4500);
