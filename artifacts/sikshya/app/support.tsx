@@ -15,7 +15,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { notify } from "@/utils/alerts";
 import { useColors } from "@/hooks/useColors";
-import { apiBase, apiGet, apiPost, apiPutBinary, getToken } from "@/utils/api";
+import { apiGet, apiPost } from "@/utils/api";
+import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 const REASONS = [
   "Payment Issue",
@@ -48,13 +49,8 @@ interface ReportableSession {
   endedEarly: boolean;
 }
 
-interface PickedFile {
-  uri: string;
-  name: string;
-  mimeType: string;
-  /** Bytes. The upload endpoint requires it, and a missing one is a 400. */
-  size: number;
-}
+/** What the picker hands back. The uploader takes the same shape — see utils/uploadFile.ts. */
+type PickedFile = UploadableFile;
 
 /**
  * The largest file worth trying to send.
@@ -163,98 +159,16 @@ export default function SupportScreen() {
     });
   };
 
+  /**
+   * The upload itself lives in utils/uploadFile.ts.
+   *
+   * It moved there when homework needed to upload files too. Two copies of this would drift —
+   * different fields, a different fallback, a different error — and this project already knows
+   * what two implementations of one thing costs.
+   */
   const uploadEvidence = async (): Promise<string> => {
     if (!file) throw new Error("No file selected");
-    /**
-     * `name` and `size`, not `fileName`.
-     *
-     * This is why attaching anything to a report failed for months: the app sent `fileName` and
-     * no size, the endpoint requires `name`, `size` and `contentType`, and every upload came
-     * back 400 before a single byte left the phone. Nothing said so — the report simply failed.
-     */
-    const { uploadURL, objectPath } = await apiPost<UploadUrlResponse>("/storage/uploads/request-url", {
-      name: file.name,
-      size: file.size > 0 ? file.size : 1,
-      contentType: file.mimeType,
-    });
-
-    /**
-     * Straight to Cloudflare first, through this server only if that is refused.
-     *
-     * The direct path is much better on a slow connection — the file goes to the nearest
-     * Cloudflare edge instead of to Railway and out again — but a browser will not make that
-     * request unless the bucket names this site's origin in a CORS rule. With no rule, Safari
-     * says "Load failed" and nothing else, which is exactly what a student saw on the live site.
-     *
-     * So a refusal is not fatal. It falls back to uploading through our own API, which is
-     * slower and always works: same size cap, same allowed types, same bucket. It also means
-     * renaming the app cannot silently break uploads, and that rename is coming.
-     */
-    try {
-      await putDirect(uploadURL, file);
-      return objectPath;
-    } catch (directFailure) {
-      try {
-        return await putViaServer(file);
-      } catch (fallbackFailure) {
-        // The direct failure is the more informative of the two, so it is the one reported.
-        throw fallbackFailure instanceof Error && /larger than|photos and PDFs/i.test(fallbackFailure.message)
-          ? fallbackFailure
-          : new Error(
-              directFailure instanceof Error && directFailure.message
-                ? `${directFailure.message}. We also could not send it through our server.`
-                : "We could not upload your file.",
-            );
-      }
-    }
-  };
-
-  /** Upload straight to the bucket with the signed link. */
-  const putDirect = async (uploadURL: string, chosen: PickedFile): Promise<void> => {
-    if (Platform.OS === "web") {
-      const fileResp = await fetch(chosen.uri);
-      const blob = await fileResp.blob();
-      const putResp = await fetch(uploadURL, {
-        method: "PUT",
-        headers: { "Content-Type": chosen.mimeType },
-        body: blob,
-      });
-      if (!putResp.ok) throw new Error(`The upload was refused (${putResp.status}).`);
-      return;
-    }
-    const FileSystem = await import("expo-file-system");
-    const uploadResult = await FileSystem.uploadAsync(uploadURL, chosen.uri, {
-      httpMethod: "PUT",
-      headers: { "Content-Type": chosen.mimeType },
-    });
-    if (uploadResult.status < 200 || uploadResult.status >= 300) {
-      throw new Error(`The upload was refused (${uploadResult.status}).`);
-    }
-  };
-
-  /** Upload through our own API, which no browser rule can block. */
-  const putViaServer = async (chosen: PickedFile): Promise<string> => {
-    if (Platform.OS === "web") {
-      const fileResp = await fetch(chosen.uri);
-      const blob = await fileResp.blob();
-      const res = await apiPutBinary<{ objectPath: string }>("/storage/upload", blob, chosen.mimeType);
-      return res.objectPath;
-    }
-    const FileSystem = await import("expo-file-system");
-    const token = await getToken();
-    const result = await FileSystem.uploadAsync(`${apiBase()}/storage/upload`, chosen.uri, {
-      httpMethod: "PUT",
-      headers: {
-        "Content-Type": chosen.mimeType,
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
-    if (result.status < 200 || result.status >= 300) {
-      let reason = "We could not send your file.";
-      try { reason = JSON.parse(result.body ?? "{}").error ?? reason; } catch { /* not JSON */ }
-      throw new Error(reason);
-    }
-    return JSON.parse(result.body).objectPath as string;
+    return uploadFile(file);
   };
 
   const submit = async () => {

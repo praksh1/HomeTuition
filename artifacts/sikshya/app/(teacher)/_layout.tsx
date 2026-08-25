@@ -112,6 +112,14 @@ function ClassicTabLayout() {
       />
       {/* Still routable, and reached from Profile — just no longer a tab of its own. */}
       <Tabs.Screen name="subscription" options={{ href: null }} />
+      {/*
+        Reached from the Dashboard rather than given a tab of its own.
+
+        The bar already holds six, and the owner's students are on cheap Android phones where a
+        seventh is a squeeze. A monthly class is also something a teacher sets up once and then
+        lives inside, which is the same argument that moved Plan off the bar.
+      */}
+      <Tabs.Screen name="monthly" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="session-create" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="classroom/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
     </Tabs>

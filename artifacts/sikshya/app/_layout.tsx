@@ -45,6 +45,10 @@ const SHARED_SCREENS = [
   // A class's own page. Shared because both roles land on it from the same link — the one in
   // the invitation and booking emails, which until now led nowhere.
   { name: "session/[id]", segment: "session" },
+  // A monthly course's chat and homework. Shared for the same reason: a teacher and a student
+  // open the same conversation and the same homework, from opposite sides of it.
+  { name: "monthly-chat", segment: "monthly-chat" },
+  { name: "monthly-homework", segment: "monthly-homework" },
 ] as const;
 
 function AuthGuard() {
