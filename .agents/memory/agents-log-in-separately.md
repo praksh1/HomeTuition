@@ -23,6 +23,32 @@ make was the problem, and it cost them a round of correction.
 
 If a design constraint here looks wrong, say so in a sentence and then build what was asked.
 
+### The shape, decided 2026-08-25
+
+- **Its own address.** A second Cloudflare Worker on its own URL, built from its own route
+  tree. Not a path inside the student/teacher site, and nothing in that site links to it.
+- **Its own login form.** Operators never see the app's login.
+- **Accounts created by an administrator**, who sets an ID and gets a **one-time password shown
+  once**. The operator must change it on first sign-in, so nobody — the administrator included
+  — knows their working password.
+
+### How a second site gets built from this repo
+
+The route tree comes from `app.json` → `expo.extra.router.root`, which `@expo/cli` reads via
+`getRouterDirectoryModuleIdWithManifest` and hands to babel as the `routerRoot` caller option;
+`babel-preset-expo` then inlines it as `EXPO_ROUTER_APP_ROOT`, which is what `expo-router`'s
+`require.context` resolves. It defaults to `./app`.
+
+So an `app.config.js` that switches that value on an env var produces a **second bundle from a
+second directory**, reusing the existing admin screens rather than rewriting them:
+
+```js
+extra: { router: { root: process.env.OPERATOR_BUILD ? "./app-operator" : "./app" } }
+```
+
+Then a second wrangler config points at that build output. `expo export --config` was removed
+in SDK 54 — do not reach for it.
+
 ### What that means in practice
 
 The current implementation does **not** match this yet. What exists today is:
