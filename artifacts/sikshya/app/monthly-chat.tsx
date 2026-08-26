@@ -18,7 +18,7 @@ import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollV
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 
-import { openAttachment } from "@/utils/openAttachment";
+import MessageAttachment from "@/components/MessageAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 import { applyReaction, attachmentLabel, REACTIONS, type Attachment, type Reaction } from "@/utils/reactions";
 
@@ -266,10 +266,7 @@ export default function MonthlyChatScreen() {
             open={picking === item.id}
             onLongPress={() => setPicking(picking === item.id ? null : item.id)}
             onReact={(emoji) => void react(item.id, emoji)}
-            onOpenFile={async (key) => {
-              const result = await openAttachment(key);
-              if (!result.ok) setProblem(result.reason ?? "We could not open that file.");
-            }}
+            onProblem={setProblem}
           />
         )}
       />
@@ -356,7 +353,7 @@ export default function MonthlyChatScreen() {
  * message this is can disagree with the first.
  */
 function Bubble({
-  message, canPin, onPin, open, onLongPress, onReact, onOpenFile,
+  message, canPin, onPin, open, onLongPress, onReact, onProblem,
 }: {
   message: ChatMessage;
   canPin: boolean;
@@ -365,7 +362,8 @@ function Bubble({
   open: boolean;
   onLongPress: () => void;
   onReact: (emoji: string) => void;
-  onOpenFile: (key: string) => void;
+  /** A file that would not open — said in the screen's own words, above the composer. */
+  onProblem: (reason: string) => void;
 }) {
   const colors = useColors();
   const mine = message.mine;
@@ -402,30 +400,9 @@ function Bubble({
           )}
 
           {files.map((f) => (
-            <TouchableOpacity
-              key={f.fileKey}
-              onPress={() => onOpenFile(f.fileKey)}
-              activeOpacity={0.75}
-              testID={`class-file-${message.id}`}
-              style={[
-                styles.fileChip,
-                {
-                  backgroundColor: mine ? "rgba(255,255,255,0.16)" : colors.muted,
-                  borderColor: mine ? "rgba(255,255,255,0.28)" : colors.border,
-                  marginTop: message.body ? 8 : 0,
-                },
-              ]}
-            >
-              <Feather
-                name={f.fileType.startsWith("image/") ? "image" : "file-text"}
-                size={14}
-                color={mine ? "#FFFFFF" : colors.primary}
-              />
-              <Text style={[styles.fileName, { color: mine ? "#FFFFFF" : colors.foreground }]} numberOfLines={1}>
-                {attachmentLabel(f)}
-              </Text>
-              <Feather name="external-link" size={12} color={mine ? "#FFFFFFCC" : colors.mutedForeground} />
-            </TouchableOpacity>
+            <View key={f.fileKey} style={{ marginTop: message.body ? 8 : 0 }}>
+              <MessageAttachment file={f} mine={mine} onProblem={onProblem} />
+            </View>
           ))}
 
           {message.pinnedAt && (

@@ -18,7 +18,7 @@ import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/utils/api";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
-import { openAttachment } from "@/utils/openAttachment";
+import MessageAttachment from "@/components/MessageAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 import {
   applyReaction,
@@ -216,39 +216,11 @@ export default function ConversationScreen() {
                   )}
 
                   {files.map((f) => (
-                    <TouchableOpacity
-                      key={f.fileKey}
-                      onPress={async () => {
-                        const result = await openAttachment(f.fileKey);
-                        if (!result.ok) setProblem(result.reason ?? "We could not open that file.");
-                      }}
-                      activeOpacity={0.75}
-                      testID={`message-file-${item.id}`}
-                      style={[
-                        styles.fileChip,
-                        {
-                          backgroundColor: mine ? "rgba(255,255,255,0.16)" : colors.card,
-                          borderColor: mine ? "rgba(255,255,255,0.28)" : colors.border,
-                          marginTop: item.body ? 8 : 0,
-                        },
-                      ]}
-                    >
-                      <Feather
-                        name={f.fileType.startsWith("image/") ? "image" : "file-text"}
-                        size={14}
-                        color={mine ? "#fff" : colors.primary}
-                      />
-                      <Text
-                        style={[styles.fileName, { color: mine ? "#fff" : colors.foreground }]}
-                        numberOfLines={1}
-                      >
-                        {attachmentLabel(f)}
-                      </Text>
-                      <Feather name="external-link" size={12} color={mine ? "#fff" : colors.mutedForeground} />
-                    </TouchableOpacity>
+                    <View key={f.fileKey} style={{ marginTop: item.body ? 8 : 0 }}>
+                      <MessageAttachment file={f} mine={mine} onProblem={setProblem} />
+                    </View>
                   ))}
                 </TouchableOpacity>
-
               </View>
 
               {reactions.length > 0 && (
