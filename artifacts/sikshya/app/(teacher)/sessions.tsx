@@ -279,6 +279,24 @@ export default function TeacherSessions() {
               ) : null}
               <Text style={[styles.planLink, { color: colors.secondary }]}>Open My Plan →</Text>
             </TouchableOpacity>
+          ) : null}
+
+          {/*
+            Today's class, one tap from the plan.
+            
+            A teacher should not have to find their own daily class in a list of every class
+            they have ever run — it is the same class every day, at the same time.
+          */}
+          {plan?.class?.today?.sessionId ? (
+            <TouchableOpacity
+              testID="teacher-monthly-today"
+              activeOpacity={0.85}
+              onPress={() => router.push(`/session/${plan.class!.today!.sessionId}`)}
+              style={[styles.todayBtn, { backgroundColor: colors.primary }]}
+            >
+              <Feather name="video" size={16} color="#fff" />
+              <Text style={styles.todayBtnText}>Today&apos;s class</Text>
+            </TouchableOpacity>
           ) : !planKnown ? (
             <View style={styles.empty}>
               <Feather name="wifi-off" size={44} color={colors.border} />
@@ -390,6 +408,8 @@ const styles = StyleSheet.create({
   planMeta: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   planWarn: { fontSize: 13, fontFamily: "Inter_500Medium", lineHeight: 19, marginTop: 4 },
   planLink: { fontSize: 14, fontFamily: "Inter_500Medium", marginTop: 8 },
+  todayBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 13, marginTop: 12 },
+  todayBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: "#fff" },
   createBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
   createBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#fff" },
   tabsRow: { flexGrow: 0, flexShrink: 0 },

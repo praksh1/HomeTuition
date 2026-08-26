@@ -32,6 +32,25 @@ export interface MonthlyEnrolment {
   sessionsPaidFor: number;
   sessionsPlanned: number;
   status: string;
+  /** The number the teacher must actually deliver, capped at what this student bought. */
+  guaranteed: number;
+  /** The platform's floor itself, so the screen can explain where the number came from. */
+  guaranteeFloor: number;
+}
+
+/**
+ * What a student paid for, and what is promised — in one sentence.
+ *
+ * A student was told "you paid NPR 1,933 for 29 classes" while the teacher's obligation was a
+ * floor of 25. Both true, and the gap between them is exactly where a refund argument starts:
+ * receive 26 and you have "lost three" while the teacher owes nothing. Saying only the larger
+ * number is a promise the rules do not make; saying only the smaller one undersells what a
+ * student will almost always get.
+ */
+export function paidAndGuaranteed(e: MonthlyEnrolment): string {
+  const paid = `You paid NPR ${e.amountPaid.toLocaleString()} for ${e.sessionsPaidFor} classes.`;
+  if (e.guaranteed >= e.sessionsPaidFor) return `${paid} All of them are guaranteed.`;
+  return `${paid} At least ${e.guaranteed} are guaranteed — if fewer are held, you are refunded the difference.`;
 }
 
 export interface MonthlyLedger {
@@ -65,6 +84,8 @@ export interface MonthlyClass {
   ledger: MonthlyLedger | null;
   quote: MonthlyQuote | null;
   enrolment: MonthlyEnrolment | null;
+  /** Today's class, for people who are in it. Null for a browser, or on a day with none. */
+  today: { sessionId: number | null; startsAt: string; status: string } | null;
 }
 
 export interface MonthlyStanding {

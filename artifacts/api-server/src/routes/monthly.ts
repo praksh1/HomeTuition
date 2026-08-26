@@ -13,6 +13,7 @@ import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { chargeForMonthly } from "../lib/payments";
 import { notify, notifyMany } from "../lib/notify";
 import {
+  MIN_SESSIONS_PER_CYCLE,
   MAKEUP_DEADLINE_HOURS,
   MAX_ABUSES_PER_CYCLE,
   MAX_DAILY_MINUTES,
@@ -53,6 +54,7 @@ import {
   nextClassDay,
   settleDueDays,
   settleFinishedCycles,
+  todaysClassDay,
 } from "../lib/monthlyStore";
 
 const router: IRouter = Router();
@@ -162,6 +164,9 @@ async function describeClass(klass: Awaited<ReturnType<typeof classById>>, viewe
   const ledger = cycle ? await ledgerFor(klass.id, cycleIndex) : null;
 
   const mine = viewerId !== null && cycle ? await enrolmentFor(klass.id, viewerId, cycleIndex) : null;
+  const isTeacher = viewerId !== null && viewerId === klass.teacherId;
+  // Looked up for everyone and handed only to people in the class — see `today` below.
+  const today = viewerId !== null ? await todaysClassDay(klass.id) : null;
 
   return {
     id: klass.id,
@@ -191,6 +196,21 @@ async function describeClass(klass: Awaited<ReturnType<typeof classById>>, viewe
     ledger,
     /** What this viewer would pay to join right now; null once they hold a place. */
     quote: mine ? null : quoteJoin(klass.monthlyPrice, remaining, planned),
+    /**
+     * Today's class, so the monthly card can be the way in.
+     *
+     * Only for somebody who is actually in the class — the teacher, or a student holding a
+     * place. A link handed to a browser would be a door with no lock in front of it, and the
+     * door itself is `membership.ts`, which would refuse them anyway; offering it would just
+     * be a button that fails.
+     */
+    today: today && (isTeacher || mine)
+      ? {
+          sessionId: today.sessionId,
+          startsAt: today.scheduledFor.toISOString(),
+          status: today.status,
+        }
+      : null,
     enrolment: mine
       ? {
           cycleIndex: mine.cycleIndex,
@@ -198,6 +218,17 @@ async function describeClass(klass: Awaited<ReturnType<typeof classById>>, viewe
           sessionsPaidFor: mine.sessionsPaidFor,
           sessionsPlanned: mine.sessionsPlanned,
           status: mine.status,
+          /**
+           * What is guaranteed, next to what was bought.
+           *
+           * A student was told "you paid NPR 1,933 for 29 classes" while the teacher owed a
+           * floor of 25. Two numbers for one arrangement, and the gap is exactly where a
+           * refund argument starts: a student who receives 26 has "lost three" while the
+           * teacher owes nothing. Saying both, in one sentence, is the whole fix — see
+           * `deliveryVerdict` in lib/monthly.ts for the rule this is quoting.
+           */
+          guaranteed: Math.min(MIN_SESSIONS_PER_CYCLE, mine.sessionsPaidFor),
+          guaranteeFloor: MIN_SESSIONS_PER_CYCLE,
         }
       : null,
   };

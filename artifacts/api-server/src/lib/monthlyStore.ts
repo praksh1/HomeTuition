@@ -286,6 +286,47 @@ export async function nextClassDay(recurringId: number, now: number = Date.now()
   return found ?? null;
 }
 
+/**
+ * Today's class, or the next one — with the id of the real class behind it.
+ *
+ * The owner's ask: *"'Monthly Class' should automatically have a link to the 'Daily Session'
+ * for that day — a student or a teacher need not go to the Sessions Tab to attend."* They were
+ * right that it should be one tap, and the pieces were already there: `materialiseDueDays`
+ * turns each class-day into an ordinary `sessions` row, so the class has a real id, a real
+ * room and a real door. Nothing linked to it.
+ *
+ * Looks back as well as forward. A class that started twenty minutes ago is the class somebody
+ * opening the app right now wants; `nextClassDay` deliberately only looks ahead, because it
+ * answers a different question — when is the next one *due* — and using it here would send a
+ * student who is running late to tomorrow.
+ */
+export async function todaysClassDay(
+  recurringId: number,
+  now: number = Date.now(),
+  conn: Db = db,
+) {
+  /**
+   * How far back to still count a class as "today's".
+   *
+   * Three hours covers a long class plus a late start, and stops short of yesterday's — which
+   * would be worse than showing nothing, because a link to a finished room looks like a link
+   * to a live one.
+   */
+  const lookBackMs = 3 * 60 * 60 * 1000;
+  const [found] = await conn
+    .select()
+    .from(recurringDaysTable)
+    .where(
+      and(
+        eq(recurringDaysTable.recurringId, recurringId),
+        gt(recurringDaysTable.scheduledFor, new Date(now - lookBackMs)),
+      ),
+    )
+    .orderBy(asc(recurringDaysTable.scheduledFor))
+    .limit(1);
+  return found ?? null;
+}
+
 /** The cycle length in days, re-exported so route code has one place to read it from. */
 export { CYCLE_DAYS };
 

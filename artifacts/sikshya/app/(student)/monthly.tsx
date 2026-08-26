@@ -16,7 +16,7 @@ import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import { useColors } from "@/hooks/useColors";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet, apiPost, ApiError } from "@/utils/api";
-import { formatStartMinute, money, type MonthlyClass } from "@/utils/monthly";
+import { formatStartMinute, money, paidAndGuaranteed, type MonthlyClass } from "@/utils/monthly";
 
 /**
  * Monthly classes, from a student's side.
@@ -26,6 +26,23 @@ import { formatStartMinute, money, type MonthlyClass } from "@/utils/monthly";
  * charged then nothing else about the tier matters. So the price shown here is the one the
  * server quoted — the app never works one out.
  */
+/**
+ * What the button should say about today's class.
+ *
+ * "Join today's class" only once the doors are actually open, because a button that promises a
+ * room and then refuses is worse than one that tells you when to come back. Ten minutes is the
+ * same window the rest of the app uses — see utils/sessionWindow.ts.
+ */
+function todayLabel(startsAt: string, dates: { format: (v: string, o?: { withTime?: boolean }) => string }): string {
+  const starts = new Date(startsAt).getTime();
+  const now = Date.now();
+  const doorsOpen = starts - 10 * 60 * 1000;
+  if (now >= doorsOpen) return "Join today's class";
+  const sameDay = new Date(starts).toDateString() === new Date(now).toDateString();
+  if (sameDay) return `Today's class — ${dates.format(startsAt, { withTime: true }).split(", ").pop()}`;
+  return `Next class — ${dates.format(startsAt, { withTime: true })}`;
+}
+
 export default function StudentMonthlyScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -160,6 +177,7 @@ function ClassCard({
   onJoin: () => void;
 }) {
   const colors = useColors();
+  const dates = useDates();
   const quote = klass.quote;
   const full = klass.seatsLeft <= 0;
   const nothingLeft = quote?.startsNextCycle === true;
@@ -178,12 +196,39 @@ function ClassCard({
         <Fact icon="calendar" text={`${klass.sessionsRemaining} classes left this month`} />
       </View>
 
+      {/*
+        Today's class, one tap from here.
+
+        The owner's ask: a student should not have to go to the Sessions tab to attend. The
+        class-day is already a real session with a real room — only the link was missing.
+      */}
+      {klass.today?.sessionId ? (
+        <TouchableOpacity
+          testID={`monthly-today-${klass.id}`}
+          activeOpacity={0.85}
+          onPress={() => router.push(`/session/${klass.today!.sessionId}`)}
+          style={[styles.todayBtn, { backgroundColor: colors.primary }]}
+        >
+          <Feather name="video" size={16} color="#fff" />
+          <Text style={styles.todayBtnText}>
+            {todayLabel(klass.today.startsAt, dates)}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+
       {klass.enrolment ? (
         <View style={[styles.joined, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "30" }]}>
           <Feather name="check-circle" size={16} color={colors.primary} />
-          <Text style={[styles.joinedText, { color: colors.foreground }]}>
-            You are in this class. You paid {money(klass.enrolment.amountPaid)} for{" "}
-            {klass.enrolment.sessionsPaidFor} classes.
+          {/*
+            What was paid for, and what is guaranteed.
+
+            This used to say only the first. The teacher's obligation is a floor of 25, so a
+            student who receives 26 of 29 had "lost three" while the teacher owed nothing —
+            two numbers for one arrangement, and the gap is where a refund argument starts.
+            See paidAndGuaranteed() in utils/monthly.ts.
+          */}
+          <Text style={[styles.joinedText, { color: colors.foreground }]} testID="monthly-paid-line">
+            You are in this class. {paidAndGuaranteed(klass.enrolment)}
           </Text>
         </View>
       ) : (
@@ -295,6 +340,8 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     marginTop: 14,
   },
+  todayBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 13, marginBottom: 12 },
+  todayBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: "#fff" },
   joinedText: { flex: 1, fontSize: 13.5, fontFamily: "Inter_400Regular", lineHeight: 19 },
   notice: {
     flexDirection: "row",
