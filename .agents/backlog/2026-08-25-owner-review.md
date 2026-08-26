@@ -57,12 +57,24 @@ Answers given, in their order:
 Also: **Messages** is not meant to be WhatsApp entire — a conversation-style thread with
 attachments is what was asked for.
 
-## C. Messages, rebuilt to look like a messaging app
+## C. Messages, rebuilt to look like a messaging app — **done**
 
 The owner's words: no Inbox/Sent/Drafts. One list, newest correspondent on top, unread marked,
 open to clear it. Unsent text stays a draft. Sent and received in different bubbles, a few
 reactions. "As close to Messenger/WhatsApp/Viber as possible" — and explicitly: replace their
 wording with whatever the industry actually does.
+
+Built: folders gone, one list newest-first, drafts shown against the conversation they belong
+to, a paperclip on the compose row, long-press to react. 52 checks in
+`artifacts/api-server/scripts/message-tests/run.mjs`, each guard removed on purpose to confirm
+its check goes red.
+
+One thing found along the way that had nothing to do with Messages and everything to do with
+the next feature that stores a file: `GET /storage/file` allows a fixed list of cases, and a
+recipient of a message was not on it — so a photo sent to a teacher produced a bubble they
+could see and a file they could not open. Written up in
+`.agents/memory/attachment-access-is-per-feature.md`, because the same trap is waiting for
+whatever stores a file key next.
 
 ## D. Infrastructure the owner asked about
 
