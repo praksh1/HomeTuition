@@ -16,6 +16,7 @@ export * from "./sessionEnrollments";
 export * from "./reviews";
 export * from "./studentTeacherSubscriptions";
 export * from "./messages";
+export * from "./messageExtras";
 export * from "./disputes";
 export * from "./teacherLeave";
 export * from "./teacherPlans";

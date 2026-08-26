@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
+  messageAttachmentsTable,
+  messageReactionsTable,
   db,
   messagesTable,
   sessionEnrollmentsTable,
@@ -10,6 +12,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { notify } from "../lib/notify";
+import { verifyUpload } from "../lib/fileStore";
 
 const router: IRouter = Router();
 
@@ -98,17 +101,127 @@ router.get("/messages/:otherUserId", requireAuth, async (req, res): Promise<void
     .set({ read: true })
     .where(and(eq(messagesTable.senderId, otherUserId), eq(messagesTable.receiverId, userId), eq(messagesTable.read, false)));
 
-  res.json(thread);
+  /**
+   * Files and reactions, fetched for the whole thread at once.
+   *
+   * Two queries rather than two per message: a conversation is read on a cheap phone over a
+   * poor connection, and a hundred round trips to decorate a hundred bubbles is the difference
+   * between a screen that opens and one that crawls.
+   *
+   * Both tables are new, so an older database that has not been pushed yet simply has nothing
+   * in them — the thread still opens, without decoration, rather than failing.
+   */
+  const ids = thread.map((m) => m.id);
+  const [files, reactions] = ids.length
+    ? await Promise.all([
+        db.select().from(messageAttachmentsTable).where(inArray(messageAttachmentsTable.messageId, ids)),
+        db.select().from(messageReactionsTable).where(inArray(messageReactionsTable.messageId, ids)),
+      ])
+    : [[], []];
+
+  const filesByMessage = new Map<number, typeof files>();
+  for (const f of files) {
+    filesByMessage.set(f.messageId, [...(filesByMessage.get(f.messageId) ?? []), f]);
+  }
+  const reactionsByMessage = new Map<number, typeof reactions>();
+  for (const r of reactions) {
+    reactionsByMessage.set(r.messageId, [...(reactionsByMessage.get(r.messageId) ?? []), r]);
+  }
+
+  res.json(
+    thread.map((m) => ({
+      ...m,
+      attachments: (filesByMessage.get(m.id) ?? []).map((f) => ({
+        fileKey: f.fileKey, fileType: f.fileType, fileName: f.fileName,
+      })),
+      /**
+       * Counted, with this reader's own marked.
+       *
+       * Sending the whole list would mean shipping every reactor's id to both sides of a
+       * private conversation for no gain: what a bubble shows is "two 👍, one of them mine".
+       */
+      reactions: Object.entries(
+        (reactionsByMessage.get(m.id) ?? []).reduce<Record<string, number>>((acc, r) => {
+          acc[r.emoji] = (acc[r.emoji] ?? 0) + 1;
+          return acc;
+        }, {}),
+      ).map(([emoji, count]) => ({
+        emoji,
+        count,
+        mine: (reactionsByMessage.get(m.id) ?? []).some((r) => r.emoji === emoji && r.userId === userId),
+      })),
+    })),
+  );
+});
+
+/**
+ * React to a message, or take a reaction back.
+ *
+ * One per person per message, replaced rather than stacked — sending the emoji you already put
+ * there removes it, which is what a second tap means everywhere else.
+ */
+router.post("/messages/:messageId/reaction", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.userId;
+  const messageId = parseInt(String(req.params.messageId), 10);
+  if (isNaN(messageId)) { res.status(400).json({ error: "Invalid message id" }); return; }
+
+  const { emoji } = req.body as { emoji?: string };
+  const chosen = typeof emoji === "string" ? emoji.trim() : "";
+  // Length rather than a fixed list: the list is a screen decision and will change, and a
+  // server that only accepts six would need changing the first time somebody wants a seventh.
+  if (!chosen || [...chosen].length > 4) {
+    res.status(400).json({ error: "Pick one reaction." });
+    return;
+  }
+
+  /** Only the two people in the conversation. A reaction is as private as the message. */
+  const [message] = await db
+    .select({ senderId: messagesTable.senderId, receiverId: messagesTable.receiverId })
+    .from(messagesTable)
+    .where(eq(messagesTable.id, messageId));
+  if (!message || (message.senderId !== userId && message.receiverId !== userId)) {
+    res.status(404).json({ error: "That message was not found." });
+    return;
+  }
+
+  const [existing] = await db
+    .select({ id: messageReactionsTable.id, emoji: messageReactionsTable.emoji })
+    .from(messageReactionsTable)
+    .where(and(eq(messageReactionsTable.messageId, messageId), eq(messageReactionsTable.userId, userId)));
+
+  if (existing && existing.emoji === chosen) {
+    await db.delete(messageReactionsTable).where(eq(messageReactionsTable.id, existing.id));
+    res.json({ emoji: null });
+    return;
+  }
+  if (existing) {
+    await db.update(messageReactionsTable).set({ emoji: chosen }).where(eq(messageReactionsTable.id, existing.id));
+  } else {
+    await db.insert(messageReactionsTable).values({ messageId, userId, emoji: chosen }).onConflictDoNothing();
+  }
+  res.json({ emoji: chosen });
 });
 
 // POST /messages/:otherUserId — send a message to a user.
 router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
   const otherUserId = parseInt(String(req.params.otherUserId), 10);
-  const { body } = req.body as { body?: string };
+  const { body, fileKey, fileType, fileName } = req.body as {
+    body?: string; fileKey?: string; fileType?: string; fileName?: string;
+  };
+  const attaching = typeof fileKey === "string" && fileKey.trim().length > 0;
 
   if (isNaN(otherUserId)) { res.status(400).json({ error: "Invalid user id" }); return; }
-  if (!body || !body.trim()) { res.status(400).json({ error: "Message body is required" }); return; }
+  /**
+   * A message needs words *or* a file.
+   *
+   * Sending a photo with no caption is the ordinary case in every messaging app, and requiring
+   * a body for it would mean typing something in order to send a picture.
+   */
+  if ((!body || !body.trim()) && !attaching) {
+    res.status(400).json({ error: "Write something, or attach a file." });
+    return;
+  }
   if (otherUserId === userId) { res.status(400).json({ error: "Cannot message yourself" }); return; }
 
   const [recipient] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, otherUserId));
@@ -117,8 +230,39 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
   const [message] = await db.insert(messagesTable).values({
     senderId: userId,
     receiverId: otherUserId,
-    body: body.trim(),
+    body: (body ?? "").trim(),
   }).returning();
+
+  /**
+   * The file, checked before it is allowed to be one.
+   *
+   * `verifyUpload` reads what actually landed in the bucket — who it belongs to, how big it
+   * really is, what type it really is. Everything the app said when it asked for the upload
+   * link was a claim.
+   *
+   * A file that fails does not sink the message, for the same reason it does not sink a
+   * support report: the words are the message, and losing both is the worst outcome. The
+   * sender is told the file did not go.
+   */
+  let attachmentProblem: string | null = null;
+  let attached: { fileKey: string; fileType: string; fileName: string | null } | null = null;
+  if (attaching) {
+    const verdict = await verifyUpload(fileKey!.trim(), userId);
+    if (verdict.ok) {
+      const [row] = await db.insert(messageAttachmentsTable).values({
+        messageId: message!.id,
+        fileKey: fileKey!.trim(),
+        // The type the bucket reports, not the one the phone claimed — the claim is what a
+        // renamed executable would have lied about, and is already known to be unreliable.
+        fileType: verdict.contentType || (typeof fileType === "string" ? fileType : "application/octet-stream"),
+        fileName: typeof fileName === "string" && fileName.trim() ? fileName.trim().slice(0, 200) : null,
+      }).returning();
+      attached = row ? { fileKey: row.fileKey, fileType: row.fileType, fileName: row.fileName } : null;
+    } else {
+      attachmentProblem = verdict.reason;
+      req.log.warn({ userId, key: fileKey, reason: verdict.reason }, "an attachment to a message was refused");
+    }
+  }
 
   /**
    * Tell the recipient now, if they are looking at the app.
@@ -136,11 +280,19 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
     kind: "message",
     fromUserId: userId,
     fromName: sender?.name ?? "Someone",
-    preview: message.body.slice(0, 140),
+    // A photo with no caption still has to read as something in a notification.
+    preview: message.body ? message.body.slice(0, 140) : attached ? "Sent a file" : "",
     at: new Date(message.createdAt).toISOString(),
   });
 
-  res.status(201).json(message);
+  res.status(201).json({
+    ...message,
+    // What was stored, so the bubble the sender sees is the same one the recipient will.
+    attachments: attached ? [attached] : [],
+    reactions: [],
+    // Travels with the reply so the app can say the message went and the file did not.
+    attachmentProblem,
+  });
 });
 
 /**
