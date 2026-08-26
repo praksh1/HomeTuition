@@ -6,7 +6,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
 import { apiGet } from "@/utils/api";
 import { loadDrafts, type Drafts } from "@/utils/drafts";
-import { unreadTotal } from "@/utils/conversations";
 
 interface Conversation {
   otherUserId: number;
@@ -18,19 +17,23 @@ interface Conversation {
   lastMessageFromMe: boolean;
 }
 
-type Folder = "inbox" | "sent" | "drafts";
-
-const FOLDERS: { id: Folder; label: string; icon: keyof typeof Feather.glyphMap }[] = [
-  { id: "inbox", label: "Inbox", icon: "inbox" },
-  { id: "sent", label: "Sent", icon: "send" },
-  { id: "drafts", label: "Drafts", icon: "edit" },
-];
+/**
+ * One list, newest first — no Inbox, Sent or Drafts.
+ *
+ * The owner asked for Messages to work the way the apps their users already have work. Those
+ * apps have no folders, and the reason is not fashion: folders are a filing metaphor from
+ * email, and a conversation is not filed. It is one thread with two people in it, and
+ * splitting it by who happened to speak last means the same conversation moves between tabs as
+ * it goes on — you reply, and it leaves your Inbox.
+ *
+ * Drafts do not need a folder either. An unsent line belongs to the conversation it was typed
+ * in, shown against it, where it will be finished.
+ */
 
 export default function ConversationList({ title }: { title: string }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [folder, setFolder] = useState<Folder>("inbox");
   const [drafts, setDrafts] = useState<Drafts>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -62,18 +65,21 @@ export default function ConversationList({ title }: { title: string }) {
     load();
   };
 
-  // Inbox is anything the other person last spoke in (or that has unread messages); Sent is
-  // where the last word was ours. Drafts are local, so they are matched by id.
-  const visible = conversations.filter((c) => {
-    if (folder === "inbox") return !c.lastMessageFromMe || c.unreadCount > 0;
-    if (folder === "sent") return c.lastMessageFromMe;
-    return Object.prototype.hasOwnProperty.call(drafts, String(c.otherUserId));
-  });
+  /**
+   * Everything, newest first.
+   *
+   * The server already returns them in order; sorting again here is cheap insurance against
+   * that changing, and against a draft written just now sitting below a conversation from a
+   * fortnight ago.
+   */
+  const visible = [...conversations].sort(
+    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
+  );
 
-  const draftOnly =
-    folder === "drafts"
-      ? Object.keys(drafts).filter((id) => !conversations.some((c) => String(c.otherUserId) === id))
-      : [];
+  /** A conversation that exists only as an unsent line still belongs in the list. */
+  const draftOnly = Object.keys(drafts).filter(
+    (id) => !conversations.some((c) => String(c.otherUserId) === id),
+  );
 
   const initials = (name: string) =>
     name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
@@ -100,39 +106,6 @@ export default function ConversationList({ title }: { title: string }) {
           <Feather name="edit-2" size={13} color="#fff" />
           <Text style={styles.newBtnText}>New</Text>
         </TouchableOpacity>
-      </View>
-
-      <View style={styles.folders}>
-        {FOLDERS.map((f) => {
-          const active = folder === f.id;
-          /**
-           * A number here means "unread", and nothing else.
-           *
-           * Every folder used to show how many conversations were in it, so a tidy inbox read
-           * "Inbox (1) · Sent (1) · Drafts (1)" — three numbers, none of which was anything to
-           * act on, all of them looking like the badge that means somebody is waiting for a
-           * reply. The owner asked for them gone. Only genuinely unread messages count now,
-           * and only on Inbox, which is the only folder where waiting is possible: nothing in
-           * Sent or Drafts can be unread by you.
-           */
-          const count = f.id === "inbox" ? unreadTotal(conversations) : 0;
-          return (
-            <TouchableOpacity
-              key={f.id}
-              style={[
-                styles.folderTab,
-                { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.primary + "12" : colors.muted },
-              ]}
-              onPress={() => setFolder(f.id)}
-              activeOpacity={0.75}
-            >
-              <Feather name={f.icon} size={13} color={active ? colors.primary : colors.mutedForeground} />
-              <Text style={[styles.folderText, { color: active ? colors.primary : colors.mutedForeground }]}>
-                {f.label}{count > 0 ? ` (${count})` : ""}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
       </View>
 
       {!loading && visible.length === 0 && draftOnly.length === 0 && (
@@ -179,9 +152,31 @@ export default function ConversationList({ title }: { title: string }) {
                 {new Date(c.lastMessageAt).toLocaleDateString("en-NP", { month: "short", day: "numeric" })}
               </Text>
             </View>
-            <Text style={[styles.preview, { color: colors.mutedForeground }]} numberOfLines={1}>
-              {c.lastMessage}
-            </Text>
+            {/*
+              An unsent line takes the preview's place.
+
+              It is the thing that person needs to see about that conversation — they were
+              part-way through saying something. Marked, so it is not mistaken for a message
+              that went.
+            */}
+            {drafts[String(c.otherUserId)] ? (
+              <Text style={[styles.preview, { color: colors.mutedForeground }]} numberOfLines={1}>
+                <Text style={{ color: colors.destructive }}>Draft: </Text>
+                {drafts[String(c.otherUserId)]}
+              </Text>
+            ) : (
+              <Text
+                style={[
+                  styles.preview,
+                  { color: colors.mutedForeground },
+                  // An unread conversation reads differently at a glance, not only by its badge.
+                  c.unreadCount > 0 && { color: colors.foreground, fontFamily: "Inter_600SemiBold" },
+                ]}
+                numberOfLines={1}
+              >
+                {c.lastMessage}
+              </Text>
+            )}
           </View>
           {c.unreadCount > 0 && (
             <View style={[styles.badge, { backgroundColor: colors.primary }]}>
@@ -190,15 +185,37 @@ export default function ConversationList({ title }: { title: string }) {
           )}
         </TouchableOpacity>
       ))}
+
+      {/*
+        Somebody typed to a person they have never sent to. Without this the line is kept and
+        invisible — nothing in the list says it exists, and it surfaces only if they happen to
+        open that conversation again.
+      */}
+      {draftOnly.map((id) => (
+        <TouchableOpacity
+          key={`draft-${id}`}
+          style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
+          activeOpacity={0.7}
+          onPress={() => router.push({ pathname: "/conversation/[id]", params: { id } })}
+          testID={`draft-row-${id}`}
+        >
+          <View style={[styles.avatar, { backgroundColor: colors.muted }]}>
+            <Feather name="edit-2" size={14} color={colors.mutedForeground} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>Unsent message</Text>
+            <Text style={[styles.preview, { color: colors.mutedForeground }]} numberOfLines={1}>
+              <Text style={{ color: colors.destructive }}>Draft: </Text>{drafts[id]}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      ))}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { paddingHorizontal: 20, gap: 12 },
-  folders: { flexDirection: "row", gap: 8, marginBottom: 14 },
-  folderTab: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 18, borderWidth: 1 },
-  folderText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
   title: { fontSize: 24, fontFamily: "Inter_700Bold", marginBottom: 4 },
   titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   newBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },

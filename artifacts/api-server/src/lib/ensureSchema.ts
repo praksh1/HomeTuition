@@ -868,3 +868,63 @@ export async function ensureTeacherLeave(): Promise<void> {
     );
   }
 }
+
+/**
+ * Files and reactions on messages.
+ *
+ * New tables rather than columns on `messages`, deliberately: two routes read that table with
+ * a bare `select()`, so a column declared before `db:push` runs turns listing conversations
+ * and opening a thread into 500s for the length of the deploy window. See
+ * `.agents/memory/schema-change-deploy-window.md`, and the comment on the schema itself.
+ */
+export async function ensureMessageExtras(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "message_attachments" (
+        "id" serial PRIMARY KEY,
+        "message_id" integer NOT NULL,
+        "file_key" text NOT NULL,
+        "file_type" text NOT NULL,
+        "file_name" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "message_attachments_message_id_messages_id_fk"
+          FOREIGN KEY ("message_id") REFERENCES "messages"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "message_attachments_message_idx" ON "message_attachments" ("message_id")
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "message_reactions" (
+        "id" serial PRIMARY KEY,
+        "message_id" integer NOT NULL,
+        "user_id" integer NOT NULL,
+        "emoji" text NOT NULL,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "message_reactions_message_id_messages_id_fk"
+          FOREIGN KEY ("message_id") REFERENCES "messages"("id") ON DELETE CASCADE,
+        CONSTRAINT "message_reactions_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    /*
+     * One per person per message, enforced by the database rather than by reading first and
+     * then writing — two taps in quick succession both pass that read.
+     */
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "message_reactions_one_each_idx"
+        ON "message_reactions" ("message_id", "user_id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "message_reactions_message_idx" ON "message_reactions" ("message_id")
+    `);
+    logger.info("message attachments and reactions are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not create the message attachment and reaction tables; run `pnpm run db:push`. " +
+        "Messages still send and arrive — but a file cannot be attached to one, and reacting " +
+        "to a message will fail.",
+    );
+  }
+}

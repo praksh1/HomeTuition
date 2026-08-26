@@ -4,6 +4,7 @@ import { db, disputesTable } from "@workspace/db";
 import { RequestUploadUrlBody, RequestUploadUrlResponse } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/requireAuth";
 import { mayOpenHomeworkFile } from "../lib/homeworkAccess";
+import { mayOpenMessageFile } from "../lib/messageAccess";
 import {
   ALLOWED_UPLOAD_TYPES,
   MAX_UPLOAD_BYTES,
@@ -230,6 +231,15 @@ router.get("/storage/file", requireAuth, async (req: Request, res: Response) => 
    * the rule sits with the tables it is about, and so this route keeps refusing by default.
    */
   if (!allowed) allowed = await mayOpenHomeworkFile(key, user.userId);
+
+  /**
+   * A file sent in a conversation, which is the third thing to keep files here.
+   *
+   * Somebody sending a photo to their teacher is not the teacher, so nothing above lets the
+   * teacher open it. Without this the bubble appeared and the file did not — and it would
+   * have looked fine to whoever tested it, because a sender can always open their own upload.
+   */
+  if (!allowed) allowed = await mayOpenMessageFile(key, user.userId);
 
   if (!allowed) { res.status(403).json({ error: "You cannot open this file." }); return; }
 
