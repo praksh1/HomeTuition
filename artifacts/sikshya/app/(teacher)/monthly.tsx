@@ -34,6 +34,25 @@ import {
  * one thing and a teacher should never have to find the right one: no plan yet, a plan with no
  * class, and a class that is running.
  */
+/**
+ * What the button should say about today's class.
+ *
+ * "Start today's class" only once the doors are actually open — ten minutes before, the same
+ * window the rest of the app uses. Before that it says when instead, because a button that
+ * promises a room and then refuses is worse than one that tells you to come back.
+ */
+function todayLabel(
+  startsAt: string,
+  formatBoth: (v: string | number | Date, o?: { withTime?: boolean }) => string,
+): string {
+  const starts = new Date(startsAt).getTime();
+  const now = Date.now();
+  if (now >= starts - 10 * 60 * 1000) return "Start today's class";
+  const when = formatBoth(startsAt, { withTime: true });
+  const sameDay = new Date(starts).toDateString() === new Date(now).toDateString();
+  return sameDay ? `Today's class — ${when.split(", ").pop()}` : `Next class — ${when}`;
+}
+
 export default function MonthlyClassScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -411,6 +430,29 @@ function RunningClass({
       </View>
 
       {/*
+        Today's class, one tap from here.
+
+        The owner, on the live site: *"The daily class link still does not show up here!"* It
+        was on their Sessions tab and on the student's monthly screen, and missing from the one
+        screen that is about this class — which is where a teacher goes to look at it.
+
+        Shown all day rather than only when the room opens, and saying when: a teacher checking
+        at breakfast wants to know the class is there. A button that appears ten minutes
+        beforehand reads as the app having forgotten about it.
+      */}
+      {klass.today?.sessionId ? (
+        <TouchableOpacity
+          testID={`teacher-monthly-today-${klass.id}`}
+          activeOpacity={0.85}
+          onPress={() => router.push(`/session/${klass.today!.sessionId}`)}
+          style={[styles.todayBtn, { backgroundColor: colors.primary }]}
+        >
+          <Feather name="video" size={16} color="#fff" />
+          <Text style={styles.todayBtnText}>{todayLabel(klass.today.startsAt, formatBoth)}</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {/*
         The floor, shown as a count rather than a rule.
         "You must teach 25" means nothing at a glance; "5 more to go" is a number a teacher can
         act on, and it is the same number their students' refunds hang off.
@@ -667,6 +709,8 @@ const styles = StyleSheet.create({
   cycleLine: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
   barTrack: { height: 10, borderRadius: 5, overflow: "hidden", marginTop: 10, marginBottom: 8 },
   barFill: { height: 10, borderRadius: 5 },
+  todayBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 13, marginBottom: 12 },
+  todayBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: "#fff" },
   missedRow: {
     flexDirection: "row",
     alignItems: "center",

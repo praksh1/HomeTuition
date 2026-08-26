@@ -220,8 +220,8 @@ export default function ConversationScreen() {
           const files = item.attachments ?? [];
           const reactions = item.reactions ?? [];
           return (
-            <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
-              <View style={{ maxWidth: "78%", alignItems: mine ? "flex-end" : "flex-start" }}>
+            <View style={styles.messageBlock}>
+              <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                 {/*
                   Long-press to react, which is the gesture these apps have taught everybody.
                   A permanently visible row of six emoji under every bubble would be louder
@@ -279,8 +279,10 @@ export default function ConversationScreen() {
                   ))}
                 </TouchableOpacity>
 
-                {reactions.length > 0 && (
-                  <View style={[styles.reactionRow, mine ? { justifyContent: "flex-end" } : null]}>
+              </View>
+
+              {reactions.length > 0 && (
+                <View style={[styles.reactionRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                     {reactions.map((r) => (
                       <TouchableOpacity
                         key={r.emoji}
@@ -304,7 +306,8 @@ export default function ConversationScreen() {
                   </View>
                 )}
 
-                {picking === item.id && (
+              {picking === item.id && (
+                <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                   <View
                     style={[styles.picker, { backgroundColor: colors.card, borderColor: colors.border }]}
                     testID={`reaction-picker-${item.id}`}
@@ -321,8 +324,8 @@ export default function ConversationScreen() {
                       </TouchableOpacity>
                     ))}
                   </View>
-                )}
-              </View>
+                </View>
+              )}
             </View>
           );
         }}
@@ -421,6 +424,16 @@ const styles = StyleSheet.create({
   },
   headerTitle: { flex: 1, textAlign: "center", fontSize: 16, fontFamily: "Inter_600SemiBold", marginHorizontal: 8 },
   listContent: { padding: 16, gap: 8, flexGrow: 1 },
+  /**
+   * One message: the bubble, then its reactions, then the picker — each a full-width row that
+   * pushes its contents to the sender's side.
+   *
+   * The bubble must be a direct child of a `flexDirection: row` container. Wrapping it in a
+   * column with `alignItems` instead — which looked like the tidy way to line the reactions up
+   * under it — collapses the bubble to its *minimum* content width, so "hi" renders as an "h"
+   * above an "i". The owner caught that on the live site.
+   */
+  messageBlock: { gap: 4 },
   bubbleRow: { flexDirection: "row" },
   bubbleRowMine: { justifyContent: "flex-end" },
   bubbleRowTheirs: { justifyContent: "flex-start" },
@@ -434,7 +447,7 @@ const styles = StyleSheet.create({
   attachBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
   fileChip: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
   fileName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
-  reactionRow: { flexDirection: "row", gap: 4, marginTop: 4, flexWrap: "wrap" },
+  reactionRow: { flexDirection: "row", gap: 4, flexWrap: "wrap" },
   reactionChip: { flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 12, borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2 },
   reactionEmoji: { fontSize: 13 },
   reactionCount: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
