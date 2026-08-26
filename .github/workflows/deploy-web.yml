@@ -204,6 +204,18 @@ jobs:
           SESSION_SECRET: ci-only-not-a-real-secret
         run: pnpm --filter @workspace/api-server run test:uploads
 
+      # Sending a file in a message, and — the part that would have shipped broken — opening
+      # it at the other end. GET /storage/file refuses by default and allows a fixed list of
+      # cases; a recipient was not on it, so a photo produced a bubble the person could see and
+      # a file that 403'd when they tapped it. It looked perfect from the sending side, because
+      # the sender is the uploader. Every check here that matters signs in as the recipient.
+      - name: A file sent in a message, and the person it was sent to opening it
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+        run: pnpm --filter @workspace/api-server run test:messages
+
       # Swapping the video provider. Daily.co is unlikely to survive the monthly tier's
       # economics, so the seam went in before anything was built on top of it. This starts the
       # real server twice — once on Daily, once on a provider that carries no video — and
