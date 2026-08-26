@@ -16,6 +16,11 @@ has happened and wasted the owner's time.
 When the owner decides something, **write it to a note and add it to the index in the same
 change.** A decision that lives only in a chat has already been lost.
 
+**`HANDOVER.md` is the whole project in one document** — what it is, what is built, what is
+not, the pricing rules, and the questions still open for the owner. Written for somebody
+arriving cold, including a second AI working alongside this one. It carries no instructions of
+its own; the authority is still this file and the memory index.
+
 ---
 
 ## What it is
