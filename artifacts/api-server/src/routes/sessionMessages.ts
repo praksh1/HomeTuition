@@ -9,6 +9,12 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership } from "../lib/membership";
+import {
+  attachToClassMessage,
+  decorateClassMessages,
+  readReaction,
+  reactToClassMessage,
+} from "../lib/classMessageExtras";
 import { notifyUsers } from "../ws/userHub";
 import { recordActivity } from "../lib/activityLog";
 
@@ -113,8 +119,10 @@ router.get("/sessions/:id/messages", requireAuth, async (req, res): Promise<void
       .orderBy(asc(sessionMessagesTable.id))
       .limit(DEFAULT_LIMIT);
 
+    const decorated = await decorateClassMessages(messages, req.user!.userId);
+
     res.json({
-      messages: messages.map((m) => ({ ...m, mine: m.senderId === req.user!.userId })),
+      messages: decorated.map((m) => ({ ...m, mine: m.senderId === req.user!.userId })),
       // So the app hides the composer rather than offering a box whose Send button is refused.
       readOnly: !mayPost(membership),
       // Told apart from "no messages" so the app can say "we could not load these" rather than
@@ -144,9 +152,16 @@ router.post("/sessions/:id/messages", requireAuth, async (req, res): Promise<voi
     return;
   }
 
-  const { body } = req.body as { body?: string };
+  const { body, fileKey, fileType, fileName } = req.body as {
+    body?: string; fileKey?: string; fileType?: string; fileName?: string;
+  };
   const text = typeof body === "string" ? body.trim() : "";
-  if (!text) { res.status(400).json({ error: "A message cannot be empty." }); return; }
+  const attaching = typeof fileKey === "string" && fileKey.trim().length > 0;
+  // A photo of your working, with no caption, is the commonest thing anybody sends a teacher.
+  if (!text && !attaching) {
+    res.status(400).json({ error: "Write something, or attach a file." });
+    return;
+  }
   if (text.length > MAX_BODY_CHARS) {
     res.status(400).json({ error: `Please keep messages under ${MAX_BODY_CHARS} characters.` });
     return;
@@ -173,6 +188,26 @@ router.post("/sessions/:id/messages", requireAuth, async (req, res): Promise<voi
     .returning();
 
   /**
+   * The file, checked before it is allowed to be one — see `attachToClassMessage`. A refused
+   * file does not take the words with it.
+   */
+  const { attached, problem: attachmentProblem } = attaching
+    ? await attachToClassMessage({
+        messageId: message!.id,
+        userId: req.user!.userId,
+        fileKey: fileKey!,
+        fileType,
+        fileName,
+      })
+    : { attached: null, problem: null };
+  if (attachmentProblem) {
+    req.log.warn(
+      { userId: req.user!.userId, key: fileKey, reason: attachmentProblem },
+      "an attachment to a class message was refused",
+    );
+  }
+
+  /**
    * Delivered live down the channel the app already holds, rather than over a second socket.
    *
    * A signed-in app keeps one connection open for notifications; the session page listens on
@@ -185,7 +220,8 @@ router.post("/sessions/:id/messages", requireAuth, async (req, res): Promise<voi
     sessionId: id,
     fromUserId: req.user!.userId,
     fromName: message.senderName,
-    preview: text.slice(0, 140),
+    // A photo with no caption still has to read as something in a notification.
+    preview: text ? text.slice(0, 140) : attached ? "Sent a file" : "",
     at: message.createdAt.toISOString(),
   });
 
@@ -197,7 +233,45 @@ router.post("/sessions/:id/messages", requireAuth, async (req, res): Promise<voi
     detail: { length: text.length, recipients: audience.length },
   });
 
-  res.status(201).json({ ...message, mine: true });
+  res.status(201).json({
+    ...message,
+    mine: true,
+    attachments: attached ? [attached] : [],
+    reactions: [],
+    // Travels with the reply so the app can say the message went and the file did not.
+    attachmentProblem,
+  });
+});
+
+/**
+ * React to something said in a class.
+ *
+ * Only somebody who may read the thread, which is the same gate as reading it — a reaction is
+ * as private as the message it sits on.
+ */
+router.post("/sessions/:id/messages/:messageId/reaction", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  const messageId = parseInt(String(req.params.messageId), 10);
+  if (isNaN(id) || isNaN(messageId)) { res.status(400).json({ error: "Invalid id" }); return; }
+
+  const membership = await threadAccess(id, req.user!.userId);
+  if (!membership) {
+    res.status(403).json({ error: "You do not have access to this session." });
+    return;
+  }
+
+  const emoji = readReaction((req.body as { emoji?: unknown }).emoji);
+  if (!emoji) { res.status(400).json({ error: "Pick one reaction." }); return; }
+
+  /** The message has to be in *this* thread — an id from another class is not theirs to react to. */
+  const [message] = await db
+    .select({ id: sessionMessagesTable.id })
+    .from(sessionMessagesTable)
+    .where(and(eq(sessionMessagesTable.id, messageId), eq(sessionMessagesTable.sessionId, id)));
+  if (!message) { res.status(404).json({ error: "That message was not found." }); return; }
+
+  res.json({ emoji: await reactToClassMessage(messageId, req.user!.userId, emoji) });
 });
 
 export default router;

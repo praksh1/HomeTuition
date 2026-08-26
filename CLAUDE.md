@@ -40,6 +40,13 @@ This shapes how to communicate:
 - Explain *why* something broke and what it means for users, not just what changed.
 - Do not hand over commands without saying which directory to run them in. This has caused real
   frustration — see the Windows section below.
+- **Hand over the route, not the destination.** The same failure one level up: "you can change
+  that in your settings" or a link to a documentation page is not an instruction. Give the
+  literal clicks — which site, which control, what it is called, what to type, what to expect
+  after. The owner's words: *"one little hurdle and I get stuck for minutes and hours."* If the
+  exact path is not known, go and find it before saying anything; a wrong or vague route costs
+  more than the minute spent checking. (The occasion: being sent to a docs page to change a
+  setting that page cannot change.)
 - Verify claims before making them. "It should work now" without evidence is not acceptable
   here; several past bugs were declared fixed and were not.
 - When something cannot be done, say so plainly and give the honest cost, rather than

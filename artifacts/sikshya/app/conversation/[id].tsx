@@ -20,19 +20,13 @@ import { apiGet, apiPost } from "@/utils/api";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
 import { openAttachment } from "@/utils/openAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
-
-interface Attachment {
-  fileKey: string;
-  fileType: string;
-  fileName: string | null;
-}
-
-interface Reaction {
-  emoji: string;
-  count: number;
-  /** Whether this reader is one of the people counted, so the chip can show as pressed. */
-  mine: boolean;
-}
+import {
+  applyReaction,
+  attachmentLabel,
+  REACTIONS,
+  type Attachment,
+  type Reaction,
+} from "@/utils/reactions";
 
 interface Message {
   id: number;
@@ -46,14 +40,6 @@ interface Message {
   /** Sent back when a file was refused. The message went; the file did not. */
   attachmentProblem?: string | null;
 }
-
-/**
- * Six, and no more.
- *
- * A long grid of every emoji is a search problem on a phone. These are the ones a lesson
- * actually needs: understood, thank you, well done, and the three that carry a feeling.
- */
-const REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F62E}", "\u{1F64F}"];
 
 export default function ConversationScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
@@ -166,24 +152,10 @@ export default function ConversationScreen() {
    */
   const react = async (messageId: number, emoji: string) => {
     setPicking(null);
+    // The rule itself lives in utils/reactions.ts, unit-tested and shared with the class chat —
+    // two copies of "what one tap does" would drift the first time either was edited.
     setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== messageId) return m;
-        const current = m.reactions ?? [];
-        const already = current.find((r) => r.emoji === emoji && r.mine);
-        // Whatever this person had before goes, whether they are replacing it or removing it.
-        const withoutMine = current
-          .map((r) => (r.mine ? { ...r, count: r.count - 1, mine: false } : r))
-          .filter((r) => r.count > 0);
-        if (already) return { ...m, reactions: withoutMine };
-        const existing = withoutMine.find((r) => r.emoji === emoji);
-        return {
-          ...m,
-          reactions: existing
-            ? withoutMine.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: true } : r))
-            : [...withoutMine, { emoji, count: 1, mine: true }],
-        };
-      }),
+      prev.map((m) => (m.id === messageId ? { ...m, reactions: applyReaction(m.reactions ?? [], emoji) } : m)),
     );
     try {
       await apiPost(`/messages/${messageId}/reaction`, { emoji });
@@ -220,8 +192,8 @@ export default function ConversationScreen() {
           const files = item.attachments ?? [];
           const reactions = item.reactions ?? [];
           return (
-            <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
-              <View style={{ maxWidth: "78%", alignItems: mine ? "flex-end" : "flex-start" }}>
+            <View style={styles.messageBlock}>
+              <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                 {/*
                   Long-press to react, which is the gesture these apps have taught everybody.
                   A permanently visible row of six emoji under every bubble would be louder
@@ -270,17 +242,17 @@ export default function ConversationScreen() {
                         style={[styles.fileName, { color: mine ? "#fff" : colors.foreground }]}
                         numberOfLines={1}
                       >
-                        {/* The key is a UUID, so without the sender's own name this reads as
-                            "a file" and cannot be asked about. */}
-                        {f.fileName ?? (f.fileType.startsWith("image/") ? "Photo" : "File")}
+                        {attachmentLabel(f)}
                       </Text>
                       <Feather name="external-link" size={12} color={mine ? "#fff" : colors.mutedForeground} />
                     </TouchableOpacity>
                   ))}
                 </TouchableOpacity>
 
-                {reactions.length > 0 && (
-                  <View style={[styles.reactionRow, mine ? { justifyContent: "flex-end" } : null]}>
+              </View>
+
+              {reactions.length > 0 && (
+                <View style={[styles.reactionRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                     {reactions.map((r) => (
                       <TouchableOpacity
                         key={r.emoji}
@@ -304,7 +276,8 @@ export default function ConversationScreen() {
                   </View>
                 )}
 
-                {picking === item.id && (
+              {picking === item.id && (
+                <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
                   <View
                     style={[styles.picker, { backgroundColor: colors.card, borderColor: colors.border }]}
                     testID={`reaction-picker-${item.id}`}
@@ -321,8 +294,8 @@ export default function ConversationScreen() {
                       </TouchableOpacity>
                     ))}
                   </View>
-                )}
-              </View>
+                </View>
+              )}
             </View>
           );
         }}
@@ -421,6 +394,16 @@ const styles = StyleSheet.create({
   },
   headerTitle: { flex: 1, textAlign: "center", fontSize: 16, fontFamily: "Inter_600SemiBold", marginHorizontal: 8 },
   listContent: { padding: 16, gap: 8, flexGrow: 1 },
+  /**
+   * One message: the bubble, then its reactions, then the picker — each a full-width row that
+   * pushes its contents to the sender's side.
+   *
+   * The bubble must be a direct child of a `flexDirection: row` container. Wrapping it in a
+   * column with `alignItems` instead — which looked like the tidy way to line the reactions up
+   * under it — collapses the bubble to its *minimum* content width, so "hi" renders as an "h"
+   * above an "i". The owner caught that on the live site.
+   */
+  messageBlock: { gap: 4 },
   bubbleRow: { flexDirection: "row" },
   bubbleRowMine: { justifyContent: "flex-end" },
   bubbleRowTheirs: { justifyContent: "flex-start" },
@@ -434,7 +417,7 @@ const styles = StyleSheet.create({
   attachBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
   fileChip: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
   fileName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
-  reactionRow: { flexDirection: "row", gap: 4, marginTop: 4, flexWrap: "wrap" },
+  reactionRow: { flexDirection: "row", gap: 4, flexWrap: "wrap" },
   reactionChip: { flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 12, borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2 },
   reactionEmoji: { fontSize: 13 },
   reactionCount: { fontSize: 11, fontFamily: "Inter_600SemiBold" },

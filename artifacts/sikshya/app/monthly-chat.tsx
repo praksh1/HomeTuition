@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import * as DocumentPicker from "expo-document-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -17,6 +18,10 @@ import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollV
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 
+import { openAttachment } from "@/utils/openAttachment";
+import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
+import { applyReaction, attachmentLabel, REACTIONS, type Attachment, type Reaction } from "@/utils/reactions";
+
 interface ChatMessage {
   id: number;
   senderId: number;
@@ -26,6 +31,10 @@ interface ChatMessage {
   pinnedAt: string | null;
   createdAt: string;
   mine: boolean;
+  attachments?: Attachment[];
+  reactions?: Reaction[];
+  /** Sent back when a file was refused: the message went, the file did not. */
+  attachmentProblem?: string | null;
 }
 
 interface ChatView {
@@ -56,6 +65,10 @@ export default function MonthlyChatScreen() {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** Chosen but not sent yet. */
+  const [pending, setPending] = useState<UploadableFile | null>(null);
+  /** Which bubble's long-press menu is open, if any. */
+  const [picking, setPicking] = useState<number | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
 
   const load = useCallback(async () => {
@@ -103,20 +116,78 @@ export default function MonthlyChatScreen() {
     return () => clearInterval(timer);
   }, [classId, view]);
 
+  /**
+   * Choose a file. Nothing is uploaded yet — it goes up when they press send.
+   *
+   * Uploading on pick puts bytes in the bucket for a message that is never sent, and on a
+   * Nepali connection it means a long wait with no send pressed and nothing obviously
+   * happening.
+   */
+  const pickFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["image/*", "application/pdf"],
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    setProblem(null);
+    setPending({
+      uri: asset.uri,
+      name: asset.name ?? "file",
+      mimeType: asset.mimeType ?? "application/octet-stream",
+      size: asset.size ?? 1,
+    });
+  };
+
   const send = async () => {
     const body = draft.trim();
-    if (!body || sending) return;
+    // A photo of the day's working, with no caption, is the commonest thing anybody sends.
+    if ((!body && !pending) || sending) return;
     setSending(true);
     setProblem(null);
+    const outgoing = pending;
+    setDraft("");
+    setPending(null);
     try {
-      const message = await apiPost<ChatMessage>(`/monthly/classes/${classId}/messages`, { body });
-      setDraft("");
+      let fileKey: string | undefined;
+      if (outgoing) fileKey = await uploadFile(outgoing);
+      const message = await apiPost<ChatMessage>(`/monthly/classes/${classId}/messages`, {
+        body,
+        ...(fileKey ? { fileKey, fileType: outgoing!.mimeType, fileName: outgoing!.name } : {}),
+      });
       setView((prev) => (prev ? { ...prev, messages: [...prev.messages, message] } : prev));
+      if (message.attachmentProblem) setProblem(message.attachmentProblem);
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
     } catch (e) {
+      // Everything back exactly as it was — half-clearing after a failed send is how somebody
+      // loses a message they believed they had sent, and the upload is the step most likely
+      // to fail here.
+      setDraft(body);
+      setPending(outgoing);
       setProblem(e instanceof ApiError ? e.message : "Could not send that.");
     } finally {
       setSending(false);
+    }
+  };
+
+  /**
+   * React, or take it back. Shown immediately and reconciled from the server afterwards: a tap
+   * that waits for a round trip on a poor connection feels broken, and the server is the
+   * authority on the count either way.
+   */
+  const react = async (messageId: number, emoji: string) => {
+    setPicking(null);
+    setView((prev) => prev && {
+      ...prev,
+      messages: prev.messages.map((m) =>
+        m.id === messageId ? { ...m, reactions: applyReaction(m.reactions ?? [], emoji) } : m),
+      pinned: prev.pinned.map((m) =>
+        m.id === messageId ? { ...m, reactions: applyReaction(m.reactions ?? [], emoji) } : m),
+    });
+    try {
+      await apiPost(`/monthly/classes/${classId}/messages/${messageId}/reaction`, { emoji });
+    } catch {
+      void load();
     }
   };
 
@@ -188,7 +259,18 @@ export default function MonthlyChatScreen() {
           </Text>
         }
         renderItem={({ item }) => (
-          <Bubble message={item} canPin={view?.canPin === true} onPin={() => void togglePin(item)} />
+          <Bubble
+            message={item}
+            canPin={view?.canPin === true}
+            onPin={() => { setPicking(null); void togglePin(item); }}
+            open={picking === item.id}
+            onLongPress={() => setPicking(picking === item.id ? null : item.id)}
+            onReact={(emoji) => void react(item.id, emoji)}
+            onOpenFile={async (key) => {
+              const result = await openAttachment(key);
+              if (!result.ok) setProblem(result.reason ?? "We could not open that file.");
+            }}
+          />
         )}
       />
 
@@ -205,7 +287,31 @@ export default function MonthlyChatScreen() {
         </View>
       ) : (
         <KeyboardAwareScrollViewCompat>
+          {/* A file chosen and not yet sent, with a way to change your mind about it. */}
+          {!!pending && (
+            <View style={[styles.pendingRow, { backgroundColor: colors.muted, borderTopColor: colors.border }]}>
+              <Feather
+                name={pending.mimeType.startsWith("image/") ? "image" : "file-text"}
+                size={14}
+                color={colors.primary}
+              />
+              <Text style={[styles.fileName, { color: colors.foreground }]} numberOfLines={1}>{pending.name}</Text>
+              <TouchableOpacity onPress={() => setPending(null)} activeOpacity={0.7} testID="class-remove-attachment">
+                <Feather name="x" size={14} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            </View>
+          )}
+
           <View style={[styles.composer, { borderTopColor: colors.border, paddingBottom: insets.bottom + 10 }]}>
+            <TouchableOpacity
+              testID="monthly-chat-attach"
+              onPress={() => void pickFile()}
+              disabled={sending}
+              style={[styles.sendBtn, { backgroundColor: colors.input }]}
+              activeOpacity={0.85}
+            >
+              <Feather name="paperclip" size={18} color={colors.mutedForeground} />
+            </TouchableOpacity>
             <TextInput
               testID="monthly-chat-input"
               value={draft}
@@ -218,17 +324,21 @@ export default function MonthlyChatScreen() {
             <TouchableOpacity
               testID="monthly-chat-send"
               onPress={() => void send()}
-              disabled={sending || draft.trim().length === 0}
+              disabled={sending || (draft.trim().length === 0 && !pending)}
               style={[
                 styles.sendBtn,
-                { backgroundColor: draft.trim().length === 0 ? colors.input : colors.primary },
+                { backgroundColor: draft.trim().length === 0 && !pending ? colors.input : colors.primary },
               ]}
               activeOpacity={0.85}
             >
               {sending ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Feather name="send" size={18} color={draft.trim().length === 0 ? colors.mutedForeground : "#FFFFFF"} />
+                <Feather
+                  name="send"
+                  size={18}
+                  color={draft.trim().length === 0 && !pending ? colors.mutedForeground : "#FFFFFF"}
+                />
               )}
             </TouchableOpacity>
           </View>
@@ -245,42 +355,164 @@ export default function MonthlyChatScreen() {
  * over: the account id is not the same type as the sender id, and a second opinion about whose
  * message this is can disagree with the first.
  */
-function Bubble({ message, canPin, onPin }: { message: ChatMessage; canPin: boolean; onPin: () => void }) {
+function Bubble({
+  message, canPin, onPin, open, onLongPress, onReact, onOpenFile,
+}: {
+  message: ChatMessage;
+  canPin: boolean;
+  onPin: () => void;
+  /** Whether this bubble's long-press menu is the open one. */
+  open: boolean;
+  onLongPress: () => void;
+  onReact: (emoji: string) => void;
+  onOpenFile: (key: string) => void;
+}) {
   const colors = useColors();
   const mine = message.mine;
+  const files = message.attachments ?? [];
+  const reactions = message.reactions ?? [];
   return (
-    <View style={[styles.bubbleRow, mine ? styles.bubbleRight : styles.bubbleLeft]}>
-      <TouchableOpacity
-        testID={`pin-${message.id}`}
-        activeOpacity={canPin ? 0.7 : 1}
-        onLongPress={canPin ? onPin : undefined}
-        style={[
-          styles.bubble,
-          mine
-            ? { backgroundColor: colors.primary }
-            : { backgroundColor: colors.card, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth },
-        ]}
-      >
-        {!mine && (
-          <Text style={[styles.sender, { color: message.senderRole === "teacher" ? colors.primary : colors.mutedForeground }]}>
-            {message.senderName}
-            {message.senderRole === "teacher" ? " · teacher" : ""}
-          </Text>
-        )}
-        <Text style={[styles.body, { color: mine ? "#FFFFFF" : colors.foreground }]}>{message.body}</Text>
-        {message.pinnedAt && (
-          <View style={styles.pinTag}>
-            <Feather name="bookmark" size={11} color={mine ? "#FFFFFFCC" : colors.accent} />
-            <Text style={[styles.pinTagText, { color: mine ? "#FFFFFFCC" : colors.accent }]}>Pinned</Text>
+    /*
+     * The bubble stays a direct child of a row. Wrapping it in a column with alignItems to line
+     * the reactions up under it collapses it to its minimum content width — "hi" renders as an
+     * "h" above an "i", which shipped once already. The reactions get their own row instead.
+     */
+    <View style={styles.messageBlock}>
+      <View style={[styles.bubbleRow, mine ? styles.bubbleRight : styles.bubbleLeft]}>
+        <TouchableOpacity
+          testID={`pin-${message.id}`}
+          activeOpacity={0.85}
+          onLongPress={onLongPress}
+          delayLongPress={250}
+          style={[
+            styles.bubble,
+            mine
+              ? { backgroundColor: colors.primary }
+              : { backgroundColor: colors.card, borderColor: colors.border, borderWidth: StyleSheet.hairlineWidth },
+          ]}
+        >
+          {!mine && (
+            <Text style={[styles.sender, { color: message.senderRole === "teacher" ? colors.primary : colors.mutedForeground }]}>
+              {message.senderName}
+              {message.senderRole === "teacher" ? " · teacher" : ""}
+            </Text>
+          )}
+          {!!message.body && (
+            <Text style={[styles.body, { color: mine ? "#FFFFFF" : colors.foreground }]}>{message.body}</Text>
+          )}
+
+          {files.map((f) => (
+            <TouchableOpacity
+              key={f.fileKey}
+              onPress={() => onOpenFile(f.fileKey)}
+              activeOpacity={0.75}
+              testID={`class-file-${message.id}`}
+              style={[
+                styles.fileChip,
+                {
+                  backgroundColor: mine ? "rgba(255,255,255,0.16)" : colors.muted,
+                  borderColor: mine ? "rgba(255,255,255,0.28)" : colors.border,
+                  marginTop: message.body ? 8 : 0,
+                },
+              ]}
+            >
+              <Feather
+                name={f.fileType.startsWith("image/") ? "image" : "file-text"}
+                size={14}
+                color={mine ? "#FFFFFF" : colors.primary}
+              />
+              <Text style={[styles.fileName, { color: mine ? "#FFFFFF" : colors.foreground }]} numberOfLines={1}>
+                {attachmentLabel(f)}
+              </Text>
+              <Feather name="external-link" size={12} color={mine ? "#FFFFFFCC" : colors.mutedForeground} />
+            </TouchableOpacity>
+          ))}
+
+          {message.pinnedAt && (
+            <View style={styles.pinTag}>
+              <Feather name="bookmark" size={11} color={mine ? "#FFFFFFCC" : colors.accent} />
+              <Text style={[styles.pinTagText, { color: mine ? "#FFFFFFCC" : colors.accent }]}>Pinned</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      {reactions.length > 0 && (
+        <View style={[styles.reactionRow, mine ? styles.bubbleRight : styles.bubbleLeft]}>
+          {reactions.map((r) => (
+            <TouchableOpacity
+              key={r.emoji}
+              onPress={() => onReact(r.emoji)}
+              activeOpacity={0.75}
+              testID={`class-reaction-${message.id}-${r.emoji}`}
+              style={[
+                styles.reactionChip,
+                {
+                  backgroundColor: r.mine ? colors.primary + "1F" : colors.muted,
+                  borderColor: r.mine ? colors.primary : colors.border,
+                },
+              ]}
+            >
+              <Text style={styles.reactionEmoji}>{r.emoji}</Text>
+              {r.count > 1 && (
+                <Text style={[styles.reactionCount, { color: colors.mutedForeground }]}>{r.count}</Text>
+              )}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/*
+        One menu, because a bubble has one long-press. Everybody gets the reactions; the teacher
+        also gets Pin, which is what the long-press used to do on its own and must keep doing.
+      */}
+      {open && (
+        <View style={[styles.reactionRow, mine ? styles.bubbleRight : styles.bubbleLeft]}>
+          <View style={[styles.picker, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            {REACTIONS.map((emoji) => (
+              <TouchableOpacity
+                key={emoji}
+                onPress={() => onReact(emoji)}
+                activeOpacity={0.7}
+                testID={`class-pick-${message.id}-${emoji}`}
+                style={styles.pickerItem}
+              >
+                <Text style={styles.pickerEmoji}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+            {canPin && (
+              <TouchableOpacity
+                onPress={onPin}
+                activeOpacity={0.7}
+                testID={`class-pin-${message.id}`}
+                style={[styles.pickerItem, { flexDirection: "row", alignItems: "center", gap: 4 }]}
+              >
+                <Feather name="bookmark" size={14} color={colors.accent} />
+                <Text style={[styles.pinTagText, { color: colors.accent }]}>
+                  {message.pinnedAt ? "Unpin" : "Pin"}
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
-        )}
-      </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  messageBlock: { gap: 4 },
+  fileChip: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
+  fileName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
+  reactionRow: { flexDirection: "row", gap: 4, flexWrap: "wrap" },
+  reactionChip: { flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 12, borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2 },
+  reactionEmoji: { fontSize: 13 },
+  reactionCount: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  picker: { flexDirection: "row", alignItems: "center", gap: 2, borderRadius: 20, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 4 },
+  pickerItem: { paddingHorizontal: 5, paddingVertical: 3 },
+  pickerEmoji: { fontSize: 19 },
+  pendingRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 9, borderTopWidth: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: {
     flexDirection: "row",

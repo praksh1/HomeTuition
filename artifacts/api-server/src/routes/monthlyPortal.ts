@@ -14,7 +14,14 @@ import { notifyUsers } from "../ws/userHub";
 import { notifyMany } from "../lib/notify";
 import { recordActivity } from "../lib/activityLog";
 import { classById, cycleOf } from "../lib/monthlyStore";
+import { mayWrite, portalAccess, readableFrom, type PortalAccess } from "../lib/portalAccess";
 import { verifyUpload } from "../lib/fileStore";
+import {
+  attachToClassMessage,
+  decorateClassMessages,
+  readReaction,
+  reactToClassMessage,
+} from "../lib/classMessageExtras";
 
 /**
  * The monthly course's portal: its one conversation, and its homework.
@@ -39,94 +46,6 @@ function idParam(req: Request, name = "id"): number | null {
   const value = parseInt(Array.isArray(raw) ? (raw[0] ?? "") : (raw ?? ""), 10);
   return Number.isNaN(value) ? null : value;
 }
-
-export interface PortalAccess {
-  klass: NonNullable<Awaited<ReturnType<typeof classById>>>;
-  isTeacher: boolean;
-  /** The month the course is in now. Null before it has started one. */
-  cycleIndex: number | null;
-  /** True while this student holds a place in the current month. */
-  isCurrentStudent: boolean;
-  /** True if they have ever held one, which is what read access hangs off. */
-  wasEverStudent: boolean;
-  /**
-   * When this student first joined the course, and so how far back their thread starts.
-   * Null for the teacher, who reads all of it.
-   */
-  joinedAt: Date | null;
-}
-
-/**
- * Who may see a monthly course's portal, and who may write in it.
- *
- * Reading and writing are separated for the same reason the class thread separates them: a
- * student whose month has ended, or who was refunded when a teacher was suspended, keeps what
- * was said and what they handed in. That record is most needed *after* they leave, because
- * that is when there is an argument about money.
- */
-async function portalAccess(classId: number, userId: number): Promise<PortalAccess | null> {
-  const klass = await classById(classId);
-  if (!klass) return null;
-
-  const [plan] = await db.select().from(teacherPlansTable).where(eq(teacherPlansTable.id, klass.planId));
-  const cycle = plan ? await cycleOf(plan) : null;
-  const cycleIndex = cycle?.index ?? null;
-
-  if (klass.teacherId === userId) {
-    return { klass, isTeacher: true, cycleIndex, isCurrentStudent: false, wasEverStudent: false, joinedAt: null };
-  }
-
-  const places = await db
-    .select({
-      cycleIndex: recurringEnrollmentsTable.cycleIndex,
-      status: recurringEnrollmentsTable.status,
-      joinedAt: recurringEnrollmentsTable.joinedAt,
-    })
-    .from(recurringEnrollmentsTable)
-    .where(
-      and(
-        eq(recurringEnrollmentsTable.recurringId, klass.id),
-        eq(recurringEnrollmentsTable.studentId, userId),
-      ),
-    );
-  if (places.length === 0) return null;
-
-  /**
-   * The first moment this student was ever in this course.
-   *
-   * Their *earliest* place, not the current one. Somebody who took the class in Bhadra, left,
-   * and came back in Ashwin has already read that first month — cutting them back to their
-   * newest enrolment would hide their own conversation from them.
-   */
-  const joinedAt = places
-    .map((p) => p.joinedAt)
-    .reduce<Date | null>((first, at) => (first === null || at < first ? at : first), null);
-
-  return {
-    klass,
-    isTeacher: false,
-    cycleIndex,
-    isCurrentStudent: places.some((p) => p.cycleIndex === cycleIndex && p.status === "active"),
-    wasEverStudent: true,
-    joinedAt,
-  };
-}
-
-/**
- * How far back this person may read.
- *
- * The owner's decision: *"hide any other prior messages for students who enrolled late"* — but
- * with pinned messages exempt, so a teacher can put the things that always matter where
- * everybody sees them whenever they arrived.
- *
- * A month of a class's conversation is other people's, and a student who joins on the 20th
- * walking into three weeks of it is being handed a room they were not in. The teacher sees all
- * of it: it is their class, and they wrote most of it.
- */
-const readableFrom = (access: PortalAccess): Date | null => (access.isTeacher ? null : access.joinedAt);
-
-/** Reading is not writing: somebody whose month has ended may read, but not post. */
-const mayWrite = (access: PortalAccess) => access.isTeacher || access.isCurrentStudent;
 
 /** Everyone who should hear about something: the teacher and this month's students. */
 async function audienceFor(classId: number, cycleIndex: number | null, teacherId: number) {
@@ -252,9 +171,15 @@ router.get("/monthly/classes/:id/messages", requireAuth, async (req: Request, re
         )[0]?.n ?? 0;
 
     const mine = (m: { senderId: number }) => m.senderId === req.user!.userId;
+    // Pinned messages are the same rows read a second way, so they are decorated too — a
+    // pinned photo of the timetable is exactly the thing that must keep its file.
+    const [shown, pins] = await Promise.all([
+      decorateClassMessages(messages, req.user!.userId),
+      decorateClassMessages(pinned, req.user!.userId),
+    ]);
     res.json({
-      messages: messages.map((m) => ({ ...m, mine: mine(m) })),
-      pinned: pinned.map((m) => ({ ...m, mine: mine(m) })),
+      messages: shown.map((m) => ({ ...m, mine: mine(m) })),
+      pinned: pins.map((m) => ({ ...m, mine: mine(m) })),
       earlier,
       readOnly: !mayWrite(access),
       canPin: access.isTeacher,
@@ -284,10 +209,14 @@ router.post("/monthly/classes/:id/messages", requireAuth, async (req: Request, r
     return;
   }
 
-  const { body } = req.body as { body?: string };
+  const { body, fileKey, fileType, fileName } = req.body as {
+    body?: string; fileKey?: string; fileType?: string; fileName?: string;
+  };
   const text = typeof body === "string" ? body.trim() : "";
-  if (!text) {
-    res.status(400).json({ error: "A message cannot be empty." });
+  const attaching = typeof fileKey === "string" && fileKey.trim().length > 0;
+  // A photo of the day's working, with no caption, is the commonest thing anybody sends.
+  if (!text && !attaching) {
+    res.status(400).json({ error: "Write something, or attach a file." });
     return;
   }
   if (text.length > MAX_BODY_CHARS) {
@@ -312,6 +241,23 @@ router.post("/monthly/classes/:id/messages", requireAuth, async (req: Request, r
     })
     .returning();
 
+  /** Checked against what actually landed in the bucket; a refused file leaves the words. */
+  const { attached, problem: attachmentProblem } = attaching
+    ? await attachToClassMessage({
+        messageId: message!.id,
+        userId: req.user!.userId,
+        fileKey: fileKey!,
+        fileType,
+        fileName,
+      })
+    : { attached: null, problem: null };
+  if (attachmentProblem) {
+    req.log.warn(
+      { userId: req.user!.userId, key: fileKey, reason: attachmentProblem },
+      "an attachment to a monthly class message was refused",
+    );
+  }
+
   const audience = (await audienceFor(id, access.cycleIndex, access.klass.teacherId)).filter(
     (userId) => userId !== req.user!.userId,
   );
@@ -321,7 +267,7 @@ router.post("/monthly/classes/:id/messages", requireAuth, async (req: Request, r
     monthlyClassId: id,
     fromUserId: req.user!.userId,
     fromName: message!.senderName,
-    preview: text.slice(0, 140),
+    preview: text ? text.slice(0, 140) : attached ? "Sent a file" : "",
     at: message!.createdAt.toISOString(),
   });
 
@@ -333,7 +279,47 @@ router.post("/monthly/classes/:id/messages", requireAuth, async (req: Request, r
     detail: { length: text.length, recipients: audience.length },
   });
 
-  res.status(201).json({ ...message, mine: true });
+  res.status(201).json({
+    ...message,
+    mine: true,
+    attachments: attached ? [attached] : [],
+    reactions: [],
+    attachmentProblem,
+  });
+});
+
+/**
+ * React to something said in a monthly class.
+ *
+ * The same gate as reading the thread — a reaction is as private as the message it sits on —
+ * and the message must belong to *this* course.
+ */
+router.post("/monthly/classes/:id/messages/:messageId/reaction", requireAuth, async (req: Request, res: Response) => {
+  const id = idParam(req);
+  const messageId = parseInt(String(req.params.messageId), 10);
+  if (id === null || Number.isNaN(messageId)) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  const access = await portalAccess(id, req.user!.userId);
+  if (!access) {
+    res.status(403).json({ error: "You do not have access to this class." });
+    return;
+  }
+  const emoji = readReaction((req.body as { emoji?: unknown }).emoji);
+  if (!emoji) {
+    res.status(400).json({ error: "Pick one reaction." });
+    return;
+  }
+  const [message] = await db
+    .select({ id: sessionMessagesTable.id })
+    .from(sessionMessagesTable)
+    .where(and(eq(sessionMessagesTable.id, messageId), eq(sessionMessagesTable.recurringId, id)));
+  if (!message) {
+    res.status(404).json({ error: "That message was not found." });
+    return;
+  }
+  res.json({ emoji: await reactToClassMessage(messageId, req.user!.userId, emoji) });
 });
 
 /** Pins or unpins a message. The teacher's alone: forty-five people pinning is nothing pinned. */

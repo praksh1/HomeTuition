@@ -15,10 +15,11 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import NepaliDatePicker from "@/components/NepaliDatePicker";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import { useColors } from "@/hooks/useColors";
 import { useDates } from "@/context/DatePreferenceContext";
-import { apiGet, apiPost, ApiError } from "@/utils/api";
+import { apiDelete, apiGet, apiPost, ApiError } from "@/utils/api";
 import {
   type MonthlyClass,
   type MonthlyPlanView,
@@ -34,6 +35,25 @@ import {
  * one thing and a teacher should never have to find the right one: no plan yet, a plan with no
  * class, and a class that is running.
  */
+/**
+ * What the button should say about today's class.
+ *
+ * "Start today's class" only once the doors are actually open — ten minutes before, the same
+ * window the rest of the app uses. Before that it says when instead, because a button that
+ * promises a room and then refuses is worse than one that tells you to come back.
+ */
+function todayLabel(
+  startsAt: string,
+  formatBoth: (v: string | number | Date, o?: { withTime?: boolean }) => string,
+): string {
+  const starts = new Date(startsAt).getTime();
+  const now = Date.now();
+  if (now >= starts - 10 * 60 * 1000) return "Start today's class";
+  const when = formatBoth(startsAt, { withTime: true });
+  const sameDay = new Date(starts).toDateString() === new Date(now).toDateString();
+  return sameDay ? `Today's class — ${when.split(", ").pop()}` : `Next class — ${when}`;
+}
+
 export default function MonthlyClassScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -411,6 +431,29 @@ function RunningClass({
       </View>
 
       {/*
+        Today's class, one tap from here.
+
+        The owner, on the live site: *"The daily class link still does not show up here!"* It
+        was on their Sessions tab and on the student's monthly screen, and missing from the one
+        screen that is about this class — which is where a teacher goes to look at it.
+
+        Shown all day rather than only when the room opens, and saying when: a teacher checking
+        at breakfast wants to know the class is there. A button that appears ten minutes
+        beforehand reads as the app having forgotten about it.
+      */}
+      {klass.today?.sessionId ? (
+        <TouchableOpacity
+          testID={`teacher-monthly-today-${klass.id}`}
+          activeOpacity={0.85}
+          onPress={() => router.push(`/session/${klass.today!.sessionId}`)}
+          style={[styles.todayBtn, { backgroundColor: colors.primary }]}
+        >
+          <Feather name="video" size={16} color="#fff" />
+          <Text style={styles.todayBtnText}>{todayLabel(klass.today.startsAt, formatBoth)}</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {/*
         The floor, shown as a count rather than a rule.
         "You must teach 25" means nothing at a glance; "5 more to go" is a number a teacher can
         act on, and it is the same number their students' refunds hang off.
@@ -443,6 +486,15 @@ function RunningClass({
       {missed && missed.missed.length > 0 && (
         <MissedList missed={missed} classId={klass.id} formatBoth={formatBoth} onChanged={onChanged} />
       )}
+
+      {/*
+        Days you will not be here.
+
+        The owner: *"I thought you added a feature where a teacher could schedule a make up in
+        advance?"* The rule behind it went in and the screen did not, so from the app there was
+        no such feature at all. This is that screen.
+      */}
+      <LeaveList formatBoth={formatBoth} />
 
       <View style={styles.linkRow}>
         <LinkTile
@@ -568,6 +620,208 @@ function MissedList({
   );
 }
 
+interface LeaveRow {
+  id: number;
+  startsAt: string;
+  endsAt: string;
+  reason: string | null;
+}
+
+/**
+ * Telling the app you will be away.
+ *
+ * ### What this is not
+ *
+ * It is **not** a way to cancel classes, and it deliberately does not pretend to be. The price,
+ * the 25-class delivery floor and the suspension count all assume the class runs every day, and
+ * changing that is a bigger question the owner has parked — see
+ * `.agents/backlog/monthly-partial-months-and-dropping.md`. So the panel says plainly how many
+ * classes fall inside the dates and that they are still owed, rather than letting somebody book
+ * a fortnight away and discover the consequences at the end of the month.
+ *
+ * What it does buy is the thing that was actually broken: a make-up can no longer be scheduled
+ * onto a day the teacher already knows they will miss — one absence quietly becoming two.
+ */
+function LeaveList({ formatBoth }: { formatBoth: (v: string | number | Date) => string }) {
+  const colors = useColors();
+  const [rows, setRows] = useState<LeaveRow[]>([]);
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState<Date | null>(null);
+  const [to, setTo] = useState<Date | null>(null);
+  const [picking, setPicking] = useState<"from" | "to" | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await apiGet<{ leave: LeaveRow[] }>("/monthly/leave");
+      setRows(data.leave);
+    } catch {
+      // The rest of the screen is worth showing without this.
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async () => {
+    if (!from || !to || busy) return;
+    setBusy(true);
+    setProblem(null);
+    setNote(null);
+    try {
+      const res = await apiPost<{ note: string }>("/monthly/leave", {
+        startsAt: from.toISOString(),
+        endsAt: to.toISOString(),
+        reason: reason.trim() || undefined,
+      });
+      // The server counts the classes inside and says what is still owed. Shown as it came
+      // back rather than reworded here, so one sentence about the rule lives in one place.
+      setNote(res.note);
+      setFrom(null); setTo(null); setReason(""); setOpen(false);
+      await load();
+    } catch (e) {
+      setProblem(e instanceof Error && e.message ? e.message : "Could not save that.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id: number) => {
+    setBusy(true);
+    try {
+      await apiDelete(`/monthly/leave/${id}`);
+      await load();
+    } catch (e) {
+      setProblem(e instanceof Error && e.message ? e.message : "Could not remove that.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Days you will be away</Text>
+      <Text style={[styles.fieldHint, { color: colors.mutedForeground, marginBottom: 10 }]}>
+        Tell us in advance and no make-up will be scheduled onto a day you are not here. Your
+        classes on those days are still yours to hold.
+      </Text>
+
+      {problem && <Text style={[styles.noticeText, { color: colors.destructive, marginBottom: 8 }]}>{problem}</Text>}
+      {note && <Text style={[styles.fieldHint, { color: colors.foreground, marginBottom: 8 }]}>{note}</Text>}
+
+      {rows.map((row) => (
+        <View key={row.id} style={[styles.missedRow, { borderTopColor: colors.border }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.missedWhen, { color: colors.foreground }]}>
+              {formatBoth(row.startsAt)}
+              {row.endsAt.slice(0, 10) !== row.startsAt.slice(0, 10) ? ` — ${formatBoth(row.endsAt)}` : ""}
+            </Text>
+            {!!row.reason && (
+              <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>{row.reason}</Text>
+            )}
+          </View>
+          <TouchableOpacity
+            testID={`leave-remove-${row.id}`}
+            onPress={() => void remove(row.id)}
+            disabled={busy}
+            style={[styles.smallBtn, { borderColor: colors.border }]}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.smallBtnText, { color: colors.mutedForeground }]}>Remove</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+
+      {!open ? (
+        <TouchableOpacity
+          testID="leave-add"
+          onPress={() => setOpen(true)}
+          style={[styles.smallBtn, { borderColor: colors.primary, alignSelf: "flex-start", marginTop: 10 }]}
+          activeOpacity={0.8}
+        >
+          <Text style={[styles.smallBtnText, { color: colors.primary }]}>Add days away</Text>
+        </TouchableOpacity>
+      ) : (
+        <View style={{ marginTop: 10, gap: 8 }}>
+          <TouchableOpacity
+            testID="leave-from"
+            onPress={() => setPicking("from")}
+            style={[styles.pickField, { borderColor: colors.border }]}
+            activeOpacity={0.8}
+          >
+            <Feather name="calendar" size={14} color={colors.mutedForeground} />
+            <Text style={[styles.pickFieldText, { color: from ? colors.foreground : colors.mutedForeground }]}>
+              {from ? formatBoth(from) : "First day away"}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="leave-to"
+            onPress={() => setPicking("to")}
+            style={[styles.pickField, { borderColor: colors.border }]}
+            activeOpacity={0.8}
+          >
+            <Feather name="calendar" size={14} color={colors.mutedForeground} />
+            <Text style={[styles.pickFieldText, { color: to ? colors.foreground : colors.mutedForeground }]}>
+              {to ? formatBoth(to) : "Last day away"}
+            </Text>
+          </TouchableOpacity>
+          <TextInput
+            testID="leave-reason"
+            value={reason}
+            onChangeText={setReason}
+            placeholder="Why? (optional — shown back to you)"
+            placeholderTextColor={colors.mutedForeground}
+            style={[styles.pickField, { borderColor: colors.border, color: colors.foreground }]}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TouchableOpacity
+              testID="leave-save"
+              onPress={() => void save()}
+              disabled={!from || !to || busy}
+              style={[styles.smallBtn, { borderColor: colors.primary, opacity: !from || !to ? 0.5 : 1 }]}
+              activeOpacity={0.8}
+            >
+              {busy ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Text style={[styles.smallBtnText, { color: colors.primary }]}>Save</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setOpen(false); setFrom(null); setTo(null); setReason(""); setProblem(null); }}
+              style={[styles.smallBtn, { borderColor: colors.border }]}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.smallBtnText, { color: colors.mutedForeground }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      <NepaliDatePicker
+        visible={picking !== null}
+        value={picking === "from" ? from : to}
+        minDate={picking === "to" ? (from ?? new Date()) : new Date()}
+        title={picking === "from" ? "First day away" : "Last day away"}
+        onCancel={() => setPicking(null)}
+        onPick={(d) => {
+          if (picking === "from") {
+            setFrom(d);
+            // A one-day trip is the common case, so the second date starts filled in rather
+            // than making somebody pick the same day twice.
+            if (!to || to.getTime() < d.getTime()) setTo(d);
+          } else {
+            setTo(d);
+          }
+          setPicking(null);
+        }}
+      />
+    </View>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   const colors = useColors();
   return (
@@ -667,6 +921,10 @@ const styles = StyleSheet.create({
   cycleLine: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
   barTrack: { height: 10, borderRadius: 5, overflow: "hidden", marginTop: 10, marginBottom: 8 },
   barFill: { height: 10, borderRadius: 5 },
+  todayBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 13, marginBottom: 12 },
+  todayBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: "#fff" },
+  pickField: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontFamily: "Inter_400Regular" },
+  pickFieldText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   missedRow: {
     flexDirection: "row",
     alignItems: "center",
