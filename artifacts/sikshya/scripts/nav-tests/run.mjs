@@ -136,8 +136,19 @@ async function main() {
 
   await page.click('a[role="tab"][href="/support"]', { timeout: 15000 });
   await page.waitForTimeout(2500);
+  /*
+   * Matched on the form itself, not on its heading.
+   *
+   * This asked for the words "Customer Support" and went red when the screen was renamed to
+   * "Support" — a test failing for a change that was correct, which blocked the deploy of
+   * everything behind it. A heading is copy and will be rewritten again; the field somebody
+   * types their problem into is the screen. Matching the word "Support" instead would have
+   * been worse than either: the tab bar says Support on every screen, so the check would pass
+   * without going anywhere.
+   */
   const supportText = await page.evaluate(() => document.body.innerText);
-  check("the Support tab opens the report form", /Customer Support/i.test(supportText),
+  check("the Support tab opens the report form",
+    (await page.locator('[data-testid="dispute-description-input"]').count()) > 0,
     supportText.slice(0, 160).replace(/\n/g, " | "));
   await ctx.close();
 
@@ -156,7 +167,8 @@ async function main() {
   check("opened cold as a tab, there is no back arrow to go nowhere",
     (await coldPage.locator('[data-testid="support-back-btn"]').count()) === 0);
   check("and the form is there all the same",
-    /Customer Support/i.test(await coldPage.evaluate(() => document.body.innerText)));
+    (await coldPage.locator('[data-testid="dispute-description-input"]').count()) > 0,
+    (await coldPage.evaluate(() => document.body.innerText)).slice(0, 160).replace(/\n/g, " | "));
   await coldCtx.close();
 
   console.log("\nA student's tabs");
@@ -179,7 +191,8 @@ async function main() {
   await page2.click('a[role="tab"][href="/support"]', { timeout: 15000 });
   await page2.waitForTimeout(2500);
   check("and it opens the same report form",
-    /Customer Support/i.test(await page2.evaluate(() => document.body.innerText)));
+    (await page2.locator('[data-testid="dispute-description-input"]').count()) > 0,
+    (await page2.evaluate(() => document.body.innerText)).slice(0, 160).replace(/\n/g, " | "));
 
   console.log("\nWhat the cleanup moved");
 
@@ -227,26 +240,49 @@ async function main() {
   /**
    * Real conversations first, or this proves nothing.
    *
-   * An account with no messages shows no numbers whatever the rule is, so an assertion against
-   * an empty inbox passes just as happily with the old behaviour as with the new one. The
-   * student sends one message (filling Sent) and receives two (filling Inbox with genuine
-   * unread), which is exactly the shape that used to read "Inbox (1) · Sent (1)".
+   * An account with no messages shows one empty list whatever the rule is, so an assertion
+   * here passes just as happily with folders as without them. The last message is deliberately
+   * the student's own: under Inbox/Sent that moved the conversation out of the Inbox the
+   * moment they replied, which is the behaviour the owner asked to be rid of — the same thread
+   * moving between tabs as it goes on.
    */
   await api(`/messages/${teacher.user.id}`, { method: "POST", token: student.token, body: { body: "Hello" } });
   await api(`/messages/${student.user.id}`, { method: "POST", token: teacher.token, body: { body: "Hi there" } });
   await api(`/messages/${student.user.id}`, { method: "POST", token: teacher.token, body: { body: "And again" } });
+  await api(`/messages/${teacher.user.id}`, { method: "POST", token: student.token, body: { body: "Thank you sir" } });
+
+  /*
+   * And one conversation the student started and nobody has answered.
+   *
+   * This is the case the folders actually lost. The conversation above still has unread
+   * messages in it, so the old Inbox showed it anyway — a check against that one would have
+   * passed under both designs and proved nothing. A conversation you spoke last in with
+   * nothing unread was the one that vanished from Inbox and could only be found under Sent.
+   */
+  const quietTeacher = await register("teacher");
+  await api(`/messages/${quietTeacher.user.id}`, { method: "POST", token: student.token, body: {
+    body: "Sir, are you taking new students?" } });
 
   await page3.goto(`${siteUrl}/messages`, { waitUntil: "networkidle" });
   await page3.waitForTimeout(3500);
   const messages = await page3.evaluate(() => document.body.innerText);
   check("the conversation is actually there, so these checks mean something",
-    /Teacher|Hi there|And again/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
-  check("Messages shows no invented count beside Sent",
-    !/Sent \(\d+\)/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
-  check("nor beside Drafts",
-    !/Drafts \(\d+\)/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
-  check("and Inbox counts unread messages, not conversations",
-    /Inbox \(2\)/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
+    /Teacher|Thank you sir/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
+  check("Messages has no folders to file a conversation into",
+    !/\bInbox\b/.test(messages) && !/\bDrafts\b/.test(messages),
+    messages.slice(0, 260).replace(/\n/g, " | "));
+  /*
+   * One row each, both present. Two rows for one person would mean the conversation had been
+   * split; a missing quiet one means speaking last had filed it out of sight again.
+   */
+  check("a conversation the student answered stays in the one list",
+    (await page3.locator(`[data-testid="conversation-row-${teacher.user.id}"]`).count()) === 1,
+    messages.slice(0, 260).replace(/\n/g, " | "));
+  check("and so does one nobody has answered yet",
+    (await page3.locator(`[data-testid="conversation-row-${quietTeacher.user.id}"]`).count()) === 1,
+    messages.slice(0, 260).replace(/\n/g, " | "));
+  check("still carrying what has not been read",
+    /\b2\b/.test(messages), messages.slice(0, 260).replace(/\n/g, " | "));
 
   await ctx3.close();
 
