@@ -928,3 +928,60 @@ export async function ensureMessageExtras(): Promise<void> {
     );
   }
 }
+
+/**
+ * Files and reactions on class messages.
+ *
+ * The private-message pair's twin — see `ensureMessageExtras`. Separate tables because a class
+ * message and a private message have different answers to "who may read this", and one table
+ * with two nullable keys is one forgotten `where` away from a private attachment surfacing in
+ * a classroom.
+ */
+export async function ensureSessionMessageExtras(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_message_attachments" (
+        "id" serial PRIMARY KEY,
+        "message_id" integer NOT NULL,
+        "file_key" text NOT NULL,
+        "file_type" text NOT NULL,
+        "file_name" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_message_attachments_message_id_fk"
+          FOREIGN KEY ("message_id") REFERENCES "session_messages"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_message_attachments_message_idx"
+        ON "session_message_attachments" ("message_id")
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_message_reactions" (
+        "id" serial PRIMARY KEY,
+        "message_id" integer NOT NULL,
+        "user_id" integer NOT NULL,
+        "emoji" text NOT NULL,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_message_reactions_message_id_fk"
+          FOREIGN KEY ("message_id") REFERENCES "session_messages"("id") ON DELETE CASCADE,
+        CONSTRAINT "session_message_reactions_user_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "session_message_reactions_one_each_idx"
+        ON "session_message_reactions" ("message_id", "user_id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_message_reactions_message_idx"
+        ON "session_message_reactions" ("message_id")
+    `);
+    logger.info("class message attachments and reactions are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not create the class message attachment and reaction tables; run `pnpm run db:push`. " +
+        "Class chat still works — but a file cannot be sent in one, and reacting will fail.",
+    );
+  }
+}

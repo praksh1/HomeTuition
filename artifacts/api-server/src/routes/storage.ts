@@ -5,6 +5,7 @@ import { RequestUploadUrlBody, RequestUploadUrlResponse } from "@workspace/api-z
 import { requireAuth } from "../middlewares/requireAuth";
 import { mayOpenHomeworkFile } from "../lib/homeworkAccess";
 import { mayOpenMessageFile } from "../lib/messageAccess";
+import { mayOpenClassMessageFile } from "../lib/classMessageAccess";
 import {
   ALLOWED_UPLOAD_TYPES,
   MAX_UPLOAD_BYTES,
@@ -240,6 +241,9 @@ router.get("/storage/file", requireAuth, async (req: Request, res: Response) => 
    * have looked fine to whoever tested it, because a sender can always open their own upload.
    */
   if (!allowed) allowed = await mayOpenMessageFile(key, user.userId);
+
+  /** And a file sent in a class conversation — the fourth and last place files land. */
+  if (!allowed) allowed = await mayOpenClassMessageFile(key, user.userId);
 
   if (!allowed) { res.status(403).json({ error: "You cannot open this file." }); return; }
 

@@ -216,6 +216,18 @@ jobs:
           SESSION_SECRET: ci-only-not-a-real-secret
         run: pnpm --filter @workspace/api-server run test:messages
 
+      # The same chat features everywhere, which is the owner's requirement: the class chat and
+      # the monthly course chat now take files and reactions like the Messages tab. Two routes
+      # with different rules about who may read, so both are covered — "similar features" that
+      # reached only one of them is the half-finished state this catches. And the checks that
+      # matter sign in as somebody who did not upload the file.
+      - name: A file sent in a class conversation, and the class opening it
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: ci-only-not-a-real-secret
+        run: pnpm --filter @workspace/api-server run test:class-chat
+
       # Swapping the video provider. Daily.co is unlikely to survive the monthly tier's
       # economics, so the seam went in before anything was built on top of it. This starts the
       # real server twice — once on Daily, once on a provider that carries no video — and
