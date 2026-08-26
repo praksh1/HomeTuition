@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNotNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, isNotNull, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db,
@@ -49,6 +49,11 @@ export interface PortalAccess {
   isCurrentStudent: boolean;
   /** True if they have ever held one, which is what read access hangs off. */
   wasEverStudent: boolean;
+  /**
+   * When this student first joined the course, and so how far back their thread starts.
+   * Null for the teacher, who reads all of it.
+   */
+  joinedAt: Date | null;
 }
 
 /**
@@ -68,11 +73,15 @@ async function portalAccess(classId: number, userId: number): Promise<PortalAcce
   const cycleIndex = cycle?.index ?? null;
 
   if (klass.teacherId === userId) {
-    return { klass, isTeacher: true, cycleIndex, isCurrentStudent: false, wasEverStudent: false };
+    return { klass, isTeacher: true, cycleIndex, isCurrentStudent: false, wasEverStudent: false, joinedAt: null };
   }
 
   const places = await db
-    .select({ cycleIndex: recurringEnrollmentsTable.cycleIndex, status: recurringEnrollmentsTable.status })
+    .select({
+      cycleIndex: recurringEnrollmentsTable.cycleIndex,
+      status: recurringEnrollmentsTable.status,
+      joinedAt: recurringEnrollmentsTable.joinedAt,
+    })
     .from(recurringEnrollmentsTable)
     .where(
       and(
@@ -82,14 +91,39 @@ async function portalAccess(classId: number, userId: number): Promise<PortalAcce
     );
   if (places.length === 0) return null;
 
+  /**
+   * The first moment this student was ever in this course.
+   *
+   * Their *earliest* place, not the current one. Somebody who took the class in Bhadra, left,
+   * and came back in Ashwin has already read that first month — cutting them back to their
+   * newest enrolment would hide their own conversation from them.
+   */
+  const joinedAt = places
+    .map((p) => p.joinedAt)
+    .reduce<Date | null>((first, at) => (first === null || at < first ? at : first), null);
+
   return {
     klass,
     isTeacher: false,
     cycleIndex,
     isCurrentStudent: places.some((p) => p.cycleIndex === cycleIndex && p.status === "active"),
     wasEverStudent: true,
+    joinedAt,
   };
 }
+
+/**
+ * How far back this person may read.
+ *
+ * The owner's decision: *"hide any other prior messages for students who enrolled late"* — but
+ * with pinned messages exempt, so a teacher can put the things that always matter where
+ * everybody sees them whenever they arrived.
+ *
+ * A month of a class's conversation is other people's, and a student who joins on the 20th
+ * walking into three weeks of it is being handed a room they were not in. The teacher sees all
+ * of it: it is their class, and they wrote most of it.
+ */
+const readableFrom = (access: PortalAccess): Date | null => (access.isTeacher ? null : access.joinedAt);
 
 /** Reading is not writing: somebody whose month has ended may read, but not post. */
 const mayWrite = (access: PortalAccess) => access.isTeacher || access.isCurrentStudent;
@@ -150,19 +184,31 @@ router.get("/monthly/classes/:id/messages", requireAuth, async (req: Request, re
      * stays ascending: that is a page already open catching up on what it has not seen, and it
      * genuinely wants the oldest of those first.
      */
+    /**
+     * A student who joined late does not get the weeks before they arrived.
+     *
+     * Applied in the query rather than by filtering afterwards, so a page of two hundred is two
+     * hundred messages they may actually read — filtering after the limit would hand a new
+     * student an empty-looking thread with a "load earlier" button that never fills.
+     */
+    const from = readableFrom(access);
+    const mineToRead = from
+      ? and(eq(sessionMessagesTable.recurringId, id), gte(sessionMessagesTable.createdAt, from))
+      : eq(sessionMessagesTable.recurringId, id);
+
     const catchingUp = Number.isFinite(after);
     const found = catchingUp
       ? await db
           .select(columns)
           .from(sessionMessagesTable)
-          .where(and(eq(sessionMessagesTable.recurringId, id), gt(sessionMessagesTable.id, after)))
+          .where(and(mineToRead, gt(sessionMessagesTable.id, after)))
           .orderBy(asc(sessionMessagesTable.id))
           .limit(DEFAULT_LIMIT)
       : (
           await db
             .select(columns)
             .from(sessionMessagesTable)
-            .where(eq(sessionMessagesTable.recurringId, id))
+            .where(mineToRead)
             .orderBy(desc(sessionMessagesTable.id))
             .limit(DEFAULT_LIMIT)
         ).reverse();
@@ -174,6 +220,13 @@ router.get("/monthly/classes/:id/messages", requireAuth, async (req: Request, re
      * A month of conversation is longer than one page, so a pinned message from three weeks ago
      * is not in `messages` at all — and a pin that scrolls out of reach is not a pin. The app
      * shows these at the top whatever the thread is showing.
+     */
+    /**
+     * Pinned messages ignore the late-joiner cut entirely, which is the point of pinning.
+     *
+     * The owner asked for exactly this pairing: hide the back-conversation from somebody who
+     * joined on the 20th, *and* give the teacher a way to say "this one matters, whenever you
+     * arrived" — the timetable, the book to buy, where the class meets.
      */
     const pinned = await db
       .select(columns)
@@ -195,7 +248,7 @@ router.get("/monthly/classes/:id/messages", requireAuth, async (req: Request, re
           await db
             .select({ n: sql<number>`count(*)::int` })
             .from(sessionMessagesTable)
-            .where(and(eq(sessionMessagesTable.recurringId, id), sql`${sessionMessagesTable.id} < ${oldest}`))
+            .where(and(mineToRead, sql`${sessionMessagesTable.id} < ${oldest}`))
         )[0]?.n ?? 0;
 
     const mine = (m: { senderId: number }) => m.senderId === req.user!.userId;

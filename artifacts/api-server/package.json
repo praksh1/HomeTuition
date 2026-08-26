@@ -28,7 +28,8 @@
     "test:tickets": "node scripts/ticket-tests/run.mjs",
     "test:upgrade": "node scripts/ticket-upgrade/run.mjs",
     "test:operators": "node scripts/operator-tests/run.mjs",
-    "test:one-chat": "node scripts/one-chat/run.mjs"
+    "test:one-chat": "node scripts/one-chat/run.mjs",
+    "test:late-joiner": "node scripts/late-joiner/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",
