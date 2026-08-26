@@ -20,19 +20,13 @@ import { apiGet, apiPost } from "@/utils/api";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
 import { openAttachment } from "@/utils/openAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
-
-interface Attachment {
-  fileKey: string;
-  fileType: string;
-  fileName: string | null;
-}
-
-interface Reaction {
-  emoji: string;
-  count: number;
-  /** Whether this reader is one of the people counted, so the chip can show as pressed. */
-  mine: boolean;
-}
+import {
+  applyReaction,
+  attachmentLabel,
+  REACTIONS,
+  type Attachment,
+  type Reaction,
+} from "@/utils/reactions";
 
 interface Message {
   id: number;
@@ -46,14 +40,6 @@ interface Message {
   /** Sent back when a file was refused. The message went; the file did not. */
   attachmentProblem?: string | null;
 }
-
-/**
- * Six, and no more.
- *
- * A long grid of every emoji is a search problem on a phone. These are the ones a lesson
- * actually needs: understood, thank you, well done, and the three that carry a feeling.
- */
-const REACTIONS = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F389}", "\u{1F62E}", "\u{1F64F}"];
 
 export default function ConversationScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
@@ -166,24 +152,10 @@ export default function ConversationScreen() {
    */
   const react = async (messageId: number, emoji: string) => {
     setPicking(null);
+    // The rule itself lives in utils/reactions.ts, unit-tested and shared with the class chat —
+    // two copies of "what one tap does" would drift the first time either was edited.
     setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== messageId) return m;
-        const current = m.reactions ?? [];
-        const already = current.find((r) => r.emoji === emoji && r.mine);
-        // Whatever this person had before goes, whether they are replacing it or removing it.
-        const withoutMine = current
-          .map((r) => (r.mine ? { ...r, count: r.count - 1, mine: false } : r))
-          .filter((r) => r.count > 0);
-        if (already) return { ...m, reactions: withoutMine };
-        const existing = withoutMine.find((r) => r.emoji === emoji);
-        return {
-          ...m,
-          reactions: existing
-            ? withoutMine.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: true } : r))
-            : [...withoutMine, { emoji, count: 1, mine: true }],
-        };
-      }),
+      prev.map((m) => (m.id === messageId ? { ...m, reactions: applyReaction(m.reactions ?? [], emoji) } : m)),
     );
     try {
       await apiPost(`/messages/${messageId}/reaction`, { emoji });
@@ -270,9 +242,7 @@ export default function ConversationScreen() {
                         style={[styles.fileName, { color: mine ? "#fff" : colors.foreground }]}
                         numberOfLines={1}
                       >
-                        {/* The key is a UUID, so without the sender's own name this reads as
-                            "a file" and cannot be asked about. */}
-                        {f.fileName ?? (f.fileType.startsWith("image/") ? "Photo" : "File")}
+                        {attachmentLabel(f)}
                       </Text>
                       <Feather name="external-link" size={12} color={mine ? "#fff" : colors.mutedForeground} />
                     </TouchableOpacity>
