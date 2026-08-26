@@ -36,7 +36,9 @@ import { MAX_PDF_BYTES, preparePickedPdf } from "@/utils/pickedPdf";
 import { cancelSessionReminder } from "@/utils/notifications";
 import { canOpenSession } from "@/utils/sessionWindow";
 import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
+import { useAloneInCall } from "@/hooks/useAloneInCall";
 import CallTimeNotice from "@/components/CallTimeNotice";
+import AloneNotice from "@/components/AloneNotice";
 import { showsOwnChatTab } from "@/utils/classroomChat";
 import SmartBoard from "@/components/SmartBoard";
 
@@ -482,6 +484,18 @@ export default function Classroom() {
   // Called when the teacher clicks Daily's native Leave button. No confirmation dialog
   // here — the user already made an explicit in-call gesture, so we just clean up
   // immediately: mark the session completed and return to the dashboard.
+  /**
+   * Get out of this screen, whatever route brought us here.
+   *
+   * The same trap the student's classroom had: a teacher who arrived from a link, a
+   * notification, or their monthly class's page has nothing behind them on the stack, so
+   * `router.back()` alone leaves them sitting in the call they just ended.
+   */
+  const leaveScreen = useCallback(() => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(teacher)/sessions");
+  }, []);
+
   const handleDailyLeft = useCallback(async () => {
     // Drop the room URL before navigating. DailyEmbed tears the call down in its effect
     // cleanup, and clearing the URL makes that run immediately instead of waiting for the
@@ -494,8 +508,8 @@ export default function Classroom() {
     // scheduled at creation and never cancelled, which is why finished sessions kept
     // notifying.
     try { await cancelSessionReminder(String(id)); } catch {}
-    router.back();
-  }, [id]);
+    leaveScreen();
+  }, [id, leaveScreen]);
 
   /**
    * The class's own clock, running while the call is.
@@ -510,8 +524,14 @@ export default function Classroom() {
     setMeetingToken(null);
     void apiPatch(`/sessions/${id}`, { status: "completed" }).catch(() => {});
     void cancelSessionReminder(String(id)).catch(() => {});
-    router.back();
-  }, [id]);
+    leaveScreen();
+  }, [id, leaveScreen]);
+
+  // Presence (from the live WebSocket room) is the source of truth once connected — it
+  // starts at 0 the moment the teacher starts the session (server force-clears any stale
+  // "ghost" entries on start). Falling back to enrolledCount before the socket connects
+  // caused a stale avatar/count to render even when nobody is actually present.
+  const participantCount = connected ? presenceCount : 0;
 
   const timeLimit = useCallTimeLimit({
     session: session
@@ -521,13 +541,30 @@ export default function Classroom() {
     onCutoff: endBecauseTimeIsUp,
   });
 
+  /**
+   * A teacher sitting in an empty room, on the same fifteen minutes as a waiting student.
+   *
+   * The owner asked for both halves: *"Same thing at the teachers end if there is no student
+   * who has joined — teacher can also only stay active for 15 minutes if 0 students have
+   * joined."* Five quiet minutes in case somebody is just slow, then ten with the way out on
+   * screen, then the call ends itself. Starting it again from Sessions gives another fifteen.
+   *
+   * `presenceCount` counts students, never the teacher, so nobody having arrived really is
+   * zero — see the participant label further down.
+   */
+  const aloneTeacher = useAloneInCall({
+    alone: participantCount === 0,
+    active: !!roomUrl && !expired,
+    onCutoff: endBecauseTimeIsUp,
+  });
+
   const endSession = async () => {
     const doEnd = async () => {
       setRoomUrl(null);
     setMeetingToken(null); // release camera/mic before leaving — see handleDailyLeft above
       try { await apiPatch(`/sessions/${id}`, { status: "completed" }); } catch {}
       try { await cancelSessionReminder(String(id)); } catch {}
-      router.back();
+      leaveScreen();
     };
     if (Platform.OS === "web") {
       if (window.confirm("End Session?\n\nThis will mark the session as completed.")) await doEnd();
@@ -545,12 +582,6 @@ export default function Classroom() {
     setChatMsg("");
     setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 100);
   };
-
-  // Presence (from the live WebSocket room) is the source of truth once connected — it
-  // starts at 0 the moment the teacher starts the session (server force-clears any stale
-  // "ghost" entries on start). Falling back to enrolledCount before the socket connects
-  // caused a stale avatar/count to render even when nobody is actually present.
-  const participantCount = connected ? presenceCount : 0;
 
   /**
    * A class too old to open gets this instead of a classroom.
@@ -746,6 +777,18 @@ export default function Classroom() {
           ) : timeLimit.showWarning ? (
             <CallTimeNotice kind="warning" minutesLeft={timeLimit.minutesLeft} onClose={timeLimit.dismissWarning} />
           ) : null}
+
+          {/*
+            Five minutes in an empty room. Said once, with the way out — and the class can be
+            started again from Sessions, which buys another fifteen.
+          */}
+          {aloneTeacher.phase === "warned" && (
+            <AloneNotice
+              waitingFor="students"
+              minutesLeft={aloneTeacher.minutesLeft}
+              onLeave={endBecauseTimeIsUp}
+            />
+          )}
         </View>
         {!videoExpanded && (
         <View style={[s.boardArea, sideBySide && s.boardAreaSide, boardExpanded && s.boardAreaExpanded]}>
