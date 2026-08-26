@@ -129,34 +129,23 @@ export default function StudentClassroom() {
   };
 
   /**
-   * Set the moment we know the class is genuinely over.
+   * The class has been marked over — which is not the same as everybody having to go.
    *
-   * Read by the disconnect handler, which must stay quiet in that case. The teacher's video
-   * leaving and the class ending arrive as two separate events at almost the same instant, and
-   * whichever won the race decided which message the student saw — that is why a monthly class
-   * dropped students with no warning and a regular one gave a "they may rejoin" dialog that
-   * was contradicted a second later. One event, one message.
+   * This used to eject the student the instant the status changed: an alert, then out. The
+   * owner asked for the opposite, and they are right about why. **A teacher can press End by
+   * accident, and this app already lets them walk straight back in** — that is the whole point
+   * of the three-hour window in the teacher's classroom. Throwing thirty students out a second
+   * later destroys the recovery path the app already has.
+   *
+   * So an ended class is treated as exactly what it looks like from a student's chair: the
+   * teacher is not here. Same five quiet minutes, same ten with a way out, same automatic
+   * close at fifteen — and if the teacher comes back the status returns to live, this goes
+   * false, and the countdown disappears without anybody having been told anything.
+   *
+   * The room is deliberately *not* torn down here. Keeping it is what lets the video simply
+   * resume when they return.
    */
-  const endedRef = useRef(false);
-
-  useEffect(() => {
-    if (hasLeft.current) return;
-    if (sessionStatus === "completed" || sessionStatus === "cancelled") {
-      endedRef.current = true;
-      // Clear the room first: DailyEmbed releases the camera and microphone in its effect
-      // cleanup, and dropping the URL runs that immediately rather than waiting for this
-      // screen to unmount, which a navigation stack may never do.
-      setRoomUrl(null);
-      setMeetingToken(null);
-      const msg = "The teacher has ended this session.";
-      if (Platform.OS === "web") {
-        window.alert(`Session Ended\n\n${msg}`);
-        leaveNow();
-      } else {
-        Alert.alert("Session Ended", msg, [{ text: "OK", onPress: leaveNow }]);
-      }
-    }
-  }, [sessionStatus, leaveNow]);
+  const classEnded = sessionStatus === "completed" || sessionStatus === "cancelled";
 
   /**
    * The class is open to this student but the teacher has not pressed start.
@@ -247,7 +236,6 @@ export default function StudentClassroom() {
   const teacherGoneRef = useRef(false);
   const [teacherGone, setTeacherGone] = useState(false);
   const notifyTeacherLeft = useCallback(() => {
-    if (endedRef.current) return;
     teacherGoneRef.current = true;
     setTeacherGone(true);
   }, []);
@@ -259,7 +247,12 @@ export default function StudentClassroom() {
    * the fifteen minutes start again when they do — see utils/aloneInCall.ts.
    */
   const alone = useAloneInCall({
-    alone: teacherGone,
+    /*
+     * Two ways the teacher can be absent and one answer to both: their video dropped, or they
+     * pressed End. A student cannot tell those apart and should not have to — a teacher whose
+     * phone died looks exactly like a teacher who hung up.
+     */
+    alone: teacherGone || classEnded,
     active: !!roomUrl && !roomExpired,
     onCutoff: () => {
       leaveNow();
