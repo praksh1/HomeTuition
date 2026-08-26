@@ -24,7 +24,9 @@ import VideoCall from "@/components/VideoCall";
 import SmartBoard from "@/components/SmartBoard";
 import { showsOwnChatTab } from "@/utils/classroomChat";
 import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
+import { useAloneInCall } from "@/hooks/useAloneInCall";
 import CallTimeNotice from "@/components/CallTimeNotice";
+import AloneNotice from "@/components/AloneNotice";
 
 const SCREEN_W = Dimensions.get("window").width;
 type Mode = "board" | "chat";
@@ -75,6 +77,22 @@ export default function StudentClassroom() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
+  /**
+   * Get out of this screen, whatever route brought us here.
+   *
+   * `router.back()` alone was not enough: a student who reached the classroom from a link, a
+   * notification, or a monthly class's own page has nothing behind them on the stack, so Leave
+   * did nothing at all and they were stuck in the call. The owner hit exactly that — "several
+   * attempts, a student could not end a live session call".
+   */
+  const leaveNow = useCallback(() => {
+    hasLeft.current = true;
+    setRoomUrl(null);
+    setMeetingToken(null); // release camera/mic before navigating away
+    if (router.canGoBack()) router.back();
+    else router.replace("/(student)/sessions");
+  }, []);
+
   useEffect(() => {
     loadSession();
     loadRoom();
@@ -110,23 +128,35 @@ export default function StudentClassroom() {
     }
   };
 
+  /**
+   * Set the moment we know the class is genuinely over.
+   *
+   * Read by the disconnect handler, which must stay quiet in that case. The teacher's video
+   * leaving and the class ending arrive as two separate events at almost the same instant, and
+   * whichever won the race decided which message the student saw — that is why a monthly class
+   * dropped students with no warning and a regular one gave a "they may rejoin" dialog that
+   * was contradicted a second later. One event, one message.
+   */
+  const endedRef = useRef(false);
+
   useEffect(() => {
     if (hasLeft.current) return;
     if (sessionStatus === "completed" || sessionStatus === "cancelled") {
+      endedRef.current = true;
       // Clear the room first: DailyEmbed releases the camera and microphone in its effect
       // cleanup, and dropping the URL runs that immediately rather than waiting for this
       // screen to unmount, which a navigation stack may never do.
       setRoomUrl(null);
-    setMeetingToken(null);
+      setMeetingToken(null);
       const msg = "The teacher has ended this session.";
       if (Platform.OS === "web") {
         window.alert(`Session Ended\n\n${msg}`);
-        router.back();
+        leaveNow();
       } else {
-        Alert.alert("Session Ended", msg, [{ text: "OK", onPress: () => router.back() }]);
+        Alert.alert("Session Ended", msg, [{ text: "OK", onPress: leaveNow }]);
       }
     }
-  }, [sessionStatus]);
+  }, [sessionStatus, leaveNow]);
 
   /**
    * The class is open to this student but the teacher has not pressed start.
@@ -163,11 +193,8 @@ export default function StudentClassroom() {
   // Called when the student clicks Daily's native Leave button — no confirmation needed
   // since the user already made an explicit in-call gesture. Redirect instantly.
   const handleDailyLeft = useCallback(() => {
-    hasLeft.current = true;
-    setRoomUrl(null);
-    setMeetingToken(null); // release camera/mic before navigating away
-    router.back();
-  }, []);
+    leaveNow();
+  }, [leaveNow]);
 
   /**
    * The same clock the teacher's screen runs on.
@@ -185,12 +212,7 @@ export default function StudentClassroom() {
   });
 
   const leaveSession = () => {
-    const doLeave = () => {
-      hasLeft.current = true;
-      setRoomUrl(null);
-    setMeetingToken(null); // release camera/mic before navigating away
-      router.back();
-    };
+    const doLeave = leaveNow;
     if (Platform.OS === "web") {
       if (window.confirm("Leave Session?\n\nAre you sure?")) doLeave();
     } else {
@@ -209,11 +231,40 @@ export default function StudentClassroom() {
   /** Students never author anything, so outgoing changes are dropped. */
   const noopSceneChange = useCallback(() => {}, []);
 
-  const notifyTeacherLeft = () => {
-    const msg = "The teacher has disconnected. They may rejoin shortly — you can wait here or leave the session.";
-    if (Platform.OS === "web") window.alert(`Teacher Disconnected\n\n${msg}`);
-    else Alert.alert("Teacher Disconnected", msg);
-  };
+  /**
+   * The teacher's video went away. That is not the same as the teacher ending the class.
+   *
+   * This used to throw up "Teacher Disconnected — they may rejoin shortly" the instant it
+   * happened. When the teacher pressed End, both things happened at once, so the student got
+   * that dialog, pressed OK, and was immediately thrown out by the *other* alert with "the
+   * teacher has ended this session" — two contradictory messages for one event, which is what
+   * the owner reported.
+   *
+   * Nothing is said now. The clock below waits five quiet minutes first, because a connection
+   * that drops usually comes back, and `endedRef` keeps this quiet altogether when the class
+   * is genuinely over.
+   */
+  const teacherGoneRef = useRef(false);
+  const [teacherGone, setTeacherGone] = useState(false);
+  const notifyTeacherLeft = useCallback(() => {
+    if (endedRef.current) return;
+    teacherGoneRef.current = true;
+    setTeacherGone(true);
+  }, []);
+
+  /**
+   * Waiting for a teacher who is not here: five quiet minutes, then ten with a way out.
+   *
+   * Ends the call at fifteen. Both of them can come straight back from the Sessions tab, and
+   * the fifteen minutes start again when they do — see utils/aloneInCall.ts.
+   */
+  const alone = useAloneInCall({
+    alone: teacherGone,
+    active: !!roomUrl && !roomExpired,
+    onCutoff: () => {
+      leaveNow();
+    },
+  });
 
   return (
     <KeyboardAvoidingView style={{ flex: 1, backgroundColor: "#0A0A0A" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
@@ -353,6 +404,14 @@ export default function StudentClassroom() {
           ) : timeLimit.showWarning ? (
             <CallTimeNotice kind="warning" minutesLeft={timeLimit.minutesLeft} onClose={timeLimit.dismissWarning} />
           ) : null}
+
+          {/*
+            The teacher has been gone five minutes. Said once, quietly, with the way out —
+            not as the dialog that used to fire the instant their video dropped.
+          */}
+          {alone.phase === "warned" && (
+            <AloneNotice waitingFor="teacher" minutesLeft={alone.minutesLeft} onLeave={leaveNow} />
+          )}
         </View>
         {!videoExpanded && (
         <View style={s.boardWrap}>
