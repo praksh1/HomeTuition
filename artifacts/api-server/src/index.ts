@@ -19,6 +19,7 @@ import {
   ensureMonthlyEnforcementColumns,
   ensureMonthlyPortalTables,
   ensureOperatorAccounts,
+  ensureTeacherLeave,
   ensureTicketLifecycle,
 } from "./lib/ensureSchema";
 
@@ -56,6 +57,7 @@ server.listen(port, () => {
   void ensureMonthlyPortalTables();
   void ensureTicketLifecycle();
   void ensureOperatorAccounts();
+  void ensureTeacherLeave();
   // Says once whether uploads can work, and whether a setting had to be interpreted.
   noteStorageConfig();
   // Whether real money can move is too important to have to go and look up.

@@ -273,6 +273,15 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:late-joiner
 
+      # A teacher who is going to be away. Nothing knew they were, so cover for a class they
+      # missed could land on a day they will miss too — one absence becoming two, and a student
+      # told to turn up for a class nobody will hold. Marking leave deliberately does not cancel
+      # the classes inside it or excuse missing them; that is the parked partial-month question.
+      - name: A make-up cannot be scheduled into a teacher's leave
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:teacher-leave
+
       # A class's own message thread, and the log of who did what. Both have to survive a
       # restart to be worth anything — a teacher's "running ten minutes late" and a refund
       # argued weeks later both depend on the words still being there — so this restarts the

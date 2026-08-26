@@ -1,6 +1,7 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
+  teacherLeaveTable,
   db,
   recurringDaysTable,
   recurringEnrollmentsTable,
@@ -419,6 +420,109 @@ router.get("/monthly/classes/:id/missed", requireAuth, async (req: Request, res:
     makeups: { used, allowed: MAX_MAKEUPS_PER_CYCLE, left: Math.max(0, MAX_MAKEUPS_PER_CYCLE - used) },
     makeupDeadlineHours: MAKEUP_DEADLINE_HOURS,
   });
+});
+
+/**
+ * The days a teacher has said they are away, and marking new ones.
+ *
+ * Marking leave changes nothing about what a teacher owes: the daily classes inside it are not
+ * cancelled and missing them still counts. Running a class for only part of a month is a
+ * separate, larger question — the price, the delivery floor and the suspension count all assume
+ * a class runs every day — and it is parked pending the owner's decisions. See
+ * `.agents/backlog/monthly-partial-months-and-dropping.md`.
+ *
+ * What this does do is stop a make-up landing on a day the teacher will miss, and tell them
+ * honestly how many classes fall inside the dates they just booked.
+ */
+router.get("/monthly/leave", requireAuth, async (req: Request, res: Response) => {
+  const rows = await db
+    .select()
+    .from(teacherLeaveTable)
+    .where(eq(teacherLeaveTable.teacherId, req.user!.userId))
+    .orderBy(desc(teacherLeaveTable.startsAt));
+  res.json({
+    leave: rows.map((row) => ({
+      id: row.id,
+      startsAt: row.startsAt.toISOString(),
+      endsAt: row.endsAt.toISOString(),
+      reason: row.reason,
+    })),
+  });
+});
+
+router.post("/monthly/leave", requireAuth, async (req: Request, res: Response) => {
+  const { startsAt, endsAt, reason } = req.body as { startsAt?: string; endsAt?: string; reason?: string };
+  const from = startsAt ? new Date(startsAt) : null;
+  const to = endsAt ? new Date(endsAt) : null;
+  if (!from || !to || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    res.status(400).json({ error: "Pick the first and last day you will be away." });
+    return;
+  }
+  if (to.getTime() < from.getTime()) {
+    res.status(400).json({ error: "The last day cannot be before the first." });
+    return;
+  }
+  // A year is far beyond any trip and well within a mistake — a decade of leave booked by a
+  // slipped digit would quietly refuse every make-up from now on.
+  if (to.getTime() - from.getTime() > 365 * 24 * 60 * 60 * 1000) {
+    res.status(400).json({ error: "That is longer than a year. Check the dates." });
+    return;
+  }
+
+  const [row] = await db
+    .insert(teacherLeaveTable)
+    .values({
+      teacherId: req.user!.userId,
+      startsAt: from,
+      endsAt: to,
+      reason: typeof reason === "string" && reason.trim() ? reason.trim().slice(0, 200) : null,
+    })
+    .returning();
+
+  /**
+   * How many classes fall inside it, said plainly.
+   *
+   * A teacher booking a fortnight away is about to miss fourteen classes, and the app knows it.
+   * Telling them now is the difference between a decision and a surprise — and it is *only*
+   * telling: nothing is cancelled and nothing is excused.
+   */
+  const plan = await currentPlanFor(req.user!.userId);
+  const klass = plan ? await classForPlan(plan.id) : null;
+  let classesInside = 0;
+  if (klass) {
+    const [n] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(recurringDaysTable)
+      .where(
+        and(
+          eq(recurringDaysTable.recurringId, klass.id),
+          sql`status = 'planned'`,
+          gte(recurringDaysTable.scheduledFor, from),
+          lte(recurringDaysTable.scheduledFor, to),
+        ),
+      );
+    classesInside = n?.n ?? 0;
+  }
+
+  res.status(201).json({
+    leave: { id: row!.id, startsAt: from.toISOString(), endsAt: to.toISOString(), reason: row!.reason },
+    classesInside,
+    note:
+      classesInside > 0
+        ? `${classesInside} of your classes fall in those dates. They are still yours to hold — marking leave does not cancel them or excuse missing them. It only stops a make-up being put on a day you are away.`
+        : "No classes fall in those dates.",
+  });
+});
+
+router.delete("/monthly/leave/:leaveId", requireAuth, async (req: Request, res: Response) => {
+  const leaveId = parseInt(String(req.params.leaveId), 10);
+  if (!Number.isFinite(leaveId)) { res.status(400).json({ error: "Invalid leave id" }); return; }
+  const [gone] = await db
+    .delete(teacherLeaveTable)
+    .where(and(eq(teacherLeaveTable.id, leaveId), eq(teacherLeaveTable.teacherId, req.user!.userId)))
+    .returning({ id: teacherLeaveTable.id });
+  if (!gone) { res.status(404).json({ error: "That leave was not found." }); return; }
+  res.json({ ok: true });
 });
 
 /** Puts a make-up class on the calendar for one that was missed. */

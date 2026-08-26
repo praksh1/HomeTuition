@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import {
   db,
   recurringDaysTable,
@@ -11,6 +11,7 @@ import {
   usersTable,
   type RecurringSession,
   type TeacherPlan,
+  teacherLeaveTable,
 } from "@workspace/db";
 import {
   CYCLE_DAYS,
@@ -1219,6 +1220,60 @@ export async function addMakeup(
       .from(recurringDaysTable)
       .where(and(eq(recurringDaysTable.makeupForId, missedDayId), sql`status <> 'cancelled'`));
     if (already) return { ok: false as const, reason: "A make-up class is already arranged for that one." };
+
+    /**
+     * Not onto a day the teacher has already said they are away.
+     *
+     * The owner's case: somebody going out of town in a fortnight, arranging cover for a class
+     * they missed. Without this they can put the make-up inside the trip and miss it too — one
+     * absence becoming two, and a student told to turn up for a class nobody will hold.
+     *
+     * Checked inside the same transaction that creates it, so leave booked at the same moment
+     * cannot slip past a check made before it.
+     */
+    const [away] = await tx
+      .select({ startsAt: teacherLeaveTable.startsAt, endsAt: teacherLeaveTable.endsAt, reason: teacherLeaveTable.reason })
+      .from(teacherLeaveTable)
+      .where(
+        and(
+          eq(teacherLeaveTable.teacherId, klass.teacherId),
+          lte(teacherLeaveTable.startsAt, at),
+          gte(teacherLeaveTable.endsAt, at),
+        ),
+      )
+      .limit(1);
+    if (away) {
+      return {
+        ok: false as const,
+        reason: away.reason
+          ? `You are away then — ${away.reason}. Pick a day you will be here.`
+          : "You are away then. Pick a day you will be here.",
+      };
+    }
+
+    /**
+     * Nor on top of a class that is already happening.
+     *
+     * A make-up at the same moment as an ordinary class-day is one the teacher cannot hold and
+     * a student cannot attend, and it would be counted as two classes delivered.
+     */
+    const slotFrom = new Date(at.getTime() - klass.durationMinutes * 60_000 + 60_000);
+    const slotTo = new Date(at.getTime() + klass.durationMinutes * 60_000 - 60_000);
+    const [clash] = await tx
+      .select({ id: recurringDaysTable.id })
+      .from(recurringDaysTable)
+      .where(
+        and(
+          eq(recurringDaysTable.recurringId, klass.id),
+          sql`status <> 'cancelled'`,
+          gte(recurringDaysTable.scheduledFor, slotFrom),
+          lte(recurringDaysTable.scheduledFor, slotTo),
+        ),
+      )
+      .limit(1);
+    if (clash) {
+      return { ok: false as const, reason: "There is already a class at that time. Pick another slot." };
+    }
 
     const used = await makeupsIn(klass.id, cycleIndex, tx);
     const [total] = await tx

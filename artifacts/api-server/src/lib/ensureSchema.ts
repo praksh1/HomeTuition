@@ -832,3 +832,39 @@ export async function ensureOperatorAccounts(): Promise<void> {
     );
   }
 }
+
+/**
+ * The days a teacher has said they are away.
+ *
+ * Create-only, like every guard here. A new table rather than a column, for the reason recorded
+ * in `.agents/memory/schema-change-deploy-window.md`: the API redeploys itself and `db:push` is
+ * a step somebody has to remember, and in that window a new column on an existing table takes
+ * sign-in down for everybody.
+ */
+export async function ensureTeacherLeave(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "teacher_leave" (
+        "id" serial PRIMARY KEY,
+        "teacher_id" integer NOT NULL,
+        "starts_at" timestamp with time zone NOT NULL,
+        "ends_at" timestamp with time zone NOT NULL,
+        "reason" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "teacher_leave_teacher_id_users_id_fk"
+          FOREIGN KEY ("teacher_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "teacher_leave_teacher_idx" ON "teacher_leave" ("teacher_id", "starts_at")
+    `);
+    logger.info("teacher leave is present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not create the teacher leave table; run `pnpm run db:push`. " +
+        "Monthly classes still work — but a teacher cannot mark themselves away, so nothing " +
+        "stops a make-up being scheduled onto a day they will miss.",
+    );
+  }
+}

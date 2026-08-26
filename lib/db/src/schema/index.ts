@@ -17,6 +17,7 @@ export * from "./reviews";
 export * from "./studentTeacherSubscriptions";
 export * from "./messages";
 export * from "./disputes";
+export * from "./teacherLeave";
 export * from "./teacherPlans";
 export * from "./recurringSessions";
 export * from "./recurringDays";
