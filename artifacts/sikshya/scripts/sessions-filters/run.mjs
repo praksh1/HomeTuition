@@ -88,6 +88,47 @@ let body = await text();
 check("the teacher's Sessions screen offers an Expired filter", /Expired/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
 check("and a Monthly one", /Monthly/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
 
+/**
+ * And they are actually on the screen, with a height, not merely in the document.
+ *
+ * This is the check that was missing. A horizontal ScrollView has no height of its own, and
+ * above a list that wants all the room it collapses to nothing — the chips paint for one frame
+ * and vanish, which is what a teacher reported. Every assertion above still passed, because
+ * `innerText` returns text from zero-height elements too. Measuring is the only way to tell a
+ * rendered control from a remembered one.
+ */
+/**
+ * The row's own height, not a chip's.
+ *
+ * Measuring the chips is not enough: give the row `height: 0` and the chips overflow it and
+ * keep boxes of their own, so every chip assertion passes while the row is invisible and
+ * unclickable. The container is the thing that collapses, so the container is the thing to
+ * measure.
+ */
+const rowHeight = async (page, testId) => {
+  const box = await page.locator(`[data-testid="${testId}"]`).first().boundingBox().catch(() => null);
+  return box?.height ?? 0;
+};
+
+const chipBox = async (label) => {
+  const box = await page.getByText(label, { exact: true }).first().boundingBox();
+  return box ?? { width: 0, height: 0 };
+};
+for (const label of ["All", "Live", "Upcoming", "Completed", "Expired", "Monthly"]) {
+  const box = await chipBox(label);
+  check(`the "${label}" filter is visible, not a zero-height ghost`,
+    box.height > 10 && box.width > 10, `height=${box.height} width=${box.width}`);
+}
+
+check("the row holding them has a height of its own",
+  await rowHeight(page, "teacher-filter-row") > 20, `height=${await rowHeight(page, "teacher-filter-row")}`);
+
+/* And it stays visible — a row that collapses one frame later is the bug being fixed. */
+await page.waitForTimeout(2500);
+const settled = await chipBox("Expired");
+check("and is still there once the list below has loaded",
+  settled.height > 10, `height=${settled.height}`);
+
 await tap("Upcoming");
 body = await text();
 check("Upcoming shows the classes still to come", /Coming up 0/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
@@ -122,7 +163,37 @@ await sPage.addInitScript((tok) => window.localStorage.setItem("@sikshya_token",
 await sPage.goto(`${siteUrl}/(student)/sessions`, { waitUntil: "networkidle" });
 await sPage.waitForTimeout(4500);
 const sBody = await sPage.evaluate(() => document.body.innerText);
+/*
+ * The student's own filters, which they had none of. Measured, not read: text inside a
+ * zero-height row is still in innerText, and that is how the teacher's row passed while being
+ * invisible on a phone.
+ */
+for (const id of ["all", "monthly", "live", "upcoming", "past"]) {
+  const box = await sPage.locator(`[data-testid="student-group-${id}"]`).first().boundingBox().catch(() => null);
+  check(`the student's "${id}" filter is on screen`, !!box && box.height > 10 && box.width > 10,
+    box ? `height=${box.height}` : "not found");
+}
+check("and the row holding them has a height of its own",
+  await rowHeight(sPage, "student-filter-row") > 20, `height=${await rowHeight(sPage, "student-filter-row")}`);
 check("the student sees a Monthly Classes section", /Monthly Classes/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
+
+/* Choosing one narrows to it, and the count on the chip matches what is under it. */
+/*
+ * Checked by the card, not by its topic. A monthly class generates real daily sessions under
+ * the same name, so matching the words finds the day's class sitting in Past and reads it as
+ * the standing arrangement — an assertion that cannot tell the two apart is not an assertion.
+ */
+const monthlyCard = `[data-testid="student-monthly-${klassId}"]`;
+await sPage.locator('[data-testid="student-group-past"]').first().click();
+await sPage.waitForTimeout(1500);
+check("choosing Past hides the monthly arrangement",
+  await sPage.locator(monthlyCard).count() === 0,
+  (await sPage.evaluate(() => document.body.innerText)).slice(0, 240).replace(/\n/g, " | "));
+await sPage.locator('[data-testid="student-group-monthly"]').first().click();
+await sPage.waitForTimeout(1500);
+check("and choosing Monthly brings it back", await sPage.locator(monthlyCard).count() > 0);
+await sPage.locator('[data-testid="student-group-all"]').first().click();
+await sPage.waitForTimeout(1200);
 check("with the class they joined in it", /Daily algebra hour/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
 check("and who teaches it", /Gita Poudel/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
 /*

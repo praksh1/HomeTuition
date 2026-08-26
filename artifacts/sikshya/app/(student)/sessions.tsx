@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, FlatList, Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, FlatList, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
@@ -71,6 +71,7 @@ export default function StudentSessions() {
    * and this app is built for a cheap phone on a poor connection — polling something that only
    * changes when the student themselves changes it would spend their data for nothing.
    */
+  const [group, setGroup] = useState<"all" | "monthly" | "live" | "upcoming" | "past">("all");
   const [myMonthly, setMyMonthly] = useState<MonthlyClass[]>([]);
   useFocusEffect(useCallback(() => {
     let alive = true;
@@ -188,6 +189,25 @@ export default function StudentSessions() {
   const upcomingSessions = held.filter((s) => s.status === "upcoming" && !isOver(s));
   const pastSessions = held.filter((s) => s.status !== "live" && isOver(s));
 
+  /**
+   * Filters here too, which a student did not have at all.
+   *
+   * Sections alone are fine in a first week and wrong by the second: a student who has taken
+   * thirty classes scrolls past all of them to reach tomorrow's. The counts sit on the chips so
+   * somebody can see there is nothing under a heading without opening it.
+   *
+   * Rendered inside the list rather than above it — on the teacher's screen a row that sat
+   * above the list flashed on and vanished on a real phone.
+   */
+  const GROUPS = [
+    { id: "all" as const, label: "All", n: myMonthly.length + held.length },
+    { id: "monthly" as const, label: "Monthly", n: myMonthly.length },
+    { id: "live" as const, label: "Live", n: liveSessions.length },
+    { id: "upcoming" as const, label: "Upcoming", n: upcomingSessions.length },
+    { id: "past" as const, label: "Past", n: pastSessions.length },
+  ];
+  const showing = (id: (typeof GROUPS)[number]["id"]) => group === "all" || group === id;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
@@ -201,7 +221,35 @@ export default function StudentSessions() {
         scrollEnabled={!!sessions.length || myMonthly.length > 0}
         ListHeaderComponent={
           <View>
-            {myMonthly.length > 0 && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.groups}
+              testID="student-filter-row"
+              style={styles.groupsRow}
+            >
+              {GROUPS.map((g) => {
+                const active = group === g.id;
+                return (
+                  <TouchableOpacity
+                    key={g.id}
+                    testID={`student-group-${g.id}`}
+                    onPress={() => setGroup(g.id)}
+                    activeOpacity={0.75}
+                    style={[styles.group, {
+                      borderColor: active ? colors.secondary : colors.border,
+                      backgroundColor: active ? colors.secondary + "14" : colors.card,
+                    }]}
+                  >
+                    <Text style={[styles.groupText, { color: active ? colors.secondary : colors.mutedForeground }]}>
+                      {g.label}{g.n > 0 ? ` ${g.n}` : ""}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            {showing("monthly") && myMonthly.length > 0 && (
               <View style={styles.section} testID="student-monthly-section">
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Monthly Classes</Text>
                 {myMonthly.map((k) => (
@@ -236,7 +284,7 @@ export default function StudentSessions() {
               </View>
             )}
 
-            {liveSessions.length > 0 && (
+            {showing("live") && liveSessions.length > 0 && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <View style={[styles.liveIndicator, { backgroundColor: colors.success }]} />
@@ -258,7 +306,7 @@ export default function StudentSessions() {
               </View>
             )}
 
-            {upcomingSessions.length > 0 && (
+            {showing("upcoming") && upcomingSessions.length > 0 && (
               <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Upcoming</Text>
                 {upcomingSessions.map((s) => (
@@ -267,7 +315,7 @@ export default function StudentSessions() {
               </View>
             )}
 
-            {pastSessions.length > 0 && (
+            {showing("past") && pastSessions.length > 0 && (
               <View style={styles.section}>
                 <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Past Sessions</Text>
                 {/*
@@ -358,6 +406,10 @@ const styles = StyleSheet.create({
   },
   droppedFlagText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", marginBottom: 8 },
+  groupsRow: { flexGrow: 0, flexShrink: 0, marginBottom: 12 },
+  groups: { flexDirection: "row", alignItems: "center", gap: 8 },
+  group: { borderRadius: 999, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 7 },
+  groupText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   monthlyCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 4, marginBottom: 10 },
   monthlyTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   monthlyTopic: { flex: 1, fontSize: 16, fontFamily: "Inter_600SemiBold" },

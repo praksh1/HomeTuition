@@ -181,6 +181,41 @@ export default function TeacherSessions() {
     router.push(`/session/${item.id}`);
   };
 
+  const FilterRow = () => (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabs}
+        /**
+         * `flexGrow: 0, flexShrink: 0` is load-bearing, not tidying.
+         *
+         * A horizontal ScrollView has no height of its own. As a flex child above a list that
+         * wants all the room, it gets squeezed to nothing — the chips paint for one frame and
+         * then the row collapses, which is exactly what a teacher reported: "the filters
+         * flashed for a second before disappearing completely".
+         *
+         * A test that reads document.body.innerText will not catch this. Text inside a
+         * zero-height element is still in innerText, so the suite went green while the row was
+         * invisible on a real phone; the checks measure the row's height now.
+         */
+        testID="teacher-filter-row"
+        style={styles.tabsRow}
+      >
+        {TABS.map((tab) => (
+          <TouchableOpacity
+            key={tab.key}
+            style={[styles.tab, filter === tab.key && { backgroundColor: colors.primary }]}
+            onPress={() => setFilter(tab.key)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.tabText, { color: filter === tab.key ? "#fff" : colors.mutedForeground }]}>
+              {tab.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
@@ -199,24 +234,6 @@ export default function TeacherSessions() {
         Six chips do not fit across a cheap Android phone, and squashing them makes every label
         unreadable rather than one of them off-screen. So the row scrolls.
       */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabs}
-      >
-        {TABS.map((tab) => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.tab, filter === tab.key && { backgroundColor: colors.primary }]}
-            onPress={() => setFilter(tab.key)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.tabText, { color: filter === tab.key ? "#fff" : colors.mutedForeground }]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
 
       {/*
         My Plan.
@@ -228,6 +245,7 @@ export default function TeacherSessions() {
       */}
       {filter === "monthly" ? (
         <View style={[styles.list, { paddingBottom: insets.bottom + 100 }]}>
+          <FilterRow />
           {plan?.class ? (
             <TouchableOpacity
               testID="teacher-monthly-plan"
@@ -289,6 +307,17 @@ export default function TeacherSessions() {
       ) : (
       <FlatList
         data={filtered}
+        /**
+         * The filters ride inside the list rather than sitting above it.
+         *
+         * As a sibling they flashed on and then vanished on a teacher's iPhone — reported
+         * twice, from two different routes into this screen. I could not reproduce it in
+         * Chromium and my first explanation for it was wrong, so rather than patch a guess
+         * this removes the situation that produced it: a row competing for height with a list
+         * that wants all of it. Inside the list there is nothing to compete with, and it is
+         * the arrangement the student's Sessions screen has always used without trouble.
+         */
+        ListHeaderComponent={<FilterRow />}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
         scrollEnabled={!!filtered.length}
@@ -363,7 +392,8 @@ const styles = StyleSheet.create({
   planLink: { fontSize: 14, fontFamily: "Inter_500Medium", marginTop: 8 },
   createBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
   createBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  tabs: { flexDirection: "row", paddingHorizontal: 20, paddingVertical: 12, gap: 8 },
+  tabsRow: { flexGrow: 0, flexShrink: 0 },
+  tabs: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingVertical: 12, gap: 8 },
   tab: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: "#F4F4F0" },
   tabText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   list: { paddingHorizontal: 20, paddingTop: 8 },
