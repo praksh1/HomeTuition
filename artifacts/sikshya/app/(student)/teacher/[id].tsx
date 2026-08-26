@@ -1,8 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
-import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import React, { useCallback, useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { confirm, notify } from "@/utils/alerts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -38,6 +38,14 @@ interface SessionAccess {
   /** Paid and inside the early-join window, but the teacher has not started yet. */
   awaitingTeacher?: boolean;
   joinOpensAt?: string | null;
+  /**
+   * Whether the server actually answered.
+   *
+   * Absent means yes. False means the check failed, and the difference matters: "we could not
+   * ask" and "you have not paid" look identical on screen otherwise, and the screen was showing
+   * the second one — inviting a student who had already paid to pay a second time.
+   */
+  known?: boolean;
 }
 
 interface ApiReview {
@@ -60,6 +68,14 @@ interface ApiSession {
   enrolledCount: number;
   price: number;
   status: string;
+  /**
+   * The class is past its cutoff and will never be held, whatever the `status` column says.
+   *
+   * `status` stays "upcoming" on a class nobody ever started, so the server computes this from
+   * the clock and sends it. On the live site 19 of the 20 "upcoming" classes on this list were
+   * days old — students were being invited to pay for lessons that had already come and gone.
+   */
+  expired?: boolean;
 }
 
 function mapApiSession(s: ApiSession, teacherId: string): Session {
@@ -116,6 +132,31 @@ export default function TeacherDetail() {
     loadData();
   }, [id]);
 
+  /**
+   * Look again when the student comes back to this screen, and while a class is live.
+   *
+   * This page used to read the world once, on mount, and then keep insisting on it. So a
+   * student who opened a teacher's profile, watched the teacher start the class, and looked
+   * back was still told to "Book & Pay to join" — the owner hit exactly that, joined from the
+   * Sessions tab instead, came back here and found it stale again.
+   *
+   * Two triggers, because they catch different things: coming back to the tab catches a booking
+   * made elsewhere, and the interval catches a teacher starting the class while the student is
+   * sitting on this page. Only while something is live, so a profile left open on a quiet day
+   * costs nothing.
+   */
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [id]),
+  );
+
+  useEffect(() => {
+    if (liveSessions.length === 0) return;
+    const timer = setInterval(loadData, 20000);
+    return () => clearInterval(timer);
+  }, [liveSessions.length, id]);
+
   const loadData = async () => {
     // The route param `id` is the teacher's *profile* id; the reviews and sessions APIs key on
     // the teacher's *user* id. Kept here so the eligibility check below uses the same id the
@@ -137,21 +178,40 @@ export default function TeacherDetail() {
         apiGet<{ reviews: ApiReview[] }>(`/teachers/${id}/reviews?limit=10`),
       ]);
 
-      setUpcomingSessions(upcomingRes.sessions.map((s) => mapApiSession(s, String(apiTeacher.id))));
+      /**
+       * A class whose moment has passed belongs in the past list, not on sale.
+       *
+       * `status=upcoming` filters on the status column, and that column still reads "upcoming"
+       * for every class nobody got round to starting. The server tells us which ones are really
+       * over; this is the screen finally reading it.
+       */
+      const stillToCome = upcomingRes.sessions.filter((s) => !s.expired);
+      const goneBy = upcomingRes.sessions.filter((s) => s.expired);
+
+      setUpcomingSessions(stillToCome.map((s) => mapApiSession(s, String(apiTeacher.id))));
       setLiveSessions(liveRes.sessions.map((s) => mapApiSession(s, String(apiTeacher.id))));
-      setPastSessions(pastRes.sessions.map((s) => mapApiSession(s, String(apiTeacher.id))));
+      // Shown under Past, where they belong, rather than vanishing — a student who booked one
+      // still needs to see that it existed.
+      setPastSessions(
+        [...goneBy, ...pastRes.sessions].map((s) => mapApiSession(s, String(apiTeacher.id))),
+      );
       setReviews(revRes.reviews);
 
       if (studentId) {
-        const joinable = [...liveRes.sessions, ...upcomingRes.sessions];
+        const joinable = [...liveRes.sessions, ...stillToCome];
         const entries = await Promise.all(
           joinable.map(async (s) => {
             try {
               return [String(s.id), await apiGet<SessionAccess>(`/sessions/${s.id}/access`)] as const;
             } catch {
-              // Treat an unreachable check as "not joinable" — better a student is asked to
-              // enrol again than shown a button the server will refuse.
-              return [String(s.id), { canJoin: false, isTeacher: false, isEnrolled: false, hasPaid: false }] as const;
+              /*
+               * We do not know, and must not guess.
+               *
+               * This used to answer "not enrolled", which reads on screen as "Book & Pay" — so
+               * one failed request told a student who had already paid to pay again. `known:
+               * false` keeps the question open and the screen says so instead.
+               */
+              return [String(s.id), { canJoin: false, isTeacher: false, isEnrolled: false, hasPaid: false, known: false }] as const;
             }
           }),
         );
@@ -250,13 +310,23 @@ You can join from your Sessions tab — the class opens a few minutes before it 
   const openLiveSession = (session: Session) => {
     // Only genuinely active classes are routable; anything else is a no-op tap.
     if (session.status !== "live") return;
-    // The server refuses the video room and the board to anyone who has not paid, so offering
-    // to "join" would walk the student into a class that then rejects them.
-    if (!access[session.id]?.canJoin) {
-      bookSession(session);
+    const a = access[session.id];
+    /*
+     * Never send somebody to pay on the strength of a check that failed, or one they already
+     * passed. The owner tapped "Join Live Session" here on a class they had paid for and got
+     * "Setting up video room" spinning forever; the honest answers are "go in" or "we do not
+     * know yet", and only a genuine not-enrolled leads to the payment sheet.
+     */
+    if (a?.canJoin) {
+      router.push(`/(student)/classroom/${session.id}`);
       return;
     }
-    router.push(`/(student)/classroom/${session.id}`);
+    if (a?.known === false || a?.isEnrolled) {
+      // Ask again rather than guess; the answer usually arrives before they tap twice.
+      void loadData();
+      return;
+    }
+    bookSession(session);
   };
 
   const submitRating = async () => {
@@ -514,7 +584,11 @@ You can join from your Sessions tab — the class opens a few minutes before it 
               // "Join Live Class" is only offered when the server says it would be honoured.
               // Anyone else is shown the way in — enrolling — instead of a button that leads
               // to a locked door.
-              const canJoin = !!access[s.id]?.canJoin;
+              const a = access[s.id];
+              const canJoin = !!a?.canJoin;
+              // We asked and could not get an answer. Saying "Book & Pay" here is a lie to
+              // anybody who already has, so the screen admits it instead.
+              const unknown = a?.known === false;
               return (
                 <TouchableOpacity key={s.id} onPress={() => openLiveSession(s)} activeOpacity={0.85} disabled={bookingSessionId === s.id}>
                   <SessionCard session={s} onPress={() => openLiveSession(s)} />
@@ -523,6 +597,20 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                       <View style={[styles.bookBtn, { backgroundColor: colors.destructive }]}>
                         <View style={styles.liveDotWhite} />
                         <Text style={styles.bookBtnText}>Join Live Class</Text>
+                      </View>
+                    ) : unknown ? (
+                      <View style={[styles.bookBtn, { backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border }]}>
+                        <Feather name="wifi-off" size={14} color={colors.mutedForeground} />
+                        <Text style={[styles.bookBtnText, { color: colors.mutedForeground }]}>
+                          Could not check — open Sessions to join
+                        </Text>
+                      </View>
+                    ) : a?.isEnrolled ? (
+                      // Paid, and the class is live, but the door is not open to them yet.
+                      // Offering payment again would be the same lie in a different place.
+                      <View style={[styles.bookBtn, { backgroundColor: colors.success + "1A", borderWidth: 1, borderColor: colors.success }]}>
+                        <Feather name="check-circle" size={14} color={colors.success} />
+                        <Text style={[styles.bookBtnText, { color: colors.success }]}>Booked & paid — opening shortly</Text>
                       </View>
                     ) : (
                       <View style={[styles.bookBtn, { backgroundColor: colors.primary }]}>
