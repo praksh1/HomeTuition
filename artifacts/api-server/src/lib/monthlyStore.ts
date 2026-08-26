@@ -582,6 +582,31 @@ export async function isRecurringDay(sessionId: number): Promise<boolean> {
   return Boolean(found);
 }
 
+/**
+ * Which thread a class's chat belongs in.
+ *
+ * One conversation per class, and for a monthly class the class is the **course**: a teacher
+ * saying "bring your compass tomorrow" should not have to pick which of thirty daily threads to
+ * say it in, and a student should not have to hunt for it.
+ *
+ * The owner's worry, in their words: *"users will get confused between which chat they're
+ * using — one may write something in one chat and if they're not replying right away they may
+ * reply in another link. I just don't want this to be confusing."* The fix is not a better
+ * label; it is that there is only one place for it to be.
+ */
+export async function threadTargetFor(
+  sessionId: number,
+): Promise<{ sessionId: number; recurringId: null } | { sessionId: null; recurringId: number }> {
+  const [day] = await db
+    .select({ recurringId: recurringDaysTable.recurringId })
+    .from(recurringDaysTable)
+    .where(eq(recurringDaysTable.sessionId, sessionId))
+    .limit(1);
+  return day
+    ? { sessionId: null, recurringId: day.recurringId }
+    : { sessionId, recurringId: null };
+}
+
 /** Keeps materialised class-days out of the public list of classes for sale. */
 export const notARecurringDay = sql`not exists (
   select 1 from recurring_days rd where rd.session_id = ${sessionsTable.id}

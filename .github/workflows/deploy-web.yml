@@ -255,6 +255,15 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:operators
 
+      # One conversation per class, however it is reached. The chat inside a lesson used to be
+      # broadcast and never stored, so anything said during a class vanished and got said again
+      # in the class thread — two conversations about one lesson, neither complete. For a
+      # monthly class the messages belong to the course, not to one of thirty daily rooms.
+      - name: What is said in a lesson is kept, in one place
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:one-chat
+
       # A class's own message thread, and the log of who did what. Both have to survive a
       # restart to be worth anything — a teacher's "running ten minutes late" and a refund
       # argued weeks later both depend on the words still being there — so this restarts the

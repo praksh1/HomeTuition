@@ -2,10 +2,11 @@ import http from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { IncomingMessage } from "http";
 import { eq } from "drizzle-orm";
-import { db, usersTable } from "@workspace/db";
+import { db, sessionMessagesTable, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { verifyToken, type JwtPayload } from "../lib/auth";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
+import { threadTargetFor } from "../lib/monthlyStore";
 import { addUserChannel } from "./userHub";
 import { markTeacherPresent } from "../lib/sessionLifecycle";
 import { recordParticipation } from "../lib/participation";
@@ -523,8 +524,9 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
       try { msg = JSON.parse(raw.toString()) as Record<string, unknown>; } catch { return; }
 
       switch (msg.type) {
-        case "chat":
+        case "chat": {
           ledger.messages += 1;
+          const text = typeof msg.text === "string" ? msg.text.trim() : "";
           broadcast(sessionId, {
             type: "chat",
             senderName: name,
@@ -534,7 +536,38 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
             text: msg.text,
             time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           }, ws);
+
+          /**
+           * And kept, which it never was.
+           *
+           * The in-room chat used to be broadcast and nothing else: it lived in memory and went
+           * with the room. That is the whole reason this app has two conversations a person can
+           * get lost between — say something during a lesson, watch it vanish, and say it again
+           * in the class thread afterwards. Now there is one conversation, and the room is
+           * simply another way into it.
+           *
+           * Written after the broadcast, and never allowed to break the send. Chat that
+           * arrives is the live thing people are relying on; a database that is briefly unwell
+           * must not stop a teacher answering a question mid-lesson.
+           */
+          if (text) {
+            void (async () => {
+              try {
+                const target = await threadTargetFor(Number(sessionId));
+                await db.insert(sessionMessagesTable).values({
+                  ...target,
+                  senderId: userId,
+                  senderName: name,
+                  senderRole: isSessionTeacher ? "teacher" : "student",
+                  body: text.slice(0, 4000),
+                });
+              } catch (err) {
+                logger.warn({ err, sessionId }, "could not keep a message said during a class");
+              }
+            })();
+          }
           break;
+        }
         // Board writes are gated on owning this session, not on merely holding a teacher
         // role — otherwise any teacher account could draw on and replace the material of
         // another teacher's live class.
