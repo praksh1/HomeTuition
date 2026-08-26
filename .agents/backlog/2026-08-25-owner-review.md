@@ -38,6 +38,25 @@ what the code actually does today.
 7. Joining a recurring session opens a classroom with its own chat. **Is that the same
    conversation as the monthly class chat, or a second one?**
 
+## B2. What the owner decided, 2026-08-26
+
+Answers given, in their order:
+
+1. **Chat before enrolling** — hide it from late joiners, *but* let the teacher **pin** messages
+   that stay visible to everyone whenever they joined.
+2. **Link to today's session from the monthly class** — build it. Started first.
+3. **29 vs 25** — agreed: show what was paid for and what is guaranteed. Implement.
+4. **Make-ups while the teacher is away** — make it work.
+5. **A month that is not a whole month** — parked. Full detail, and the decisions needed before
+   it can start, in `monthly-partial-months-and-dropping.md`.
+6. **Dropping the whole course mid-month** — parked, same file.
+7. **Two chats** — the owner's worry is people writing in one and being answered in the other:
+   *"I just don't want this to be confusing."* One conversation per class, however it is
+   reached, is the thing to aim at.
+
+Also: **Messages** is not meant to be WhatsApp entire — a conversation-style thread with
+attachments is what was asked for.
+
 ## C. Messages, rebuilt to look like a messaging app
 
 The owner's words: no Inbox/Sent/Drafts. One list, newest correspondent on top, unread marked,
