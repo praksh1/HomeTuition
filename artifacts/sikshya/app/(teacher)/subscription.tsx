@@ -7,17 +7,14 @@ import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View }
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { numeric } from "@/constants/typography";
+import Skeleton from "@/components/Skeleton";
 import { useNotifications } from "@/context/NotificationContext";
 import { addInAppNotification } from "@/utils/notifications";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import type { Teacher } from "@/context/AuthContext";
 import { apiGet, apiPost } from "@/utils/api";
-
-const PAYMENT_HISTORY = [
-  { id: "p1", amount: 2000, date: "May 2025", method: "eSewa", status: "paid" },
-  { id: "p2", amount: 2000, date: "Apr 2025", method: "Khalti", status: "paid" },
-  { id: "p3", amount: 2000, date: "Mar 2025", method: "eSewa", status: "paid" },
-];
 
 export type SubscriptionTierKey = "base" | "tier1" | "tier2" | "tier3" | "tier4";
 
@@ -36,9 +33,57 @@ export const SUBSCRIPTION_TIERS: TierInfo[] = [
   { key: "tier4", label: "Tier 4", sessions: 30, price: 4700 },
 ];
 
+/**
+ * What the plan actually gives you.
+ *
+ * The list this replaced promised six things, and **four of them were not true**: "session
+ * recording included" and "cloud storage for recordings" describe a feature that does not exist
+ * anywhere in this codebase — no route, no column, nothing — and "up to 20 students" and
+ * "60-minute maximum" describe *defaults* on the create-class form, not limits. Nothing enforces
+ * either; a teacher can set 200 students and three hours.
+ *
+ * Promising a feature that does not exist is bad on any screen. On the one where somebody hands
+ * over money it is the worst place in the product for it. Everything below is either enforced by
+ * the server or is a thing the class demonstrably does.
+ */
+function featuresFor(tier: TierInfo): string[] {
+  return [
+    `${tier.sessions} classes every 30 days`,
+    "You set the price of every class",
+    "Shared whiteboard in every class",
+    "In-class chat with your students",
+    "Attendance recorded automatically",
+  ];
+}
+
+/**
+ * A card, so the four on this screen cannot drift apart.
+ *
+ * At module scope, not inside the screen. A component defined inside a render is a *new
+ * component type* on every render, so React unmounts and rebuilds the whole subtree — real
+ * native views destroyed and recreated — every time a tier is tapped. It looks like a harmless
+ * local helper and is a genuine cost on the phone this app is built for.
+ */
+function Card({ children }: { children: React.ReactNode }) {
+  const colors = useColors();
+  const { space, radius, elevation } = useLayout();
+  return (
+    <View
+      style={[
+        styles.card,
+        { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm },
+        elevation.card,
+      ]}
+    >
+      {children}
+    </View>
+  );
+}
+
 export default function Subscription() {
   const { user, updateUser } = useAuth();
   const colors = useColors();
+  const { t, gutter, space, radius, elevation } = useLayout();
   const insets = useSafeAreaInsets();
   const teacher = user as Teacher;
   const [selectedMethod, setSelectedMethod] = useState<"esewa" | "khalti">("esewa");
@@ -57,11 +102,21 @@ export default function Subscription() {
    * this screen told every teacher they had used none of their classes, whatever they had done.
    */
   const [allowance, setAllowance] = useState<{ used: number; limit: number } | null>(null);
+  /**
+   * Loading and unavailable are different claims and must look different.
+   *
+   * The old code read `allowance?.used ?? 0`, which turns "we have not heard back yet" into a
+   * confident zero — the same fabrication as the counter it was brought in to replace, one layer
+   * further down.
+   */
+  const [allowanceLoading, setAllowanceLoading] = useState(true);
+
   useEffect(() => {
     let live = true;
+    setAllowanceLoading(true);
     apiGet<{ used: number; limit: number }>("/teachers/me/allowance")
-      .then((a) => { if (live) setAllowance(a); })
-      .catch(() => { if (live) setAllowance(null); });
+      .then((a) => { if (live) { setAllowance(a); setAllowanceLoading(false); } })
+      .catch(() => { if (live) { setAllowance(null); setAllowanceLoading(false); } });
     return () => { live = false; };
   }, [teacher?.userId]);
 
@@ -122,173 +177,356 @@ export default function Subscription() {
     router.replace("/(teacher)");
   };
 
+  const isActive = !!teacher?.subscriptionActive;
+  const isPending = teacher?.approvalStatus === "pending";
+  const isRejected = teacher?.approvalStatus === "rejected";
+  const changingTier = selectedTier !== currentTierKey;
+
+  // Ink for the navy card. Tokens rather than white at an opacity: an alpha over a gradient
+  // lands on a different colour at each end, so it can pass contrast on one side and fail the
+  // other. Both of these are measured against both ends.
+  const onNavy = { color: colors.onInverse };
+  const onNavyMuted = { color: colors.onInverseMuted };
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 100 }]}
+      contentContainerStyle={{
+        paddingHorizontal: gutter,
+        paddingTop: insets.top + space.md,
+        paddingBottom: insets.bottom + 100,
+        gap: space.md,
+        width: "100%",
+        maxWidth: 760,
+        alignSelf: "center",
+      }}
       showsVerticalScrollIndicator={false}
     >
+      {/* ------------------------------------------------------------------ header */}
       {from === "notif" ? (
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={handleBack} style={styles.backBtn} accessibilityLabel="Back to notifications">
+          <TouchableOpacity
+            onPress={handleBack}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Back to notifications"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
             <Feather name="arrow-left" size={22} color={colors.foreground} />
           </TouchableOpacity>
-          <Text style={[styles.title, { color: colors.foreground }]}>Subscription</Text>
+          <Text style={[t.title1, { color: colors.foreground }]}>Subscription</Text>
         </View>
       ) : (
-        <Text style={[styles.title, { color: colors.foreground }]}>Subscription</Text>
+        <Text style={[t.title1, { color: colors.foreground }]}>Subscription</Text>
       )}
 
+      {/* ------------------------------------------------------- the plan you hold */}
       <LinearGradient
-        colors={["#1A365D", "#2D4A7A"]}
-        style={styles.planCard}
+        colors={[colors.secondary, colors.primary]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ borderRadius: radius.lg, padding: space.lg, gap: space.md }}
       >
         <View style={styles.planHeader}>
-          <View>
-            <Text style={styles.planName}>Sikshya Pro — {tierInfo.label}</Text>
-            <Text style={styles.planPrice}>NPR {tierInfo.price.toLocaleString()} <Text style={styles.planPeriod}>/month</Text></Text>
+          <View style={{ flex: 1 }}>
+            <Text style={[t.caption, onNavyMuted]}>Sikshya Pro — {tierInfo.label}</Text>
+            <Text style={[t.display, numeric, onNavy, { marginTop: 2 }]}>
+              NPR {tierInfo.price.toLocaleString()}
+              <Text style={[t.body, onNavyMuted]}> /month</Text>
+            </Text>
           </View>
-          <View style={[styles.activeBadge, { backgroundColor: teacher?.subscriptionActive ? "#22C55E30" : "#EF444430" }]}>
-            <View style={[styles.dot, { backgroundColor: teacher?.subscriptionActive ? "#22C55E" : "#EF4444" }]} />
-            <Text style={[styles.activeText, { color: teacher?.subscriptionActive ? "#22C55E" : "#EF4444" }]}>
-              {teacher?.subscriptionActive ? "Active" : "Inactive"}
+          {/*
+            Status at a glance, in the semantic colours: green means the plan is running, and
+            anything else is deliberately not green. The dot repeats the state in shape as well
+            as colour, so it still reads for somebody who cannot separate the two.
+          */}
+          <View
+            style={[
+              styles.statusPill,
+              {
+                backgroundColor: isActive ? colors.successSoft : colors.surfaceSunk,
+                borderRadius: radius.pill,
+                paddingHorizontal: space.sm,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.dot,
+                { backgroundColor: isActive ? colors.success : colors.inkFaint },
+              ]}
+            />
+            <Text style={[t.caption, { color: isActive ? colors.success : colors.mutedForeground }]}>
+              {isActive ? "Active" : "Not active"}
             </Text>
           </View>
         </View>
 
-        <View style={styles.planFeatures}>
-          {[
-            `${tierInfo.sessions} sessions per month`,
-            "Up to 20 students per session",
-            "60-minute maximum per session",
-            "Session recording included",
-            "Cloud storage for recordings",
-            "Student payment processing",
-          ].map((f) => (
+        <View style={{ gap: space.xs }}>
+          {featuresFor(tierInfo).map((f) => (
             <View key={f} style={styles.featureRow}>
-              <Feather name="check-circle" size={15} color="#22C55E" />
-              <Text style={styles.featureText}>{f}</Text>
+              <Feather name="check" size={14} color={colors.onInverseMuted} />
+              <Text style={[t.callout, onNavy, { flex: 1 }]}>{f}</Text>
             </View>
           ))}
         </View>
 
-        <View style={styles.nextBilling}>
-          <Feather name="calendar" size={14} color="#ffffff66" />
-          <Text style={styles.nextBillingText}>Next billing: July 1, 2025</Text>
+        {/*
+          There was a "Next billing: July 1, 2025" line here — hardcoded, and a date already in
+          the past. There is no billing cycle stored for this plan anywhere, because the plan is
+          not charged yet, so no honest date could replace it. This says the true thing instead.
+        */}
+        <View style={styles.footNote}>
+          <Feather name="info" size={13} color={colors.onInverseMuted} />
+          <Text style={[t.caption, onNavyMuted, { flex: 1 }]}>
+            Billing dates appear here once online payment is live.
+          </Text>
         </View>
       </LinearGradient>
 
-      <View style={[styles.paySection, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.payTitle, { color: colors.foreground }]}>Choose Your Plan</Text>
-        <Text style={[styles.paySubtitle, { color: colors.mutedForeground }]}>
-          Select a tier based on how many sessions you plan to teach per month
+      {/*
+        Buying a plan is not the same as being listed, and this is where a teacher is most
+        likely to assume otherwise — they have just paid. Surfaced here because the server
+        stopped treating payment as approval.
+      */}
+      {(isPending || isRejected) && (
+        <View
+          style={[
+            styles.banner,
+            {
+              backgroundColor: isRejected ? colors.destructiveSoft : colors.warnSoft,
+              borderColor: isRejected ? colors.destructive : colors.warn,
+              borderRadius: radius.md,
+              padding: space.sm,
+            },
+          ]}
+        >
+          <Feather
+            name={isRejected ? "x-circle" : "clock"}
+            size={16}
+            color={isRejected ? colors.destructive : colors.warn}
+          />
+          <Text style={[t.caption, { flex: 1, color: isRejected ? colors.destructive : colors.warn }]}>
+            {isRejected
+              ? "Your verification was rejected, so your classes are not listed. Re-upload your documents in Profile."
+              : "A plan does not list you to students on its own — your verification is still being reviewed."}
+          </Text>
+        </View>
+      )}
+
+      {/* -------------------------------------------------------------- where you are */}
+      <Card>
+        <Text style={[t.title3, { color: colors.foreground }]}>Your classes this month</Text>
+
+        {allowanceLoading ? (
+          <View style={{ gap: space.sm }}>
+            <Skeleton width="55%" height={15} />
+            <Skeleton width="100%" height={8} radius={4} />
+          </View>
+        ) : allowance ? (
+          <>
+            <View style={styles.usageRow}>
+              <Text style={[t.body, numeric, { color: colors.foreground }]}>
+                {sessionsUsed} of {maxSessions} used
+              </Text>
+              <Text
+                style={[
+                  t.bodyStrong,
+                  numeric,
+                  { color: sessionsRemaining === 0 ? colors.destructive : colors.success },
+                ]}
+              >
+                {sessionsRemaining} left
+              </Text>
+            </View>
+            <View style={[styles.progressTrack, { backgroundColor: colors.muted, borderRadius: radius.xs }]}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    width: `${Math.min(progressPct * 100, 100)}%` as `${number}%`,
+                    backgroundColor: progressPct >= 0.8 ? colors.destructive : colors.primary,
+                    borderRadius: radius.xs,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={[t.caption, { color: colors.inkFaint }]}>
+              Counted over any 30 days, not a calendar month.
+            </Text>
+          </>
+        ) : (
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            Could not reach the server. Pull down to try again.
+          </Text>
+        )}
+
+        <View style={[styles.usageMeta, { borderTopColor: colors.border, paddingTop: space.sm, marginTop: space.xxs }]}>
+          <View style={styles.usageItem}>
+            <Text style={[t.title2, numeric, { color: colors.foreground }]}>{teacher?.totalStudents ?? 0}</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>Students taught</Text>
+          </View>
+          <View style={[styles.dividerV, { backgroundColor: colors.border }]} />
+          {/*
+            Earnings are not tracked. `monthly_earnings` is written once, to zero, at
+            registration and never again — so this tile has been reporting NPR 0 to every
+            teacher since the app was built. A fabricated zero about money is indistinguishable
+            from a real answer, which makes it the worst kind of placeholder to leave on the
+            screen where somebody is deciding whether this platform is worth paying for.
+          */}
+          <View style={styles.usageItem}>
+            <Text style={[t.title2, numeric, { color: colors.inkFaint }]}>—</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>Earnings · soon</Text>
+          </View>
+        </View>
+      </Card>
+
+      {/* ------------------------------------------------------------- pick a plan */}
+      <Card>
+        <Text style={[t.title3, { color: colors.foreground }]}>Choose your plan</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>
+          Pick a tier for how many classes you expect to teach in a month.
         </Text>
-        <View style={styles.tierList}>
-          {SUBSCRIPTION_TIERS.map((t) => {
-            const active = selectedTier === t.key;
+
+        <View style={{ gap: space.xs }}>
+          {SUBSCRIPTION_TIERS.map((tier) => {
+            const active = selectedTier === tier.key;
+            const current = tier.key === currentTierKey;
             return (
               <TouchableOpacity
-                key={t.key}
+                key={tier.key}
                 style={[
                   styles.tierRow,
-                  { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.primary + "10" : colors.muted },
+                  {
+                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? colors.actionSoft : colors.surface,
+                    borderRadius: radius.sm,
+                    paddingHorizontal: space.sm,
+                    paddingVertical: space.sm,
+                  },
                 ]}
-                onPress={() => setSelectedTier(t.key)}
+                onPress={() => setSelectedTier(tier.key)}
                 activeOpacity={0.7}
-                testID={`tier-${t.key}`}
+                testID={`tier-${tier.key}`}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={`${tier.label}, ${tier.sessions} classes a month, NPR ${tier.price}`}
               >
-                <View style={styles.tierInfo}>
-                  <Text style={[styles.tierLabel, { color: active ? colors.primary : colors.foreground }]}>{t.label}</Text>
-                  <Text style={[styles.tierMeta, { color: colors.mutedForeground }]}>{t.sessions} sessions/month</Text>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.tierLabelRow}>
+                    <Text style={[t.bodyStrong, { color: active ? colors.primary : colors.foreground }]}>
+                      {tier.label}
+                    </Text>
+                    {current && (
+                      <View style={[styles.currentChip, { backgroundColor: colors.surfaceSunk, borderRadius: radius.xs }]}>
+                        <Text style={[t.overline, { color: colors.mutedForeground }]}>Current</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+                    {tier.sessions} classes a month
+                  </Text>
                 </View>
                 <View style={styles.tierRight}>
-                  <Text style={[styles.tierPrice, { color: colors.foreground }]}>NPR {t.price.toLocaleString()}</Text>
-                  {active && <Feather name="check-circle" size={16} color={colors.primary} />}
+                  <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>
+                    NPR {tier.price.toLocaleString()}
+                  </Text>
+                  {active && <Feather name="check-circle" size={17} color={colors.primary} />}
                 </View>
               </TouchableOpacity>
             );
           })}
         </View>
-      </View>
+      </Card>
 
-      <View style={[styles.usageCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.usageTitle, { color: colors.foreground }]}>Usage This Month</Text>
-        <View style={styles.usageRow}>
-          <Text style={[styles.usageStat, { color: colors.foreground }]}>{sessionsUsed}/{maxSessions} sessions used</Text>
-          <Text style={[styles.usageRemaining, { color: colors.success }]}>{sessionsRemaining} remaining</Text>
-        </View>
-        <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}>
-          <View
-            style={[styles.progressFill, {
-              width: `${Math.min(progressPct * 100, 100)}%` as `${number}%`,
-              backgroundColor: progressPct >= 0.8 ? colors.destructive : colors.primary,
-            }]}
-          />
-        </View>
-        <View style={styles.usageMeta}>
-          <View style={styles.usageItem}>
-            <Text style={[styles.usageNum, { color: colors.foreground }]}>{teacher?.totalStudents ?? 0}</Text>
-            <Text style={[styles.usageLabel, { color: colors.mutedForeground }]}>Total Students</Text>
-          </View>
-          <View style={[styles.dividerV, { backgroundColor: colors.border }]} />
-          <View style={styles.usageItem}>
-            <Text style={[styles.usageNum, { color: colors.foreground }]}>NPR {(teacher?.monthlyEarnings ?? 0).toLocaleString()}</Text>
-            <Text style={[styles.usageLabel, { color: colors.mutedForeground }]}>Earned This Month</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={[styles.paySection, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.payTitle, { color: colors.foreground }]}>Pay Monthly Subscription</Text>
-        <Text style={[styles.paySubtitle, { color: colors.mutedForeground }]}>
-          Secure payment via Nepali payment gateways · {tierInfo.label} plan
+      {/* ------------------------------------------------------------------- pay */}
+      <Card>
+        <Text style={[t.title3, { color: colors.foreground }]}>
+          {changingTier ? `Switch to ${tierInfo.label}` : "Pay this month"}
+        </Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>
+          Pay with eSewa or Khalti.
         </Text>
 
-        <View style={styles.methodRow}>
-          {(["esewa", "khalti"] as const).map((method) => (
-            <TouchableOpacity
-              key={method}
-              style={[
-                styles.methodBtn,
-                { borderColor: selectedMethod === method ? colors.primary : colors.border, backgroundColor: selectedMethod === method ? colors.primary + "10" : colors.muted },
-              ]}
-              onPress={() => setSelectedMethod(method)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.methodIcon, { color: selectedMethod === method ? colors.primary : colors.mutedForeground }]}>
-                {method === "esewa" ? "eSewa" : "Khalti"}
-              </Text>
-              {selectedMethod === method && <Feather name="check" size={14} color={colors.primary} />}
-            </TouchableOpacity>
-          ))}
+        <View style={{ flexDirection: "row", gap: space.xs }}>
+          {(["esewa", "khalti"] as const).map((method) => {
+            const on = selectedMethod === method;
+            return (
+              <TouchableOpacity
+                key={method}
+                style={[
+                  styles.methodBtn,
+                  {
+                    borderColor: on ? colors.primary : colors.border,
+                    backgroundColor: on ? colors.actionSoft : colors.surface,
+                    borderRadius: radius.sm,
+                    paddingVertical: space.sm,
+                  },
+                ]}
+                onPress={() => setSelectedMethod(method)}
+                activeOpacity={0.7}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+              >
+                <Text style={[t.bodyStrong, { color: on ? colors.primary : colors.mutedForeground }]}>
+                  {method === "esewa" ? "eSewa" : "Khalti"}
+                </Text>
+                {on && <Feather name="check" size={14} color={colors.primary} />}
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        <TouchableOpacity style={[styles.payBtn, { backgroundColor: colors.primary }]} onPress={handlePay} activeOpacity={0.85}>
-          <Feather name="lock" size={16} color="#fff" />
-          <Text style={styles.payBtnText}>Pay NPR {tierInfo.price.toLocaleString()} via {selectedMethod === "esewa" ? "eSewa" : "Khalti"}</Text>
+        <TouchableOpacity
+          style={[
+            styles.payBtn,
+            { backgroundColor: colors.primary, borderRadius: radius.sm, paddingVertical: space.sm, gap: space.xs },
+            elevation.card,
+          ]}
+          onPress={handlePay}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={`Pay NPR ${tierInfo.price} via ${selectedMethod === "esewa" ? "eSewa" : "Khalti"}`}
+        >
+          <Feather name="lock" size={16} color={colors.primaryForeground} />
+          <Text style={[t.bodyStrong, numeric, { color: colors.primaryForeground }]}>
+            Pay NPR {tierInfo.price.toLocaleString()}
+          </Text>
         </TouchableOpacity>
+      </Card>
 
-        <View style={styles.secureNote}>
-          <Feather name="shield" size={13} color={colors.mutedForeground} />
-          <Text style={[styles.secureText, { color: colors.mutedForeground }]}>
-            Payments are secured with 256-bit SSL encryption
+      {/* -------------------------------------------------------------- history */}
+      <View style={{ gap: space.xs }}>
+        <Text style={[t.title3, { color: colors.foreground }]}>Payment history</Text>
+        {/*
+          There is no payment history, and until recently this screen invented three: NPR 2,000
+          in May, April and March 2025, via eSewa and Khalti, all marked paid — to every teacher,
+          including one who registered this morning.
+
+          Nothing on the server records a subscription payment. There is no route to ask, and no
+          table to ask it of. So this says so, rather than showing rows that would tell a teacher
+          they had already paid for months they had not.
+        */}
+        <View
+          style={[
+            styles.emptyHistory,
+            {
+              backgroundColor: colors.muted,
+              borderColor: colors.border,
+              borderRadius: radius.md,
+              padding: space.lg,
+              gap: space.xs,
+            },
+          ]}
+        >
+          <Feather name="file-text" size={22} color={colors.inkFaint} />
+          <Text style={[t.body, { color: colors.foreground }]}>No payments yet</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground, textAlign: "center" }]}>
+            Every subscription payment will be listed here, with its date, method and amount,
+            once online payment is live.
           </Text>
         </View>
       </View>
-
-      <Text style={[styles.historyTitle, { color: colors.foreground }]}>Payment History</Text>
-      {PAYMENT_HISTORY.map((p) => (
-        <View key={p.id} style={[styles.historyRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <View style={[styles.historyIcon, { backgroundColor: colors.success + "15" }]}>
-            <Feather name="check" size={15} color={colors.success} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.historyDate, { color: colors.foreground }]}>{p.date} Subscription</Text>
-            <Text style={[styles.historyMethod, { color: colors.mutedForeground }]}>via {p.method}</Text>
-          </View>
-          <Text style={[styles.historyAmount, { color: colors.success }]}>NPR {p.amount.toLocaleString()}</Text>
-        </View>
-      ))}
 
       <PaymentSheet
         visible={payVisible}
@@ -302,57 +540,40 @@ export default function Subscription() {
   );
 }
 
+/**
+ * Only what does not depend on a token or the screen size.
+ *
+ * Colours, spacing, radii and type arrive from `useColors()` and `useLayout()` at render time,
+ * so they cannot live in a StyleSheet built once at module load. What is left is structure.
+ */
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 16 },
   headerRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  backBtn: { width: 36, height: 36, justifyContent: "center", marginLeft: -8 },
-  title: { fontSize: 24, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
-  planCard: { borderRadius: 20, padding: 22, gap: 16 },
-  planHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  planName: { fontSize: 14, fontFamily: "Inter_500Medium", color: "#ffffff99", marginBottom: 4 },
-  planPrice: { fontSize: 30, fontFamily: "Inter_700Bold", color: "#fff" },
-  planPeriod: { fontSize: 16, fontFamily: "Inter_400Regular", color: "#ffffff80" },
-  activeBadge: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
+  backBtn: { width: 40, height: 40, justifyContent: "center", marginLeft: -10 },
+
+  card: { borderWidth: StyleSheet.hairlineWidth },
+
+  planHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  statusPill: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 26 },
   dot: { width: 7, height: 7, borderRadius: 4 },
-  activeText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  planFeatures: { gap: 8 },
   featureRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  featureText: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#ffffffdd" },
-  nextBilling: { flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 4 },
-  nextBillingText: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#ffffff66" },
-  usageCard: { borderRadius: 18, borderWidth: 1, padding: 18, gap: 12 },
-  usageTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  usageRow: { flexDirection: "row", justifyContent: "space-between" },
-  usageStat: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  usageRemaining: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  progressTrack: { height: 8, borderRadius: 4, overflow: "hidden" },
-  progressFill: { height: "100%", borderRadius: 4 },
-  usageMeta: { flexDirection: "row", justifyContent: "space-around", paddingTop: 4 },
-  usageItem: { alignItems: "center", gap: 4 },
-  usageNum: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  usageLabel: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  dividerV: { width: 1, marginVertical: 4 },
-  paySection: { borderRadius: 18, borderWidth: 1, padding: 18, gap: 14 },
-  payTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  paySubtitle: { fontSize: 13, fontFamily: "Inter_400Regular" },
-  tierList: { gap: 10 },
-  tierRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderRadius: 14, borderWidth: 1.5, paddingHorizontal: 14, paddingVertical: 12 },
-  tierInfo: { gap: 2 },
-  tierLabel: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  tierMeta: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  footNote: { flexDirection: "row", alignItems: "center", gap: 8 },
+
+  banner: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderWidth: 1 },
+
+  usageRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 8 },
+  progressTrack: { height: 8, overflow: "hidden" },
+  progressFill: { height: "100%" },
+  usageMeta: { flexDirection: "row", justifyContent: "space-around", borderTopWidth: StyleSheet.hairlineWidth },
+  usageItem: { flex: 1, alignItems: "center", gap: 2 },
+  dividerV: { width: StyleSheet.hairlineWidth, marginVertical: 4 },
+
+  tierRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: 1.5, gap: 12, minHeight: 56 },
+  tierLabelRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  currentChip: { paddingHorizontal: 6, paddingVertical: 2 },
   tierRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  tierPrice: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  methodRow: { flexDirection: "row", gap: 12 },
-  methodBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, borderWidth: 1.5, paddingVertical: 14 },
-  methodIcon: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  payBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 14, paddingVertical: 16 },
-  payBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  secureNote: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
-  secureText: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  historyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", marginTop: 4 },
-  historyRow: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 14, borderWidth: 1, padding: 14 },
-  historyIcon: { width: 38, height: 38, borderRadius: 10, justifyContent: "center", alignItems: "center" },
-  historyDate: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  historyMethod: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  historyAmount: { fontSize: 15, fontFamily: "Inter_700Bold" },
+
+  methodBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderWidth: 1.5, minHeight: 48 },
+  payBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", minHeight: 52 },
+
+  emptyHistory: { alignItems: "center", borderWidth: StyleSheet.hairlineWidth },
 });

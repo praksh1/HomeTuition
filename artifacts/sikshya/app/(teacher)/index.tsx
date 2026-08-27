@@ -1,8 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Animated, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useState } from "react";
+import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
@@ -10,6 +10,7 @@ import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { numeric } from "@/constants/typography";
+import Skeleton from "@/components/Skeleton";
 import { useNotifications } from "@/context/NotificationContext";
 import { useDates } from "@/context/DatePreferenceContext";
 import type { Teacher } from "@/context/AuthContext";
@@ -38,32 +39,18 @@ interface Allowance {
 }
 
 /**
- * A grey bar where text will be.
+ * A stat on the navy card, so the three cannot drift apart.
  *
- * Cheaper than it looks: the opacity loop runs on the native driver, so it never touches the
- * JavaScript thread and costs nothing on the budget Android this app is built for. Worth having
- * over a plain spinner because it holds the shape of what is coming — the layout does not jump
- * when the numbers land, which is most of what "fast" feels like on a poor connection.
+ * At module scope deliberately: a component declared inside a render is a new component type
+ * every time, which makes React tear down and rebuild the subtree on each state change rather
+ * than update it.
  */
-function Skeleton({ width, height = 14, tint }: { width: number | string; height?: number; tint: string }) {
-  const pulse = useRef(new Animated.Value(0.45)).current;
-
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.45, duration: 700, useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [pulse]);
-
+function Stat({ children, label, labelStyle }: { children: React.ReactNode; label: string; labelStyle: object }) {
   return (
-    <Animated.View
-      accessibilityLabel="Loading"
-      style={{ width: width as number, height, borderRadius: 6, backgroundColor: tint, opacity: pulse }}
-    />
+    <View style={styles.stat}>
+      <View style={styles.statValue}>{children}</View>
+      <Text style={labelStyle} numberOfLines={1}>{label}</Text>
+    </View>
   );
 }
 
@@ -214,14 +201,6 @@ export default function TeacherDashboard() {
     return `${formatDate(d, { withTime: false })}, ${timeStr}`;
   };
 
-  /** A stat on the navy card. Its own component so the three cannot drift apart. */
-  const Stat = ({ children, label }: { children: React.ReactNode; label: string }) => (
-    <View style={styles.stat}>
-      <View style={styles.statValue}>{children}</View>
-      <Text style={[t.caption, onNavyMuted]} numberOfLines={1}>{label}</Text>
-    </View>
-  );
-
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -349,7 +328,7 @@ export default function TeacherDashboard() {
           </View>
 
           <View style={styles.statsRow}>
-            <Stat label="Classes">
+            <Stat label="Classes" labelStyle={[t.caption, onNavyMuted]}>
               {allowanceLoading ? (
                 <Skeleton width={54} height={22} tint={colors.onInverseMuted} />
               ) : allowance ? (
@@ -364,7 +343,7 @@ export default function TeacherDashboard() {
 
             <View style={[styles.statDivider, { backgroundColor: colors.onInverseMuted }]} />
 
-            <Stat label="Students">
+            <Stat label="Students" labelStyle={[t.caption, onNavyMuted]}>
               <Text style={[t.title1, numeric, onNavy]}>{teacher.totalStudents}</Text>
             </Stat>
 
@@ -379,7 +358,7 @@ export default function TeacherDashboard() {
               is indistinguishable from a real answer. It says what it actually knows instead,
               and starts working the day payments do.
             */}
-            <Stat label="Earned · soon">
+            <Stat label="Earned · soon" labelStyle={[t.caption, onNavyMuted]}>
               <Text style={[t.title1, numeric, onNavyMuted]}>—</Text>
             </Stat>
           </View>
@@ -522,9 +501,9 @@ export default function TeacherDashboard() {
           >
             <View style={[styles.squareIcon, { backgroundColor: colors.muted, borderRadius: radius.sm }]} />
             <View style={{ flex: 1, gap: space.xxs }}>
-              <Skeleton width={64} height={10} tint={colors.muted} />
-              <Skeleton width="70%" height={15} tint={colors.muted} />
-              <Skeleton width={104} height={12} tint={colors.muted} />
+              <Skeleton width={64} height={10} />
+              <Skeleton width="70%" height={15} />
+              <Skeleton width={104} height={12} />
             </View>
           </View>
         ))}
