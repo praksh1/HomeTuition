@@ -195,6 +195,27 @@ const colors = {
     online: "#1FA463",
     /** The socket is down or reconnecting. */
     offline: "#8A929B",
+
+    /* ---------------------------------------------------------------
+     * INVERSE — ink for the dark branded surfaces
+     * ------------------------------------------------------------- */
+
+    /**
+     * Text on a dark branded surface — the navy stats card, a filled crimson chip, a photo.
+     *
+     * Its own token rather than a literal white, because these surfaces paint their own ground
+     * and every screen that has one would otherwise invent its own answer.
+     */
+    onInverse: "#FFFFFF",
+    /**
+     * Secondary text on those same surfaces. A pale blue-grey, **not white at reduced opacity.**
+     *
+     * The rule holds here for the same reason it holds everywhere: an alpha value over a
+     * gradient lands on a different colour at each end, so it can pass contrast on one side of a
+     * card and fail on the other. This is measured against both ends of the navy-to-blue
+     * gradient — 6.38:1 on `secondary` and 5.38:1 on `primary`, AA at each.
+     */
+    onInverseMuted: "#AEBDD4",
   },
 
   /**

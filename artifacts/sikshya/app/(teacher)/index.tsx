@@ -1,13 +1,15 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Animated, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { numeric } from "@/constants/typography";
 import { useNotifications } from "@/context/NotificationContext";
 import { useDates } from "@/context/DatePreferenceContext";
 import type { Teacher } from "@/context/AuthContext";
@@ -25,16 +27,57 @@ interface ApiSession {
   expired?: boolean;
 }
 
+/** What `GET /teachers/me/allowance` sends back. */
+interface Allowance {
+  tier: string;
+  tierName: string;
+  limit: number;
+  used: number;
+  remaining: number;
+  price: number;
+}
+
+/**
+ * A grey bar where text will be.
+ *
+ * Cheaper than it looks: the opacity loop runs on the native driver, so it never touches the
+ * JavaScript thread and costs nothing on the budget Android this app is built for. Worth having
+ * over a plain spinner because it holds the shape of what is coming — the layout does not jump
+ * when the numbers land, which is most of what "fast" feels like on a poor connection.
+ */
+function Skeleton({ width, height = 14, tint }: { width: number | string; height?: number; tint: string }) {
+  const pulse = useRef(new Animated.Value(0.45)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 700, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  return (
+    <Animated.View
+      accessibilityLabel="Loading"
+      style={{ width: width as number, height, borderRadius: 6, backgroundColor: tint, opacity: pulse }}
+    />
+  );
+}
+
 export default function TeacherDashboard() {
   const { user, logout } = useAuth();
   const colors = useColors();
+  const { t, gutter, space, radius, elevation, isExpanded } = useLayout();
   const insets = useSafeAreaInsets();
   const { format: formatDate } = useDates();
   const { unreadCount, refresh: refreshNotifs } = useNotifications();
   const teacher = user as Teacher;
   const [upcomingSessions, setUpcomingSessions] = useState<ApiSession[]>([]);
   const [expiredCount, setExpiredCount] = useState(0);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
   /**
    * The real allowance, from the server.
    *
@@ -43,7 +86,15 @@ export default function TeacherDashboard() {
    * shown "0/10 Sessions" for ever — and the upgrade nudge below, which fires at eight, could
    * never fire at all. Null until it loads, so nothing invents a number in the meantime.
    */
-  const [allowance, setAllowance] = useState<{ used: number; limit: number; tierName: string } | null>(null);
+  const [allowance, setAllowance] = useState<Allowance | null>(null);
+  /**
+   * Loading and failed are different states and must look different.
+   *
+   * Without this the card cannot tell "we have not asked yet" from "we asked and could not
+   * reach the server", and both would render the same placeholder — which is how a teacher ends
+   * up staring at a dash wondering whether it is a spinner or an answer.
+   */
+  const [allowanceLoading, setAllowanceLoading] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
@@ -54,13 +105,15 @@ export default function TeacherDashboard() {
   );
 
   const loadAllowance = async () => {
+    setAllowanceLoading(true);
     try {
-      setAllowance(await apiGet<{ used: number; limit: number; tierName: string }>("/teachers/me/allowance"));
+      setAllowance(await apiGet<Allowance>("/teachers/me/allowance"));
     } catch {
       // A dashboard that cannot reach the server should show nothing here rather than a zero,
       // which reads as "you have used none of your classes" and is a different claim.
       setAllowance(null);
     }
+    setAllowanceLoading(false);
   };
 
   const loadSessions = async () => {
@@ -134,6 +187,12 @@ export default function TeacherDashboard() {
 
   if (!teacher) return null;
 
+  // Ink for the navy card. Tokens rather than white-at-an-opacity: an alpha over a gradient
+  // lands on a different colour at each end, and can pass contrast on one side and fail the
+  // other. Both of these are measured against both ends.
+  const onNavy = { color: colors.onInverse };
+  const onNavyMuted = { color: colors.onInverseMuted };
+
   const isPending = teacher.approvalStatus === "pending";
   const isRejected = teacher.approvalStatus === "rejected";
 
@@ -155,143 +214,266 @@ export default function TeacherDashboard() {
     return `${formatDate(d, { withTime: false })}, ${timeStr}`;
   };
 
+  /** A stat on the navy card. Its own component so the three cannot drift apart. */
+  const Stat = ({ children, label }: { children: React.ReactNode; label: string }) => (
+    <View style={styles.stat}>
+      <View style={styles.statValue}>{children}</View>
+      <Text style={[t.caption, onNavyMuted]} numberOfLines={1}>{label}</Text>
+    </View>
+  );
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 100 }]}
+      contentContainerStyle={{
+        paddingHorizontal: gutter,
+        paddingTop: insets.top + space.md,
+        paddingBottom: insets.bottom + 100,
+        gap: space.md,
+        // Capped and centred, so a laptop gets a readable column rather than a dashboard
+        // stretched across a metre of screen. A no-op on a phone.
+        width: "100%",
+        maxWidth: 760,
+        alignSelf: "center",
+      }}
       showsVerticalScrollIndicator={false}
     >
+      {/* ---------------------------------------------------------------- header */}
       <View style={styles.headerRow}>
-        <View>
-          <Text style={[styles.greeting, { color: colors.mutedForeground }]}>Namaste,</Text>
-          <Text style={[styles.name, { color: colors.foreground }]}>{teacher.name}</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Namaste,</Text>
+          <Text style={[t.title1, { color: colors.foreground }]} numberOfLines={1}>
+            {teacher.name}
+          </Text>
         </View>
-        <View style={styles.headerActions}>
+        <View style={{ flexDirection: "row", gap: space.xs }}>
           <TouchableOpacity
-            style={[styles.iconBtn, { borderColor: colors.border }]}
+            style={[styles.iconBtn, { borderColor: colors.border, borderRadius: radius.sm }]}
             onPress={() => router.push("/notifications")}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
           >
             <Feather name="bell" size={18} color={colors.foreground} />
             {unreadCount > 0 && (
-              <View style={[styles.bellBadge, { backgroundColor: colors.primary }]}>
-                <Text style={styles.bellBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+              // Crimson, not blue: this is "something wants you", which is the one thing the
+              // brand colour marks besides the logo and a live class.
+              <View style={[styles.bellBadge, { backgroundColor: colors.brand, borderColor: colors.background }]}>
+                <Text style={[t.overline, styles.badgeText, { color: colors.brandForeground }]}>
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </Text>
               </View>
             )}
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.iconBtn, { borderColor: colors.border }]}
+            style={[styles.iconBtn, { borderColor: colors.border, borderRadius: radius.sm }]}
             onPress={handleLogout}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
           >
             <Feather name="log-out" size={18} color={colors.mutedForeground} />
           </TouchableOpacity>
         </View>
       </View>
 
+      {/* ------------------------------------------------------- approval banners */}
       {isPending && (
-        <View style={[styles.alertBanner, { backgroundColor: colors.accent + "15", borderColor: colors.accent + "40" }]}>
-          <Feather name="clock" size={18} color={colors.accent} />
-          <View style={styles.alertText}>
-            <Text style={[styles.alertTitle, { color: "#B45309" }]}>Verification Pending</Text>
-            <Text style={[styles.alertBody, { color: "#92400E" }]}>
+        <View
+          style={[
+            styles.banner,
+            { backgroundColor: colors.warnSoft, borderColor: colors.warn, borderRadius: radius.md, padding: space.md },
+          ]}
+        >
+          <Feather name="clock" size={18} color={colors.warn} />
+          <View style={{ flex: 1 }}>
+            <Text style={[t.bodyStrong, { color: colors.warn }]}>Verification pending</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground, marginTop: 2 }]}>
               Upload your credentials in Profile to get approved and start teaching.
             </Text>
           </View>
-          <TouchableOpacity onPress={() => router.push("/(teacher)/profile")} activeOpacity={0.7}>
-            <Text style={[styles.alertAction, { color: colors.accent }]}>Upload</Text>
+          <TouchableOpacity
+            onPress={() => router.push("/(teacher)/profile")}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>Upload</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {isRejected && (
-        <View style={[styles.alertBanner, { backgroundColor: colors.destructive + "10", borderColor: colors.destructive + "30" }]}>
+        <View
+          style={[
+            styles.banner,
+            {
+              backgroundColor: colors.destructiveSoft,
+              borderColor: colors.destructive,
+              borderRadius: radius.md,
+              padding: space.md,
+            },
+          ]}
+        >
           <Feather name="x-circle" size={18} color={colors.destructive} />
-          <View style={styles.alertText}>
-            <Text style={[styles.alertTitle, { color: colors.destructive }]}>Verification Rejected</Text>
-            <Text style={[styles.alertBody, { color: colors.mutedForeground }]}>
+          <View style={{ flex: 1 }}>
+            <Text style={[t.bodyStrong, { color: colors.destructive }]}>Verification rejected</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground, marginTop: 2 }]}>
               Please re-upload valid documents in your Profile.
             </Text>
           </View>
         </View>
       )}
 
-      <LinearGradient
-        colors={[colors.primary, "#8B0000"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.statsCard}
-      >
-        <Text style={styles.statsTitle}>This Month</Text>
-        <View style={styles.statsRow}>
-          <View style={styles.stat}>
-            <Text style={styles.statNum}>{allowance ? `${allowance.used}/${allowance.limit}` : "—"}</Text>
-            <Text style={styles.statLabel}>Sessions</Text>
+      {/*
+        On a laptop the summary and the two buttons sit side by side; on a phone they stack.
+        Same components either way — the screen is given more room, not redesigned.
+      */}
+      <View style={{ flexDirection: isExpanded ? "row" : "column", gap: space.md, alignItems: "stretch" }}>
+        {/* ------------------------------------------------------------ this month */}
+        <LinearGradient
+          // Navy into the action blue. The card is a *surface*, so it does not use crimson —
+          // and both ends carry white text well above AA.
+          colors={[colors.secondary, colors.primary]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.statsCard, { borderRadius: radius.lg, padding: space.lg, gap: space.md, flex: isExpanded ? 1.4 : undefined }]}
+        >
+          <View style={styles.statsHead}>
+            <Text style={[t.overline, onNavyMuted]}>This month</Text>
+            {allowance && (
+              <Text style={[t.caption, onNavyMuted]}>
+                {allowance.tierName} · NPR {allowance.price.toLocaleString()}
+              </Text>
+            )}
           </View>
-          <View style={styles.statDivider} />
-          <View style={styles.stat}>
-            <Text style={styles.statNum}>{teacher.totalStudents}</Text>
-            <Text style={styles.statLabel}>Students</Text>
-          </View>
-          <View style={styles.statDivider} />
-          <View style={styles.stat}>
-            <Text style={styles.statNum}>NPR {(teacher.monthlyEarnings / 1000).toFixed(0)}k</Text>
-            <Text style={styles.statLabel}>Earned</Text>
-          </View>
-        </View>
-        <View style={[styles.planBadge, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
-          <Feather name="shield" size={13} color="#fff" />
-          <Text style={styles.planBadgeText}>Pro Plan · NPR 2,000/mo</Text>
-        </View>
-      </LinearGradient>
 
-      <View style={styles.quickActions}>
-        <TouchableOpacity
-          style={[styles.actionBtn, { backgroundColor: colors.primary }]}
-          onPress={() => router.push("/(teacher)/session-create")}
-          activeOpacity={0.85}
+          <View style={styles.statsRow}>
+            <Stat label="Classes">
+              {allowanceLoading ? (
+                <Skeleton width={54} height={22} tint={colors.onInverseMuted} />
+              ) : allowance ? (
+                <Text style={[t.title1, numeric, onNavy]}>
+                  {allowance.used}
+                  <Text style={[t.title3, onNavyMuted]}>/{allowance.limit}</Text>
+                </Text>
+              ) : (
+                <Text style={[t.title3, onNavyMuted]}>Unavailable</Text>
+              )}
+            </Stat>
+
+            <View style={[styles.statDivider, { backgroundColor: colors.onInverseMuted }]} />
+
+            <Stat label="Students">
+              <Text style={[t.title1, numeric, onNavy]}>{teacher.totalStudents}</Text>
+            </Stat>
+
+            <View style={[styles.statDivider, { backgroundColor: colors.onInverseMuted }]} />
+
+            {/*
+              Earnings are not tracked yet.
+
+              `monthly_earnings` is written once, to zero, at registration and never again — so
+              this tile has been telling every teacher they earned NPR 0k since the app was
+              built. A fabricated zero about money is the worst kind of placeholder, because it
+              is indistinguishable from a real answer. It says what it actually knows instead,
+              and starts working the day payments do.
+            */}
+            <Stat label="Earned · soon">
+              <Text style={[t.title1, numeric, onNavyMuted]}>—</Text>
+            </Stat>
+          </View>
+
+          {allowance && allowance.remaining > 0 && (
+            <View style={styles.planBadge}>
+              <Feather name="shield" size={13} color={colors.onInverseMuted} />
+              <Text style={[t.caption, onNavyMuted]}>
+                {allowance.remaining} more {allowance.remaining === 1 ? "class" : "classes"} on this plan
+              </Text>
+            </View>
+          )}
+        </LinearGradient>
+
+        {/* --------------------------------------------------------- quick actions */}
+        <View
+          style={{
+            flexDirection: isExpanded ? "column" : "row",
+            gap: space.sm,
+            flex: isExpanded ? 1 : undefined,
+            justifyContent: "center",
+          }}
         >
-          <Feather name="plus" size={18} color="#fff" />
-          <Text style={styles.actionBtnText}>New Session</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtnOutline, { borderColor: colors.border }]}
-          onPress={() => router.push("/(teacher)/sessions")}
-          activeOpacity={0.85}
-        >
-          <Feather name="calendar" size={18} color={colors.foreground} />
-          <Text style={[styles.actionBtnOutlineText, { color: colors.foreground }]}>View All</Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.actionBtn,
+              { backgroundColor: colors.primary, borderRadius: radius.sm, paddingVertical: space.sm },
+              elevation.card,
+            ]}
+            onPress={() => router.push("/(teacher)/session-create")}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+          >
+            <Feather name="plus" size={18} color={colors.primaryForeground} />
+            <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>New class</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.actionBtn,
+              { borderColor: colors.lineStrong, borderWidth: 1, borderRadius: radius.sm, paddingVertical: space.sm },
+            ]}
+            onPress={() => router.push("/(teacher)/sessions")}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+          >
+            <Feather name="calendar" size={18} color={colors.foreground} />
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>View all</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/*
         The way in to the monthly class.
 
         A full-width row rather than a third small button: it is a different kind of thing from
-        "New Session" — a class that runs every day for a month — and a teacher who has one
-        lives in it. It reads as an offer until they have one, and as a door afterwards.
+        "New class" — a class that runs every day for a month — and a teacher who has one lives
+        in it. It reads as an offer until they have one, and as a door afterwards.
       */}
       <TouchableOpacity
         testID="teacher-monthly-entry"
-        style={[styles.monthlyEntry, { backgroundColor: colors.card, borderColor: colors.border }]}
+        style={[
+          styles.monthlyEntry,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            borderRadius: radius.md,
+            padding: space.md,
+            gap: space.sm,
+          },
+        ]}
         onPress={() => router.push("/(teacher)/monthly")}
         activeOpacity={0.85}
+        accessibilityRole="button"
       >
-        <View style={[styles.monthlyIcon, { backgroundColor: colors.primary + "14" }]}>
+        <View style={[styles.squareIcon, { backgroundColor: colors.actionSoft, borderRadius: radius.sm }]}>
           <Feather name="repeat" size={20} color={colors.primary} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.monthlyTitle, { color: colors.foreground }]}>Monthly class</Text>
-          <Text style={[styles.monthlySub, { color: colors.mutedForeground }]}>
+          <Text style={[t.title3, { color: colors.foreground }]}>Monthly class</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground, marginTop: 2 }]}>
             Teach the same class every day. Students buy the month.
           </Text>
         </View>
-        <Feather name="chevron-right" size={20} color={colors.mutedForeground} />
+        <Feather name="chevron-right" size={20} color={colors.inkFaint} />
       </TouchableOpacity>
 
-      <View style={styles.sectionHeader}>
-        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Upcoming Sessions</Text>
-        {sessionsLoading && <ActivityIndicator size="small" color={colors.primary} />}
+      {/* -------------------------------------------------------------- upcoming */}
+      <View style={[styles.sectionHeader, { marginTop: space.xs }]}>
+        <Text style={[t.title2, { color: colors.foreground }]}>Upcoming</Text>
+        {!sessionsLoading && upcomingSessions.length > 0 && (
+          <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>
+            {upcomingSessions.length} {upcomingSessions.length === 1 ? "class" : "classes"}
+          </Text>
+        )}
       </View>
 
       {/*
@@ -304,148 +486,221 @@ export default function TeacherDashboard() {
       {expiredCount > 0 && (
         <TouchableOpacity
           testID="teacher-expired-note"
-          style={[styles.expiredNote, { backgroundColor: colors.card, borderColor: colors.border }]}
+          style={[
+            styles.expiredNote,
+            {
+              backgroundColor: colors.muted,
+              borderColor: colors.border,
+              borderRadius: radius.sm,
+              paddingHorizontal: space.sm,
+              paddingVertical: space.sm,
+              gap: space.xs,
+            },
+          ]}
           onPress={() => router.push("/(teacher)/sessions")}
           activeOpacity={0.8}
+          accessibilityRole="button"
         >
           <Feather name="clock" size={15} color={colors.mutedForeground} />
-          <Text style={[styles.expiredNoteText, { color: colors.mutedForeground }]}>
+          <Text style={[t.caption, { flex: 1, color: colors.mutedForeground }]}>
             {expiredCount} {expiredCount === 1 ? "class" : "classes"} passed without being started.
             Tap to see them.
           </Text>
         </TouchableOpacity>
       )}
 
+      {/* Loading holds the shape of a class row, so nothing jumps when the real ones arrive. */}
+      {sessionsLoading &&
+        upcomingSessions.length === 0 &&
+        [0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={[
+              styles.sessionRow,
+              { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.sm, gap: space.sm },
+            ]}
+          >
+            <View style={[styles.squareIcon, { backgroundColor: colors.muted, borderRadius: radius.sm }]} />
+            <View style={{ flex: 1, gap: space.xxs }}>
+              <Skeleton width={64} height={10} tint={colors.muted} />
+              <Skeleton width="70%" height={15} tint={colors.muted} />
+              <Skeleton width={104} height={12} tint={colors.muted} />
+            </View>
+          </View>
+        ))}
+
       {!sessionsLoading && upcomingSessions.length === 0 && (
-        <View style={[styles.emptyCard, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <Feather name="calendar" size={24} color={colors.mutedForeground} />
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            No upcoming sessions. Create one to start teaching!
+        <View
+          style={[
+            styles.emptyCard,
+            { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, padding: space.lg, gap: space.sm },
+          ]}
+        >
+          <Feather name="calendar" size={22} color={colors.inkFaint} />
+          <Text style={[t.body, { color: colors.foreground }]}>No classes coming up</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground, textAlign: "center" }]}>
+            Create one and your students will be able to find and book it.
           </Text>
         </View>
       )}
 
-      {upcomingSessions.map((session) => (
-        <TouchableOpacity
-          key={session.id}
-          style={[styles.sessionRow, { backgroundColor: colors.card, borderColor: colors.border }]}
-          onPress={() => startSession(session)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.sessionDot, { backgroundColor: colors.primary + "20" }]}>
-            <Feather name="video" size={16} color={colors.primary} />
-          </View>
-          <View style={styles.sessionInfo}>
-            <Text style={[styles.sessionSubject, { color: colors.primary }]}>{session.subject}</Text>
-            <Text style={[styles.sessionTopic, { color: colors.foreground }]} numberOfLines={1}>
-              {session.topic}
-            </Text>
-            <Text style={[styles.sessionTime, { color: colors.mutedForeground }]}>
-              {formatSessionTime(session.date)}
-            </Text>
-          </View>
-          <View style={styles.sessionRight}>
-            <Text style={[styles.studentCount, { color: colors.mutedForeground }]}>
-              {session.enrolledCount}/{session.maxStudents}
-            </Text>
-            <Feather name="users" size={13} color={colors.mutedForeground} />
-            <TouchableOpacity
-              style={[styles.startBtn, { backgroundColor: colors.primary }]}
-              onPress={() => startSession(session)}
-              activeOpacity={0.8}
-            >
-              <Feather name="play" size={12} color="#fff" />
-              <Text style={styles.startBtnText}>Start</Text>
-            </TouchableOpacity>
-          </View>
-        </TouchableOpacity>
-      ))}
+      {upcomingSessions.map((session) => {
+        const full = session.enrolledCount >= session.maxStudents;
+        return (
+          <TouchableOpacity
+            key={session.id}
+            style={[
+              styles.sessionRow,
+              { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.sm, gap: space.sm },
+              elevation.card,
+            ]}
+            onPress={() => startSession(session)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={`${session.topic}, ${session.subject}, ${formatSessionTime(session.date)}`}
+          >
+            <View style={[styles.squareIcon, { backgroundColor: colors.actionSoft, borderRadius: radius.sm }]}>
+              <Feather name="video" size={16} color={colors.primary} />
+            </View>
+
+            {/*
+              Three levels, told by weight and colour rather than size alone: the subject is a
+              quiet uppercase label, the topic is the thing itself, the time sits under it.
+            */}
+            <View style={{ flex: 1, gap: 1 }}>
+              <Text style={[t.overline, { color: colors.inkFaint }]} numberOfLines={1}>
+                {session.subject}
+              </Text>
+              <Text style={[t.title3, { color: colors.foreground }]} numberOfLines={1}>
+                {session.topic}
+              </Text>
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                {formatSessionTime(session.date)}
+              </Text>
+            </View>
+
+            <View style={{ alignItems: "flex-end", gap: space.xs }}>
+              <View style={styles.seatRow}>
+                <Feather name="users" size={12} color={full ? colors.success : colors.inkFaint} />
+                <Text style={[t.caption, numeric, { color: full ? colors.success : colors.inkFaint }]}>
+                  {session.enrolledCount}/{session.maxStudents}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.startBtn,
+                  { backgroundColor: colors.primary, borderRadius: radius.xs, paddingHorizontal: space.sm, gap: space.xxs },
+                ]}
+                onPress={() => startSession(session)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={`Start ${session.topic}`}
+              >
+                <Feather name="play" size={11} color={colors.primaryForeground} />
+                <Text style={[t.caption, { color: colors.primaryForeground }]}>Start</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        );
+      })}
 
       {/*
-        * Warn near the limit, not at a fixed eight — eight of ten is worth a word and eight of
-        * thirty is not. Two left is the point at which a teacher can still act on it.
-        */}
-      {teacher.approvalStatus === "approved" && allowance !== null && allowance.used >= allowance.limit - 2 && (
-        <View style={[styles.warningBanner, { backgroundColor: colors.destructive + "10", borderColor: colors.destructive + "20" }]}>
-          <Feather name="alert-triangle" size={15} color={colors.destructive} />
-          <Text style={[styles.warningText, { color: colors.destructive }]}>
-            {allowance.used >= allowance.limit
-              ? `You've used all ${allowance.limit} classes on your ${allowance.tierName} plan for this 30 days. Upgrade for more.`
-              : `You've used ${allowance.used} of ${allowance.limit} classes on your ${allowance.tierName} plan. Upgrade for more.`}
+        Warn near the limit, not at a fixed eight — eight of ten is worth a word and eight of
+        thirty is not. Two left is the point at which a teacher can still act on it.
+
+        Amber while there is room to act, rust once the plan is spent: running out is a
+        different message from running low, and they should not look the same.
+      */}
+      {teacher.approvalStatus === "approved" && allowance !== null && allowance.remaining <= 2 && (
+        <TouchableOpacity
+          style={[
+            styles.banner,
+            {
+              backgroundColor: allowance.remaining === 0 ? colors.destructiveSoft : colors.warnSoft,
+              borderColor: allowance.remaining === 0 ? colors.destructive : colors.warn,
+              borderRadius: radius.md,
+              padding: space.sm,
+              alignItems: "center",
+            },
+          ]}
+          onPress={() => router.push("/(teacher)/subscription")}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+        >
+          <Feather
+            name="alert-triangle"
+            size={15}
+            color={allowance.remaining === 0 ? colors.destructive : colors.warn}
+          />
+          <Text
+            style={[
+              t.caption,
+              { flex: 1, color: allowance.remaining === 0 ? colors.destructive : colors.warn },
+            ]}
+          >
+            {allowance.remaining === 0
+              ? `All ${allowance.limit} classes on your ${allowance.tierName} plan are used.`
+              : `${allowance.remaining} ${allowance.remaining === 1 ? "class" : "classes"} left on your ${allowance.tierName} plan.`}
           </Text>
-        </View>
+          <Text style={[t.caption, { color: colors.primary }]}>Upgrade</Text>
+        </TouchableOpacity>
       )}
     </ScrollView>
   );
 }
 
+/**
+ * Only what does not depend on a token or the screen size.
+ *
+ * Colours, spacing, radii and type all arrive from `useColors()` and `useLayout()` at render
+ * time, so they cannot live in a StyleSheet created once at module load. What is left here is
+ * structure — the things that are true at every size, in every palette.
+ */
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 16 },
-  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  greeting: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  name: { fontSize: 24, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
-  headerActions: { flexDirection: "row", gap: 8 },
-  iconBtn: { width: 40, height: 40, borderRadius: 12, borderWidth: 1, justifyContent: "center", alignItems: "center" },
-  bellBadge: { position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, justifyContent: "center", alignItems: "center", paddingHorizontal: 3 },
-  bellBadgeText: { fontSize: 9, fontFamily: "Inter_700Bold", color: "#fff" },
-  alertBanner: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderRadius: 14, borderWidth: 1, padding: 14 },
-  alertText: { flex: 1 },
-  alertTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
-  alertBody: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 18 },
-  alertAction: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  statsCard: { borderRadius: 20, padding: 20, gap: 16 },
-  statsTitle: { fontSize: 13, fontFamily: "Inter_500Medium", color: "#ffffff99" },
-  statsRow: { flexDirection: "row", justifyContent: "space-around" },
-  stat: { alignItems: "center", gap: 4 },
-  statNum: { fontSize: 22, fontFamily: "Inter_700Bold", color: "#fff" },
-  statLabel: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#ffffff99" },
-  statDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.2)" },
-  planBadge: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
-  planBadgeText: { fontSize: 12, fontFamily: "Inter_500Medium", color: "#fff" },
-  quickActions: { flexDirection: "row", gap: 12 },
-  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, paddingVertical: 14 },
-  actionBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  actionBtnOutline: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, paddingVertical: 14, borderWidth: 1 },
-  actionBtnOutlineText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  expiredNote: {
+  headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  iconBtn: { width: 44, height: 44, borderWidth: 1, justifyContent: "center", alignItems: "center" },
+  bellBadge: {
+    position: "absolute",
+    top: -3,
+    right: -3,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 3,
+  },
+  // The overline step carries uppercase and tracking; a two-digit badge needs neither.
+  badgeText: { letterSpacing: 0, textTransform: "none" },
+
+  banner: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderWidth: 1 },
+
+  statsCard: { justifyContent: "center" },
+  statsHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  statsRow: { flexDirection: "row", alignItems: "stretch" },
+  stat: { flex: 1, alignItems: "center", gap: 4 },
+  statValue: { minHeight: 30, justifyContent: "center", alignItems: "center" },
+  statDivider: { width: StyleSheet.hairlineWidth },
+  planBadge: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" },
+  actionBtn: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    marginHorizontal: 20,
-    marginBottom: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: "center",
+    gap: 8,
+    minHeight: 48,
   },
-  expiredNoteText: { flex: 1, fontSize: 12.5, fontFamily: "Inter_400Regular", lineHeight: 17 },
-  monthlyEntry: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    marginHorizontal: 20,
-    marginBottom: 8,
-    padding: 16,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  monthlyIcon: { width: 44, height: 44, borderRadius: 12, alignItems: "center", justifyContent: "center" },
-  monthlyTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  monthlySub: { fontSize: 12.5, fontFamily: "Inter_400Regular", marginTop: 2, lineHeight: 17 },
-  sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", marginTop: 4 },
-  emptyCard: { borderRadius: 16, borderWidth: 1, padding: 20, flexDirection: "row", alignItems: "center", gap: 12 },
-  emptyText: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular" },
-  sessionRow: { flexDirection: "row", alignItems: "center", gap: 14, borderRadius: 16, borderWidth: 1, padding: 14 },
-  sessionDot: { width: 44, height: 44, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-  sessionInfo: { flex: 1, gap: 2 },
-  sessionSubject: { fontSize: 11, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.5 },
-  sessionTopic: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  sessionTime: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  sessionRight: { alignItems: "center", gap: 6 },
-  studentCount: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  startBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
-  startBtnText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  warningBanner: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 12, borderWidth: 1, padding: 12 },
-  warningText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular" },
+
+  monthlyEntry: { flexDirection: "row", alignItems: "center", borderWidth: StyleSheet.hairlineWidth },
+  squareIcon: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+
+  sectionHeader: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between" },
+  expiredNote: { flexDirection: "row", alignItems: "center", borderWidth: StyleSheet.hairlineWidth },
+
+  emptyCard: { alignItems: "center", borderWidth: StyleSheet.hairlineWidth },
+
+  sessionRow: { flexDirection: "row", alignItems: "center", borderWidth: StyleSheet.hairlineWidth },
+  seatRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  startBtn: { flexDirection: "row", alignItems: "center", minHeight: 32, justifyContent: "center" },
 });

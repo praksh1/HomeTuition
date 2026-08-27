@@ -71,10 +71,6 @@
     "hex": 108,
     "size": 31
   },
-  "app/(teacher)/index.tsx": {
-    "hex": 13,
-    "size": 23
-  },
   "app/(teacher)/monthly.tsx": {
     "hex": 4,
     "size": 24
