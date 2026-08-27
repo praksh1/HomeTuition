@@ -18,7 +18,11 @@ If you are an AI being handed this repository:
 2. **Read `.agents/memory/MEMORY.md` second.** It is an index of ~30 short notes, each one a
    thing that broke and cost real time. Reaching for the note beats re-deriving it.
 3. **Read `.agents/backlog/`** before planning anything. It holds work the owner has raised
-   that is not finished.
+   that is not finished — including `ui-upgrade-progress.md`, which is the live state of the
+   visual work.
+4. **If you are touching anything a user can see, read `DESIGN.md`.** There is one palette, one
+   type scale and one spacing scale, and a check in CI that fails the build if a screen writes
+   a colour or a font size by hand.
 4. Then this document, for the shape of the whole thing.
 
 Section 11 is the one to skim before writing any code. Section 8 is the one to read before
@@ -546,6 +550,39 @@ Support".
 
 ---
 
+## 6b. The design system, and the visual upgrade
+
+Agreed with the owner on 27 August 2026 and specified in full in **`DESIGN.md`**. The short
+version:
+
+- **Crimson `#C41E3A` is identity and a LIVE class. Nothing else, and never a button.** Every
+  action a person takes — Join, Book & Pay, Start — is royal blue `#123C8C`. The two are the
+  colours of the Nepali flag, used as ink and action rather than decoration.
+- Before this, `primary` was crimson and `destructive` was red, so **the button that took a
+  student's money and the button that cancelled their class were both red.**
+- Destructive is a burnt rust `#9A3412`, chosen because the obvious `#B3261E` measures 13° in
+  hue from the brand crimson — the same red to any human eye.
+- Nine named type steps replace eighteen ad hoc font sizes. Money and clocks get tabular figures.
+- **Dark mode is deliberately absent** — the owner's call, the product is a whiteboard. Do not
+  add one without asking.
+
+`constants/colors.ts` had been bypassed **468 times** by hex written straight into screens, so
+`lint:design` runs in CI as a **ratchet**: a per-file baseline that may fall and may never rise.
+It is at 413 hex / 507 sizes and dropping as screens are converted.
+
+### The thing every converted screen has had in common
+
+**Each one contained at least one number or claim with nothing behind it.** A dead column
+written once at registration, a hardcoded array, a value derived from `?? 0`. A teacher's
+dashboard reporting "NPR 0k earned" forever; a subscription screen showing three invented
+payments and promising session recording that exists nowhere in the codebase; a storefront
+labelling every teacher "Available" from a column no screen writes.
+
+The full list, how to test for one, and what to do instead are in
+`.agents/backlog/ui-upgrade-progress.md`. **Open every new screen expecting to find one.**
+
+---
+
 ## 7. What is not built
 
 In rough priority order. Nothing here is hidden or half-claimed.
@@ -847,6 +884,7 @@ Condensed. Each has a note in `.agents/memory/` with the full story.
 | `.agents/memory/MEMORY.md` | Index of ~30 hard-won notes. Read second. |
 | `.agents/backlog/` | Raised work that is not finished. Read before planning. |
 | `HANDOVER.md` | This file — the whole shape. |
+| `DESIGN.md` | The palette, type scale, spacing, and the lint ratchet. Read before touching any screen. |
 | `MONTHLY.md` | The monthly tier: design, arithmetic, state. |
 | `REFUNDS.md` | Refund policy, the queue, the missing dispute timetable. |
 | `WHITEBOARD.md` | Whiteboard design and roadmap. Section 4 is handwriting OCR. |
