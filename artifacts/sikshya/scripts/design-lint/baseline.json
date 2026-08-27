@@ -1,0 +1,258 @@
+{
+  "app/(admin)/_layout.tsx": {
+    "hex": 0,
+    "size": 1
+  },
+  "app/(admin)/activity.tsx": {
+    "hex": 0,
+    "size": 5
+  },
+  "app/(admin)/index.tsx": {
+    "hex": 0,
+    "size": 16
+  },
+  "app/(admin)/people.tsx": {
+    "hex": 1,
+    "size": 7
+  },
+  "app/(admin)/person/[id].tsx": {
+    "hex": 3,
+    "size": 7
+  },
+  "app/(admin)/refunds.tsx": {
+    "hex": 2,
+    "size": 15
+  },
+  "app/(admin)/ticket/[id].tsx": {
+    "hex": 1,
+    "size": 15
+  },
+  "app/(auth)/login.tsx": {
+    "hex": 6,
+    "size": 11
+  },
+  "app/(auth)/register.tsx": {
+    "hex": 2,
+    "size": 9
+  },
+  "app/(student)/_layout.tsx": {
+    "hex": 0,
+    "size": 1
+  },
+  "app/(student)/classroom/[id].tsx": {
+    "hex": 62,
+    "size": 21
+  },
+  "app/(student)/index.tsx": {
+    "hex": 13,
+    "size": 29
+  },
+  "app/(student)/monthly.tsx": {
+    "hex": 3,
+    "size": 14
+  },
+  "app/(student)/profile.tsx": {
+    "hex": 7,
+    "size": 15
+  },
+  "app/(student)/sessions.tsx": {
+    "hex": 3,
+    "size": 12
+  },
+  "app/(student)/teacher/[id].tsx": {
+    "hex": 20,
+    "size": 26
+  },
+  "app/(teacher)/_layout.tsx": {
+    "hex": 0,
+    "size": 1
+  },
+  "app/(teacher)/classroom/[id].tsx": {
+    "hex": 108,
+    "size": 31
+  },
+  "app/(teacher)/index.tsx": {
+    "hex": 13,
+    "size": 23
+  },
+  "app/(teacher)/monthly.tsx": {
+    "hex": 4,
+    "size": 24
+  },
+  "app/(teacher)/profile.tsx": {
+    "hex": 6,
+    "size": 16
+  },
+  "app/(teacher)/session-create.tsx": {
+    "hex": 8,
+    "size": 14
+  },
+  "app/(teacher)/sessions.tsx": {
+    "hex": 7,
+    "size": 12
+  },
+  "app/(teacher)/students.tsx": {
+    "hex": 1,
+    "size": 10
+  },
+  "app/(teacher)/subscription.tsx": {
+    "hex": 17,
+    "size": 24
+  },
+  "app/+not-found.tsx": {
+    "hex": 0,
+    "size": 2
+  },
+  "app/board.tsx": {
+    "hex": 2,
+    "size": 1
+  },
+  "app/conversation/[id].tsx": {
+    "hex": 3,
+    "size": 10
+  },
+  "app/desk.tsx": {
+    "hex": 1,
+    "size": 3
+  },
+  "app/index.tsx": {
+    "hex": 3,
+    "size": 1
+  },
+  "app/monthly-chat.tsx": {
+    "hex": 5,
+    "size": 13
+  },
+  "app/monthly-homework.tsx": {
+    "hex": 4,
+    "size": 17
+  },
+  "app/new-message.tsx": {
+    "hex": 0,
+    "size": 6
+  },
+  "app/notification-settings.tsx": {
+    "hex": 1,
+    "size": 7
+  },
+  "app/notifications.tsx": {
+    "hex": 11,
+    "size": 10
+  },
+  "app/request/[id].tsx": {
+    "hex": 0,
+    "size": 14
+  },
+  "app/requests.tsx": {
+    "hex": 2,
+    "size": 12
+  },
+  "app/session/[id].tsx": {
+    "hex": 4,
+    "size": 17
+  },
+  "app/support.tsx": {
+    "hex": 1,
+    "size": 12
+  },
+  "app/welcome.tsx": {
+    "hex": 18,
+    "size": 10
+  },
+  "components/AloneNotice.tsx": {
+    "hex": 4,
+    "size": 2
+  },
+  "components/CallTimeNotice.tsx": {
+    "hex": 4,
+    "size": 1
+  },
+  "components/ConversationList.tsx": {
+    "hex": 4,
+    "size": 8
+  },
+  "components/DailyEmbed.tsx": {
+    "hex": 43,
+    "size": 10
+  },
+  "components/DailyEmbed.web.tsx": {
+    "hex": 23,
+    "size": 0
+  },
+  "components/DateSystemSetting.tsx": {
+    "hex": 0,
+    "size": 4
+  },
+  "components/DropClass.tsx": {
+    "hex": 0,
+    "size": 9
+  },
+  "components/ErrorFallback.tsx": {
+    "hex": 1,
+    "size": 5
+  },
+  "components/FollowedTeachers.tsx": {
+    "hex": 1,
+    "size": 5
+  },
+  "components/MessageAttachment.tsx": {
+    "hex": 3,
+    "size": 1
+  },
+  "components/NepaliDatePicker.tsx": {
+    "hex": 2,
+    "size": 6
+  },
+  "components/PaymentSheet.tsx": {
+    "hex": 5,
+    "size": 12
+  },
+  "components/RescheduleClass.tsx": {
+    "hex": 3,
+    "size": 6
+  },
+  "components/SessionCard.tsx": {
+    "hex": 0,
+    "size": 6
+  },
+  "components/SessionThread.tsx": {
+    "hex": 1,
+    "size": 8
+  },
+  "components/SmartBoard.tsx": {
+    "hex": 2,
+    "size": 0
+  },
+  "components/SmartBoard.web.tsx": {
+    "hex": 9,
+    "size": 0
+  },
+  "components/StarRating.tsx": {
+    "hex": 2,
+    "size": 0
+  },
+  "components/TeacherCard.tsx": {
+    "hex": 12,
+    "size": 12
+  },
+  "components/VideoCall.tsx": {
+    "hex": 2,
+    "size": 1
+  },
+  "components/WarningModal.tsx": {
+    "hex": 1,
+    "size": 5
+  },
+  "components/WhiteboardCanvas.tsx": {
+    "hex": 2,
+    "size": 0
+  },
+  "components/boardLibrary.ts": {
+    "hex": 1,
+    "size": 0
+  },
+  "hooks/useClassroomSocket.ts": {
+    "hex": 1,
+    "size": 0
+  }
+}
