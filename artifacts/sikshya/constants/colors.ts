@@ -77,10 +77,20 @@ const colors = {
     /** Alias of `mutedForeground`. */
     inkMuted: "#5A626B",
     /**
-     * Metadata, timestamps, placeholders. 3.15:1 — passes for large text only.
-     * Never use it for anything below 18px that a person has to read.
+     * Metadata, timestamps, placeholders — the third tier below `mutedForeground`.
+     *
+     * It was `#8A929B`, which measures 3.15:1 on white: legible only at large sizes, and
+     * documented as such. That did not survive contact with real screens. Every use it found
+     * was small — a timestamp, a seat count, an uppercase label at 11px — because small quiet
+     * metadata is exactly what a faint ink is *for*, and three screens in a row reached for it
+     * that way, including the ones written by whoever wrote the warning.
+     *
+     * A token that can only be used where nobody wants to use it is a trap rather than a rule,
+     * so the value moved instead of the guidance. **5.25:1 on a card, 5.03:1 on the app ground,
+     * 4.64:1 on a sunk surface** — AA on all three, at any size, while staying visibly lighter
+     * than `mutedForeground`.
      */
-    inkFaint: "#8A929B",
+    inkFaint: "#646D78",
 
     /* ---------------------------------------------------------------
      * STRUCTURE — the lines that do most of the work
@@ -216,6 +226,16 @@ const colors = {
      * gradient — 6.38:1 on `secondary` and 5.38:1 on `primary`, AA at each.
      */
     onInverseMuted: "#AEBDD4",
+
+    /**
+     * The dim behind a modal or a bottom sheet.
+     *
+     * The one place an alpha is correct rather than a shortcut: a scrim exists *to* let the
+     * screen behind show through dimmed, so translucency is the point rather than a way of
+     * avoiding a second colour. A token so that every sheet in the app dims by the same amount —
+     * they were each choosing their own.
+     */
+    scrim: "rgba(0,0,0,0.45)",
   },
 
   /**

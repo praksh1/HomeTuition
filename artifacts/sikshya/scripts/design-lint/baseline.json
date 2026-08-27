@@ -43,10 +43,6 @@
     "hex": 62,
     "size": 21
   },
-  "app/(student)/index.tsx": {
-    "hex": 13,
-    "size": 29
-  },
   "app/(student)/monthly.tsx": {
     "hex": 3,
     "size": 14
@@ -222,10 +218,6 @@
   "components/StarRating.tsx": {
     "hex": 2,
     "size": 0
-  },
-  "components/TeacherCard.tsx": {
-    "hex": 12,
-    "size": 12
   },
   "components/VideoCall.tsx": {
     "hex": 2,

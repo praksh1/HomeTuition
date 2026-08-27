@@ -220,7 +220,9 @@ async function main() {
   check("Discover has a Following sub-tab", (await page3.locator('[data-testid="discover-subtab-following"]').count()) > 0);
   // Looked for as an element, not as text: a placeholder is an attribute, so it never appears
   // in innerText and an assertion against the page's text could not have passed.
-  const searchBox = 'input[placeholder*="Search name"]';
+  // By testID, not by placeholder copy: selecting on wording makes a rewrite of the
+  // placeholder look like a navigation failure.
+  const searchBox = '[data-testid="discover-search"]';
   check("and Discover is what it opens on", (await page3.locator(searchBox).count()) > 0);
 
   await page3.locator('[data-testid="discover-subtab-following"]').click({ timeout: 10000 });

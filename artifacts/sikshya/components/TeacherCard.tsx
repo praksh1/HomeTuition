@@ -2,6 +2,8 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { numeric } from "@/constants/typography";
 import StarRating from "./StarRating";
 import type { Teacher } from "@/context/AuthContext";
 
@@ -9,22 +11,19 @@ interface TeacherCardProps {
   teacher: Teacher;
   onPress?: () => void;
   compact?: boolean;
+  /**
+   * This teacher also runs a monthly class, taken from `GET /monthly/classes`.
+   *
+   * Passed in rather than read here: the card cannot know it, and asking per card would be one
+   * request per row. Undefined means "we have not checked", which is why the badge only appears
+   * when it is explicitly true — a missing badge must never imply a missing class.
+   */
+  hasMonthlyClass?: boolean;
 }
 
-const SUBJECT_COLORS: Record<string, string> = {
-  Mathematics: "#3B82F6",
-  Science: "#10B981",
-  English: "#8B5CF6",
-  Nepali: "#F59E0B",
-  "Computer Science": "#EC4899",
-  History: "#6B7280",
-  Geography: "#14B8A6",
-  Economics: "#F97316",
-};
-
-export default function TeacherCard({ teacher, onPress, compact }: TeacherCardProps) {
+export default function TeacherCard({ teacher, onPress, compact, hasMonthlyClass }: TeacherCardProps) {
   const colors = useColors();
-  const subjectColor = SUBJECT_COLORS[teacher.subject] ?? colors.primary;
+  const { t, space, radius, elevation } = useLayout();
 
   const initials = teacher.name
     .split(" ")
@@ -33,147 +32,173 @@ export default function TeacherCard({ teacher, onPress, compact }: TeacherCardPr
     .join("")
     .toUpperCase();
 
+  /**
+   * A teacher with no reviews is unrated, not badly rated.
+   *
+   * This showed `0.0` beside an empty row of stars for everybody who had never been reviewed,
+   * which on a storefront reads as "people tried this teacher and thought little of it". It is
+   * the opposite of the truth for somebody who joined yesterday, and it is the first thing a
+   * student sees about them.
+   */
+  const isRated = teacher.reviewCount > 0;
+
   return (
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.8}
-      style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
+      accessibilityRole="button"
+      accessibilityLabel={`${teacher.name}, ${teacher.subject}${isRated ? `, rated ${teacher.rating.toFixed(1)} from ${teacher.reviewCount} reviews` : ", not yet reviewed"}`}
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+          borderRadius: radius.md,
+          padding: space.md,
+          marginBottom: space.sm,
+          gap: space.sm,
+        },
+        elevation.card,
+      ]}
     >
-      {/* Top row — avatar + core info */}
-      <View style={styles.topRow}>
-        <View style={styles.avatarWrap}>
-          <View style={[styles.avatar, { backgroundColor: subjectColor + "20" }]}>
-            <Text style={[styles.initials, { color: subjectColor }]}>{initials}</Text>
-          </View>
-          {teacher.isOnline && (
-            <View style={[styles.onlineDot, { backgroundColor: "#22C55E", borderColor: colors.card }]} />
-          )}
+      <View style={[styles.topRow, { gap: space.sm }]}>
+        <View style={[styles.avatar, { backgroundColor: colors.actionSoft, borderRadius: radius.pill }]}>
+          <Text style={[t.title3, { color: colors.primary }]}>{initials}</Text>
         </View>
 
-        <View style={styles.info}>
+        <View style={{ flex: 1, gap: 3 }}>
           <View style={styles.nameRow}>
-            <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
+            <Text style={[t.title3, { color: colors.foreground, flex: 1 }]} numberOfLines={1}>
               {teacher.name}
             </Text>
             {teacher.approvalStatus === "approved" && (
-              <Feather name="check-circle" size={14} color={colors.primary} />
+              <Feather name="check-circle" size={14} color={colors.success} />
             )}
           </View>
 
-          <View style={[styles.subjectTag, { backgroundColor: subjectColor + "15" }]}>
-            <Text style={[styles.subject, { color: subjectColor }]}>{teacher.subject}</Text>
-          </View>
+          <Text style={[t.overline, { color: colors.inkFaint }]} numberOfLines={1}>
+            {teacher.subject}
+          </Text>
 
-          <View style={styles.ratingRow}>
-            <StarRating rating={teacher.rating} size={12} />
-            <Text style={[styles.ratingText, { color: colors.mutedForeground }]}>
-              {teacher.rating.toFixed(1)}
-            </Text>
-            <Text style={[styles.reviewCount, { color: colors.mutedForeground }]}>
-              ({teacher.reviewCount})
-            </Text>
-          </View>
+          {isRated ? (
+            <View style={styles.ratingRow}>
+              <StarRating rating={teacher.rating} size={12} />
+              <Text style={[t.caption, numeric, { color: colors.foreground }]}>
+                {teacher.rating.toFixed(1)}
+              </Text>
+              <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+                ({teacher.reviewCount})
+              </Text>
+            </View>
+          ) : (
+            <Text style={[t.caption, { color: colors.inkFaint }]}>Not yet reviewed</Text>
+          )}
         </View>
 
-        {/* Price badge */}
+        {/*
+          The price always carries its unit.
+
+          "NPR 500" on a storefront that sells both single classes and whole months is
+          ambiguous in the most expensive possible way. It said "/session"; it now says the
+          billing model in words.
+        */}
         {teacher.pricePerSession != null && (
-          <View style={[styles.priceBadge, { backgroundColor: colors.primary + "12" }]}>
-            <Text style={[styles.priceAmt, { color: colors.primary }]}>
+          <View style={[styles.priceBadge, { backgroundColor: colors.actionSoft, borderRadius: radius.sm, paddingHorizontal: space.xs }]}>
+            <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>
               NPR {teacher.pricePerSession.toLocaleString()}
             </Text>
-            <Text style={[styles.priceLabel, { color: colors.primary + "99" }]}>/session</Text>
+            <Text style={[t.overline, { color: colors.primary }]}>per class</Text>
           </View>
         )}
       </View>
 
-      {/* Bio */}
-      {!compact && (
-        <Text style={[styles.bio, { color: colors.mutedForeground }]} numberOfLines={2}>
+      {!compact && !!teacher.bio && (
+        <Text style={[t.callout, { color: colors.mutedForeground }]} numberOfLines={2}>
           {teacher.bio}
         </Text>
       )}
 
-      {/* Sub-subjects */}
       {!compact && teacher.subjects.length > 0 && (
-        <View style={styles.subjectChips}>
+        <View style={[styles.chips, { gap: space.xxs }]}>
           {teacher.subjects.slice(0, 3).map((s) => (
-            <View key={s} style={[styles.subChip, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-              <Text style={[styles.subChipText, { color: colors.mutedForeground }]}>{s}</Text>
+            <View
+              key={s}
+              style={[styles.chip, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.xs }]}
+            >
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>{s}</Text>
             </View>
           ))}
           {teacher.subjects.length > 3 && (
-            <Text style={[styles.moreChip, { color: colors.mutedForeground }]}>
+            <Text style={[t.caption, { color: colors.inkFaint, alignSelf: "center" }]}>
               +{teacher.subjects.length - 3}
             </Text>
           )}
         </View>
       )}
 
-      {/* Footer stats */}
-      <View style={[styles.footer, compact && { marginTop: 8 }]}>
+      <View style={[styles.footer, { gap: space.sm }]}>
+        {/*
+          There was an "Available" tag here, shown to every teacher who had not set an online
+          flag — which is all of them, because nothing in the app has ever set it. A claim about
+          whether somebody can teach you right now, made from no data at all, on the screen
+          where a student is choosing. It is gone rather than restyled.
+        */}
         <View style={styles.stat}>
-          <Feather name="users" size={12} color={colors.mutedForeground} />
-          <Text style={[styles.statText, { color: colors.mutedForeground }]}>
-            {teacher.totalStudents} students
+          <Feather name="users" size={12} color={colors.inkFaint} />
+          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+            {teacher.totalStudents} {teacher.totalStudents === 1 ? "student" : "students"}
           </Text>
         </View>
 
         {teacher.experienceYears != null && (
           <View style={styles.stat}>
-            <Feather name="award" size={12} color={colors.mutedForeground} />
-            <Text style={[styles.statText, { color: colors.mutedForeground }]}>
-              {teacher.experienceYears}y exp
+            <Feather name="award" size={12} color={colors.inkFaint} />
+            <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+              {teacher.experienceYears}y experience
             </Text>
           </View>
         )}
 
-        {teacher.location && (
-          <View style={styles.stat}>
-            <Feather name="map-pin" size={12} color={colors.mutedForeground} />
-            <Text style={[styles.statText, { color: colors.mutedForeground }]} numberOfLines={1}>
+        {!!teacher.location && (
+          <View style={[styles.stat, { flexShrink: 1 }]}>
+            <Feather name="map-pin" size={12} color={colors.inkFaint} />
+            <Text style={[t.caption, { color: colors.mutedForeground }]} numberOfLines={1}>
               {teacher.location}
             </Text>
           </View>
         )}
 
-        <View style={[styles.availTag, { backgroundColor: teacher.isOnline ? "#22C55E15" : colors.muted }]}>
-          <View style={[styles.dot, { backgroundColor: teacher.isOnline ? "#22C55E" : colors.border }]} />
-          <Text style={[styles.availText, { color: teacher.isOnline ? "#22C55E" : colors.mutedForeground }]}>
-            {teacher.isOnline ? "Online" : "Available"}
-          </Text>
-        </View>
+        {/*
+          Crimson, because this is a different *kind* of thing rather than a better one: it is
+          the other billing model. A student must be able to tell before they tap.
+        */}
+        {hasMonthlyClass === true && (
+          <View
+            style={[
+              styles.monthlyTag,
+              { backgroundColor: colors.brandSoft, borderRadius: radius.pill, paddingHorizontal: space.xs },
+            ]}
+          >
+            <Feather name="repeat" size={11} color={colors.brand} />
+            <Text style={[t.overline, { color: colors.brand }]}>Monthly too</Text>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
 }
 
+/** Structure only. Colour, spacing, radius and type arrive from the hooks at render time. */
 const styles = StyleSheet.create({
-  card: { borderRadius: 18, borderWidth: 1, padding: 16, marginBottom: 12 },
-  topRow: { flexDirection: "row", gap: 12, marginBottom: 10, alignItems: "flex-start" },
-  avatarWrap: { position: "relative" },
-  avatar: { width: 52, height: 52, borderRadius: 26, justifyContent: "center", alignItems: "center" },
-  onlineDot: { position: "absolute", bottom: 1, right: 1, width: 12, height: 12, borderRadius: 6, borderWidth: 2 },
-  initials: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  info: { flex: 1, gap: 4 },
+  card: { borderWidth: StyleSheet.hairlineWidth },
+  topRow: { flexDirection: "row", alignItems: "flex-start" },
+  avatar: { width: 52, height: 52, justifyContent: "center", alignItems: "center" },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 5 },
-  name: { fontSize: 15, fontFamily: "Inter_600SemiBold", flex: 1 },
-  subjectTag: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2, alignSelf: "flex-start" },
-  subject: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   ratingRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  ratingText: { fontSize: 12, fontFamily: "Inter_600SemiBold" },
-  reviewCount: { fontSize: 11, fontFamily: "Inter_400Regular" },
-  priceBadge: { borderRadius: 10, padding: 8, alignItems: "center" },
-  priceAmt: { fontSize: 13, fontFamily: "Inter_700Bold" },
-  priceLabel: { fontSize: 9, fontFamily: "Inter_400Regular" },
-  bio: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19, marginBottom: 10 },
-  subjectChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 10 },
-  subChip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 3 },
-  subChipText: { fontSize: 11, fontFamily: "Inter_400Regular" },
-  moreChip: { fontSize: 11, fontFamily: "Inter_400Regular", alignSelf: "center" },
-  footer: { flexDirection: "row", alignItems: "center", gap: 12, flexWrap: "wrap" },
+  priceBadge: { alignItems: "center", justifyContent: "center", minHeight: 44, paddingVertical: 6 },
+  chips: { flexDirection: "row", flexWrap: "wrap" },
+  chip: { borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 8, paddingVertical: 3 },
+  footer: { flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
   stat: { flexDirection: "row", alignItems: "center", gap: 4 },
-  statText: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  availTag: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 3 },
-  dot: { width: 6, height: 6, borderRadius: 3 },
-  availText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
+  monthlyTag: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 3 },
 });

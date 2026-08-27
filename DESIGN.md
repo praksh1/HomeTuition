@@ -69,7 +69,7 @@ the same thing.
 | Inputs, wells, skeletons | `muted` / `surfaceSunk` | `#F2F1EC` | |
 | Primary text | `foreground` / `ink` / `text` | `#14171A` | 17.99:1 — AAA |
 | Secondary text | `mutedForeground` / `inkMuted` | `#5A626B` | 6.19:1 — AA |
-| Metadata | `inkFaint` | `#8A929B` | 3.15:1 — **large text only** |
+| Metadata | `inkFaint` | `#646D78` | 5.25:1 — AA at any size |
 | Borders | `border` / `line` | `#E7E4DC` | |
 | Visible border | `lineStrong` | `#CFCBC1` | |
 | **Every action** | `primary` / `action` | `#123C8C` | 10.24:1 — AAA |
@@ -84,14 +84,22 @@ the same thing.
 | Saffron **fill** | `accent` | `#F5A623` | **1.9:1 — never text** |
 | Cancel, end, refund | `destructive` | `#9A3412` | 7.31:1 — AAA |
 | Destructive wash | `destructiveSoft` | `#FBEBE4` | |
+| Ink on a dark branded card | `onInverse` | `#FFFFFF` | |
+| Secondary ink on the same | `onInverseMuted` | `#AEBDD4` | Measured at both gradient ends |
+| Modal / sheet dim | `scrim` | `rgba(0,0,0,.45)` | The one correct alpha |
 | Socket up / person online | `online` | `#1FA463` | Was `#22C55E` hardcoded 17× |
-| Socket down | `offline` | `#8A929B` | |
+| Socket down | `offline` | `#8A929B` | Dot, not text |
 
 ### Two things not to do
 
 **Do not use opacity for secondary text.** Use `mutedForeground` or `inkFaint`. Opacity behaves
 on a white card and misbehaves everywhere else — 60% ink over a crimson badge is muddy pink, and
 over the whiteboard it shifts with whatever the teacher just drew.
+
+**`inkFaint` was `#8A929B` and passed only at large sizes.** Three screens in a row used it
+for 11–13px metadata anyway — because quiet small metadata is what a faint ink is *for*. The
+value moved rather than the guidance: a token that can only be used where nobody wants to use
+it is a trap, not a rule.
 
 **Do not use `accent` as a text colour.** It fails contrast badly. Four screens currently do;
 they are being fixed as each is touched. For attention *text*, use `warn`.
