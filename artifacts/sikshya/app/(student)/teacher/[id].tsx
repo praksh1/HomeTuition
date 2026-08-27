@@ -3,10 +3,20 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { confirm, notify } from "@/utils/alerts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet, apiPost, apiDelete } from "@/utils/api";
 import StarRating from "@/components/StarRating";
@@ -99,9 +109,13 @@ type SessionTab = "upcoming" | "live" | "past";
 export default function TeacherDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
+  const { t, numeric, gutter, space, radius, elevation, isExpanded } =
+    useLayout();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const [teacher, setTeacher] = useState<(Teacher & { isFollowing?: boolean }) | null>(null);
+  const [teacher, setTeacher] = useState<
+    (Teacher & { isFollowing?: boolean }) | null
+  >(null);
   const [upcomingSessions, setUpcomingSessions] = useState<Session[]>([]);
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
   const [pastSessions, setPastSessions] = useState<Session[]>([]);
@@ -116,7 +130,10 @@ export default function TeacherDetail() {
   const [paySession, setPaySession] = useState<Session | null>(null);
   const [subscribing, setSubscribing] = useState(false);
   const [subjectsExpanded, setSubjectsExpanded] = useState(false);
-  const [sessionsHostedExpanded, setSessionsHostedExpanded] = useState(false);
+  const [profileLoadFailed, setProfileLoadFailed] = useState(false);
+  const [detailsLoadState, setDetailsLoadState] = useState<
+    "loading" | "ready" | "failed"
+  >("loading");
 
   const studentId = user?.role === "student" ? (user as Student).id : undefined;
 
@@ -163,18 +180,29 @@ export default function TeacherDetail() {
     // review is later submitted with — they disagreed, so the rating box appeared for teachers
     // the student had never studied with (and stayed hidden for ones they had).
     let teacherUserId: number | null = null;
+    let profileLoaded = false;
     try {
       // No `?studentId=` any more. The server answers "do you follow this teacher" from the
       // token, because the id this screen holds is the student's *profile* row and the follow
       // table keys on their *users* row — so the two only ever matched by coincidence.
-      const apiTeacher = await apiGet<Teacher & { userId: number; isFollowing?: boolean }>(`/teachers/${id}`);
+      const apiTeacher = await apiGet<
+        Teacher & { userId: number; isFollowing?: boolean }
+      >(`/teachers/${id}`);
+      profileLoaded = true;
       teacherUserId = apiTeacher.userId;
+      setProfileLoadFailed(false);
       setTeacher({ ...apiTeacher, id: String(apiTeacher.id), credentials: [] });
 
       const [upcomingRes, liveRes, pastRes, revRes] = await Promise.all([
-        apiGet<{ sessions: ApiSession[] }>(`/sessions?teacherId=${apiTeacher.userId}&status=upcoming`),
-        apiGet<{ sessions: ApiSession[] }>(`/sessions?teacherId=${apiTeacher.userId}&status=live`),
-        apiGet<{ sessions: ApiSession[] }>(`/sessions?teacherId=${apiTeacher.userId}&status=completed`),
+        apiGet<{ sessions: ApiSession[] }>(
+          `/sessions?teacherId=${apiTeacher.userId}&status=upcoming`,
+        ),
+        apiGet<{ sessions: ApiSession[] }>(
+          `/sessions?teacherId=${apiTeacher.userId}&status=live`,
+        ),
+        apiGet<{ sessions: ApiSession[] }>(
+          `/sessions?teacherId=${apiTeacher.userId}&status=completed`,
+        ),
         apiGet<{ reviews: ApiReview[] }>(`/teachers/${id}/reviews?limit=10`),
       ]);
 
@@ -188,21 +216,31 @@ export default function TeacherDetail() {
       const stillToCome = upcomingRes.sessions.filter((s) => !s.expired);
       const goneBy = upcomingRes.sessions.filter((s) => s.expired);
 
-      setUpcomingSessions(stillToCome.map((s) => mapApiSession(s, String(apiTeacher.id))));
-      setLiveSessions(liveRes.sessions.map((s) => mapApiSession(s, String(apiTeacher.id))));
+      setUpcomingSessions(
+        stillToCome.map((s) => mapApiSession(s, String(apiTeacher.id))),
+      );
+      setLiveSessions(
+        liveRes.sessions.map((s) => mapApiSession(s, String(apiTeacher.id))),
+      );
       // Shown under Past, where they belong, rather than vanishing — a student who booked one
       // still needs to see that it existed.
       setPastSessions(
-        [...goneBy, ...pastRes.sessions].map((s) => mapApiSession(s, String(apiTeacher.id))),
+        [...goneBy, ...pastRes.sessions].map((s) =>
+          mapApiSession(s, String(apiTeacher.id)),
+        ),
       );
       setReviews(revRes.reviews);
+      setDetailsLoadState("ready");
 
       if (studentId) {
         const joinable = [...liveRes.sessions, ...stillToCome];
         const entries = await Promise.all(
           joinable.map(async (s) => {
             try {
-              return [String(s.id), await apiGet<SessionAccess>(`/sessions/${s.id}/access`)] as const;
+              return [
+                String(s.id),
+                await apiGet<SessionAccess>(`/sessions/${s.id}/access`),
+              ] as const;
             } catch {
               /*
                * We do not know, and must not guess.
@@ -211,7 +249,16 @@ export default function TeacherDetail() {
                * one failed request told a student who had already paid to pay again. `known:
                * false` keeps the question open and the screen says so instead.
                */
-              return [String(s.id), { canJoin: false, isTeacher: false, isEnrolled: false, hasPaid: false, known: false }] as const;
+              return [
+                String(s.id),
+                {
+                  canJoin: false,
+                  isTeacher: false,
+                  isEnrolled: false,
+                  hasPaid: false,
+                  known: false,
+                },
+              ] as const;
             }
           }),
         );
@@ -219,11 +266,19 @@ export default function TeacherDetail() {
       }
 
       if (liveRes.sessions.length > 0) setSessionTab("live");
-    } catch (_e) {}
+    } catch (_e) {
+      // A failed profile request is not an empty profile, and a failed details request is not
+      // "no classes" or "no reviews". Keep those pictures distinct so a poor connection does
+      // not rewrite the teacher's public record as zero.
+      if (!profileLoaded && !teacher) setProfileLoadFailed(true);
+      if (profileLoaded) setDetailsLoadState("failed");
+    }
 
     if (studentId && teacherUserId != null) {
       try {
-        const rateRes = await apiGet<{ canRate: boolean }>(`/reviews/can-rate?teacherId=${teacherUserId}`);
+        const rateRes = await apiGet<{ canRate: boolean }>(
+          `/reviews/can-rate?teacherId=${teacherUserId}`,
+        );
         setCanRate(rateRes.canRate);
       } catch (_e) {
         setCanRate(false);
@@ -265,7 +320,10 @@ export default function TeacherDetail() {
    * It stays open now and this rethrows, so one screen tells the truth instead of two
    * contradicting each other.
    */
-  const confirmBooking = async (session: Session, paymentMethod: PaymentMethod) => {
+  const confirmBooking = async (
+    session: Session,
+    paymentMethod: PaymentMethod,
+  ) => {
     if (bookingSessionId === session.id) return;
     setBookingSessionId(session.id);
     try {
@@ -281,7 +339,10 @@ export default function TeacherDetail() {
 
       setPaySession(null);
       if (res?.alreadyBooked) {
-        notify("Already booked", "You have already paid for this session. Check your Sessions tab to join.");
+        notify(
+          "Already booked",
+          "You have already paid for this session. Check your Sessions tab to join.",
+        );
         return;
       }
       if (
@@ -300,7 +361,10 @@ You can join from your Sessions tab — the class opens a few minutes before it 
       await refreshAccess(session.id);
       // Rethrown so the payment sheet shows this instead of a success it has not earned.
       // Nothing was charged and nothing was booked, which is what the sheet says.
-      const msg = e instanceof Error ? e.message : "That did not go through. Please try again.";
+      const msg =
+        e instanceof Error
+          ? e.message
+          : "That did not go through. Please try again.";
       throw new Error(`${msg} Nothing has been charged.`);
     } finally {
       setBookingSessionId(null);
@@ -342,9 +406,15 @@ You can join from your Sessions tab — the class opens a few minutes before it 
         comment: myComment.trim(),
       });
       setRatingSubmitted(true);
-      notify("Thank you!", `You rated ${teacher.name} ${myRating} star${myRating !== 1 ? "s" : ""}.`);
+      notify(
+        "Thank you!",
+        `You rated ${teacher.name} ${myRating} star${myRating !== 1 ? "s" : ""}.`,
+      );
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "You can only rate teachers after attending a completed session.";
+      const msg =
+        e instanceof Error
+          ? e.message
+          : "You can only rate teachers after attending a completed session.";
       notify("Can't Submit Rating", msg);
     }
   };
@@ -368,276 +438,835 @@ You can join from your Sessions tab — the class opens a few minutes before it 
     }
   };
 
-  if (!teacher) return null;
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace("/(student)");
+  };
 
-  const initials = teacher.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
+  if (!teacher) {
+    return (
+      <View
+        style={[
+          styles.loadScreen,
+          {
+            backgroundColor: colors.background,
+            paddingTop: insets.top + space.md,
+            paddingBottom: insets.bottom + space.md,
+            paddingHorizontal: gutter,
+            gap: space.xl,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          style={[
+            styles.loadBack,
+            { borderColor: colors.border, borderRadius: radius.sm },
+          ]}
+          onPress={goBack}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Back to Discover"
+        >
+          <Feather name="arrow-left" size={20} color={colors.foreground} />
+        </TouchableOpacity>
 
-  const activeSessions = sessionTab === "upcoming" ? upcomingSessions : sessionTab === "live" ? liveSessions : pastSessions;
-  const visibleSubjects = subjectsExpanded ? teacher.subjects : teacher.subjects.slice(0, 4);
+        {profileLoadFailed ? (
+          <View style={[styles.loadCard, { gap: space.md }]}>
+            <View
+              style={[
+                styles.loadIcon,
+                {
+                  backgroundColor: colors.destructiveSoft,
+                  borderRadius: radius.pill,
+                },
+              ]}
+            >
+              <Feather name="wifi-off" size={24} color={colors.destructive} />
+            </View>
+            <Text
+              style={[
+                t.title2,
+                { color: colors.foreground, textAlign: "center" },
+              ]}
+            >
+              Couldn&apos;t load this teacher
+            </Text>
+            <Text
+              style={[
+                t.body,
+                { color: colors.mutedForeground, textAlign: "center" },
+              ]}
+            >
+              Your connection may have dropped. Nothing on the teacher&apos;s
+              profile has been changed.
+            </Text>
+            <TouchableOpacity
+              style={[
+                styles.loadRetry,
+                { backgroundColor: colors.primary, borderRadius: radius.sm },
+              ]}
+              onPress={() => {
+                setProfileLoadFailed(false);
+                void loadData();
+              }}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+            >
+              <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>
+                Try again
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={[styles.loadCard, { gap: space.md }]}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[t.body, { color: colors.mutedForeground }]}>
+              Loading teacher profile…
+            </Text>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  const initials = teacher.name
+    .split(" ")
+    .map((n) => n[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+
+  const activeSessions =
+    sessionTab === "upcoming"
+      ? upcomingSessions
+      : sessionTab === "live"
+        ? liveSessions
+        : pastSessions;
+  const visibleSubjects = subjectsExpanded
+    ? teacher.subjects
+    : teacher.subjects.slice(0, 4);
   const hasMoreSubjects = teacher.subjects.length > 4;
-  const totalHosted = upcomingSessions.length + liveSessions.length + pastSessions.length;
+  const isRated = teacher.reviewCount > 0;
+  const onNavy = { color: colors.onInverse };
+  const onNavyMuted = { color: colors.onInverseMuted };
 
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingBottom: insets.bottom + 40 }]}
+      contentContainerStyle={[
+        styles.container,
+        { paddingBottom: insets.bottom + space.xxxl },
+      ]}
       showsVerticalScrollIndicator={false}
     >
-      <LinearGradient colors={["#1A365D", "#2D4A7A"]} style={[styles.hero, { paddingTop: insets.top + 16 }]}>
+      <LinearGradient
+        colors={[colors.secondary, colors.primary]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          styles.hero,
+          {
+            paddingTop: insets.top + space.md,
+            paddingHorizontal: gutter,
+            paddingBottom: space.xxl,
+            gap: space.sm,
+          },
+        ]}
+      >
         <View style={styles.heroTopRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} activeOpacity={0.7}>
-            <Feather name="arrow-left" size={22} color="#fff" />
+          <TouchableOpacity
+            style={[
+              styles.backBtn,
+              { borderColor: colors.onInverseMuted, borderRadius: radius.sm },
+            ]}
+            onPress={goBack}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Discover"
+          >
+            <Feather name="arrow-left" size={20} color={colors.onInverse} />
           </TouchableOpacity>
-          <View style={styles.heroTopActions}>
+          <View style={[styles.heroTopActions, { gap: space.xs }]}>
             {studentId && (
               <TouchableOpacity
-                style={[styles.contactBtn, { backgroundColor: "rgba(255,255,255,0.18)" }]}
+                style={[
+                  styles.heroAction,
+                  {
+                    borderColor: colors.onInverseMuted,
+                    borderRadius: radius.pill,
+                    paddingHorizontal: space.sm,
+                    gap: space.xxs,
+                  },
+                ]}
                 onPress={() =>
                   router.push({
                     pathname: "/conversation/[id]",
-                    params: { id: String((teacher as Teacher & { userId: number }).userId), name: teacher.name },
+                    params: {
+                      id: String(
+                        (teacher as Teacher & { userId: number }).userId,
+                      ),
+                      name: teacher.name,
+                    },
                   })
                 }
                 activeOpacity={0.8}
                 testID="contact-teacher-btn"
+                accessibilityRole="button"
               >
-                <Feather name="message-circle" size={14} color="#fff" />
-                <Text style={styles.subscribeBtnText}>Message</Text>
+                <Feather
+                  name="message-circle"
+                  size={14}
+                  color={colors.onInverse}
+                />
+                <Text style={[t.caption, onNavy]}>Message</Text>
               </TouchableOpacity>
             )}
             {studentId && (
               <TouchableOpacity
                 style={[
-                  styles.subscribeBtn,
-                  teacher.isFollowing ? styles.subscribeBtnActive : styles.subscribeBtnInactive,
+                  styles.heroAction,
+                  {
+                    borderColor: colors.onInverseMuted,
+                    borderRadius: radius.pill,
+                    paddingHorizontal: space.sm,
+                    gap: space.xxs,
+                  },
                 ]}
                 onPress={toggleSubscribe}
                 disabled={subscribing}
                 activeOpacity={0.8}
                 testID="subscribe-follow-btn"
+                accessibilityRole="button"
+                accessibilityLabel={
+                  teacher.isFollowing
+                    ? `Unfollow ${teacher.name}`
+                    : `Follow ${teacher.name} for updates`
+                }
               >
-                <Feather name={teacher.isFollowing ? "check" : "plus"} size={14} color="#fff" />
-                <Text style={styles.subscribeBtnText}>{teacher.isFollowing ? "Subscribed" : "Subscribe"}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-        <View style={styles.heroAvatar}>
-          <Text style={styles.heroAvatarText}>{initials}</Text>
-        </View>
-        <Text style={styles.heroName}>{teacher.name}</Text>
-        <View style={[styles.heroSubjectTag, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
-          <Text style={styles.heroSubjectText}>{teacher.subject}</Text>
-        </View>
-        <View style={styles.heroRating}>
-          <StarRating rating={teacher.rating} size={18} color="#F5A623" />
-          <Text style={styles.heroRatingText}>{teacher.rating.toFixed(1)} ({teacher.reviewCount} reviews)</Text>
-        </View>
-        <View style={styles.heroStats}>
-          <View style={styles.heroStat}>
-            <Text style={styles.heroStatNum}>{teacher.totalStudents}</Text>
-            <Text style={styles.heroStatLabel}>Students</Text>
-          </View>
-          <View style={styles.heroStatDivider} />
-          <View style={styles.heroStat}>
-            <Text style={styles.heroStatNum}>{teacher.sessionsThisMonth}</Text>
-            <Text style={styles.heroStatLabel}>Sessions/mo</Text>
-          </View>
-          <View style={styles.heroStatDivider} />
-          <View style={styles.heroStat}>
-            <Text style={styles.heroStatNum}>{teacher.subjects.length}</Text>
-            <Text style={styles.heroStatLabel}>Subjects</Text>
-          </View>
-        </View>
-      </LinearGradient>
-
-      <View style={styles.body}>
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.cardTitle, { color: colors.foreground }]}>About</Text>
-          <Text style={[styles.bio, { color: colors.mutedForeground }]}>{teacher.bio}</Text>
-
-          <View style={styles.expandableHeader}>
-            <Text style={[styles.expandableLabel, { color: colors.foreground }]}>
-              Subjects Taught ({teacher.subjects.length})
-            </Text>
-            {hasMoreSubjects && (
-              <TouchableOpacity onPress={() => setSubjectsExpanded((v) => !v)} activeOpacity={0.7}>
-                <Text style={[styles.expandToggle, { color: colors.primary }]}>
-                  {subjectsExpanded ? "Show less" : "Show all"}
+                <Feather
+                  name={teacher.isFollowing ? "check" : "plus"}
+                  size={14}
+                  color={colors.onInverse}
+                />
+                {/*
+                  This is a free follow, not either paid subscription product. Calling it
+                  "Subscribe" on the screen where students pay blurred that distinction at the
+                  exact moment it matters.
+                */}
+                <Text style={[t.caption, onNavy]}>
+                  {subscribing
+                    ? "Saving…"
+                    : teacher.isFollowing
+                      ? "Following"
+                      : "Follow"}
                 </Text>
               </TouchableOpacity>
             )}
           </View>
-          <View style={styles.tagRow}>
-            {visibleSubjects.map((s) => (
-              <View key={s} style={[styles.tag, { backgroundColor: colors.secondary + "12" }]}>
-                <Text style={[styles.tagText, { color: colors.secondary }]}>{s}</Text>
-              </View>
-            ))}
-          </View>
-
-          <TouchableOpacity
-            style={styles.expandableHeader}
-            onPress={() => setSessionsHostedExpanded((v) => !v)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.expandableLabel, { color: colors.foreground }]}>
-              Sessions Hosted ({totalHosted})
-            </Text>
-            <Feather name={sessionsHostedExpanded ? "chevron-up" : "chevron-down"} size={16} color={colors.mutedForeground} />
-          </TouchableOpacity>
-          {sessionsHostedExpanded && (
-            <View style={styles.hostedBreakdown}>
-              <Text style={[styles.hostedRow, { color: colors.mutedForeground }]}>Upcoming: {upcomingSessions.length}</Text>
-              <Text style={[styles.hostedRow, { color: colors.mutedForeground }]}>Live now: {liveSessions.length}</Text>
-              <Text style={[styles.hostedRow, { color: colors.mutedForeground }]}>Completed: {pastSessions.length}</Text>
-            </View>
-          )}
         </View>
+        <View
+          style={[
+            styles.heroAvatar,
+            { backgroundColor: colors.actionSoft, borderRadius: radius.pill },
+          ]}
+        >
+          <Text style={[t.display, { color: colors.primary }]}>{initials}</Text>
+        </View>
+        <Text style={[t.title1, onNavy, { textAlign: "center" }]}>
+          {teacher.name}
+        </Text>
+        <View
+          style={[
+            styles.heroSubjectTag,
+            {
+              backgroundColor: colors.card,
+              borderRadius: radius.pill,
+              paddingHorizontal: space.md,
+              paddingVertical: space.xxs,
+            },
+          ]}
+        >
+          <Text style={[t.overline, { color: colors.secondary }]}>
+            {teacher.subject}
+          </Text>
+        </View>
+        {isRated ? (
+          <View style={[styles.heroRating, { gap: space.xs }]}>
+            <StarRating
+              rating={teacher.rating}
+              size={18}
+              color={colors.accent}
+            />
+            <Text style={[t.callout, numeric, onNavy]}>
+              {teacher.rating.toFixed(1)} · {teacher.reviewCount}{" "}
+              {teacher.reviewCount === 1 ? "review" : "reviews"}
+            </Text>
+          </View>
+        ) : (
+          <Text style={[t.callout, onNavyMuted]}>Not yet reviewed</Text>
+        )}
 
-        <View>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Sessions</Text>
-          <View style={styles.tabRow}>
-            {([
-              { key: "upcoming", label: "Upcoming" },
-              { key: "live", label: `Live${liveSessions.length > 0 ? ` (${liveSessions.length})` : ""}` },
-              { key: "past", label: "Past" },
-            ] as { key: SessionTab; label: string }[]).map((t) => {
-              const active = sessionTab === t.key;
-              return (
+        <View style={[styles.heroStats, { paddingTop: space.xs }]}>
+          <View style={styles.heroStat}>
+            <Text style={[t.title2, numeric, onNavy]}>
+              {teacher.totalStudents}
+            </Text>
+            <Text style={[t.caption, onNavyMuted]}>Paid bookings</Text>
+          </View>
+          <View
+            style={[
+              styles.heroStatDivider,
+              { backgroundColor: colors.onInverseMuted },
+            ]}
+          />
+          <View style={styles.heroStat}>
+            {teacher.experienceYears != null ? (
+              <Text style={[t.title2, numeric, onNavy]}>
+                {teacher.experienceYears}
+              </Text>
+            ) : (
+              <Text style={[t.title2, onNavyMuted]}>—</Text>
+            )}
+            <Text style={[t.caption, onNavyMuted]}>Years teaching</Text>
+          </View>
+          <View
+            style={[
+              styles.heroStatDivider,
+              { backgroundColor: colors.onInverseMuted },
+            ]}
+          />
+          <View style={styles.heroStat}>
+            <Text style={[t.title2, numeric, onNavy]}>
+              {teacher.subjects.length}
+            </Text>
+            <Text style={[t.caption, onNavyMuted]}>
+              {teacher.subjects.length === 1 ? "Subject" : "Subjects"}
+            </Text>
+          </View>
+        </View>
+      </LinearGradient>
+
+      <View
+        style={[
+          styles.body,
+          {
+            paddingHorizontal: gutter,
+            paddingTop: space.xl,
+            gap: space.xl,
+          },
+        ]}
+      >
+        <View
+          style={{
+            flexDirection: isExpanded ? "row" : "column",
+            alignItems: "flex-start",
+            gap: space.lg,
+          }}
+        >
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                borderRadius: radius.md,
+                padding: space.md,
+                gap: space.sm,
+                width: isExpanded ? 320 : "100%",
+              },
+              elevation.card,
+            ]}
+          >
+            <Text style={[t.title3, { color: colors.foreground }]}>About</Text>
+            <Text style={[t.body, { color: colors.mutedForeground }]}>
+              {teacher.bio?.trim() || "No introduction provided yet."}
+            </Text>
+
+            <View style={[styles.expandableHeader, { marginTop: space.xxs }]}>
+              <Text
+                style={[t.bodyStrong, numeric, { color: colors.foreground }]}
+              >
+                Subjects taught ({teacher.subjects.length})
+              </Text>
+              {hasMoreSubjects && (
                 <TouchableOpacity
-                  key={t.key}
-                  style={[
-                    styles.tabBtn,
-                    { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.primary + "12" : colors.muted },
-                  ]}
-                  onPress={() => setSessionTab(t.key)}
+                  onPress={() => setSubjectsExpanded((v) => !v)}
                   activeOpacity={0.7}
-                  testID={`session-tab-${t.key}`}
                 >
-                  {t.key === "live" && liveSessions.length > 0 && <View style={styles.liveDot} />}
-                  <Text style={[styles.tabBtnText, { color: active ? colors.primary : colors.mutedForeground }]}>{t.label}</Text>
+                  <Text style={[t.caption, { color: colors.primary }]}>
+                    {subjectsExpanded ? "Show less" : "Show all"}
+                  </Text>
                 </TouchableOpacity>
-              );
-            })}
+              )}
+            </View>
+            <View style={[styles.tagRow, { gap: space.xs }]}>
+              {visibleSubjects.map((s) => (
+                <View
+                  key={s}
+                  style={[
+                    styles.tag,
+                    {
+                      backgroundColor: colors.actionSoft,
+                      borderRadius: radius.pill,
+                      paddingHorizontal: space.sm,
+                      paddingVertical: space.xxs,
+                    },
+                  ]}
+                >
+                  <Text style={[t.caption, { color: colors.primary }]}>
+                    {s}
+                  </Text>
+                </View>
+              ))}
+            </View>
           </View>
 
-          {activeSessions.length === 0 && (
-            <View style={[styles.noSessions, { backgroundColor: colors.muted }]}>
-              <Feather name="calendar" size={24} color={colors.mutedForeground} />
-              <Text style={[styles.noSessionsText, { color: colors.mutedForeground }]}>
-                {sessionTab === "upcoming" && "No upcoming sessions. Check back soon."}
-                {sessionTab === "live" && "No active class right now."}
-                {sessionTab === "past" && "No past sessions yet."}
-              </Text>
-            </View>
-          )}
+          <View style={{ flex: 1, width: "100%" }}>
+            <Text style={[t.title2, { color: colors.foreground }]}>
+              Book a class
+            </Text>
+            <Text
+              style={[
+                t.callout,
+                {
+                  color: colors.mutedForeground,
+                  marginTop: space.xxs,
+                  marginBottom: space.sm,
+                },
+              ]}
+            >
+              These are pay-per-class bookings. Each price covers one scheduled
+              class; monthly courses are a separate product.
+            </Text>
 
-          {sessionTab === "upcoming" &&
-            activeSessions.map((s) => {
-              const a = access[s.id];
-              // Already signed up: say so, rather than inviting them to pay a second time.
-              if (a?.isEnrolled) {
+            {detailsLoadState === "loading" && (
+              <View
+                style={[
+                  styles.detailsState,
+                  {
+                    backgroundColor: colors.muted,
+                    borderColor: colors.border,
+                    borderRadius: radius.md,
+                    gap: space.sm,
+                    padding: space.md,
+                  },
+                ]}
+              >
+                <ActivityIndicator color={colors.primary} />
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>
+                  Loading classes and reviews…
+                </Text>
+              </View>
+            )}
+
+            {detailsLoadState === "failed" && (
+              <View
+                style={[
+                  styles.detailsState,
+                  {
+                    backgroundColor: colors.destructiveSoft,
+                    borderColor: colors.destructive,
+                    borderRadius: radius.md,
+                    gap: space.sm,
+                    marginBottom: space.md,
+                    padding: space.md,
+                  },
+                ]}
+              >
+                <Feather name="wifi-off" size={18} color={colors.destructive} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[t.bodyStrong, { color: colors.destructive }]}>
+                    Couldn&apos;t refresh classes and reviews
+                  </Text>
+                  <Text style={[t.callout, { color: colors.mutedForeground }]}>
+                    Existing information stays visible; an empty list is not
+                    being treated as a real zero.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => void loadData()}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                >
+                  <Text style={[t.bodyStrong, { color: colors.primary }]}>
+                    Retry
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {detailsLoadState !== "loading" && (
+              <View
+                style={[
+                  styles.tabRow,
+                  { gap: space.xs, marginBottom: space.sm },
+                ]}
+              >
+                {(
+                  [
+                    { key: "upcoming", label: "Upcoming" },
+                    {
+                      key: "live",
+                      label: `Live${liveSessions.length > 0 ? ` (${liveSessions.length})` : ""}`,
+                    },
+                    { key: "past", label: "Past" },
+                  ] as { key: SessionTab; label: string }[]
+                ).map((tab) => {
+                  const active = sessionTab === tab.key;
+                  return (
+                    <TouchableOpacity
+                      key={tab.key}
+                      style={[
+                        styles.tabBtn,
+                        {
+                          borderColor: active ? colors.primary : colors.border,
+                          backgroundColor: active
+                            ? colors.actionSoft
+                            : colors.muted,
+                          borderRadius: radius.pill,
+                          paddingHorizontal: space.sm,
+                        },
+                      ]}
+                      onPress={() => setSessionTab(tab.key)}
+                      activeOpacity={0.7}
+                      testID={`session-tab-${tab.key}`}
+                    >
+                      {tab.key === "live" && liveSessions.length > 0 && (
+                        <View
+                          style={[
+                            styles.liveDot,
+                            { backgroundColor: colors.brand },
+                          ]}
+                        />
+                      )}
+                      <Text
+                        style={[
+                          t.caption,
+                          {
+                            color: active
+                              ? colors.primary
+                              : colors.mutedForeground,
+                          },
+                        ]}
+                      >
+                        {tab.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+
+            {detailsLoadState === "ready" && activeSessions.length === 0 && (
+              <View
+                style={[
+                  styles.noSessions,
+                  {
+                    backgroundColor: colors.muted,
+                    borderRadius: radius.md,
+                    padding: space.lg,
+                    gap: space.sm,
+                  },
+                ]}
+              >
+                <Feather
+                  name="calendar"
+                  size={24}
+                  color={colors.mutedForeground}
+                />
+                <Text
+                  style={[
+                    t.callout,
+                    { color: colors.mutedForeground, flex: 1 },
+                  ]}
+                >
+                  {sessionTab === "upcoming" &&
+                    "No upcoming sessions. Check back soon."}
+                  {sessionTab === "live" && "No active class right now."}
+                  {sessionTab === "past" && "No past sessions yet."}
+                </Text>
+              </View>
+            )}
+
+            {sessionTab === "upcoming" &&
+              activeSessions.map((s) => {
+                const a = access[s.id];
+                // Already signed up: say so, rather than inviting them to pay a second time.
+                if (a?.isEnrolled) {
+                  return (
+                    <View key={s.id}>
+                      <SessionCard session={s} onPress={() => {}} />
+                      <View
+                        style={[
+                          styles.bookBtnRow,
+                          { marginTop: -space.xxs, marginBottom: space.xs },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.bookBtn,
+                            {
+                              backgroundColor: colors.successSoft,
+                              borderColor: colors.success,
+                              borderRadius: radius.sm,
+                              gap: space.xs,
+                              paddingHorizontal: space.sm,
+                            },
+                          ]}
+                        >
+                          <Feather
+                            name="check-circle"
+                            size={14}
+                            color={colors.success}
+                          />
+                          <Text
+                            style={[
+                              t.callout,
+                              { color: colors.success, textAlign: "center" },
+                            ]}
+                          >
+                            {a.awaitingTeacher
+                              ? "Booked — waiting for the teacher to start"
+                              : "Booked & paid — opens 5 minutes before it starts"}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  );
+                }
                 return (
                   <View key={s.id}>
-                    <SessionCard session={s} onPress={() => {}} />
-                    <View style={styles.bookBtnRow}>
-                      <View style={[styles.bookBtn, { backgroundColor: colors.success + "1A", borderWidth: 1, borderColor: colors.success }]}>
-                        <Feather name="check-circle" size={14} color={colors.success} />
-                        <Text style={[styles.bookBtnText, { color: colors.success }]}>
-                          {a.awaitingTeacher
-                            ? "Booked — waiting for the teacher to start"
-                            : "Booked & paid — opens 5 minutes before it starts"}
+                    <SessionCard session={s} onPress={() => bookSession(s)} />
+                    <View
+                      style={[
+                        styles.bookBtnRow,
+                        { marginTop: -space.xxs, marginBottom: space.xs },
+                      ]}
+                    >
+                      <TouchableOpacity
+                        style={[
+                          styles.bookBtn,
+                          {
+                            backgroundColor: colors.actionSoft,
+                            borderColor: colors.primary,
+                            borderRadius: radius.sm,
+                            gap: space.xs,
+                            paddingHorizontal: space.sm,
+                          },
+                          bookingSessionId === s.id && { opacity: 0.6 },
+                        ]}
+                        onPress={() => bookSession(s)}
+                        disabled={bookingSessionId === s.id}
+                        activeOpacity={0.85}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Book ${s.topic} for NPR ${s.price.toLocaleString()}, one class`}
+                      >
+                        <Feather
+                          name="credit-card"
+                          size={14}
+                          color={colors.primary}
+                        />
+                        <Text
+                          style={[
+                            t.bodyStrong,
+                            numeric,
+                            { color: colors.primary, textAlign: "center" },
+                          ]}
+                        >
+                          {bookingSessionId === s.id
+                            ? "Booking…"
+                            : `Book & pay NPR ${s.price.toLocaleString()} for this class`}
                         </Text>
-                      </View>
+                      </TouchableOpacity>
                     </View>
                   </View>
                 );
-              }
-              return (
-                <TouchableOpacity
-                  key={s.id}
-                  onPress={() => bookSession(s)}
-                  activeOpacity={0.85}
-                  disabled={bookingSessionId === s.id}
-                >
-                  <SessionCard session={s} onPress={() => bookSession(s)} />
-                  <View style={styles.bookBtnRow}>
-                    <TouchableOpacity
-                      style={[styles.bookBtn, { backgroundColor: colors.primary }, bookingSessionId === s.id && { opacity: 0.6 }]}
-                      onPress={() => bookSession(s)}
-                      disabled={bookingSessionId === s.id}
-                      activeOpacity={0.85}
+              })}
+
+            {sessionTab === "live" &&
+              activeSessions.map((s) => {
+                // "Join Live Class" is only offered when the server says it would be honoured.
+                // Anyone else is shown the way in — enrolling — instead of a button that leads
+                // to a locked door.
+                const a = access[s.id];
+                const canJoin = !!a?.canJoin;
+                // We asked and could not get an answer. Saying "Book & Pay" here is a lie to
+                // anybody who already has, so the screen admits it instead.
+                const unknown = a?.known === false;
+                return (
+                  <View key={s.id}>
+                    <SessionCard
+                      session={s}
+                      onPress={() => openLiveSession(s)}
+                    />
+                    <View
+                      style={[
+                        styles.bookBtnRow,
+                        { marginTop: -space.xxs, marginBottom: space.xs },
+                      ]}
                     >
-                      <Feather name="credit-card" size={14} color="#fff" />
-                      <Text style={styles.bookBtnText}>
-                        {bookingSessionId === s.id ? "Booking..." : `Book & Pay · NPR ${s.price.toLocaleString()}`}
-                      </Text>
-                    </TouchableOpacity>
+                      {canJoin ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.bookBtn,
+                            {
+                              backgroundColor: colors.primary,
+                              borderColor: colors.primary,
+                              borderRadius: radius.sm,
+                              gap: space.xs,
+                            },
+                          ]}
+                          onPress={() => openLiveSession(s)}
+                          activeOpacity={0.85}
+                          accessibilityRole="button"
+                        >
+                          <View
+                            style={[
+                              styles.liveDot,
+                              { backgroundColor: colors.brandForeground },
+                            ]}
+                          />
+                          <Text
+                            style={[
+                              t.bodyStrong,
+                              { color: colors.primaryForeground },
+                            ]}
+                          >
+                            Join live class
+                          </Text>
+                        </TouchableOpacity>
+                      ) : unknown ? (
+                        <View
+                          style={[
+                            styles.bookBtn,
+                            {
+                              backgroundColor: colors.muted,
+                              borderColor: colors.border,
+                              borderRadius: radius.sm,
+                              gap: space.xs,
+                            },
+                          ]}
+                        >
+                          <Feather
+                            name="wifi-off"
+                            size={14}
+                            color={colors.mutedForeground}
+                          />
+                          <Text
+                            style={[
+                              t.callout,
+                              {
+                                color: colors.mutedForeground,
+                                textAlign: "center",
+                              },
+                            ]}
+                          >
+                            Could not check — open Sessions to join
+                          </Text>
+                        </View>
+                      ) : a?.isEnrolled ? (
+                        // Paid, and the class is live, but the door is not open to them yet.
+                        // Offering payment again would be the same lie in a different place.
+                        <View
+                          style={[
+                            styles.bookBtn,
+                            {
+                              backgroundColor: colors.successSoft,
+                              borderColor: colors.success,
+                              borderRadius: radius.sm,
+                              gap: space.xs,
+                            },
+                          ]}
+                        >
+                          <Feather
+                            name="check-circle"
+                            size={14}
+                            color={colors.success}
+                          />
+                          <Text style={[t.callout, { color: colors.success }]}>
+                            Booked & paid — opening shortly
+                          </Text>
+                        </View>
+                      ) : (
+                        <TouchableOpacity
+                          style={[
+                            styles.bookBtn,
+                            {
+                              backgroundColor: colors.actionSoft,
+                              borderColor: colors.primary,
+                              borderRadius: radius.sm,
+                              gap: space.xs,
+                              paddingHorizontal: space.sm,
+                            },
+                          ]}
+                          onPress={() => bookSession(s)}
+                          activeOpacity={0.85}
+                          disabled={bookingSessionId === s.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Book ${s.topic} for NPR ${s.price.toLocaleString()}, one live class`}
+                        >
+                          <Feather
+                            name="credit-card"
+                            size={14}
+                            color={colors.primary}
+                          />
+                          <Text
+                            style={[
+                              t.bodyStrong,
+                              numeric,
+                              { color: colors.primary, textAlign: "center" },
+                            ]}
+                          >
+                            {`Book & pay NPR ${s.price.toLocaleString()} for this live class`}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   </View>
-                </TouchableOpacity>
-              );
-            })}
+                );
+              })}
 
-          {sessionTab === "live" &&
-            activeSessions.map((s) => {
-              // "Join Live Class" is only offered when the server says it would be honoured.
-              // Anyone else is shown the way in — enrolling — instead of a button that leads
-              // to a locked door.
-              const a = access[s.id];
-              const canJoin = !!a?.canJoin;
-              // We asked and could not get an answer. Saying "Book & Pay" here is a lie to
-              // anybody who already has, so the screen admits it instead.
-              const unknown = a?.known === false;
-              return (
-                <TouchableOpacity key={s.id} onPress={() => openLiveSession(s)} activeOpacity={0.85} disabled={bookingSessionId === s.id}>
-                  <SessionCard session={s} onPress={() => openLiveSession(s)} />
-                  <View style={styles.bookBtnRow}>
-                    {canJoin ? (
-                      <View style={[styles.bookBtn, { backgroundColor: colors.destructive }]}>
-                        <View style={styles.liveDotWhite} />
-                        <Text style={styles.bookBtnText}>Join Live Class</Text>
-                      </View>
-                    ) : unknown ? (
-                      <View style={[styles.bookBtn, { backgroundColor: colors.muted, borderWidth: 1, borderColor: colors.border }]}>
-                        <Feather name="wifi-off" size={14} color={colors.mutedForeground} />
-                        <Text style={[styles.bookBtnText, { color: colors.mutedForeground }]}>
-                          Could not check — open Sessions to join
-                        </Text>
-                      </View>
-                    ) : a?.isEnrolled ? (
-                      // Paid, and the class is live, but the door is not open to them yet.
-                      // Offering payment again would be the same lie in a different place.
-                      <View style={[styles.bookBtn, { backgroundColor: colors.success + "1A", borderWidth: 1, borderColor: colors.success }]}>
-                        <Feather name="check-circle" size={14} color={colors.success} />
-                        <Text style={[styles.bookBtnText, { color: colors.success }]}>Booked & paid — opening shortly</Text>
-                      </View>
-                    ) : (
-                      <View style={[styles.bookBtn, { backgroundColor: colors.primary }]}>
-                        <Feather name="credit-card" size={14} color="#fff" />
-                        <Text style={styles.bookBtnText}>
-                          {`Book & Pay to join · NPR ${s.price.toLocaleString()}`}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-
-          {sessionTab === "past" &&
-            activeSessions.map((s) => <SessionCard key={s.id} session={s} onPress={() => {}} />)}
+            {sessionTab === "past" &&
+              activeSessions.map((s) => (
+                <SessionCard key={s.id} session={s} onPress={() => {}} />
+              ))}
+          </View>
         </View>
 
-        {studentId && (
-          !checkingRateEligibility && !ratingSubmitted && canRate ? (
-            <View style={[styles.rateCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <Text style={[styles.cardTitle, { color: colors.foreground }]}>Rate this Teacher</Text>
-              <Text style={[styles.rateSubtitle, { color: colors.mutedForeground }]}>
-                Your feedback helps other students choose the right teacher
+        {studentId &&
+          (!checkingRateEligibility && !ratingSubmitted && canRate ? (
+            <View
+              style={[
+                styles.rateCard,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  borderRadius: radius.md,
+                  padding: space.md,
+                  gap: space.sm,
+                },
+                elevation.card,
+              ]}
+            >
+              <Text style={[t.title3, { color: colors.foreground }]}>
+                Rate this teacher
               </Text>
-              <View style={styles.starRow}>
-                <StarRating rating={myRating} size={36} interactive onRate={(r) => setMyRating(r)} />
+              <Text
+                style={[
+                  t.callout,
+                  { color: colors.mutedForeground, textAlign: "center" },
+                ]}
+              >
+                Your feedback helps other students choose the right teacher.
+              </Text>
+              <View style={{ paddingVertical: space.xs }}>
+                <StarRating
+                  rating={myRating}
+                  size={36}
+                  color={colors.accent}
+                  interactive
+                  onRate={(r) => setMyRating(r)}
+                />
               </View>
               {/*
                 Optional on purpose. A star with nothing beside it is still a real opinion, and
@@ -645,7 +1274,18 @@ You can join from your Sessions tab — the class opens a few minutes before it 
               */}
               <TextInput
                 testID="review-comment-input"
-                style={[styles.reviewInput, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                style={[
+                  t.body,
+                  styles.reviewInput,
+                  {
+                    color: colors.foreground,
+                    borderColor: colors.border,
+                    backgroundColor: colors.background,
+                    borderRadius: radius.sm,
+                    padding: space.sm,
+                    marginBottom: space.xs,
+                  },
+                ]}
                 placeholder="Say what the class was like (optional)"
                 placeholderTextColor={colors.mutedForeground}
                 value={myComment}
@@ -654,40 +1294,109 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                 maxLength={1000}
                 textAlignVertical="top"
               />
-              <Text style={[styles.reviewHint, { color: colors.mutedForeground }]}>
+              <Text
+                style={[
+                  t.caption,
+                  { color: colors.mutedForeground, marginBottom: space.sm },
+                ]}
+              >
                 Your name is never shown with your review.
               </Text>
               <TouchableOpacity
-                style={[styles.submitBtn, { backgroundColor: myRating > 0 ? colors.secondary : colors.muted }]}
+                style={[
+                  styles.submitBtn,
+                  {
+                    backgroundColor:
+                      myRating > 0 ? colors.actionSoft : colors.muted,
+                    borderColor: myRating > 0 ? colors.primary : colors.border,
+                    borderRadius: radius.sm,
+                    paddingHorizontal: space.xxl,
+                  },
+                ]}
                 onPress={submitRating}
                 disabled={myRating === 0}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.submitBtnText, { color: myRating > 0 ? "#fff" : colors.mutedForeground }]}>
+                <Text
+                  style={[
+                    t.bodyStrong,
+                    {
+                      color:
+                        myRating > 0 ? colors.primary : colors.mutedForeground,
+                    },
+                  ]}
+                >
                   Submit Rating
                 </Text>
               </TouchableOpacity>
             </View>
           ) : ratingSubmitted ? (
-            <View style={[styles.ratingThanks, { backgroundColor: colors.success + "12", borderColor: colors.success + "30" }]}>
+            <View
+              style={[
+                styles.ratingThanks,
+                {
+                  backgroundColor: colors.successSoft,
+                  borderColor: colors.success,
+                  borderRadius: radius.md,
+                  padding: space.md,
+                  gap: space.xs,
+                },
+              ]}
+            >
               <Feather name="check-circle" size={20} color={colors.success} />
-              <Text style={[styles.ratingThanksText, { color: colors.success }]}>Rating submitted! Thank you.</Text>
-            </View>
-          ) : !checkingRateEligibility ? (
-            <View style={[styles.rateLocked, { backgroundColor: colors.muted }]}>
-              <Feather name="lock" size={16} color={colors.mutedForeground} />
-              <Text style={[styles.noSessionsText, { color: colors.mutedForeground }]}>
-                You can rate this teacher after attending a completed session with them (within the last 15 days).
+              <Text style={[t.bodyStrong, { color: colors.success }]}>
+                Rating submitted! Thank you.
               </Text>
             </View>
-          ) : null
-        )}
+          ) : !checkingRateEligibility ? (
+            <View
+              style={[
+                styles.rateLocked,
+                {
+                  backgroundColor: colors.muted,
+                  borderRadius: radius.md,
+                  padding: space.md,
+                  gap: space.xs,
+                },
+              ]}
+            >
+              <Feather name="lock" size={16} color={colors.mutedForeground} />
+              <Text
+                style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}
+              >
+                You can rate this teacher after attending a completed session
+                with them (within the last 15 days).
+              </Text>
+            </View>
+          ) : null)}
 
-        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Student Reviews</Text>
+        <Text style={[t.title2, { color: colors.foreground }]}>
+          Student reviews
+        </Text>
         {reviews.map((review) => (
-          <View key={review.id} style={[styles.reviewCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.reviewHeader}>
-              <View style={[styles.reviewAvatar, { backgroundColor: colors.primary + "15" }]}>
+          <View
+            key={review.id}
+            style={[
+              styles.reviewCard,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                borderRadius: radius.md,
+                padding: space.md,
+                gap: space.xs,
+              },
+            ]}
+          >
+            <View style={[styles.reviewHeader, { gap: space.xs }]}>
+              <View
+                style={[
+                  styles.reviewAvatar,
+                  {
+                    backgroundColor: colors.actionSoft,
+                    borderRadius: radius.pill,
+                  },
+                ]}
+              >
                 <Feather name="user" size={14} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
@@ -697,116 +1406,208 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                   this page is public, and a teacher can read it signed out. The server does not
                   send the name at all; see routes/teachers.ts.
                 */}
-                <Text style={[styles.reviewName, { color: colors.foreground }]}>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>
                   {review.mine ? "Your review" : "A student"}
                 </Text>
-                <Text style={[styles.reviewDate, { color: colors.mutedForeground }]}>
-                  {new Date(review.createdAt).toLocaleDateString("en-NP", { month: "short", year: "numeric" })}
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                  {new Date(review.createdAt).toLocaleDateString("en-NP", {
+                    month: "short",
+                    year: "numeric",
+                  })}
                 </Text>
               </View>
-              <StarRating rating={review.rating} size={14} />
+              <StarRating
+                rating={review.rating}
+                size={14}
+                color={colors.accent}
+              />
             </View>
             {review.comment ? (
-              <Text style={[styles.reviewComment, { color: colors.mutedForeground }]}>"{review.comment}"</Text>
+              <Text
+                style={[
+                  t.callout,
+                  styles.reviewComment,
+                  { color: colors.mutedForeground },
+                ]}
+              >
+                "{review.comment}"
+              </Text>
             ) : null}
           </View>
         ))}
-        {reviews.length === 0 && (
-          <View style={[styles.noSessions, { backgroundColor: colors.muted }]}>
-            <Feather name="message-circle" size={20} color={colors.mutedForeground} />
-            <Text style={[styles.noSessionsText, { color: colors.mutedForeground }]}>No reviews yet. Be the first to rate!</Text>
+        {detailsLoadState === "ready" && reviews.length === 0 && (
+          <View
+            style={[
+              styles.noSessions,
+              {
+                backgroundColor: colors.muted,
+                borderRadius: radius.md,
+                padding: space.lg,
+                gap: space.sm,
+              },
+            ]}
+          >
+            <Feather
+              name="message-circle"
+              size={20}
+              color={colors.mutedForeground}
+            />
+            <Text
+              style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}
+            >
+              No reviews yet. Be the first to rate!
+            </Text>
           </View>
         )}
       </View>
 
-      <PaymentSheet
-        visible={paySession !== null}
-        amount={paySession?.price ?? 0}
-        label={paySession ? `Book · ${paySession.topic}` : "Book Session"}
-        onClose={() => setPaySession(null)}
-        /**
-         * The promise is **returned**, not just started.
-         *
-         * Without the return, the sheet awaited `undefined`, resolved immediately and showed
-         * its success screen while the real booking was still in flight — so a class that was
-         * full still produced "You're booked", and the rejection became an unhandled promise
-         * nobody saw. Caught by a browser test; no server test could have seen it.
-         */
-        onSuccess={(method) => (paySession ? confirmBooking(paySession, method) : Promise.resolve())}
-      />
+      {paySession && (
+        <PaymentSheet
+          visible
+          amount={paySession.price}
+          label={`Pay per class · ${paySession.topic}`}
+          onClose={() => setPaySession(null)}
+          /**
+           * The promise is **returned**, not just started.
+           *
+           * Without the return, the sheet awaited `undefined`, resolved immediately and showed
+           * its success screen while the real booking was still in flight — so a class that was
+           * full still produced "You're booked", and the rejection became an unhandled promise
+           * nobody saw. Caught by a browser test; no server test could have seen it.
+           */
+          onSuccess={(method) => confirmBooking(paySession, method)}
+        />
+      )}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {},
-  hero: { paddingHorizontal: 20, paddingBottom: 28, alignItems: "center", gap: 10 },
-  heroTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", width: "100%", marginBottom: 4 },
-  backBtn: { alignSelf: "flex-start" },
-  heroTopActions: { flexDirection: "row", alignItems: "center", gap: 8 },
-  contactBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  subscribeBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  subscribeBtnInactive: { backgroundColor: "rgba(255,255,255,0.18)" },
-  subscribeBtnActive: { backgroundColor: "#22C55E60" },
-  subscribeBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  heroAvatar: { width: 88, height: 88, borderRadius: 44, backgroundColor: "rgba(255,255,255,0.25)", justifyContent: "center", alignItems: "center" },
-  heroAvatarText: { fontSize: 32, fontFamily: "Inter_700Bold", color: "#fff" },
-  heroName: { fontSize: 24, fontFamily: "Inter_700Bold", color: "#fff" },
-  heroSubjectTag: { borderRadius: 20, paddingHorizontal: 16, paddingVertical: 6 },
-  heroSubjectText: { fontSize: 14, fontFamily: "Inter_500Medium", color: "#ffffffdd" },
-  heroRating: { flexDirection: "row", alignItems: "center", gap: 8 },
-  heroRatingText: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#ffffffcc" },
-  heroStats: { flexDirection: "row", width: "100%", justifyContent: "space-around", paddingTop: 8 },
-  heroStat: { alignItems: "center" },
-  heroStatNum: { fontSize: 22, fontFamily: "Inter_700Bold", color: "#fff" },
-  heroStatLabel: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#ffffff80" },
-  heroStatDivider: { width: 1, backgroundColor: "rgba(255,255,255,0.2)" },
-  body: { padding: 20, gap: 20 },
-  card: { borderRadius: 18, borderWidth: 1, padding: 18, gap: 12 },
-  cardTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  bio: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 22 },
-  expandableHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 4 },
-  expandableLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  expandToggle: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  hostedBreakdown: { gap: 4, paddingTop: 2 },
-  hostedRow: { fontSize: 13, fontFamily: "Inter_400Regular" },
-  tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  tag: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
-  tagText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  sectionTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold", marginBottom: 10 },
-  tabRow: { flexDirection: "row", gap: 8, marginBottom: 12 },
-  tabBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 8 },
-  tabBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#EF4444" },
-  liveDotWhite: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff" },
-  noSessions: { borderRadius: 14, padding: 20, flexDirection: "row", alignItems: "center", gap: 12 },
-  noSessionsText: { fontSize: 14, fontFamily: "Inter_400Regular", flex: 1 },
-  rateLocked: { borderRadius: 14, padding: 16, flexDirection: "row", alignItems: "center", gap: 10 },
-  bookBtnRow: { marginTop: -4, marginBottom: 8, paddingHorizontal: 2 },
-  bookBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 12 },
-  bookBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  rateCard: { borderRadius: 18, borderWidth: 1, padding: 18, gap: 12, alignItems: "center" },
-  rateSubtitle: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
-  starRow: { paddingVertical: 8 },
-  submitBtn: { borderRadius: 14, paddingHorizontal: 32, paddingVertical: 13 },
-  submitBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  ratingThanks: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14, borderWidth: 1, padding: 14 },
-  ratingThanksText: { fontSize: 15, fontFamily: "Inter_500Medium" },
-  reviewCard: { borderRadius: 16, borderWidth: 1, padding: 14, gap: 10 },
-  reviewHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
-  reviewAvatar: { width: 38, height: 38, borderRadius: 19, justifyContent: "center", alignItems: "center" },
-  reviewAvatarText: { fontSize: 15, fontFamily: "Inter_700Bold" },
-  reviewName: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  reviewDate: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  reviewInput: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    minHeight: 76,
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    marginBottom: 8,
+  container: { width: "100%" },
+  loadScreen: { flex: 1, minHeight: "100%", alignItems: "center" },
+  loadBack: {
+    alignSelf: "flex-start",
+    width: HIT_SLOP_MIN,
+    height: HIT_SLOP_MIN,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: "center",
+    alignItems: "center",
   },
-  reviewHint: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 12 },
-  reviewComment: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 21, fontStyle: "italic" },
+  loadCard: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 420,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  loadIcon: {
+    width: 56,
+    height: 56,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadRetry: {
+    minHeight: HIT_SLOP_MIN,
+    justifyContent: "center",
+    alignItems: "center",
+    alignSelf: "stretch",
+  },
+  hero: { alignItems: "center" },
+  heroTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    width: "100%",
+  },
+  backBtn: {
+    width: HIT_SLOP_MIN,
+    height: HIT_SLOP_MIN,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  heroTopActions: { flexDirection: "row", alignItems: "center" },
+  heroAction: {
+    minHeight: HIT_SLOP_MIN,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroAvatar: {
+    width: 88,
+    height: 88,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  heroSubjectTag: { minHeight: 28, justifyContent: "center" },
+  heroRating: { flexDirection: "row", alignItems: "center" },
+  heroStats: {
+    flexDirection: "row",
+    width: "100%",
+    maxWidth: 560,
+    justifyContent: "space-around",
+  },
+  heroStat: { flex: 1, alignItems: "center" },
+  heroStatDivider: { width: StyleSheet.hairlineWidth },
+  body: { width: "100%", maxWidth: 960, alignSelf: "center" },
+  card: { borderWidth: StyleSheet.hairlineWidth },
+  expandableHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  tagRow: { flexDirection: "row", flexWrap: "wrap" },
+  tag: { minHeight: 28, justifyContent: "center" },
+  detailsState: {
+    minHeight: 72,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tabRow: { flexDirection: "row", flexWrap: "wrap" },
+  tabBtn: {
+    minHeight: HIT_SLOP_MIN,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  liveDot: { width: 6, height: 6, borderRadius: 3 },
+  noSessions: { flexDirection: "row", alignItems: "center" },
+  bookBtnRow: { width: "100%" },
+  bookBtn: {
+    minHeight: HIT_SLOP_MIN,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  rateCard: { borderWidth: StyleSheet.hairlineWidth, alignItems: "center" },
+  submitBtn: {
+    minHeight: HIT_SLOP_MIN,
+    borderWidth: StyleSheet.hairlineWidth,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  ratingThanks: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  rateLocked: { flexDirection: "row", alignItems: "center" },
+  reviewCard: { borderWidth: StyleSheet.hairlineWidth },
+  reviewHeader: { flexDirection: "row", alignItems: "center" },
+  reviewAvatar: {
+    width: 38,
+    height: 38,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  reviewInput: {
+    width: "100%",
+    minHeight: 84,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  reviewComment: { fontStyle: "italic" },
 });

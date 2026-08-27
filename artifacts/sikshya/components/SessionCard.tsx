@@ -3,6 +3,7 @@ import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { useDates } from "@/context/DatePreferenceContext";
+import { numeric } from "@/constants/typography";
 
 interface Session {
   id: string;
@@ -78,8 +79,8 @@ export default function SessionCard({ session, onPress, showTeacher = false }: S
             {session.enrolledStudents.length}/{session.maxStudents}
           </Text>
         </View>
-        <Text style={[styles.price, { color: colors.primary }]}>
-          NPR {session.price.toLocaleString()}
+        <Text style={[styles.price, numeric, { color: colors.primary }]}>
+          NPR {session.price.toLocaleString()} per class
         </Text>
       </View>
     </TouchableOpacity>

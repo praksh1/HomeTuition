@@ -1,8 +1,4 @@
 {
-  "app/(admin)/_layout.tsx": {
-    "hex": 0,
-    "size": 1
-  },
   "app/(admin)/activity.tsx": {
     "hex": 0,
     "size": 5
@@ -27,6 +23,10 @@
     "hex": 1,
     "size": 15
   },
+  "app/(admin)/_layout.tsx": {
+    "hex": 0,
+    "size": 1
+  },
   "app/(auth)/login.tsx": {
     "hex": 6,
     "size": 11
@@ -34,10 +34,6 @@
   "app/(auth)/register.tsx": {
     "hex": 2,
     "size": 9
-  },
-  "app/(student)/_layout.tsx": {
-    "hex": 0,
-    "size": 1
   },
   "app/(student)/classroom/[id].tsx": {
     "hex": 62,
@@ -55,11 +51,7 @@
     "hex": 3,
     "size": 12
   },
-  "app/(student)/teacher/[id].tsx": {
-    "hex": 20,
-    "size": 26
-  },
-  "app/(teacher)/_layout.tsx": {
+  "app/(student)/_layout.tsx": {
     "hex": 0,
     "size": 1
   },
@@ -86,6 +78,10 @@
   "app/(teacher)/students.tsx": {
     "hex": 1,
     "size": 10
+  },
+  "app/(teacher)/_layout.tsx": {
+    "hex": 0,
+    "size": 1
   },
   "app/+not-found.tsx": {
     "hex": 0,
@@ -150,6 +146,10 @@
   "components/AloneNotice.tsx": {
     "hex": 4,
     "size": 2
+  },
+  "components/boardLibrary.ts": {
+    "hex": 1,
+    "size": 0
   },
   "components/CallTimeNotice.tsx": {
     "hex": 4,
@@ -229,10 +229,6 @@
   },
   "components/WhiteboardCanvas.tsx": {
     "hex": 2,
-    "size": 0
-  },
-  "components/boardLibrary.ts": {
-    "hex": 1,
     "size": 0
   },
   "hooks/useClassroomSocket.ts": {

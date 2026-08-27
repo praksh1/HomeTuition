@@ -146,7 +146,7 @@ export default function TeacherCard({ teacher, onPress, compact, hasMonthlyClass
         <View style={styles.stat}>
           <Feather name="users" size={12} color={colors.inkFaint} />
           <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
-            {teacher.totalStudents} {teacher.totalStudents === 1 ? "student" : "students"}
+            {teacher.totalStudents} paid {teacher.totalStudents === 1 ? "booking" : "bookings"}
           </Text>
         </View>
 

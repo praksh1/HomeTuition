@@ -220,8 +220,8 @@ The end state is a baseline of zero, one screen at a time. Where it stands today
 | `app/(teacher)/classroom/[id].tsx` | 108 | 31 |
 | `app/(student)/classroom/[id].tsx` | 62 | 21 |
 | `components/DailyEmbed.tsx` | 43 | 10 |
-| `app/(student)/teacher/[id].tsx` | 20 | 26 |
-| `app/(teacher)/subscription.tsx` | 17 | 24 |
+| `app/welcome.tsx` | 18 | 10 |
+| `app/(teacher)/session-create.tsx` | 8 | 14 |
 | …59 more | | |
 
 If a literal genuinely is not a design decision — a colour inside a third-party embed's own

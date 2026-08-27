@@ -56,6 +56,11 @@ Found and fixed so far:
 | Discover | "Top Pick" was `filtered[0]`. With no reviews yet, the platform crowned somebody at random |
 | Discover | `0.0` with empty stars for unreviewed teachers, which reads as *badly* rated |
 | TeacherCard | Header counted `teachers.length` (capped at the request's own `limit=200`) while the endpoint returned the real total |
+| Teacher profile + TeacherCard | `totalStudents` was labelled "students", but the server increments it for every paid enrollment. It is a cumulative paid-booking count, not a unique-person count |
+| Teacher profile | `sessionsThisMonth` was the same registration-only zero already removed from the dashboard |
+| Teacher profile | "Sessions Hosted" summed only the first API page (at most 20 sessions per status), then presented the partial count as a lifetime total |
+| Teacher profile | An unreviewed teacher showed `0.0`, and a free follow action was labelled "Subscribe" beside a separate paid monthly product |
+| Teacher profile | A hidden payment-sheet fallback turned a missing class price into `NPR 0`; the sheet is now rendered only when a real selected session exists |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.
@@ -74,19 +79,18 @@ it the worst placeholder available.
 | `app/(teacher)/subscription.tsx` | 17 hex, 24 sizes | **0 / 0** | No — Chromium gone from the container |
 | `app/(student)/index.tsx` | 13 hex, 29 sizes | **0 / 0** | No |
 | `components/TeacherCard.tsx` | 12 hex, 12 sizes | **0 / 0** | No |
+| `app/(student)/teacher/[id].tsx` | 20 hex, 26 sizes | **0 / 0** | No — local Metro never completed its first web bundle |
 
-Baseline has fallen from **468 hex / 595 sizes** to **413 / 507**.
+Baseline has fallen from **468 hex / 595 sizes** to **393 / 481**.
 
 ## Next, in the order I would take them
 
-1. **`app/(student)/teacher/[id].tsx`** — 20 hex, 26 sizes. The teacher's public page and the
-   **Book & Pay** screen; the student's money moment, and the natural partner to Discover.
-2. **`app/(teacher)/session-create.tsx`** — 8 hex, 14 sizes. Already returns the tier-limit
+1. **`app/(teacher)/session-create.tsx`** — 8 hex, 14 sizes. Already returns the tier-limit
    402; the refusal deserves a proper design rather than an alert.
-3. **`app/welcome.tsx`** — 18 hex, 10 sizes. First impression, and self-contained.
-4. **`app/(teacher)/profile.tsx`** / **`app/(student)/profile.tsx`** — small, similar, do together.
-5. **`app/(teacher)/monthly.tsx`** — 4 hex, 24 sizes.
-6. **The two classrooms** — `(teacher)/classroom/[id].tsx` (108 hex, 31 sizes) and
+2. **`app/welcome.tsx`** — 18 hex, 10 sizes. First impression, and self-contained.
+3. **`app/(teacher)/profile.tsx`** / **`app/(student)/profile.tsx`** — small, similar, do together.
+4. **`app/(teacher)/monthly.tsx`** — 4 hex, 24 sizes.
+5. **The two classrooms** — `(teacher)/classroom/[id].tsx` (108 hex, 31 sizes) and
    `(student)/classroom/[id].tsx` (62, 21), plus `DailyEmbed` (43 + 23 hex). **Leave these for
    last.** They are the biggest by a wide margin, they are where the whiteboard lives, and they
    are the only screens with real responsive work to do — the board must keep its share of the
@@ -112,3 +116,6 @@ Baseline has fallen from **468 hex / 595 sizes** to **413 / 507**.
 - **Subject colours were dropped** from `TeacherCard` (8 hardcoded hues). If categorical colour
   is wanted back, it needs a validated categorical palette in the design system, not eight
   arbitrary values.
+- **`totalStudents` is not a unique-student metric.** It increments once per paid enrollment.
+  The UI now calls it "paid bookings"; renaming or replacing the database field is server work
+  and was deliberately left outside this UI-only pass.
