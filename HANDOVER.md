@@ -333,6 +333,45 @@ Held or missed is read from `sessions.startedAt`, **never from anything the teac
 A teacher creates a one-off class and sets its price (`sessions.price`, whole rupees). A
 student books and pays for that class alone.
 
+**Sikshya's revenue here is the teacher's subscription, not a cut of the booking.** A teacher
+buys a monthly plan that entitles them to a number of sessions. `SUBSCRIPTION_TIERS` in
+`artifacts/api-server/src/routes/teachers.ts`:
+
+| Tier | Sessions / month | Price |
+|---|---|---|
+| `base` | 10 | NPR 2,000 |
+| `tier1` | 15 | NPR 2,800 |
+| `tier2` | 20 | NPR 3,500 |
+| `tier3` | 25 | NPR 4,220 |
+| `tier4` | 30 | NPR 4,700 |
+
+Separate from the NPR 6,500 monthly recurring-class tier in Package A, which has its own table
+(`teacher_plans`) and its own rules. A teacher could hold both. `POST /teachers/:id/subscribe`
+sets the tier, `GET /subscription-tiers` publishes the list, and the chosen allowance is
+written to `teacher_profiles.max_sessions_per_month`.
+
+**Three things about this are not finished.** All verified against the code, and all
+consequential — see section 8.3:
+
+1. **The session allowance is not enforced.** `maxSessionsPerMonth` is written when a teacher
+   subscribes and read only to display. It is never compared against anything.
+   `POST /sessions` validates `maxStudents` (how many fit in one class) and never the monthly
+   quota, so a teacher on the NPR 2,000 base plan can create ten sessions or five hundred.
+   **The tier sells a limit that does not exist.**
+2. **The subscription is never charged.** `POST /teachers/:id/subscribe` describes itself as a
+   "Phase 3 sandbox bypass": it flips `subscriptionActive` to true when the client says it
+   paid. No gateway is called, and unlike a refund it does not even record a debt — so there is
+   no row anywhere saying a teacher owes NPR 2,000.
+3. **Subscribing also approves the teacher.** The same update sets
+   `approvalStatus: "approved"`. Meanwhile `auth.ts` registers teachers as `pending`, `admin.ts`
+   has a proper review queue (`GET /admin/teachers/pending`) and a decision route that demands a
+   written reason for a rejection and logs it — and `GET /teachers` only lists approved
+   teachers. So there are two doors to being publicly listed, and one of them is the teacher's
+   own. Since payment is simulated, **any registered teacher can self-approve, for free, and
+   appear in Discover without an agent ever seeing their credentials.**
+
+#### Refund arithmetic
+
 | Rule | Constant | Value |
 |---|---|---|
 | A class can only be moved more than N hours before it starts | `RESCHEDULE_LOCK_HOURS` | 48 |
@@ -349,12 +388,10 @@ is rounded **up** — a 50% split of an odd price puts its stray rupee with the 
 the refund. `refundSplit` in `lib/sessionChanges.ts`, and there is a test that no arithmetic
 can invent or lose a rupee at any price.
 
-> **Gap worth flagging to the owner.** There is **no commission recorded on a successful
-> pay-per-class booking.** `platformShare` appears in the refund path and nowhere in the
-> booking path — searched across the API and the schema. So as written, Sikshya earns 0% on
-> pay-per-class and only ever takes a share when a booking is *cancelled*. That may be
-> intentional (a loss-leader next to the monthly tier) or it may simply never have been
-> decided. It needs an answer before launch. See section 8.
+> **Note for anybody reading the booking transaction.** There is no commission recorded when a
+> booking succeeds — `platformShare` appears in the refund path and nowhere in the booking
+> path. That is **not** a gap: the platform's revenue on pay-per-class is the teacher's
+> subscription above, not a cut of each booking. Do not "fix" it by adding a commission.
 
 ### Refunds are a debt, not a payment
 
@@ -617,11 +654,26 @@ To settle first:
   it is a way to dodge the shortfall rule.
 - Does the teacher's delivery floor still count days a dropped student did not take?
 
-### 8.3 Commission on pay-per-class
+### 8.3 The teacher subscription is sold but not implemented
 
-See the flag in section 5. **Sikshya currently earns nothing on a successful pay-per-class
-booking.** Intentional, or never decided? Needs an answer before a payment provider is wired,
-because the answer changes what the booking transaction has to record.
+The revenue model for pay-per-class is the tier table in section 5 — NPR 2,000 for 10 sessions
+a month up to NPR 4,700 for 30. The tiers are defined, offered and stored. What is missing is
+everything that makes them real, and two of the three are decisions as much as tasks:
+
+1. **Enforce the allowance.** Decide what happens at the eleventh session on a ten-session
+   plan: refused outright, or allowed with an upgrade prompt? Refusing mid-month is a teacher
+   who cannot teach; allowing it is a limit nobody respects. Also decide what a "month" means
+   here — Package A is deliberately 30 × 24 hours from a timestamp, and this should almost
+   certainly match it rather than invent a second definition of a month in the same product.
+2. **Charge for it.** This shares the payment-provider work already on the pre-launch list, so
+   it is a smaller job than it sounds. Until then no money moves and nothing is recorded as
+   owed.
+3. **Stop it approving the teacher.** `POST /teachers/:id/subscribe` sets
+   `approvalStatus: "approved"` alongside the tier, bypassing the agent review queue in
+   `admin.ts`. Because payment is simulated, any registered teacher can list themselves
+   publicly, for free, with nobody checking their credentials. **This one is not a decision —
+   it is a launch blocker**, and the fix is to delete that one field from the update so the
+   agent decision route is the only door. See section 9.
 
 ### 8.4 The video provider
 
@@ -657,6 +709,12 @@ Not a wish list. These are things that are **unsafe or wrong to launch with**, a
 cheap next to what it costs afterwards. Live list at the top of `ISSUES.md`.
 
 - [x] ~~Rotate the Daily.co API key.~~ Done by the owner 2026-08-24.
+- [ ] **Stop the subscribe endpoint approving the teacher.** `POST /teachers/:id/subscribe`
+      sets `approvalStatus: "approved"`, which bypasses the agent review queue — and because
+      payment is simulated, any registered teacher can put themselves in Discover for free with
+      nobody checking their credentials. Delete that field from the update. Section 8.3.
+- [ ] **Enforce and charge the teacher session tiers.** They are sold (NPR 2,000–4,700) and
+      neither limited nor billed. Section 8.3.
 - [ ] **Decide what happens to chat** once an installed app exists. Section 8.5.
 - [ ] **Decide who actually pays the refunds**, and how often. Otherwise the queue grows and
       the promise stops being kept.
