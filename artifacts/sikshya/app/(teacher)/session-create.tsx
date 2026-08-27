@@ -148,8 +148,22 @@ export default function SessionCreate() {
         );
       }
     } catch (_e) {
-      if (Platform.OS === "web") window.alert("Error\n\nFailed to create session. Please check your inputs and try again.");
-      else Alert.alert("Error", "Failed to create session. Please check your inputs and try again.");
+      /**
+       * Show what the server actually said.
+       *
+       * "Check your inputs" is the wrong advice for the two refusals a teacher will really
+       * hit — being over their plan's allowance (402), where the inputs are fine and the fix is
+       * a later date or an upgrade. Telling them to re-read a correct form sends them round a
+       * loop with no way out of it.
+       */
+      const overPlan = _e instanceof ApiError && _e.status === 402;
+      const title = overPlan ? "Plan limit reached" : "Error";
+      const message =
+        _e instanceof ApiError && _e.message
+          ? _e.message
+          : "Failed to create session. Please check your inputs and try again.";
+      if (Platform.OS === "web") window.alert(`${title}\n\n${message}`);
+      else Alert.alert(title, message);
     } finally {
       setSaving(false);
     }
@@ -187,8 +201,16 @@ export default function SessionCreate() {
         else Alert.alert("Session Created", msg);
         router.replace("/(teacher)/sessions");
       } else {
-        if (Platform.OS === "web") window.alert("Error\n\nFailed to start the live session. Please try again.");
-        else Alert.alert("Error", "Failed to start the live session. Please try again.");
+        // Nothing was created, so the refusal is about the class itself — most often the plan's
+        // allowance. Same reasoning as the scheduled path above: say what the server said.
+        const overPlan = _e instanceof ApiError && _e.status === 402;
+        const title = overPlan ? "Plan limit reached" : "Error";
+        const message =
+          _e instanceof ApiError && _e.message
+            ? _e.message
+            : "Failed to start the live session. Please try again.";
+        if (Platform.OS === "web") window.alert(`${title}\n\n${message}`);
+        else Alert.alert(title, message);
       }
     } finally {
       setSaving(false);

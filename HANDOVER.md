@@ -350,25 +350,28 @@ Separate from the NPR 6,500 monthly recurring-class tier in Package A, which has
 sets the tier, `GET /subscription-tiers` publishes the list, and the chosen allowance is
 written to `teacher_profiles.max_sessions_per_month`.
 
-**Three things about this are not finished.** All verified against the code, and all
-consequential — see section 8.3:
+**The allowance is enforced** (`lib/tierLimits.ts`, the rules; `lib/sessionAllowance.ts`, the
+query; refused at `POST /sessions` with a 402). Two rules worth knowing:
 
-1. **The session allowance is not enforced.** `maxSessionsPerMonth` is written when a teacher
-   subscribes and read only to display. It is never compared against anything.
-   `POST /sessions` validates `maxStudents` (how many fit in one class) and never the monthly
-   quota, so a teacher on the NPR 2,000 base plan can create ten sessions or five hundred.
-   **The tier sells a limit that does not exist.**
-2. **The subscription is never charged.** `POST /teachers/:id/subscribe` describes itself as a
-   "Phase 3 sandbox bypass": it flips `subscriptionActive` to true when the client says it
-   paid. No gateway is called, and unlike a refund it does not even record a debt — so there is
-   no row anywhere saying a teacher owes NPR 2,000.
-3. **Subscribing also approves the teacher.** The same update sets
-   `approvalStatus: "approved"`. Meanwhile `auth.ts` registers teachers as `pending`, `admin.ts`
-   has a proper review queue (`GET /admin/teachers/pending`) and a decision route that demands a
-   written reason for a rejection and logs it — and `GET /teachers` only lists approved
-   teachers. So there are two doors to being publicly listed, and one of them is the teacher's
-   own. Since payment is simulated, **any registered teacher can self-approve, for free, and
-   appear in Discover without an agent ever seeing their credentials.**
+- **A "month" is thirty times twenty-four hours**, matching Package A. Never a calendar month —
+  the reason is the same one, and is above.
+- **The limit is "no more than N classes inside any thirty-day stretch."** Not a counter that
+  resets on a date: that needs a stored anchor, and the only place for one is a new column on
+  `teacher_profiles`, which is the deploy-window trap. Counting off the classes themselves needs
+  no schema change, cannot drift from what actually happened, and cannot be gamed by stacking
+  classes either side of a boundary.
+
+Behaviour that follows: **days of a monthly recurring class do not count** (they are ordinary
+`sessions` rows, so a naive count would bill a teacher for classes they paid NPR 6,500 for);
+**a cancelled class frees its slot**; and a refusal offers an upgrade only when that upgrade
+would actually take the class.
+
+**One thing here is still unfinished.** The subscription is **not really charged**.
+`POST /teachers/:id/subscribe` now goes through `chargeForMonthly` — the same gate every other
+payment passes, so it approves in simulated mode and refuses in gateway mode rather than
+silently taking real money through an untested path. But no money moves and, unlike a refund,
+nothing records that a teacher *owes* NPR 2,000. Finishing it is the payment-provider item on
+the pre-launch list, not a separate job. See section 8.3.
 
 #### Refund arithmetic
 
@@ -654,26 +657,26 @@ To settle first:
   it is a way to dodge the shortfall rule.
 - Does the teacher's delivery floor still count days a dropped student did not take?
 
-### 8.3 The teacher subscription is sold but not implemented
+### 8.3 Two open questions about the teacher tiers
 
-The revenue model for pay-per-class is the tier table in section 5 — NPR 2,000 for 10 sessions
-a month up to NPR 4,700 for 30. The tiers are defined, offered and stored. What is missing is
-everything that makes them real, and two of the three are decisions as much as tasks:
+The allowance is enforced and the self-approval hole is closed (section 5). Two product calls
+were made without waiting for an answer, because the work would otherwise have stalled. Both
+are cheap to change and both are the owner's to settle:
 
-1. **Enforce the allowance.** Decide what happens at the eleventh session on a ten-session
-   plan: refused outright, or allowed with an upgrade prompt? Refusing mid-month is a teacher
-   who cannot teach; allowing it is a limit nobody respects. Also decide what a "month" means
-   here — Package A is deliberately 30 × 24 hours from a timestamp, and this should almost
-   certainly match it rather than invent a second definition of a month in the same product.
-2. **Charge for it.** This shares the payment-provider work already on the pre-launch list, so
-   it is a smaller job than it sounds. Until then no money moves and nothing is recorded as
-   owed.
-3. **Stop it approving the teacher.** `POST /teachers/:id/subscribe` sets
-   `approvalStatus: "approved"` alongside the tier, bypassing the agent review queue in
-   `admin.ts`. Because payment is simulated, any registered teacher can list themselves
-   publicly, for free, with nobody checking their credentials. **This one is not a decision —
-   it is a launch blocker**, and the fix is to delete that one field from the update so the
-   agent decision route is the only door. See section 9.
+1. **The eleventh class on a ten-class plan is refused outright.** The alternative is to create
+   it and prompt for an upgrade. Refusing mid-month means a teacher who cannot teach a class
+   they may already have told students about; allowing it means a limit nobody respects. The
+   refusal already names the upgrade that would take the class, so switching is small.
+2. **A cancelled class frees its slot.** It was not taught, and the refund rules already make
+   cancelling expensive. If teachers churn cancellations to dodge the limit, count them
+   instead — nothing else changes.
+
+And one thing genuinely unfinished: **nothing records that a teacher owes their subscription.**
+Refunds write a debt row an agent works; subscriptions do not. It belongs with the
+payment-provider work.
+
+Full detail, including what was built and why, in
+`.agents/backlog/teacher-tier-plans-not-enforced.md`.
 
 ### 8.4 The video provider
 
@@ -709,12 +712,10 @@ Not a wish list. These are things that are **unsafe or wrong to launch with**, a
 cheap next to what it costs afterwards. Live list at the top of `ISSUES.md`.
 
 - [x] ~~Rotate the Daily.co API key.~~ Done by the owner 2026-08-24.
-- [ ] **Stop the subscribe endpoint approving the teacher.** `POST /teachers/:id/subscribe`
-      sets `approvalStatus: "approved"`, which bypasses the agent review queue — and because
-      payment is simulated, any registered teacher can put themselves in Discover for free with
-      nobody checking their credentials. Delete that field from the update. Section 8.3.
-- [ ] **Enforce and charge the teacher session tiers.** They are sold (NPR 2,000–4,700) and
-      neither limited nor billed. Section 8.3.
+- [x] ~~**Stop the subscribe endpoint approving the teacher.**~~ Done 2026-08-27. An agent's
+      decision is now the only door into Discover.
+- [x] ~~**Enforce the teacher session tiers.**~~ Done 2026-08-27 — `test:tiers`, 26 checks.
+      Charging them is part of the payment-provider item below, not separate.
 - [ ] **Decide what happens to chat** once an installed app exists. Section 8.5.
 - [ ] **Decide who actually pays the refunds**, and how often. Otherwise the queue grows and
       the promise stops being kept.

@@ -32,7 +32,8 @@
     "test:late-joiner": "node scripts/late-joiner/run.mjs",
     "test:teacher-leave": "node scripts/teacher-leave/run.mjs",
     "test:messages": "node scripts/message-tests/run.mjs",
-    "test:class-chat": "node scripts/class-chat/run.mjs"
+    "test:class-chat": "node scripts/class-chat/run.mjs",
+    "test:tiers": "node scripts/tier-limits/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",

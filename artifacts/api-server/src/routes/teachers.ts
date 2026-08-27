@@ -3,18 +3,20 @@ import { Router, type IRouter } from "express";
 import { db, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { notify } from "../lib/notify";
+import { chargeForMonthly } from "../lib/payments";
+import { allowanceSummary } from "../lib/sessionAllowance";
+import { SUBSCRIPTION_TIERS, isTierKey, type SubscriptionTierKey } from "../lib/tierLimits";
 
 const router: IRouter = Router();
 
-export const SUBSCRIPTION_TIERS = {
-  base: { sessions: 10, price: 2000 },
-  tier1: { sessions: 15, price: 2800 },
-  tier2: { sessions: 20, price: 3500 },
-  tier3: { sessions: 25, price: 4220 },
-  tier4: { sessions: 30, price: 4700 },
-} as const;
-
-export type SubscriptionTierKey = keyof typeof SUBSCRIPTION_TIERS;
+/**
+ * The tiers themselves live in `lib/tierLimits.ts`, next to the rule that enforces them.
+ *
+ * They were defined here, in a route file, which meant the prices and the allowance sat in one
+ * place and nothing that could read them sat anywhere. Re-exported so existing callers are
+ * unaffected.
+ */
+export { SUBSCRIPTION_TIERS, type SubscriptionTierKey } from "../lib/tierLimits";
 
 router.get("/teachers", async (req, res): Promise<void> => {
   const { search, subject, district, minRating, maxPrice, onlineOnly, sort, page = "1", limit = "20" } = req.query as Record<string, string>;
@@ -235,16 +237,38 @@ router.patch("/teachers/:id", requireAuth, async (req, res): Promise<void> => {
   res.json({ ...profile, name: user?.name ?? "", email: user?.email ?? "" });
 });
 
-// Phase 3 sandbox bypass: local mock eSewa/Khalti payment flow has no real gateway to
-// confirm against, so this endpoint marks the subscription active as soon as the client
-// simulates a successful charge. No external payment API is called.
+/**
+ * Buy or change a teacher's session tier.
+ *
+ * ### This no longer approves the teacher
+ *
+ * It used to set `approvalStatus: "approved"` alongside the tier, and that was a hole rather
+ * than a shortcut. Registration writes `pending`, `admin.ts` holds a real review queue whose
+ * rejection route refuses to proceed without a written reason, and `GET /teachers` lists only
+ * approved teachers — so approval is the gate into Discover. Setting it here opened that gate
+ * from the inside, and since payment is simulated, any registered teacher could put themselves
+ * in front of students for nothing with no agent ever seeing their credentials.
+ *
+ * Approval now has exactly one door: an agent's decision. A teacher may buy a tier while still
+ * pending — there is no reason to make them wait to pay — they simply are not listed until
+ * somebody has looked at them.
+ *
+ * ### And it can no longer take money by accident
+ *
+ * The charge goes through `chargeForMonthly`, which is the same gate every other payment in the
+ * product passes: it approves in simulated mode and logs loudly that no money moved, and it
+ * refuses in gateway mode because the eSewa/Khalti branch is not written yet. That refusal is
+ * the correct behaviour and the whole point — the alternative is a route that starts charging
+ * real customers the moment a provider is configured, through code nobody has tested against a
+ * real gateway. See `.agents/memory/payment-mode-trap.md`.
+ */
 router.post("/teachers/:id/subscribe", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid teacher ID" }); return; }
 
   const { tier } = req.body as { tier?: string };
-  const tierKey: SubscriptionTierKey = tier && tier in SUBSCRIPTION_TIERS ? (tier as SubscriptionTierKey) : "base";
+  const tierKey: SubscriptionTierKey = isTierKey(tier) ? tier : "base";
   const tierInfo = SUBSCRIPTION_TIERS[tierKey];
 
   const [existing] = await db.select({ userId: teacherProfilesTable.userId })
@@ -255,11 +279,23 @@ router.post("/teachers/:id/subscribe", requireAuth, async (req, res): Promise<vo
     return;
   }
 
+  const charge = await chargeForMonthly({
+    purpose: "teacher-plan",
+    referenceId: id,
+    userId: existing.userId,
+    amount: tierInfo.price,
+    method: "tier-subscription",
+    log: req.log,
+  });
+  if (!charge.ok) {
+    res.status(402).json({ error: charge.message ?? "Payment could not be taken.", redirectUrl: charge.redirectUrl });
+    return;
+  }
+
   const [profile] = await db
     .update(teacherProfilesTable)
     .set({
       subscriptionActive: true,
-      approvalStatus: "approved",
       subscriptionTier: tierKey,
       maxSessionsPerMonth: tierInfo.sessions,
     })
@@ -270,6 +306,22 @@ router.post("/teachers/:id/subscribe", requireAuth, async (req, res): Promise<vo
     .from(usersTable).where(eq(usersTable.id, profile.userId));
 
   res.json({ ...profile, name: user?.name ?? "", email: user?.email ?? "" });
+});
+
+/**
+ * What the signed-in teacher has left of their allowance.
+ *
+ * One place for the dashboard to ask, rather than each screen working it out from a tier name
+ * and a hard-coded ten. `sessions_this_month` on `teacher_profiles` is not the answer and never
+ * was — it has been zero for every teacher since the column was added.
+ */
+router.get("/teachers/me/allowance", requireAuth, async (req, res): Promise<void> => {
+  const user = req.user!;
+  if (user.role !== "teacher") {
+    res.status(403).json({ error: "Only teachers have a session allowance" });
+    return;
+  }
+  res.json(await allowanceSummary(user.userId));
 });
 
 router.get("/subscription-tiers", (_req, res): void => {

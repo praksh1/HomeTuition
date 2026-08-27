@@ -35,13 +35,33 @@ export default function TeacherDashboard() {
   const [upcomingSessions, setUpcomingSessions] = useState<ApiSession[]>([]);
   const [expiredCount, setExpiredCount] = useState(0);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  /**
+   * The real allowance, from the server.
+   *
+   * This used to read `teacher.sessionsThisMonth` against a hard-coded ten. That column has
+   * never been written to since registration set it to zero, so every teacher on every plan was
+   * shown "0/10 Sessions" for ever — and the upgrade nudge below, which fires at eight, could
+   * never fire at all. Null until it loads, so nothing invents a number in the meantime.
+   */
+  const [allowance, setAllowance] = useState<{ used: number; limit: number; tierName: string } | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       refreshNotifs();
       loadSessions();
+      loadAllowance();
     }, [teacher?.userId])
   );
+
+  const loadAllowance = async () => {
+    try {
+      setAllowance(await apiGet<{ used: number; limit: number; tierName: string }>("/teachers/me/allowance"));
+    } catch {
+      // A dashboard that cannot reach the server should show nothing here rather than a zero,
+      // which reads as "you have used none of your classes" and is a different claim.
+      setAllowance(null);
+    }
+  };
 
   const loadSessions = async () => {
     if (!teacher?.userId) return;
@@ -205,7 +225,7 @@ export default function TeacherDashboard() {
         <Text style={styles.statsTitle}>This Month</Text>
         <View style={styles.statsRow}>
           <View style={styles.stat}>
-            <Text style={styles.statNum}>{teacher.sessionsThisMonth}/10</Text>
+            <Text style={styles.statNum}>{allowance ? `${allowance.used}/${allowance.limit}` : "—"}</Text>
             <Text style={styles.statLabel}>Sessions</Text>
           </View>
           <View style={styles.statDivider} />
@@ -341,11 +361,17 @@ export default function TeacherDashboard() {
         </TouchableOpacity>
       ))}
 
-      {teacher.approvalStatus === "approved" && teacher.sessionsThisMonth >= 8 && (
+      {/*
+        * Warn near the limit, not at a fixed eight — eight of ten is worth a word and eight of
+        * thirty is not. Two left is the point at which a teacher can still act on it.
+        */}
+      {teacher.approvalStatus === "approved" && allowance !== null && allowance.used >= allowance.limit - 2 && (
         <View style={[styles.warningBanner, { backgroundColor: colors.destructive + "10", borderColor: colors.destructive + "20" }]}>
           <Feather name="alert-triangle" size={15} color={colors.destructive} />
           <Text style={[styles.warningText, { color: colors.destructive }]}>
-            You've used {teacher.sessionsThisMonth}/10 sessions this month. Upgrade your plan for more.
+            {allowance.used >= allowance.limit
+              ? `You've used all ${allowance.limit} classes on your ${allowance.tierName} plan for this 30 days. Upgrade for more.`
+              : `You've used ${allowance.used} of ${allowance.limit} classes on your ${allowance.tierName} plan. Upgrade for more.`}
           </Text>
         </View>
       )}

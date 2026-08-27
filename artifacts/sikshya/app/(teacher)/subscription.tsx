@@ -2,7 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
@@ -11,7 +11,7 @@ import { useNotifications } from "@/context/NotificationContext";
 import { addInAppNotification } from "@/utils/notifications";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import type { Teacher } from "@/context/AuthContext";
-import { apiPost } from "@/utils/api";
+import { apiGet, apiPost } from "@/utils/api";
 
 const PAYMENT_HISTORY = [
   { id: "p1", amount: 2000, date: "May 2025", method: "eSewa", status: "paid" },
@@ -50,10 +50,25 @@ export default function Subscription() {
   const [selectedTier, setSelectedTier] = useState<SubscriptionTierKey>(currentTierKey);
   const tierInfo = SUBSCRIPTION_TIERS.find((t) => t.key === selectedTier) ?? SUBSCRIPTION_TIERS[0];
 
-  const maxSessions = teacher?.maxSessionsPerMonth ?? 10;
-  const sessionsUsed = teacher?.sessionsThisMonth ?? 0;
-  const sessionsRemaining = maxSessions - sessionsUsed;
-  const progressPct = maxSessions > 0 ? sessionsUsed / maxSessions : 0;
+  /**
+   * The allowance comes from the server, which counts it off the teacher's actual classes.
+   *
+   * It used to come from `teacher.sessionsThisMonth`, a column nothing has ever written to — so
+   * this screen told every teacher they had used none of their classes, whatever they had done.
+   */
+  const [allowance, setAllowance] = useState<{ used: number; limit: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    apiGet<{ used: number; limit: number }>("/teachers/me/allowance")
+      .then((a) => { if (live) setAllowance(a); })
+      .catch(() => { if (live) setAllowance(null); });
+    return () => { live = false; };
+  }, [teacher?.userId]);
+
+  const maxSessions = allowance?.limit ?? teacher?.maxSessionsPerMonth ?? 10;
+  const sessionsUsed = allowance?.used ?? 0;
+  const sessionsRemaining = Math.max(0, maxSessions - sessionsUsed);
+  const progressPct = maxSessions > 0 ? Math.min(1, sessionsUsed / maxSessions) : 0;
 
   const handleBack = () => {
     if (router.canGoBack()) router.back();
@@ -80,16 +95,24 @@ export default function Subscription() {
       await apiPost(`/teachers/${teacher.id}/subscribe`, { tier: selectedTier });
     }
     setPayVisible(false);
+    /**
+     * Paying buys a plan. It does not approve the teacher.
+     *
+     * This used to set `approvalStatus: "approved"` here, matching a server that did the same —
+     * and between them they let any teacher list themselves in Discover without an agent ever
+     * seeing their credentials. The server no longer does it, so neither may this: claiming it
+     * locally would only make the app disagree with the server about whether the teacher is
+     * visible to students, which is worse than the honest answer.
+     */
     await updateUser({
       subscriptionActive: true,
-      approvalStatus: "approved",
       subscriptionTier: selectedTier,
       maxSessionsPerMonth: tierInfo.sessions,
     });
 
     await addInAppNotification({
       title: "Subscription Payment Confirmed",
-      body: `NPR ${tierInfo.price.toLocaleString()} paid via ${method === "esewa" ? "eSewa" : "Khalti"}. Your Sikshya Pro (${tierInfo.label}) plan is active for July 2025.`,
+      body: `NPR ${tierInfo.price.toLocaleString()} paid via ${method === "esewa" ? "eSewa" : "Khalti"}. Your Sikshya Pro (${tierInfo.label}) plan is active.`,
       type: "payment",
     });
     await refreshNotifs();
