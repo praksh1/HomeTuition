@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: `claude/excalidraw-whiteboard-sync-gjoqaz`
 - Base commit: `eb4f4f7` (`Write down where the visual work has got to, and the pattern underneath it`)
-- Status: complete; verified and ready to commit/push
+- Status: complete; verified, committed and pushed
 
 ## Requested
 
@@ -87,6 +87,9 @@ entry is the first use of the shared format added in the same task.
 - Final reruns after the documentation and adjacent-label edits: root typecheck exited 0, app tests
   passed 154/154, and design lint passed at 393 / 481. `git diff --check` also passed after one
   trailing space introduced during diff cleanup was removed.
+- Git handoff — implementation and the initial detailed log were committed as `363cb1a`
+  (`Convert teacher booking profile to design system`) and pushed successfully to
+  `origin/claude/excalidraw-whiteboard-sync-gjoqaz`.
 
 ## Problems and surprises
 
