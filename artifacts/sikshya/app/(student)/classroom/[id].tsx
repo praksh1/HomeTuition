@@ -1,5 +1,4 @@
 import { Feather } from "@expo/vector-icons";
-import * as ScreenOrientation from "expo-screen-orientation";
 import { router, useLocalSearchParams } from "expo-router";
 import React, {
   useCallback,
@@ -21,6 +20,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  Vibration,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -182,9 +182,9 @@ export default function StudentClassroom() {
   const [elapsed, setElapsed] = useState(0);
   const [chatMsg, setChatMsg] = useState("");
   const [mode, setMode] = useState<Mode>("board");
-  /** The board taking the whole pane. The call is hidden, never unmounted — see the video pane. */
-  const [boardExpanded, setBoardExpanded] = useState(false);
-  const [isLandscape, setIsLandscape] = useState(false);
+  /** Compact keeps the board usable; expanded makes the teacher or a screen share readable. */
+  const [videoExpanded, setVideoExpanded] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
@@ -206,6 +206,8 @@ export default function StudentClassroom() {
   const chatProgress = useRef(new Animated.Value(0)).current;
   const pipDrag = useRef(new Animated.ValueXY()).current;
   const pipOffset = useRef({ x: 0, y: 0 });
+  const lastSeenIncomingRef = useRef(0);
+  const previousIncomingRef = useRef(0);
 
   /**
    * Excalidraw's controls own the top and bottom bands. Classroom overlays stay between them:
@@ -216,18 +218,36 @@ export default function StudentClassroom() {
   const hudBottom = insets.bottom + HIT_SLOP_MIN + space.md;
   const pipBottomClearance = hudBottom + HIT_SLOP_MIN + space.lg;
 
-  // Students need one clean teacher feed, not a second video stage over the whiteboard.
+  // Daily's controls and the teacher's shared screen both need more than the old 200×120 frame.
   const pipWidth = Math.min(
     width - space.xxl,
-    space.huge * (isLandscapeLayout || isCompact ? 5 : 7),
+    space.huge * (isCompact ? 7 : 10),
   );
-  const pipHeight = isLandscapeLayout
-    ? space.huge * 2 + space.xl
-    : space.huge * 3;
   const pipTop =
-    boardToolbarBottom + HIT_SLOP_MIN +
+    boardToolbarBottom +
+    HIT_SLOP_MIN +
     (isLandscapeLayout ? space.xs : space.lg);
+  const pipHeight = Math.min(
+    space.huge * (isLandscapeLayout ? 5 : 6),
+    Math.max(space.huge * 3, height - pipTop - pipBottomClearance),
+  );
   const pipBaseLeft = Math.max(space.md, width - pipWidth - space.md);
+  const expandedVideoWidth = width - space.xxl;
+  const expandedVideoHeight = Math.max(
+    space.huge * 3,
+    height - pipTop - hudBottom - HIT_SLOP_MIN - space.lg,
+  );
+  const videoWidth = videoExpanded ? expandedVideoWidth : pipWidth;
+  const videoHeight = videoExpanded ? expandedVideoHeight : pipHeight;
+  const videoLeft = videoExpanded ? space.md : pipBaseLeft;
+  const noticeTop = videoExpanded
+    ? pipTop + space.sm
+    : pipTop + pipHeight + space.sm;
+  const incomingMessageCount = useMemo(
+    () =>
+      messages.reduce((total, message) => total + (message.isMe ? 0 : 1), 0),
+    [messages],
+  );
 
   const pipPanResponder = useMemo(
     () =>
@@ -343,6 +363,24 @@ export default function StudentClassroom() {
     }).start();
   }, [chatProgress, mode]);
 
+  useEffect(() => {
+    const previous = previousIncomingRef.current;
+    if (incomingMessageCount > previous && mode !== "chat") {
+      Vibration.vibrate();
+    }
+    previousIncomingRef.current = incomingMessageCount;
+
+    if (mode === "chat") {
+      lastSeenIncomingRef.current = incomingMessageCount;
+      setUnreadChatCount(0);
+      return;
+    }
+
+    setUnreadChatCount(
+      Math.max(0, incomingMessageCount - lastSeenIncomingRef.current),
+    );
+  }, [incomingMessageCount, mode]);
+
   /**
    * Get out of this screen, whatever route brought us here.
    *
@@ -365,9 +403,6 @@ export default function StudentClassroom() {
     timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      ScreenOrientation.lockAsync(
-        ScreenOrientation.OrientationLock.PORTRAIT_UP,
-      ).catch(() => {});
     };
   }, [id]);
 
@@ -446,21 +481,6 @@ export default function StudentClassroom() {
     `${Math.floor(s / 60)
       .toString()
       .padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
-
-  const toggleLandscape = async () => {
-    try {
-      if (isLandscape) {
-        await ScreenOrientation.lockAsync(
-          ScreenOrientation.OrientationLock.PORTRAIT_UP,
-        );
-      } else {
-        await ScreenOrientation.lockAsync(
-          ScreenOrientation.OrientationLock.LANDSCAPE,
-        );
-      }
-      setIsLandscape((v) => !v);
-    } catch {}
-  };
 
   const sendMessage = () => {
     if (!chatMsg.trim()) return;
@@ -615,7 +635,7 @@ export default function StudentClassroom() {
           </View>
         </View>
 
-        {livePresenceCount > 0 ? (
+        {livePresenceCount > 0 && !videoExpanded && !isCompact ? (
           <View
             pointerEvents="none"
             style={[
@@ -645,21 +665,13 @@ export default function StudentClassroom() {
           style={[
             s.noticeLayer,
             {
-              top: pipTop,
+              top: noticeTop,
               left: space.md,
               right: space.md,
               gap: space.xs,
             },
           ]}
         >
-          {waitingForTeacher ? (
-            <FloatingNotice
-              tone="warning"
-              icon="clock"
-              text="Awaiting your teacher. You're already in the room, and the class will begin automatically."
-            />
-          ) : null}
-
           {accessDenied ? (
             <FloatingNotice
               tone="destructive"
@@ -725,56 +737,6 @@ export default function StudentClassroom() {
                   height: HIT_SLOP_MIN,
                   borderRadius: radius.pill,
                   backgroundColor:
-                    mode === "board" ? colors.actionSoft : colors.card,
-                },
-              ]}
-              onPress={() => setMode("board")}
-              activeOpacity={0.75}
-              accessibilityLabel="View class materials"
-            >
-              <Feather
-                name="book-open"
-                size={18}
-                color={
-                  mode === "board" ? colors.primary : colors.mutedForeground
-                }
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                s.hudButton,
-                {
-                  width: HIT_SLOP_MIN,
-                  height: HIT_SLOP_MIN,
-                  borderRadius: radius.pill,
-                  backgroundColor: boardExpanded
-                    ? colors.muted
-                    : colors.actionSoft,
-                },
-              ]}
-              onPress={() => setBoardExpanded((hidden) => !hidden)}
-              activeOpacity={0.75}
-              accessibilityLabel={
-                boardExpanded ? "Show teacher video" : "Hide teacher video"
-              }
-              testID="video-size-btn"
-            >
-              <Feather
-                name={boardExpanded ? "video-off" : "video"}
-                size={18}
-                color={boardExpanded ? colors.mutedForeground : colors.primary}
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                s.hudButton,
-                {
-                  width: HIT_SLOP_MIN,
-                  height: HIT_SLOP_MIN,
-                  borderRadius: radius.pill,
-                  backgroundColor:
                     mode === "chat" ? colors.actionSoft : colors.card,
                 },
               ]}
@@ -793,6 +755,32 @@ export default function StudentClassroom() {
                   mode === "chat" ? colors.primary : colors.mutedForeground
                 }
               />
+              {unreadChatCount > 0 && mode !== "chat" ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    s.chatBadge,
+                    {
+                      minWidth: space.lg,
+                      height: space.lg,
+                      paddingHorizontal: space.xxs,
+                      borderRadius: radius.pill,
+                      backgroundColor: colors.primary,
+                      borderColor: colors.card,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      t.overline,
+                      numeric,
+                      { color: colors.primaryForeground },
+                    ]}
+                  >
+                    {unreadChatCount > 9 ? "9+" : unreadChatCount}
+                  </Text>
+                </View>
+              ) : null}
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -802,19 +790,22 @@ export default function StudentClassroom() {
                   width: HIT_SLOP_MIN,
                   height: HIT_SLOP_MIN,
                   borderRadius: radius.pill,
-                  backgroundColor: colors.card,
+                  backgroundColor: videoExpanded
+                    ? colors.actionSoft
+                    : colors.card,
                 },
               ]}
-              onPress={toggleLandscape}
+              onPress={() => setVideoExpanded((expanded) => !expanded)}
               activeOpacity={0.75}
               accessibilityLabel={
-                isLandscape ? "Leave full screen" : "Full screen"
+                videoExpanded ? "Restore compact call" : "Expand video call"
               }
+              testID="video-size-btn"
             >
               <Feather
-                name={isLandscape ? "minimize-2" : "maximize-2"}
+                name={videoExpanded ? "minimize-2" : "maximize-2"}
                 size={18}
-                color={colors.mutedForeground}
+                color={videoExpanded ? colors.primary : colors.mutedForeground}
               />
             </TouchableOpacity>
 
@@ -839,24 +830,24 @@ export default function StudentClassroom() {
           </View>
         </View>
 
-        {/* The board owns the stage; the teacher's feed stays mounted in a draggable PIP. */}
+        {/* Daily stays mounted: compact is draggable; expanded makes teaching/screen share legible. */}
         <View style={s.contentArea}>
           <Animated.View
-            pointerEvents={boardExpanded || mode === "chat" ? "none" : "auto"}
+            pointerEvents={mode === "chat" ? "none" : "auto"}
             style={[
               s.videoArea,
               elevation.sheet,
               {
                 top: pipTop,
-                left: pipBaseLeft,
-                width: pipWidth,
-                height: pipHeight,
-                borderRadius: radius.md,
+                left: videoLeft,
+                width: videoWidth,
+                height: videoHeight,
+                borderRadius: videoExpanded ? radius.lg : radius.md,
                 backgroundColor: colors.secondary,
                 borderColor: colors.lineStrong,
-                transform: pipDrag.getTranslateTransform(),
+                transform: videoExpanded ? [] : pipDrag.getTranslateTransform(),
               },
-              (mode === "chat" || boardExpanded) && s.videoAreaHidden,
+              mode === "chat" && s.videoAreaHidden,
             ]}
           >
             {roomUrl ? (
@@ -892,16 +883,21 @@ export default function StudentClassroom() {
                 </Text>
               </View>
             )}
-            <View
-              {...pipPanResponder.panHandlers}
-              style={s.pipGripHit}
-              accessibilityRole="adjustable"
-              accessibilityLabel="Drag teacher video window"
-            >
+            {!videoExpanded ? (
               <View
-                style={[s.pipGrip, { backgroundColor: colors.onInverseMuted }]}
-              />
-            </View>
+                {...pipPanResponder.panHandlers}
+                style={s.pipGripHit}
+                accessibilityRole="adjustable"
+                accessibilityLabel="Drag teacher video window"
+              >
+                <View
+                  style={[
+                    s.pipGrip,
+                    { backgroundColor: colors.onInverseMuted },
+                  ]}
+                />
+              </View>
+            ) : null}
           </Animated.View>
 
           <View style={[s.boardWrap, { paddingTop: insets.top }]}>
@@ -913,6 +909,7 @@ export default function StudentClassroom() {
                   {
                     gap: space.sm,
                     paddingHorizontal: space.xxl,
+                    paddingBottom: hudBottom + HIT_SLOP_MIN + space.lg,
                     backgroundColor: colors.background,
                   },
                 ]}
@@ -1229,7 +1226,19 @@ const s = StyleSheet.create({
     zIndex: 100,
   },
   hud: { flexDirection: "row", alignItems: "center", borderWidth: 1 },
-  hudButton: { alignItems: "center", justifyContent: "center" },
+  hudButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    position: "relative",
+  },
+  chatBadge: {
+    position: "absolute",
+    top: 0,
+    right: 0,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
   overlayHidden: { opacity: 0 },
   contentArea: { flex: 1, position: "relative" },
   videoArea: {
@@ -1259,7 +1268,7 @@ const s = StyleSheet.create({
   permissionGate: { alignItems: "center", justifyContent: "center" },
   boardWrap: { flex: 1, overflow: "hidden" },
   boardArea: { flex: 1, overflow: "hidden" },
-  boardWaiting: { alignItems: "center", justifyContent: "center" },
+  boardWaiting: { alignItems: "center", justifyContent: "flex-end" },
   chatLayer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: "flex-end",
