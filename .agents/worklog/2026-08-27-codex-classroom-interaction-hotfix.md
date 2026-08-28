@@ -1,10 +1,10 @@
 # Classroom interaction hotfix
 
-- Date: 27 August 2026
+- Date: 27–28 August 2026
 - Agent: Codex
 - Branch: `claude/excalidraw-whiteboard-sync-gjoqaz`
 - Base commit: `63016c9` (`UI: Edge-to-edge architecture applied to both Teacher and Student classrooms`)
-- Status: implementation and automated verification complete; branch-preview deployment and owner verification pending
+- Status: implementation, automated verification, commit, push and branch-preview deployment complete; owner verification pending
 
 ## Requested
 
@@ -72,8 +72,24 @@ The affected screens are:
   evidence for the changed code.
 - `pnpm.cmd --filter @workspace/sikshya run lint:design` — passed at the existing 223 hex / 429
   raw-size baseline; no new design-token leaks.
-- Production web build, commit, push, Cloudflare preview deployment and live owner verification
-  are still pending at the time of this entry and must be appended below before handoff.
+- Production web build — passed and produced
+  `_expo/static/js/web/entry-ccb3dca1f520bba36d443f590ebb5bc8.js`, with the documented Railway
+  API URL baked in and verified by the build script.
+- Commit `bc96c04` (`Fix classroom overlay interactions and Daily controls`) — created and pushed
+  to `origin/claude/excalidraw-whiteboard-sync-gjoqaz`.
+- Wrangler 4.124.0 dry-run — passed against the explicit Worker name
+  `claude-excalidraw-whiteboard-sync-gjoqaz-hometuition`, reading 242 static files.
+- Wrangler deployment — succeeded only against that explicit branch Worker. Cloudflare version:
+  `d0729be4-1840-4a5f-98c2-1eec48a554cc`.
+- External HTTP check — branch preview returned 200 and served the exact new
+  `entry-ccb3dca1f520bba36d443f590ebb5bc8.js` bundle. The production URL also returned 200 but
+  remained on its separate `entry-292c7e35f4071f2ecc397b02f0ec9052.js` bundle.
+- Signed-in in-app browser check — the branch preview loaded the teacher dashboard successfully.
+  No class was started and no session state was changed merely to manufacture a classroom test.
+- Shared Railway API `/api/healthz` — returned 200 with `{"status":"ok"}` after the push. This
+  proves availability, not that Railway has already rebuilt this exact branch commit; Railway did
+  not publish a GitHub commit status that could prove the rollout.
+- Live owner interaction verification is still pending.
 
 ## Problems and surprises
 
@@ -109,11 +125,13 @@ The affected screens are:
 
 ## Remaining risks / next pickup point
 
-- Build, commit and push the exact hotfix files and this documentation, then explicitly deploy
-  the branch-preview Worker and append the commit, Cloudflare version and served bundle here.
 - The owner must manually verify teacher and student classrooms in portrait and landscape:
   Excalidraw top/side/bottom tools visible and tappable; drawing around transparent overlay areas;
   exactly one draggable PIP; no Daily pop-out/fullscreen or Daily chat; the classroom Chat action
   opens the sole slide-over; and neither HUD nor PIP overlaps that sheet.
 - Because the API controls persistent Daily room properties, confirm the Railway API deployment
   has picked up this branch change before interpreting an old room that still shows Daily UI.
+- GitHub automatically began a `Workers Builds: hometuition` check after the branch push even
+  though the manual deployment used the branch Worker name. At the last check it was still in
+  progress. The production URL was explicitly rechecked and still served its older bundle; check
+  the automatic build's final outcome before the next source push.
