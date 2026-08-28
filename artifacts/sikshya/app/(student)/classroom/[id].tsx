@@ -38,6 +38,9 @@ import { HIT_SLOP_MIN } from "@/constants/layout";
 import { aloneMessage } from "@/utils/aloneInCall";
 
 type Mode = "board" | "chat";
+type VideoWindowSize = "hidden" | "small" | "medium" | "full";
+type VisibleVideoWindowSize = Exclude<VideoWindowSize, "hidden">;
+type WindowedVideoSize = Exclude<VisibleVideoWindowSize, "full">;
 
 interface SessionData {
   id: number;
@@ -182,8 +185,9 @@ export default function StudentClassroom() {
   const [elapsed, setElapsed] = useState(0);
   const [chatMsg, setChatMsg] = useState("");
   const [mode, setMode] = useState<Mode>("board");
-  /** Compact keeps the board usable; expanded makes the teacher or a screen share readable. */
-  const [videoExpanded, setVideoExpanded] = useState(false);
+  /** The call never unmounts while its app-owned shell is hidden or resized. */
+  const [videoWindowSize, setVideoWindowSize] =
+    useState<VideoWindowSize>("small");
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
@@ -206,6 +210,8 @@ export default function StudentClassroom() {
   const chatProgress = useRef(new Animated.Value(0)).current;
   const pipDrag = useRef(new Animated.ValueXY()).current;
   const pipOffset = useRef({ x: 0, y: 0 });
+  const lastVisibleVideoSizeRef = useRef<VisibleVideoWindowSize>("small");
+  const lastWindowedVideoSizeRef = useRef<WindowedVideoSize>("small");
   const lastSeenIncomingRef = useRef(0);
   const previousIncomingRef = useRef(0);
 
@@ -218,8 +224,16 @@ export default function StudentClassroom() {
   const hudBottom = insets.bottom + HIT_SLOP_MIN + space.md;
   const pipBottomClearance = hudBottom + HIT_SLOP_MIN + space.lg;
 
-  // Daily's controls and the teacher's shared screen both need more than the old 200×120 frame.
-  const pipWidth = Math.min(
+  const videoHidden = videoWindowSize === "hidden";
+  const videoFull = videoWindowSize === "full";
+  const videoSmall = videoWindowSize === "small";
+
+  // Small is a true thumbnail. Medium is the first size intended for Daily's own controls.
+  const smallVideoWidth = Math.min(
+    width - space.xxl,
+    space.huge * (isCompact ? 4 : 6),
+  );
+  const mediumVideoWidth = Math.min(
     width - space.xxl,
     space.huge * (isCompact ? 7 : 10),
   );
@@ -227,22 +241,34 @@ export default function StudentClassroom() {
     boardToolbarBottom +
     HIT_SLOP_MIN +
     (isLandscapeLayout ? space.xs : space.lg);
-  const pipHeight = Math.min(
-    space.huge * (isLandscapeLayout ? 5 : 6),
-    Math.max(space.huge * 3, height - pipTop - pipBottomClearance),
+  const availableVideoHeight = Math.max(
+    space.huge * 2,
+    height - pipTop - pipBottomClearance,
   );
-  const pipBaseLeft = Math.max(space.md, width - pipWidth - space.md);
+  const smallVideoHeight = Math.min(space.huge * 3, availableVideoHeight);
+  const mediumVideoHeight = Math.min(
+    space.huge * (isLandscapeLayout ? 5 : 6),
+    availableVideoHeight,
+  );
+  const windowedVideoWidth = videoSmall ? smallVideoWidth : mediumVideoWidth;
+  const windowedVideoHeight = videoSmall ? smallVideoHeight : mediumVideoHeight;
+  const windowedVideoBaseLeft = Math.max(
+    space.md,
+    width - windowedVideoWidth - space.md,
+  );
   const expandedVideoWidth = width - space.xxl;
   const expandedVideoHeight = Math.max(
     space.huge * 3,
     height - pipTop - hudBottom - HIT_SLOP_MIN - space.lg,
   );
-  const videoWidth = videoExpanded ? expandedVideoWidth : pipWidth;
-  const videoHeight = videoExpanded ? expandedVideoHeight : pipHeight;
-  const videoLeft = videoExpanded ? space.md : pipBaseLeft;
-  const noticeTop = videoExpanded
-    ? pipTop + space.sm
-    : pipTop + pipHeight + space.sm;
+  const videoWidth = videoFull ? expandedVideoWidth : windowedVideoWidth;
+  const videoHeight = videoFull ? expandedVideoHeight : windowedVideoHeight;
+  const videoLeft = videoFull ? space.md : windowedVideoBaseLeft;
+  const noticeTop = videoHidden
+    ? pipTop
+    : videoFull
+      ? pipTop + space.sm
+      : pipTop + windowedVideoHeight + space.sm;
   const incomingMessageCount = useMemo(
     () =>
       messages.reduce((total, message) => total + (message.isMe ? 0 : 1), 0),
@@ -268,17 +294,17 @@ export default function StudentClassroom() {
         onPanResponderRelease: (_, gesture) => {
           const next = {
             x: Math.max(
-              space.md - pipBaseLeft,
+              space.md - windowedVideoBaseLeft,
               Math.min(
                 pipOffset.current.x + gesture.dx,
-                width - pipWidth - space.md - pipBaseLeft,
+                width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
               ),
             ),
             y: Math.max(
               0,
               Math.min(
                 pipOffset.current.y + gesture.dy,
-                height - pipTop - pipHeight - pipBottomClearance,
+                height - pipTop - windowedVideoHeight - pipBottomClearance,
               ),
             ),
           };
@@ -290,17 +316,17 @@ export default function StudentClassroom() {
           pipDrag.flattenOffset();
           const next = {
             x: Math.max(
-              space.md - pipBaseLeft,
+              space.md - windowedVideoBaseLeft,
               Math.min(
                 pipOffset.current.x + gesture.dx,
-                width - pipWidth - space.md - pipBaseLeft,
+                width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
               ),
             ),
             y: Math.max(
               0,
               Math.min(
                 pipOffset.current.y + gesture.dy,
-                height - pipTop - pipHeight - pipBottomClearance,
+                height - pipTop - windowedVideoHeight - pipBottomClearance,
               ),
             ),
           };
@@ -310,14 +336,14 @@ export default function StudentClassroom() {
       }),
     [
       height,
-      pipBaseLeft,
+      windowedVideoBaseLeft,
       pipDrag,
-      pipHeight,
       pipTop,
-      pipWidth,
       pipBottomClearance,
       space.md,
       space.xxs,
+      windowedVideoHeight,
+      windowedVideoWidth,
       width,
     ],
   );
@@ -325,17 +351,17 @@ export default function StudentClassroom() {
   useEffect(() => {
     const next = {
       x: Math.max(
-        space.md - pipBaseLeft,
+        space.md - windowedVideoBaseLeft,
         Math.min(
           pipOffset.current.x,
-          width - pipWidth - space.md - pipBaseLeft,
+          width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
         ),
       ),
       y: Math.max(
         0,
         Math.min(
           pipOffset.current.y,
-          height - pipTop - pipHeight - pipBottomClearance,
+          height - pipTop - windowedVideoHeight - pipBottomClearance,
         ),
       ),
     };
@@ -344,15 +370,51 @@ export default function StudentClassroom() {
     pipDrag.setValue(next);
   }, [
     height,
-    pipBaseLeft,
+    windowedVideoBaseLeft,
     pipDrag,
-    pipHeight,
     pipTop,
-    pipWidth,
     pipBottomClearance,
     space.md,
+    windowedVideoHeight,
+    windowedVideoWidth,
     width,
   ]);
+
+  const hideVideoWindow = useCallback(() => {
+    if (videoWindowSize === "hidden") return;
+    lastVisibleVideoSizeRef.current = videoWindowSize;
+    if (videoWindowSize !== "full") {
+      lastWindowedVideoSizeRef.current = videoWindowSize;
+    }
+    setVideoWindowSize("hidden");
+  }, [videoWindowSize]);
+
+  const showVideoWindow = useCallback(() => {
+    setVideoWindowSize(lastVisibleVideoSizeRef.current);
+  }, []);
+
+  const toggleWindowedVideoSize = useCallback(() => {
+    const next: WindowedVideoSize =
+      videoWindowSize === "small" ? "medium" : "small";
+    lastVisibleVideoSizeRef.current = next;
+    lastWindowedVideoSizeRef.current = next;
+    setVideoWindowSize(next);
+  }, [videoWindowSize]);
+
+  const toggleFullVideoWindow = useCallback(() => {
+    if (videoWindowSize === "full") {
+      const next = lastWindowedVideoSizeRef.current;
+      lastVisibleVideoSizeRef.current = next;
+      setVideoWindowSize(next);
+      return;
+    }
+
+    if (videoWindowSize !== "hidden") {
+      lastWindowedVideoSizeRef.current = videoWindowSize;
+    }
+    lastVisibleVideoSizeRef.current = "full";
+    setVideoWindowSize("full");
+  }, [videoWindowSize]);
 
   useEffect(() => {
     Animated.timing(chatProgress, {
@@ -635,7 +697,7 @@ export default function StudentClassroom() {
           </View>
         </View>
 
-        {livePresenceCount > 0 && !videoExpanded && !isCompact ? (
+        {livePresenceCount > 0 && !videoFull && !isCompact ? (
           <View
             pointerEvents="none"
             style={[
@@ -790,22 +852,22 @@ export default function StudentClassroom() {
                   width: HIT_SLOP_MIN,
                   height: HIT_SLOP_MIN,
                   borderRadius: radius.pill,
-                  backgroundColor: videoExpanded
+                  backgroundColor: videoHidden
                     ? colors.actionSoft
                     : colors.card,
                 },
               ]}
-              onPress={() => setVideoExpanded((expanded) => !expanded)}
+              onPress={videoHidden ? showVideoWindow : hideVideoWindow}
               activeOpacity={0.75}
               accessibilityLabel={
-                videoExpanded ? "Restore compact call" : "Expand video call"
+                videoHidden ? "Show call window" : "Hide call window"
               }
-              testID="video-size-btn"
+              testID="video-visibility-btn"
             >
               <Feather
-                name={videoExpanded ? "minimize-2" : "maximize-2"}
+                name={videoHidden ? "video-off" : "video"}
                 size={18}
-                color={videoExpanded ? colors.primary : colors.mutedForeground}
+                color={videoHidden ? colors.primary : colors.mutedForeground}
               />
             </TouchableOpacity>
 
@@ -830,10 +892,46 @@ export default function StudentClassroom() {
           </View>
         </View>
 
-        {/* Daily stays mounted: compact is draggable; expanded makes teaching/screen share legible. */}
+        {videoHidden && mode !== "chat" ? (
+          <View
+            pointerEvents="box-none"
+            style={[
+              s.callDockLayer,
+              {
+                bottom: hudBottom + HIT_SLOP_MIN + space.md,
+                paddingRight: space.md,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={[
+                s.showCallButton,
+                elevation.sheet,
+                {
+                  minHeight: HIT_SLOP_MIN,
+                  gap: space.xs,
+                  paddingHorizontal: space.md,
+                  borderRadius: radius.pill,
+                  backgroundColor: colors.card,
+                  borderColor: colors.primary,
+                },
+              ]}
+              onPress={showVideoWindow}
+              activeOpacity={0.75}
+              accessibilityLabel="Show call window"
+            >
+              <Feather name="video" size={18} color={colors.primary} />
+              <Text style={[t.caption, { color: colors.primary }]}>
+                Show call
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {/* Daily stays mounted through hide and every size change; only its shell moves. */}
         <View style={s.contentArea}>
           <Animated.View
-            pointerEvents={mode === "chat" ? "none" : "auto"}
+            pointerEvents={mode === "chat" || videoHidden ? "none" : "auto"}
             style={[
               s.videoArea,
               elevation.sheet,
@@ -842,62 +940,140 @@ export default function StudentClassroom() {
                 left: videoLeft,
                 width: videoWidth,
                 height: videoHeight,
-                borderRadius: videoExpanded ? radius.lg : radius.md,
+                borderRadius: videoFull ? radius.lg : radius.md,
                 backgroundColor: colors.secondary,
                 borderColor: colors.lineStrong,
-                transform: videoExpanded ? [] : pipDrag.getTranslateTransform(),
+                transform: videoFull ? [] : pipDrag.getTranslateTransform(),
               },
-              mode === "chat" && s.videoAreaHidden,
+              (mode === "chat" || videoHidden) && s.videoAreaHidden,
             ]}
           >
-            {roomUrl ? (
-              <VideoCall
-                provider={videoProvider}
-                roomUrl={roomUrl}
-                token={meetingToken}
-                displayName={studentName}
-                style={StyleSheet.absoluteFill}
-                onLeft={handleDailyLeft}
-                watchUserName={session?.teacherName}
-                onWatchedParticipantLeft={notifyTeacherLeft}
-              />
-            ) : (
-              <View
-                style={[
-                  StyleSheet.absoluteFill,
-                  s.permissionGate,
-                  { gap: space.sm, paddingHorizontal: space.xl },
-                ]}
-              >
-                <ActivityIndicator color={colors.onInverse} />
-                <Text
-                  style={[
-                    t.caption,
-                    { color: colors.onInverseMuted, textAlign: "center" },
-                  ]}
+            <View
+              style={[
+                s.callFrameHeader,
+                {
+                  height: HIT_SLOP_MIN,
+                  backgroundColor: colors.secondary,
+                  borderBottomColor: colors.lineStrong,
+                },
+              ]}
+            >
+              {!videoFull ? (
+                <View
+                  {...pipPanResponder.panHandlers}
+                  style={s.callDragZone}
+                  accessibilityRole="adjustable"
+                  accessibilityLabel="Drag teacher video window"
                 >
-                  {roomExpired ??
-                    (roomError
-                      ? "Couldn't set up the video room."
-                      : "Setting up video room…")}
-                </Text>
+                  <View
+                    style={[
+                      s.pipGrip,
+                      { backgroundColor: colors.onInverseMuted },
+                    ]}
+                  />
+                </View>
+              ) : (
+                <View style={s.callDragZone} />
+              )}
+
+              <View style={s.callFrameActions}>
+                <TouchableOpacity
+                  style={[
+                    s.callFrameButton,
+                    {
+                      width: HIT_SLOP_MIN + space.md,
+                      height: HIT_SLOP_MIN,
+                      gap: space.xxs,
+                    },
+                  ]}
+                  onPress={hideVideoWindow}
+                  accessibilityLabel="Hide call window"
+                >
+                  <Feather name="eye-off" size={18} color={colors.onInverse} />
+                  <Text style={[t.caption, { color: colors.onInverse }]}>
+                    Hide
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    s.callFrameButton,
+                    { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN },
+                  ]}
+                  onPress={toggleWindowedVideoSize}
+                  accessibilityLabel={
+                    videoSmall
+                      ? "Make call window medium"
+                      : "Make call window small"
+                  }
+                  testID="video-window-size-btn"
+                >
+                  <Feather
+                    name={videoSmall ? "maximize" : "minimize"}
+                    size={18}
+                    color={colors.onInverse}
+                  />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    s.callFrameButton,
+                    {
+                      width: HIT_SLOP_MIN,
+                      height: HIT_SLOP_MIN,
+                      backgroundColor: videoFull
+                        ? colors.actionSoft
+                        : colors.secondary,
+                    },
+                  ]}
+                  onPress={toggleFullVideoWindow}
+                  accessibilityLabel={
+                    videoFull ? "Restore call window" : "Show call full screen"
+                  }
+                  testID="video-fullscreen-btn"
+                >
+                  <Feather
+                    name={videoFull ? "minimize-2" : "maximize-2"}
+                    size={18}
+                    color={videoFull ? colors.primary : colors.onInverse}
+                  />
+                </TouchableOpacity>
               </View>
-            )}
-            {!videoExpanded ? (
-              <View
-                {...pipPanResponder.panHandlers}
-                style={s.pipGripHit}
-                accessibilityRole="adjustable"
-                accessibilityLabel="Drag teacher video window"
-              >
+            </View>
+
+            <View style={s.callFrameBody}>
+              {roomUrl ? (
+                <VideoCall
+                  provider={videoProvider}
+                  roomUrl={roomUrl}
+                  token={meetingToken}
+                  displayName={studentName}
+                  style={StyleSheet.absoluteFill}
+                  onLeft={handleDailyLeft}
+                  watchUserName={session?.teacherName}
+                  onWatchedParticipantLeft={notifyTeacherLeft}
+                />
+              ) : (
                 <View
                   style={[
-                    s.pipGrip,
-                    { backgroundColor: colors.onInverseMuted },
+                    StyleSheet.absoluteFill,
+                    s.permissionGate,
+                    { gap: space.sm, paddingHorizontal: space.xl },
                   ]}
-                />
-              </View>
-            ) : null}
+                >
+                  <ActivityIndicator color={colors.onInverse} />
+                  <Text
+                    style={[
+                      t.caption,
+                      { color: colors.onInverseMuted, textAlign: "center" },
+                    ]}
+                  >
+                    {roomExpired ??
+                      (roomError
+                        ? "Couldn't set up the video room."
+                        : "Setting up video room…")}
+                  </Text>
+                </View>
+              )}
+            </View>
           </Animated.View>
 
           <View style={[s.boardWrap, { paddingTop: insets.top }]}>
@@ -1231,6 +1407,19 @@ const s = StyleSheet.create({
     justifyContent: "center",
     position: "relative",
   },
+  callDockLayer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "flex-end",
+    zIndex: 100,
+  },
+  showCallButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
   chatBadge: {
     position: "absolute",
     top: 0,
@@ -1248,23 +1437,29 @@ const s = StyleSheet.create({
     zIndex: 60,
   },
   videoAreaHidden: { display: "none" },
-  pipGripHit: {
-    position: "absolute",
-    top: 0,
-    left: "35%",
-    right: "35%",
-    minHeight: HIT_SLOP_MIN,
+  callFrameHeader: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-start",
-    zIndex: 2,
+    borderBottomWidth: 1,
+  },
+  callDragZone: {
+    flex: 1,
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
   },
   pipGrip: {
-    marginTop: 4,
-    alignSelf: "center",
     width: 32,
     height: 4,
     borderRadius: 2,
   },
+  callFrameActions: { flexDirection: "row", alignItems: "center" },
+  callFrameButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  callFrameBody: { flex: 1, position: "relative" },
   permissionGate: { alignItems: "center", justifyContent: "center" },
   boardWrap: { flex: 1, overflow: "hidden" },
   boardArea: { flex: 1, overflow: "hidden" },
