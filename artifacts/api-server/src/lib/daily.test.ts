@@ -22,9 +22,14 @@ test("extra settings we do not care about are left alone", () => {
   assert.deepEqual(propertiesToRepair(config), {});
 });
 
-test("the room that started this: chat switched off", () => {
-  const repairs = propertiesToRepair({ ...ROOM_PROPERTIES, enable_chat: false });
-  assert.deepEqual(repairs, { enable_chat: true });
+test("Daily chat cannot split the class into a second conversation", () => {
+  const repairs = propertiesToRepair({ ...ROOM_PROPERTIES, enable_chat: true });
+  assert.deepEqual(repairs, { enable_chat: false });
+});
+
+test("Daily cannot create a second PIP inside the classroom PIP", () => {
+  const repairs = propertiesToRepair({ ...ROOM_PROPERTIES, enable_pip_ui: true });
+  assert.deepEqual(repairs, { enable_pip_ui: false });
 });
 
 test("a setting simply absent is Daily's default, not ours", () => {
@@ -48,12 +53,14 @@ test("a setting we deliberately want off is repaired when it is on", () => {
 test("several wrong at once are all reported, so one round trip fixes the room", () => {
   const repairs = propertiesToRepair({
     ...ROOM_PROPERTIES,
-    enable_chat: false,
+    enable_chat: true,
+    enable_pip_ui: true,
     enable_hand_raising: false,
     enable_screenshare: false,
   });
   assert.deepEqual(repairs, {
-    enable_chat: true,
+    enable_chat: false,
+    enable_pip_ui: false,
     enable_hand_raising: true,
     enable_screenshare: true,
   });

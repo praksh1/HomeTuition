@@ -143,8 +143,17 @@ function FloatingNotice({
 export default function StudentClassroom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
-  const { t, numeric, width, height, isCompact, space, radius, elevation } =
-    useLayout();
+  const {
+    t,
+    numeric,
+    width,
+    height,
+    isCompact,
+    isLandscape: isLandscapeLayout,
+    space,
+    radius,
+    elevation,
+  } = useLayout();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const student = user as Student;
@@ -198,10 +207,26 @@ export default function StudentClassroom() {
   const pipDrag = useRef(new Animated.ValueXY()).current;
   const pipOffset = useRef({ x: 0, y: 0 });
 
-  // Large enough to keep the provider's real native controls usable on a budget phone.
-  const pipWidth = Math.min(width - space.xxl, space.huge * 7);
-  const pipHeight = isCompact ? space.huge * 4 : space.huge * 5;
-  const pipTop = insets.top + space.huge + space.sm;
+  /**
+   * Excalidraw's controls own the top and bottom bands. Classroom overlays stay between them:
+   * the context pill begins below the top toolbar, the HUD sits above the zoom controls, and
+   * the remote-video PIP cannot be dragged into either interactive area.
+   */
+  const boardToolbarBottom = insets.top + HIT_SLOP_MIN + space.md;
+  const hudBottom = insets.bottom + HIT_SLOP_MIN + space.md;
+  const pipBottomClearance = hudBottom + HIT_SLOP_MIN + space.lg;
+
+  // Students need one clean teacher feed, not a second video stage over the whiteboard.
+  const pipWidth = Math.min(
+    width - space.xxl,
+    space.huge * (isLandscapeLayout || isCompact ? 5 : 7),
+  );
+  const pipHeight = isLandscapeLayout
+    ? space.huge * 2 + space.xl
+    : space.huge * 3;
+  const pipTop =
+    boardToolbarBottom + HIT_SLOP_MIN +
+    (isLandscapeLayout ? space.xs : space.lg);
   const pipBaseLeft = Math.max(space.md, width - pipWidth - space.md);
 
   const pipPanResponder = useMemo(
@@ -233,7 +258,7 @@ export default function StudentClassroom() {
               0,
               Math.min(
                 pipOffset.current.y + gesture.dy,
-                height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+                height - pipTop - pipHeight - pipBottomClearance,
               ),
             ),
           };
@@ -255,7 +280,7 @@ export default function StudentClassroom() {
               0,
               Math.min(
                 pipOffset.current.y + gesture.dy,
-                height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+                height - pipTop - pipHeight - pipBottomClearance,
               ),
             ),
           };
@@ -270,8 +295,8 @@ export default function StudentClassroom() {
       pipHeight,
       pipTop,
       pipWidth,
+      pipBottomClearance,
       space.md,
-      space.xxxl,
       space.xxs,
       width,
     ],
@@ -290,7 +315,7 @@ export default function StudentClassroom() {
         0,
         Math.min(
           pipOffset.current.y,
-          height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+          height - pipTop - pipHeight - pipBottomClearance,
         ),
       ),
     };
@@ -304,8 +329,8 @@ export default function StudentClassroom() {
     pipHeight,
     pipTop,
     pipWidth,
+    pipBottomClearance,
     space.md,
-    space.xxxl,
     width,
   ]);
 
@@ -544,7 +569,7 @@ export default function StudentClassroom() {
               s.sessionPill,
               elevation.card,
               {
-                top: insets.top + space.xs,
+                top: boardToolbarBottom,
                 left: space.md,
                 right: space.md,
                 gap: space.sm,
@@ -620,7 +645,7 @@ export default function StudentClassroom() {
           style={[
             s.noticeLayer,
             {
-              top: insets.top + space.huge + space.md,
+              top: pipTop,
               left: space.md,
               right: space.md,
               gap: space.xs,
@@ -671,8 +696,12 @@ export default function StudentClassroom() {
 
         {/* Only this visible capsule captures touches; its carrier stays transparent. */}
         <View
-          pointerEvents="box-none"
-          style={[s.hudLayer, { bottom: insets.bottom + space.sm }]}
+          pointerEvents={mode === "chat" ? "none" : "box-none"}
+          style={[
+            s.hudLayer,
+            { bottom: hudBottom },
+            mode === "chat" && s.overlayHidden,
+          ]}
         >
           <View
             pointerEvents="auto"
@@ -875,7 +904,7 @@ export default function StudentClassroom() {
             </View>
           </Animated.View>
 
-          <View style={s.boardWrap}>
+          <View style={[s.boardWrap, { paddingTop: insets.top }]}>
             {waitingForTeacher ? (
               <View
                 style={[
@@ -1201,6 +1230,7 @@ const s = StyleSheet.create({
   },
   hud: { flexDirection: "row", alignItems: "center", borderWidth: 1 },
   hudButton: { alignItems: "center", justifyContent: "center" },
+  overlayHidden: { opacity: 0 },
   contentArea: { flex: 1, position: "relative" },
   videoArea: {
     position: "absolute",

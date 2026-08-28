@@ -218,8 +218,17 @@ function FloatingNotice({
 export default function Classroom() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
-  const { t, numeric, width, height, isCompact, space, radius, elevation } =
-    useLayout();
+  const {
+    t,
+    numeric,
+    width,
+    height,
+    isCompact,
+    isLandscape: isLandscapeLayout,
+    space,
+    radius,
+    elevation,
+  } = useLayout();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const teacher = user as Teacher;
@@ -299,10 +308,29 @@ export default function Classroom() {
   const pipDrag = useRef(new Animated.ValueXY()).current;
   const pipOffset = useRef({ x: 0, y: 0 });
 
-  // Wide enough for the native call's real mic/camera controls, but still a movable overlay.
-  const pipWidth = Math.min(width - space.xxl, space.huge * 7);
-  const pipHeight = isCompact ? space.huge * 4 : space.huge * 5;
-  const pipTop = insets.top + space.huge + space.sm;
+  /**
+   * Excalidraw owns the outermost top and bottom bands.
+   *
+   * Its hamburger, drawing tools, properties controls and zoom controls live there. Floating
+   * classroom chrome may cover canvas, but it must never cover the controls that make the
+   * canvas usable. The top context pill starts below one full tap target; the HUD sits above
+   * the bottom controls; and the PIP is clamped between them.
+   */
+  const boardToolbarBottom = insets.top + HIT_SLOP_MIN + space.md;
+  const hudBottom = insets.bottom + HIT_SLOP_MIN + space.md;
+  const pipBottomClearance = hudBottom + HIT_SLOP_MIN + space.lg;
+
+  // A compact call window leaves the board's side tools and the floating HUD unobstructed.
+  const pipWidth = Math.min(
+    width - space.xxl,
+    space.huge * (isLandscapeLayout || isCompact ? 5 : 7),
+  );
+  const pipHeight = isLandscapeLayout
+    ? space.huge * 2 + space.xl
+    : space.huge * 3;
+  const pipTop =
+    boardToolbarBottom + HIT_SLOP_MIN +
+    (isLandscapeLayout ? space.xs : space.lg);
   const pipBaseLeft = Math.max(space.md, width - pipWidth - space.md);
 
   const pipPanResponder = useMemo(
@@ -334,7 +362,7 @@ export default function Classroom() {
               0,
               Math.min(
                 pipOffset.current.y + gesture.dy,
-                height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+                height - pipTop - pipHeight - pipBottomClearance,
               ),
             ),
           };
@@ -356,7 +384,7 @@ export default function Classroom() {
               0,
               Math.min(
                 pipOffset.current.y + gesture.dy,
-                height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+                height - pipTop - pipHeight - pipBottomClearance,
               ),
             ),
           };
@@ -371,8 +399,8 @@ export default function Classroom() {
       pipHeight,
       pipTop,
       pipWidth,
+      pipBottomClearance,
       space.md,
-      space.xxxl,
       space.xxs,
       width,
     ],
@@ -391,7 +419,7 @@ export default function Classroom() {
         0,
         Math.min(
           pipOffset.current.y,
-          height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+          height - pipTop - pipHeight - pipBottomClearance,
         ),
       ),
     };
@@ -405,8 +433,8 @@ export default function Classroom() {
     pipHeight,
     pipTop,
     pipWidth,
+    pipBottomClearance,
     space.md,
-    space.xxxl,
     width,
   ]);
 
@@ -1017,7 +1045,7 @@ export default function Classroom() {
               s.sessionPill,
               elevation.card,
               {
-                top: insets.top + space.xs,
+                top: boardToolbarBottom,
                 left: space.md,
                 right: space.md,
                 gap: space.sm,
@@ -1098,7 +1126,7 @@ export default function Classroom() {
           style={[
             s.noticeLayer,
             {
-              top: insets.top + space.huge + space.md,
+              top: pipTop,
               left: space.md,
               right: space.md,
               gap: space.xs,
@@ -1181,8 +1209,12 @@ export default function Classroom() {
 
         {/* Only the visible capsule captures touches; its full-screen layer is transparent. */}
         <View
-          pointerEvents="box-none"
-          style={[s.hudLayer, { bottom: insets.bottom + space.sm }]}
+          pointerEvents={mode === "chat" ? "none" : "box-none"}
+          style={[
+            s.hudLayer,
+            { bottom: hudBottom },
+            mode === "chat" && s.overlayHidden,
+          ]}
         >
           <View
             pointerEvents="auto"
@@ -1386,7 +1418,7 @@ export default function Classroom() {
               />
             </View>
           </Animated.View>
-          <View style={s.boardArea}>
+          <View style={[s.boardArea, { paddingTop: insets.top }]}>
             {/* Whiteboard. Scoped to its own boundary so a board rendering failure shows a
             recoverable message here instead of unmounting the app — which would also tear
             down the video call the class is running on. */}
@@ -1401,7 +1433,7 @@ export default function Classroom() {
                       {
                         left: space.md,
                         right: space.md,
-                        bottom: insets.bottom + HIT_SLOP_MIN + space.xxl,
+                        bottom: hudBottom + HIT_SLOP_MIN + space.lg,
                         gap: space.xs,
                         padding: space.sm,
                         borderRadius: radius.lg,
@@ -1995,6 +2027,7 @@ const s = StyleSheet.create({
   },
   hud: { flexDirection: "row", alignItems: "center", borderWidth: 1 },
   hudButton: { alignItems: "center", justifyContent: "center" },
+  overlayHidden: { opacity: 0 },
   contentArea: { flex: 1, position: "relative" },
   videoArea: {
     position: "absolute",
