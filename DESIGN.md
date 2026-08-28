@@ -217,12 +217,12 @@ The end state is a baseline of zero, one screen at a time. Where it stands today
 
 | File | hex | sizes |
 |---|---|---|
-| `app/(teacher)/classroom/[id].tsx` | 108 | 31 |
-| `app/(student)/classroom/[id].tsx` | 62 | 21 |
 | `components/DailyEmbed.tsx` | 43 | 10 |
 | `app/welcome.tsx` | 18 | 10 |
+| `app/(teacher)/monthly.tsx` | 4 | 24 |
+| `components/DailyEmbed.web.tsx` | 23 | 0 |
 | `app/(teacher)/session-create.tsx` | 8 | 14 |
-| …59 more | | |
+| …52 more | | |
 
 If a literal genuinely is not a design decision — a colour inside a third-party embed's own
 config — put `design-lint-ignore` on the line and say why. That is the difference between an

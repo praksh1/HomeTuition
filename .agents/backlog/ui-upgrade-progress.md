@@ -80,8 +80,10 @@ it the worst placeholder available.
 | `app/(student)/index.tsx` | 13 hex, 29 sizes | **0 / 0** | No |
 | `components/TeacherCard.tsx` | 12 hex, 12 sizes | **0 / 0** | No |
 | `app/(student)/teacher/[id].tsx` | 20 hex, 26 sizes | **0 / 0** | No — local Metro never completed its first web bundle |
+| `app/(teacher)/classroom/[id].tsx` | 108 hex, 31 sizes | **0 / 0** | Yes — owner verified whiteboard touch propagation and PIP dragging |
+| `app/(student)/classroom/[id].tsx` | 62 hex, 21 sizes | **0 / 0** | No — awaiting student-side touch verification |
 
-Baseline has fallen from **468 hex / 595 sizes** to **393 / 481**.
+Baseline has fallen from **468 hex / 595 sizes** to **223 / 429**.
 
 ## Next, in the order I would take them
 
@@ -90,12 +92,9 @@ Baseline has fallen from **468 hex / 595 sizes** to **393 / 481**.
 2. **`app/welcome.tsx`** — 18 hex, 10 sizes. First impression, and self-contained.
 3. **`app/(teacher)/profile.tsx`** / **`app/(student)/profile.tsx`** — small, similar, do together.
 4. **`app/(teacher)/monthly.tsx`** — 4 hex, 24 sizes.
-5. **The two classrooms** — `(teacher)/classroom/[id].tsx` (108 hex, 31 sizes) and
-   `(student)/classroom/[id].tsx` (62, 21), plus `DailyEmbed` (43 + 23 hex). **Leave these for
-   last.** They are the biggest by a wide margin, they are where the whiteboard lives, and they
-   are the only screens with real responsive work to do — the board must keep its share of the
-   width and never be covered on a phone. `useLayout().boardShare` returns 1 / 0.72 / 0.66 for
-   exactly this.
+5. **Shared video embeds, only after the student touch test passes** — `components/DailyEmbed.tsx`
+   (43 hex, 10 sizes) and `components/DailyEmbed.web.tsx` (23 hex). Keep provider behavior and
+   bandwidth strategy fixed; this is a token/accessibility pass, not a video rewrite.
 
 ---
 
@@ -119,3 +118,6 @@ Baseline has fallen from **468 hex / 595 sizes** to **393 / 481**.
 - **`totalStudents` is not a unique-student metric.** It increments once per paid enrollment.
   The UI now calls it "paid bookings"; renaming or replacing the database field is server work
   and was deliberately left outside this UI-only pass.
+- **Teacher PIP controls still belong to the video provider.** Native mic/camera/share/leave and
+  web Daily Prebuilt controls remain inside the PIP. Moving them into the classroom HUD requires
+  a provider-level imperative control contract and must not be faked with non-working buttons.

@@ -35,10 +35,6 @@
     "hex": 2,
     "size": 9
   },
-  "app/(student)/classroom/[id].tsx": {
-    "hex": 62,
-    "size": 21
-  },
   "app/(student)/monthly.tsx": {
     "hex": 3,
     "size": 14
@@ -54,10 +50,6 @@
   "app/(student)/_layout.tsx": {
     "hex": 0,
     "size": 1
-  },
-  "app/(teacher)/classroom/[id].tsx": {
-    "hex": 108,
-    "size": 31
   },
   "app/(teacher)/monthly.tsx": {
     "hex": 4,

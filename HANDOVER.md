@@ -568,7 +568,7 @@ version:
 
 `constants/colors.ts` had been bypassed **468 times** by hex written straight into screens, so
 `lint:design` runs in CI as a **ratchet**: a per-file baseline that may fall and may never rise.
-It is at 393 hex / 481 sizes and dropping as screens are converted.
+It is at 223 hex / 429 sizes and dropping as screens are converted.
 
 ### The thing every converted screen has had in common
 

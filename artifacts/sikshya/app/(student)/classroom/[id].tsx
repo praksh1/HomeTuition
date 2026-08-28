@@ -1,12 +1,20 @@
 import { Feather } from "@expo/vector-icons";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
+  Animated,
+  Easing,
   KeyboardAvoidingView,
+  PanResponder,
   Platform,
   ScrollView,
   StyleSheet,
@@ -22,24 +30,121 @@ import { ApiError, apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
 import SmartBoard from "@/components/SmartBoard";
-import { showsOwnChatTab } from "@/utils/classroomChat";
 import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
 import { useAloneInCall } from "@/hooks/useAloneInCall";
-import CallTimeNotice from "@/components/CallTimeNotice";
-import AloneNotice from "@/components/AloneNotice";
+import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN } from "@/constants/layout";
+import { aloneMessage } from "@/utils/aloneInCall";
 
-const SCREEN_W = Dimensions.get("window").width;
 type Mode = "board" | "chat";
 
 interface SessionData {
-  id: number; topic: string; subject: string; teacherName: string;
-  duration: number; maxStudents: number; enrolledCount: number; status: string;
+  id: number;
+  topic: string;
+  subject: string;
+  teacherName: string;
+  duration: number;
+  maxStudents: number;
+  enrolledCount: number;
+  status: string;
   /** The booked start. The whole call clock is measured from this and the duration. */
   date: string;
 }
 
+type NoticeTone = "warning" | "destructive";
+
+interface FloatingNoticeProps {
+  tone: NoticeTone;
+  icon: keyof typeof Feather.glyphMap;
+  text: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  onClose?: () => void;
+}
+
+/** Mirrors the verified teacher notice: transform-only, above the board, never in its flow. */
+function FloatingNotice({
+  tone,
+  icon,
+  text,
+  actionLabel,
+  onAction,
+  onClose,
+}: FloatingNoticeProps) {
+  const colors = useColors();
+  const { t, space, radius, elevation } = useLayout();
+  const entrance = useRef(new Animated.Value(-space.huge)).current;
+  const toneColor = tone === "destructive" ? colors.destructive : colors.warn;
+  const toneFill =
+    tone === "destructive" ? colors.destructiveSoft : colors.warnSoft;
+
+  useEffect(() => {
+    Animated.timing(entrance, {
+      toValue: 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [entrance]);
+
+  return (
+    <Animated.View
+      pointerEvents="auto"
+      style={[
+        s.noticeCard,
+        elevation.sheet,
+        {
+          gap: space.sm,
+          paddingHorizontal: space.md,
+          paddingVertical: space.sm,
+          borderRadius: radius.md,
+          backgroundColor: toneFill,
+          borderColor: toneColor,
+          transform: [{ translateY: entrance }],
+        },
+      ]}
+    >
+      <Feather name={icon} size={18} color={toneColor} />
+      <Text style={[t.callout, s.noticeText, { color: colors.foreground }]}>
+        {text}
+      </Text>
+      {actionLabel && onAction ? (
+        <TouchableOpacity
+          style={[
+            s.noticeAction,
+            {
+              minHeight: HIT_SLOP_MIN,
+              paddingHorizontal: space.sm,
+              borderRadius: radius.sm,
+              borderColor: toneColor,
+            },
+          ]}
+          onPress={onAction}
+          activeOpacity={0.75}
+        >
+          <Text style={[t.caption, { color: toneColor }]}>{actionLabel}</Text>
+        </TouchableOpacity>
+      ) : null}
+      {onClose ? (
+        <TouchableOpacity
+          style={[s.noticeClose, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN }]}
+          onPress={onClose}
+          activeOpacity={0.7}
+          accessibilityLabel="Dismiss notice"
+        >
+          <Feather name="x" size={18} color={toneColor} />
+        </TouchableOpacity>
+      ) : null}
+    </Animated.View>
+  );
+}
+
 export default function StudentClassroom() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const colors = useColors();
+  const { t, numeric, width, height, isCompact, space, radius, elevation } =
+    useLayout();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const student = user as Student;
@@ -47,14 +152,27 @@ export default function StudentClassroom() {
 
   const studentName = student.name ?? "Student";
 
-  const { connected, accessDenied, presenceCount, messages, sessionStatus, sendChat, sceneUpdates, consumeSceneUpdates, boardClearedAt, boardView } =
-    useClassroomSocket({ sessionId: id ?? "", name: studentName, role: "student" });
+  const {
+    connected,
+    accessDenied,
+    presenceCount,
+    messages,
+    sessionStatus,
+    sendChat,
+    sceneUpdates,
+    consumeSceneUpdates,
+    boardClearedAt,
+    boardView,
+  } = useClassroomSocket({
+    sessionId: id ?? "",
+    name: studentName,
+    role: "student",
+  });
 
   const [session, setSession] = useState<SessionData | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [chatMsg, setChatMsg] = useState("");
   const [mode, setMode] = useState<Mode>("board");
-  const [videoExpanded, setVideoExpanded] = useState(false);
   /** The board taking the whole pane. The call is hidden, never unmounted — see the video pane. */
   const [boardExpanded, setBoardExpanded] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
@@ -76,6 +194,129 @@ export default function StudentClassroom() {
   const hasLeft = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scrollRef = useRef<ScrollView>(null);
+  const chatProgress = useRef(new Animated.Value(0)).current;
+  const pipDrag = useRef(new Animated.ValueXY()).current;
+  const pipOffset = useRef({ x: 0, y: 0 });
+
+  // Large enough to keep the provider's real native controls usable on a budget phone.
+  const pipWidth = Math.min(width - space.xxl, space.huge * 7);
+  const pipHeight = isCompact ? space.huge * 4 : space.huge * 5;
+  const pipTop = insets.top + space.huge + space.sm;
+  const pipBaseLeft = Math.max(space.md, width - pipWidth - space.md);
+
+  const pipPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onMoveShouldSetPanResponder: (_, gesture) =>
+          Math.abs(gesture.dx) > space.xxs || Math.abs(gesture.dy) > space.xxs,
+        onPanResponderGrant: () => {
+          pipDrag.setOffset(pipOffset.current);
+          pipDrag.setValue({ x: 0, y: 0 });
+        },
+        onPanResponderMove: Animated.event(
+          [null, { dx: pipDrag.x, dy: pipDrag.y }],
+          {
+            useNativeDriver: false,
+          },
+        ),
+        onPanResponderRelease: (_, gesture) => {
+          const next = {
+            x: Math.max(
+              space.md - pipBaseLeft,
+              Math.min(
+                pipOffset.current.x + gesture.dx,
+                width - pipWidth - space.md - pipBaseLeft,
+              ),
+            ),
+            y: Math.max(
+              0,
+              Math.min(
+                pipOffset.current.y + gesture.dy,
+                height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+              ),
+            ),
+          };
+          pipDrag.flattenOffset();
+          pipDrag.setValue(next);
+          pipOffset.current = next;
+        },
+        onPanResponderTerminate: (_, gesture) => {
+          pipDrag.flattenOffset();
+          const next = {
+            x: Math.max(
+              space.md - pipBaseLeft,
+              Math.min(
+                pipOffset.current.x + gesture.dx,
+                width - pipWidth - space.md - pipBaseLeft,
+              ),
+            ),
+            y: Math.max(
+              0,
+              Math.min(
+                pipOffset.current.y + gesture.dy,
+                height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+              ),
+            ),
+          };
+          pipDrag.setValue(next);
+          pipOffset.current = next;
+        },
+      }),
+    [
+      height,
+      pipBaseLeft,
+      pipDrag,
+      pipHeight,
+      pipTop,
+      pipWidth,
+      space.md,
+      space.xxxl,
+      space.xxs,
+      width,
+    ],
+  );
+
+  useEffect(() => {
+    const next = {
+      x: Math.max(
+        space.md - pipBaseLeft,
+        Math.min(
+          pipOffset.current.x,
+          width - pipWidth - space.md - pipBaseLeft,
+        ),
+      ),
+      y: Math.max(
+        0,
+        Math.min(
+          pipOffset.current.y,
+          height - pipTop - pipHeight - space.xxxl - HIT_SLOP_MIN,
+        ),
+      ),
+    };
+    pipOffset.current = next;
+    pipDrag.setOffset({ x: 0, y: 0 });
+    pipDrag.setValue(next);
+  }, [
+    height,
+    pipBaseLeft,
+    pipDrag,
+    pipHeight,
+    pipTop,
+    pipWidth,
+    space.md,
+    space.xxxl,
+    width,
+  ]);
+
+  useEffect(() => {
+    Animated.timing(chatProgress, {
+      toValue: mode === "chat" ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [chatProgress, mode]);
 
   /**
    * Get out of this screen, whatever route brought us here.
@@ -99,12 +340,16 @@ export default function StudentClassroom() {
     timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+      ScreenOrientation.lockAsync(
+        ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      ).catch(() => {});
     };
   }, [id]);
 
   const loadSession = async () => {
-    try { setSession(await apiGet<SessionData>(`/sessions/${id}`)); } catch {}
+    try {
+      setSession(await apiGet<SessionData>(`/sessions/${id}`));
+    } catch {}
   };
 
   // Daily.co rooms must be created server-side via their REST API before anyone can
@@ -112,7 +357,15 @@ export default function StudentClassroom() {
   // own "start session" call has run, since the room is created idempotently either way.
   const loadRoom = async () => {
     try {
-      const { roomUrl: url, token, provider } = await apiGet<{ roomUrl: string; token?: string | null; provider?: string }>(`/sessions/${id}/room`);
+      const {
+        roomUrl: url,
+        token,
+        provider,
+      } = await apiGet<{
+        roomUrl: string;
+        token?: string | null;
+        provider?: string;
+      }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
       setRoomUrl(url);
       setMeetingToken(token ?? null);
@@ -145,7 +398,8 @@ export default function StudentClassroom() {
    * The room is deliberately *not* torn down here. Keeping it is what lets the video simply
    * resume when they return.
    */
-  const classEnded = sessionStatus === "completed" || sessionStatus === "cancelled";
+  const classEnded =
+    sessionStatus === "completed" || sessionStatus === "cancelled";
 
   /**
    * The class is open to this student but the teacher has not pressed start.
@@ -156,17 +410,28 @@ export default function StudentClassroom() {
    * clears itself with no polling.
    */
   const liveStatus = sessionStatus ?? session?.status ?? null;
-  const waitingForTeacher = !!liveStatus && liveStatus !== "live" && liveStatus !== "completed" && liveStatus !== "cancelled";
+  const classIsLive = liveStatus === "live";
+  const waitingForTeacher =
+    !!liveStatus &&
+    liveStatus !== "live" &&
+    liveStatus !== "completed" &&
+    liveStatus !== "cancelled";
 
   const fmt = (s: number) =>
-    `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
+    `${Math.floor(s / 60)
+      .toString()
+      .padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
   const toggleLandscape = async () => {
     try {
       if (isLandscape) {
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        await ScreenOrientation.lockAsync(
+          ScreenOrientation.OrientationLock.PORTRAIT_UP,
+        );
       } else {
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        await ScreenOrientation.lockAsync(
+          ScreenOrientation.OrientationLock.LANDSCAPE,
+        );
       }
       setIsLandscape((v) => !v);
     } catch {}
@@ -194,7 +459,13 @@ export default function StudentClassroom() {
    */
   const timeLimit = useCallTimeLimit({
     session: session
-      ? { date: session.date, duration: session.duration, status: session.status, startedAt: null, endedAt: null }
+      ? {
+          date: session.date,
+          duration: session.duration,
+          status: session.status,
+          startedAt: null,
+          endedAt: null,
+        }
       : null,
     active: !!roomUrl,
     onCutoff: handleDailyLeft,
@@ -260,234 +531,626 @@ export default function StudentClassroom() {
   });
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: "#0A0A0A" }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <View style={[s.container, { paddingTop: insets.top }]}>
-
-        {/* Header */}
-        <View style={s.header}>
-          <View style={s.headerInfo}>
-            <Text style={s.sessionTitle} numberOfLines={1}>{session?.topic ?? "Live Session"}</Text>
-            <Text style={s.sessionSub}>{session?.subject ?? ""} · {fmt(elapsed)}</Text>
-          </View>
-          <View style={s.headerRight}>
-            {/*
-              The video's own size control, in **our** header rather than floating on the call.
-
-              It used to sit at the top-right corner of the video pane, which is exactly where
-              Daily puts the close button for its Chat and People panels. The two stacked, ours
-              on top, so the panel could not be closed at all: every press shrank the video and
-              grew the board instead, and there was no way back to the call. Reported with the
-              overlap circled in a screenshot.
-
-              Nothing of ours is drawn over the Daily iframe's corners any more. Daily owns that
-              surface and changes it between versions; our controls live on our own chrome,
-              where they cannot be covered and cannot cover anything.
-            */}
-            <TouchableOpacity
-              style={s.iconBtn}
-              onPress={() => setVideoExpanded((v) => !v)}
-              activeOpacity={0.8}
-              testID="video-size-btn"
-              accessibilityLabel={videoExpanded ? "Show the whiteboard" : "Make the video bigger"}
-            >
-              <Feather name={videoExpanded ? "chevron-down" : "chevron-up"} size={15} color="#aaa" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={s.iconBtn}
-              onPress={toggleLandscape}
-              activeOpacity={0.8}
-              accessibilityLabel={isLandscape ? "Leave full screen" : "Full screen"}
-            >
-              <Feather name={isLandscape ? "minimize-2" : "maximize-2"} size={15} color="#aaa" />
-            </TouchableOpacity>
-            <View style={s.liveTag}>
-              <View style={[s.liveDot, { backgroundColor: connected ? "#fff" : "#ff0" }]} />
-              <Text style={s.liveText}>LIVE</Text>
-            </View>
-            <TouchableOpacity style={s.leaveBtn} onPress={leaveSession} activeOpacity={0.8}>
-              <Feather name="phone-off" size={15} color="#EF4444" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Teacher banner */}
-        <View style={s.teacherBanner}>
-          <View style={s.teacherAvatar}>
-            <Text style={s.teacherAvatarText}>{session?.teacherName?.[0]?.toUpperCase() ?? "T"}</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={s.teacherName}>{session?.teacherName ?? "Teacher"} is presenting</Text>
-            <Text style={s.enrolledText}>
-              {livePresenceCount > 0 ? `${livePresenceCount} in session` : "No one else here yet"}
-            </Text>
-          </View>
-          <View style={s.onlineRow}>
-            <View style={[s.onlineDot, { backgroundColor: connected ? "#22C55E" : "#F59E0B" }]} />
-            <Text style={[s.onlineText, { color: connected ? "#22C55E" : "#F59E0B" }]}>
-              {connected ? "Live" : "Connecting…"}
-            </Text>
-          </View>
-        </View>
-
-        {waitingForTeacher && (
-          <View style={s.waitingBar}>
-            <ActivityIndicator size="small" color="#FCD34D" />
-            <Text style={s.waitingText}>
-              Awaiting teacher to start the class. You're in the room — stay here and the class
-              will begin automatically.
-            </Text>
-          </View>
-        )}
-
-        {accessDenied && (
-          <View style={s.deniedBar}>
-            <Feather name="lock" size={15} color="#FCA5A5" />
-            <Text style={s.deniedText}>
-              You're not enrolled in this class, so the whiteboard and chat are unavailable. Enrol
-              from the session page to join.
-            </Text>
-          </View>
-        )}
-
-        {/* Mode tabs */}
-        <View style={s.modeSwitcher}>
-          {(showsOwnChatTab(Platform.OS) ? (["board", "chat"] as Mode[]) : ([] as Mode[])).map((m) => (
-            <TouchableOpacity key={m} style={[s.modeTab, mode === m && s.modeTabActive]} onPress={() => setMode(m)} activeOpacity={0.7}>
-              <Feather name={m === "board" ? "monitor" : "message-circle"} size={13} color={mode === m ? "#fff" : "#666"} />
-              <Text style={[s.modeText, mode === m && s.modeTextActive]}>
-                {m === "board" ? "Whiteboard" : `Chat${messages.length > 0 ? ` (${messages.length})` : ""}`}
+    <KeyboardAvoidingView
+      style={[s.container, { backgroundColor: colors.card }]}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
+      <View style={s.container}>
+        {/* Session context floats without becoming a touch-blocking header. */}
+        <View pointerEvents="box-none" style={s.headerLayer}>
+          <View
+            pointerEvents="none"
+            style={[
+              s.sessionPill,
+              elevation.card,
+              {
+                top: insets.top + space.xs,
+                left: space.md,
+                right: space.md,
+                gap: space.sm,
+                paddingHorizontal: space.md,
+                paddingVertical: space.xs,
+                borderRadius: radius.pill,
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <View style={s.sessionInfo}>
+              <Text
+                style={[t.caption, { color: colors.foreground }]}
+                numberOfLines={1}
+              >
+                {session?.topic ?? "Live session"}
               </Text>
-            </TouchableOpacity>
-          ))}
+              <Text
+                style={[t.overline, numeric, { color: colors.mutedForeground }]}
+              >
+                {session?.teacherName ?? "Teacher"} ·{" "}
+                {session?.subject ?? "Class"} · {fmt(elapsed)}
+              </Text>
+            </View>
+            {classIsLive ? (
+              <View
+                style={[
+                  s.liveTag,
+                  {
+                    gap: space.xxs,
+                    paddingHorizontal: space.xs,
+                    paddingVertical: space.xxs,
+                    borderRadius: radius.pill,
+                    backgroundColor: colors.brandSoft,
+                  },
+                ]}
+              >
+                <View style={[s.liveDot, { backgroundColor: colors.brand }]} />
+                <Text style={[t.overline, { color: colors.brand }]}>LIVE</Text>
+              </View>
+            ) : null}
+          </View>
         </View>
 
-        {/* Content area — unified flexbox: video feed confined on top, board/chat on bottom.
-            Video is persistently mounted so it never reconnects when switching tabs. */}
-        <View style={s.contentArea}>
-        {/* Video pane. Forced display:none (not just covered) while chatting — some mobile
-            browsers break the embedded call out into a native Picture-in-Picture window that
-            floats above all DOM content regardless of z-index, so removing it from layout
-            is the only reliable way to keep it from clashing with the chat tab. */}
-        <View style={[s.videoArea, videoExpanded && s.videoAreaExpanded, (mode === "chat" || boardExpanded) && s.videoAreaHidden]}>
-          {roomUrl ? (
-            <VideoCall
-              provider={videoProvider}
-              roomUrl={roomUrl}
-              token={meetingToken}
-              chatMessages={messages}
-              onSendChat={sendChat}
-              displayName={studentName}
-              style={StyleSheet.absoluteFill}
-              onLeft={handleDailyLeft}
-              watchUserName={session?.teacherName}
-              onWatchedParticipantLeft={notifyTeacherLeft}
+        {livePresenceCount > 0 ? (
+          <View
+            pointerEvents="none"
+            style={[
+              s.presence,
+              elevation.card,
+              {
+                top: pipTop,
+                left: space.md,
+                gap: space.xs,
+                paddingHorizontal: space.sm,
+                paddingVertical: space.xs,
+                borderRadius: radius.pill,
+                backgroundColor: colors.successSoft,
+                borderColor: colors.success,
+              },
+            ]}
+          >
+            <View style={[s.presenceDot, { backgroundColor: colors.online }]} />
+            <Text style={[t.caption, numeric, { color: colors.success }]}>
+              {livePresenceCount} in session
+            </Text>
+          </View>
+        ) : null}
+
+        <View
+          pointerEvents="box-none"
+          style={[
+            s.noticeLayer,
+            {
+              top: insets.top + space.huge + space.md,
+              left: space.md,
+              right: space.md,
+              gap: space.xs,
+            },
+          ]}
+        >
+          {waitingForTeacher ? (
+            <FloatingNotice
+              tone="warning"
+              icon="clock"
+              text="Awaiting your teacher. You're already in the room, and the class will begin automatically."
             />
-          ) : (
-            <View style={[StyleSheet.absoluteFill, s.permissionGate]}>
-              <ActivityIndicator color="#fff" />
-              <Text style={s.permissionGateText}>
-                {roomExpired ?? (roomError ? "Couldn't set up the video room." : "Setting up video room…")}
-              </Text>
-            </View>
-          )}
-
-          {/* Over the video, covering nothing that matters. See components/CallTimeNotice.tsx. */}
-          {timeLimit.overtime ? (
-            <CallTimeNotice kind="overtime" minutesLeft={0} />
-          ) : timeLimit.showWarning ? (
-            <CallTimeNotice kind="warning" minutesLeft={timeLimit.minutesLeft} onClose={timeLimit.dismissWarning} />
           ) : null}
 
-          {/*
-            The teacher has been gone five minutes. Said once, quietly, with the way out —
-            not as the dialog that used to fire the instant their video dropped.
-          */}
-          {alone.phase === "warned" && (
-            <AloneNotice waitingFor="teacher" minutesLeft={alone.minutesLeft} onLeave={leaveNow} />
-          )}
-        </View>
-        {!videoExpanded && (
-        <View style={s.boardWrap}>
-        {/* Board — live whiteboard from teacher */}
-        {/* The board appears when the class does.
-            A student who arrived early used to see the teacher's private preparation — notes
-            scribbled before the lesson, on a board the call still described as "waiting for
-            others". The board and the class now start together; the server wipes it as the
-            class goes live, so the lesson opens clean. */}
-        {mode === "board" && waitingForTeacher && (
-          <View style={[s.boardArea, s.boardWaiting]}>
-            <Feather name="clock" size={26} color="#888" />
-            <Text style={s.boardWaitingTitle}>The board opens when the class starts</Text>
-            <Text style={s.boardWaitingBody}>
-              You are in the room and your teacher can see you. Stay here — the whiteboard
-              appears the moment they begin.
-            </Text>
-          </View>
-        )}
-
-        {mode === "board" && !waitingForTeacher && (
-          <View style={s.boardArea}>
-            {/* Reading a teacher's working on a phone needs the screen. The call is collapsed
-                rather than left, so nothing has to be rejoined afterwards. */}
-            <TouchableOpacity
-              style={s.boardExpandBtn}
-              onPress={() => setBoardExpanded((v) => !v)}
-              activeOpacity={0.8}
-            >
-              <Feather name={boardExpanded ? "minimize-2" : "maximize-2"} size={13} color="#fff" />
-              <Text style={s.boardExpandText}>{boardExpanded ? "Show call" : "Full board"}</Text>
-            </TouchableOpacity>
-            {/* The teacher's board, read-only.
-                Students see the same Excalidraw scene the teacher is drawing on, rather than a
-                flattened picture of it, so panning and zooming to read something small is now
-                possible from a phone — which it was not when the board was a fixed SVG scaled
-                to fit the screen.
-
-                `viewport` is what makes that an advantage rather than a hazard: an infinite
-                canvas is easy to be lost on, so the board follows wherever the teacher is
-                looking until the student takes over by panning themselves. */}
-            <SmartBoard
-              key={id}
-              readOnly
-              sceneUpdates={sceneUpdates}
-              onConsumeUpdates={consumeSceneUpdates}
-              onSceneChange={noopSceneChange}
-              viewport={boardView}
-              clearedAt={boardClearedAt}
+          {accessDenied ? (
+            <FloatingNotice
+              tone="destructive"
+              icon="lock"
+              text="You're not enrolled in this class, so the whiteboard and chat are unavailable. Enrol from the session page to join."
             />
-          </View>
-        )}
+          ) : null}
 
-        {/* Chat — solid opaque background + high z-index so it fully covers the video pane
-            if a mobile browser forces the call into a floating window regardless. */}
-        {mode === "chat" && (
-          <View style={[s.flex, s.chatCover]}>
-            <ScrollView ref={scrollRef} style={s.flex} contentContainerStyle={s.chatContent} onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: false })}>
-              {messages.length === 0 && (
-                <Text style={s.emptyChat}>No messages yet. Send a question to the teacher!</Text>
-              )}
-              {messages.map((msg) => (
-                <View key={msg.id} style={[s.bubble, msg.isMe && s.bubbleMe]}>
-                  {!msg.isMe && <Text style={s.bubbleSender}>{msg.senderName}</Text>}
-                  <View style={[s.bubbleBody, { backgroundColor: msg.isMe ? "#C41E3A" : msg.role === "teacher" ? "#1A365D" : "#1E1E1E" }]}>
-                    <Text style={s.bubbleText}>{msg.text}</Text>
+          {timeLimit.overtime ? (
+            <FloatingNotice
+              tone="destructive"
+              icon="alert-octagon"
+              text="This class has run past its finish time. The call is ending now."
+            />
+          ) : timeLimit.showWarning ? (
+            <FloatingNotice
+              tone="warning"
+              icon="clock"
+              text={`${timeLimit.minutesLeft} minute${timeLimit.minutesLeft === 1 ? "" : "s"} left in this class.`}
+              onClose={timeLimit.dismissWarning}
+            />
+          ) : null}
+
+          {alone.phase === "warned" ? (
+            <FloatingNotice
+              tone="warning"
+              icon="user-x"
+              text={aloneMessage("teacher", alone.minutesLeft)}
+              actionLabel="Leave"
+              onAction={leaveNow}
+            />
+          ) : null}
+        </View>
+
+        {/* Only this visible capsule captures touches; its carrier stays transparent. */}
+        <View
+          pointerEvents="box-none"
+          style={[s.hudLayer, { bottom: insets.bottom + space.sm }]}
+        >
+          <View
+            pointerEvents="auto"
+            style={[
+              s.hud,
+              elevation.sheet,
+              {
+                gap: space.xxs,
+                padding: space.xs,
+                borderRadius: radius.pill,
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={[
+                s.hudButton,
+                {
+                  width: HIT_SLOP_MIN,
+                  height: HIT_SLOP_MIN,
+                  borderRadius: radius.pill,
+                  backgroundColor:
+                    mode === "board" ? colors.actionSoft : colors.card,
+                },
+              ]}
+              onPress={() => setMode("board")}
+              activeOpacity={0.75}
+              accessibilityLabel="View class materials"
+            >
+              <Feather
+                name="book-open"
+                size={18}
+                color={
+                  mode === "board" ? colors.primary : colors.mutedForeground
+                }
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                s.hudButton,
+                {
+                  width: HIT_SLOP_MIN,
+                  height: HIT_SLOP_MIN,
+                  borderRadius: radius.pill,
+                  backgroundColor: boardExpanded
+                    ? colors.muted
+                    : colors.actionSoft,
+                },
+              ]}
+              onPress={() => setBoardExpanded((hidden) => !hidden)}
+              activeOpacity={0.75}
+              accessibilityLabel={
+                boardExpanded ? "Show teacher video" : "Hide teacher video"
+              }
+              testID="video-size-btn"
+            >
+              <Feather
+                name={boardExpanded ? "video-off" : "video"}
+                size={18}
+                color={boardExpanded ? colors.mutedForeground : colors.primary}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                s.hudButton,
+                {
+                  width: HIT_SLOP_MIN,
+                  height: HIT_SLOP_MIN,
+                  borderRadius: radius.pill,
+                  backgroundColor:
+                    mode === "chat" ? colors.actionSoft : colors.card,
+                },
+              ]}
+              onPress={() =>
+                setMode((current) => (current === "chat" ? "board" : "chat"))
+              }
+              activeOpacity={0.75}
+              accessibilityLabel={
+                mode === "chat" ? "Close class chat" : "Open class chat"
+              }
+            >
+              <Feather
+                name="message-circle"
+                size={18}
+                color={
+                  mode === "chat" ? colors.primary : colors.mutedForeground
+                }
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                s.hudButton,
+                {
+                  width: HIT_SLOP_MIN,
+                  height: HIT_SLOP_MIN,
+                  borderRadius: radius.pill,
+                  backgroundColor: colors.card,
+                },
+              ]}
+              onPress={toggleLandscape}
+              activeOpacity={0.75}
+              accessibilityLabel={
+                isLandscape ? "Leave full screen" : "Full screen"
+              }
+            >
+              <Feather
+                name={isLandscape ? "minimize-2" : "maximize-2"}
+                size={18}
+                color={colors.mutedForeground}
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                s.hudButton,
+                {
+                  width: HIT_SLOP_MIN,
+                  height: HIT_SLOP_MIN,
+                  borderRadius: radius.pill,
+                  backgroundColor: colors.card,
+                  borderColor: colors.destructive,
+                  borderWidth: 1,
+                },
+              ]}
+              onPress={leaveSession}
+              activeOpacity={0.75}
+              accessibilityLabel="Leave session"
+            >
+              <Feather name="log-out" size={18} color={colors.destructive} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* The board owns the stage; the teacher's feed stays mounted in a draggable PIP. */}
+        <View style={s.contentArea}>
+          <Animated.View
+            pointerEvents={boardExpanded || mode === "chat" ? "none" : "auto"}
+            style={[
+              s.videoArea,
+              elevation.sheet,
+              {
+                top: pipTop,
+                left: pipBaseLeft,
+                width: pipWidth,
+                height: pipHeight,
+                borderRadius: radius.md,
+                backgroundColor: colors.secondary,
+                borderColor: colors.lineStrong,
+                transform: pipDrag.getTranslateTransform(),
+              },
+              (mode === "chat" || boardExpanded) && s.videoAreaHidden,
+            ]}
+          >
+            {roomUrl ? (
+              <VideoCall
+                provider={videoProvider}
+                roomUrl={roomUrl}
+                token={meetingToken}
+                displayName={studentName}
+                style={StyleSheet.absoluteFill}
+                onLeft={handleDailyLeft}
+                watchUserName={session?.teacherName}
+                onWatchedParticipantLeft={notifyTeacherLeft}
+              />
+            ) : (
+              <View
+                style={[
+                  StyleSheet.absoluteFill,
+                  s.permissionGate,
+                  { gap: space.sm, paddingHorizontal: space.xl },
+                ]}
+              >
+                <ActivityIndicator color={colors.onInverse} />
+                <Text
+                  style={[
+                    t.caption,
+                    { color: colors.onInverseMuted, textAlign: "center" },
+                  ]}
+                >
+                  {roomExpired ??
+                    (roomError
+                      ? "Couldn't set up the video room."
+                      : "Setting up video room…")}
+                </Text>
+              </View>
+            )}
+            <View
+              {...pipPanResponder.panHandlers}
+              style={s.pipGripHit}
+              accessibilityRole="adjustable"
+              accessibilityLabel="Drag teacher video window"
+            >
+              <View
+                style={[s.pipGrip, { backgroundColor: colors.onInverseMuted }]}
+              />
+            </View>
+          </Animated.View>
+
+          <View style={s.boardWrap}>
+            {waitingForTeacher ? (
+              <View
+                style={[
+                  s.boardArea,
+                  s.boardWaiting,
+                  {
+                    gap: space.sm,
+                    paddingHorizontal: space.xxl,
+                    backgroundColor: colors.background,
+                  },
+                ]}
+              >
+                <Feather
+                  name="clock"
+                  size={26}
+                  color={colors.mutedForeground}
+                />
+                <Text
+                  style={[
+                    t.title3,
+                    { color: colors.foreground, textAlign: "center" },
+                  ]}
+                >
+                  The board opens when the class starts
+                </Text>
+                <Text
+                  style={[
+                    t.callout,
+                    {
+                      color: colors.mutedForeground,
+                      textAlign: "center",
+                      maxWidth: space.huge * 9,
+                    },
+                  ]}
+                >
+                  You are in the room and your teacher can see you. Stay here —
+                  the whiteboard appears the moment they begin.
+                </Text>
+              </View>
+            ) : (
+              <View style={s.boardArea}>
+                {/* Students receive the teacher's Excalidraw scene and materials here. This
+                    remains read-only, and stays mounted while chat slides over it. */}
+                <SmartBoard
+                  key={id}
+                  readOnly
+                  sceneUpdates={sceneUpdates}
+                  onConsumeUpdates={consumeSceneUpdates}
+                  onSceneChange={noopSceneChange}
+                  viewport={boardView}
+                  clearedAt={boardClearedAt}
+                />
+              </View>
+            )}
+
+            {/* This carrier is inert while closed; only the scrim and sheet capture touches. */}
+            <View
+              pointerEvents={mode === "chat" ? "auto" : "none"}
+              style={s.chatLayer}
+            >
+              <Animated.View
+                style={[
+                  StyleSheet.absoluteFill,
+                  { opacity: chatProgress, backgroundColor: colors.scrim },
+                ]}
+              >
+                <TouchableOpacity
+                  style={StyleSheet.absoluteFill}
+                  activeOpacity={1}
+                  onPress={() => setMode("board")}
+                  accessibilityLabel="Close class chat"
+                />
+              </Animated.View>
+
+              <Animated.View
+                pointerEvents="auto"
+                style={[
+                  s.chatCover,
+                  elevation.modal,
+                  {
+                    height: isCompact ? "64%" : "56%",
+                    maxWidth: space.huge * 12,
+                    borderTopLeftRadius: radius.lg,
+                    borderTopRightRadius: radius.lg,
+                    backgroundColor: colors.card,
+                    borderColor: colors.border,
+                    transform: [
+                      {
+                        translateY: chatProgress.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [height, 0],
+                        }),
+                      },
+                    ],
+                  },
+                ]}
+              >
+                <View
+                  style={[
+                    s.chatHeader,
+                    {
+                      minHeight: HIT_SLOP_MIN,
+                      paddingLeft: space.md,
+                      paddingRight: space.xxs,
+                      borderBottomColor: colors.border,
+                    },
+                  ]}
+                >
+                  <View style={s.sessionInfo}>
+                    <Text style={[t.title3, { color: colors.foreground }]}>
+                      Class chat
+                    </Text>
+                    <Text
+                      style={[t.caption, { color: colors.mutedForeground }]}
+                    >
+                      {messages.length === 0
+                        ? "No messages yet"
+                        : `${messages.length} ${messages.length === 1 ? "message" : "messages"}`}
+                    </Text>
                   </View>
-                  <Text style={s.bubbleTime}>{msg.time}</Text>
+                  <TouchableOpacity
+                    style={[
+                      s.chatClose,
+                      { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN },
+                    ]}
+                    onPress={() => setMode("board")}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Close class chat"
+                  >
+                    <Feather
+                      name="x"
+                      size={20}
+                      color={colors.mutedForeground}
+                    />
+                  </TouchableOpacity>
                 </View>
-              ))}
-            </ScrollView>
-            <View style={[s.inputRow, { paddingBottom: insets.bottom + 8 }]}>
-              <TextInput style={s.input} value={chatMsg} onChangeText={setChatMsg} placeholder="Ask the teacher…" placeholderTextColor="#555" onSubmitEditing={sendMessage} returnKeyType="send" />
-              <TouchableOpacity style={s.sendBtn} onPress={sendMessage} activeOpacity={0.8}>
-                <Feather name="send" size={15} color="#fff" />
-              </TouchableOpacity>
+
+                <ScrollView
+                  ref={scrollRef}
+                  style={s.flex}
+                  contentContainerStyle={[
+                    s.chatMessages,
+                    { gap: space.sm, padding: space.md },
+                  ]}
+                  keyboardShouldPersistTaps="handled"
+                  onContentSizeChange={() =>
+                    scrollRef.current?.scrollToEnd({ animated: false })
+                  }
+                >
+                  {messages.length === 0 ? (
+                    <Text
+                      style={[
+                        t.callout,
+                        {
+                          color: colors.mutedForeground,
+                          textAlign: "center",
+                          marginTop: space.xxxl,
+                        },
+                      ]}
+                    >
+                      No messages yet. Ask your teacher a question here.
+                    </Text>
+                  ) : null}
+                  {messages.map((msg) => (
+                    <View
+                      key={msg.id}
+                      style={[s.chatBubble, msg.isMe && s.chatBubbleMe]}
+                    >
+                      {!msg.isMe ? (
+                        <Text
+                          style={[
+                            t.overline,
+                            { color: colors.mutedForeground },
+                          ]}
+                        >
+                          {msg.senderName}
+                        </Text>
+                      ) : null}
+                      <View
+                        style={[
+                          s.bubbleContent,
+                          {
+                            paddingHorizontal: space.sm,
+                            paddingVertical: space.xs,
+                            borderRadius: radius.md,
+                            backgroundColor: msg.isMe
+                              ? colors.primary
+                              : colors.muted,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            t.body,
+                            {
+                              color: msg.isMe
+                                ? colors.primaryForeground
+                                : colors.foreground,
+                            },
+                          ]}
+                        >
+                          {msg.text}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          t.overline,
+                          numeric,
+                          { color: colors.inkFaint },
+                        ]}
+                      >
+                        {msg.time}
+                      </Text>
+                    </View>
+                  ))}
+                </ScrollView>
+
+                <View
+                  style={[
+                    s.chatInputRow,
+                    {
+                      gap: space.xs,
+                      paddingHorizontal: space.md,
+                      paddingTop: space.xs,
+                      paddingBottom: insets.bottom + space.xs,
+                      borderTopColor: colors.border,
+                    },
+                  ]}
+                >
+                  <TextInput
+                    style={[
+                      t.body,
+                      s.chatInputField,
+                      {
+                        minHeight: HIT_SLOP_MIN,
+                        paddingHorizontal: space.md,
+                        borderRadius: radius.pill,
+                        color: colors.foreground,
+                        backgroundColor: colors.muted,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                    value={chatMsg}
+                    onChangeText={setChatMsg}
+                    placeholder="Ask the teacher…"
+                    placeholderTextColor={colors.inkFaint}
+                    onSubmitEditing={sendMessage}
+                    returnKeyType="send"
+                    testID="chat-input"
+                  />
+                  <TouchableOpacity
+                    style={[
+                      s.sendBtn,
+                      {
+                        width: HIT_SLOP_MIN,
+                        height: HIT_SLOP_MIN,
+                        borderRadius: radius.pill,
+                        backgroundColor: colors.primary,
+                      },
+                    ]}
+                    onPress={sendMessage}
+                    activeOpacity={0.8}
+                    accessibilityLabel="Send message"
+                  >
+                    <Feather
+                      name="send"
+                      size={18}
+                      color={colors.primaryForeground}
+                    />
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
             </View>
           </View>
-        )}
         </View>
-        )}
-        </View>
-
       </View>
     </KeyboardAvoidingView>
   );
@@ -496,67 +1159,100 @@ export default function StudentClassroom() {
 const s = StyleSheet.create({
   container: { flex: 1 },
   flex: { flex: 1 },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 14, paddingVertical: 12 },
-  headerInfo: { flex: 1, marginRight: 10 },
-  sessionTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  sessionSub: { fontSize: 11, fontFamily: "Inter_400Regular", color: "#888", marginTop: 2 },
-  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
-  iconBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
-  liveTag: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "#C41E3A", borderRadius: 20, paddingHorizontal: 9, paddingVertical: 4 },
-  liveDot: { width: 6, height: 6, borderRadius: 3 },
-  liveText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff" },
-  leaveBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#1A1A1A", justifyContent: "center", alignItems: "center" },
-  waitingBar: { flexDirection: "row", alignItems: "center", gap: 9, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: "#3A2E0B", borderBottomWidth: 1, borderBottomColor: "#5A470F" },
-  waitingText: { flex: 1, color: "#FCD34D", fontSize: 12, lineHeight: 17 },
-  teacherBanner: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingVertical: 9, backgroundColor: "#111" },
-  teacherAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#1A365D", justifyContent: "center", alignItems: "center" },
-  teacherAvatarText: { fontSize: 14, fontFamily: "Inter_700Bold", color: "#fff" },
-  teacherName: { fontSize: 13, fontFamily: "Inter_500Medium", color: "#ddd" },
-  enrolledText: { fontSize: 11, fontFamily: "Inter_400Regular", color: "#666", marginTop: 2 },
-  onlineRow: { flexDirection: "row", alignItems: "center", gap: 5 },
-  onlineDot: { width: 8, height: 8, borderRadius: 4 },
-  onlineText: { fontSize: 11, fontFamily: "Inter_500Medium" },
-  deniedBar: { flexDirection: "row", alignItems: "center", gap: 9, marginHorizontal: 14, marginTop: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, backgroundColor: "#2A1416", borderWidth: 1, borderColor: "#7F1D1D" },
-  deniedText: { flex: 1, fontSize: 12, fontFamily: "Inter_400Regular", color: "#FCA5A5", lineHeight: 17 },
-  modeSwitcher: { flexDirection: "row", paddingHorizontal: 14, paddingVertical: 8, gap: 8 },
-  modeTab: { flexDirection: "row", alignItems: "center", gap: 5, borderRadius: 20, paddingHorizontal: 13, paddingVertical: 7, backgroundColor: "#1A1A1A" },
-  modeTabActive: { backgroundColor: "#2A2A2A" },
-  modeText: { fontSize: 12, fontFamily: "Inter_500Medium", color: "#666" },
-  modeTextActive: { color: "#fff" },
-  boardArea: { flex: 1, marginHorizontal: 12, marginBottom: 12, borderRadius: 14, backgroundColor: "#fff", overflow: "hidden" },
-  boardExpandBtn: {
-    position: "absolute", top: 8, right: 8, zIndex: 60,
-    flexDirection: "row", alignItems: "center", gap: 5,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14,
-    backgroundColor: "rgba(0,0,0,0.65)",
+  noticeCard: {
+    width: "100%",
+    maxWidth: 640,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
   },
-  boardExpandText: { fontSize: 11, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  boardWaiting: { alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 28, backgroundColor: "#141414" },
-  boardWaitingTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#DDD", textAlign: "center" },
-  boardWaitingBody: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#888", textAlign: "center", lineHeight: 19 },
-  boardEmpty: { flex: 1, justifyContent: "center", alignItems: "center", padding: 30, gap: 12 },
-  boardEmptyTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold", color: "#222", textAlign: "center" },
-  boardEmptySub: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#777", textAlign: "center", lineHeight: 20 },
-  chatContent: { padding: 14, gap: 10 },
-  emptyChat: { textAlign: "center", color: "#555", fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 40 },
-  bubble: { maxWidth: "80%", gap: 3 },
-  bubbleMe: { alignSelf: "flex-end", alignItems: "flex-end" },
-  bubbleSender: { fontSize: 11, fontFamily: "Inter_500Medium", color: "#666", marginLeft: 4 },
-  bubbleBody: { borderRadius: 14, paddingHorizontal: 13, paddingVertical: 9 },
-  bubbleText: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#fff" },
-  bubbleTime: { fontSize: 10, fontFamily: "Inter_400Regular", color: "#555" },
-  inputRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 14, paddingTop: 8, borderTopWidth: 1, borderTopColor: "#1A1A1A" },
-  input: { flex: 1, backgroundColor: "#1A1A1A", borderRadius: 24, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, fontFamily: "Inter_400Regular", color: "#fff" },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#C41E3A", justifyContent: "center", alignItems: "center" },
-  contentArea: { flex: 1, flexDirection: "column" },
+  noticeText: { flex: 1 },
+  noticeAction: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  noticeClose: { alignItems: "center", justifyContent: "center" },
+  headerLayer: { ...StyleSheet.absoluteFillObject, zIndex: 70 },
+  sessionPill: {
+    position: "absolute",
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+  },
+  sessionInfo: { flex: 1 },
+  liveTag: { flexDirection: "row", alignItems: "center" },
+  liveDot: { width: 8, height: 8, borderRadius: 4 },
+  presence: {
+    position: "absolute",
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    zIndex: 72,
+  },
+  presenceDot: { width: 8, height: 8, borderRadius: 4 },
+  noticeLayer: { position: "absolute", alignItems: "center", zIndex: 120 },
+  hudLayer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 100,
+  },
+  hud: { flexDirection: "row", alignItems: "center", borderWidth: 1 },
+  hudButton: { alignItems: "center", justifyContent: "center" },
+  contentArea: { flex: 1, position: "relative" },
   videoArea: {
-    flex: 1, backgroundColor: "#000", position: "relative",
-    overflow: "hidden", borderBottomWidth: 1, borderBottomColor: "#1A1A1A",
+    position: "absolute",
+    overflow: "hidden",
+    borderWidth: 1,
+    zIndex: 60,
   },
-  videoAreaExpanded: { flex: 1 },
   videoAreaHidden: { display: "none" },
-  permissionGate: { alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
-  permissionGateText: { color: "#ccc", fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
+  pipGripHit: {
+    position: "absolute",
+    top: 0,
+    left: "35%",
+    right: "35%",
+    minHeight: HIT_SLOP_MIN,
+    alignItems: "center",
+    justifyContent: "flex-start",
+    zIndex: 2,
+  },
+  pipGrip: {
+    marginTop: 4,
+    alignSelf: "center",
+    width: 32,
+    height: 4,
+    borderRadius: 2,
+  },
+  permissionGate: { alignItems: "center", justifyContent: "center" },
   boardWrap: { flex: 1, overflow: "hidden" },
-  chatCover: { backgroundColor: "#0A0A0A", zIndex: 9999, position: "relative" },
+  boardArea: { flex: 1, overflow: "hidden" },
+  boardWaiting: { alignItems: "center", justifyContent: "center" },
+  chatLayer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "flex-end",
+    alignItems: "center",
+    zIndex: 200,
+  },
+  chatCover: {
+    width: "100%",
+    alignSelf: "center",
+    overflow: "hidden",
+    borderTopWidth: 1,
+  },
+  chatHeader: { flexDirection: "row", alignItems: "center" },
+  chatClose: { alignItems: "center", justifyContent: "center" },
+  chatMessages: { flexGrow: 1 },
+  chatBubble: { gap: 3, maxWidth: "80%" },
+  chatBubbleMe: { alignSelf: "flex-end", alignItems: "flex-end" },
+  bubbleContent: {},
+  chatInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderTopWidth: 1,
+  },
+  chatInputField: { flex: 1, borderWidth: 1, outlineStyle: "none" } as object,
+  sendBtn: { justifyContent: "center", alignItems: "center" },
 });
