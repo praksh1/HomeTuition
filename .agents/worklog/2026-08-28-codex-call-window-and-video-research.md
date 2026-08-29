@@ -6,6 +6,11 @@
 - Base commit: `adda852`
 - Status: complete (owner's cross-device touch verification still required)
 
+> **Production follow-up, 2026-08-29:** The statement below that production was not deployed was
+> accurate when this task ended. The owner subsequently authorized the real release. Production
+> deployment and verification are recorded in
+> [`2026-08-29-codex-production-release.md`](./2026-08-29-codex-production-release.md).
+
 ## Requested
 
 - Fix the current Daily call window before making unrelated application changes.

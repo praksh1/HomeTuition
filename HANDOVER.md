@@ -177,6 +177,13 @@ What breaks one is handing it a device-local `file://` path instead of the file'
 | Database | Neon Postgres |
 | Files | Cloudflare R2 |
 
+**Production release state (2026-08-29):** The site was explicitly deployed from branch
+`claude/excalidraw-whiteboard-sync-gjoqaz` at commit `13c4d3a`. It includes the approved teacher
+and student classroom call-window redesign (Hidden/Small/Medium/Full), the preceding edge-to-edge
+classroom and chat work, and all other frontend changes already committed on that branch. Daily
+remains active. Full build/deployment evidence and the deliberately untouched areas are in
+`.agents/worklog/2026-08-29-codex-production-release.md`.
+
 ### The two rules that must not be broken
 
 **1. Access control lives in one place.** `artifacts/api-server/src/lib/membership.ts` answers

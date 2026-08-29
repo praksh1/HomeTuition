@@ -100,6 +100,10 @@ Baseline has fallen from **468 hex / 595 sizes** to **223 / 429**.
 
 ## Loose ends this work created or uncovered
 
+- **The welcome screen has unverified hardcoded scale claims.** `app/welcome.tsx` says `5,000+
+  Teachers`, `50,000+ Students`, and `77 Districts`. The production smoke check on 2026-08-29
+  exposed them. Verify each against real data or remove them; do not replace them with another
+  invented number.
 - **`is_online` is dead.** No screen sets it. Either wire presence to the classroom socket, or
   drop the column. Right now it is dead weight that already produced one broken filter.
 - **The app duplicates the tier price table** in `app/(teacher)/subscription.tsx` while the
