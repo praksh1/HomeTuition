@@ -43,7 +43,15 @@ const stamp = Date.now();
 const teacher = (await api("/auth/register", { method: "POST", body: {
   name: "Gita Poudel", email: `flt_t_${stamp}@example.com`, password: "password123", role: "teacher", subject: "Maths", bio: "x",
 } })).body;
-sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
+/*
+ * This screen-crowding fixture deliberately needs seventeen single classes. Put only this
+ * synthetic teacher on the real 30-class tier so the test measures filtering rather than the
+ * independently verified Base-plan limit.
+ */
+sql(`update teacher_profiles
+     set approval_status = 'approved', subscription_tier = 'tier4',
+         max_sessions_per_month = 30, subscription_active = true
+     where user_id = ${teacher.user.id}`);
 
 const soon = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
 const make = (topic) => api("/sessions", { method: "POST", token: teacher.token, body: {

@@ -191,3 +191,10 @@ that already has the documented local Postgres/API test stack.
   timed out. Stable `testID` passthroughs were restored on both teacher and student floating
   notices, including warning, close, and overtime identifiers. No layout, clock, or call behavior
   changed.
+- The warning identifiers were committed as `7081541` and merged through PR #8 as
+  `b1c2ac911ab55ded5c3263f8d997c6db78b2cea2`. The browser classroom suite then passed and the
+  workflow reached the Sessions-filter browser suite. That older crowding fixture deliberately
+  seeds 17 single classes under one teacher, so it hit the same Base-plan ceiling and then tried
+  to update the missing 11th row as `id = undefined`. Only that synthetic teacher now uses the
+  genuine Tier 4 allowance. The crowded-screen scenario, application filtering, and production
+  tier rules are unchanged.
