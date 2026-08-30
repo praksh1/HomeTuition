@@ -111,11 +111,23 @@ function ageChanges(teacherId) {
   sql(`update schedule_changes set changed_at = changed_at - interval '70 days' where teacher_id = ${teacherId}`);
 }
 
+/**
+ * Each reliability scenario deliberately creates twenty classes for one synthetic teacher.
+ * Put only that fixture on the real 30-class tier so the test measures notification delivery,
+ * not the independently tested Base-plan session limit.
+ */
+function giveAlertFixtureEnoughClasses(teacherId) {
+  sql(`update teacher_profiles
+       set subscription_tier = 'tier4', max_sessions_per_month = 30, subscription_active = true
+       where user_id = ${teacherId}`);
+}
+
 async function run() {
   console.log(`\nA class moves: does every student hear about it? (${ROUNDS} rounds)\n`);
 
   {
     const teacher = await register("teacher", "Moving Mohan");
+    giveAlertFixtureEnoughClasses(teacher.user.id);
     const students = [];
     for (let i = 0; i < 3; i += 1) students.push(await register("student", `Listener ${i}`));
 
@@ -173,6 +185,7 @@ async function run() {
 
   {
     const teacher = await register("teacher", "Told Tara");
+    giveAlertFixtureEnoughClasses(teacher.user.id);
     const student = await register("student", "Leaving Leela");
     const socket = listen(teacher.token);
     await socket.open();
@@ -205,6 +218,7 @@ async function run() {
 
   {
     const teacher = await register("teacher", "Paid Pranav");
+    giveAlertFixtureEnoughClasses(teacher.user.id);
     const student = await register("student", "Paying Priya");
     const socket = listen(teacher.token);
     await socket.open();
@@ -230,6 +244,7 @@ async function run() {
 
   {
     const teacher = await register("teacher", "Cancelling Chetan");
+    giveAlertFixtureEnoughClasses(teacher.user.id);
     const students = [];
     for (let i = 0; i < 3; i += 1) students.push(await register("student", `Cancelled ${i}`));
     const sockets = students.map((s) => listen(s.token));

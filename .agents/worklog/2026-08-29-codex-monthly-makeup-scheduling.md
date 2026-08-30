@@ -177,4 +177,9 @@ that already has the documented local Postgres/API test stack.
   reused one Base-plan teacher for 24 independent classes, so the 11th setup class correctly hit
   the newer 10-class Base limit. The refund assertions before that point passed. The test fixture
   now uses the genuine Tier 4 30-class allowance; no tier rule, production code, or price was
-  weakened. The follow-up commit, merge, and final workflow result are recorded below when known.
+  weakened. That correction was committed as `28cd94f`, merged through PR #6 as
+  `1db202303f149f6629a065013d91975409bc25f5`, and the formerly failing refund stage passed.
+- The rerun then revealed the same isolation problem in the next legacy suite: each of four alert
+  reliability scenarios intentionally creates 20 classes for one teacher. Those four synthetic
+  teachers now use the genuine Tier 4 allowance as well. The change is confined to
+  `scripts/alert-tests/run.mjs`; alert delivery and product tier enforcement are unchanged.
