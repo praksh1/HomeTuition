@@ -61,6 +61,8 @@ interface FloatingNoticeProps {
   tone: NoticeTone;
   icon: keyof typeof Feather.glyphMap;
   text: string;
+  testID?: string;
+  closeTestID?: string;
   actionLabel?: string;
   onAction?: () => void;
   onClose?: () => void;
@@ -71,6 +73,8 @@ function FloatingNotice({
   tone,
   icon,
   text,
+  testID,
+  closeTestID,
   actionLabel,
   onAction,
   onClose,
@@ -93,6 +97,7 @@ function FloatingNotice({
 
   return (
     <Animated.View
+      testID={testID}
       pointerEvents="auto"
       style={[
         s.noticeCard,
@@ -131,6 +136,7 @@ function FloatingNotice({
       ) : null}
       {onClose ? (
         <TouchableOpacity
+          testID={closeTestID}
           style={[s.noticeClose, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN }]}
           onPress={onClose}
           activeOpacity={0.7}
@@ -744,12 +750,15 @@ export default function StudentClassroom() {
 
           {timeLimit.overtime ? (
             <FloatingNotice
+              testID="call-overtime-notice"
               tone="destructive"
               icon="alert-octagon"
               text="This class has run past its finish time. The call is ending now."
             />
           ) : timeLimit.showWarning ? (
             <FloatingNotice
+              testID="call-warning-notice"
+              closeTestID="call-warning-close"
               tone="warning"
               icon="clock"
               text={`${timeLimit.minutesLeft} minute${timeLimit.minutesLeft === 1 ? "" : "s"} left in this class.`}

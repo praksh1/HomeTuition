@@ -183,3 +183,11 @@ that already has the documented local Postgres/API test stack.
   reliability scenarios intentionally creates 20 classes for one teacher. Those four synthetic
   teachers now use the genuine Tier 4 allowance as well. The change is confined to
   `scripts/alert-tests/run.mjs`; alert delivery and product tier enforcement are unchanged.
+- That alert correction was committed as `55d104c` and merged through PR #7 as
+  `aaa1c578f1a9647d42b7e5cdf767c0deccf4a52d`. Both the refund and alert integration stages then
+  passed. The browser classroom suite next exposed that the earlier floating-notice redesign had
+  dropped the stable identifiers for the near-finish banner and its close control. The visible
+  control and behavior still existed, but automated verification could no longer address it and
+  timed out. Stable `testID` passthroughs were restored on both teacher and student floating
+  notices, including warning, close, and overtime identifiers. No layout, clock, or call behavior
+  changed.
