@@ -94,10 +94,22 @@ function ageChanges(teacherId) {
   sql(`update schedule_changes set changed_at = changed_at - interval '70 days' where teacher_id = ${teacherId}`);
 }
 
+/**
+ * This suite creates many independent refund scenarios with one teacher. Give that fixture the
+ * real Tier 4 allowance so the session-limit rule does not stop unrelated refund setup. Tier
+ * enforcement has its own dedicated suite; the product's Base limit remains unchanged.
+ */
+function giveRefundFixtureEnoughClasses(teacherId) {
+  sql(`update teacher_profiles
+       set subscription_tier = 'tier4', max_sessions_per_month = 30, subscription_active = true
+       where user_id = ${teacherId}`);
+}
+
 async function run() {
   console.log("\nMoving a class\n");
 
   const teacher = await register("teacher", "Ram Prasad");
+  giveRefundFixtureEnoughClasses(teacher.user.id);
   const student = await register("student", "Sita Sharma");
   const other = await register("student", "Bikash Thapa");
   const stranger = await register("teacher", "Someone Else");
