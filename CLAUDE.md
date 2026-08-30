@@ -16,6 +16,18 @@ has happened and wasted the owner's time.
 When the owner decides something, **write it to a note and add it to the index in the same
 change.** A decision that lives only in a chat has already been lost.
 
+**Every task also gets a cross-agent work log in `.agents/worklog/`.** The owner moves between
+Claude Code and Codex, so chat history is not a handover. Before finishing or handing off, record
+what was requested, what changed, what was deliberately not changed, verification actually run,
+anything that failed or behaved unexpectedly, and the exact next step. Follow the format in
+`.agents/worklog/README.md`; update the entry as the work changes rather than writing a polished
+success story after the fact.
+
+**`HANDOVER.md` is the whole project in one document** — what it is, what is built, what is
+not, the pricing rules, and the questions still open for the owner. Written for somebody
+arriving cold, including a second AI working alongside this one. It carries no instructions of
+its own; the authority is still this file and the memory index.
+
 ---
 
 ## What it is

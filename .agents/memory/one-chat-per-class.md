@@ -1,7 +1,24 @@
 ---
-name: Daily's chat is on for web, and the app's own chat is off — the split is now a known, accepted cost
-description: `enable_chat: true` in daily.ts was the owner's decision after testing on a phone. It buys a usable call and costs one thing: an installed app and a browser in the same class have two conversations that cannot see each other.
+name: One classroom chat on every platform; Daily chat and Daily PIP are off
+description: The classroom WebSocket slide-over is the only chat. Daily room properties enforce enable_chat false and enable_pip_ui false so browser and installed-app users share one conversation and one app-owned draggable PIP.
 ---
+
+## Current owner decision — 2026-08-27
+
+The classroom's slide-over WebSocket chat is the only chat on web, iOS and Android. Daily
+Prebuilt's internal chat is explicitly disabled. Daily's own PIP UI is also explicitly disabled
+because both classroom screens already provide one draggable video container.
+
+This supersedes every historical state described below. It is enforced by
+`artifacts/api-server/src/lib/dailyRoom.ts` (`enable_chat: false`, `enable_pip_ui: false`, including
+repairs for existing rooms), `artifacts/sikshya/components/DailyEmbed.web.tsx`
+(`showFullscreenButton: false`), and `artifacts/sikshya/utils/classroomChat.ts` (the app chat is
+shown on every platform).
+
+The old experiment is retained below only as history, not as instruction. The edge-to-edge
+classrooms now provide a closable slide-over, so the original reason for temporarily using Daily
+chat no longer applies. Test with one browser and one phone: both must use the same classroom
+conversation, with no Daily chat panel and only one app-owned draggable PIP.
 
 **This entry was reversed on 2026-08-21, deliberately.** It used to say Daily's chat must stay
 off. The owner then used the app's own in-call chat on a phone, found it took over the screen

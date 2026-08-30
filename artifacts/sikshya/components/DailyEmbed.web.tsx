@@ -60,14 +60,13 @@ const CHAT_STRIP_PX = 38;
 /**
  * Whether the app draws its own chat over the call.
  *
- * Off, at the owner's decision after using it on a phone: the panel took over the screen and
- * could not be closed again, which on a small screen makes the call itself unusable. Daily's
- * own chat is enabled on the room instead (see api-server/src/lib/daily.ts) — it comes with
- * the call and is built for that space.
+ * Off because the classroom now owns the slide-over chat. Rendering another panel here would
+ * duplicate the same socket conversation inside the already-small PIP. Daily's own unrelated
+ * chat is disabled at the room level too, so every platform has one conversation.
  *
  * Turned off rather than deleted, deliberately and at the owner's request: the day this
- * project moves off Daily, this panel is what a call would need, and it works — its faults
- * were in how much room it took, not in what it did. The tests in
+ * project moves off Daily, this panel is what a standalone call would need, and it works — its
+ * faults were in how much room it took, not in what it did. The tests in
  * scripts/call-chat-tests still drive it, so it cannot rot while it waits.
  */
 const IN_CALL_CHAT_ENABLED = false;
@@ -259,7 +258,9 @@ export default function DailyEmbed({
            * is the one that means what a teacher thinks it means.
            */
           showLeaveButton: false,
-          showFullscreenButton: true,
+          // The classroom already owns the only floating video window. Daily's fullscreen /
+          // pop-out control would create a second competing PIP from inside that PIP.
+          showFullscreenButton: false,
         });
 
         _activeFrame = callFrame;

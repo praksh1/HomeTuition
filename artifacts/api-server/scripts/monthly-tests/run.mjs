@@ -951,19 +951,40 @@ async function makeupTests() {
   const standingNow = await api("/monthly/plan", { token: teacher.token });
   check("so it is not a black mark either", standingNow.body?.standing?.abuses === 2, `${standingNow.body?.standing?.abuses} marks`);
 
-  const at = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString();
-  const made = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[0], at } });
+  const chosen = new Date(Date.now() + 5 * 24 * 3600 * 1000);
+  const dayParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Kathmandu", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(chosen);
+  const part = (type) => dayParts.find((p) => p.type === type)?.value;
+  const localDate = `${part("year")}-${part("month")}-${part("day")}`;
+  const chosenMinute = 13 * 60 + 15;
+  const made = await api(`/monthly/classes/${klass.id}/makeups`, {
+    method: "POST",
+    token: teacher.token,
+    body: { missedDayId: missed[0], localDate, startMinute: chosenMinute },
+  });
   check("a make-up can be arranged", made.status === 201, `status ${made.status} ${JSON.stringify(made.body)?.slice(0, 140)}`);
   check("and it is counted against the five", made.body?.makeups?.used === 1, `used ${made.body?.makeups?.used}`);
   check("the students are told about it", made.body?.studentsTold >= 1, `told ${made.body?.studentsTold}`);
 
-  const row = sql(`select kind, status, makeup_for_id from recurring_days where id = ${idFrom(made, "makeup.id", "the make-up class")}`).split("|");
+  const row = sql(`select kind, status, makeup_for_id,
+      to_char(scheduled_for at time zone 'Asia/Kathmandu', 'HH24:MI')
+      from recurring_days where id = ${idFrom(made, "makeup.id", "the make-up class")}`).split("|");
   check("it is written down as a make-up for that class", row[0] === "makeup" && Number(row[2]) === missed[0], row.join("|"));
+  check("the teacher can choose a different time from the daily class", row[3] === "13:15", row.join("|"));
+
+  const afterCycle = new Date(new Date(klass.cycle.endsAt).getTime() + 60_000).toISOString();
+  const tooLate = await api(`/monthly/classes/${klass.id}/makeups`, {
+    method: "POST", token: teacher.token, body: { missedDayId: missed[1], at: afterCycle },
+  });
+  check("a make-up cannot spill into the next monthly cycle", tooLate.status === 409, `status ${tooLate.status}`);
+  check("and the teacher is told to keep it in this cycle", /cycle ends/i.test(tooLate.body?.error ?? ""), tooLate.body?.error);
 
   const again = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[0], at: new Date(Date.now() + 6 * 24 * 3600 * 1000).toISOString() } });
   check("a class cannot be made up twice", again.status === 409, `status ${again.status}`);
 
   const notMissed = sql(`select id from recurring_days where recurring_id = ${klass.id} and status = 'planned' limit 1`);
+  const at = new Date(Date.now() + 5 * 24 * 3600 * 1000).toISOString();
   const bogus = await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: Number(notMissed), at } });
   check("a class that was not missed cannot be made up", bogus.status === 409, `status ${bogus.status}`);
 

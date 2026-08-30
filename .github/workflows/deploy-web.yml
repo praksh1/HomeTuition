@@ -72,6 +72,15 @@ jobs:
       - name: Check every package compiles
         run: pnpm run typecheck
 
+      # The design tokens, held to a baseline that may go down and never up.
+      #
+      # constants/colors.ts existed for a long time and was bypassed 468 times by hex written
+      # straight into screens — which is how a token file stops being one. This fails only when
+      # a file gets worse than it already is, so it catches new leaks without demanding the
+      # whole backlog be cleared first.
+      - name: Design tokens
+        run: pnpm --filter @workspace/sikshya run lint:design
+
       # Rules the whole product depends on, exercised without a database: what counts as a
       # class being over, and therefore whether a teacher may start another one.
       - name: Server rules

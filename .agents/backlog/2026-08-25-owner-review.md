@@ -57,6 +57,14 @@ Answers given, in their order:
 Also: **Messages** is not meant to be WhatsApp entire — a conversation-style thread with
 attachments is what was asked for.
 
+## B3. Make-up scheduling clarified, 2026-08-29 — **done**
+
+The owner confirmed that a make-up may be held on any date and at any time inside the same
+monthly cycle. The teacher screen no longer silently schedules one three days later; it opens
+an explicit date-and-time scheduler. Existing safety limits remain: future/current-cycle only,
+one per missed class, five per cycle, no overlap, and no slot inside declared leave. A make-up
+counts toward the 25-class floor only after it was actually held.
+
 ## C. Messages, rebuilt to look like a messaging app — **done**
 
 The owner's words: no Inbox/Sent/Drafts. One list, newest correspondent on top, unread marked,

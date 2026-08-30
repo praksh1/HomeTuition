@@ -1,30 +1,23 @@
 /**
- * What a classroom's video room must have switched on, and what an existing one is missing.
+ * How a classroom's video room must be configured, and what an existing one is missing.
  *
  * Split out from daily.ts with no imports of its own, deliberately: that file needs an API key
  * and a network, and this is the one decision inside it that was wrong. Pure, so it can be
  * tested on a laptop — the same reason sessionStart.ts is its own file.
  */
 /**
- * What every classroom room must have switched on.
+ * What every classroom room must enforce.
  *
- * Chat, hand raising and reactions come from Daily Prebuilt.
+ * The classroom owns chat and the only floating video window.
  *
- * Daily's own chat is on at the owner's decision after using both. The app's in-call chat panel
- * took over the screen on a phone and could not be closed again, which on a small screen makes
- * the call itself unusable. Daily's chat comes with the call, is built for that space, and is
- * not ours to get wrong.
- *
- * The known cost, unchanged and worth restating: Prebuilt's chat exists on **web only**. The
- * installed iOS and Android apps drive Daily's native SDK behind our own call UI, and their chat
- * is the app's Chat tab, carried by the classroom socket. A class mixing an installed app with a
- * browser therefore has two conversations that cannot see each other, and both sides look like
- * they are working. Everyone is on browsers today, so this is a real cost that is not currently
- * being paid — but it comes due the day the app ships to a store. See
- * .agents/memory/one-chat-per-class.md.
+ * Daily Prebuilt's chat is deliberately off: it is a second conversation that does not share
+ * messages with the classroom socket or the installed apps. Its Picture in Picture control is
+ * also off because both classroom screens already provide one draggable PIP. Repairing these
+ * false values matters for old rooms as much as including them when a new room is created.
  */
 export const ROOM_PROPERTIES = {
-  enable_chat: true,
+  enable_chat: false,
+  enable_pip_ui: false,
   enable_hand_raising: true,
   enable_emoji_reactions: true,
   enable_people_ui: true,
@@ -45,9 +38,9 @@ export function roomExpiry(): number {
  *
  * A room is created once and then reused for the rest of its life, so its settings are frozen at
  * whatever they were the day it was made — and every change to the list above reaches new rooms
- * only. That is not hypothetical: turning Daily's chat on left every room already in existence
- * without a chat panel, and a teacher in one of those was told the feature was live while their
- * call plainly had no chat in it. Reported exactly that way.
+ * only. That is not hypothetical: an earlier chat change reached new rooms but not old ones,
+ * leaving classrooms with different controls. Both true and false settings therefore need the
+ * same repair path.
  *
  * Pure, and exported, so the comparison can be tested without an API key or a network — the two
  * things this file otherwise cannot be tested without.

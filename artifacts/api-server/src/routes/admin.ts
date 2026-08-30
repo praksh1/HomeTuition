@@ -17,6 +17,7 @@ import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { recordActivity, readActivity } from "../lib/activityLog";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor } from "../lib/sessionEvidence";
+import { costAt, egressGbAt, monthWindow, usageIn } from "../lib/videoUsage";
 import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
 import { notify } from "../lib/notify";
@@ -476,6 +477,55 @@ router.patch("/admin/tickets/:id", async (req, res): Promise<void> => {
  * Behind the support desk because the answer names environment variables. It never returns a
  * value, only which names are set — see `storageSettingsPresent`.
  */
+/**
+ * What the video cost this month, in the units a provider bills in.
+ *
+ * The owner is weighing Daily against a self-hosted alternative and asked for real numbers
+ * rather than a guess. Both halves of the comparison come out of one figure — participant
+ * minutes — because a managed provider charges per minute and a self-hosted one charges per
+ * gigabyte of egress, and the second is derived from the first.
+ *
+ * Nothing new is measured to produce this. `session_participation.present_ms` has been written
+ * on every socket disconnect since the attendance work; this only adds it up.
+ *
+ * ### Two knobs, both honest
+ *
+ * `rate` is your provider's price per participant-minute, off your own invoice. `kbps` is the
+ * video bitrate you actually observe. Neither is hard-coded: a stale constant in here would be
+ * trusted precisely because it looked authoritative. Passing nothing gives you the minutes and
+ * a zero cost, which is the true answer for self-hosting anyway.
+ */
+router.get("/admin/video-usage", async (req, res): Promise<void> => {
+  const monthParam = String(req.query.month ?? "");
+  // `?month=2026-08`, or this month. Parsed as the 15th so no timezone can push it into a
+  // neighbouring month on the way in.
+  const anchorDate = /^\d{4}-\d{2}$/.test(monthParam)
+    ? new Date(`${monthParam}-15T00:00:00Z`)
+    : new Date();
+
+  const rate = Number(req.query.rate ?? 0);
+  const kbps = Number(req.query.kbps ?? 1500);
+
+  const window = monthWindow(anchorDate);
+  const totals = await usageIn(window);
+
+  res.json({
+    ...totals,
+    /** What a per-minute provider would charge, at the rate given. Zero when none is. */
+    estimatedCost: Number.isFinite(rate) && rate > 0 ? Number(costAt(totals.participantMinutes, rate).toFixed(2)) : 0,
+    rateUsed: Number.isFinite(rate) && rate > 0 ? rate : null,
+    /** What a self-hosted SFU would have to move for the same classes. */
+    estimatedEgressGb: egressGbAt(totals.participantMinutes, Number.isFinite(kbps) && kbps > 0 ? kbps : 1500),
+    kbpsAssumed: Number.isFinite(kbps) && kbps > 0 ? kbps : 1500,
+    /**
+     * Said out loud, because a number without its caveat gets quoted without it. This counts
+     * time on the classroom socket, which includes somebody sitting with their camera off, so
+     * it is an upper bound on real video minutes.
+     */
+    note: "Counts time on the classroom socket, so this is an upper bound on real video minutes.",
+  });
+});
+
 router.get("/admin/storage/check", async (req, res): Promise<void> => {
   const result = await checkStorage();
   recordActivity({

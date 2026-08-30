@@ -34,6 +34,7 @@ import {
 } from "../lib/scheduleChanges";
 import { refundsTable, scheduleChangesTable } from "@workspace/db";
 import { isRecurringDay, notARecurringDay } from "../lib/monthlyStore";
+import { mayCreateClassAt } from "../lib/sessionAllowance";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -309,6 +310,30 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
 
   if (errors.length > 0) {
     res.status(400).json({ error: errors.join(" ") });
+    return;
+  }
+
+  /**
+   * The subscription tier is what Sikshya earns on ordinary classes — there is no commission on
+   * a booking — so the allowance has to mean something. Until now it did not: the tier was
+   * stored, displayed and never once compared to anything, and a teacher on the ten-class plan
+   * could create five hundred.
+   *
+   * Checked after validation so a teacher with a broken form is told about the form, not about
+   * their plan. Days of a monthly recurring class are excluded — see `sessionAllowance.ts`.
+   */
+  const allowance = await mayCreateClassAt({ teacherId: user.userId, when: when! });
+  if (!allowance.allowed) {
+    res.status(402).json({
+      error: allowance.message,
+      allowance: {
+        tier: allowance.tier,
+        limit: allowance.limit,
+        usedNearby: allowance.usedNearby,
+        freesAt: allowance.freesAt,
+        upgradeTo: allowance.upgradeTo,
+      },
+    });
     return;
   }
 

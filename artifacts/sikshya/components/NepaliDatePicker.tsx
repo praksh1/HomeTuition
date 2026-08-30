@@ -40,11 +40,13 @@ interface Props {
   onPick: (date: Date) => void;
   /** Days before this cannot be chosen. Classes cannot be scheduled in the past. */
   minDate?: Date | null;
+  /** Days after this cannot be chosen. The day itself remains available. */
+  maxDate?: Date | null;
   title?: string;
 }
 
 export default function NepaliDatePicker({
-  visible, value, onCancel, onPick, minDate, title = "Pick a date",
+  visible, value, onCancel, onPick, minDate, maxDate, title = "Pick a date",
 }: Props) {
   const colors = useColors();
   const { nepaliNumerals } = useDates();
@@ -86,10 +88,12 @@ export default function NepaliDatePicker({
   };
 
   const dayIsAllowed = (day: number): boolean => {
-    if (!minDate) return true;
-    const at = fromBikramSambat(year, month, day, 23, 59);
-    if (!at) return false;
-    return at.getTime() >= minDate.getTime();
+    const atStart = fromBikramSambat(year, month, day);
+    const atEnd = fromBikramSambat(year, month, day, 23, 59);
+    if (!atStart || !atEnd) return false;
+    if (minDate && atEnd.getTime() < minDate.getTime()) return false;
+    if (maxDate && atStart.getTime() > maxDate.getTime()) return false;
+    return true;
   };
 
   const chosenDate = chosen === null ? null : fromBikramSambat(year, month, chosen);
