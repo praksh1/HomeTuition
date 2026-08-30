@@ -156,5 +156,25 @@ that already has the documented local Postgres/API test stack.
 
 ## Commit, push, and deployment
 
-To be filled with the resulting commit, remote push, Railway/API observation, Cloudflare Worker
-deployment, and live bundle verification before this task is closed.
+- The monthly make-up implementation was committed as `c84ae6f` (`Allow flexible monthly makeup
+  scheduling`) and pushed to `claude/excalidraw-whiteboard-sync-gjoqaz`.
+- Cloudflare's production dry run passed with Wrangler 4.127.1 and included 242 assets. The
+  production Worker deployment succeeded as version `e29bf73b-ee27-4e10-b519-30f9c7b78fb1`.
+  The public site returned HTTP 200 and served the final Expo bundle
+  `entry-c6d453d462784fa72d417e1eed8faa8a.js`; that bundle contains the new scheduler copy and
+  the correct public Railway API URL.
+- The first compatibility probe found the Railway API still running the old route: it rejected
+  the new `localDate`/`startMinute` request with the old 400 validation message. Repository
+  memory clarified that Railway deploys from `main`, despite the older handover wording that
+  implied any branch push deployed it.
+- Existing clean PR #5 was therefore merged to `main` as `80a50174fd2dda8d62172ae84dd9f20e2a48a343`.
+  This merge included the already owner-approved classroom/design work that preceded this task,
+  because the feature branch was the project's accumulated release branch.
+- After Railway redeployed, a deliberately rejected, non-writing request against the public API
+  returned the new 409 cycle-boundary message. This confirmed the new route was live without
+  creating a make-up or touching production monthly records.
+- GitHub's `main` workflow then exposed a pre-existing test-fixture collision: the refund suite
+  reused one Base-plan teacher for 24 independent classes, so the 11th setup class correctly hit
+  the newer 10-class Base limit. The refund assertions before that point passed. The test fixture
+  now uses the genuine Tier 4 30-class allowance; no tier rule, production code, or price was
+  weakened. The follow-up commit, merge, and final workflow result are recorded below when known.
