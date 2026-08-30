@@ -198,3 +198,20 @@ that already has the documented local Postgres/API test stack.
   to update the missing 11th row as `id = undefined`. Only that synthetic teacher now uses the
   genuine Tier 4 allowance. The crowded-screen scenario, application filtering, and production
   tier rules are unchanged.
+- The Sessions-filter correction was committed as `72927ab` and merged through PR #9 as
+  `efdfcd3740f59246e7dc4ac4200e0abc7cc6856d`. GitHub workflow run `33319720353` then completed
+  successfully in 19 minutes 29 seconds. It passed compilation, the design ratchet, 257 API unit
+  tests, 154 app unit tests, every configured database integration suite, the entire real-app
+  browser group, the production build, desktop/phone/slow-phone whiteboard checks, photo
+  transfer, in-call chat, failed-call recovery, Cloudflare deployment, and the live-site check.
+- Cloudflare production version `e99a3722-fccb-4cc1-bba6-bea432cac663` is live. The verified
+  bundle is `_expo/static/js/web/entry-50f910ff50d04adf872f049666b7ad8d.js`; it points to the
+  public Railway API and the tab title is `Sikshya`. A separate post-workflow fetch returned HTTP
+  200 and confirmed that exact live bundle contains both “Choose the replacement class” and
+  “Any future day and time is allowed.”
+- The only workflow annotation was GitHub's deprecation notice that several standard actions
+  still target Node 20 while GitHub now forces Node 24. It did not fail or alter any check.
+- This final documentation-only update is committed and pushed to the long-lived Claude/Codex
+  feature branch for the next handoff. It is intentionally not merged to `main`, because doing
+  so would trigger another 19-minute production deployment even though no application file has
+  changed since the fully green, verified production merge above.
