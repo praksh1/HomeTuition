@@ -118,6 +118,24 @@ export function cycleEnd(start: Date | string | number): number | null {
 }
 
 /**
+ * Whether a teacher-chosen make-up belongs to the cycle it is repairing.
+ *
+ * A make-up may use any time inside the cycle. The window is half-open for the same reason as
+ * every other cycle rule: an instant exactly at the end belongs to the next cycle and must not
+ * be counted once in each.
+ */
+export function makeupFallsWithinCycle(
+  at: Date | string | number,
+  cycleStart: Date | string | number,
+  cycleEndsAt: Date | string | number,
+): boolean {
+  const chosen = ms(at);
+  const start = ms(cycleStart);
+  const end = ms(cycleEndsAt);
+  return chosen !== null && start !== null && end !== null && chosen >= start && chosen < end;
+}
+
+/**
  * When a plan's cycle actually begins.
  *
  * The day the recurring class is created, or seven days after purchase if it never is — see

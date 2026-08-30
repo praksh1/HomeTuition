@@ -17,11 +17,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import NepaliDatePicker from "@/components/NepaliDatePicker";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
+import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiDelete, apiGet, apiPost, ApiError } from "@/utils/api";
 import {
   type MonthlyClass,
+  type MonthlyCycle,
   type MonthlyPlanView,
   type MissedClassesView,
   formatStartMinute,
@@ -483,8 +486,14 @@ function RunningClass({
         </View>
       )}
 
-      {missed && missed.missed.length > 0 && (
-        <MissedList missed={missed} classId={klass.id} formatBoth={formatBoth} onChanged={onChanged} />
+      {missed && missed.missed.length > 0 && view.cycle && (
+        <MissedList
+          missed={missed}
+          klass={klass}
+          cycle={view.cycle}
+          formatBoth={formatBoth}
+          onChanged={onChanged}
+        />
       )}
 
       {/*
@@ -543,34 +552,19 @@ function DeliveryBar({ held, planned }: { held: number; planned: number }) {
 
 function MissedList({
   missed,
-  classId,
+  klass,
+  cycle,
   formatBoth,
   onChanged,
 }: {
   missed: MissedClassesView;
-  classId: number;
-  formatBoth: (v: string | number | Date) => string;
+  klass: MonthlyClass;
+  cycle: MonthlyCycle;
+  formatBoth: (v: string | number | Date, o?: { withTime?: boolean }) => string;
   onChanged: () => Promise<void>;
 }) {
   const colors = useColors();
-  const [busy, setBusy] = useState<number | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
-
-  const arrange = async (dayId: number) => {
-    setProblem(null);
-    setBusy(dayId);
-    try {
-      // Three days out, at the class's usual time, which is the commonest thing a teacher wants
-      // and saves them a date picker on a phone. Moving it is a later job.
-      const at = new Date(Date.now() + 3 * 24 * 3600 * 1000);
-      await apiPost(`/monthly/classes/${classId}/makeups`, { missedDayId: dayId, at: at.toISOString() });
-      await onChanged();
-    } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : "Could not arrange that make-up.");
-    } finally {
-      setBusy(null);
-    }
-  };
+  const [editing, setEditing] = useState<number | null>(null);
 
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -580,42 +574,261 @@ function MissedList({
         {missed.makeups.left} of {missed.makeups.allowed} make-ups left this month.
       </Text>
 
-      {problem && <Text style={[styles.noticeText, { color: colors.destructive, marginBottom: 8 }]}>{problem}</Text>}
-
       {missed.missed.map((row) => (
-        <View key={row.id} style={[styles.missedRow, { borderTopColor: colors.border }]}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.missedWhen, { color: colors.foreground }]}>{formatBoth(row.wasAt)}</Text>
-            <Text
-              style={[
-                styles.fieldHint,
-                { color: row.countsAgainstYou ? colors.destructive : colors.mutedForeground },
-              ]}
-            >
-              {row.madeUpAt
-                ? `Make-up on ${formatBoth(row.madeUpAt)}`
-                : row.countsAgainstYou
-                  ? "This counts against you"
-                  : `${row.hoursLeft} hours left to arrange a make-up`}
-            </Text>
+        <View key={row.id}>
+          <View style={[styles.missedRow, { borderTopColor: colors.border }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.missedWhen, { color: colors.foreground }]}>{formatBoth(row.wasAt)}</Text>
+              <Text
+                style={[
+                  styles.fieldHint,
+                  { color: row.countsAgainstYou ? colors.destructive : colors.mutedForeground },
+                ]}
+              >
+                {row.madeUpAt
+                  ? `Make-up on ${formatBoth(row.madeUpAt)}`
+                  : row.countsAgainstYou
+                    ? "This counts against you"
+                    : `${row.hoursLeft} hours left to arrange a make-up`}
+              </Text>
+            </View>
+            {!row.madeUpAt && missed.makeups.left > 0 && editing !== row.id && (
+              <TouchableOpacity
+                testID={`monthly-makeup-${row.id}`}
+                onPress={() => setEditing(row.id)}
+                style={[styles.smallBtn, { borderColor: colors.primary }]}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.smallBtnText, { color: colors.primary }]}>Schedule</Text>
+              </TouchableOpacity>
+            )}
           </View>
-          {!row.madeUpAt && missed.makeups.left > 0 && (
-            <TouchableOpacity
-              testID={`monthly-makeup-${row.id}`}
-              onPress={() => void arrange(row.id)}
-              disabled={busy === row.id}
-              style={[styles.smallBtn, { borderColor: colors.primary }]}
-              activeOpacity={0.8}
-            >
-              {busy === row.id ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Text style={[styles.smallBtnText, { color: colors.primary }]}>Make up</Text>
-              )}
-            </TouchableOpacity>
+          {editing === row.id && (
+            <MakeupScheduler
+              missedDayId={row.id}
+              klass={klass}
+              cycle={cycle}
+              formatBoth={formatBoth}
+              onCancel={() => setEditing(null)}
+              onSaved={async () => {
+                setEditing(null);
+                await onChanged();
+              }}
+            />
           )}
         </View>
       ))}
+    </View>
+  );
+}
+
+/** A Gregorian day-shaped Date for the class's time zone, independent of the device's zone. */
+function calendarDateInZone(value: string | number | Date, timeZone: string): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const read = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  return new Date(read("year"), read("month") - 1, read("day"));
+}
+
+function clockInZone(value: string | number | Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date(value));
+  const read = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+  return `${read("hour") === "24" ? "00" : read("hour")}:${read("minute")}`;
+}
+
+function gregorianDayKey(value: Date): string {
+  return [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, "0"),
+    String(value.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function MakeupScheduler({
+  missedDayId,
+  klass,
+  cycle,
+  formatBoth,
+  onCancel,
+  onSaved,
+}: {
+  missedDayId: number;
+  klass: MonthlyClass;
+  cycle: MonthlyCycle;
+  formatBoth: (v: string | number | Date, o?: { withTime?: boolean }) => string;
+  onCancel: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const colors = useColors();
+  const { t, numeric, space, radius } = useLayout();
+  const lastInstant = new Date(cycle.endsAt).getTime() - 1;
+  const initialInstant = Math.min(Date.now() + 24 * 60 * 60 * 1000, lastInstant);
+  const [date, setDate] = useState(() => calendarDateInZone(initialInstant, klass.timeZone));
+  const [time, setTime] = useState(() =>
+    formatStartMinute((klass.startMinute + klass.durationMinutes) % (24 * 60)),
+  );
+  const [pickingDate, setPickingDate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const save = async () => {
+    const startMinute = parseStartMinute(time);
+    if (startMinute === null) {
+      setProblem("Write the time as HH:MM, like 17:30.");
+      return;
+    }
+    setBusy(true);
+    setProblem(null);
+    try {
+      await apiPost(`/monthly/classes/${klass.id}/makeups`, {
+        missedDayId,
+        localDate: gregorianDayKey(date),
+        startMinute,
+      });
+      await onSaved();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? e.message : "Could not arrange that make-up.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const today = calendarDateInZone(Date.now(), klass.timeZone);
+  const lastDay = calendarDateInZone(lastInstant, klass.timeZone);
+  const cycleEndDay = calendarDateInZone(cycle.endsAt, klass.timeZone);
+  const cycleEndTime = clockInZone(cycle.endsAt, klass.timeZone);
+
+  return (
+    <View
+      testID={`monthly-makeup-editor-${missedDayId}`}
+      style={{
+        gap: space.sm,
+        padding: space.sm,
+        marginTop: space.xs,
+        borderRadius: radius.sm,
+        backgroundColor: colors.muted,
+      }}
+    >
+      <View style={{ gap: space.xxs }}>
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>Choose the replacement class</Text>
+        <Text style={[t.callout, numeric, { color: colors.mutedForeground }]}>
+          Any future day and time is allowed before this cycle ends on {formatBoth(cycleEndDay)} at {cycleEndTime} Nepal time.
+        </Text>
+      </View>
+
+      <View style={{ gap: space.xs }}>
+        <Text style={[t.caption, { color: colors.foreground }]}>Date</Text>
+        <TouchableOpacity
+          testID={`monthly-makeup-date-${missedDayId}`}
+          onPress={() => setPickingDate(true)}
+          activeOpacity={0.8}
+          style={{
+            minHeight: HIT_SLOP_MIN,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: space.xs,
+            paddingHorizontal: space.sm,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: radius.sm,
+            borderColor: colors.border,
+            backgroundColor: colors.card,
+          }}
+        >
+          <Feather name="calendar" size={20} color={colors.primary} />
+          <Text style={[t.body, { color: colors.foreground }]}>{formatBoth(date)}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={{ gap: space.xs }}>
+        <Text style={[t.caption, { color: colors.foreground }]}>Time</Text>
+        <TextInput
+          testID={`monthly-makeup-time-${missedDayId}`}
+          value={time}
+          onChangeText={setTime}
+          placeholder="17:30"
+          placeholderTextColor={colors.mutedForeground}
+          style={[
+            t.body,
+            numeric,
+            {
+              minHeight: HIT_SLOP_MIN,
+              paddingHorizontal: space.sm,
+              borderWidth: StyleSheet.hairlineWidth,
+              borderRadius: radius.sm,
+              borderColor: colors.border,
+              color: colors.foreground,
+              backgroundColor: colors.card,
+            },
+          ]}
+        />
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>
+          Use a 24-hour Nepal-time clock. Pick a slot that does not overlap the daily class at {formatStartMinute(klass.startMinute)}.
+        </Text>
+      </View>
+
+      {problem && <Text style={[t.callout, { color: colors.destructive }]}>{problem}</Text>}
+
+      <View style={{ flexDirection: "row", gap: space.xs }}>
+        <TouchableOpacity
+          onPress={onCancel}
+          disabled={busy}
+          activeOpacity={0.8}
+          style={{
+            minHeight: HIT_SLOP_MIN,
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            borderWidth: StyleSheet.hairlineWidth,
+            borderRadius: radius.sm,
+            borderColor: colors.border,
+            backgroundColor: colors.card,
+          }}
+        >
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Cancel</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID={`monthly-makeup-save-${missedDayId}`}
+          onPress={() => void save()}
+          disabled={busy}
+          activeOpacity={0.85}
+          style={{
+            minHeight: HIT_SLOP_MIN,
+            flex: 1,
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: radius.sm,
+            backgroundColor: colors.primary,
+          }}
+        >
+          {busy ? (
+            <ActivityIndicator size="small" color={colors.onInverse} />
+          ) : (
+            <Text style={[t.bodyStrong, { color: colors.onInverse }]}>Schedule makeup</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+
+      <NepaliDatePicker
+        visible={pickingDate}
+        value={date}
+        minDate={today}
+        maxDate={lastDay}
+        title="Pick the makeup date"
+        onCancel={() => setPickingDate(false)}
+        onPick={(picked) => {
+          setDate(picked);
+          setPickingDate(false);
+        }}
+      />
     </View>
   );
 }

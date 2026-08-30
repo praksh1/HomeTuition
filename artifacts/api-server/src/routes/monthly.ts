@@ -28,9 +28,15 @@ import {
   canChangeTime,
   canEnrol,
   isAllowedDuration,
+  makeupFallsWithinCycle,
   quoteJoin,
 } from "../lib/monthly";
-import { formatStartMinute, isValidStartMinute } from "../lib/monthlySchedule";
+import {
+  formatStartMinute,
+  instantOfLocalTime,
+  isValidStartMinute,
+  localDayKey,
+} from "../lib/monthlySchedule";
 import {
   activePlanFor,
   classById,
@@ -543,18 +549,42 @@ router.post("/monthly/classes/:id/makeups", requireAuth, async (req: Request, re
     return;
   }
 
-  const { missedDayId, at } = req.body as { missedDayId?: number; at?: string };
+  const { missedDayId, at, localDate, startMinute } = req.body as {
+    missedDayId?: number;
+    /** Backwards-compatible instant used by older clients and the API suite. */
+    at?: string;
+    /** The day the teacher chose, on the class's own local calendar. */
+    localDate?: string;
+    /** The time the teacher chose, as minutes after midnight in the class's time zone. */
+    startMinute?: number;
+  };
   const dayId = Number(missedDayId);
   if (!Number.isInteger(dayId)) {
     res.status(400).json({ error: "Say which missed class this is making up." });
     return;
   }
-  const when = at ? new Date(at) : null;
+
+  let when: Date | null = null;
+  if (localDate !== undefined || startMinute !== undefined) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(localDate ?? "");
+    if (match && isValidStartMinute(startMinute ?? -1)) {
+      const [, year, month, day] = match;
+      when = new Date(
+        instantOfLocalTime(Number(year), Number(month), Number(day), startMinute!, klass.timeZone),
+      );
+      // `Date.UTC` normalises an impossible date such as 31 February. Refuse that instead of
+      // silently moving a teacher's make-up into the following month.
+      if (localDayKey(when.getTime(), klass.timeZone) !== localDate) when = null;
+    }
+  } else if (at) {
+    when = new Date(at);
+  }
   if (!when || Number.isNaN(when.getTime())) {
     res.status(400).json({ error: "Pick a date and time for the make-up class." });
     return;
   }
-  if (when.getTime() <= Date.now()) {
+  const now = Date.now();
+  if (when.getTime() <= now) {
     res.status(400).json({ error: "A make-up class has to be in the future." });
     return;
   }
@@ -564,9 +594,15 @@ router.post("/monthly/classes/:id/makeups", requireAuth, async (req: Request, re
     res.status(403).json({ error: plan?.suspendedReason ?? "This plan is not running." });
     return;
   }
-  const cycle = await cycleOf(plan);
+  const cycle = await cycleOf(plan, now);
   if (!cycle) {
     res.status(409).json({ error: "That class has not started its first month yet." });
+    return;
+  }
+  if (!makeupFallsWithinCycle(when, cycle.start, cycle.end)) {
+    res.status(409).json({
+      error: "A make-up must be held before this monthly cycle ends. Pick another date and time.",
+    });
     return;
   }
 

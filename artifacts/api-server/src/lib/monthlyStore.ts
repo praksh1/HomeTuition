@@ -1214,6 +1214,12 @@ export async function addMakeup(
     if (missed.status !== "missed") {
       return { ok: false as const, reason: "That class was not missed, so it does not need making up." };
     }
+    if (missed.cycleIndex !== cycleIndex) {
+      return {
+        ok: false as const,
+        reason: "A make-up can only replace a class missed in the current monthly cycle.",
+      };
+    }
 
     const [already] = await tx
       .select({ id: recurringDaysTable.id })

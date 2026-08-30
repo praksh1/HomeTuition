@@ -18,6 +18,7 @@ import {
   isAllowedDuration,
   metDeliveryFloor,
   metStudentShare,
+  makeupFallsWithinCycle,
   planCycleAnchor,
   proRatedShortfall,
   quoteJoin,
@@ -286,6 +287,15 @@ test("make-ups run out at five, and a cycle cannot hold more than forty classes"
   assert.equal(canAddMakeup(0, 30).ok, true);
   assert.equal(canAddMakeup(MAX_MAKEUPS_PER_CYCLE, 30).ok, false);
   assert.equal(canAddMakeup(1, 40).ok, false);
+});
+
+test("a make-up may use any instant in this cycle, but never the next one", () => {
+  const end = T0 + 30 * DAY;
+  assert.equal(makeupFallsWithinCycle(T0, T0, end), true);
+  assert.equal(makeupFallsWithinCycle(T0 + 12 * DAY + 37 * 60 * 1000, T0, end), true);
+  assert.equal(makeupFallsWithinCycle(end - 1, T0, end), true);
+  assert.equal(makeupFallsWithinCycle(T0 - 1, T0, end), false);
+  assert.equal(makeupFallsWithinCycle(end, T0, end), false);
 });
 
 test("a class takes forty-five students and no more", () => {

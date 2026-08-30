@@ -337,6 +337,12 @@ drift. At **3** they are warned in the strongest terms the app has. At **5** the
 suspended for 30 days, everyone is refunded for the rest of the month, and the class ends.
 Suspension **is** recorded, unlike the marks.
 
+The teacher chooses a make-up's date and time. It may be any future instant inside the same
+30-day cycle; it cannot overlap another class, land during declared leave, replace a miss from
+an older cycle, or cross the cycle boundary. Five are allowed per cycle. A make-up contributes
+to the 25-class floor only after its session was actually held — putting it on the calendar is
+not delivery.
+
 Held or missed is read from `sessions.startedAt`, **never from anything the teacher confirms**.
 
 ### Package B — pay-per-class (regular sessions)
@@ -632,8 +638,7 @@ days for the teacher to respond, two days to tell the student, the appeal. `REFU
 4.
 
 **10. Marking drawn in the app has no drawing surface yet.** It is stored and handed back; a
-teacher currently marks with words or by uploading a marked-up file. Changing a make-up's date
-is not offered either — arranging one puts it three days out at the usual time.
+teacher currently marks with words or by uploading a marked-up file.
 
 **11. Video cost is under review.** Daily.co is billed per participant-minute. At the monthly
 tier one teacher is roughly 37,440 participant-minutes a month; at a plausible rate that is
@@ -783,18 +788,18 @@ cheap next to what it costs afterwards. Live list at the top of `ISSUES.md`.
 
 ## 10. Testing
 
-**390 unit tests pass** — 236 in the API, 154 in the app. Verified by running them, not
+**411 unit tests pass** — 257 in the API, 154 in the app. Verified by running them, not
 recalled.
 
 ```
 pnpm run typecheck                              # all four packages
-pnpm --filter @workspace/api-server run test    # 236 unit tests
+pnpm --filter @workspace/api-server run test    # 257 unit tests
 pnpm --filter @workspace/sikshya run test       # 154 unit tests
 ```
 
 On top of that, **28 integration suites** in the API and **19 browser suites** in the app, each
 a `pnpm --filter … run test:<name>`. The full list is in the two `package.json` files. Notable
-ones: `test:monthly` (187 checks), `test:portal` (72), `test:sessions`, `test:payments`,
+ones: `test:monthly` (190 checks), `test:portal` (72), `test:sessions`, `test:payments`,
 `test:tickets`, `test:board-persistence`, `test:attendance`, `test:perf`.
 
 ### What the owner expects

@@ -162,7 +162,11 @@ for 30 days, everyone in it is refunded for the rest of the month, and the class
 Suspension **is** recorded, unlike the marks: once it has happened, a make-up bought afterwards
 does not undo it.
 
-Make-ups are capped at 5 a month and a month cannot hold more than 40 classes.
+Make-ups are capped at 5 a month and a month cannot hold more than 40 classes. The teacher
+chooses the replacement's date and time: it may be any future instant inside the same 30-day
+cycle. It cannot overlap another class, land inside leave the teacher already declared, replace
+a miss from an older cycle, or spill into the next cycle. A held make-up counts as a held class
+toward the 25-class delivery floor; merely scheduling one does not.
 
 ### Closing a month
 
@@ -237,8 +241,7 @@ the afternoon means.
 ### What is not built yet
 
 Marking drawn **in the app** is stored and handed back, but there is no drawing surface for it
-yet — a teacher marks with words or by uploading a marked-up file. Changing a make-up's date is
-not offered either: arranging one puts it three days out at the usual time.
+yet — a teacher marks with words or by uploading a marked-up file.
 
 ---
 
