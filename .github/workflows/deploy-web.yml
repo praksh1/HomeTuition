@@ -29,6 +29,10 @@ env:
   # Every database-backed integration script uses the same throwaway Postgres service. Keeping
   # this at job scope also covers the earliest notification and board suites.
   PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+  # Excalidraw's generated CSS is large enough that parallel Metro workers exhaust the
+  # GitHub runner while transforming it. The process then disappears mid-progress with no
+  # JavaScript error. One worker takes longer but stays inside the runner's memory limit.
+  EXPO_EXPORT_MAX_WORKERS: "1"
 
 jobs:
   deploy:

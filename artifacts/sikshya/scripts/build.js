@@ -198,10 +198,30 @@ function main() {
   // export silently never ran — the build failed with nothing but "expo export failed". This
   // sidesteps package-manager and platform differences altogether.
   const expoCli = require.resolve("expo/bin/cli");
+  const requestedWorkers = process.env.EXPO_EXPORT_MAX_WORKERS?.trim();
+  if (requestedWorkers && !/^[1-9]\d*$/.test(requestedWorkers)) {
+    exitWithError(
+      `EXPO_EXPORT_MAX_WORKERS must be a positive whole number (got "${requestedWorkers}")`,
+    );
+  }
+
+  const exportArgs = [
+    expoCli,
+    "export",
+    "-p",
+    "web",
+    "--output-dir",
+    "web-build",
+    ...(requestedWorkers ? ["--max-workers", requestedWorkers] : []),
+    ...(targetChanged ? ["--clear"] : []),
+  ];
+  if (requestedWorkers) {
+    console.log(`Limiting Metro to ${requestedWorkers} worker(s) for this export.`);
+  }
 
   const result = spawnSync(
     process.execPath,
-    [expoCli, "export", "-p", "web", "--output-dir", "web-build", ...(targetChanged ? ["--clear"] : [])],
+    exportArgs,
     {
       cwd: projectRoot,
       stdio: "inherit",
@@ -214,7 +234,10 @@ function main() {
   );
 
   if (result.status !== 0) {
-    exitWithError("expo export failed");
+    const cause = result.signal
+      ? ` after receiving ${result.signal}`
+      : ` with status ${result.status}`;
+    exitWithError(`expo export failed${cause}`);
   }
 
   if (!fs.existsSync(path.join(outputDir, "index.html"))) {
