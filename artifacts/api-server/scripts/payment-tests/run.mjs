@@ -1,3 +1,5 @@
+import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+
 /**
  * The door and the money, against a running server.
  *
@@ -51,6 +53,7 @@ async function register(role) {
     name: `${role} ${seq}`, email: `pay_${Date.now()}_${seq}@example.com`, password: "password123", role,
     ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status}`);
+  if (role === "teacher") prepareTeacherForClass(res.body.user.id);
   return res.body;
 }
 

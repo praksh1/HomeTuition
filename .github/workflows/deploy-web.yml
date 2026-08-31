@@ -26,6 +26,9 @@ env:
   # site that cannot reach its backend, and nothing fails loudly when it does. See
   # .agents/memory/deploy-url-baked-in.md before changing it.
   EXPO_PUBLIC_API_URL: https://workspaceapi-server-production-5a63.up.railway.app
+  # Every database-backed integration script uses the same throwaway Postgres service. Keeping
+  # this at job scope also covers the earliest notification and board suites.
+  PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
 
 jobs:
   deploy:

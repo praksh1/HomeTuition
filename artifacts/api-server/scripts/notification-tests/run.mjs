@@ -13,6 +13,7 @@
  */
 
 import { WebSocket } from "ws";
+import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const WS = API.replace(/^http/, "ws");
@@ -72,6 +73,7 @@ async function register(role, extra = {}) {
   if (res.status !== 200 && res.status !== 201) {
     throw new Error(`register ${role} failed: ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`);
   }
+  if (role === "teacher") prepareTeacherForClass(res.body.user.id);
   return { token: res.body.token, user: res.body.user, email };
 }
 

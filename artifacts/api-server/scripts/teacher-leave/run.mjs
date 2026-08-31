@@ -14,6 +14,7 @@
  * Usage: PGURL=... API_URL=http://127.0.0.1:8080 node scripts/teacher-leave/run.mjs
  */
 import { execFileSync } from "node:child_process";
+import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -39,6 +40,7 @@ async function run() {
   const email = `tl_${Date.now()}@example.com`;
   const teacher = (await api("/auth/register", { method: "POST", body: {
     name: "Away Teacher", email, password: "password123", role: "teacher", subject: "Maths", bio: "x" } })).body;
+  prepareTeacherForClass(teacher.user.id);
   sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
   await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
   const made = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {

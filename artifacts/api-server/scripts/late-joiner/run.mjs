@@ -14,6 +14,7 @@
  * Usage: PGURL=... API_URL=http://127.0.0.1:8080 node scripts/late-joiner/run.mjs
  */
 import { execFileSync } from "node:child_process";
+import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -39,6 +40,7 @@ async function register(role) {
     email, password: "password123", role,
     ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status}`);
+  if (role === "teacher") prepareTeacherForClass(res.body.user.id);
   return { ...res.body, email };
 }
 

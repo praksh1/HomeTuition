@@ -10,6 +10,7 @@
  * PGURL is used to make an agent account, which nothing in the app can do — deliberately.
  */
 import { execFileSync } from "node:child_process";
+import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -66,6 +67,7 @@ async function run() {
 
   const agent = await makeAgent();
   const teacher = await register("teacher", "Ram Prasad");
+  prepareTeacherForClass(teacher.user.id);
   const student = await register("student", "Sita Sharma");
 
   const asStudent = await api("/admin/overview", { token: student.token });

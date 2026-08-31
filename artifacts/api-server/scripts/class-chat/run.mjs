@@ -22,6 +22,7 @@ import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFakeR2 } from "../upload-tests/fake-r2.mjs";
+import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
@@ -63,6 +64,7 @@ async function register(role, name) {
     name: name ?? `${role} ${seq}`, email, password: "password123", role,
     ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status} ${JSON.stringify(res.body)}`);
+  if (role === "teacher") prepareTeacherForClass(res.body.user.id);
   return { ...res.body, email };
 }
 

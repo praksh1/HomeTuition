@@ -148,3 +148,48 @@ services for this activation.
   **Inactive**, and cannot send automatically. It was left in place as an audit artifact.
 - The 12 commits after production `main` have not yet been promoted in this subsection. Do not
   claim the new account screens are live until the `main` deployment and its health checks pass.
+
+## Production promotion and CI fixture repairs
+
+- Pushed the completed activation work to the Claude branch. A direct push to `main` was first
+  rejected because GitHub had added merge history to `main` after the local checkout was made.
+  No force push, reset, or history rewrite was used. Fetched and merged the remote `main`; the
+  merge contained no file-level differences from the branch, then both refs were pushed normally.
+- GitHub Actions run `33425152273` stopped before Cloudflare deployment. Compilation, design
+  lint, server tests, and app tests passed, but old integration student fixtures did not supply
+  the now-required date of birth. This was a test-data defect exposed by the new real signup
+  rule, not a reason to weaken that rule.
+- Added an explicit adult fixture date (`2000-01-01`) to all affected integration registrations.
+  Commit `00aee63` (`Update integration fixtures for student birth dates`) was pushed to the
+  branch and `main`.
+- GitHub Actions run `33425808918` progressed further: 34 notification checks passed and two
+  class-creation checks failed with `403 EMAIL_UNVERIFIED`. The application was correctly
+  enforcing that a teacher cannot create a class before email verification, operator approval,
+  and paid-plan access; the old test setup had silently assumed those gates were open.
+- Added `scripts/test-support/teacherAccess.mjs`, a CI-only fixture helper that updates only the
+  disposable integration database. Classroom/payment/notification suites now explicitly make
+  their teacher fixtures email-verified, operator-approved, and active before testing unrelated
+  behavior. Production registration and all application guards remain unchanged.
+- The support-desk suite is intentionally different: only its ordinary class teacher is prepared.
+  Its newly registered applicant remains pending so the operator review queue and approval flow
+  continue to be tested honestly.
+- Added the throwaway PostgreSQL URL at GitHub job scope because the earliest notification and
+  board suites previously had no direct database setting. It points only to the CI service on
+  `127.0.0.1`, never to Railway or production data.
+- All modified integration scripts passed `node --check`; `git diff --check` passed. Full
+  typecheck passed, app tests passed 154/154, API tests passed 269/269, and design lint stayed at
+  223 hex literals / 429 raw font sizes with no regression.
+- One restricted API-test attempt could not read the `jose` package through pnpm's Windows
+  junction and reported a missing package. The junction and package existed; rerunning the same
+  unchanged suite with approved junction access passed 269/269. No reinstall or dependency
+  change was made for that sandbox-only failure.
+
+### Deployment state at this checkpoint
+
+- Both failed GitHub Actions runs stopped before the Cloudflare publish step, so neither one
+  changed the production website.
+- Railway watches `main` independently and may deploy the API commits before the matching web
+  build reaches Cloudflare. The live API and website must therefore be checked together after a
+  fully green GitHub run; do not infer a complete release from either service alone.
+- The next action is to commit these CI fixture repairs, push the branch and `main`, monitor the
+  complete workflow, then verify the Railway health endpoint and the public Cloudflare site.
