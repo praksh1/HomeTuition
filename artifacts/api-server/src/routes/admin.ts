@@ -1,5 +1,5 @@
 import { createHash, randomInt } from "node:crypto";
-import { and, asc, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import {
@@ -13,6 +13,7 @@ import {
   teacherProfilesTable,
   teacherCredentialsTable,
   accountSecurityTable,
+  moderationFlagsTable,
   userOnboardingTable,
   usersTable,
 } from "@workspace/db";
@@ -107,9 +108,10 @@ function callerIp(req: { headers: Record<string, unknown>; ip?: string }): strin
 
 router.get("/admin/overview", async (_req, res): Promise<void> => {
   try {
-    const [[open], [pending], [suspended], [refunds], [owed]] = await Promise.all([
+    const [[open], [pending], [moderation], [suspended], [refunds], [owed]] = await Promise.all([
       db.select({ n: sql<number>`count(*)::int` }).from(disputesTable).where(eq(disputesTable.status, "open")),
       db.select({ n: sql<number>`count(*)::int` }).from(teacherProfilesTable).where(eq(teacherProfilesTable.approvalStatus, "pending")),
+      db.select({ n: sql<number>`count(*)::int` }).from(moderationFlagsTable).where(eq(moderationFlagsTable.status, "open")),
       db.select({ n: sql<number>`count(*)::int` }).from(usersTable).where(sql`${usersTable.suspendedAt} is not null`),
       db.select({ n: sql<number>`count(*)::int` }).from(refundsTable).where(eq(refundsTable.status, "owed")),
       db.select({ n: sql<number>`coalesce(sum(${refundsTable.amount}), 0)::int` }).from(refundsTable).where(eq(refundsTable.status, "owed")),
@@ -117,6 +119,7 @@ router.get("/admin/overview", async (_req, res): Promise<void> => {
     res.json({
       openTickets: open?.n ?? 0,
       pendingTeachers: pending?.n ?? 0,
+      openModeration: moderation?.n ?? 0,
       suspendedAccounts: suspended?.n ?? 0,
       refundsOwed: refunds?.n ?? 0,
       refundsOwedTotal: owed?.n ?? 0,
@@ -127,12 +130,58 @@ router.get("/admin/overview", async (_req, res): Promise<void> => {
     res.status(503).json({
       openTickets: 0,
       pendingTeachers: 0,
+      openModeration: 0,
       suspendedAccounts: 0,
       refundsOwed: 0,
       refundsOwedTotal: 0,
       known: false,
     });
   }
+});
+
+/** Text that the automated word check sent to a human; it is evidence, never an automatic ban. */
+router.get("/admin/moderation", async (req, res): Promise<void> => {
+  const status = String(req.query.status ?? "open");
+  const rows = await db
+    .select({
+      id: moderationFlagsTable.id,
+      userId: moderationFlagsTable.userId,
+      userName: usersTable.name,
+      userRole: usersTable.role,
+      surface: moderationFlagsTable.surface,
+      subjectId: moderationFlagsTable.subjectId,
+      excerpt: moderationFlagsTable.excerpt,
+      matchedTerms: moderationFlagsTable.matchedTerms,
+      status: moderationFlagsTable.status,
+      createdAt: moderationFlagsTable.createdAt,
+    })
+    .from(moderationFlagsTable)
+    .leftJoin(usersTable, eq(usersTable.id, moderationFlagsTable.userId))
+    .where(eq(moderationFlagsTable.status, status))
+    .orderBy(desc(moderationFlagsTable.id))
+    .limit(100);
+  res.json({ flags: rows });
+});
+
+router.post("/admin/moderation/:id/decision", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const resolution = typeof req.body?.resolution === "string" ? req.body.resolution.trim() : "";
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid moderation case." }); return; }
+  if (resolution.length < 3) { res.status(400).json({ error: "Write what was decided before closing the case." }); return; }
+  const [row] = await db
+    .update(moderationFlagsTable)
+    .set({ status: "resolved", resolution, resolvedBy: req.user!.userId, resolvedAt: new Date() })
+    .where(and(eq(moderationFlagsTable.id, id), eq(moderationFlagsTable.status, "open")))
+    .returning();
+  if (!row) { res.status(409).json({ error: "This moderation case was already handled." }); return; }
+  recordActivity({
+    userId: req.user!.userId,
+    action: "moderation.resolved",
+    subjectType: "moderation_flag",
+    subjectId: id,
+    detail: { resolution, reportedUserId: row.userId },
+  });
+  res.json({ flag: row });
 });
 
 /**
@@ -146,6 +195,7 @@ router.get("/admin/overview", async (_req, res): Promise<void> => {
 router.get("/admin/tickets", async (req, res): Promise<void> => {
   const status = String(req.query.status ?? "");
   const mine = String(req.query.assigned ?? "");
+  const category = String(req.query.category ?? "");
 
   const filters = [];
   if (status === "active") {
@@ -156,6 +206,15 @@ router.get("/admin/tickets", async (req, res): Promise<void> => {
   }
   if (mine === "me") filters.push(eq(disputesTable.assignedTo, req.user!.userId));
   else if (mine === "unassigned") filters.push(isNull(disputesTable.assignedTo));
+  const reasonsByCategory = {
+    payment: ["Payment Issue", "Refund Request"],
+    technical: ["Technical Failure"],
+    safety: ["Inappropriate Behavior"],
+    other: ["Other"],
+  } as const;
+  if (category in reasonsByCategory) {
+    filters.push(inArray(disputesTable.reason, [...reasonsByCategory[category as keyof typeof reasonsByCategory]]));
+  }
 
   const assignee = alias(usersTable, "assignee");
   const rows = await db

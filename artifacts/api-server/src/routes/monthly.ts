@@ -13,6 +13,7 @@ import {
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { chargeForMonthly } from "../lib/payments";
 import { mayBuyTeacherPlan } from "../lib/teachingAccess";
+import { flagContent } from "../lib/moderation";
 import { notify, notifyMany } from "../lib/notify";
 import {
   MIN_SESSIONS_PER_CYCLE,
@@ -667,6 +668,12 @@ router.post("/monthly/classes", requireAuth, async (req: Request, res: Response)
     return;
   }
 
+  const identity = await mayBuyTeacherPlan(user.userId);
+  if (!identity.allowed) {
+    res.status(identity.status).json({ error: identity.message, code: identity.code });
+    return;
+  }
+
   // Read whatever they have, so a suspended teacher is told they are suspended rather than
   // told to buy a plan they already own.
   const plan = await currentPlanFor(user.userId);
@@ -755,6 +762,8 @@ router.post("/monthly/classes", requireAuth, async (req: Request, res: Response)
       await generateCycle(klass!, 0, startedAt.getTime(), tx);
       return klass!;
     });
+
+    await flagContent({ userId: user.userId, surface: "monthly_class_title", subjectId: created.id, text: `${subject} ${topic}` });
 
     res.status(201).json({ class: await describeClass(created, user.userId) });
   } catch (err) {

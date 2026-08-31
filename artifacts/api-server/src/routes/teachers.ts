@@ -8,6 +8,7 @@ import { mayBuyTeacherPlan } from "../lib/teachingAccess";
 import { allowanceSummary } from "../lib/sessionAllowance";
 import { SUBSCRIPTION_TIERS, isTierKey, type SubscriptionTierKey } from "../lib/tierLimits";
 import { deleteUpload, verifyUpload } from "../lib/fileStore";
+import { flagContent } from "../lib/moderation";
 
 const router: IRouter = Router();
 
@@ -232,6 +233,10 @@ router.patch("/teachers/:id", requireAuth, async (req, res): Promise<void> => {
     .returning();
 
   if (!profile) { res.status(404).json({ error: "Teacher not found" }); return; }
+
+  if (typeof updates.bio === "string") {
+    await flagContent({ userId: profile.userId, surface: "teacher_bio", subjectId: profile.id, text: updates.bio });
+  }
 
   const [user] = await db.select({ name: usersTable.name, email: usersTable.email })
     .from(usersTable).where(eq(usersTable.id, profile.userId));

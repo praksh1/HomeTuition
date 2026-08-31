@@ -51,6 +51,14 @@ const WHOSE = [
   { id: "unassigned", label: "Nobody's" },
 ] as const;
 
+const CATEGORIES = [
+  { id: "", label: "All issues" },
+  { id: "payment", label: "Payment" },
+  { id: "technical", label: "Technical" },
+  { id: "safety", label: "Safety / harassment" },
+  { id: "other", label: "Other" },
+] as const;
+
 export default function AdminTickets() {
   const colors = useColors();
   const dates = useDates();
@@ -71,8 +79,9 @@ export default function AdminTickets() {
   };
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("active");
   const [whose, setWhose] = useState<(typeof WHOSE)[number]["id"]>("");
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number]["id"]>("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [counts, setCounts] = useState<{ openTickets: number; pendingTeachers: number; suspendedAccounts: number; known: boolean } | null>(null);
+  const [counts, setCounts] = useState<{ openTickets: number; pendingTeachers: number; openModeration: number; suspendedAccounts: number; known: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
@@ -80,8 +89,8 @@ export default function AdminTickets() {
     setFailed(false);
     try {
       const [list, overview] = await Promise.all([
-        apiGet<{ tickets: Ticket[] }>(`/admin/tickets?status=${filter}&assigned=${whose}`),
-        apiGet<{ openTickets: number; pendingTeachers: number; suspendedAccounts: number; known: boolean }>("/admin/overview"),
+        apiGet<{ tickets: Ticket[] }>(`/admin/tickets?status=${filter}&assigned=${whose}&category=${category}`),
+        apiGet<{ openTickets: number; pendingTeachers: number; openModeration: number; suspendedAccounts: number; known: boolean }>("/admin/overview"),
       ]);
       setTickets(list.tickets ?? []);
       setCounts(overview);
@@ -93,7 +102,7 @@ export default function AdminTickets() {
     } finally {
       setLoading(false);
     }
-  }, [filter, whose]);
+  }, [filter, whose, category]);
 
   useFocusEffect(useCallback(() => { void load(); }, [load]));
 
@@ -136,9 +145,29 @@ export default function AdminTickets() {
         <View style={styles.stats}>
           <Stat label="Open tickets" value={counts.known ? counts.openTickets : "—"} colors={colors} />
           <Stat label="Teachers to review" value={counts.known ? counts.pendingTeachers : "—"} colors={colors} />
+          <Stat label="Text to review" value={counts.known ? counts.openModeration : "—"} colors={colors} />
           <Stat label="Suspended" value={counts.known ? counts.suspendedAccounts : "—"} colors={colors} />
         </View>
       )}
+
+      <TouchableOpacity style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/people")} activeOpacity={0.8}>
+        <View style={styles.cardHead}>
+          <Text style={[styles.reason, { color: colors.primary }]}>Teacher sign-ups and moderation</Text>
+          <Feather name="chevron-right" size={16} color={colors.primary} />
+        </View>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Review identity documents, account applications, and flagged profile or class text in People.</Text>
+      </TouchableOpacity>
+
+      <View style={[styles.filters, styles.categoryFilters]}>
+        {CATEGORIES.map((item) => {
+          const active = category === item.id;
+          return (
+            <TouchableOpacity key={item.id || "all"} onPress={() => setCategory(item.id)} activeOpacity={0.75} style={[styles.filter, styles.categoryFilter, { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.actionSoft : colors.muted }]}>
+              <Text style={[styles.filterText, { color: active ? colors.primary : colors.mutedForeground }]}>{item.label}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
 
       <View style={styles.filters}>
         {FILTERS.map((f) => {
@@ -368,6 +397,8 @@ const styles = StyleSheet.create({
   statValue: { fontSize: 20, fontFamily: "Inter_600SemiBold" },
   statLabel: { fontSize: 11, fontFamily: "Inter_400Regular", textAlign: "center" },
   filters: { flexDirection: "row", gap: 8, marginTop: 4 },
+  categoryFilters: { flexWrap: "wrap" },
+  categoryFilter: { flexBasis: "30%" },
   filter: { flex: 1, alignItems: "center", borderRadius: 12, borderWidth: 1, paddingVertical: 9 },
   filterText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   empty: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 20, lineHeight: 20 },

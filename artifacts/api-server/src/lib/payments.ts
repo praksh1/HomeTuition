@@ -117,6 +117,20 @@ export async function chargeForMonthly(args: {
   log?: { warn: (o: object, m: string) => void };
 }): Promise<ChargeResult> {
   if (paymentMode() === "simulated") {
+    // A simulated student booking is still useful for end-to-end product testing. A simulated
+    // teacher plan is different: it grants the right to create and sell classes, and therefore
+    // cannot be accepted as proof that a teacher purchased a tier. Unit/integration tests may
+    // exercise the success path, but a running development or production server must refuse it.
+    if (args.purpose === "teacher-plan" && process.env.NODE_ENV !== "test") {
+      args.log?.warn(
+        { purpose: args.purpose, referenceId: args.referenceId, userId: args.userId },
+        "TEACHER PLAN refused — no payment provider is configured and no money can be verified.",
+      );
+      return {
+        ok: false,
+        message: "Online plan payment is not connected yet. No plan was activated and no money was taken.",
+      };
+    }
     args.log?.warn(
       { purpose: args.purpose, referenceId: args.referenceId, userId: args.userId, amount: args.amount },
       "SIMULATED PAYMENT approved for the monthly tier — no money moved. " +

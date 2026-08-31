@@ -74,6 +74,19 @@
   review store without blocking or silently rewriting the user's text.
 - Added the account guard sequence: new teacher/student accounts must verify email, then complete
   onboarding, before the ordinary role dashboard is reachable. Legacy accounts remain usable.
+- Closed a plan-entitlement hole left by simulated payments. Outside `NODE_ENV=test`, a
+  simulated teacher-plan charge is now refused, explicitly says that no plan was activated and
+  no money moved, and cannot set either ordinary or monthly teaching access. Student payment
+  simulation was deliberately not changed in this checkpoint.
+- Moved the ordinary teaching-access gate onto the actual `POST /sessions` write route (it had
+  only been used by the helper endpoint that lists inviteable students). Monthly-class creation
+  now also re-checks verified email and operator approval even for an older plan row.
+- Added moderation checks to ordinary class create/edit, monthly class creation, and teacher-bio
+  edits. Added an operator moderation queue with the matched excerpt/terms and recorded outcomes.
+- Split the support queue into payment/refund, technical, safety/harassment, and other filters.
+  Teacher sign-ups and moderation are a separate visible queue under People. Renamed the old
+  reset-code control to `Assisted reset (phone support)` and explains that emailed Forgot
+  password is the normal route.
 
 ## Decisions and assumptions
 
@@ -94,6 +107,7 @@
   Expo-route typing and using the actual typography-token names.
 - `pnpm --filter @workspace/api-server run test` — 257/257 passed.
 - After adding onboarding/moderation rules, rerun — 262/262 passed.
+- After tightening teacher-payment and class gates, rerun — 264/264 passed.
 - `pnpm --filter @workspace/sikshya run test` — 154/154 passed.
 - `pnpm --filter @workspace/sikshya run lint:design` — passed at the existing 223-hex / 429-size
   baseline; the new screens add no raw colour or font-size literals.
@@ -128,6 +142,9 @@
   until the new mail path is proven live, so support is not left with no recovery mechanism.
 - Google, Facebook, and Apple provider credentials/configuration have not been invented. Current
   official Expo/Google/Apple requirements were checked; provider work remains below.
+- A real teacher tier still cannot be purchased until a payment provider or an audited
+  operator-recorded payment flow is connected. This is intentional: the former behaviour issued
+  paid teaching access from a `SIM-*` reference although no money moved.
 
 ## Remaining risks / next pickup point
 

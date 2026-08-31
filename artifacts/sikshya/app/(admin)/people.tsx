@@ -18,12 +18,18 @@ interface PendingTeacher {
   userId: number; name: string; email: string; subject: string; bio: string | null;
 }
 
+interface ModerationFlag {
+  id: number; userId: number | null; userName: string | null; userRole: string | null;
+  surface: string; excerpt: string; matchedTerms: string[]; createdAt: string;
+}
+
 export default function AdminPeople() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState("");
   const [people, setPeople] = useState<Person[]>([]);
   const [pending, setPending] = useState<PendingTeacher[]>([]);
+  const [flags, setFlags] = useState<ModerationFlag[]>([]);
   const [loading, setLoading] = useState(true);
 
   const search = useCallback(async (q: string) => {
@@ -39,10 +45,15 @@ export default function AdminPeople() {
 
   const loadPending = useCallback(async () => {
     try {
-      const res = await apiGet<{ teachers: PendingTeacher[] }>("/admin/teachers/pending");
-      setPending(res.teachers ?? []);
+      const [teachers, moderation] = await Promise.all([
+        apiGet<{ teachers: PendingTeacher[] }>("/admin/teachers/pending"),
+        apiGet<{ flags: ModerationFlag[] }>("/admin/moderation?status=open"),
+      ]);
+      setPending(teachers.teachers ?? []);
+      setFlags(moderation.flags ?? []);
     } catch {
       setPending([]);
+      setFlags([]);
     }
   }, []);
 
@@ -66,6 +77,16 @@ export default function AdminPeople() {
       await apiPost(`/admin/teachers/${userId}/decision`, { decision });
       await loadPending();
       notify("Approved", "They can schedule classes now, and have been told.");
+    } catch (e) {
+      notify("Could not save", e instanceof Error ? e.message : "Please try again.");
+    }
+  };
+
+  const closeFlag = async (id: number, resolution: string) => {
+    try {
+      await apiPost(`/admin/moderation/${id}/decision`, { resolution });
+      await loadPending();
+      notify("Case closed", "The moderation decision was recorded.");
     } catch (e) {
       notify("Could not save", e instanceof Error ? e.message : "Please try again.");
     }
@@ -106,6 +127,33 @@ export default function AdminPeople() {
               >
                 <Text style={[styles.smallText, { color: colors.foreground }]}>Review</Text>
               </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {flags.length > 0 && (
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Text needing review ({flags.length})</Text>
+          <Text style={[styles.meta, { color: colors.mutedForeground }]}>A word match is a lead for a person to review, not an automatic punishment.</Text>
+          {flags.slice(0, 20).map((flag) => (
+            <View key={flag.id} style={[styles.flag, { borderTopColor: colors.border }]}>
+              <Text style={[styles.name, { color: colors.foreground }]}>{flag.userName ?? "Unknown account"} · {flag.surface.replaceAll("_", " ")}</Text>
+              <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={3}>{flag.excerpt}</Text>
+              <Text style={[styles.meta, { color: colors.destructive }]}>Matched: {flag.matchedTerms.join(", ")}</Text>
+              <View style={styles.flagActions}>
+                {flag.userId !== null && (
+                  <TouchableOpacity style={[styles.small, { backgroundColor: colors.muted }]} onPress={() => router.push(`/(admin)/person/${flag.userId}`)}>
+                    <Text style={[styles.smallText, { color: colors.foreground }]}>Review person</Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity style={[styles.small, { backgroundColor: colors.primary }]} onPress={() => void closeFlag(flag.id, "Reviewed — no action required") }>
+                  <Text style={[styles.smallText, { color: colors.primaryForeground }]}>No action</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.small, { backgroundColor: colors.destructive }]} onPress={() => void closeFlag(flag.id, "Reviewed — operator handled the account") }>
+                  <Text style={[styles.smallText, { color: colors.destructiveForeground }]}>Handled</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))}
         </View>
@@ -157,6 +205,8 @@ const styles = StyleSheet.create({
   card: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 6 },
   sectionTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   row: { flexDirection: "row", alignItems: "center", gap: 8, borderTopWidth: 1, paddingTop: 10, marginTop: 6 },
+  flag: { gap: 6, borderTopWidth: 1, paddingTop: 10, marginTop: 6 },
+  flagActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   personHead: { flexDirection: "row", alignItems: "center", gap: 8 },
   name: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   meta: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17 },

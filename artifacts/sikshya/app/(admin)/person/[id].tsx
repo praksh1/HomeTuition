@@ -219,8 +219,9 @@ export default function AdminPerson() {
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Password</Text>
         <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
-          You never see or set their password. This gives you a code to read out; they choose
-          the password themselves.
+          The normal path is the Forgot password link on sign-in, which emails the account owner.
+          Use this assisted code only while actively helping someone who cannot receive that email.
+          You never see or set their password.
         </Text>
         {resetCode ? (
           <View style={[styles.codeBox, { backgroundColor: colors.muted, borderColor: colors.border }]}>
@@ -231,7 +232,7 @@ export default function AdminPerson() {
           </View>
         ) : (
           <TouchableOpacity testID="admin-issue-reset" style={[styles.action, { borderColor: colors.border }]} onPress={() => void issueReset()} activeOpacity={0.8}>
-            <Text style={[styles.actionText, { color: colors.foreground }]}>Issue a reset code</Text>
+            <Text style={[styles.actionText, { color: colors.foreground }]}>Assisted reset (phone support)</Text>
           </TouchableOpacity>
         )}
       </View>

@@ -10,6 +10,7 @@ import {
 } from "../lib/membership";
 import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/payments";
 import { ordinaryTeachingAccess } from "../lib/teachingAccess";
+import { flagContent } from "../lib/moderation";
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
 import { videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
@@ -273,6 +274,12 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
+  const access = await ordinaryTeachingAccess(user.userId);
+  if (!access.allowed) {
+    res.status(access.status).json({ error: access.message, code: access.code });
+    return;
+  }
+
   const { subject, topic, date, duration, maxStudents, price } = req.body as {
     subject?: string; topic?: string; date?: string;
     duration?: number; maxStudents?: number; price?: number;
@@ -358,6 +365,7 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
     price: price!,
     status: "upcoming",
   }).returning();
+  await flagContent({ userId: user.userId, surface: "session_title", subjectId: session.id, text: `${subject} ${topic}` });
 
   /**
    * Tell the students the teacher picked, and nothing more than tell them.
@@ -636,6 +644,7 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     // class actually began rather than the slot it was booked into.
     if (status === "live") updates.startedAt = new Date();
   }
+
   if (topic !== undefined) {
     if (!String(topic).trim()) { res.status(400).json({ error: "Topic cannot be empty." }); return; }
     updates.topic = String(topic).trim();
@@ -914,6 +923,15 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     movedAffected = outcome.affected;
   } else {
     [session] = await db.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
+  }
+
+  if (topic !== undefined || subject !== undefined) {
+    await flagContent({
+      userId: user.userId,
+      surface: "session_title",
+      subjectId: id,
+      text: `${session.subject} ${session.topic}`,
+    });
   }
 
   /**
