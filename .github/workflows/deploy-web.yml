@@ -33,7 +33,12 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # The complete production gate now includes every database-backed integration suite,
+    # followed by a fresh Metro export and the real-browser checks. On a clean GitHub runner
+    # those server checks consume about 29 minutes, so the old 30-minute ceiling killed Metro
+    # mid-build even though every completed test had passed. This is a ceiling, not a delay:
+    # successful runs still finish as soon as the checks and deploy do.
+    timeout-minutes: 60
 
     # A throwaway database, so the notification tests can run against a real one. They cannot
     # be faked usefully: what broke before was not logic but wiring, and only a real request
