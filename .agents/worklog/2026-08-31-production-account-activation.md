@@ -1,6 +1,6 @@
 # Production account activation — Codex worklog
 
-Date: 2026-08-31  
+Date: 2026-08-31
 Branch: `claude/excalidraw-whiteboard-sync-gjoqaz`
 
 ## Owner request
