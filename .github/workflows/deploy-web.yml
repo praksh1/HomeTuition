@@ -39,7 +39,7 @@ env:
   # ever truly needs more, fail with a useful diagnostic rather than silently disappearing.
   # Metro keeps a coordinator and a transform worker, and both inherit this value. Their
   # combined ceiling therefore needs to fit under the runner limit, not merely each process.
-  NODE_OPTIONS: --max-old-space-size=1536
+  NODE_OPTIONS: --max-old-space-size=1024
 
 jobs:
   deploy:
