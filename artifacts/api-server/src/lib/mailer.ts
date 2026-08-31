@@ -1,4 +1,4 @@
-import { logger } from "./logger";
+import { logger } from "./logger.ts";
 
 /**
  * Sending email.
@@ -7,19 +7,37 @@ import { logger } from "./logger";
  * important things — a message that arrives while the app is closed being the obvious one.
  *
  * This follows the same rule as payments (see lib/payments.ts): the mode follows from what is
- * in the environment rather than from a flag. Set `RESEND_API_KEY` and `EMAIL_FROM` and mail
- * goes out; leave them unset and it does not, and the app *says so* rather than showing a
- * switch that quietly does nothing.
+ * in the environment rather than from a flag. Set either `BREVO_API_KEY` or `RESEND_API_KEY`,
+ * plus `EMAIL_FROM`, and mail goes out; leave them unset and it does not, and the app *says so*
+ * rather than showing a switch that quietly does nothing.
  *
- * Uses Resend's HTTP API rather than SMTP so there is no new dependency to install and nothing
- * to configure beyond two environment variables. Any provider with a send-one-email endpoint
- * would drop in here.
+ * Uses either provider's HTTP API rather than SMTP so there is no new dependency to install.
+ * Resend remains supported for existing deployments; Brevo provides a permanent no-card free
+ * tier suitable for the owner's production experiment.
  */
 
-const ENDPOINT = "https://api.resend.com/emails";
+const RESEND_ENDPOINT = "https://api.resend.com/emails";
+const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
+
+type MailProvider = "resend" | "brevo";
+
+function configuredProvider(): MailProvider | null {
+  // Preserve the existing provider if both were ever configured during a staged migration.
+  if (process.env.RESEND_API_KEY) return "resend";
+  if (process.env.BREVO_API_KEY) return "brevo";
+  return null;
+}
 
 export function isEmailConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+  return Boolean(configuredProvider() && process.env.EMAIL_FROM);
+}
+
+function senderFromEnvironment(): { email: string; name?: string } {
+  const value = process.env.EMAIL_FROM!.trim();
+  const named = /^(.*?)\s*<([^<>]+)>$/.exec(value);
+  if (!named) return { email: value };
+  const name = named[1].trim().replace(/^['"]|['"]$/g, "");
+  return { email: named[2].trim(), ...(name ? { name } : {}) };
 }
 
 export interface OutgoingEmail {
@@ -40,32 +58,42 @@ export interface OutgoingEmail {
 export async function sendEmail(mail: OutgoingEmail): Promise<boolean> {
   if (!isEmailConfigured()) return false;
 
+  const provider = configuredProvider()!;
+  const isBrevo = provider === "brevo";
+
   try {
-    const res = await fetch(ENDPOINT, {
+    const res = await fetch(isBrevo ? BREVO_ENDPOINT : RESEND_ENDPOINT, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: process.env.EMAIL_FROM,
-        to: [mail.to],
-        subject: mail.subject,
-        text: mail.text,
-        ...(mail.html ? { html: mail.html } : {}),
-      }),
+      headers: isBrevo
+        ? { "api-key": process.env.BREVO_API_KEY!, Accept: "application/json", "Content-Type": "application/json" }
+        : { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(isBrevo
+        ? {
+            sender: senderFromEnvironment(),
+            to: [{ email: mail.to }],
+            subject: mail.subject,
+            textContent: mail.text,
+            ...(mail.html ? { htmlContent: mail.html } : {}),
+          }
+        : {
+            from: process.env.EMAIL_FROM,
+            to: [mail.to],
+            subject: mail.subject,
+            text: mail.text,
+            ...(mail.html ? { html: mail.html } : {}),
+          }),
       // A slow mail provider must not hold a request open. The caller does not wait on us
       // anyway, but an unbounded fetch would still pin a socket.
       signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {
-      logger.warn({ status: res.status, to: mail.to }, "email send rejected");
+      logger.warn({ provider, status: res.status, to: mail.to }, "email send rejected");
       return false;
     }
     return true;
   } catch (err) {
-    logger.warn({ err, to: mail.to }, "email send failed");
+    logger.warn({ err, provider, to: mail.to }, "email send failed");
     return false;
   }
 }
