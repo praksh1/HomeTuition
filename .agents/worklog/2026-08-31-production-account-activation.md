@@ -138,7 +138,13 @@ services for this activation.
 
 ### Still pending after this checkpoint
 
-- No real email has yet been sent. The recipient address must be confirmed at action time before
-  transmitting it to Brevo.
+- The owner explicitly confirmed the one-time recipient at action time. Brevo's signed-in test
+  interface sent `Sikshya email verification test` to the verified Gmail test recipient. Brevo's
+  real-time transactional dashboard recorded one event as **Delivered**, with zero bounces.
+- A first attempt to call Brevo directly from the in-app browser's isolated Node environment
+  failed with a network `AggregateError`; no email was sent by that attempt and no secret was
+  exposed. The successful test used Brevo's own signed-in interface instead.
+- Brevo created template ID 1 solely to support the UI test. It is named `New template`, remains
+  **Inactive**, and cannot send automatically. It was left in place as an audit artifact.
 - The 12 commits after production `main` have not yet been promoted in this subsection. Do not
   claim the new account screens are live until the `main` deployment and its health checks pass.
