@@ -25,3 +25,5 @@ export * from "./recurringSessions";
 export * from "./recurringDays";
 export * from "./recurringEnrollments";
 export * from "./homework";
+export * from "./accountSecurity";
+export * from "./onboarding";

@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { chargeForMonthly } from "../lib/payments";
+import { mayBuyTeacherPlan } from "../lib/teachingAccess";
 import { notify, notifyMany } from "../lib/notify";
 import {
   MIN_SESSIONS_PER_CYCLE,
@@ -561,6 +562,12 @@ router.post("/monthly/classes/:id/makeups", requireAuth, async (req: Request, re
   const dayId = Number(missedDayId);
   if (!Number.isInteger(dayId)) {
     res.status(400).json({ error: "Say which missed class this is making up." });
+    return;
+  }
+
+  const access = await mayBuyTeacherPlan(user.userId);
+  if (!access.allowed) {
+    res.status(access.status).json({ error: access.message, code: access.code });
     return;
   }
 

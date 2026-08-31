@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 
 function showAccessDenied(message: string) {
   if (Platform.OS === "web") window.alert(`Access Denied\n\n${message}`);
@@ -31,6 +32,7 @@ export default function Login() {
   const { login, logout } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { t } = useLayout();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -76,6 +78,10 @@ export default function Login() {
           `This account is registered as a ${loggedInUser.role}, not a ${resolvedRole}. Please use the ${actualHome} login instead.`,
         );
         router.replace(loggedInUser.role === "teacher" ? "/(auth)/login?role=teacher" : "/(auth)/login?role=student");
+        return;
+      }
+      if (!loggedInUser.emailVerified) {
+        router.replace({ pathname: "/check-email" as never, params: { email: loggedInUser.email } });
         return;
       }
       router.replace("/");
@@ -144,7 +150,12 @@ export default function Login() {
           </View>
 
           <View style={styles.fieldGroup}>
-            <Text style={[styles.label, { color: colors.foreground }]}>Password</Text>
+            <View style={styles.passwordLabelRow}>
+              <Text style={[styles.label, { color: colors.foreground }]}>Password</Text>
+              <TouchableOpacity onPress={() => router.push("/forgot-password" as never)} activeOpacity={0.7}>
+                <Text style={[t.caption, { color: accentColor }]}>Forgot password?</Text>
+              </TouchableOpacity>
+            </View>
             <View style={[styles.inputWrapper, { backgroundColor: colors.muted, borderColor: colors.border }]}>
               <Feather name="lock" size={18} color={colors.mutedForeground} />
               <TextInput
@@ -231,6 +242,7 @@ const styles = StyleSheet.create({
   demoText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
   form: { gap: 16 },
   fieldGroup: { gap: 8 },
+  passwordLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   label: { fontSize: 14, fontFamily: "Inter_500Medium" },
   inputWrapper: {
     flexDirection: "row", alignItems: "center", gap: 12,

@@ -1,30 +1,59 @@
 import { Feather } from "@expo/vector-icons";
-import * as ImagePicker from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { notify } from "@/utils/alerts";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import StarRating from "@/components/StarRating";
-import type { Teacher, Credential } from "@/context/AuthContext";
+import type { Teacher } from "@/context/AuthContext";
+import { apiDelete, apiGet, apiPost } from "@/utils/api";
+import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
+import { openAttachment } from "@/utils/openAttachment";
 
 const CREDENTIAL_TYPES = [
-  "National ID / Citizenship",
-  "Teaching License",
-  "University Degree",
-  "Professional Certificate",
-];
+  { id: "citizenship", label: "National ID / Citizenship" },
+  { id: "teaching_license", label: "Teaching License" },
+  { id: "university_degree", label: "University Degree" },
+  { id: "professional_certificate", label: "Professional Certificate" },
+] as const;
+
+interface StoredCredential {
+  id: number;
+  documentType: string;
+  fileKey: string;
+  originalName: string;
+  contentType: string;
+  status: "submitted" | "opened" | "approved" | "rejected";
+  rejectionReason: string | null;
+  createdAt: string;
+}
 
 export default function TeacherProfile() {
-  const { user, logout, updateUser } = useAuth();
+  const { user, logout } = useAuth();
   const colors = useColors();
+  const { t } = useLayout();
   const insets = useSafeAreaInsets();
   const teacher = user as Teacher;
   const [uploading, setUploading] = useState(false);
+  const [credentials, setCredentials] = useState<StoredCredential[]>([]);
+  const [selected, setSelected] = useState<{ documentType: string; file: UploadableFile } | null>(null);
+
+  const loadCredentials = useCallback(async () => {
+    try {
+      const result = await apiGet<{ credentials: StoredCredential[] }>("/teachers/me/credentials");
+      setCredentials(result.credentials ?? []);
+    } catch {
+      setCredentials([]);
+    }
+  }, []);
+
+  useEffect(() => { void loadCredentials(); }, [loadCredentials]);
 
   const doLogout = async () => {
     await logout();
@@ -52,35 +81,53 @@ export default function TeacherProfile() {
 
   const initials = teacher.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
 
-  const uploadCredential = async (type: string) => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== "granted") {
-      notify("Permission needed", "Please grant photo library access to upload credentials.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      quality: 0.8,
-      allowsEditing: true,
+  const chooseCredential = async (documentType: string) => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"],
+      copyToCacheDirectory: true,
     });
-    if (result.canceled) return;
+    if (result.canceled || !result.assets?.[0]) return;
+    const asset = result.assets[0];
+    setSelected({
+      documentType,
+      file: {
+        uri: asset.uri,
+        name: asset.name ?? "credential",
+        mimeType: asset.mimeType ?? "application/octet-stream",
+        size: asset.size ?? 0,
+      },
+    });
+  };
+
+  const submitCredential = async () => {
+    if (!selected) return;
     setUploading(true);
     try {
-      const newCred: Credential = {
-        id: Date.now().toString(),
-        type,
-        uri: result.assets[0]?.uri ?? "",
-        name: type,
-        uploadedAt: new Date().toISOString(),
-      };
-      const updated = [...(teacher.credentials ?? []), newCred];
-      await updateUser({ credentials: updated, approvalStatus: "pending" } as Partial<Teacher>);
+      const fileKey = await uploadFile(selected.file);
+      await apiPost("/teachers/me/credentials", {
+        documentType: selected.documentType,
+        fileKey,
+        originalName: selected.file.name,
+        contentType: selected.file.mimeType,
+      });
+      setSelected(null);
+      await loadCredentials();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      notify("Uploaded", `${type} uploaded successfully. It will be reviewed within 24-48 hours.`);
-    } catch (_e) {
-      notify("Error", "Upload failed. Please try again.");
+      notify("Submitted", "The document is now waiting for an operator to review it.");
+    } catch (error) {
+      notify("Upload failed", error instanceof Error ? error.message : "Please try again.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const deleteCredential = async (credential: StoredCredential) => {
+    try {
+      await apiDelete(`/teachers/me/credentials/${credential.id}`);
+      await loadCredentials();
+      notify("Deleted", "The document was removed before review.");
+    } catch (error) {
+      notify("Cannot delete", error instanceof Error ? error.message : "An operator may already have opened it.");
     }
   };
 
@@ -139,33 +186,46 @@ export default function TeacherProfile() {
           Upload valid documents to get verified. All documents are reviewed by the Sikshya team within 24-48 hours.
         </Text>
 
-        {teacher.credentials.length > 0 && (
-          <View style={styles.uploadedList}>
-            {teacher.credentials.map((cred) => (
-              <View key={cred.id} style={[styles.credItem, { backgroundColor: colors.success + "10", borderColor: colors.success + "30" }]}>
-                <Feather name="file-text" size={16} color={colors.success} />
-                <Text style={[styles.credName, { color: colors.success }]}>{cred.name}</Text>
-                <Feather name="check" size={14} color={colors.success} />
-              </View>
-            ))}
-          </View>
-        )}
-
-        <Text style={[styles.uploadLabel, { color: colors.foreground }]}>Upload Document:</Text>
+        <Text style={[styles.uploadLabel, { color: colors.foreground }]}>Documents</Text>
         <View style={styles.credTypeGrid}>
           {CREDENTIAL_TYPES.map((type) => {
-            const uploaded = teacher.credentials.some((c) => c.type === type);
+            const uploaded = credentials.find((credential) => credential.documentType === type.id);
+            const selectedHere = selected?.documentType === type.id ? selected.file : null;
+            const locked = uploaded?.status === "opened" || uploaded?.status === "approved";
+            const canReplace = !uploaded || uploaded.status === "rejected";
             return (
-              <TouchableOpacity
-                key={type}
-                style={[styles.credTypeBtn, { borderColor: uploaded ? colors.success : colors.border, backgroundColor: uploaded ? colors.success + "10" : colors.muted }]}
-                onPress={() => uploadCredential(type)}
-                disabled={uploading}
-                activeOpacity={0.7}
-              >
-                <Feather name={uploaded ? "check-circle" : "upload"} size={16} color={uploaded ? colors.success : colors.mutedForeground} />
-                <Text style={[styles.credTypeName, { color: uploaded ? colors.success : colors.mutedForeground }]}>{type}</Text>
-              </TouchableOpacity>
+              <View key={type.id} style={[styles.credentialBlock, { borderColor: uploaded?.status === "rejected" ? colors.destructive : colors.border, backgroundColor: colors.muted }]}>
+                <View style={styles.credentialTitleRow}>
+                  <Feather name={uploaded ? "file-text" : "upload"} size={16} color={uploaded?.status === "rejected" ? colors.destructive : uploaded ? colors.success : colors.mutedForeground} />
+                  <Text style={[styles.credTypeName, { color: colors.foreground }]}>{type.label}</Text>
+                  {uploaded && <Text style={[t.caption, styles.documentStatus, { color: uploaded.status === "rejected" ? colors.destructive : uploaded.status === "approved" ? colors.success : colors.warn }]}>{uploaded.status === "opened" ? "Under review" : uploaded.status}</Text>}
+                </View>
+                {uploaded && (
+                  <TouchableOpacity onPress={() => void openAttachment(uploaded.fileKey)} activeOpacity={0.7}>
+                    <Text style={[t.caption, { color: colors.primary }]} numberOfLines={1}>{uploaded.originalName}</Text>
+                  </TouchableOpacity>
+                )}
+                {uploaded?.rejectionReason && <Text style={[t.caption, { color: colors.destructive }]}>{uploaded.rejectionReason}</Text>}
+                {selectedHere && <Text style={[t.caption, { color: colors.foreground }]} numberOfLines={1}>Selected: {selectedHere.name}</Text>}
+                <View style={styles.documentActions}>
+                  {canReplace && (
+                    <TouchableOpacity style={[styles.documentAction, { borderColor: colors.border }]} onPress={() => void chooseCredential(type.id)} disabled={uploading} activeOpacity={0.7}>
+                      <Text style={[t.caption, { color: colors.primary }]}>{selectedHere ? "Choose another" : "Select file"}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {selectedHere && (
+                    <TouchableOpacity style={[styles.documentAction, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => void submitCredential()} disabled={uploading} activeOpacity={0.8}>
+                      <Text style={[t.caption, { color: colors.primaryForeground }]}>{uploading ? "Uploading…" : "Upload"}</Text>
+                    </TouchableOpacity>
+                  )}
+                  {uploaded?.status === "submitted" && !locked && (
+                    <TouchableOpacity style={[styles.documentAction, { borderColor: colors.destructive }]} onPress={() => void deleteCredential(uploaded)} activeOpacity={0.7}>
+                      <Text style={[t.caption, { color: colors.destructive }]}>Delete</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {locked && <Text style={[t.caption, { color: colors.mutedForeground }]}>An operator has opened this file, so it can no longer be deleted.</Text>}
+              </View>
             );
           })}
         </View>
@@ -250,6 +310,11 @@ const styles = StyleSheet.create({
   credName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
   uploadLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
   credTypeGrid: { gap: 10 },
+  credentialBlock: { gap: 8, borderRadius: 12, borderWidth: 1, padding: 13 },
+  credentialTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  documentStatus: { marginLeft: "auto", textTransform: "capitalize" },
+  documentActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  documentAction: { minHeight: 36, justifyContent: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 12 },
   credTypeBtn: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 12, borderWidth: 1, padding: 13 },
   credTypeName: { fontSize: 14, fontFamily: "Inter_400Regular" },
   logoutBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15 },

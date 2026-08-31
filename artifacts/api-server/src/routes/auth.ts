@@ -1,9 +1,18 @@
 import { eq } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { db, usersTable, teacherProfilesTable, studentProfilesTable } from "@workspace/db";
+import { accountSecurityTable, db, usersTable, teacherProfilesTable, studentProfilesTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { recordActivity } from "../lib/activityLog";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth";
+import {
+  consumePasswordReset,
+  consumeVerificationToken,
+  emailVerifiedFor,
+  externalProvidersFor,
+  requestPasswordReset,
+  sendVerificationEmail,
+} from "../lib/accountSecurity";
+import { isEmailConfigured } from "../lib/mailer";
 
 const router: IRouter = Router();
 
@@ -97,40 +106,110 @@ router.post("/auth/register", async (req, res): Promise<void> => {
     return;
   }
   const passwordHash = await hashPassword(password);
-  const [user] = await db.insert(usersTable).values({
-    name: name.trim(),
-    email: email.toLowerCase().trim(),
-    role,
-    passwordHash,
-    // Same reason as AUTH_COLUMNS: a bare `returning()` asks for every column, so registration
-    // would break on a schema change the database has not caught up with yet.
-  }).returning(AUTH_COLUMNS);
-  if (role === "teacher") {
-    await db.insert(teacherProfilesTable).values({
-      userId: user.id,
-      subject: subject ?? "Mathematics",
-      subjects: [],
-      bio: bio ?? "",
-      approvalStatus: "pending",
-      languages: ["Nepali"],
-      isOnline: false,
-      subscriptionActive: false,
-      sessionsThisMonth: 0,
-      totalStudents: 0,
-      monthlyEarnings: 0,
-      rating: 0,
-      reviewCount: 0,
+  const user = await db.transaction(async (tx) => {
+    const [created] = await tx.insert(usersTable).values({
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      role,
+      passwordHash,
+      // Same reason as AUTH_COLUMNS: a bare `returning()` asks for every column, so registration
+      // would break on a schema change the database has not caught up with yet.
+    }).returning(AUTH_COLUMNS);
+    if (!created) throw new Error("User insert returned no row");
+
+    await tx.insert(accountSecurityTable).values({
+      userId: created.id,
+      emailVerifiedAt: null,
+      passwordAuthEnabled: true,
     });
-  } else {
-    await db.insert(studentProfilesTable).values({
-      userId: user.id,
-      grade: grade ?? "",
-      bio: bio ?? "",
-    });
-  }
+    if (role === "teacher") {
+      await tx.insert(teacherProfilesTable).values({
+        userId: created.id,
+        subject: subject ?? "Mathematics",
+        subjects: [],
+        bio: bio ?? "",
+        approvalStatus: "pending",
+        languages: ["Nepali"],
+        isOnline: false,
+        subscriptionActive: false,
+        sessionsThisMonth: 0,
+        totalStudents: 0,
+        monthlyEarnings: 0,
+        rating: 0,
+        reviewCount: 0,
+      });
+    } else {
+      await tx.insert(studentProfilesTable).values({
+        userId: created.id,
+        grade: grade ?? "",
+        bio: bio ?? "",
+      });
+    }
+    return created;
+  });
   const token = signToken({ userId: user.id, email: user.email, role: user.role });
   const profile = await buildUserProfile(user);
-  res.status(201).json({ token, user: profile });
+  const delivery = await sendVerificationEmail(user);
+  res.status(201).json({
+    token,
+    user: profile,
+    verificationRequired: true,
+    verificationEmailSent: delivery.sent,
+    emailConfigured: isEmailConfigured(),
+  });
+});
+
+router.post("/auth/verification/resend", requireAuth, async (req, res): Promise<void> => {
+  const [user] = await db.select(AUTH_COLUMNS).from(usersTable).where(eq(usersTable.id, req.user!.userId));
+  if (!user) { res.status(404).json({ error: "Account not found" }); return; }
+  if (await emailVerifiedFor(user.id)) {
+    res.json({ verified: true, sent: false });
+    return;
+  }
+  const delivery = await sendVerificationEmail(user);
+  res.status(delivery.rateLimited ? 429 : delivery.sent ? 200 : 503).json({
+    verified: false,
+    sent: delivery.sent,
+    error: delivery.rateLimited
+      ? "Please wait a minute before asking for another email."
+      : delivery.sent
+        ? undefined
+        : "Email delivery is not configured yet. Please contact Sikshya support.",
+  });
+});
+
+router.post("/auth/verification/confirm", async (req, res): Promise<void> => {
+  const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+  if (!token) { res.status(400).json({ error: "The verification link is incomplete." }); return; }
+  const userId = await consumeVerificationToken(token);
+  if (userId === null) {
+    res.status(400).json({ error: "This verification link is invalid or has expired." });
+    return;
+  }
+  recordActivity({ userId, action: "auth.email.verified", subjectType: "user", subjectId: userId });
+  res.json({ verified: true });
+});
+
+router.post("/auth/password/forgot", async (req, res): Promise<void> => {
+  const email = typeof req.body?.email === "string" ? req.body.email.trim() : "";
+  if (!email) { res.status(400).json({ error: "Enter your email address." }); return; }
+  // The same answer whether the address exists or not prevents account discovery.
+  await requestPasswordReset(email);
+  res.json({
+    accepted: true,
+    message: "If that email belongs to a password account, a reset link is on its way.",
+    emailConfigured: isEmailConfigured(),
+  });
+});
+
+router.post("/auth/password/reset", async (req, res): Promise<void> => {
+  const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+  const password = typeof req.body?.password === "string" ? req.body.password : "";
+  if (!token) { res.status(400).json({ error: "The reset link is incomplete." }); return; }
+  if (password.length < 8) { res.status(400).json({ error: "Use at least 8 characters for your new password." }); return; }
+  const changed = await consumePasswordReset(token, await hashPassword(password));
+  if (!changed) { res.status(400).json({ error: "This reset link is invalid or has expired." }); return; }
+  res.json({ changed: true });
 });
 
 router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
@@ -145,6 +224,10 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
 });
 
 async function buildUserProfile(user: { id: number; email: string; name: string; role: string }) {
+  const [emailVerified, authProviders] = await Promise.all([
+    emailVerifiedFor(user.id),
+    externalProvidersFor(user.id),
+  ]);
   if (user.role === "teacher") {
     const [teacher] = await db
       .select()
@@ -155,6 +238,8 @@ async function buildUserProfile(user: { id: number; email: string; name: string;
       email: user.email,
       name: user.name,
       role: user.role,
+      emailVerified,
+      authProviders,
       teacher: teacher ? { ...teacher, name: user.name, email: user.email } : null,
     };
   } else {
@@ -167,6 +252,8 @@ async function buildUserProfile(user: { id: number; email: string; name: string;
       email: user.email,
       name: user.name,
       role: user.role,
+      emailVerified,
+      authProviders,
       student: student ?? null,
     };
   }

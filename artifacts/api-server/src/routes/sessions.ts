@@ -9,6 +9,7 @@ import {
   joinWindowOpen,
 } from "../lib/membership";
 import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/payments";
+import { ordinaryTeachingAccess } from "../lib/teachingAccess";
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
 import { videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
@@ -227,6 +228,12 @@ router.get("/sessions/invitable-students", requireAuth, async (req, res): Promis
   const user = req.user!;
   if (user.role !== "teacher") {
     res.status(403).json({ error: "Only teachers can see this" });
+    return;
+  }
+
+  const access = await ordinaryTeachingAccess(user.userId);
+  if (!access.allowed) {
+    res.status(access.status).json({ error: access.message, code: access.code });
     return;
   }
 

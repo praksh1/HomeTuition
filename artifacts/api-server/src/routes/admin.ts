@@ -11,6 +11,9 @@ import {
   sessionMessagesTable,
   sessionsTable,
   teacherProfilesTable,
+  teacherCredentialsTable,
+  accountSecurityTable,
+  userOnboardingTable,
   usersTable,
 } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
@@ -25,6 +28,7 @@ import { refundSplit } from "../lib/sessionChanges";
 import { checkStorage, storageSettingsPresent } from "../lib/fileStore";
 import { TICKET_STATUSES, displayStatus, nextStatuses, statusLabel, ticketRef } from "../lib/tickets";
 import { historyFor, moveTicket, nameOf } from "../lib/ticketStore";
+import { sendEmail } from "../lib/mailer";
 
 /**
  * The support desk.
@@ -607,8 +611,36 @@ router.get("/admin/users/:id", async (req, res): Promise<void> => {
     .from(teacherProfilesTable)
     .where(eq(teacherProfilesTable.userId, id));
 
+  let credentials: (typeof teacherCredentialsTable.$inferSelect)[] = [];
+  if (profile) {
+    // Opening the case locks submitted files against deletion. This is the real event, not a
+    // button an operator might forget to press.
+    await db
+      .update(teacherCredentialsTable)
+      .set({ status: "opened", openedAt: new Date(), openedBy: req.user!.userId, updatedAt: new Date() })
+      .where(and(eq(teacherCredentialsTable.teacherId, id), eq(teacherCredentialsTable.status, "submitted")));
+    credentials = await db
+      .select()
+      .from(teacherCredentialsTable)
+      .where(and(eq(teacherCredentialsTable.teacherId, id), sql`${teacherCredentialsTable.status} <> 'withdrawn'`))
+      .orderBy(asc(teacherCredentialsTable.documentType), desc(teacherCredentialsTable.id));
+  }
+
+  const [security] = await db
+    .select({ emailVerifiedAt: accountSecurityTable.emailVerifiedAt })
+    .from(accountSecurityTable)
+    .where(eq(accountSecurityTable.userId, id));
+  const [onboarding] = await db.select().from(userOnboardingTable).where(eq(userOnboardingTable.userId, id));
+
   const activity = await readActivity({ userId: id, limit: 80 });
-  res.json({ user, teacherProfile: profile ?? null, activity });
+  res.json({
+    user,
+    teacherProfile: profile ?? null,
+    credentials,
+    onboarding: onboarding ?? null,
+    emailVerified: security ? security.emailVerifiedAt !== null : true,
+    activity,
+  });
 });
 
 router.post("/admin/users/:id/suspend", async (req, res): Promise<void> => {
@@ -730,9 +762,11 @@ router.get("/admin/teachers/pending", async (_req, res): Promise<void> => {
       bio: teacherProfilesTable.bio,
       approvalStatus: teacherProfilesTable.approvalStatus,
       createdAt: usersTable.createdAt,
+      emailVerifiedAt: accountSecurityTable.emailVerifiedAt,
     })
     .from(teacherProfilesTable)
     .innerJoin(usersTable, eq(usersTable.id, teacherProfilesTable.userId))
+    .leftJoin(accountSecurityTable, eq(accountSecurityTable.userId, usersTable.id))
     .where(eq(teacherProfilesTable.approvalStatus, "pending"))
     .orderBy(asc(teacherProfilesTable.id))
     .limit(100);
@@ -753,6 +787,22 @@ router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> 
   if (decision === "rejected" && !text) {
     res.status(400).json({ error: "Please say why, so the teacher can put it right." });
     return;
+  }
+
+  const credentials = await db
+    .select({ status: teacherCredentialsTable.status, type: teacherCredentialsTable.documentType })
+    .from(teacherCredentialsTable)
+    .where(eq(teacherCredentialsTable.teacherId, userId));
+  if (decision === "approved") {
+    const active = credentials.filter((row) => row.status !== "withdrawn" && row.status !== "rejected");
+    if (active.length === 0) {
+      res.status(409).json({ error: "Open and approve the teacher's submitted identity documents before approving the account." });
+      return;
+    }
+    if (active.some((row) => row.status !== "approved")) {
+      res.status(409).json({ error: "Every submitted document must be approved or rejected before the teacher account can be approved." });
+      return;
+    }
   }
 
   const [updated] = await db
@@ -782,6 +832,71 @@ router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> 
   });
 
   res.json(updated);
+});
+
+router.post("/admin/teacher-credentials/:id/decision", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const decision = req.body?.decision;
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid document id." }); return; }
+  if (decision !== "approved" && decision !== "rejected") {
+    res.status(400).json({ error: "Choose approved or rejected." });
+    return;
+  }
+  if (decision === "rejected" && !reason) {
+    res.status(400).json({ error: "Explain what is wrong so the teacher can send the right document." });
+    return;
+  }
+  const [existing] = await db
+    .select({
+      id: teacherCredentialsTable.id,
+      teacherId: teacherCredentialsTable.teacherId,
+      status: teacherCredentialsTable.status,
+      documentType: teacherCredentialsTable.documentType,
+      teacherEmail: usersTable.email,
+      teacherName: usersTable.name,
+    })
+    .from(teacherCredentialsTable)
+    .innerJoin(usersTable, eq(usersTable.id, teacherCredentialsTable.teacherId))
+    .where(eq(teacherCredentialsTable.id, id));
+  if (!existing || existing.status === "withdrawn") { res.status(404).json({ error: "Document not found." }); return; }
+
+  const [updated] = await db
+    .update(teacherCredentialsTable)
+    .set({
+      status: decision,
+      reviewedAt: new Date(),
+      reviewedBy: req.user!.userId,
+      rejectionReason: decision === "rejected" ? reason : null,
+      openedAt: sql`coalesce(${teacherCredentialsTable.openedAt}, now())`,
+      openedBy: sql`coalesce(${teacherCredentialsTable.openedBy}, ${req.user!.userId})`,
+      updatedAt: new Date(),
+    })
+    .where(eq(teacherCredentialsTable.id, id))
+    .returning();
+
+  if (decision === "rejected") {
+    await db.update(teacherProfilesTable).set({ approvalStatus: "rejected" }).where(eq(teacherProfilesTable.userId, existing.teacherId));
+  }
+  const label = existing.documentType.replaceAll("_", " ");
+  const message = decision === "approved"
+    ? `Your ${label} was approved.`
+    : `Your ${label} was rejected: ${reason}. You may now upload a replacement.`;
+  notify(existing.teacherId, { kind: "message", fromName: "Sikshya Support", preview: message, at: new Date().toISOString() });
+  void sendEmail({
+    to: existing.teacherEmail,
+    subject: decision === "approved" ? "Sikshya document approved" : "Sikshya document needs to be replaced",
+    text: `Hello ${existing.teacherName},\n\n${message}`,
+  });
+  recordActivity({
+    userId: req.user!.userId,
+    action: `admin.teacher_credential.${decision}`,
+    subjectType: "teacher_credential",
+    subjectId: id,
+    detail: { teacherId: existing.teacherId, reason: reason || undefined },
+    ip: callerIp(req),
+  });
+  res.json({ credential: updated });
 });
 
 /**

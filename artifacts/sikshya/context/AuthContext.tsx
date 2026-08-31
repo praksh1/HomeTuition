@@ -46,6 +46,8 @@ export interface Teacher {
   pricePerSession?: number;
   languages?: string[];
   isOnline?: boolean;
+  emailVerified: boolean;
+  authProviders: string[];
 }
 
 export interface Student {
@@ -58,6 +60,8 @@ export interface Student {
   bio?: string;
   enrolledSessions: string[];
   avatarUrl?: string;
+  emailVerified: boolean;
+  authProviders: string[];
 }
 
 /**
@@ -75,6 +79,8 @@ export interface Agent {
   email: string;
   role: "admin";
   avatarUrl?: string;
+  emailVerified: boolean;
+  authProviders: string[];
 }
 
 export type User = Teacher | Student | Agent;
@@ -89,11 +95,17 @@ interface RegisterData {
   grade?: string;
 }
 
+interface RegisterResult {
+  success: boolean;
+  verificationEmailSent: boolean;
+  emailConfigured: boolean;
+}
+
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string, role: "teacher" | "student") => Promise<User | null>;
-  register: (data: RegisterData) => Promise<boolean>;
+  register: (data: RegisterData) => Promise<RegisterResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => Promise<void>;
 }
@@ -137,6 +149,8 @@ interface ApiUserProfile {
   email: string;
   name: string;
   role: string;
+  emailVerified?: boolean;
+  authProviders?: string[];
   teacher?: ApiTeacher | null;
   student?: ApiStudent | null;
 }
@@ -175,6 +189,8 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       pricePerSession: t.pricePerSession ?? undefined,
       languages: t.languages ?? ["Nepali"],
       isOnline: t.isOnline ?? false,
+      emailVerified: profile.emailVerified === true,
+      authProviders: profile.authProviders ?? [],
     };
   } else if (profile.role === "student") {
     const s = profile.student;
@@ -188,6 +204,8 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       bio: s?.bio ?? undefined,
       enrolledSessions: [],
       avatarUrl: s?.avatarUrl ?? undefined,
+      emailVerified: profile.emailVerified === true,
+      authProviders: profile.authProviders ?? [],
     };
   } else if (profile.role === "admin") {
     // Nothing to map: an agent has no profile of their own. Returning null here would have
@@ -198,6 +216,8 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       name: profile.name,
       email: profile.email,
       role: "admin",
+      emailVerified: profile.emailVerified !== false,
+      authProviders: profile.authProviders ?? [],
     };
   }
   return null;
@@ -207,7 +227,7 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
   login: async () => null,
-  register: async () => false,
+  register: async () => ({ success: false, verificationEmailSent: false, emailConfigured: false }),
   logout: () => {},
   updateUser: async () => {},
 });
@@ -250,8 +270,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return mapped;
   };
 
-  const register = async (data: RegisterData): Promise<boolean> => {
-    const res = await apiPost<ApiAuthResponse>("/auth/register", {
+  const register = async (data: RegisterData): Promise<RegisterResult> => {
+    const res = await apiPost<ApiAuthResponse & { verificationEmailSent?: boolean; emailConfigured?: boolean }>("/auth/register", {
       name: data.name,
       email: data.email,
       password: data.password,
@@ -262,9 +282,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     await setToken(res.token);
     const mapped = mapApiUserToUser(res.user);
-    if (!mapped) return false;
+    if (!mapped) return { success: false, verificationEmailSent: false, emailConfigured: false };
     setUser(mapped);
-    return true;
+    return {
+      success: true,
+      verificationEmailSent: res.verificationEmailSent === true,
+      emailConfigured: res.emailConfigured === true,
+    };
   };
 
   const logout = async () => {

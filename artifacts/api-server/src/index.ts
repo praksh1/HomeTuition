@@ -23,6 +23,7 @@ import {
   ensureMessageExtras,
   ensureSessionMessageExtras,
   ensureTicketLifecycle,
+  ensureAccountOnboardingTables,
 } from "./lib/ensureSchema";
 
 const rawPort = process.env["PORT"];
@@ -62,6 +63,7 @@ server.listen(port, () => {
   void ensureTeacherLeave();
   void ensureMessageExtras();
   void ensureSessionMessageExtras();
+  void ensureAccountOnboardingTables();
   // Says once whether uploads can work, and whether a setting had to be interpreted.
   noteStorageConfig();
   // Whether real money can move is too important to have to go and look up.

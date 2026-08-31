@@ -1,11 +1,13 @@
 import { and, asc, desc, eq, gte, lte, or, sql, type AnyColumn } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { db, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
+import { db, studentTeacherSubscriptionsTable, teacherCredentialsTable, teacherProfilesTable, usersTable } from "@workspace/db";
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { notify } from "../lib/notify";
 import { chargeForMonthly } from "../lib/payments";
+import { mayBuyTeacherPlan } from "../lib/teachingAccess";
 import { allowanceSummary } from "../lib/sessionAllowance";
 import { SUBSCRIPTION_TIERS, isTierKey, type SubscriptionTierKey } from "../lib/tierLimits";
+import { deleteUpload, verifyUpload } from "../lib/fileStore";
 
 const router: IRouter = Router();
 
@@ -279,6 +281,12 @@ router.post("/teachers/:id/subscribe", requireAuth, async (req, res): Promise<vo
     return;
   }
 
+  const access = await mayBuyTeacherPlan(existing.userId);
+  if (!access.allowed) {
+    res.status(access.status).json({ error: access.message, code: access.code });
+    return;
+  }
+
   const charge = await chargeForMonthly({
     purpose: "teacher-plan",
     referenceId: id,
@@ -326,6 +334,91 @@ router.get("/teachers/me/allowance", requireAuth, async (req, res): Promise<void
 
 router.get("/subscription-tiers", (_req, res): void => {
   res.json({ tiers: SUBSCRIPTION_TIERS });
+});
+
+const CREDENTIAL_TYPES = ["citizenship", "teaching_license", "university_degree", "professional_certificate"] as const;
+
+function credentialType(value: unknown): (typeof CREDENTIAL_TYPES)[number] | null {
+  return typeof value === "string" && CREDENTIAL_TYPES.includes(value as (typeof CREDENTIAL_TYPES)[number])
+    ? value as (typeof CREDENTIAL_TYPES)[number]
+    : null;
+}
+
+router.get("/teachers/me/credentials", requireAuth, async (req, res): Promise<void> => {
+  if (req.user!.role !== "teacher") { res.status(403).json({ error: "Only teachers have credentials." }); return; }
+  const rows = await db
+    .select()
+    .from(teacherCredentialsTable)
+    .where(eq(teacherCredentialsTable.teacherId, req.user!.userId))
+    .orderBy(asc(teacherCredentialsTable.documentType), desc(teacherCredentialsTable.id));
+  res.json({ credentials: rows.filter((row) => row.status !== "withdrawn") });
+});
+
+router.post("/teachers/me/credentials", requireAuth, async (req, res): Promise<void> => {
+  const user = req.user!;
+  if (user.role !== "teacher") { res.status(403).json({ error: "Only teachers can submit credentials." }); return; }
+  const documentType = credentialType(req.body?.documentType);
+  const fileKey = typeof req.body?.fileKey === "string" ? req.body.fileKey.trim() : "";
+  const originalName = typeof req.body?.originalName === "string" ? req.body.originalName.trim().slice(0, 180) : "";
+  const contentType = typeof req.body?.contentType === "string" ? req.body.contentType.trim() : "";
+  if (!documentType || !fileKey || !originalName || !contentType) {
+    res.status(400).json({ error: "Choose a document type and a completed photo or PDF upload." });
+    return;
+  }
+  const verdict = await verifyUpload(fileKey, user.userId);
+  if (!verdict.ok) { res.status(400).json({ error: verdict.reason }); return; }
+
+  const existing = await db
+    .select({ id: teacherCredentialsTable.id, status: teacherCredentialsTable.status })
+    .from(teacherCredentialsTable)
+    .where(and(eq(teacherCredentialsTable.teacherId, user.userId), eq(teacherCredentialsTable.documentType, documentType)))
+    .orderBy(desc(teacherCredentialsTable.id));
+  if (existing.some((row) => ["submitted", "opened", "approved"].includes(row.status))) {
+    await deleteUpload(fileKey);
+    res.status(409).json({ error: "That document type is already submitted. It can be replaced only before review, or after an operator rejects it." });
+    return;
+  }
+
+  const [credential] = await db.transaction(async (tx) => {
+    await tx
+      .update(teacherCredentialsTable)
+      .set({ status: "withdrawn", updatedAt: new Date() })
+      .where(and(eq(teacherCredentialsTable.teacherId, user.userId), eq(teacherCredentialsTable.documentType, documentType), eq(teacherCredentialsTable.status, "rejected")));
+    const inserted = await tx.insert(teacherCredentialsTable).values({
+      teacherId: user.userId,
+      documentType,
+      fileKey,
+      originalName,
+      contentType: verdict.contentType,
+      status: "submitted",
+    }).returning();
+    await tx.update(teacherProfilesTable).set({ approvalStatus: "pending" }).where(eq(teacherProfilesTable.userId, user.userId));
+    return inserted;
+  });
+  res.status(201).json({ credential });
+});
+
+router.delete("/teachers/me/credentials/:id", requireAuth, async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid document id." }); return; }
+  const [row] = await db
+    .select()
+    .from(teacherCredentialsTable)
+    .where(and(eq(teacherCredentialsTable.id, id), eq(teacherCredentialsTable.teacherId, req.user!.userId)))
+    .limit(1);
+  if (!row) { res.status(404).json({ error: "Document not found." }); return; }
+  if (row.status !== "submitted") {
+    res.status(409).json({ error: "An operator has opened this document, so it can no longer be deleted." });
+    return;
+  }
+  const [withdrawn] = await db
+    .update(teacherCredentialsTable)
+    .set({ status: "withdrawn", updatedAt: new Date() })
+    .where(and(eq(teacherCredentialsTable.id, id), eq(teacherCredentialsTable.status, "submitted")))
+    .returning({ id: teacherCredentialsTable.id });
+  if (!withdrawn) { res.status(409).json({ error: "This document was opened while you were viewing it and can no longer be deleted." }); return; }
+  await deleteUpload(row.fileKey);
+  res.json({ deleted: true });
 });
 
 // Free "Subscribe" (follow): adds a teacher to a student's dashboard with no charge.

@@ -61,9 +61,18 @@ export default function Register() {
     setLoading(true);
     setError("");
     try {
-      const success = await doRegister({ name: name.trim(), email: email.trim(), password, role: resolvedRole, subject, bio, grade });
+      const result = await doRegister({ name: name.trim(), email: email.trim(), password, role: resolvedRole, subject, bio, grade });
       setLoading(false);
-      if (success) router.replace("/");
+      if (result.success) {
+        router.replace({
+          pathname: "/check-email" as never,
+          params: {
+            email: email.trim(),
+            sent: result.verificationEmailSent ? "1" : "0",
+            configured: result.emailConfigured ? "1" : "0",
+          },
+        });
+      }
     } catch (e) {
       setLoading(false);
       setError(e instanceof ApiError ? e.message : "Registration failed. Please try again.");

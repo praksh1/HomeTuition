@@ -985,3 +985,134 @@ export async function ensureSessionMessageExtras(): Promise<void> {
     );
   }
 }
+
+/**
+ * Account security, onboarding, credential review, and moderation tables.
+ *
+ * These are deliberately new tables instead of columns on `users` or the two profile tables.
+ * Railway deploys code before anybody can run `db:push`; an additive `CREATE TABLE IF NOT
+ * EXISTS` keeps every existing sign-in and class route alive throughout that window.
+ */
+export async function ensureAccountOnboardingTables(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "account_security" (
+        "user_id" integer PRIMARY KEY,
+        "email_verified_at" timestamp with time zone,
+        "password_auth_enabled" boolean NOT NULL DEFAULT true,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "account_security_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "account_tokens" (
+        "id" serial PRIMARY KEY,
+        "user_id" integer NOT NULL,
+        "purpose" text NOT NULL,
+        "token_hash" text NOT NULL,
+        "expires_at" timestamp with time zone NOT NULL,
+        "used_at" timestamp with time zone,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "account_tokens_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS "account_tokens_hash_idx" ON "account_tokens" ("token_hash")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "account_tokens_user_idx" ON "account_tokens" ("user_id", "purpose", "id")`);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "external_identities" (
+        "id" serial PRIMARY KEY,
+        "user_id" integer NOT NULL,
+        "provider" text NOT NULL,
+        "provider_subject" text NOT NULL,
+        "provider_email" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "external_identities_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS "external_identities_provider_subject_idx" ON "external_identities" ("provider", "provider_subject")`);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "external_identities_user_idx" ON "external_identities" ("user_id", "id")`);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "user_onboarding" (
+        "user_id" integer PRIMARY KEY,
+        "date_of_birth" date,
+        "phone" text,
+        "province" text,
+        "district" text,
+        "local_level" text,
+        "locality" text,
+        "institution_name" text,
+        "affiliation_status" text,
+        "guardian_name" text,
+        "guardian_email" text,
+        "guardian_phone" text,
+        "guardian_relationship" text,
+        "profile_photo_key" text,
+        "completed_at" timestamp with time zone,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "user_onboarding_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "teacher_credentials" (
+        "id" serial PRIMARY KEY,
+        "teacher_id" integer NOT NULL,
+        "document_type" text NOT NULL,
+        "file_key" text NOT NULL,
+        "original_name" text NOT NULL,
+        "content_type" text NOT NULL,
+        "status" text NOT NULL DEFAULT 'submitted',
+        "opened_at" timestamp with time zone,
+        "opened_by" integer,
+        "reviewed_at" timestamp with time zone,
+        "reviewed_by" integer,
+        "rejection_reason" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "teacher_credentials_teacher_id_users_id_fk"
+          FOREIGN KEY ("teacher_id") REFERENCES "users"("id") ON DELETE CASCADE,
+        CONSTRAINT "teacher_credentials_opened_by_users_id_fk"
+          FOREIGN KEY ("opened_by") REFERENCES "users"("id") ON DELETE SET NULL,
+        CONSTRAINT "teacher_credentials_reviewed_by_users_id_fk"
+          FOREIGN KEY ("reviewed_by") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "teacher_credentials_teacher_idx" ON "teacher_credentials" ("teacher_id", "document_type", "id")`);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "moderation_flags" (
+        "id" serial PRIMARY KEY,
+        "user_id" integer,
+        "surface" text NOT NULL,
+        "subject_id" integer,
+        "excerpt" text NOT NULL,
+        "matched_terms" text[] NOT NULL DEFAULT '{}',
+        "status" text NOT NULL DEFAULT 'open',
+        "resolved_by" integer,
+        "resolution" text,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "resolved_at" timestamp with time zone,
+        CONSTRAINT "moderation_flags_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL,
+        CONSTRAINT "moderation_flags_resolved_by_users_id_fk"
+          FOREIGN KEY ("resolved_by") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS "moderation_flags_status_idx" ON "moderation_flags" ("status", "id")`);
+    logger.info("account security and onboarding tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not prepare account security and onboarding tables; run `pnpm run db:push`. " +
+        "Existing accounts still work, but verification, onboarding, credentials, and moderation are unavailable.",
+    );
+  }
+}

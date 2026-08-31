@@ -25,8 +25,10 @@ export function isEmailConfigured(): boolean {
 export interface OutgoingEmail {
   to: string;
   subject: string;
-  /** Plain text. Kept plain deliberately: it renders everywhere and cannot break a client. */
+  /** Plain text is always present, including for clients that suppress HTML. */
   text: string;
+  /** Optional, intentionally simple HTML. Never the only version of an important message. */
+  html?: string;
 }
 
 /**
@@ -50,6 +52,7 @@ export async function sendEmail(mail: OutgoingEmail): Promise<boolean> {
         to: [mail.to],
         subject: mail.subject,
         text: mail.text,
+        ...(mail.html ? { html: mail.html } : {}),
       }),
       // A slow mail provider must not hold a request open. The caller does not wait on us
       // anyway, but an unbounded fetch would still pin a socket.

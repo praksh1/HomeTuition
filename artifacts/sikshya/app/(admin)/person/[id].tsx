@@ -7,6 +7,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPost } from "@/utils/api";
 import { confirm, notify } from "@/utils/alerts";
+import { openAttachment } from "@/utils/openAttachment";
 
 /**
  * One person, and the four things an agent can do about them.
@@ -21,6 +22,11 @@ interface PersonDetail {
     suspendedAt: string | null; suspendedReason: string | null;
   };
   teacherProfile: { subject: string; bio: string | null; approvalStatus: string; rating: number; reviewCount: number } | null;
+  emailVerified: boolean;
+  credentials: {
+    id: number; documentType: string; fileKey: string; originalName: string;
+    status: string; rejectionReason: string | null;
+  }[];
   activity: { known: boolean; rows: { id: number; action: string; subjectType: string | null; subjectId: number | null; createdAt: string }[] };
 }
 
@@ -96,6 +102,24 @@ export default function AdminPerson() {
     }
   };
 
+  const decideDocument = async (credentialId: number, decision: "approved" | "rejected") => {
+    if (decision === "rejected" && !note.trim()) {
+      notify("Say what is wrong", "The teacher needs a specific reason before the upload can be reopened.");
+      return;
+    }
+    try {
+      await apiPost(`/admin/teacher-credentials/${credentialId}/decision`, {
+        decision,
+        reason: decision === "rejected" ? note.trim() : undefined,
+      });
+      setNote("");
+      await load();
+      notify("Document reviewed", decision === "rejected" ? "The teacher can upload a replacement." : "The approval was recorded.");
+    } catch (error) {
+      notify("Could not save", error instanceof Error ? error.message : "Please try again.");
+    }
+  };
+
   if (loading) {
     return <View style={[styles.centre, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /></View>;
   }
@@ -107,7 +131,7 @@ export default function AdminPerson() {
     );
   }
 
-  const { user, teacherProfile, activity } = data;
+  const { user, teacherProfile, activity, credentials } = data;
 
   return (
     <ScrollView
@@ -137,12 +161,40 @@ export default function AdminPerson() {
             {teacherProfile.subject} · credentials {teacherProfile.approvalStatus} · {teacherProfile.rating.toFixed(1)}★ from {teacherProfile.reviewCount}
           </Text>
         )}
+        <Text style={[styles.meta, { color: data.emailVerified ? colors.success : colors.warn }]}>
+          Email {data.emailVerified ? "verified" : "not verified"}
+        </Text>
       </View>
 
-      {teacherProfile && teacherProfile.approvalStatus === "pending" && (
+      {teacherProfile && (
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Credentials</Text>
           <Text style={[styles.meta, { color: colors.mutedForeground }]}>{teacherProfile.bio ?? "No description given."}</Text>
+          {credentials.length === 0 ? (
+            <Text style={[styles.meta, { color: colors.destructive }]}>No identity document has been submitted.</Text>
+          ) : credentials.map((credential) => (
+            <View key={credential.id} style={[styles.document, { borderColor: colors.border, backgroundColor: colors.background }]}>
+              <TouchableOpacity onPress={() => void openAttachment(credential.fileKey)} activeOpacity={0.7} style={styles.documentNameRow}>
+                <Feather name="file-text" size={16} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.actionText, { color: colors.primary }]}>{credential.documentType.replaceAll("_", " ")}</Text>
+                  <Text style={[styles.meta, { color: colors.mutedForeground }]} numberOfLines={1}>{credential.originalName}</Text>
+                </View>
+                <Text style={[styles.meta, { color: credential.status === "rejected" ? colors.destructive : credential.status === "approved" ? colors.success : colors.warn }]}>{credential.status}</Text>
+              </TouchableOpacity>
+              {credential.rejectionReason && <Text style={[styles.meta, { color: colors.destructive }]}>{credential.rejectionReason}</Text>}
+              {(credential.status === "submitted" || credential.status === "opened") && (
+                <View style={styles.actions}>
+                  <TouchableOpacity style={[styles.action, { borderColor: colors.destructive }]} onPress={() => void decideDocument(credential.id, "rejected")} activeOpacity={0.8}>
+                    <Text style={[styles.actionText, { color: colors.destructive }]}>Reject document</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.action, { backgroundColor: colors.success, borderColor: colors.success }]} onPress={() => void decideDocument(credential.id, "approved")} activeOpacity={0.8}>
+                    <Text style={[styles.actionText, { color: colors.successForeground }]}>Approve document</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          ))}
           <TextInput
             testID="admin-credential-note"
             style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
@@ -153,14 +205,14 @@ export default function AdminPerson() {
             multiline
             textAlignVertical="top"
           />
-          <View style={styles.actions}>
+          {teacherProfile.approvalStatus !== "approved" && <View style={styles.actions}>
             <TouchableOpacity style={[styles.action, { borderColor: colors.border }]} onPress={() => void decideCredentials("rejected")} activeOpacity={0.8}>
               <Text style={[styles.actionText, { color: colors.foreground }]}>Reject</Text>
             </TouchableOpacity>
             <TouchableOpacity testID="admin-approve-credentials" style={[styles.action, { backgroundColor: colors.success, borderColor: colors.success }]} onPress={() => void decideCredentials("approved")} activeOpacity={0.8}>
               <Text style={[styles.actionText, { color: "#fff" }]}>Approve</Text>
             </TouchableOpacity>
-          </View>
+          </View>}
         </View>
       )}
 
@@ -245,4 +297,6 @@ const styles = StyleSheet.create({
   actionText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   codeBox: { borderRadius: 12, borderWidth: 1, padding: 14, alignItems: "center", gap: 6 },
   code: { fontSize: 30, fontFamily: "Inter_600SemiBold", letterSpacing: 6 },
+  document: { borderWidth: 1, borderRadius: 12, padding: 12, gap: 8 },
+  documentNameRow: { flexDirection: "row", alignItems: "center", gap: 8 },
 });
