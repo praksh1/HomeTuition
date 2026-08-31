@@ -65,7 +65,7 @@ async function register(role, extra = {}) {
       email,
       password: "password123",
       role,
-      ...(role === "teacher" ? { subject: "Maths", bio: "Test" } : { grade: "10" }),
+      ...(role === "teacher" ? { subject: "Maths", bio: "Test" } : { grade: "10", dateOfBirth: "2000-01-01" }),
       ...extra,
     },
   });

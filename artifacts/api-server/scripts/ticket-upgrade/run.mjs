@@ -120,7 +120,7 @@ check("starting again changes nothing and complains about nothing",
 console.log("\nA request filed before any of this existed\n");
 
 const agent = await api("/auth/register", { method: "POST", body: {
-  name: "Upgrade Agent", email: "upgrade_agent@example.com", password: "password123", role: "student", grade: "10",
+  name: "Upgrade Agent", email: "upgrade_agent@example.com", password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } });
 psql(TARGET, `update users set role='admin' where email='upgrade_agent@example.com'`);
 const agentToken = (await api("/auth/login", { method: "POST", body: {
