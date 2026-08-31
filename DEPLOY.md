@@ -51,27 +51,28 @@ Neon already hosts it. Copy the connection string from the Neon dashboard; it is
 
    | Name | Value |
    |---|---|
-   | `RESEND_API_KEY` | an API key from a free account at resend.com |
+   | `BREVO_API_KEY` | an API key from the Brevo account (current production provider) |
    | `EMAIL_FROM` | the address mail appears to come from — see below |
-   | `APP_URL` | where the app is served, so links inside emails work: `https://hometuition.praksh-dhakal.workers.dev` |
+   | `PUBLIC_APP_URL` | where the app is served, so links inside emails work: `https://hometuition.praksh-dhakal.workers.dev` |
 
-   **`EMAIL_FROM` needs a domain, and that is the whole difficulty.** Mail claiming to come
-   from a domain you cannot prove you own is refused or filed as spam — that is how email
-   works, not a rule Resend invented. So there are two answers depending on what you have:
+   Brevo accepts a sender identity after the address itself has been verified. Production was
+   first activated with the owner's verified Gmail sender so account mail could be exercised
+   without buying a domain. Brevo warns that a free-mail domain is not recommended: it is an
+   acceptable launch test, but a domain the owner controls is still the deliverability target.
 
-   - **No domain yet:** use `onboarding@resend.dev`, Resend's test sender. It works
-     immediately and delivers **only to the address that owns your Resend account**. Mail to
-     students is rejected. Good for confirming the feature runs end to end; not something to
-     launch on.
    - **A domain you own:** `hello@yourdomain.com`, or `Sikshya <hello@yourdomain.com>` if you
-     want a name beside it. You add two or three DNS records at your registrar and Resend
-     verifies them. A .com is roughly $10-15 a year; Nepal's `.np` is free to Nepali citizens
+     want a name beside it. Add the DNS authentication records Brevo supplies. A .com is
+     roughly $10-15 a year; Nepal's `.np` is free to Nepali citizens
      and businesses through Mercantile, but it is a paperwork process rather than a purchase.
+
+   `RESEND_API_KEY` remains supported for an existing Resend deployment. If both provider keys
+   are present, Resend deliberately keeps priority so a staged change cannot silently switch
+   providers. Production currently sets Brevo only.
 
    Worth settling the app's **name** before buying anything — see the pre-launch checklist in
    ISSUES.md, which records that it is expected to change again.
 
-   Setting these with a domain that is not verified is safe: Resend rejects the send, the
+   Setting these with a sender Brevo has not verified is safe: Brevo rejects the send, the
    server logs it and carries on, and the notification still arrives in the app. A mail
    provider that is down can never break the thing it was notifying about.
 

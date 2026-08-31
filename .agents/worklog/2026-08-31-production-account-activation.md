@@ -79,3 +79,61 @@ services for this activation.
    the production Worker.
 5. Configure Google, then Facebook, as separate free checkpoints. Keep Apple disabled until the
    owner independently chooses to pay for Apple Developer membership.
+
+## Activation continuation — Railway Hobby and Brevo
+
+- The owner activated Railway Hobby and explicitly confirmed the following safeguards:
+  a USD 5 compute email warning, a USD 10 compute hard limit, and no Railway Agent spending.
+- Saved those limits in the Railway workspace and reopened the form to verify the stored
+  compute values. Railway showed `Compute Usage Limit $0.00 / $10.00` and
+  `Agent Usage Limit $0.00 / $0.00`. The hard limit is intentionally an emergency stop: every
+  Railway workload goes offline if compute usage reaches USD 10 in a billing cycle.
+- The new Hobby billing cycle showed USD 0.00 current usage, USD 5.00 included usage and USD
+  5.00 credits when activated.
+- Confirmed the Brevo Free account has one verified sender. It is a Gmail sender, and Brevo
+  displays its honest deliverability warning that a free-mail domain is not recommended.
+- Created one Brevo API key named `Sikshya Production API`, expiring 2027-08-31 (Brevo also
+  expires an inactive key after 90 days). The key value was transferred only inside the secured
+  browser session; it was not printed, copied into chat, committed, or written to this log.
+- Added `BREVO_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL` to the production Railway API
+  service. Applied all three together and verified they appear as masked service variables.
+- The configuration-only Railway restart completed successfully and the existing production API
+  returned to `Active`. It still ran the old `main` code at that checkpoint; the new mailer does
+  not become live merely because its variables exist.
+- Deliberately added none of `GOOGLE_*`, `FACEBOOK_*`, or `APPLE_CLIENT_IDS` to Railway. The
+  server therefore reports every social provider disabled, and the app renders no social-login
+  buttons. The implementation remains in `artifacts/api-server/src/lib/socialIdentity.ts`,
+  `artifacts/api-server/src/routes/auth.ts`, and
+  `artifacts/sikshya/components/SocialSignIn.tsx` for future activation.
+
+### Verification and problems encountered
+
+- The root typecheck script again matched no artifact workspaces on Windows, so it was not
+  accepted as proof. The API and app typechecks were run explicitly.
+- The first explicit checks found the checkout had not installed the newly locked `jose`,
+  `expo-auth-session`, and `expo-apple-authentication` packages. This was a local dependency
+  state problem, not a source failure.
+- The first locked install stopped because OneDrive briefly held a package file. A retry inside
+  the restricted environment then received `EACCES` from the npm registry. It was stopped and
+  rerun with approved network/filesystem access; the unchanged lockfile passed supply-chain
+  policy verification and all 1,399 package links completed. No dependency versions or lockfile
+  entries changed.
+- The restricted filesystem view still could not follow pnpm junctions. The unchanged checks
+  were rerun with approved junction access, matching the earlier documented Windows constraint.
+- Final API typecheck: passed.
+- Final app typecheck: passed.
+- Final API unit tests: 269/269 passed.
+- Final app unit tests: 154/154 passed.
+- Final design lint: passed at the existing baseline of 223 hex literals and 429 raw font sizes;
+  no new leaks.
+- API production build: passed, producing `dist/index.mjs` (about 5.9 MB).
+- Web production export: passed. Its build guard verified the baked API address is the live
+  Railway `/api` endpoint and that the app name is Sikshya. The normal Excalidraw CSS resource
+  warning appeared but did not fail the export.
+
+### Still pending after this checkpoint
+
+- No real email has yet been sent. The recipient address must be confirmed at action time before
+  transmitting it to Brevo.
+- The 12 commits after production `main` have not yet been promoted in this subsection. Do not
+  claim the new account screens are live until the `main` deployment and its health checks pass.
