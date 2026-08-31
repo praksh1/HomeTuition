@@ -31,10 +31,10 @@ env:
   PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
   # Excalidraw's generated CSS is large enough that parallel Metro workers exhaust the
   # GitHub runner while transforming it. The process then disappears mid-progress with no
-  # JavaScript error. One worker takes longer but stays inside the runner's memory limit.
+  # JavaScript error. One worker takes longer and avoids multiplying the transform peak.
   EXPO_EXPORT_MAX_WORKERS: "1"
-  # Keep the single Metro process below the runner's operating-system limit as well. Without
-  # this cap Node expands until the kernel kills Metro and its parent together, leaving no
+  # Keep Metro's Node processes below the runner's operating-system limit as well. Without
+  # this cap they expand until the kernel kills Metro and its parent together, leaving no
   # stack trace or build error. A heap ceiling makes Node collect earlier and, if the bundle
   # ever truly needs more, fail with a useful diagnostic rather than silently disappearing.
   # Metro keeps a coordinator and a transform worker, and both inherit this value. Their
@@ -109,6 +109,15 @@ jobs:
       # "ram p rasa d" now finds Ram Prasad.
       - name: App rules
         run: pnpm --filter @workspace/sikshya run test
+
+      # Build before starting any API process. Metro's Excalidraw transform and the complete
+      # integration server suite each fit on the standard runner, but their memory peaks do
+      # not fit at the same time. The browser tests below still run against the real local API;
+      # only the order of preparing their static bundle has changed.
+      - name: Build the app for real-browser tests
+        env:
+          EXPO_PUBLIC_API_URL: http://127.0.0.1:8080
+        run: pnpm --filter @workspace/sikshya run build
 
       # Notifications broke in a way unit tests cannot see: nothing was wrong, the wiring was
       # simply absent — the app showed sample data it had invented on the device, and the
@@ -450,7 +459,6 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: |
           set -euo pipefail
-          pnpm --filter @workspace/sikshya run build
           pnpm --filter @workspace/sikshya run test:notifications
           # Tapping the card a teacher actually taps. This exists because a rule was fixed and
           # the screen that had to ask it was never touched: every test passed while tapping a
@@ -502,6 +510,15 @@ jobs:
           # token, and has no tab bar to click. Its API-level checks passed there and only the
           # browser half failed, which is exactly how that mistake hides.
           pnpm --filter @workspace/sikshya run test:messaging
+
+      # Nothing after this point talks to the throwaway API: the remaining suites exercise
+      # the already-built board/call UI, and the deploy build must point at Railway. Free the
+      # local API instances before asking Metro to transform Excalidraw a second time.
+      - name: Stop throwaway APIs before the deploy build
+        run: |
+          fuser -k 8080/tcp 2>/dev/null || true
+          fuser -k 8081/tcp 2>/dev/null || true
+          fuser -k 8091/tcp 2>/dev/null || true
 
       # Rebuilt pointing at the real API. The build script clears the bundler cache whenever
       # the API address changes, because Metro inlines it during transform and caches the
