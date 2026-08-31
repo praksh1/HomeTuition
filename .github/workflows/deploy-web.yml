@@ -33,6 +33,11 @@ env:
   # GitHub runner while transforming it. The process then disappears mid-progress with no
   # JavaScript error. One worker takes longer but stays inside the runner's memory limit.
   EXPO_EXPORT_MAX_WORKERS: "1"
+  # Keep the single Metro process below the runner's operating-system limit as well. Without
+  # this cap Node expands until the kernel kills Metro and its parent together, leaving no
+  # stack trace or build error. A heap ceiling makes Node collect earlier and, if the bundle
+  # ever truly needs more, fail with a useful diagnostic rather than silently disappearing.
+  NODE_OPTIONS: --max-old-space-size=3072
 
 jobs:
   deploy:
