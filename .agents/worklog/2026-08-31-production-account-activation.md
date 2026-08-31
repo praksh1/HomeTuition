@@ -127,9 +127,14 @@ services for this activation.
 - Final design lint: passed at the existing baseline of 223 hex literals and 429 raw font sizes;
   no new leaks.
 - API production build: passed, producing `dist/index.mjs` (about 5.9 MB).
-- Web production export: passed. Its build guard verified the baked API address is the live
-  Railway `/api` endpoint and that the app name is Sikshya. The normal Excalidraw CSS resource
-  warning appeared but did not fail the export.
+- The first web export command mistakenly supplied the Railway URL with a trailing `/api`.
+  `utils/api.ts` already adds that path, so the resulting artifact would have requested
+  `/api/api`. This was caught during artifact verification and that build was rejected before
+  deployment.
+- The corrected web production export passed with
+  `EXPO_PUBLIC_API_URL=https://workspaceapi-server-production-5a63.up.railway.app` (origin only).
+  Its build guard verified the baked API origin and the Sikshya app name. The normal Excalidraw
+  CSS resource warning appeared but did not fail the export.
 
 ### Still pending after this checkpoint
 
