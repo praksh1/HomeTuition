@@ -37,7 +37,9 @@ env:
   # this cap Node expands until the kernel kills Metro and its parent together, leaving no
   # stack trace or build error. A heap ceiling makes Node collect earlier and, if the bundle
   # ever truly needs more, fail with a useful diagnostic rather than silently disappearing.
-  NODE_OPTIONS: --max-old-space-size=3072
+  # Metro keeps a coordinator and a transform worker, and both inherit this value. Their
+  # combined ceiling therefore needs to fit under the runner limit, not merely each process.
+  NODE_OPTIONS: --max-old-space-size=1536
 
 jobs:
   deploy:
