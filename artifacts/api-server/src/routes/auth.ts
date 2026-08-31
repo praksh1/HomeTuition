@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { accountSecurityTable, db, usersTable, teacherProfilesTable, studentProfilesTable } from "@workspace/db";
+import { accountSecurityTable, db, usersTable, teacherProfilesTable, studentProfilesTable, userOnboardingTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { recordActivity } from "../lib/activityLog";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth";
@@ -9,10 +9,13 @@ import {
   consumeVerificationToken,
   emailVerifiedFor,
   externalProvidersFor,
+  onboardingCompleteFor,
   requestPasswordReset,
   sendVerificationEmail,
 } from "../lib/accountSecurity";
 import { isEmailConfigured } from "../lib/mailer";
+import { ageOn } from "../lib/onboardingRules";
+import { flagContent } from "../lib/moderation";
 
 const router: IRouter = Router();
 
@@ -88,9 +91,10 @@ router.post("/auth/login", async (req, res): Promise<void> => {
 });
 
 router.post("/auth/register", async (req, res): Promise<void> => {
-  const { name, email, password, role, subject, grade, bio } = req.body as {
+  const { name, email, password, role, subject, grade, bio, dateOfBirth, guardianName, guardianEmail, guardianPhone, guardianRelationship } = req.body as {
     name?: string; email?: string; password?: string; role?: string;
-    subject?: string; grade?: string; bio?: string;
+    subject?: string; grade?: string; bio?: string; dateOfBirth?: string;
+    guardianName?: string; guardianEmail?: string; guardianPhone?: string; guardianRelationship?: string;
   };
   if (!name || !email || !password || !role) {
     res.status(400).json({ error: "name, email, password, and role are required" });
@@ -99,6 +103,25 @@ router.post("/auth/register", async (req, res): Promise<void> => {
   if (!["teacher", "student"].includes(role)) {
     res.status(400).json({ error: "role must be teacher or student" });
     return;
+  }
+  if (password.length < 8) {
+    res.status(400).json({ error: "Use at least 8 characters for your password" });
+    return;
+  }
+  if (role === "teacher" && (!subject?.trim() || !bio?.trim())) {
+    res.status(400).json({ error: "Teachers must choose a subject and write a bio for students." });
+    return;
+  }
+  if (role === "student") {
+    const age = dateOfBirth ? ageOn(dateOfBirth) : null;
+    if (age === null) {
+      res.status(400).json({ error: "Students must enter a valid date of birth." });
+      return;
+    }
+    if (age < 18 && (!guardianName?.trim() || !guardianEmail?.trim() || !guardianPhone?.trim() || !guardianRelationship?.trim())) {
+      res.status(400).json({ error: "A parent or guardian must provide their name, email, phone, and relationship for a student under 18." });
+      return;
+    }
   }
   const existing = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, email.toLowerCase().trim()));
   if (existing.length > 0) {
@@ -145,8 +168,17 @@ router.post("/auth/register", async (req, res): Promise<void> => {
         bio: bio ?? "",
       });
     }
+    await tx.insert(userOnboardingTable).values({
+      userId: created.id,
+      dateOfBirth: role === "student" ? dateOfBirth : null,
+      guardianName: role === "student" ? guardianName?.trim() || null : null,
+      guardianEmail: role === "student" ? guardianEmail?.trim().toLocaleLowerCase() || null : null,
+      guardianPhone: role === "student" ? guardianPhone?.trim() || null : null,
+      guardianRelationship: role === "student" ? guardianRelationship?.trim() || null : null,
+    });
     return created;
   });
+  if (role === "teacher") await flagContent({ userId: user.id, surface: "teacher_bio", text: bio ?? "" });
   const token = signToken({ userId: user.id, email: user.email, role: user.role });
   const profile = await buildUserProfile(user);
   const delivery = await sendVerificationEmail(user);
@@ -224,9 +256,10 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
 });
 
 async function buildUserProfile(user: { id: number; email: string; name: string; role: string }) {
-  const [emailVerified, authProviders] = await Promise.all([
+  const [emailVerified, authProviders, onboardingComplete] = await Promise.all([
     emailVerifiedFor(user.id),
     externalProvidersFor(user.id),
+    onboardingCompleteFor(user.id),
   ]);
   if (user.role === "teacher") {
     const [teacher] = await db
@@ -240,6 +273,7 @@ async function buildUserProfile(user: { id: number; email: string; name: string;
       role: user.role,
       emailVerified,
       authProviders,
+      onboardingComplete,
       teacher: teacher ? { ...teacher, name: user.name, email: user.email } : null,
     };
   } else {
@@ -254,6 +288,7 @@ async function buildUserProfile(user: { id: number; email: string; name: string;
       role: user.role,
       emailVerified,
       authProviders,
+      onboardingComplete,
       student: student ?? null,
     };
   }

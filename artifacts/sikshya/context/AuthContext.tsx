@@ -48,6 +48,7 @@ export interface Teacher {
   isOnline?: boolean;
   emailVerified: boolean;
   authProviders: string[];
+  onboardingComplete: boolean;
 }
 
 export interface Student {
@@ -62,6 +63,7 @@ export interface Student {
   avatarUrl?: string;
   emailVerified: boolean;
   authProviders: string[];
+  onboardingComplete: boolean;
 }
 
 /**
@@ -81,6 +83,7 @@ export interface Agent {
   avatarUrl?: string;
   emailVerified: boolean;
   authProviders: string[];
+  onboardingComplete: boolean;
 }
 
 export type User = Teacher | Student | Agent;
@@ -93,6 +96,11 @@ interface RegisterData {
   subject?: string;
   bio?: string;
   grade?: string;
+  dateOfBirth?: string;
+  guardianName?: string;
+  guardianEmail?: string;
+  guardianPhone?: string;
+  guardianRelationship?: string;
 }
 
 interface RegisterResult {
@@ -108,6 +116,7 @@ interface AuthContextType {
   register: (data: RegisterData) => Promise<RegisterResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 interface ApiTeacher {
@@ -151,6 +160,7 @@ interface ApiUserProfile {
   role: string;
   emailVerified?: boolean;
   authProviders?: string[];
+  onboardingComplete?: boolean;
   teacher?: ApiTeacher | null;
   student?: ApiStudent | null;
 }
@@ -191,6 +201,7 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       isOnline: t.isOnline ?? false,
       emailVerified: profile.emailVerified === true,
       authProviders: profile.authProviders ?? [],
+      onboardingComplete: profile.onboardingComplete === true,
     };
   } else if (profile.role === "student") {
     const s = profile.student;
@@ -206,6 +217,7 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       avatarUrl: s?.avatarUrl ?? undefined,
       emailVerified: profile.emailVerified === true,
       authProviders: profile.authProviders ?? [],
+      onboardingComplete: profile.onboardingComplete === true,
     };
   } else if (profile.role === "admin") {
     // Nothing to map: an agent has no profile of their own. Returning null here would have
@@ -218,6 +230,7 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       role: "admin",
       emailVerified: profile.emailVerified !== false,
       authProviders: profile.authProviders ?? [],
+      onboardingComplete: true,
     };
   }
   return null;
@@ -230,6 +243,7 @@ const AuthContext = createContext<AuthContextType>({
   register: async () => ({ success: false, verificationEmailSent: false, emailConfigured: false }),
   logout: () => {},
   updateUser: async () => {},
+  refreshUser: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -279,6 +293,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       subject: data.subject,
       bio: data.bio,
       grade: data.grade,
+      dateOfBirth: data.dateOfBirth,
+      guardianName: data.guardianName,
+      guardianEmail: data.guardianEmail,
+      guardianPhone: data.guardianPhone,
+      guardianRelationship: data.guardianRelationship,
     });
     await setToken(res.token);
     const mapped = mapApiUserToUser(res.user);
@@ -308,7 +327,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser, refreshUser: loadUser }}>
       {children}
     </AuthContext.Provider>
   );

@@ -59,6 +59,8 @@ const SHARED_SCREENS = [
   { name: "desk", segment: "desk" },
 ] as const;
 
+const ACCOUNT_SCREENS = ["check-email", "verify-email", "forgot-password", "reset-password"] as const;
+
 function AuthGuard() {
   const { user, isLoading } = useAuth();
   const segments = useSegments();
@@ -67,19 +69,26 @@ function AuthGuard() {
   useEffect(() => {
     if (isLoading) return;
 
-    const inTeacherGroup = segments[0] === "(teacher)";
-    const inStudentGroup = segments[0] === "(student)";
-    const inAdminGroup = segments[0] === "(admin)";
-    const inAuthGroup = segments[0] === "(auth)";
-    const onSharedScreen = SHARED_SCREENS.some(({ segment }) => segments[0] === segment);
+    const firstSegment = segments[0] as string | undefined;
+    const inTeacherGroup = firstSegment === "(teacher)";
+    const inStudentGroup = firstSegment === "(student)";
+    const inAdminGroup = firstSegment === "(admin)";
+    const inAuthGroup = firstSegment === "(auth)";
+    const onSharedScreen = SHARED_SCREENS.some(({ segment }) => firstSegment === segment);
+    const onAccountScreen = ACCOUNT_SCREENS.some((segment) => firstSegment === segment);
+    const onOnboarding = firstSegment === "onboarding";
     const inProtectedGroup = inTeacherGroup || inStudentGroup || inAdminGroup;
 
     if (!user) {
-      if (inProtectedGroup || onSharedScreen) router.replace("/welcome");
+      if (inProtectedGroup || onSharedScreen || onOnboarding) router.replace("/welcome");
+    } else if ((user.role === "teacher" || user.role === "student") && !user.emailVerified) {
+      if (firstSegment !== "check-email" && firstSegment !== "verify-email") router.replace("/check-email" as never);
+    } else if ((user.role === "teacher" || user.role === "student") && !user.onboardingComplete) {
+      if (!onOnboarding) router.replace("/onboarding" as never);
     } else if (user.role === "teacher") {
-      if (!inTeacherGroup && !inAuthGroup && !onSharedScreen) router.replace("/(teacher)");
+      if (!inTeacherGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen) router.replace("/(teacher)");
     } else if (user.role === "student") {
-      if (!inStudentGroup && !inAuthGroup && !onSharedScreen) router.replace("/(student)");
+      if (!inStudentGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen) router.replace("/(student)");
     } else if (user.role === "admin") {
       // An agent has one place to be. They are not a teacher or a student, and the screens for
       // those roles would show them somebody else's empty dashboard.
@@ -101,6 +110,10 @@ function RootLayoutNav() {
         <Stack.Screen name="(teacher)" />
         <Stack.Screen name="(student)" />
         <Stack.Screen name="(admin)" />
+        <Stack.Screen name="onboarding" options={{ animation: "slide_from_right", presentation: "card" }} />
+        {ACCOUNT_SCREENS.map((name) => (
+          <Stack.Screen key={name} name={name} options={{ animation: "slide_from_right", presentation: "card" }} />
+        ))}
         {SHARED_SCREENS.map(({ name }) => (
           <Stack.Screen
             key={name}

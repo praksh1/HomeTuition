@@ -39,11 +39,18 @@ export default function Register() {
   const [subject, setSubject] = useState("");
   const [bio, setBio] = useState("");
   const [grade, setGrade] = useState("Grade 10");
+  const [dateOfBirth, setDateOfBirth] = useState("");
+  const [guardianName, setGuardianName] = useState("");
+  const [guardianEmail, setGuardianEmail] = useState("");
+  const [guardianPhone, setGuardianPhone] = useState("");
+  const [guardianRelationship, setGuardianRelationship] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   const isTeacher = resolvedRole === "teacher";
   const accentColor = isTeacher ? colors.primary : colors.secondary;
+  const birthYear = Number(dateOfBirth.slice(0, 4));
+  const isMinor = !isTeacher && /^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth) && new Date().getFullYear() - birthYear < 18;
 
   const handleRegister = async () => {
     if (!name.trim() || !email.trim() || !password.trim()) {
@@ -58,10 +65,25 @@ export default function Register() {
       setError("Please select your subject specialization");
       return;
     }
+    if (isTeacher && !bio.trim()) {
+      setError("Please write a short bio so students know why to learn with you");
+      return;
+    }
+    if (!isTeacher && !/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
+      setError("Please enter the student's date of birth as YYYY-MM-DD");
+      return;
+    }
+    if (isMinor && (!guardianName.trim() || !guardianEmail.trim() || !guardianPhone.trim() || !guardianRelationship.trim())) {
+      setError("A parent or guardian must complete all guardian fields for a student under 18");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
-      const result = await doRegister({ name: name.trim(), email: email.trim(), password, role: resolvedRole, subject, bio, grade });
+      const result = await doRegister({
+        name: name.trim(), email: email.trim(), password, role: resolvedRole, subject, bio, grade,
+        dateOfBirth, guardianName, guardianEmail, guardianPhone, guardianRelationship,
+      });
       setLoading(false);
       if (result.success) {
         router.replace({
@@ -109,6 +131,21 @@ export default function Register() {
         )}
 
         <View style={styles.form}>
+          {!isTeacher && (
+            <>
+              <Field label="Student's Date of Birth *" icon="calendar" value={dateOfBirth} onChange={setDateOfBirth} placeholder="YYYY-MM-DD" colors={colors} />
+              <Text style={[styles.infoText, { color: colors.mutedForeground }]}>We ask this first because a parent or guardian must create the account for a student under 18.</Text>
+              {isMinor && (
+                <View style={[styles.guardianBox, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                  <Text style={[styles.label, { color: colors.foreground }]}>Parent or guardian details</Text>
+                  <Field label="Guardian's full name *" icon="user" value={guardianName} onChange={setGuardianName} placeholder="Full name" colors={colors} />
+                  <Field label="Guardian's email *" icon="mail" value={guardianEmail} onChange={setGuardianEmail} placeholder="parent@example.com" keyboardType="email-address" colors={colors} />
+                  <Field label="Guardian's phone *" icon="phone" value={guardianPhone} onChange={setGuardianPhone} placeholder="+977…" keyboardType="phone-pad" colors={colors} />
+                  <Field label="Relationship *" icon="users" value={guardianRelationship} onChange={setGuardianRelationship} placeholder="Parent, guardian, aunt…" colors={colors} />
+                </View>
+              )}
+            </>
+          )}
           <Field label="Full Name" icon="user" value={name} onChange={setName} placeholder="Your full name" colors={colors} />
           <Field label="Email Address" icon="mail" value={email} onChange={setEmail} placeholder="your@email.com" keyboardType="email-address" colors={colors} />
           <Field label="Password" icon="lock" value={password} onChange={setPassword} placeholder="Create a strong password" secure colors={colors} />
@@ -132,7 +169,8 @@ export default function Register() {
                 </View>
               </View>
               <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { color: colors.foreground }]}>Brief Bio</Text>
+                <Text style={[styles.label, { color: colors.foreground }]}>Brief Bio *</Text>
+                <Text style={[styles.infoText, { color: colors.mutedForeground }]}>Students use this to decide whether your experience and teaching style fit them.</Text>
                 <View style={[styles.inputWrapper, { backgroundColor: colors.muted, borderColor: colors.border }]}>
                   <TextInput
                     style={[styles.input, styles.textArea, { color: colors.foreground }]}
@@ -241,6 +279,7 @@ const styles = StyleSheet.create({
   infoBox: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderRadius: 14, borderWidth: 1, padding: 14, marginBottom: 20 },
   infoText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   form: { gap: 16 },
+  guardianBox: { gap: 12, borderWidth: 1, borderRadius: 14, padding: 14 },
   fieldGroup: { gap: 8 },
   label: { fontSize: 14, fontFamily: "Inter_500Medium" },
   inputWrapper: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 14, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14 },

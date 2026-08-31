@@ -60,6 +60,20 @@
   requires a reason, reopens that document type for replacement, updates the account review
   status, records activity, and sends in-app/email notification. Overall approval is refused
   while any submitted document is undecided or when no document exists.
+- Added a reproducible workbook-to-JSON generator and generated a server-side Nepal education
+  lookup containing all 7 provinces and 25,886 named facilities. Province, district, local-level,
+  and facility data stays on the API; phones receive only the hierarchy or a maximum of 25
+  matching institutions. `(unnamed)` and `Unassigned` records are excluded.
+- Registration now asks for a student's date of birth first and requires parent/guardian name,
+  email, phone, and relationship for anyone under 18. A teacher's bio and subject are mandatory.
+- Added the protected onboarding screen and API for phone, province, district, local level,
+  optional locality, school/college selection, manual `Not specified`, and the explicit
+  `Independent teacher` choice. Teachers must separately select and upload a face photo.
+- Added conservative English/Nepali content matching and an additive moderation-flag store.
+  Teacher registration bios and manually supplied institution names are now submitted to that
+  review store without blocking or silently rewriting the user's text.
+- Added the account guard sequence: new teacher/student accounts must verify email, then complete
+  onboarding, before the ordinary role dashboard is reachable. Legacy accounts remain usable.
 
 ## Decisions and assumptions
 
@@ -79,6 +93,7 @@
 - `pnpm --filter @workspace/sikshya run typecheck` — passed after correcting the generated
   Expo-route typing and using the actual typography-token names.
 - `pnpm --filter @workspace/api-server run test` — 257/257 passed.
+- After adding onboarding/moderation rules, rerun — 262/262 passed.
 - `pnpm --filter @workspace/sikshya run test` — 154/154 passed.
 - `pnpm --filter @workspace/sikshya run lint:design` — passed at the existing 223-hex / 429-size
   baseline; the new screens add no raw colour or font-size literals.
@@ -95,6 +110,11 @@
   succeeded; this was an environment restriction, not a source-code fix.
 - `pg_isready` is not installed on this Windows host, so database-backed route tests have not
   yet been run locally. The new tables and route lifecycle still need the CI/Postgres suite.
+- During review of the unfinished onboarding patch, registration validation was found in the
+  verification-resend handler due to a misplaced patch hunk. It was moved into registration
+  before commit. The same review found that saving onboarding could erase the birth/guardian
+  values captured at registration and that uploading a photo alone could mark onboarding done;
+  both behaviours were corrected before this checkpoint.
 
 ## Deliberately not changed
 
@@ -111,8 +131,12 @@
 
 ## Remaining risks / next pickup point
 
-- Finish tracing registration, verification, reset, subscription entitlement, session creation,
-  credential storage/access, and operator review end to end.
+- Run database-backed registration, verification, reset, onboarding, credential, and operator
+  review flows once a reachable Postgres test service is available.
+- Expand moderation calls to every editable bio and class/session text surface and expose the
+  moderation queue to operators.
+- Replace simulated teacher-plan activation with a real or operator-recorded paid entitlement;
+  approval and the old `subscription_active` label alone are not proof of payment.
 - Confirm provider configuration without printing secrets, then implement the first independently
   testable checkpoint.
 - Every new uploaded-file path must be tested as both uploader and operator/recipient.

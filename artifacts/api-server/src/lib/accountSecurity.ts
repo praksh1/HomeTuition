@@ -5,6 +5,7 @@ import {
   accountTokensTable,
   db,
   externalIdentitiesTable,
+  userOnboardingTable,
   usersTable,
 } from "@workspace/db";
 
@@ -206,4 +207,13 @@ export async function externalProvidersFor(userId: number): Promise<string[]> {
     .from(externalIdentitiesTable)
     .where(eq(externalIdentitiesTable.userId, userId));
   return rows.map((row) => row.provider);
+}
+
+/** Legacy accounts predate onboarding and remain usable; new accounts have a security row. */
+export async function onboardingCompleteFor(userId: number): Promise<boolean> {
+  const [[security], [onboarding]] = await Promise.all([
+    db.select({ userId: accountSecurityTable.userId }).from(accountSecurityTable).where(eq(accountSecurityTable.userId, userId)).limit(1),
+    db.select({ completedAt: userOnboardingTable.completedAt }).from(userOnboardingTable).where(eq(userOnboardingTable.userId, userId)).limit(1),
+  ]);
+  return security ? onboarding?.completedAt !== null && onboarding?.completedAt !== undefined : true;
 }
