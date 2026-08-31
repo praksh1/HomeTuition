@@ -20,6 +20,7 @@ import { useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
+import { SocialSignIn } from "@/components/SocialSignIn";
 
 function showAccessDenied(message: string) {
   if (Platform.OS === "web") window.alert(`Access Denied\n\n${message}`);
@@ -200,6 +201,8 @@ export default function Login() {
             <Text style={[styles.dividerText, { color: colors.mutedForeground }]}>or</Text>
             <View style={[styles.dividerLine, { backgroundColor: colors.border }]} />
           </View>
+
+          <SocialSignIn mode="login" onSignedIn={() => router.replace("/")} />
 
           <TouchableOpacity
             style={[styles.registerBtn, { borderColor: accentColor }]}

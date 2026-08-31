@@ -15,6 +15,7 @@ import type { Teacher } from "@/context/AuthContext";
 import { apiDelete, apiGet, apiPost } from "@/utils/api";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 import { openAttachment } from "@/utils/openAttachment";
+import { SocialSignIn } from "@/components/SocialSignIn";
 
 const CREDENTIAL_TYPES = [
   { id: "citizenship", label: "National ID / Citizenship" },
@@ -37,7 +38,7 @@ interface StoredCredential {
 export default function TeacherProfile() {
   const { user, logout } = useAuth();
   const colors = useColors();
-  const { t } = useLayout();
+  const { t, space } = useLayout();
   const insets = useSafeAreaInsets();
   const teacher = user as Teacher;
   const [uploading, setUploading] = useState(false);
@@ -236,6 +237,8 @@ export default function TeacherProfile() {
         tab can be integrated inside the 'Profile' tab". A subscription is set up once and then
         forgotten; it does not earn a permanent place on every screen.
       */}
+      <View style={{ marginHorizontal: space.lg }}><SocialSignIn mode="link" /></View>
+
       <TouchableOpacity
         style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
         onPress={() => router.push("/(teacher)/subscription")}

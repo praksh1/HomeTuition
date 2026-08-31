@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { accountSecurityTable, db, usersTable, teacherProfilesTable, studentProfilesTable, userOnboardingTable } from "@workspace/db";
+import { accountSecurityTable, db, externalIdentitiesTable, usersTable, teacherProfilesTable, studentProfilesTable, userOnboardingTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { recordActivity } from "../lib/activityLog";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth";
@@ -16,8 +16,15 @@ import {
 import { isEmailConfigured } from "../lib/mailer";
 import { ageOn } from "../lib/onboardingRules";
 import { flagContent } from "../lib/moderation";
+import { socialProviderConfiguration, verifySocialCredential, type SocialProvider } from "../lib/socialIdentity";
 
 const router: IRouter = Router();
+
+router.get("/auth/providers", (_req, res): void => {
+  // Client IDs are public OAuth identifiers. Provider secrets and Apple signing keys never
+  // leave the server and are deliberately absent from this response.
+  res.json(socialProviderConfiguration());
+});
 
 /**
  * The columns sign-in needs — named rather than taken with a bare `select()`.
@@ -88,6 +95,75 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   const token = signToken({ userId: user.id, email: user.email, role: user.role });
   const profile = await buildUserProfile(user);
   res.json({ token, user: profile });
+});
+
+router.post("/auth/social", async (req, res): Promise<void> => {
+  const provider = typeof req.body?.provider === "string" ? req.body.provider as SocialProvider : null;
+  const credential = typeof req.body?.credential === "string" ? req.body.credential.trim() : "";
+  if (!provider || !["google", "facebook", "apple"].includes(provider) || !credential) {
+    res.status(400).json({ error: "Choose a supported sign-in provider." });
+    return;
+  }
+  try {
+    const verified = await verifySocialCredential(provider, credential);
+    if (!verified) { res.status(401).json({ error: "That provider could not verify this sign-in." }); return; }
+    const [identity] = await db
+      .select({ userId: externalIdentitiesTable.userId })
+      .from(externalIdentitiesTable)
+      .where(and(eq(externalIdentitiesTable.provider, provider), eq(externalIdentitiesTable.providerSubject, verified.subject)))
+      .limit(1);
+    if (!identity) {
+      // Never attach a provider to an account merely because an email string matches. The
+      // account owner must first sign in with their existing method and explicitly link it.
+      res.status(409).json({
+        error: "No Sikshya account is linked to this sign-in yet. Create your account first, then link this provider from Profile.",
+        code: "SOCIAL_LINK_REQUIRED",
+      });
+      return;
+    }
+    const [user] = await db.select(AUTH_COLUMNS).from(usersTable).where(eq(usersTable.id, identity.userId));
+    if (!user) { res.status(401).json({ error: "The linked Sikshya account no longer exists." }); return; }
+    if (user.suspendedAt) { res.status(403).json({ error: "This account has been suspended." }); return; }
+    const token = signToken({ userId: user.id, email: user.email, role: user.role });
+    res.json({ token, user: await buildUserProfile(user) });
+  } catch (error) {
+    req.log?.warn({ error, provider }, "social sign-in verification failed");
+    res.status(401).json({ error: "That provider could not verify this sign-in." });
+  }
+});
+
+router.post("/auth/social/link", requireAuth, async (req, res): Promise<void> => {
+  const provider = typeof req.body?.provider === "string" ? req.body.provider as SocialProvider : null;
+  const credential = typeof req.body?.credential === "string" ? req.body.credential.trim() : "";
+  if (!provider || !["google", "facebook", "apple"].includes(provider) || !credential) {
+    res.status(400).json({ error: "Choose a supported sign-in provider." }); return;
+  }
+  try {
+    const verified = await verifySocialCredential(provider, credential);
+    if (!verified) { res.status(401).json({ error: "That provider could not verify this sign-in." }); return; }
+    const [[taken], [current]] = await Promise.all([
+      db.select({ userId: externalIdentitiesTable.userId }).from(externalIdentitiesTable)
+        .where(and(eq(externalIdentitiesTable.provider, provider), eq(externalIdentitiesTable.providerSubject, verified.subject))).limit(1),
+      db.select({ providerSubject: externalIdentitiesTable.providerSubject }).from(externalIdentitiesTable)
+        .where(and(eq(externalIdentitiesTable.userId, req.user!.userId), eq(externalIdentitiesTable.provider, provider))).limit(1),
+    ]);
+    if (taken && taken.userId !== req.user!.userId) {
+      res.status(409).json({ error: "That provider account is already linked to another Sikshya account." }); return;
+    }
+    if (current && current.providerSubject !== verified.subject) {
+      res.status(409).json({ error: `This Sikshya account already has a different ${provider} sign-in linked.` }); return;
+    }
+    if (!taken) {
+      await db.insert(externalIdentitiesTable).values({
+        userId: req.user!.userId, provider, providerSubject: verified.subject, providerEmail: verified.email,
+      });
+      recordActivity({ userId: req.user!.userId, action: "auth.provider.linked", subjectType: "user", subjectId: req.user!.userId, detail: { provider } });
+    }
+    res.json({ linked: true, provider });
+  } catch (error) {
+    req.log?.warn({ error, provider }, "social provider link failed");
+    res.status(401).json({ error: "That provider could not verify this sign-in." });
+  }
 });
 
 router.post("/auth/register", async (req, res): Promise<void> => {

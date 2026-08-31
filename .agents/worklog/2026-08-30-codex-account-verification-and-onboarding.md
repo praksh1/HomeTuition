@@ -119,6 +119,29 @@
 - Wrangler 4.124.0 dry-run passed against only the branch-preview Worker. The preview deployed
   as Cloudflare version `b36376b8-25a0-42f3-b5f6-13d0b59ba43c` and returned HTTP 200. External
   bundle inspection confirmed the new onboarding and guardian UI and the correct API URL.
+- Added provider-verified Google, Facebook, and Apple identity linking and subsequent login.
+  Google and Apple tokens are verified against their official signing keys, issuers, and the
+  configured audience; Facebook tokens are debugged with the server-only app secret and the
+  returned Facebook identity is cross-checked. Email alone is never used to auto-link an
+  external identity, avoiding an account-takeover path.
+- Enforced both one Sikshya account per provider identity and one identity from each provider per
+  Sikshya account with unique indexes plus preflight API checks. This prevents concurrent link
+  requests from quietly attaching multiple Google/Facebook/Apple identities to one profile.
+- Added configuration-aware login/profile controls. A social button is absent—not merely
+  disabled—until its provider has the required configuration. Already linked providers are
+  removed from the profile's link choices after an immediate profile refresh. Added Expo SDK
+  compatible `expo-auth-session` 7.0.11, `expo-crypto` 15.0.9,
+  `expo-apple-authentication` 8.0.8, and API `jose` 6.2.10.
+- Documented every mail/social configuration name in `.env.example` without adding secret
+  values. A configuration-presence audit found none of the mail, Google, Facebook, Apple, or
+  Railway deployment values on this host; secret values were never printed.
+- After social-provider work: API typecheck passed, app typecheck passed, API tests 266/266,
+  app tests 154/154, design lint stayed at the existing 223-hex / 429-size baseline, and
+  `git diff --check` passed apart from expected Windows line-ending notices.
+- API production build passed. The first web-build command correctly refused to run because its
+  required deployment target was absent from that shell; rerunning with the repository's
+  documented Railway API target produced bundle `entry-5a058de4f04589ca92fd4451c38d8752.js`.
+  The build's own post-check verified both the Railway API address and the Sikshya app identity.
 
 ## Problems and surprises
 
@@ -128,6 +151,9 @@
 - The first API production-build attempt failed because the restricted Windows sandbox could
   not follow pnpm's dependency links. The exact build was rerun with filesystem approval and
   succeeded; this was an environment restriction, not a source-code fix.
+- The new social-configuration test file initially hit the same pnpm-junction restriction when
+  importing `jose`; all 264 older tests passed in that run but the new file could not start.
+  The unchanged suite was rerun with dependency access and all 266 tests passed.
 - `pg_isready` is not installed on this Windows host, so database-backed route tests have not
   yet been run locally. The new tables and route lifecycle still need the CI/Postgres suite.
 - During review of the unfinished onboarding patch, registration validation was found in the
@@ -140,6 +166,10 @@
   workflow run for this branch, and Railway did not publish this branch API. Production was not
   changed because deploying the stricter registration API ahead of its matching frontend would
   break student sign-up, and email delivery is not yet configured.
+- The root `pnpm run typecheck` script compiled the shared TypeScript build, then pnpm 11 reported
+  that its relative workspace filters matched nothing. This was not accepted as proof. Running
+  `pnpm -r --if-present run typecheck` directly checked all nine workspaces; every declared
+  typecheck passed. The misleading root script itself was not changed in this product checkpoint.
 
 ## Deliberately not changed
 
@@ -152,7 +182,13 @@
   the new self-service email reset is the normal user path. Removing the assisted tool is held
   until the new mail path is proven live, so support is not left with no recovery mechanism.
 - Google, Facebook, and Apple provider credentials/configuration have not been invented. Current
-  official Expo/Google/Apple requirements were checked; provider work remains below.
+  official Expo/Google/Apple requirements were checked. Secure linking/login code is present,
+  but provider accounts and live consent flows cannot be activated or tested without the owner
+  creating/configuring those accounts and supplying their IDs/secrets through deployment secrets.
+- Social login deliberately links to an authenticated Sikshya account first. It does not yet
+  create a brand-new Sikshya account from a social identity because registration still needs the
+  role, date-of-birth/guardian, and teacher-required fields that the provider does not supply.
+  Existing users can link a provider in Profile and then use it on the login screen.
 - A real teacher tier still cannot be purchased until a payment provider or an audited
   operator-recorded payment flow is connected. This is intentional: the former behaviour issued
   paid teaching access from a `SIM-*` reference although no money moved.

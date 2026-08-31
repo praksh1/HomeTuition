@@ -1035,6 +1035,7 @@ export async function ensureAccountOnboardingTables(): Promise<void> {
       )
     `);
     await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS "external_identities_provider_subject_idx" ON "external_identities" ("provider", "provider_subject")`);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS "external_identities_user_provider_idx" ON "external_identities" ("user_id", "provider")`);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS "external_identities_user_idx" ON "external_identities" ("user_id", "id")`);
 
     await db.execute(sql`

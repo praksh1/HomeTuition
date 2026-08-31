@@ -9,11 +9,14 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import type { Student } from "@/context/AuthContext";
+import { SocialSignIn } from "@/components/SocialSignIn";
 
 export default function StudentProfile() {
   const { user, logout } = useAuth();
   const colors = useColors();
+  const { space } = useLayout();
   const insets = useSafeAreaInsets();
   const student = user as Student;
   const doLogout = async () => {
@@ -125,6 +128,8 @@ export default function StudentProfile() {
         What replaces it is the one control here that is real. When there is 2FA, or a password
         changed date worth reading, they can be shown — because they will be true.
       */}
+
+      <View style={{ marginHorizontal: space.lg }}><SocialSignIn mode="link" /></View>
 
       <TouchableOpacity
         style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}

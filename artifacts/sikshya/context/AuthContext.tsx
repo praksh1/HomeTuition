@@ -117,6 +117,7 @@ interface AuthContextType {
   logout: () => void;
   updateUser: (updates: Partial<User>) => Promise<void>;
   refreshUser: () => Promise<void>;
+  socialLogin: (provider: "google" | "facebook" | "apple", credential: string) => Promise<User | null>;
 }
 
 interface ApiTeacher {
@@ -244,6 +245,7 @@ const AuthContext = createContext<AuthContextType>({
   logout: () => {},
   updateUser: async () => {},
   refreshUser: async () => {},
+  socialLogin: async () => null,
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -310,6 +312,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
+  const socialLogin = async (provider: "google" | "facebook" | "apple", credential: string): Promise<User | null> => {
+    const res = await apiPost<ApiAuthResponse>("/auth/social", { provider, credential });
+    await setToken(res.token);
+    const mapped = mapApiUserToUser(res.user);
+    if (mapped) setUser(mapped);
+    return mapped;
+  };
+
   const logout = async () => {
     await clearToken();
     setUser(null);
@@ -327,7 +337,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser, refreshUser: loadUser }}>
+    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser, refreshUser: loadUser, socialLogin }}>
       {children}
     </AuthContext.Provider>
   );
