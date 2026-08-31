@@ -142,6 +142,15 @@
   required deployment target was absent from that shell; rerunning with the repository's
   documented Railway API target produced bundle `entry-5a058de4f04589ca92fd4451c38d8752.js`.
   The build's own post-check verified both the Railway API address and the Sikshya app identity.
+- Social checkpoint commit `06621f9` and preview-documentation commit `17e288c` were pushed to
+  `origin/claude/excalidraw-whiteboard-sync-gjoqaz`.
+- Wrangler 4.124.0 dry-run read all 242 assets for the explicit branch-only Worker. The ordinary
+  `pnpm exec wrangler` attempt first stopped harmlessly because Wrangler is not a repository
+  dependency; the pinned one-off runner was then used, matching the prior successful deploy.
+- Deployed only `claude-excalidraw-whiteboard-sync-gjoqaz-hometuition`, Cloudflare version
+  `e67e3ecd-16fc-46a4-b99e-90022bc13934`. External HTTP verification returned 200 and the exact
+  `entry-5a058de4f04589ca92fd4451c38d8752.js` bundle. Production also returned 200 but remained on
+  its distinct `entry-50f910ff50d04adf872f049666b7ad8d.js` bundle.
 
 ## Problems and surprises
 
