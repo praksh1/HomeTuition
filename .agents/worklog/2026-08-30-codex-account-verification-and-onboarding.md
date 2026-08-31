@@ -113,6 +113,12 @@
   baseline; the new screens add no raw colour or font-size literals.
 - `pnpm --filter @workspace/api-server run build` — passed; production bundle built successfully.
 - `git diff --check` — passed (only expected Windows LF/CRLF notices).
+- Checkpoint commits `4028361`, `57fed47`, and `d916596` were pushed to the named Claude branch.
+- A fresh web export passed and produced `entry-adeb15aced9a71a6622d8f372c3518e9.js` with the
+  documented Railway API URL and Sikshya identity verified by the build script.
+- Wrangler 4.124.0 dry-run passed against only the branch-preview Worker. The preview deployed
+  as Cloudflare version `b36376b8-25a0-42f3-b5f6-13d0b59ba43c` and returned HTTP 200. External
+  bundle inspection confirmed the new onboarding and guardian UI and the correct API URL.
 
 ## Problems and surprises
 
@@ -129,6 +135,11 @@
   before commit. The same review found that saving onboarding could erase the birth/guardian
   values captured at registration and that uploading a photo alone could mark onboarding done;
   both behaviours were corrected before this checkpoint.
+- The public branch preview is frontend-current but not end-to-end ready: the shared Railway API
+  returns 200 for `/api/healthz` and 404 for the new `/api/locations/nepal` route. GitHub has no
+  workflow run for this branch, and Railway did not publish this branch API. Production was not
+  changed because deploying the stricter registration API ahead of its matching frontend would
+  break student sign-up, and email delivery is not yet configured.
 
 ## Deliberately not changed
 
