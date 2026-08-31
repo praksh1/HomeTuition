@@ -93,6 +93,10 @@ async function main() {
     cwd: repoRoot,
     env: {
       ...process.env,
+      // Teacher-plan payment is deliberately simulatable only in the isolated test runtime.
+      // This child server is the test subject, so it must not accidentally inherit production
+      // semantics just because the parent workflow did not export NODE_ENV globally.
+      NODE_ENV: "test",
       PORT: String(API_PORT),
       DATABASE_URL: PGURL,
       SESSION_SECRET: process.env.SESSION_SECRET ?? "class-chat-test-secret",
@@ -191,11 +195,14 @@ async function main() {
 
     console.log("\nA monthly course\n");
 
-    await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+    const plan = await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+    check("the teacher has a paid test plan", plan.status === 201 || plan.body?.alreadyHad === true,
+      `status=${plan.status} ${JSON.stringify(plan.body).slice(0, 160)}`);
     const klass = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
       subject: "Maths", topic: "Daily algebra", startMinute: 17 * 60, durationMinutes: 60,
       timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20 } });
     const classId = klass.body?.id ?? klass.body?.class?.id;
+    if (!classId) throw new Error(`monthly class was not created: ${klass.status} ${JSON.stringify(klass.body)}`);
     const joined = await api(`/monthly/classes/${classId}/join`, { method: "POST", token: student.token, body: {
       paymentMethod: "esewa" } });
     check("a student holds a place in the course", joined.status === 201, `status=${joined.status}`);

@@ -193,3 +193,20 @@ services for this activation.
   fully green GitHub run; do not infer a complete release from either service alone.
 - The next action is to commit these CI fixture repairs, push the branch and `main`, monitor the
   complete workflow, then verify the Railway health endpoint and the public Cloudflare site.
+
+### Third production attempt
+
+- Commit `205498e` (`Repair gated teacher integration fixtures`) was pushed normally to both the
+  Claude branch and `main`. GitHub Actions run `33446922968` proved the fixture repair: the two
+  previously failing notification checks passed, as did board limits, both payment modes,
+  reviews, refunds, date/subscribe rules, repeated alerts, storage uploads, and direct-message
+  attachments.
+- That run stopped later in the class-conversation attachment suite. Its single-class half
+  passed completely. Its monthly half launched a child API process without `NODE_ENV=test`, so
+  the server correctly refused to simulate a teacher-plan payment; the test then continued with
+  an undefined class id and produced secondary `Invalid class id` failures. Cloudflare did not
+  publish.
+- Corrected the child test server to declare its isolated test runtime explicitly. Added a
+  direct assertion for the teacher test-plan purchase and an immediate, diagnostic failure if
+  monthly class creation ever fails again, preventing one root problem from turning into a page
+  of misleading follow-on errors. No production payment behavior was changed.
