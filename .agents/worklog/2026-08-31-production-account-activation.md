@@ -210,3 +210,17 @@ services for this activation.
   direct assertion for the teacher test-plan purchase and an immediate, diagnostic failure if
   monthly class creation ever fails again, preventing one root problem from turning into a page
   of misleading follow-on errors. No production payment behavior was changed.
+
+### Fourth production attempt
+
+- Commit `c1c33c2` (`Run class chat plan flow in test mode`) was pushed to the Claude branch and
+  `main`. GitHub Actions run `33447252340` passed the repaired class-conversation suite and the
+  video-provider swap, then reached the support-desk suite.
+- The support-desk suite passed 48 checks and failed two when it tried to approve a new teacher
+  who had no identity document. The application correctly returned `409`: an account may be
+  approved only after its submitted documents have individually been opened and approved.
+  Cloudflare did not publish.
+- Updated the test to create a submitted citizenship-document fixture, open the applicant case
+  through the real operator endpoint, approve the document through the real document-decision
+  endpoint, and only then approve the teacher account. Storage upload mechanics remain covered
+  separately by the upload suites; the support-desk fixture starts at the operator's inbox.

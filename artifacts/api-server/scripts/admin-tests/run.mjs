@@ -213,6 +213,14 @@ async function run() {
   console.log("\nReviewing a teacher's credentials\n");
 
   const applicant = await register("teacher", "New Teacher");
+  // The account cannot honestly be approved without an identity document. Storage itself is
+  // covered by the upload suites; this fixture begins where the support-desk workflow begins:
+  // with a submitted document waiting for an operator to open and decide.
+  sql(`insert into teacher_credentials
+        (teacher_id, document_type, file_key, original_name, content_type, status)
+       values
+        (${applicant.user.id}, 'citizenship', 'ci/teacher-${applicant.user.id}/citizenship.pdf',
+         'citizenship.pdf', 'application/pdf', 'submitted')`);
   const pending = await api("/admin/teachers/pending", { token: agent.token });
   /**
    * The queue is oldest-first, which is the right order for a queue and the wrong one to look
@@ -226,6 +234,15 @@ async function run() {
   check("the new teacher is waiting to be reviewed",
     applicantRecord.body?.teacherProfile?.approvalStatus === "pending",
     JSON.stringify(applicantRecord.body?.teacherProfile));
+  const credentialId = applicantRecord.body?.credentials?.[0]?.id;
+  check("the operator sees the submitted identity document", Number.isInteger(credentialId),
+    JSON.stringify(applicantRecord.body?.credentials));
+
+  const documentApproved = await api(`/admin/teacher-credentials/${credentialId}/decision`, {
+    method: "POST", token: agent.token, body: { decision: "approved" },
+  });
+  check("the identity document can be approved", documentApproved.status === 200,
+    `status=${documentApproved.status} ${JSON.stringify(documentApproved.body).slice(0, 160)}`);
 
   const bareRejection = await api(`/admin/teachers/${applicant.user.id}/decision`, { method: "POST", token: agent.token,
     body: { decision: "rejected" } });
