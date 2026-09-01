@@ -256,9 +256,9 @@ router.patch("/teachers/:id", requireAuth, async (req, res): Promise<void> => {
  * from the inside, and since payment is simulated, any registered teacher could put themselves
  * in front of students for nothing with no agent ever seeing their credentials.
  *
- * Approval now has exactly one door: an agent's decision. A teacher may buy a tier while still
- * pending — there is no reason to make them wait to pay — they simply are not listed until
- * somebody has looked at them.
+ * Approval now has exactly one door: an agent's decision. Email verification and that decision
+ * both happen before payment, so an unverified or pending account cannot buy a tier or start
+ * teaching. The monthly tier uses the same `mayBuyTeacherPlan` gate.
  *
  * ### And it can no longer take money by accident
  *

@@ -12,6 +12,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { WebSocket } from "ws";
+import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -104,7 +105,7 @@ async function api(path, { method = "GET", token, body } = {}) {
 }
 
 let seq = 0;
-async function register(role, name) {
+async function register(role, name, { prepareTeacher = true } = {}) {
   seq += 1;
   const email = `mo_${Date.now()}_${seq}@example.com`;
   const res = await api("/auth/register", { method: "POST", body: {
@@ -113,6 +114,7 @@ async function register(role, name) {
     ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }),
   } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status} ${JSON.stringify(res.body)}`);
+  if (role === "teacher" && prepareTeacher) prepareTeacherForClass(res.body.user.id);
   return { ...res.body, email };
 }
 
@@ -221,6 +223,19 @@ async function teacherWithClass(opts = {}) {
 
 async function planTests() {
   console.log("\nBuying the tier");
+
+  const locked = await register("teacher", "Locked Teacher", { prepareTeacher: false });
+  const unverified = await api("/monthly/plan", { method: "POST", token: locked.token, body: { paymentMethod: "esewa" } });
+  check("an unverified teacher cannot buy the monthly tier",
+    unverified.status === 403 && unverified.body?.code === "EMAIL_UNVERIFIED",
+    `status ${unverified.status}, code ${unverified.body?.code}`);
+  sql(`update account_security set email_verified_at = now() where user_id = ${locked.user.id}`);
+  const pending = await api("/monthly/plan", { method: "POST", token: locked.token, body: { paymentMethod: "esewa" } });
+  check("operator approval is still required after email verification",
+    pending.status === 403 && pending.body?.code === "OPERATOR_REVIEW",
+    `status ${pending.status}, code ${pending.body?.code}`);
+  check("neither refusal creates a paid plan",
+    Number(sql(`select count(*) from teacher_plans where teacher_id = ${locked.user.id}`)) === 0);
 
   const teacher = await register("teacher");
   const bought = await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });

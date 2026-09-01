@@ -95,6 +95,7 @@ async function startApi() {
     cwd: repoRoot,
     env: {
       ...process.env,
+      NODE_ENV: "test",
       PORT: String(API_PORT),
       DATABASE_URL: PGURL,
       SESSION_SECRET: process.env.SESSION_SECRET ?? "upload-browser-test-secret",
@@ -235,7 +236,9 @@ async function main() {
    */
   const teacher = await register("teacher");
   sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
-  await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+  const plan = await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+  check("the homework teacher has a monthly plan", plan.status <= 201,
+    `status=${plan.status} ${JSON.stringify(plan.body).slice(0, 160)}`);
   const made = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
     subject: "Maths", topic: "Daily algebra hour", startMinute: 17 * 60, durationMinutes: 60,
     timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20,

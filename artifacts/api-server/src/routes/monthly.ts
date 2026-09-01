@@ -261,6 +261,12 @@ router.post("/monthly/plan", requireAuth, async (req: Request, res: Response) =>
     return;
   }
 
+  const access = await mayBuyTeacherPlan(user.userId);
+  if (!access.allowed) {
+    res.status(access.status).json({ error: access.message, code: access.code });
+    return;
+  }
+
   const existing = await activePlanFor(user.userId);
   if (existing) {
     // Not an error. A teacher tapping a stale button should end up informed, not scolded.

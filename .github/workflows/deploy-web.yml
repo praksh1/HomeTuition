@@ -343,6 +343,21 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:teacher-leave
 
+      # The complete thirty-day product: who may buy it, daily materialisation, pro-rating,
+      # make-ups, attendance, refunds and cycle boundaries. This was a package script but was
+      # absent from the deployment gate, so a monthly-only regression could still ship.
+      - name: The monthly class contract
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:monthly
+
+      # The monthly homework/thread portal owns a separate storage-backed API in this suite.
+      # It verifies the same signed upload path the phone uses, not a mocked success response.
+      - name: The monthly course portal
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: pnpm --filter @workspace/api-server run test:portal
+
       # A class's own message thread, and the log of who did what. Both have to survive a
       # restart to be worth anything — a teacher's "running ten minutes late" and a refund
       # argued weeks later both depend on the words still being there — so this restarts the
@@ -484,6 +499,9 @@ jobs:
           # whether a Nepali teacher can schedule a class without converting a date in their
           # head, and whether a student sees the date they recognise.
           pnpm --filter @workspace/sikshya run test:calendar
+          # The whole monthly purchase and class setup through the screens. The server contract
+          # alone cannot show that an approved teacher can reach and complete the flow.
+          pnpm --filter @workspace/sikshya run test:monthly-browser
           # The dashboard, from a screenshot a teacher sent: classes from last week sitting in
           # "Upcoming" with a Start button that refuses when pressed, and every date Gregorian
           # for somebody whose whole app is in Bikram Sambat.
