@@ -138,6 +138,16 @@ function kathmanduMinuteNow() {
   return (read("hour") % 24) * 60 + read("minute");
 }
 
+/** A deterministic free afternoon slot on a Kathmandu calendar day. */
+function kathmanduSlotIn(days, startMinute = 13 * 60 + 15) {
+  const chosen = new Date(Date.now() + days * 24 * 3600 * 1000);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: KTM, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(chosen);
+  const read = (type) => parts.find((part) => part.type === type)?.value;
+  return { localDate: `${read("year")}-${read("month")}-${read("day")}`, startMinute };
+}
+
 /** Puts the single next class this many hours away, without disturbing any other day. */
 function nextClassIn(klassId, hours) {
   const id = sql(`select id from recurring_days where recurring_id = ${klassId}
@@ -966,17 +976,10 @@ async function makeupTests() {
   const standingNow = await api("/monthly/plan", { token: teacher.token });
   check("so it is not a black mark either", standingNow.body?.standing?.abuses === 2, `${standingNow.body?.standing?.abuses} marks`);
 
-  const chosen = new Date(Date.now() + 5 * 24 * 3600 * 1000);
-  const dayParts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Kathmandu", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(chosen);
-  const part = (type) => dayParts.find((p) => p.type === type)?.value;
-  const localDate = `${part("year")}-${part("month")}-${part("day")}`;
-  const chosenMinute = 13 * 60 + 15;
   const made = await api(`/monthly/classes/${klass.id}/makeups`, {
     method: "POST",
     token: teacher.token,
-    body: { missedDayId: missed[0], localDate, startMinute: chosenMinute },
+    body: { missedDayId: missed[0], ...kathmanduSlotIn(5) },
   });
   check("a make-up can be arranged", made.status === 201, `status ${made.status} ${JSON.stringify(made.body)?.slice(0, 140)}`);
   check("and it is counted against the five", made.body?.makeups?.used === 1, `used ${made.body?.makeups?.used}`);
@@ -1038,8 +1041,11 @@ async function makeupLimitTests() {
 
   const results = [];
   for (let i = 0; i < 6; i += 1) {
-    const at = new Date(Date.now() + (i + 2) * 24 * 3600 * 1000).toISOString();
-    results.push(await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed[i], at } }));
+    results.push(await api(`/monthly/classes/${klass.id}/makeups`, {
+      method: "POST",
+      token: teacher.token,
+      body: { missedDayId: missed[i], ...kathmanduSlotIn(i + 2) },
+    }));
   }
   const allowed = results.filter((r) => r.status === 201).length;
   check("five make-ups are allowed", allowed === 5, `${allowed} allowed`);
@@ -1071,9 +1077,12 @@ async function abuseAndSuspensionTests() {
   check("the plan is still running", four.body?.plan?.status === "active", `status ${four.body?.plan?.status}`);
 
   // A make-up takes one back off, which must un-warn them at three.
-  const at = new Date(Date.now() + 4 * 24 * 3600 * 1000).toISOString();
   const missedIds = sql(`select id from recurring_days where recurring_id = ${klass.id} and status = 'missed' order by scheduled_for asc limit 1`);
-  await api(`/monthly/classes/${klass.id}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: Number(missedIds), at } });
+  await api(`/monthly/classes/${klass.id}/makeups`, {
+    method: "POST",
+    token: teacher.token,
+    body: { missedDayId: Number(missedIds), ...kathmanduSlotIn(4) },
+  });
   const three = await api("/monthly/plan", { token: teacher.token });
   check("arranging a make-up takes a black mark back off", three.body?.standing?.abuses === 3, `${three.body?.standing?.abuses}`);
 
