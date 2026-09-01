@@ -286,9 +286,13 @@ async function main() {
 
     const messageId = Number(sql(`select id from session_messages where recurring_id = ${classId} order by id desc limit 1`));
     await tpage.locator(`[data-testid="pin-${messageId}"]`).click({ delay: 900, timeout: 15000 });
+    const pinAction = tpage.locator(`[data-testid="class-pin-${messageId}"]`);
+    await pinAction.waitFor({ state: "visible", timeout: 5000 });
+    check("holding the message opens its actions", await pinAction.isVisible());
+    await pinAction.click({ timeout: 15000 });
     await tpage.waitForTimeout(2500);
     const pinnedInDb = sql(`select pinned_at is not null from session_messages where id = ${messageId}`);
-    check("the teacher can pin it by holding it down", pinnedInDb === "t", `pinned_at set: ${pinnedInDb}`);
+    check("the teacher can pin it from those actions", pinnedInDb === "t", `pinned_at set: ${pinnedInDb}`);
     await tctx.close();
 
     const { ctx: sctx, page: spage } = await open(browser, student.token, `/monthly-chat?id=${classId}`);
