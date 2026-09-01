@@ -325,6 +325,34 @@ the production web bundle.
   them. No dependency was removed or app code weakened to hide that local filesystem issue.
 - `psql` is not installed in this Windows checkout, so PostgreSQL integration evidence comes
   from the workflow's isolated Postgres 16 service, never from Railway production data.
-- Current source release candidate: commit `c2b76eb` plus this documentation update. Do not
-  claim Cloudflare production is updated until its new workflow run, deploy step, Railway health
-  and the public site are independently green.
+- Source release candidate `c2b76eb` and documentation commit `2663ac2` were pushed together.
+
+### Successful production release
+
+- GitHub Actions run `33500697922` completed successfully with all 53 workflow steps green.
+  This includes clean install, full workspace typecheck, design ratchet, API/app unit tests, all
+  integration suites, the corrected leave controls, the complete monthly API contract, the real
+  browser journeys (including both monthly purchases and the two-step Pin action), desktop and
+  phone whiteboard checks, phone-photo upload, slow-phone behavior, in-call chat, failed-call
+  safety, production export, Cloudflare publish and the workflow's live-build confirmation.
+- Independent verification after the workflow completed:
+  - Railway `GET /api/healthz` returned HTTP 200 with `{"status":"ok"}`.
+  - `https://hometuition.praksh-dhakal.workers.dev/` returned HTTP 200.
+  - All three JavaScript assets referenced by production HTML returned HTTP 200. The production
+    entry was `entry-4258192bef8986ccdaaeaf9173a1e3f7.js` (4,761,361 bytes) and contains both
+    the Sikshya app identity and the correct Railway production origin.
+  - A real browser rendered title `Sikshya`, redirected normally to `/welcome`, and showed both
+    Teacher and Student role choices. Google, Facebook and Apple login controls remained hidden.
+  - The browser recorded no runtime error. Its only warning was Expo's existing notice that push
+    token-change listeners are not fully supported on web; this does not affect the in-app
+    WebSocket notification channel covered by the browser suite.
+
+### Newly observed but deliberately not changed in this release
+
+- The production welcome page displays `5,000+ Teachers`, `50,000+ Students`, `Nepal's Premier
+  Teaching Platform`, and `Nepal's best teachers`. No data source for those counts or
+  superlatives was audited during this activation. They predate the email/monthly release and
+  were not silently changed after the green deployment because that would require another full
+  production cycle. Queue the welcome screen for the same fabricated-data audit used on the
+  dashboard and Discover screens; until supported, those claims should be removed or replaced
+  with honest product language.
