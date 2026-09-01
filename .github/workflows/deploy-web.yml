@@ -439,7 +439,11 @@ jobs:
           pkill -f "artifacts/api-server/dist/index.mjs" 2>/dev/null || true
           sleep 1
           cd "$GITHUB_WORKSPACE"
-          PORT=8080 nohup node artifacts/api-server/dist/index.mjs > /tmp/api.log 2>&1 &
+          # This replaces the shared CI API, so preserve its test-only payment mode. Without
+          # NODE_ENV=test, the later monthly browser journey quite correctly refuses the
+          # simulated teacher-plan payment as though this were a production server.
+          PORT=8080 NODE_ENV=test WS_HEARTBEAT_MS=3000 \
+            nohup node artifacts/api-server/dist/index.mjs > /tmp/api.log 2>&1 &
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:8080/api/healthz >/dev/null && exit 0
             sleep 1

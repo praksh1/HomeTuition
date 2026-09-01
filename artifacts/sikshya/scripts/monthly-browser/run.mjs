@@ -94,8 +94,16 @@ async function payThrough(page) {
   await page.locator('[data-testid="pay-mobile"]').fill("9800000000");
   await page.locator('[data-testid="pay-pin"]').fill("1234");
   await page.waitForTimeout(300);
-  await page.locator('[data-testid="pay-confirm"]').click({ timeout: 15000 });
-  await page.waitForTimeout(5000);
+  const [response] = await Promise.all([
+    page.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return candidate.request().method() === "POST" && url.pathname.endsWith("/monthly/plan");
+    }, { timeout: 15000 }),
+    page.locator('[data-testid="pay-confirm"]').click({ timeout: 15000 }),
+  ]);
+  const body = await response.text();
+  await page.waitForTimeout(1500);
+  return { status: response.status(), body };
 }
 
 async function main() {
@@ -127,12 +135,15 @@ async function main() {
     const paying = await text(page);
     check("the usual payment sheet opens", /eSewa|Khalti/i.test(paying), paying.slice(0, 300).replace(/\n/g, " | "));
 
-    await payThrough(page);
+    const payment = await payThrough(page);
+    check("the plan payment is accepted by the server", payment.status === 201,
+      `HTTP ${payment.status}: ${payment.body}`);
     const bought = Number(sql(`select count(*) from teacher_plans where teacher_id = ${teacher.user.id}`));
     check("the plan is bought", bought === 1, `${bought} plans`);
 
-    const after = await text(page);
-    check("and the screen moves on to setting up the class", /Set up your class/i.test(after), after.slice(0, 300).replace(/\n/g, " | "));
+    const setup = page.locator('[data-testid="monthly-subject"]');
+    await setup.waitFor({ state: "visible", timeout: 15000 });
+    check("and the screen moves on to setting up the class", await setup.isVisible());
     await ctx.close();
   }
 
