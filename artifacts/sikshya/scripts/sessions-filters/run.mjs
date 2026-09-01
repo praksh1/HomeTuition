@@ -159,7 +159,7 @@ check("and not one of the single classes", !/Coming up|Missed it|All finished/.t
 check("and it opens My Plan", await page.locator('[data-testid="teacher-monthly-plan"]').count() > 0);
 
 const student = (await api("/auth/register", { method: "POST", body: {
-  name: "Kiran Basnet", email: `flt_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10",
+  name: "Kiran Basnet", email: `flt_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
 const joined = await api(`/monthly/classes/${klassId}/join`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
 check("a student can join the monthly class", joined.status < 300, `status=${joined.status} ${JSON.stringify(joined.body).slice(0, 200)}`);
@@ -217,7 +217,7 @@ check("and is not told they have nothing while a class is listed above",
  * and "every class in the country".
  */
 const onlooker = (await api("/auth/register", { method: "POST", body: {
-  name: "Nabin Rai", email: `flt_n_${stamp}@example.com`, password: "password123", role: "student", grade: "10",
+  name: "Nabin Rai", email: `flt_n_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
 const nCtx = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
 const nPage = await nCtx.newPage();

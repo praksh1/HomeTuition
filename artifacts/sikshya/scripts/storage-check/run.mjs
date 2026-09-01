@@ -95,7 +95,7 @@ for (let i = 0; i < 80; i++) { try { if ((await fetch(`${API}/api/healthz`)).ok)
 
 const stamp = Date.now();
 const account = (await api("/auth/register", { method: "POST", body: {
-  name: "Owner", email: `chk_${stamp}@example.com`, password: "password123", role: "student", grade: "10",
+  name: "Owner", email: `chk_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
 sql(`update users set role = 'admin' where id = ${account.user.id}`);
 const agent = (await api("/auth/login", { method: "POST", body: {
@@ -150,7 +150,7 @@ check("no secret is anywhere on the screen",
 
 /* And an ordinary user cannot reach any of it. */
 const student = (await api("/auth/register", { method: "POST", body: {
-  name: "Student", email: `chks_${stamp}@example.com`, password: "password123", role: "student", grade: "10",
+  name: "Student", email: `chks_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
 const asStudent = await api("/admin/storage/check", { token: student.token });
 check("a student cannot run the check", asStudent.status === 403, `status=${asStudent.status}`);

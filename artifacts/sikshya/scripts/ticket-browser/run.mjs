@@ -41,11 +41,11 @@ for (let i = 0; i < 40; i++) { try { if ((await fetch(siteUrl)).ok) break; } cat
 
 const stamp = Date.now();
 const student = (await api("/auth/register", { method: "POST", body: {
-  name: "Sita Sharma", email: `tkb_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10",
+  name: "Sita Sharma", email: `tkb_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
 
 const agentAccount = (await api("/auth/register", { method: "POST", body: {
-  name: "Bina Karki", email: `tkb_a_${stamp}@example.com`, password: "password123", role: "student", grade: "10",
+  name: "Bina Karki", email: `tkb_a_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
 sql(`update users set role = 'admin' where id = ${agentAccount.user.id}`);
 const agent = (await api("/auth/login", { method: "POST", body: { email: `tkb_a_${stamp}@example.com`, password: "password123" } })).body;

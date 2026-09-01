@@ -59,7 +59,9 @@ async function register(role) {
       email: `nb_${Date.now()}_${seq}@example.com`,
       password: "password123",
       role,
-      ...(role === "teacher" ? { subject: "Maths", bio: "Test" } : { grade: "10" }),
+      ...(role === "teacher"
+        ? { subject: "Maths", bio: "Test" }
+        : { grade: "10", dateOfBirth: "2000-01-01" }),
     },
   });
   if (res.status !== 200 && res.status !== 201) {

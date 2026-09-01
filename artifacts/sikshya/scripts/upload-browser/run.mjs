@@ -63,7 +63,7 @@ async function register(role) {
   const res = await api("/auth/register", { method: "POST", body: {
     name: role === "teacher" ? `Teacher ${seq}` : `Student ${seq}`,
     email, password: "password123", role,
-    ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10" }) } });
+    ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register: ${res.status}`);
   return { ...res.body, email };
 }
