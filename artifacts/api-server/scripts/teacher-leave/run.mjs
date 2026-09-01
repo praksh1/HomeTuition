@@ -33,6 +33,21 @@ async function api(p, { method = "GET", token, body } = {}) {
 
 const day = 24 * 60 * 60 * 1000;
 const iso = (ms) => new Date(ms).toISOString();
+const nepalOffset = (5 * 60 + 45) * 60 * 1000;
+
+/**
+ * The chosen calendar day at a known-free local time in Nepal.
+ *
+ * Adding whole days to `Date.now()` kept the current clock time. When CI happened to run near
+ * the class's 17:00 Nepal slot, the supposedly valid control make-up overlapped that daily
+ * class and the server correctly refused it. Nepal has no daylight-saving transition, so the
+ * fixed UTC+05:45 conversion makes this fixture deterministic without changing product rules.
+ */
+const freeSlotOn = (ms) => {
+  const local = new Date(ms + nepalOffset);
+  return Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate(), 13, 15)
+    - nepalOffset;
+};
 
 async function run() {
   console.log("\nA teacher with a class and a missed day\n");
@@ -78,7 +93,7 @@ async function run() {
   console.log("\nThe make-up they must not schedule\n");
 
   const intoTrip = await api(`/monthly/classes/${classId}/makeups`, { method: "POST", token: teacher.token, body: {
-    missedDayId: Number(missedId), at: iso(tripFrom + 2 * day) } });
+    missedDayId: Number(missedId), at: iso(freeSlotOn(tripFrom + 2 * day)) } });
   check("a make-up inside the trip is refused", intoTrip.status === 409, `status=${intoTrip.status}`);
   check("and says why, in the teacher's own words",
     /away then/i.test(String(intoTrip.body?.error)) && /Pokhara/.test(String(intoTrip.body?.error)),
@@ -87,7 +102,7 @@ async function run() {
     sql(`select count(*) from recurring_days where recurring_id = ${classId} and kind = 'makeup'`) === "0");
 
   const dayBefore = await api(`/monthly/classes/${classId}/makeups`, { method: "POST", token: teacher.token, body: {
-    missedDayId: Number(missedId), at: iso(tripFrom - 2 * day) } });
+    missedDayId: Number(missedId), at: iso(freeSlotOn(tripFrom - 2 * day)) } });
   check("a day before the trip is accepted", dayBefore.status < 300, `status=${dayBefore.status} ${JSON.stringify(dayBefore.body).slice(0, 160)}`);
 
   console.log("\nTwo classes at once\n");
@@ -119,7 +134,7 @@ async function run() {
   check("leave can be withdrawn", removed.status === 200, `status=${removed.status}`);
   sql(`delete from recurring_days where recurring_id = ${classId} and kind = 'makeup'`);
   const nowAllowed = await api(`/monthly/classes/${classId}/makeups`, { method: "POST", token: teacher.token, body: {
-    missedDayId: Number(missedId), at: iso(tripFrom + 2 * day) } });
+    missedDayId: Number(missedId), at: iso(freeSlotOn(tripFrom + 2 * day)) } });
   check("and then that day is bookable again", nowAllowed.status < 300, `status=${nowAllowed.status}`);
 
   const otherEmail = `tl2_${Date.now()}@example.com`;
