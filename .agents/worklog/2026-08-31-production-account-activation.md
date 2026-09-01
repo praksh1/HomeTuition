@@ -224,3 +224,107 @@ services for this activation.
   through the real operator endpoint, approve the document through the real document-decision
   endpoint, and only then approve the teacher account. Storage upload mechanics remain covered
   separately by the upload suites; the support-desk fixture starts at the operator's inbox.
+
+## Production gate stabilization and monthly-plan audit
+
+This section records every subsequent production attempt, including CI/test-harness mistakes.
+None of the failed runs below reached the Cloudflare publish step. They therefore did not replace
+the production web bundle.
+
+### Document review and CI resource failures
+
+- Commit `672b946` (`Exercise document review before teacher approval`) implemented the honest
+  support-desk fixture described above. Run `33447593707` then reached the workflow's overall
+  time ceiling before the expanded gate could finish. Commit `e709133` raised that ceiling to
+  60 minutes; it did not weaken or skip a test.
+- Runs `33449231793`, `33449857495`, `33450430404`, `33450967566`, and `33451551574` exposed the
+  GitHub runner's memory limit while Metro built the Excalidraw-heavy web bundle alongside API
+  integration processes. Commits `8cd7545`, `55e47f7`, `218a55e`, and `892fc7c` progressively
+  constrained Metro worker count and aggregate/Node heap use. These were CI-process changes;
+  no classroom behavior or production memory setting was changed.
+- Commit `1d23822` (`Isolate Metro from integration servers`) fixed the actual peak: build the
+  disposable browser bundle before starting the integration APIs, then reuse it for the real
+  browser journeys. Run `33465865635` passed the memory-heavy section and exposed the next real
+  fixture mismatch instead of failing from resource exhaustion.
+
+### Browser fixtures brought in line with real account gates
+
+- Run `33465865635` showed that older browser signups omitted the now-required student date of
+  birth. Commit `381f036` added explicit adult dates only to disposable browser accounts.
+- Run `33466488851` showed that browser fixtures were redirected through email verification and
+  onboarding before they could reach the unrelated screen under test. Commit `5bb715f` added a
+  shared `scripts/test-support/accountAccess.mjs` helper that completes only those two gates in
+  the throwaway CI database. Teacher approval and plan access remain opt-in per suite so tests
+  cannot accidentally bypass the rules they are meant to exercise.
+- Run `33467355042` passed notification, classroom, navigation and refund journeys. Its upload
+  journey launched a private API without `NODE_ENV=test`, so the server correctly refused a
+  simulated teacher-plan payment and no monthly homework class existed. The child process was
+  corrected to declare test mode and the journey now asserts plan creation immediately.
+
+### A product-rule omission found while repairing the fixtures
+
+- Auditing that failure found that `POST /monthly/plan` did not call `mayBuyTeacherPlan`, even
+  though class creation did. A new teacher could therefore try to buy the monthly tier before
+  email verification and operator approval. Commit `ba919db` closes that application-layer gap;
+  it does not alter the atomic charge/plan transaction.
+- The monthly API suite now proves that an unverified teacher receives `EMAIL_UNVERIFIED`, a
+  verified-but-pending teacher receives `OPERATOR_REVIEW`, neither refusal creates a plan row,
+  and an eligible teacher can still buy the tier. The previously absent `test:monthly`,
+  `test:portal`, and real `test:monthly-browser` suites were added to the production workflow.
+- Run `33468475058` ran the newly gated monthly contract and exposed five time-dependent test
+  fixtures. They scheduled make-ups at `Date.now() + N days`; in Kathmandu that happened to
+  overlap the daily 09:00 class, so the server correctly refused them. Commit `97f18bf` uses
+  distinct future days at a deterministic free 13:15 slot. This preserves both owner rules:
+  make-ups may be at any day/time in the same cycle, but may not collide with the regular class.
+
+### End-to-end monthly browser findings
+
+- Run `33468954430` passed the full 193-check monthly API contract, monthly course portal, upload
+  journey and calendar journey. The teacher-plan browser purchase failed because the earlier
+  whiteboard-persistence test restarted the shared CI API without preserving `NODE_ENV=test`.
+  The server therefore behaved like production and correctly refused a simulated teacher-plan
+  charge. Commit `02b6a8e` preserves test mode across that restart.
+- The same commit strengthened the browser journey to capture the actual payment response and
+  require the class-setup form to become visible. This removed a false-positive text check that
+  had said the screen moved on even when no plan row existed.
+- Run `33470087632` proved the teacher payment (`HTTP 201`, plan row, visible setup form) and then
+  timed out on the student's purchase. The cause was in the new diagnostic helper: it listened
+  only for `/monthly/plan`, while a student correctly posts to
+  `/monthly/classes/:id/join`. Commit `0c19b17` parameterizes the expected endpoint and asserts
+  both server responses independently.
+- Run `33471130805` passed both teacher and student monthly purchases, exact pro-rated price,
+  enrolment, class setup, course chat visibility and homework. Its only failed assertion was an
+  obsolete gesture expectation: long-press now opens the shared reactions/actions menu and Pin
+  is a separate deliberate tap, but the journey never tapped the displayed Pin action.
+- Commit `afc7ad7` now verifies both parts: hold the message until the actions appear, tap Pin,
+  then confirm `pinned_at` persisted. The later student-visibility and homework checks already
+  passed in the failed run, so this was the last observed browser blocker rather than a hidden
+  cascade.
+
+### A second clock-dependent control fixture
+
+- Run `33500074221` passed install, typecheck, design/app/API rules and every integration gate
+  through late-joiner chat. It stopped in the teacher-leave suite before reaching the browser
+  journey. The two failed *allowed* controls kept `Date.now()`'s clock time when moving fourteen
+  days forward; this run occurred just before the recurring 17:00 Nepal class, so their
+  sixty-minute make-ups overlapped it. The server correctly returned `409` with
+  `There is already a class at that time.` The leave refusal itself and the explicit collision
+  refusal both passed.
+- Commit `c2b76eb` schedules those control make-ups at 13:15 Nepal on their intended calendar
+  days. Nepal's fixed UTC+05:45 offset makes the fixture deterministic. The regular class remains
+  at 17:00, and no application collision, leave, make-up or billing rule was relaxed.
+
+### Verification accounting
+
+- Every pushed attempt ran a clean Linux install. Across the latest attempts, workspace
+  typecheck, design ratchet, 269 API unit tests, 154 app unit tests, the monthly contract,
+  monthly portal, uploads, notifications, reviews, refunds, support desk, operator access,
+  video-provider seam, attendance, restart persistence and calendar journey all passed.
+- Local Windows verification remains limited by OneDrive/pnpm junction visibility for `jose`,
+  `expo-apple-authentication`, and `expo-auth-session`; clean Linux CI resolves and typechecks
+  them. No dependency was removed or app code weakened to hide that local filesystem issue.
+- `psql` is not installed in this Windows checkout, so PostgreSQL integration evidence comes
+  from the workflow's isolated Postgres 16 service, never from Railway production data.
+- Current source release candidate: commit `c2b76eb` plus this documentation update. Do not
+  claim Cloudflare production is updated until its new workflow run, deploy step, Railway health
+  and the public site are independently green.
