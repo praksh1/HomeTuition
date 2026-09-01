@@ -22,6 +22,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 import { startFakeR2 } from "../../../api-server/scripts/upload-tests/fake-r2.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -65,6 +66,7 @@ async function register(role) {
     email, password: "password123", role,
     ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register: ${res.status}`);
+  prepareBrowserAccount(res.body.user.id);
   return { ...res.body, email };
 }
 

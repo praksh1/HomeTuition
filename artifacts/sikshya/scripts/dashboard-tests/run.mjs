@@ -10,6 +10,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const PORT = Number(process.env.DASH_SITE_PORT ?? 8099);
@@ -33,7 +34,8 @@ for (let i = 0; i < 40; i++) { try { if ((await fetch(siteUrl)).ok) break; } cat
 
 const email = `dash_${Date.now()}@example.com`;
 const t = (await api("/auth/register", { method: "POST", body: { name: "Dash Teacher", email, password: "password123", role: "teacher", subject: "Maths", bio: "x" } })).body;
-sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${t.user.id}`);
+prepareBrowserAccount(t.user.id);
+sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${t.user.id}`);
 
 // One class still to come, and one that came and went without being started.
 const soon = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();

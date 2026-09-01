@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
@@ -59,6 +60,7 @@ async function register(role) {
     email, password: "password123", role,
     ...(role === "teacher" ? { subject: "Mathematics", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status}`);
+  prepareBrowserAccount(res.body.user.id);
   return { ...res.body, email };
 }
 
@@ -338,6 +340,7 @@ async function main() {
   // Something for them to look at.
   const reporter = await register("student");
   const subject = await register("teacher");
+  sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${subject.user.id}`);
   const klass = await api("/sessions", { method: "POST", token: subject.token, body: {
     topic: "Disputed Class", subject: "Mathematics", description: "d",
     date: new Date(Date.now() + 5 * 60_000).toISOString(), duration: 60, price: 500, maxStudents: 10 } });

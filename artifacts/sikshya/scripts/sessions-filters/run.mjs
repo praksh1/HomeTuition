@@ -15,6 +15,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const PORT = Number(process.env.FILTER_SITE_PORT ?? 8097);
@@ -43,6 +44,7 @@ const stamp = Date.now();
 const teacher = (await api("/auth/register", { method: "POST", body: {
   name: "Gita Poudel", email: `flt_t_${stamp}@example.com`, password: "password123", role: "teacher", subject: "Maths", bio: "x",
 } })).body;
+prepareBrowserAccount(teacher.user.id);
 /*
  * This screen-crowding fixture deliberately needs seventeen single classes. Put only this
  * synthetic teacher on the real 30-class tier so the test measures filtering rather than the
@@ -161,6 +163,7 @@ check("and it opens My Plan", await page.locator('[data-testid="teacher-monthly-
 const student = (await api("/auth/register", { method: "POST", body: {
   name: "Kiran Basnet", email: `flt_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
+prepareBrowserAccount(student.user.id);
 const joined = await api(`/monthly/classes/${klassId}/join`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
 check("a student can join the monthly class", joined.status < 300, `status=${joined.status} ${JSON.stringify(joined.body).slice(0, 200)}`);
 
@@ -219,6 +222,7 @@ check("and is not told they have nothing while a class is listed above",
 const onlooker = (await api("/auth/register", { method: "POST", body: {
   name: "Nabin Rai", email: `flt_n_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
+prepareBrowserAccount(onlooker.user.id);
 const nCtx = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
 const nPage = await nCtx.newPage();
 await nPage.addInitScript((tok) => window.localStorage.setItem("@sikshya_token", tok), onlooker.token);

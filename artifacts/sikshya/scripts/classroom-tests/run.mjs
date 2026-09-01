@@ -20,6 +20,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
@@ -56,6 +57,7 @@ async function register(role) {
     email: `cr_${Date.now()}_${seq}@example.com`, password: "password123", role,
     ...(role === "teacher" ? { subject: "Mathematics", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status}`);
+  prepareBrowserAccount(res.body.user.id);
   return res.body;
 }
 
@@ -86,7 +88,7 @@ async function main() {
   await waitForSite();
 
   const teacher = await register("teacher");
-  sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
+  sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${teacher.user.id}`);
 
   /**
    * A class that finished three days ago — the case in the report.
@@ -485,7 +487,7 @@ async function main() {
    * asserted now rather than assumed, which is what would have said so.
    */
   const soloTeacher = await register("teacher");
-  sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${soloTeacher.user.id}`);
+  sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${soloTeacher.user.id}`);
 
   const heldEarlyClass = await api("/sessions", { method: "POST", token: soloTeacher.token, body: {
     topic: "Held Early", subject: "Mathematics", description: "d",

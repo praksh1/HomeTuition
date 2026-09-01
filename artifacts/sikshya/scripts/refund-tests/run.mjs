@@ -19,6 +19,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
@@ -57,6 +58,7 @@ async function register(role, name) {
     name: name ?? `${role} ${seq}`, email, password: "password123", role,
     ...(role === "teacher" ? { subject: "Mathematics", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status} ${JSON.stringify(res.body)}`);
+  prepareBrowserAccount(res.body.user.id);
   return { ...res.body, email };
 }
 
@@ -129,7 +131,7 @@ async function main() {
   const browser = await chromium.launch();
 
   const teacher = await register("teacher", "Ram Prasad");
-  sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
+  sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${teacher.user.id}`);
 
   console.log("\nWhat a student is shown before they give up their money");
 
@@ -244,7 +246,7 @@ async function main() {
 
   {
     const quotaTeacher = await register("teacher", "Moving Mohan");
-    sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${quotaTeacher.user.id}`);
+    sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${quotaTeacher.user.id}`);
     const student = await register("student", "Booked Bimal");
     const session = await makeSession(quotaTeacher, { price: 500 });
     await api(`/sessions/${session.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
@@ -318,7 +320,7 @@ async function main() {
 
   {
     const lateTeacher = await register("teacher", "Late Laxmi");
-    sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${lateTeacher.user.id}`);
+    sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${lateTeacher.user.id}`);
     const student = await register("student", "Stuck Sunita");
     const session = await makeSession(lateTeacher, { price: 500 });
     await api(`/sessions/${session.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
@@ -379,7 +381,7 @@ async function main() {
 
   {
     const listTeacher = await register("teacher", "Listing Lila");
-    sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${listTeacher.user.id}`);
+    sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${listTeacher.user.id}`);
     const student = await register("student", "Listing Laxmi");
 
     const dropped = await makeSession(listTeacher, { price: 500 });
@@ -434,7 +436,7 @@ async function main() {
 
   {
     const payTeacher = await register("teacher", "Paying Prem");
-    sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${payTeacher.user.id}`);
+    sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${payTeacher.user.id}`);
     const profileId = sql(`select id from teacher_profiles where user_id = ${payTeacher.user.id}`);
     const student = await register("student", "Wallet Wangchuk");
     const filler = await register("student", "First Fiona");

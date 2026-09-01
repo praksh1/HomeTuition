@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
@@ -67,6 +68,7 @@ async function register(role) {
   if (res.status !== 200 && res.status !== 201) {
     throw new Error(`register ${role}: ${res.status} ${JSON.stringify(res.body).slice(0, 200)}`);
   }
+  prepareBrowserAccount(res.body.user.id);
   return res.body;
 }
 

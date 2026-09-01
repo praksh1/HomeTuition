@@ -15,6 +15,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const PORT = Number(process.env.TICKET_SITE_PORT ?? 8098);
@@ -43,10 +44,12 @@ const stamp = Date.now();
 const student = (await api("/auth/register", { method: "POST", body: {
   name: "Sita Sharma", email: `tkb_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
+prepareBrowserAccount(student.user.id);
 
 const agentAccount = (await api("/auth/register", { method: "POST", body: {
   name: "Bina Karki", email: `tkb_a_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
+prepareBrowserAccount(agentAccount.user.id);
 sql(`update users set role = 'admin' where id = ${agentAccount.user.id}`);
 const agent = (await api("/auth/login", { method: "POST", body: { email: `tkb_a_${stamp}@example.com`, password: "password123" } })).body;
 
@@ -188,6 +191,7 @@ check("and the list says so in words rather than a number",
 const teacher = (await api("/auth/register", { method: "POST", body: {
   name: "Ram Prasad", email: `tkb_t_${stamp}@example.com`, password: "password123", role: "teacher", subject: "Maths", bio: "x",
 } })).body;
+prepareBrowserAccount(teacher.user.id);
 const tCtx = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
 const tPage = await tCtx.newPage();
 await tPage.addInitScript((tok) => window.localStorage.setItem("@sikshya_token", tok), teacher.token);

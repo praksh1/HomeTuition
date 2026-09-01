@@ -17,6 +17,7 @@ import { spawn, execFileSync } from "node:child_process";
 import http from "node:http";
 import path from "node:path";
 import { getChromium } from "../board-tests/harness.mjs";
+import { prepareBrowserAccount } from "../test-support/accountAccess.mjs";
 
 const appRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..");
 const PORT = Number(process.env.CHECK_SITE_PORT ?? 8096);
@@ -97,6 +98,7 @@ const stamp = Date.now();
 const account = (await api("/auth/register", { method: "POST", body: {
   name: "Owner", email: `chk_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
+prepareBrowserAccount(account.user.id);
 sql(`update users set role = 'admin' where id = ${account.user.id}`);
 const agent = (await api("/auth/login", { method: "POST", body: {
   email: `chk_${stamp}@example.com`, password: "password123",
@@ -152,6 +154,7 @@ check("no secret is anywhere on the screen",
 const student = (await api("/auth/register", { method: "POST", body: {
   name: "Student", email: `chks_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
+prepareBrowserAccount(student.user.id);
 const asStudent = await api("/admin/storage/check", { token: student.token });
 check("a student cannot run the check", asStudent.status === 403, `status=${asStudent.status}`);
 
