@@ -610,8 +610,11 @@ in ~140 ms — and it still paints at 25× slowdown. That says the code is not d
 foolish. It does **not** reproduce a weak GPU, memory pressure or thermal throttling.
 `artifacts/sikshya/scripts/perf-tests` runs on every deploy.
 
-**3. Shape recognition has never been used by a real teacher.** 27 tests, none of which is a
-person drawing on a phone. Watch for it correcting something a teacher meant to leave rough.
+**3. Shape recognition failed a real teacher test and is now queued for removal from the active
+path.** A handwritten `A` and ordinary rough ink can be replaced with an unintended arrow or
+shape. Preserve explicit Excalidraw shape tools, but disable automatic freehand conversion. The
+owner's acceptance criteria are in
+`.agents/backlog/2026-09-02-owner-corrections-and-stream-poc.md`, section 5.
 
 **4. Handwriting-to-text is not built.** On-device OCR was tried and withdrawn: Tesseract reads
 printed text, and on handwriting a clearly drawn "B" came back "L". Doing it properly needs ML
@@ -647,6 +650,14 @@ A provider seam already exists — `api-server/src/lib/video/types.ts`, two func
 (`ensureRoom`, `joinToken`), selected by the `VIDEO_PROVIDER` environment variable, with a test
 that runs the whole server twice (on Daily and on a stub) and checks the rules come out
 identical. `VIDEO.md`.
+
+**12. The owner's 2026-09-02 correction packet is the next implementation queue.** It covers
+operator/email wording, locking tiers before payment, a reported old reset link that worked,
+temporary audited test-teacher access, disabling automatic shape conversion, fixing the
+call-window minimize semantics, and a separate Stream Video proof of concept. Read
+`.agents/backlog/2026-09-02-owner-corrections-and-stream-poc.md` before changing any of these.
+The packet is specification only: none of those changes were implemented when this paragraph
+was added.
 
 ---
 
