@@ -244,6 +244,32 @@ async function run() {
   check("the identity document can be approved", documentApproved.status === 200,
     `status=${documentApproved.status} ${JSON.stringify(documentApproved.body).slice(0, 160)}`);
 
+  /*
+    Accepting a document is not approving the teacher.
+
+    The route used to email "Your citizenship was approved." and the operator screen used to
+    answer "They have been told." These four checks are the owner's acceptance criteria for the
+    2026-09-02 correction packet, section 1: the document decision must not move the account, and
+    the operator must never be told an email went out when none did.
+  */
+  check("accepting a document leaves the account pending",
+    sql(`select approval_status from teacher_profiles where user_id=${applicant.user.id}`) === "pending",
+    "a document decision must not approve teacher access");
+
+  const documentDelivery = documentApproved.body?.notified;
+  check("the operator is told what happened to the email", typeof documentDelivery?.message === "string",
+    JSON.stringify(documentApproved.body).slice(0, 200));
+  /*
+    No mail provider is configured in the test environment, so this run also covers the packet's
+    "simulate mail failure" case: the decision is saved and the operator is told plainly that
+    nothing was sent, rather than "they have been told".
+  */
+  check("and is not told an email was sent when none was",
+    documentDelivery?.email === "not_configured" && !/was emailed/.test(documentDelivery?.message ?? ""),
+    JSON.stringify(documentDelivery));
+  check("the decision is still saved when no email could go",
+    sql(`select status from teacher_credentials where id=${credentialId}`) === "approved");
+
   const bareRejection = await api(`/admin/teachers/${applicant.user.id}/decision`, { method: "POST", token: agent.token,
     body: { decision: "rejected" } });
   check("a rejection has to say why", bareRejection.status === 400, `status=${bareRejection.status}`);
@@ -253,6 +279,17 @@ async function run() {
   check("an approval goes through", approved.status === 200, `status=${approved.status}`);
   check("and is recorded on the profile",
     sql(`select approval_status from teacher_profiles where user_id=${applicant.user.id}`) === "approved");
+  check("the account decision also reports its delivery",
+    typeof approved.body?.notified?.message === "string" && approved.body.notified.email === "not_configured",
+    JSON.stringify(approved.body?.notified));
+  /*
+    The activity log is the durable record. "We decided" and "we told them" are separate facts,
+    and the support question weeks later is almost always about the second one.
+  */
+  check("and the delivery outcome is written to the activity log",
+    sql(`select detail::text from activity_log where action='admin.teacher.approved'`
+      + ` and subject_id=${applicant.user.id} order by id desc limit 1`).includes("emailOutcome"),
+    "the log must record whether the teacher was actually reached");
 
   console.log("\nThe log an agent reads when nothing else answers it\n");
 

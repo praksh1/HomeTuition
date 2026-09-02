@@ -30,6 +30,17 @@ interface PersonDetail {
   activity: { known: boolean; rows: { id: number; action: string; subjectType: string | null; subjectId: number | null; createdAt: string }[] };
 }
 
+/**
+ * What both decision endpoints return about reaching the teacher.
+ *
+ * `message` is the operator-facing sentence, composed on the server so there is one copy of it.
+ * Optional because an older deployment answering a newer app would omit it — the screen then
+ * falls back to the decision alone rather than inventing a delivery claim.
+ */
+interface DecisionResult {
+  notified?: { email: "sent" | "failed" | "not_configured"; inApp: boolean; message: string };
+}
+
 export default function AdminPerson() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
@@ -87,16 +98,31 @@ export default function AdminPerson() {
     }
   };
 
+  /*
+    Both confirmations below name the decision that was actually made and then quote the server's
+    own account of whether the teacher was reached.
+
+    They used to say "Saved" / "They have been told." — a claim the screen was in no position to
+    make. The email was fired and its result discarded, and on a server with no mail provider
+    configured nothing was sent at all. `notified.message` comes from `deliveryLine()` on the
+    server, which distinguishes delivered, failed, and never-configured.
+  */
   const decideCredentials = async (decision: "approved" | "rejected") => {
     if (decision === "rejected" && !note.trim()) {
       notify("Say why", "A rejection they cannot act on is one they will simply send again.");
       return;
     }
     try {
-      await apiPost(`/admin/teachers/${id}/decision`, { decision, note: note.trim() || undefined });
+      const res = await apiPost<DecisionResult>(`/admin/teachers/${id}/decision`, {
+        decision,
+        note: note.trim() || undefined,
+      });
       setNote("");
       await load();
-      notify("Saved", "They have been told.");
+      notify(
+        decision === "approved" ? "Teacher access approved." : "Teacher access refused.",
+        res.notified?.message ?? "The decision was saved.",
+      );
     } catch (e) {
       notify("Could not save", e instanceof Error ? e.message : "Please try again.");
     }
@@ -108,13 +134,16 @@ export default function AdminPerson() {
       return;
     }
     try {
-      await apiPost(`/admin/teacher-credentials/${credentialId}/decision`, {
+      const res = await apiPost<DecisionResult>(`/admin/teacher-credentials/${credentialId}/decision`, {
         decision,
         reason: decision === "rejected" ? note.trim() : undefined,
       });
       setNote("");
       await load();
-      notify("Document reviewed", decision === "rejected" ? "The teacher can upload a replacement." : "The approval was recorded.");
+      // "Document review saved", never "approved": accepting a document for Sikshya's check is
+      // not approval of the teacher's account, and the operator screen is where that distinction
+      // has to be visible first.
+      notify("Document review saved.", res.notified?.message ?? "The decision was saved.");
     } catch (error) {
       notify("Could not save", error instanceof Error ? error.message : "Please try again.");
     }

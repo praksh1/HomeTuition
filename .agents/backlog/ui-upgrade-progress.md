@@ -61,6 +61,9 @@ Found and fixed so far:
 | Teacher profile | "Sessions Hosted" summed only the first API page (at most 20 sessions per status), then presented the partial count as a lifetime total |
 | Teacher profile | An unreviewed teacher showed `0.0`, and a free follow action was labelled "Subscribe" beside a separate paid monthly product |
 | Teacher profile | A hidden payment-sheet fallback turned a missing class price into `NPR 0`; the sheet is now rendered only when a real selected session exists |
+| Operator person screen | "They have been told." — asserted after a fire-and-forget email whose result was thrown away. With no mail provider configured, nothing was sent and the operator was told it had been |
+| Operator decisions (server) | "Your citizenship was approved." — Sikshya accepted a copy of a document for its own check. It does not approve citizenship and has no standing to say so |
+| Operator decisions (server) | "Your teaching credentials have been approved. You can schedule classes now." — announced a *document* outcome for an *account* decision, and an approved teacher still cannot schedule anything without a teaching plan |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

@@ -24,12 +24,20 @@ import { findingsFor } from "../lib/sessionEvidence";
 import { costAt, egressGbAt, monthWindow, usageIn } from "../lib/videoUsage";
 import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
-import { notify } from "../lib/notify";
+import { notify, notifyInApp } from "../lib/notify";
 import { refundSplit } from "../lib/sessionChanges";
 import { checkStorage, storageSettingsPresent } from "../lib/fileStore";
 import { TICKET_STATUSES, displayStatus, nextStatuses, statusLabel, ticketRef } from "../lib/tickets";
 import { historyFor, moveTicket, nameOf } from "../lib/ticketStore";
-import { sendEmail } from "../lib/mailer";
+import { isEmailConfigured, sendEmail } from "../lib/mailer";
+import { isUserConnected } from "../ws/userHub";
+import {
+  deliveryLine,
+  documentDecisionNotice,
+  teacherAccessDecisionNotice,
+  type AccountNotice,
+  type EmailOutcome,
+} from "../lib/accountNotices";
 
 /**
  * The support desk.
@@ -832,6 +840,48 @@ router.get("/admin/teachers/pending", async (_req, res): Promise<void> => {
   res.json({ teachers: rows });
 });
 
+/**
+ * Tell a teacher about an operator's decision, and report back what actually happened.
+ *
+ * The operator screen used to say "Saved / They have been told." after every decision. It had no
+ * way of knowing that: the email was fired with `void` and its result discarded, and the in-app
+ * half only reaches a socket that happens to be open. On a server with no mail provider
+ * configured, "they have been told" was simply false.
+ *
+ * So the email is awaited here and its outcome is returned, separately from the in-app outcome,
+ * and both travel into the activity log. `notifyInApp` rather than `notify` because this function
+ * owns the email — see the note on that function about the duplicate that used to go out.
+ */
+async function deliverDecision(
+  userId: number,
+  email: string,
+  notice: AccountNotice,
+): Promise<{ email: EmailOutcome; inApp: boolean; message: string }> {
+  // Read before pushing: this is "was anybody listening", not "did the push succeed".
+  const inApp = isUserConnected(userId);
+  notifyInApp(userId, {
+    kind: "message",
+    fromName: "Sikshya Support",
+    preview: notice.preview,
+    at: new Date().toISOString(),
+  });
+
+  let outcome: EmailOutcome;
+  if (!isEmailConfigured()) {
+    outcome = "not_configured";
+  } else {
+    outcome = (await sendEmail({ to: email, subject: notice.subject, text: notice.body }))
+      ? "sent"
+      : "failed";
+  }
+
+  // The sentence travels with the outcome so the operator screen displays it rather than
+  // re-deriving it. The app already keeps a second copy of the tier price table and that is
+  // logged as a financial hazard; a second copy of "we emailed them" would be the same mistake
+  // in a smaller place.
+  return { email: outcome, inApp, message: deliveryLine(outcome, inApp) };
+}
+
 router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> => {
   const userId = parseInt(String(req.params.userId), 10);
   if (isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
@@ -871,26 +921,40 @@ router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> 
     .returning();
   if (!updated) { res.status(404).json({ error: "Teacher not found" }); return; }
 
+  const [person] = await db
+    .select({ email: usersTable.email, name: usersTable.name })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+
+  /*
+    This route sent no purpose-written email at all. The only mail a teacher received about their
+    account decision came out of `notify()` dressed as a chat message — subject "New message from
+    Sikshya Support", body quoting the decision as if somebody had typed it in a conversation, and
+    a footer offering to turn these emails off. It was also gated on the teacher's *message* email
+    preference, so a teacher who had turned chat emails off was never told the outcome of their
+    own application.
+  */
+  const notice = teacherAccessDecisionNotice({
+    decision,
+    note: text,
+    recipientName: person?.name ?? "",
+  });
+  const delivery = person
+    ? await deliverDecision(userId, person.email, notice)
+    : { email: "failed" as EmailOutcome, inApp: false, message: deliveryLine("failed", false) };
+
   recordActivity({
     userId: req.user!.userId,
     action: `admin.teacher.${decision}`,
     subjectType: "user",
     subjectId: userId,
-    detail: { note: text || undefined },
+    // The delivery outcome is part of the record: "we decided" and "we told them" are different
+    // facts, and a support question weeks later is usually about the second one.
+    detail: { note: text || undefined, emailOutcome: delivery.email, inApp: delivery.inApp },
     ip: callerIp(req),
   });
 
-  notify(userId, {
-    kind: "message",
-    fromName: "Sikshya Support",
-    preview:
-      decision === "approved"
-        ? "Your teaching credentials have been approved. You can schedule classes now."
-        : `Your credentials were not approved: ${text}`,
-    at: new Date().toISOString(),
-  });
-
-  res.json(updated);
+  res.json({ ...updated, notified: delivery });
 });
 
 router.post("/admin/teacher-credentials/:id/decision", async (req, res): Promise<void> => {
@@ -937,25 +1001,35 @@ router.post("/admin/teacher-credentials/:id/decision", async (req, res): Promise
   if (decision === "rejected") {
     await db.update(teacherProfilesTable).set({ approvalStatus: "rejected" }).where(eq(teacherProfilesTable.userId, existing.teacherId));
   }
-  const label = existing.documentType.replaceAll("_", " ");
-  const message = decision === "approved"
-    ? `Your ${label} was approved.`
-    : `Your ${label} was rejected: ${reason}. You may now upload a replacement.`;
-  notify(existing.teacherId, { kind: "message", fromName: "Sikshya Support", preview: message, at: new Date().toISOString() });
-  void sendEmail({
-    to: existing.teacherEmail,
-    subject: decision === "approved" ? "Sikshya document approved" : "Sikshya document needs to be replaced",
-    text: `Hello ${existing.teacherName},\n\n${message}`,
+  /*
+    `Your ${label} was approved.` — with `label` being "citizenship" — is the sentence this whole
+    slice exists to delete. Sikshya accepted a copy of a document for its own teacher check; it did
+    not approve anybody's citizenship, and it is not in a position to.
+
+    It also sent two emails: this one, and a second from `notify()` announcing a "new message".
+  */
+  const notice = documentDecisionNotice({
+    documentType: existing.documentType,
+    decision,
+    reason,
+    recipientName: existing.teacherName,
   });
+  const delivery = await deliverDecision(existing.teacherId, existing.teacherEmail, notice);
+
   recordActivity({
     userId: req.user!.userId,
     action: `admin.teacher_credential.${decision}`,
     subjectType: "teacher_credential",
     subjectId: id,
-    detail: { teacherId: existing.teacherId, reason: reason || undefined },
+    detail: {
+      teacherId: existing.teacherId,
+      reason: reason || undefined,
+      emailOutcome: delivery.email,
+      inApp: delivery.inApp,
+    },
     ip: callerIp(req),
   });
-  res.json({ credential: updated });
+  res.json({ credential: updated, notified: delivery });
 });
 
 /**

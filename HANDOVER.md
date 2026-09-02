@@ -764,6 +764,29 @@ panel. Currently Daily's chat is **disabled on purpose**; re-enabling it splits 
 The owner expects one more rename before launch. See section 9 — the *identifier* is the part
 that is not cheap.
 
+### 8.8 A teacher whose app is closed is not notified at all
+
+Found on 2026-09-02 while making the operator screen tell the truth about delivery.
+
+**There is no server-side notification store.** `notifyUser()` writes to whatever sockets happen
+to be open, and the app keeps its own list in the phone's storage. So an in-app notification is
+only ever received by somebody who is looking at the app at that exact moment. Everybody else
+gets nothing — the notification does not queue and does not arrive later.
+
+Today email covers the gap for anything important, which is why this has not bitten yet. But it
+means Sikshya **cannot honestly say "we notified them in the app"** about anything, and on a
+server with no mail provider configured a teacher can be approved, rejected, or have a document
+turned down without ever finding out.
+
+The fix is a notifications table the app reads on open. That is a schema change, so it needs its
+own slice and a `db:push` (see the deploy-window trap in section 11). The question for the owner
+is only whether it comes before launch — for a market where a cheap phone may not hold a session
+open, the honest answer is probably yes.
+
+A smaller related bug, same discovery: the "new message" email links to `/conversation/undefined`
+whenever the sender is Sikshya itself rather than a person, because those notices carry no
+`fromUserId`.
+
 ---
 
 ## 9. Before this goes to a store or a real launch

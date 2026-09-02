@@ -179,6 +179,29 @@ export function notify(userId: number, event: NotificationEvent): void {
   notifyMany([userId], event);
 }
 
+/**
+ * Push to the app only, sending no email, for a notice whose email the caller owns.
+ *
+ * Operator decisions need this for two reasons.
+ *
+ * **They were sending two emails.** The credential decision route called `notify()` *and*
+ * `sendEmail()`. `notify()` maps `kind: "message"` to a real email — "New message from Sikshya
+ * Support", with a link to `/conversation/undefined` because these support notices carry no
+ * `fromUserId` — so a teacher whose document was reviewed received that plus the purpose-written
+ * one. Routing the in-app half here leaves exactly one email per decision.
+ *
+ * **The operator has to be told whether it arrived.** `notify()` is fire-and-forget by design and
+ * cannot report delivery, so the route awaits its own `sendEmail()` and reads the result.
+ *
+ * Deliberately not preference-gated. The email preferences describe messages, followers and
+ * classes — things a person may reasonably opt out of. "Your teacher account was rejected" is
+ * transactional: nobody opts out of being told the outcome of their own application, and letting
+ * a stale preference row silence it would put the operator screen back to guessing.
+ */
+export function notifyInApp(userId: number, event: NotificationEvent): void {
+  notifyUser(userId, { ...event });
+}
+
 /** Notify several people about the same thing — students in one class, for instance. */
 export function notifyMany(userIds: number[], event: NotificationEvent): void {
   const ids = [...new Set(userIds)].filter((id) => Number.isFinite(id));
