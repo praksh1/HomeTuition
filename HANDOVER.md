@@ -787,6 +787,24 @@ A smaller related bug, same discovery: the "new message" email links to `/conver
 whenever the sender is Sikshya itself rather than a person, because those notices carry no
 `fromUserId`.
 
+### 8.9 Changing a password does not sign other devices out
+
+Sikshya's sessions are stateless JWTs. There is no server-side session record and no version
+column to bump, so **a device that was already signed in stays signed in after a password reset**,
+until its token expires on its own.
+
+This is what most people assume a password reset does, and it is the reason they reset it when
+they think somebody else has been in the account. The reset screen now says plainly that other
+devices stay signed in, rather than implying otherwise — but saying so is a stopgap, not the fix.
+
+Doing it properly is a `session_version` integer on the user row, bumped on reset and checked in
+the auth middleware against a claim in the token. That is a schema change (see the deploy-window
+trap in section 11) and a change to every issued token, so it needs its own slice.
+
+The question for the owner is whether it blocks launch. It is a real security gap, but a small one
+while the product has few users and no attacker; it gets more serious the moment accounts are
+worth taking.
+
 ---
 
 ## 9. Before this goes to a store or a real launch

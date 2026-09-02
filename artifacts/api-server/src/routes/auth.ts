@@ -12,6 +12,7 @@ import {
   onboardingCompleteFor,
   requestPasswordReset,
   sendVerificationEmail,
+  PASSWORD_RESEND_SECONDS,
 } from "../lib/accountSecurity";
 import { isEmailConfigured } from "../lib/mailer";
 import { ageOn } from "../lib/onboardingRules";
@@ -307,6 +308,15 @@ router.post("/auth/password/forgot", async (req, res): Promise<void> => {
     accepted: true,
     message: "If that email belongs to a password account, a reset link is on its way.",
     emailConfigured: isEmailConfigured(),
+    /*
+      A constant, not a measurement.
+
+      The server already refuses to issue a second token inside 60 seconds, and this only tells
+      the screen how long to wait before offering Resend. It must stay constant: returning the
+      *real* remaining cooldown would answer "does this address have an account?" for anybody
+      who asked twice, which is exactly the disclosure the generic message above prevents.
+    */
+    resendAfterSeconds: PASSWORD_RESEND_SECONDS,
   });
 });
 
@@ -315,9 +325,32 @@ router.post("/auth/password/reset", async (req, res): Promise<void> => {
   const password = typeof req.body?.password === "string" ? req.body.password : "";
   if (!token) { res.status(400).json({ error: "The reset link is incomplete." }); return; }
   if (password.length < 8) { res.status(400).json({ error: "Use at least 8 characters for your new password." }); return; }
-  const changed = await consumePasswordReset(token, await hashPassword(password));
-  if (!changed) { res.status(400).json({ error: "This reset link is invalid or has expired." }); return; }
-  res.json({ changed: true });
+  /*
+    The plaintext goes in, not a hash. `consumePasswordReset` has to compare the proposed password
+    with the one already on the account, and that comparison must run through `verifyPassword`:
+    scrypt salts every hash, so the same password hashes differently each time and comparing two
+    hashes would silently never match.
+  */
+  const outcome = await consumePasswordReset(token, password);
+  if (outcome === "same_password") {
+    res.status(400).json({
+      error: "Choose a password different from your current password.",
+      code: "SAME_PASSWORD",
+    });
+    return;
+  }
+  if (outcome !== "ok") { res.status(400).json({ error: "This reset link is invalid or has expired." }); return; }
+  /*
+    Sessions elsewhere are NOT revoked, and this says so rather than implying otherwise.
+
+    Auth here is a stateless JWT with no server-side session record and no version column to bump,
+    so a token issued before the reset stays valid until it expires on its own. Revoking properly
+    needs a session version on the user row and a check in the auth middleware. That is a schema
+    change, so it is written up in HANDOVER section 8 rather than half-done here — and claiming
+    "you have been signed out everywhere" without it would be the exact kind of untrue reassurance
+    this packet exists to remove.
+  */
+  res.json({ changed: true, otherSessionsSignedOut: false });
 });
 
 router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {

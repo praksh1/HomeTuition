@@ -9,11 +9,19 @@ import {
   usersTable,
 } from "@workspace/db";
 
+import { hashPassword, verifyPassword } from "./auth";
 import { sendEmail } from "./mailer";
 
 export const EMAIL_VERIFY_HOURS = 24;
 export const PASSWORD_RESET_MINUTES = 30;
-const RESEND_AFTER_MS = 60_000;
+/**
+ * How long before another token of the same purpose may be issued.
+ *
+ * Exported in seconds so the screen can show a countdown that matches what the server enforces.
+ * The timer in the UI is a courtesy; this constant is the rule.
+ */
+export const PASSWORD_RESEND_SECONDS = 60;
+const RESEND_AFTER_MS = PASSWORD_RESEND_SECONDS * 1000;
 
 type TokenPurpose = "verify_email" | "reset_password";
 
@@ -161,21 +169,54 @@ export async function requestPasswordReset(email: string): Promise<void> {
   const token = await issueToken(user.id, "reset_password", PASSWORD_RESET_MINUTES * 60_000);
   if (!token) return;
   const url = `${appOrigin()}/reset-password?token=${encodeURIComponent(token)}`;
+
+  /*
+    Each reset email says when it was sent and when its link stops working, in absolute time.
+
+    Every one of these used to be word-for-word identical, saying only "expires in 30 minutes",
+    which is meaningful only at the moment of reading. Mail clients thread on subject, so a
+    second request collapses into the same conversation as the first and the two are
+    indistinguishable — you cannot tell which message you are looking at, and the newest link
+    silently invalidates every older one.
+
+    That is the most probable explanation for the reported "two-day-old link that worked", which
+    could not be reproduced: both server paths refuse an expired token, and production runs
+    identical code. A stamp makes the next report diagnosable instead of a mystery.
+  */
+  const issuedAt = new Date();
+  const expiresAt = new Date(issuedAt.getTime() + PASSWORD_RESET_MINUTES * 60_000);
+  const stamp = (d: Date) =>
+    d.toLocaleString("en-GB", { timeZone: "Asia/Kathmandu", dateStyle: "medium", timeStyle: "short" });
+  const timing =
+    `This link was sent on ${stamp(issuedAt)} and stops working at ` +
+    `${stamp(expiresAt)} (Nepal time), ${PASSWORD_RESET_MINUTES} minutes later.`;
+
   await sendEmail({
     to: user.email,
-    subject: "Reset your Sikshya password",
+    subject: `Reset your Sikshya password — ${stamp(issuedAt)}`,
     text:
       `Hello ${user.name},\n\nOpen this link to choose a new Sikshya password:\n${url}\n\n` +
-      `The link expires in ${PASSWORD_RESET_MINUTES} minutes. If you did not request this, ignore this message.`,
+      `${timing}\n\nIf you ask for another reset, only the newest link will work. ` +
+      `If you did not request this, ignore this message.`,
     html: buttonHtml(
       "Choose a new password",
       url,
-      `Hello ${user.name}. A password reset was requested for your Sikshya account.`,
+      `Hello ${user.name}. A password reset was requested for your Sikshya account. ${timing} ` +
+        `If you ask for another reset, only the newest link will work.`,
     ),
   });
 }
 
-export async function consumePasswordReset(token: string, passwordHash: string): Promise<boolean> {
+/**
+ * Why a reset did not happen, or that it did.
+ *
+ * Three outcomes rather than a boolean, because "this link is expired" and "that is the password
+ * you already have" need different things from the person reading them. Collapsing them sends
+ * somebody off to request a fresh link when the link was never the problem.
+ */
+export type PasswordResetOutcome = "ok" | "invalid" | "same_password";
+
+export async function consumePasswordReset(token: string, newPassword: string): Promise<PasswordResetOutcome> {
   const hash = hashAccountToken(token);
   return db.transaction(async (tx) => {
     const [row] = await tx
@@ -191,13 +232,39 @@ export async function consumePasswordReset(token: string, passwordHash: string):
       )
       .limit(1)
       .for("update");
-    if (!row) return false;
-    await tx.update(usersTable).set({ passwordHash }).where(eq(usersTable.id, row.userId));
+    if (!row) return "invalid";
+
+    /*
+      The new password must not be the one already on the account.
+
+      Compared with `verifyPassword`, never by comparing the two hashes: every hash here carries
+      its own random salt, so the same password hashes to a different string every time and a
+      hash-to-hash comparison would never once match. It would look like a working check and
+      would be a no-op.
+
+      Inside the transaction and after `for("update")`, so a second request racing this one
+      cannot slip between the read and the write.
+    */
+    const [account] = await tx
+      .select({ passwordHash: usersTable.passwordHash })
+      .from(usersTable)
+      .where(eq(usersTable.id, row.userId))
+      .limit(1);
+    if (account?.passwordHash && (await verifyPassword(newPassword, account.passwordHash))) {
+      // The token is deliberately left unused: the person holds a valid link and has simply
+      // typed the wrong thing. Burning it would make a typo cost them another email.
+      return "same_password";
+    }
+
+    await tx
+      .update(usersTable)
+      .set({ passwordHash: await hashPassword(newPassword) })
+      .where(eq(usersTable.id, row.userId));
     await tx
       .update(accountTokensTable)
       .set({ usedAt: new Date() })
       .where(and(eq(accountTokensTable.userId, row.userId), isNull(accountTokensTable.usedAt)));
-    return true;
+    return "ok";
   });
 }
 
