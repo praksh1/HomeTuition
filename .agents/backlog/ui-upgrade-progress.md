@@ -87,10 +87,20 @@ Baseline has fallen from **468 hex / 595 sizes** to **223 / 429**.
 
 ## Next, in the order I would take them
 
-1. **`app/(teacher)/session-create.tsx`** — 8 hex, 14 sizes. Already returns the tier-limit
-   402; the refusal deserves a proper design rather than an alert.
-2. **`app/welcome.tsx`** — 18 hex, 10 sizes. First impression, and self-contained.
-3. **`app/(teacher)/profile.tsx`** / **`app/(student)/profile.tsx`** — small, similar, do together.
+Reordered 2 Sep 2026. `welcome.tsx` was second and is now first: it is the only remaining screen
+whose fabrication is **already live on the public front door**, and the production smoke check on
+2026-08-29 exposed it. Everything below it is a logged-in screen.
+
+1. **`app/welcome.tsx`** — 18 hex, 10 sizes. First impression, self-contained, and it claims
+   `5,000+ Teachers`, `50,000+ Students`, `77 Districts` to every visitor. Those three numbers are
+   the priority, not the tokens: count them against real data and print the real figure, or cut
+   the band entirely. Do not swap in a smaller invented number, and do not show `0+`.
+2. **`app/(teacher)/session-create.tsx`** — 8 hex, 14 sizes. Already returns the tier-limit
+   402; the refusal deserves a proper design rather than an alert. It is the moment a teacher
+   hits the paywall, so it is also the best upsell surface in the app — `GET /teachers/me/allowance`
+   already returns what the next tier up would allow.
+3. **`app/(teacher)/profile.tsx`** (6 hex, 16 sizes) / **`app/(student)/profile.tsx`** (7 hex,
+   15 sizes) — small, similar, do together.
 4. **`app/(teacher)/monthly.tsx`** — 4 hex, 24 sizes.
 5. **Shared video embeds, only after the student touch test passes** — `components/DailyEmbed.tsx`
    (43 hex, 10 sizes) and `components/DailyEmbed.web.tsx` (23 hex). Keep provider behavior and
