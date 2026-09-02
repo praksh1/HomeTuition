@@ -239,6 +239,20 @@ async function planTests() {
   check("an unverified teacher cannot buy the monthly tier",
     unverified.status === 403 && unverified.body?.code === "EMAIL_UNVERIFIED",
     `status ${unverified.status}, code ${unverified.body?.code}`);
+
+  /*
+    The subscription screen asks this before it renders, so a teacher is told no at the start
+    rather than after typing a phone number and a PIN into a payment sheet. It has to give the
+    same answer the purchase route gives — that is the whole point of it existing, rather than
+    the app deciding for itself from `approvalStatus` as it used to.
+  */
+  const unverifiedEligibility = await api("/teachers/me/plan-eligibility", { token: locked.token });
+  check("the screen is told up front that an unverified teacher may not buy",
+    unverifiedEligibility.status === 200
+      && unverifiedEligibility.body?.allowed === false
+      && unverifiedEligibility.body?.code === "EMAIL_UNVERIFIED",
+    JSON.stringify(unverifiedEligibility.body));
+
   sql(`update account_security set email_verified_at = now() where user_id = ${locked.user.id}`);
   const pending = await api("/monthly/plan", { method: "POST", token: locked.token, body: { paymentMethod: "esewa" } });
   check("operator approval is still required after email verification",
@@ -247,7 +261,39 @@ async function planTests() {
   check("neither refusal creates a paid plan",
     Number(sql(`select count(*) from teacher_plans where teacher_id = ${locked.user.id}`)) === 0);
 
+  const pendingEligibility = await api("/teachers/me/plan-eligibility", { token: locked.token });
+  check("and that a pending teacher may not buy either",
+    pendingEligibility.body?.allowed === false && pendingEligibility.body?.code === "OPERATOR_REVIEW",
+    JSON.stringify(pendingEligibility.body));
+  /*
+    The refusal must talk about the *account* decision. It used to say "Your documents must be
+    approved by a Sikshya operator", which reads this gate wrong — it reads `approval_status` on
+    the profile — and sends teachers off to re-upload documents that were already accepted.
+  */
+  check("the refusal names the account decision, not the documents",
+    /teacher account/i.test(pendingEligibility.body?.message ?? "")
+      && !/documents must be approved/i.test(pendingEligibility.body?.message ?? ""),
+    pendingEligibility.body?.message);
+
+  const rejected = await register("teacher", "Rejected Teacher", { prepareTeacher: false });
+  sql(`update account_security set email_verified_at = now() where user_id = ${rejected.user.id}`);
+  sql(`update teacher_profiles set approval_status = 'rejected' where user_id = ${rejected.user.id}`);
+  const rejectedEligibility = await api("/teachers/me/plan-eligibility", { token: rejected.token });
+  check("a rejected teacher is locked out of plans too",
+    rejectedEligibility.body?.allowed === false && rejectedEligibility.body?.code === "OPERATOR_REVIEW",
+    JSON.stringify(rejectedEligibility.body));
+
   const teacher = await register("teacher");
+  const allowedEligibility = await api("/teachers/me/plan-eligibility", { token: teacher.token });
+  check("an approved, email-verified teacher is allowed to choose a tier",
+    allowedEligibility.body?.allowed === true, JSON.stringify(allowedEligibility.body));
+
+  // A student has no teaching plan to buy, and must not be able to probe the teacher gate.
+  const nosyStudent = await register("student");
+  const studentEligibility = await api("/teachers/me/plan-eligibility", { token: nosyStudent.token });
+  check("only teachers can ask about teaching plans", studentEligibility.status === 403,
+    `status ${studentEligibility.status}`);
+
   const bought = await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
   check("a teacher can buy the monthly tier", bought.status === 201, `status ${bought.status}`);
   check("the tier costs what the owner set", bought.body?.plan?.price === TIER, `got ${bought.body?.plan?.price}`);

@@ -79,8 +79,22 @@ const setTier = (userId, tier, sessions) =>
   sql(`update teacher_profiles set subscription_tier = '${tier}', max_sessions_per_month = ${sessions},
        subscription_active = true where user_id = ${userId}`);
 
+/**
+ * Open every gate in front of creating a class, not just the operator one.
+ *
+ * This set `approval_status` alone, which was the whole gate when the suite was written. Account
+ * verification landed afterwards and added an email check ahead of it, so every teacher here
+ * started failing with "Verify your email before creating a class." — and because this suite is
+ * not wired into CI, nothing said so. Ten checks about the tier allowance had quietly stopped
+ * testing the tier allowance and were reporting a 403 from a different gate entirely.
+ *
+ * It sets both directly rather than calling the shared `prepareTeacherForClass` helper because
+ * this suite must leave `subscription_active` alone: one of the things it proves is that
+ * subscribing does not approve a teacher, and the helper turns that flag on.
+ */
 const approve = (userId) =>
-  sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${userId}`);
+  sql(`update account_security set email_verified_at = now(), updated_at = now() where user_id = ${userId};
+       update teacher_profiles set approval_status = 'approved' where user_id = ${userId}`);
 
 async function main() {
   const server = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
@@ -90,6 +104,15 @@ async function main() {
       PORT: String(API_PORT),
       DATABASE_URL: PGURL,
       SESSION_SECRET: process.env.SESSION_SECRET ?? "tier-limits-test-secret",
+      /*
+        `chargeForMonthly` refuses a *teacher plan* in simulated mode unless this is set, on
+        purpose: a plan grants the right to create and sell classes, so a running development or
+        production server must never accept an unverifiable payment for one. Integration suites
+        are the sanctioned exception, and this one spawns its own server rather than loading the
+        repo `.env`, so it has to say so itself. Without it the tier purchase comes back 402 and
+        the failure reads as a broken allowance rather than a payment mode.
+      */
+      NODE_ENV: "test",
     },
     stdio: "ignore",
   });
@@ -194,24 +217,47 @@ async function main() {
         allowed.status === 201 || allowed.status === 200, `status ${allowed.status}`);
     }
 
-    console.log("\nSubscribing does not approve the teacher\n");
+    /*
+      This block used to prove a narrower thing: that *buying a tier* no longer set
+      `approval_status` to approved, which was the hole that let anyone who could register put
+      themselves in front of students.
+
+      Account verification has since closed it from the other side as well. `mayBuyTeacherPlan()`
+      now refuses the purchase outright unless the teacher has verified their email *and* been
+      approved by an operator, so the old assertion — "subscribing succeeds while pending" — is
+      asserting behaviour the product deliberately removed. The checks below follow the stronger
+      contract: a teacher cannot reach the tier at all until both human gates are open, and
+      passing them is what puts them in Discover.
+    */
+    console.log("\nA tier cannot be bought before the human gates open\n");
     {
       const t = await register("teacher", "Unapproved Umesh");
       const before = sql(`select approval_status from teacher_profiles where user_id = ${t.user.id}`);
       check("a new teacher starts pending", before === "pending", before);
 
       const profileId = sql(`select id from teacher_profiles where user_id = ${t.user.id}`);
-      const sub = await api(`/teachers/${profileId}/subscribe`, {
+      const buy = () => api(`/teachers/${profileId}/subscribe`, {
         method: "POST", token: t.token, body: { tier: "tier2" } });
-      check("subscribing succeeds", sub.status === 200, `status ${sub.status} ${JSON.stringify(sub.body)}`);
 
-      const after = sql(`select approval_status from teacher_profiles where user_id = ${t.user.id}`);
-      check("but the teacher is STILL pending — this is the hole that was closed",
-        after === "pending", `approval_status is ${after}`);
-      check("the tier was bought all the same",
-        sql(`select subscription_tier from teacher_profiles where user_id = ${t.user.id}`) === "tier2");
-      check("and the allowance moved with it",
-        Number(sql(`select max_sessions_per_month from teacher_profiles where user_id = ${t.user.id}`)) === 20);
+      const unverified = await buy();
+      check("an unverified teacher cannot buy a tier",
+        unverified.status === 403 && unverified.body?.code === "EMAIL_UNVERIFIED",
+        `status ${unverified.status} ${JSON.stringify(unverified.body)}`);
+
+      sql(`update account_security set email_verified_at = now(), updated_at = now() where user_id = ${t.user.id}`);
+      const stillPending = await buy();
+      check("nor can a verified teacher who is still waiting on an operator",
+        stillPending.status === 403 && stillPending.body?.code === "OPERATOR_REVIEW",
+        `status ${stillPending.status} ${JSON.stringify(stillPending.body)}`);
+      check("and the refusal names the account decision, not the documents",
+        /teacher account/i.test(stillPending.body?.error ?? ""), stillPending.body?.error);
+
+      check("neither refusal bought anything",
+        sql(`select subscription_tier from teacher_profiles where user_id = ${t.user.id}`) !== "tier2");
+      check("and neither moved the allowance",
+        Number(sql(`select max_sessions_per_month from teacher_profiles where user_id = ${t.user.id}`)) !== 20);
+      check("nor quietly approved the teacher — the original hole, still shut",
+        sql(`select approval_status from teacher_profiles where user_id = ${t.user.id}`) === "pending");
 
       const discover = await api("/teachers?limit=100");
       const listed = (discover.body?.teachers ?? []).some((x) => x.userId === t.user.id || x.id === Number(profileId));
@@ -223,11 +269,34 @@ async function main() {
       sql(`update users set role = 'admin' where id = ${agent.user.id}`);
       const signedIn = await api("/auth/login", {
         method: "POST", body: { email: agent.email, password: "password123" } });
+
+      /*
+        An account cannot be approved over unreviewed paperwork, so a bare approval is refused
+        with 409 until every submitted document has a decision. The document is inserted directly
+        rather than uploaded because this suite has no file store; what is under test here is the
+        tier gate, not the upload path, which `admin-tests` covers end to end.
+      */
+      const premature = await api(`/admin/teachers/${t.user.id}/decision`, {
+        method: "POST", token: signedIn.body?.token, body: { decision: "approved" } });
+      check("an account cannot be approved over unreviewed documents", premature.status === 409,
+        `status ${premature.status} ${JSON.stringify(premature.body)}`);
+
+      sql(`insert into teacher_credentials
+             (teacher_id, document_type, file_key, original_name, content_type, status, reviewed_at)
+           values (${t.user.id}, 'citizenship', 'test-key', 'citizenship.jpg', 'image/jpeg', 'approved', now())`);
+
       const decided = await api(`/admin/teachers/${t.user.id}/decision`, {
         method: "POST", token: signedIn.body?.token, body: { decision: "approved" } });
-      check("an agent can still approve", decided.status === 200, `status ${decided.status}`);
+      check("an agent can approve once the documents are reviewed", decided.status === 200,
+        `status ${decided.status} ${JSON.stringify(decided.body)}`);
       check("and that is what puts them in Discover",
         sql(`select approval_status from teacher_profiles where user_id = ${t.user.id}`) === "approved");
+
+      const nowAllowed = await buy();
+      check("only then can the tier actually be bought", nowAllowed.status === 200,
+        `status ${nowAllowed.status} ${JSON.stringify(nowAllowed.body)}`);
+      check("and the allowance moves with it",
+        Number(sql(`select max_sessions_per_month from teacher_profiles where user_id = ${t.user.id}`)) === 20);
     }
 
     console.log("\nThe allowance a teacher is shown\n");

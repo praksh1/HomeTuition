@@ -337,6 +337,35 @@ router.get("/teachers/me/allowance", requireAuth, async (req, res): Promise<void
   res.json(await allowanceSummary(user.userId));
 });
 
+/**
+ * Whether the signed-in teacher may buy a plan, answered by the gate that enforces it.
+ *
+ * The subscription screen used to work this out for itself from `approvalStatus`, and it could
+ * not see email verification at all — so a teacher who had never confirmed their address could
+ * pick a tier, choose eSewa, type a phone number and a PIN, and only then be told no. A screen
+ * that takes somebody through a payment flow it knows will be refused is worse than one that
+ * says no at the start.
+ *
+ * This returns `mayBuyTeacherPlan()`'s verdict verbatim rather than the fields it reasons over.
+ * Handing back `approvalStatus` and `emailVerified` would invite the client to re-derive the
+ * rule, and then there would be two copies of it — the mistake `lib/membership.ts` exists to
+ * prevent for classroom access. The server stays authoritative; this is only the same answer,
+ * early enough to be useful.
+ */
+router.get("/teachers/me/plan-eligibility", requireAuth, async (req, res): Promise<void> => {
+  const user = req.user!;
+  if (user.role !== "teacher") {
+    res.status(403).json({ error: "Only teachers buy teaching plans" });
+    return;
+  }
+  const access = await mayBuyTeacherPlan(user.userId);
+  res.json(
+    access.allowed
+      ? { allowed: true as const }
+      : { allowed: false as const, code: access.code, message: access.message },
+  );
+});
+
 router.get("/subscription-tiers", (_req, res): void => {
   res.json({ tiers: SUBSCRIPTION_TIERS });
 });

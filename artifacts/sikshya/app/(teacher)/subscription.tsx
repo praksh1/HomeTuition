@@ -3,7 +3,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useState } from "react";
-import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
@@ -80,6 +80,31 @@ function Card({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * The server's answer to "may this teacher buy a plan?".
+ *
+ * Mirrors `TeachingAccess` in `api-server/src/lib/teachingAccess.ts`. Only the verdict crosses
+ * the wire — not the fields it was derived from — so the app cannot drift into keeping its own
+ * version of the rule.
+ */
+type PlanRefusalCode = "EMAIL_UNVERIFIED" | "OPERATOR_REVIEW" | "PLAN_REQUIRED";
+
+type PlanEligibility =
+  | { allowed: true }
+  | { allowed: false; code: PlanRefusalCode; message: string };
+
+/** What a locked teacher should do next, and where. Null when there is nowhere useful to send them. */
+function correctiveAction(code: PlanRefusalCode): { label: string; href: string } | null {
+  switch (code) {
+    case "EMAIL_UNVERIFIED":
+      return { label: "Go to Profile to verify your email", href: "/(teacher)/profile" };
+    case "OPERATOR_REVIEW":
+      return { label: "Go to Profile to check your documents", href: "/(teacher)/profile" };
+    default:
+      return null;
+  }
+}
+
 export default function Subscription() {
   const { user, updateUser } = useAuth();
   const colors = useColors();
@@ -119,6 +144,38 @@ export default function Subscription() {
       .catch(() => { if (live) { setAllowance(null); setAllowanceLoading(false); } });
     return () => { live = false; };
   }, [teacher?.userId]);
+
+  /**
+   * Whether this teacher may buy a plan at all, answered by the server gate that enforces it.
+   *
+   * This screen used to decide for itself from `approvalStatus`, and it could not see email
+   * verification at all. So an unverified teacher could pick a tier, choose eSewa, type a phone
+   * number and a PIN, and only then be refused — a payment flow the screen already knew would
+   * fail. `GET /teachers/me/plan-eligibility` returns `mayBuyTeacherPlan()`'s own verdict, so
+   * there is one rule rather than the app's copy of it.
+   */
+  const [eligibility, setEligibility] = useState<PlanEligibility | null>(null);
+  const [eligibilityLoading, setEligibilityLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    setEligibilityLoading(true);
+    apiGet<PlanEligibility>("/teachers/me/plan-eligibility")
+      .then((e) => { if (live) { setEligibility(e); setEligibilityLoading(false); } })
+      .catch(() => { if (live) { setEligibility(null); setEligibilityLoading(false); } });
+    return () => { live = false; };
+  }, [teacher?.userId]);
+
+  /*
+    Locked unless the server has said yes.
+
+    Deliberately fail-closed, in all three of the ways this can be uncertain: still checking,
+    the check failed, and the check said no. The server refuses the purchase in every one of
+    those cases anyway, so an unlocked button would only walk the teacher into a refusal — and
+    on the one screen in the app that asks for money, guessing in the permissive direction is
+    the wrong guess.
+  */
+  const planLocked = !eligibility?.allowed;
 
   const maxSessions = allowance?.limit ?? teacher?.maxSessionsPerMonth ?? 10;
   const sessionsUsed = allowance?.used ?? 0;
@@ -289,7 +346,89 @@ export default function Subscription() {
         likely to assume otherwise — they have just paid. Surfaced here because the server
         stopped treating payment as approval.
       */}
-      {(isPending || isRejected) && (
+      {/*
+        Why the plan is locked, in the server's own words.
+
+        Three separate pictures rather than one placeholder: still checking, could not check, and
+        a definite refusal. The refusal carries the reason the gate actually gave and a link to
+        the place the teacher can do something about it.
+      */}
+      {eligibilityLoading ? (
+        <View
+          style={[
+            styles.banner,
+            { backgroundColor: colors.surfaceSunk, borderColor: colors.border, borderRadius: radius.md, padding: space.sm },
+          ]}
+        >
+          <ActivityIndicator size="small" color={colors.mutedForeground} />
+          <Text style={[t.caption, { flex: 1, color: colors.mutedForeground }]}>
+            Checking whether your account can choose a plan…
+          </Text>
+        </View>
+      ) : !eligibility ? (
+        <View
+          style={[
+            styles.banner,
+            { backgroundColor: colors.warnSoft, borderColor: colors.warn, borderRadius: radius.md, padding: space.sm },
+          ]}
+        >
+          <Feather name="wifi-off" size={16} color={colors.warn} />
+          <Text style={[t.caption, { flex: 1, color: colors.warn }]}>
+            We could not check your account just now, so plans stay locked. Pull down or reopen this
+            screen to try again.
+          </Text>
+        </View>
+      ) : !eligibility.allowed ? (
+        <View
+          style={[
+            styles.banner,
+            {
+              backgroundColor: eligibility.code === "OPERATOR_REVIEW" && isRejected
+                ? colors.destructiveSoft
+                : colors.warnSoft,
+              borderColor: eligibility.code === "OPERATOR_REVIEW" && isRejected ? colors.destructive : colors.warn,
+              borderRadius: radius.md,
+              padding: space.sm,
+            },
+          ]}
+          testID="plan-locked-notice"
+        >
+          <Feather
+            name={eligibility.code === "EMAIL_UNVERIFIED" ? "mail" : isRejected ? "x-circle" : "clock"}
+            size={16}
+            color={eligibility.code === "OPERATOR_REVIEW" && isRejected ? colors.destructive : colors.warn}
+          />
+          <View style={{ flex: 1, gap: space.xxs }}>
+            <Text
+              style={[
+                t.caption,
+                { color: eligibility.code === "OPERATOR_REVIEW" && isRejected ? colors.destructive : colors.warn },
+              ]}
+            >
+              {eligibility.message}
+            </Text>
+            {(() => {
+              const next = correctiveAction(eligibility.code);
+              if (!next) return null;
+              return (
+                <TouchableOpacity
+                  onPress={() => router.push(next.href as never)}
+                  accessibilityRole="link"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={[t.caption, { color: colors.primary, textDecorationLine: "underline" }]}>
+                    {next.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })()}
+          </View>
+        </View>
+      ) : isPending || isRejected ? (
+        /*
+          Allowed to buy, but still not listed. A different fact from the lock above, and the
+          place a teacher is most likely to assume otherwise — they have just paid.
+        */
         <View
           style={[
             styles.banner,
@@ -301,18 +440,14 @@ export default function Subscription() {
             },
           ]}
         >
-          <Feather
-            name={isRejected ? "x-circle" : "clock"}
-            size={16}
-            color={isRejected ? colors.destructive : colors.warn}
-          />
+          <Feather name={isRejected ? "x-circle" : "clock"} size={16} color={isRejected ? colors.destructive : colors.warn} />
           <Text style={[t.caption, { flex: 1, color: isRejected ? colors.destructive : colors.warn }]}>
             {isRejected
               ? "Your verification was rejected, so your classes are not listed. Re-upload your documents in Profile."
               : "A plan does not list you to students on its own — your verification is still being reviewed."}
           </Text>
         </View>
-      )}
+      ) : null}
 
       {/* -------------------------------------------------------------- where you are */}
       <Card>
@@ -390,7 +525,7 @@ export default function Subscription() {
 
         <View style={{ gap: space.xs }}>
           {SUBSCRIPTION_TIERS.map((tier) => {
-            const active = selectedTier === tier.key;
+            const active = selectedTier === tier.key && !planLocked;
             const current = tier.key === currentTierKey;
             return (
               <TouchableOpacity
@@ -399,22 +534,42 @@ export default function Subscription() {
                   styles.tierRow,
                   {
                     borderColor: active ? colors.primary : colors.border,
-                    backgroundColor: active ? colors.actionSoft : colors.surface,
+                    backgroundColor: planLocked
+                      ? colors.surfaceSunk
+                      : active
+                        ? colors.actionSoft
+                        : colors.surface,
                     borderRadius: radius.sm,
                     paddingHorizontal: space.sm,
                     paddingVertical: space.sm,
                   },
                 ]}
-                onPress={() => setSelectedTier(tier.key)}
+                // No handler at all when locked, rather than a handler that declines. A row that
+                // still responds is a row a teacher will keep pressing.
+                onPress={planLocked ? undefined : () => setSelectedTier(tier.key)}
+                disabled={planLocked}
                 activeOpacity={0.7}
                 testID={`tier-${tier.key}`}
                 accessibilityRole="radio"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={`${tier.label}, ${tier.sessions} classes a month, NPR ${tier.price}`}
+                accessibilityState={{ selected: active, disabled: planLocked }}
+                accessibilityLabel={
+                  `${tier.label}, ${tier.sessions} classes a month, NPR ${tier.price}` +
+                  (planLocked ? ", unavailable until your account is approved" : "")
+                }
               >
                 <View style={{ flex: 1 }}>
                   <View style={styles.tierLabelRow}>
-                    <Text style={[t.bodyStrong, { color: active ? colors.primary : colors.foreground }]}>
+                    {/*
+                      Locked reads as muted ink on a sunk surface, never as reduced opacity on the
+                      whole row: the tier's price has to stay legible while it is unavailable, and
+                      an opacity that makes "disabled" obvious also makes NPR 4,700 hard to read.
+                    */}
+                    <Text
+                      style={[
+                        t.bodyStrong,
+                        { color: planLocked ? colors.mutedForeground : active ? colors.primary : colors.foreground },
+                      ]}
+                    >
                       {tier.label}
                     </Text>
                     {current && (
@@ -428,10 +583,18 @@ export default function Subscription() {
                   </Text>
                 </View>
                 <View style={styles.tierRight}>
-                  <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>
+                  <Text
+                    style={[
+                      t.bodyStrong,
+                      numeric,
+                      { color: planLocked ? colors.mutedForeground : colors.foreground },
+                    ]}
+                  >
                     NPR {tier.price.toLocaleString()}
                   </Text>
-                  {active && <Feather name="check-circle" size={17} color={colors.primary} />}
+                  {planLocked
+                    ? <Feather name="lock" size={15} color={colors.inkFaint} />
+                    : active && <Feather name="check-circle" size={17} color={colors.primary} />}
                 </View>
               </TouchableOpacity>
             );
@@ -463,10 +626,11 @@ export default function Subscription() {
                     paddingVertical: space.sm,
                   },
                 ]}
-                onPress={() => setSelectedMethod(method)}
+                onPress={planLocked ? undefined : () => setSelectedMethod(method)}
+                disabled={planLocked}
                 activeOpacity={0.7}
                 accessibilityRole="radio"
-                accessibilityState={{ selected: on }}
+                accessibilityState={{ selected: on, disabled: planLocked }}
               >
                 <Text style={[t.bodyStrong, { color: on ? colors.primary : colors.mutedForeground }]}>
                   {method === "esewa" ? "eSewa" : "Khalti"}
@@ -480,17 +644,38 @@ export default function Subscription() {
         <TouchableOpacity
           style={[
             styles.payBtn,
-            { backgroundColor: colors.primary, borderRadius: radius.sm, paddingVertical: space.sm, gap: space.xs },
-            elevation.card,
+            {
+              backgroundColor: planLocked ? colors.surfaceSunk : colors.primary,
+              borderRadius: radius.sm,
+              paddingVertical: space.sm,
+              gap: space.xs,
+            },
+            planLocked ? undefined : elevation.card,
           ]}
-          onPress={handlePay}
+          // `handlePay` only opens the sheet, so this is the one place that has to stop it. The
+          // server refuses anyway, but a teacher who has entered a phone number and a PIN before
+          // being told no has already been misled.
+          onPress={planLocked ? undefined : handlePay}
+          disabled={planLocked}
           activeOpacity={0.85}
+          testID="pay-button"
           accessibilityRole="button"
-          accessibilityLabel={`Pay NPR ${tierInfo.price} via ${selectedMethod === "esewa" ? "eSewa" : "Khalti"}`}
+          accessibilityState={{ disabled: planLocked }}
+          accessibilityLabel={
+            planLocked
+              ? "Payment unavailable until your teacher account is approved"
+              : `Pay NPR ${tierInfo.price} via ${selectedMethod === "esewa" ? "eSewa" : "Khalti"}`
+          }
         >
-          <Feather name="lock" size={16} color={colors.primaryForeground} />
-          <Text style={[t.bodyStrong, numeric, { color: colors.primaryForeground }]}>
-            Pay NPR {tierInfo.price.toLocaleString()}
+          <Feather name="lock" size={16} color={planLocked ? colors.inkFaint : colors.primaryForeground} />
+          <Text
+            style={[
+              t.bodyStrong,
+              numeric,
+              { color: planLocked ? colors.mutedForeground : colors.primaryForeground },
+            ]}
+          >
+            {planLocked ? "Payment locked" : `Pay NPR ${tierInfo.price.toLocaleString()}`}
           </Text>
         </TouchableOpacity>
       </Card>
@@ -528,8 +713,14 @@ export default function Subscription() {
         </View>
       </View>
 
+      {/*
+        The last gate, and the one that matters if any of the others is ever bypassed — a stale
+        `payVisible` from before the eligibility answer arrived, or a future edit that forgets to
+        disable a button. The sheet is where a phone number and a PIN get typed, so it stays shut
+        unless the server has said yes.
+      */}
       <PaymentSheet
-        visible={payVisible}
+        visible={payVisible && !planLocked}
         amount={tierInfo.price}
         label={`Sikshya Pro · ${tierInfo.label}`}
         initialMethod={selectedMethod}

@@ -52,16 +52,20 @@ export async function mayBuyTeacherPlan(teacherId: number): Promise<TeachingAcce
       .limit(1),
   ]);
   if (!verified) {
-    return { allowed: false, status: 403, code: "EMAIL_UNVERIFIED", message: "Verify your email before buying a teaching plan." };
+    return { allowed: false, status: 403, code: "EMAIL_UNVERIFIED", message: "Verify your email before choosing a teaching plan." };
   }
   if (!profile || profile.approvalStatus !== "approved") {
     return {
       allowed: false,
       status: 403,
       code: "OPERATOR_REVIEW",
+      // "Your documents must be approved" was wrong about what this gate reads. It reads
+      // `approval_status` on the profile, which is the *account* decision; a teacher can have
+      // every document accepted and still be waiting. Conflating the two is the same defect the
+      // operator emails had, and it sends teachers to re-upload documents that were fine.
       message: profile?.approvalStatus === "rejected"
-        ? "Your teacher verification was rejected. Correct the requested documents before choosing a plan."
-        : "Your documents must be approved by a Sikshya operator before you can choose a teaching plan.",
+        ? "Your teacher account was not approved. Check Profile for what to correct before choosing a plan."
+        : "A Sikshya operator must approve your teacher account before you can choose a teaching plan.",
     };
   }
   return { allowed: true };
