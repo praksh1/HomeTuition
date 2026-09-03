@@ -86,8 +86,9 @@ it the worst placeholder available.
 | `app/(student)/teacher/[id].tsx` | 20 hex, 26 sizes | **0 / 0** | No — local Metro never completed its first web bundle |
 | `app/(teacher)/classroom/[id].tsx` | 108 hex, 31 sizes | **0 / 0** | Yes — owner verified whiteboard touch propagation and PIP dragging |
 | `app/(student)/classroom/[id].tsx` | 62 hex, 21 sizes | **0 / 0** | No — awaiting student-side touch verification |
+| `app/welcome.tsx` | 18 hex, 10 sizes | **0 / 0** | Not yet — implementation and automated checks passed; bundle rebuild deliberately batched with the next reviewed slice |
 
-Baseline has fallen from **468 hex / 595 sizes** to **223 / 429**.
+Baseline has fallen from **468 hex / 595 sizes** to **205 / 419**.
 
 ## Next, in the order I would take them
 
@@ -95,18 +96,14 @@ Reordered 2 Sep 2026. `welcome.tsx` was second and is now first: it is the only 
 whose fabrication is **already live on the public front door**, and the production smoke check on
 2026-08-29 exposed it. Everything below it is a logged-in screen.
 
-1. **`app/welcome.tsx`** — 18 hex, 10 sizes. First impression, self-contained, and it claims
-   `5,000+ Teachers`, `50,000+ Students`, `77 Districts` to every visitor. Those three numbers are
-   the priority, not the tokens: count them against real data and print the real figure, or cut
-   the band entirely. Do not swap in a smaller invented number, and do not show `0+`.
-2. **`app/(teacher)/session-create.tsx`** — 8 hex, 14 sizes. Already returns the tier-limit
+1. **`app/(teacher)/session-create.tsx`** — 8 hex, 14 sizes. Already returns the tier-limit
    402; the refusal deserves a proper design rather than an alert. It is the moment a teacher
    hits the paywall, so it is also the best upsell surface in the app — `GET /teachers/me/allowance`
    already returns what the next tier up would allow.
-3. **`app/(teacher)/profile.tsx`** (6 hex, 16 sizes) / **`app/(student)/profile.tsx`** (7 hex,
+2. **`app/(teacher)/profile.tsx`** (6 hex, 16 sizes) / **`app/(student)/profile.tsx`** (7 hex,
    15 sizes) — small, similar, do together.
-4. **`app/(teacher)/monthly.tsx`** — 4 hex, 24 sizes.
-5. **Shared video embeds, only after the student touch test passes** — `components/DailyEmbed.tsx`
+3. **`app/(teacher)/monthly.tsx`** — 4 hex, 24 sizes.
+4. **Shared video embeds, only after the student touch test passes** — `components/DailyEmbed.tsx`
    (43 hex, 10 sizes) and `components/DailyEmbed.web.tsx` (23 hex). Keep provider behavior and
    bandwidth strategy fixed; this is a token/accessibility pass, not a video rewrite.
 
@@ -114,10 +111,9 @@ whose fabrication is **already live on the public front door**, and the producti
 
 ## Loose ends this work created or uncovered
 
-- **The welcome screen has unverified hardcoded scale claims.** `app/welcome.tsx` says `5,000+
-  Teachers`, `50,000+ Students`, and `77 Districts`. The production smoke check on 2026-08-29
-  exposed them. Verify each against real data or remove them; do not replace them with another
-  invented number.
+- **The welcome fabrication was removed on staging integration.** The `5,000+ Teachers`,
+  `50,000+ Students`, and `77 Districts` band was cut rather than replaced with another invented
+  statistic. It is not a production claim until the owner reviews and later approves deployment.
 - **`is_online` is dead.** No screen sets it. Either wire presence to the classroom socket, or
   drop the column. Right now it is dead weight that already produced one broken filter.
 - **The app duplicates the tier price table** in `app/(teacher)/subscription.tsx` while the

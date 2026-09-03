@@ -6,84 +6,76 @@ import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+
 export default function Welcome() {
   const insets = useSafeAreaInsets();
+  const colors = useColors();
+  const { t, gutter, space, radius } = useLayout();
 
   return (
     <LinearGradient
-      colors={["#1A365D", "#C41E3A"]}
+      colors={[colors.secondary, colors.brand]}
       start={{ x: 0, y: 0 }}
       end={{ x: 0.6, y: 1 }}
       style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
     >
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: space.xxl, paddingBottom: space.md, paddingHorizontal: gutter }]}>
         <Image
           source={require("../assets/images/icon.png")}
-          style={styles.logo}
+          style={[styles.logo, { borderRadius: radius.lg, marginBottom: space.sm }]}
           contentFit="contain"
         />
-        <Text style={styles.appName}>Sikshya</Text>
-        <Text style={styles.tagline}>Nepal's Premier Teaching Platform</Text>
-        <Text style={styles.taglineNepali}>शिक्षा • ज्ञान • समृद्धि</Text>
+        <Text style={[t.display, { color: colors.onInverse }]}>Sikshya</Text>
+        <Text style={[t.body, styles.centerText, { color: colors.onInverse }]}>Live teaching, built around a shared whiteboard</Text>
+        <Text style={[t.caption, { color: colors.onInverseMuted, marginTop: space.xxs }]}>शिक्षा • ज्ञान • समृद्धि</Text>
       </View>
 
-      <View style={styles.heroContainer}>
+      <View style={[styles.heroContainer, { marginHorizontal: gutter, borderRadius: radius.lg }]}>
         <Image
           source={require("../assets/images/hero_classroom.png")}
           style={styles.heroImage}
           contentFit="cover"
         />
-        <LinearGradient
-          colors={["transparent", "rgba(26,54,93,0.6)"]}
-          style={StyleSheet.absoluteFillObject}
-        />
-        <View style={styles.heroStats}>
-          <View style={styles.statPill}>
-            <Text style={styles.statNum}>5,000+</Text>
-            <Text style={styles.statLabel}>Teachers</Text>
-          </View>
-          <View style={styles.statPill}>
-            <Text style={styles.statNum}>50,000+</Text>
-            <Text style={styles.statLabel}>Students</Text>
-          </View>
-          <View style={styles.statPill}>
-            <Text style={styles.statNum}>77</Text>
-            <Text style={styles.statLabel}>Districts</Text>
-          </View>
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.scrim }]} />
+        <View style={[styles.heroMessage, { left: space.md, right: space.md, bottom: space.md, gap: space.xxs }]}>
+          <Text style={[t.title2, { color: colors.onInverse }]}>Teach live. Learn together.</Text>
+          <Text style={[t.callout, { color: colors.onInverse }]}>Video, class chat and an interactive whiteboard in one classroom.</Text>
         </View>
       </View>
 
-      <View style={styles.footer}>
-        <Text style={styles.chooseText}>Choose your role to get started</Text>
+      <View style={{ paddingHorizontal: gutter, paddingTop: space.lg, paddingBottom: space.md, gap: space.sm }}>
+        <Text style={[t.callout, styles.centerText, { color: colors.onInverseMuted, marginBottom: space.xxs }]}>Choose your role to get started</Text>
 
         <TouchableOpacity
-          style={styles.teacherBtn}
+          style={[styles.roleButton, { gap: space.sm, backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.sm, padding: space.md }]}
           onPress={() => router.push("/(auth)/login?role=teacher")}
           activeOpacity={0.85}
         >
-          <View style={styles.btnIcon}>
-            <Feather name="book-open" size={20} color="#C41E3A" />
+          <View style={[styles.btnIcon, { borderRadius: radius.sm, backgroundColor: colors.actionSoft }]}>
+            <Feather name="book-open" size={20} color={colors.primary} />
           </View>
           <View style={styles.btnTextBlock}>
-            <Text style={styles.teacherBtnTitle}>I am a Teacher</Text>
-            <Text style={styles.teacherBtnSub}>Share your knowledge, earn income</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>I am a Teacher</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>Share your knowledge and run live classes</Text>
           </View>
-          <Feather name="chevron-right" size={20} color="#C41E3A" />
+          <Feather name="chevron-right" size={20} color={colors.primary} />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.studentBtn}
+          style={[styles.roleButton, { gap: space.sm, backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.sm, padding: space.md }]}
           onPress={() => router.push("/(auth)/login?role=student")}
           activeOpacity={0.85}
         >
-          <View style={styles.btnIconWhite}>
-            <Feather name="users" size={20} color="#fff" />
+          <View style={[styles.btnIcon, { borderRadius: radius.sm, backgroundColor: colors.actionSoft }]}>
+            <Feather name="users" size={20} color={colors.primary} />
           </View>
           <View style={styles.btnTextBlock}>
-            <Text style={styles.studentBtnTitle}>I am a Student</Text>
-            <Text style={styles.studentBtnSub}>Learn from Nepal's best teachers</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>I am a Student</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>Find a teacher and learn on the shared board</Text>
           </View>
-          <Feather name="chevron-right" size={20} color="#ffffff80" />
+          <Feather name="chevron-right" size={20} color={colors.primary} />
         </TouchableOpacity>
       </View>
     </LinearGradient>
@@ -92,36 +84,13 @@ export default function Welcome() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { alignItems: "center", paddingTop: 32, paddingBottom: 16, paddingHorizontal: 24 },
-  logo: { width: 80, height: 80, borderRadius: 20, marginBottom: 14 },
-  appName: { fontSize: 38, fontFamily: "Inter_700Bold", color: "#fff", letterSpacing: -1.5 },
-  tagline: { fontSize: 15, fontFamily: "Inter_400Regular", color: "#ffffffcc", marginTop: 4, textAlign: "center" },
-  taglineNepali: { fontSize: 13, fontFamily: "Inter_400Regular", color: "#ffffff66", marginTop: 4 },
-  heroContainer: { flex: 1, marginHorizontal: 20, borderRadius: 24, overflow: "hidden" },
+  header: { alignItems: "center" },
+  centerText: { textAlign: "center" },
+  logo: { width: 80, height: 80 },
+  heroContainer: { flex: 1, overflow: "hidden" },
   heroImage: { width: "100%", height: "100%" },
-  heroStats: {
-    position: "absolute", bottom: 16, left: 16, right: 16,
-    flexDirection: "row", justifyContent: "space-around",
-  },
-  statPill: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.15)", borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
-  statNum: { fontSize: 18, fontFamily: "Inter_700Bold", color: "#fff" },
-  statLabel: { fontSize: 11, fontFamily: "Inter_400Regular", color: "#ffffffaa" },
-  footer: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, gap: 12 },
-  chooseText: { fontSize: 14, fontFamily: "Inter_500Medium", color: "#ffffffaa", textAlign: "center", marginBottom: 4 },
-  teacherBtn: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    backgroundColor: "#FFFFFF", borderRadius: 18, padding: 16,
-  },
-  btnIcon: { width: 44, height: 44, borderRadius: 12, backgroundColor: "#C41E3A15", justifyContent: "center", alignItems: "center" },
-  btnIconWhite: { width: 44, height: 44, borderRadius: 12, backgroundColor: "rgba(255,255,255,0.2)", justifyContent: "center", alignItems: "center" },
+  heroMessage: { position: "absolute" },
+  roleButton: { flexDirection: "row", alignItems: "center", borderWidth: 1 },
+  btnIcon: { width: 44, height: 44, justifyContent: "center", alignItems: "center" },
   btnTextBlock: { flex: 1 },
-  teacherBtnTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: "#0D0D0D" },
-  teacherBtnSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#6B7280", marginTop: 2 },
-  studentBtn: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    backgroundColor: "rgba(255,255,255,0.15)", borderRadius: 18, padding: 16,
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.25)",
-  },
-  studentBtnTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  studentBtnSub: { fontSize: 12, fontFamily: "Inter_400Regular", color: "#ffffffaa", marginTop: 2 },
 });

@@ -131,10 +131,6 @@
     "hex": 1,
     "size": 12
   },
-  "app/welcome.tsx": {
-    "hex": 18,
-    "size": 10
-  },
   "components/AloneNotice.tsx": {
     "hex": 4,
     "size": 2
