@@ -73,6 +73,13 @@ document it, and do not deploy or change production before owner review.
 - `test:perf` passed when run by itself at a 393×852 viewport and 6× CPU slowdown: 50/200/500
   element scenes all appeared, new strokes arrived with 41/41/62 ms medians and 49/163/92 ms
   worst-of-five times, and drawing onto the full board took 655 ms. No blocking problems.
+- Pushed integration through `73c561f`, then deployed only Cloudflare Worker
+  `hometuition-preview` with `wrangler@4.124.0 --env preview`. Version
+  `b55ff7d6-3a71-49ae-8215-878b3eba1f14` is live at
+  `https://hometuition-preview.praksh-dhakal.workers.dev`.
+- Post-deploy verification passed: served HTML and all three initial JavaScript bundles exactly
+  match the tested local build, contain the staging Railway API, and exclude the known production
+  API. The documented staging `/api/healthz` endpoint returned HTTP 200 with `{"status":"ok"}`.
 
 ## Problems and surprises
 
@@ -120,9 +127,7 @@ inspect user-facing numbers, availability claims, or money copy.
 
 ## Remaining risks / next pickup point
 
-1. Deploy only the staging preview, verify its public bundle targets the staging Railway API and
-   excludes the known production API, then give the owner the clickable preview for manual drawing.
-2. The owner should draw handwritten letters and rough lines/circles, then deliberately use the
+1. The owner should draw handwritten letters and rough lines/circles, then deliberately use the
    arrow and rectangle tools in both teacher and student classroom views.
-3. Do not merge or deploy to production until the owner confirms that handwriting stays ink and
+2. Do not merge or deploy to production until the owner confirms that handwriting stays ink and
    explicit shape tools still work on the real teacher/student classroom screens.

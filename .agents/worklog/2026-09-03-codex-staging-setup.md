@@ -359,3 +359,24 @@ Codex and an independent audit then found remaining gaps and corrected them loca
   `38212e0` removes fabricated demo credentials. Tests/typechecks/design checks pass and the design
   baseline is now 205 hex/418 sizes. These two later commits are deliberately NOT in the current
   live bundle yet; one future build will batch them with the clean reviewed shape-recognition fix.
+
+### Truth cleanups and automatic-shape removal preview
+
+- That planned batch is now live only on staging. It includes the welcome truth cleanup
+  (`900097d`), login demo-hint cleanup (`38212e0`), and the clean automatic-shape-removal slice
+  integrated as `a918f51`; it does not use contaminated Claude WIP `c908d7f`.
+- Before deployment, all four named workspace typechecks passed, app tests passed 170/170, design
+  lint passed at 205 hex/418 sizes, the staging web export passed, the rendered whiteboard suite
+  passed 44/44, and the standalone 6× CPU slowdown performance run reported no blockers. The
+  initial parallel performance run failed two scene-load assertions under resource contention;
+  the serialized rerun passed and the failure was retained in the shape worklog.
+- Pushed integration through `73c561f`. Deployed ONLY `hometuition-preview` with pinned Wrangler
+  4.124.0 and `--env preview`; Cloudflare version is
+  `b55ff7d6-3a71-49ae-8215-878b3eba1f14`. Production Worker and main branch were untouched.
+- Live verifier passed: public HTML and all three initial bundles byte-match the local build,
+  include the isolated staging API, and exclude the known production API. Staging
+  `/api/healthz` returned HTTP 200 and `{"status":"ok"}`.
+- Owner manual verification remains required before any production integration. In particular,
+  draw handwriting plus rough lines/circles and confirm they remain ink, then use explicit
+  Excalidraw rectangle/arrow tools. This deployment does not claim a real Daily call or a
+  simultaneous two-device classroom test.
