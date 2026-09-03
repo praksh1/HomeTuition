@@ -36,6 +36,19 @@ to Codex for review. Keep a detailed chronological worklog including failed appr
 
 ## Other findings / remaining review
 
+- Slice 5 (automatic shape conversion) was completed by Codex on clean branch
+  `codex/shape-recognition-disabled` at `51b57f5`, then integrated as `a918f51`. The contaminated
+  `claude/slice5-shape-recognition-wip` at `c908d7f` was not merged. App tests, named typechecks,
+  design lint, staging build, **44/44** real-browser board checks, and the standalone 6×-slowdown
+  performance run passed. Staging deployment and owner classroom verification are the remaining
+  gates; do not reimplement this slice.
+- Codex attempted to send Claude this clean Slice 5 assignment only after the owner's explicit
+  confirmation. At action time the computer-control bridge exposed browser tabs but no native apps,
+  although Claude processes were running, and no Claude CLI executable was available on `PATH`.
+  Codex did not pretend the message was sent and used a read-only parallel audit instead. A future
+  Claude prompt should review the committed/integrated result or take a new disjoint slice, not
+  duplicate the completed recognition work.
+
 - Reconfirmed existing welcome sample counts and login demo-account hint. Already queued in
   ui-upgrade-progress.md; do not invent smaller numbers or real-looking fixture statistics.
 - Staging currently has synthetic teacher/student/operator, with test-only completed onboarding

@@ -4,7 +4,7 @@
 - Agent: Codex (implementation), with a separate read-only Codex audit
 - Branch: `codex/shape-recognition-disabled`
 - Base commit: `bc0aa17`
-- Status: in progress — implementation and source/unit checks complete; integration build and browser proof still required
+- Status: complete on staging integration; awaiting owner verification before production
 
 ## Requested
 
@@ -60,8 +60,19 @@ document it, and do not deploy or change production before owner review.
 - A separate read-only audit independently confirmed that `SmartBoard.web.tsx` was the only active
   caller and that the minimal change did not touch explicit tools, sync, files, viewport, pointer,
   or read-only behavior.
-- Browser and performance checks have not yet passed. They must be rerun after integration in the
-  main checkout, where Metro can resolve the original pnpm workspace layout.
+- After cherry-picking as integration commit `a918f51`, all four named workspace TypeScript checks
+  passed: API server, mockup sandbox, Sikshya app, and scripts.
+- Integrated app tests passed, **170/170**. The higher count includes the verification-message
+  tests already present on the integration branch.
+- Integrated design ratchet passed at **205 hex / 418 font sizes**, with no new leaks.
+- A staging-configured production web export passed and verified the built app uses
+  `https://hometuition-api-staging-production.up.railway.app` and calls itself Sikshya.
+- `test:board` passed **44/44 rendered-browser checks** in installed Chrome, including rough
+  circle preservation, handwriting preservation, teacher-to-student ink sync, and explicit
+  rectangle/arrow tools.
+- `test:perf` passed when run by itself at a 393×852 viewport and 6× CPU slowdown: 50/200/500
+  element scenes all appeared, new strokes arrived with 41/41/62 ms medians and 49/163/92 ms
+  worst-of-five times, and drawing onto the full board took 655 ms. No blocking problems.
 
 ## Problems and surprises
 
@@ -76,8 +87,22 @@ document it, and do not deploy or change production before owner review.
   `expo-router` through a pnpm path outside the isolated worktree. This is a worktree-layout issue,
   not evidence that the product branch builds. The build and real browser suite remain pending.
 - The existing board browser suite also contains a hard-coded Linux screenshot path for its
-  library test. If that fails on Windows after integration, record it separately rather than
-  weakening the whiteboard assertions.
+  library test. It did not fail in the integrated Windows run because that directory currently
+  existed, but the path remains non-portable and should be cleaned up in a separate test-harness
+  maintenance slice rather than mixed into product behavior.
+- The first integrated root `pnpm run typecheck` misleadingly reported success while its Windows
+  path filters matched no artifact projects. Codex therefore ran all four named package typechecks
+  directly; all passed. The root script's Windows filter behavior remains a tooling issue.
+- The first named API/app typechecks reported installed modules (`jose` and Expo social-auth) as
+  missing because the sandbox could not traverse pnpm junctions. The identical commands passed
+  with dependency read access. No dependency or lockfile change was needed.
+- Chrome was installed but the Playwright driver package was not. Codex installed Playwright
+  1.55.0 into the ignored local `.tools/playwright` directory with browser-download scripts
+  disabled, then pointed the tests at installed Chrome. No repository dependency changed.
+- Running `test:board` and `test:perf` concurrently overloaded the machine: performance scene-load
+  assertions failed for the 50/200 element passes while the heavier 500-element pass succeeded.
+  The board suite itself passed. Rerunning performance alone passed every blocking assertion,
+  confirming contention rather than a reproducible product regression.
 
 ## Fabrications found
 
@@ -90,17 +115,14 @@ inspect user-facing numbers, availability claims, or money copy.
 - No WebSocket protocol, scene merge/version logic, persistence, membership check, business rule,
   classroom overlay, Daily configuration, payment configuration, infrastructure, secrets, or
   production deployment changed.
-- No manual phone/laptop drawing claim is made. Automated browser assertions have been updated but
-  have not yet run successfully against this isolated build.
+- No manual phone/laptop drawing claim is made. The browser suite exercised the real rendered board
+  locally, but the owner still needs to confirm the behavior through the live staging classroom.
 
 ## Remaining risks / next pickup point
 
-1. Review `git diff` and commit/push this clean isolated branch.
-2. Integrate the commit into `codex/staging-preview-integration` together with the already-reviewed
-   email and copy cleanups.
-3. Run the complete workspace typecheck, app unit tests, design linter, app build, `test:board`, and
-   `test:perf` from the main checkout. Fix only genuine regressions; document environment failures.
-4. Deploy only the staging preview, verify its bundle targets the staging Railway API and excludes
-   the known production API, then give the owner the clickable preview for manual drawing.
-5. Do not merge or deploy to production until the owner confirms that handwriting stays ink and
+1. Deploy only the staging preview, verify its public bundle targets the staging Railway API and
+   excludes the known production API, then give the owner the clickable preview for manual drawing.
+2. The owner should draw handwritten letters and rough lines/circles, then deliberately use the
+   arrow and rectangle tools in both teacher and student classroom views.
+3. Do not merge or deploy to production until the owner confirms that handwriting stays ink and
    explicit shape tools still work on the real teacher/student classroom screens.
