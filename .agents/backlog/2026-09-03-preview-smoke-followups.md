@@ -3,9 +3,11 @@
 Read CLAUDE.md, MEMORY.md, the staging-isolation note and the current staging worklog first.
 Do not repeat infrastructure setup, replace production credentials, or claim current access from
 old chat history. Cloudflare sign-in was completed by the owner and staging storage now works.
-Claude's browser remains signed out; no new task was sent to Claude this run.
+Claude's desktop app is now reachable. Owner confirmed sending the bounded assignment below;
+Codex sent it and verified receipt/active processing on 3 September. Implementation and push are
+pending. See `.agents/worklog/2026-09-03-codex-claude-reconnection.md` for the exact sent prompt.
 
-## First bounded Claude assignment once signed in
+## Active bounded Claude assignment
 
 Base a separate `claude/verification-message-truth` branch on reviewed product `bc0aa17` (or
 coordinate a newer base with Codex). Own ONLY email-verification status messaging and tests.

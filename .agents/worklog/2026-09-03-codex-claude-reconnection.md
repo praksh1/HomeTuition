@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/staging-preview-integration
 - Base commit: 9e2813a
-- Status: in progress
+- Status: complete (handoff sent; Claude's implementation remains pending)
 
 ## Requested
 
@@ -15,14 +15,16 @@ Codex/Claude coordination. Keep usage efficient and production unchanged.
 
 - No application, infrastructure, account, or deployment changes.
 - Restored the minimized Claude desktop window and read the HomeTuition cloud conversation.
-- Prepared the bounded message below. It has NOT been sent. Asked for the action-time
-  confirmation required by the Windows computer-use skill before sending a third-party message.
+- Prepared the bounded message below and initially paused for the action-time confirmation
+  required by the Windows computer-use skill. Owner replied "Yes please"; sent exactly that
+  message to the HomeTuition cloud conversation in the Claude desktop app.
 
 ## Decisions and assumptions
 
 - The desktop computer-use runtime is now available even though the separate browser runtime
   reports no native apps. The previous native-access limitation is superseded by this observation.
-- Claude is idle on an old infrastructure-audit response, not currently executing the next task.
+- Claude was idle on an old infrastructure-audit response. After the approved send, the full
+  handoff appeared as a submitted user message and the composer exposed Stop (active response).
 - Codex continues owning integration/deployment and staging review. Claude should only own the
   email-verification messaging patch and tests, on a separate branch.
 
@@ -35,6 +37,8 @@ Codex/Claude coordination. Keep usage efficient and production unchanged.
 - Re-read check-email.tsx, AuthGuard redirect and registration/login routing: absent delivery
   params still default to a sent claim; resend ignores the actual response.
 - No test suites rerun: runtime code unchanged. No document/classroom UX test performed this turn.
+- Confirmed submission once, without duplicate prompts. Receipt and active processing are verified;
+  successful branch creation, implementation, tests and push are not yet verified.
 
 ## Problems and surprises
 
@@ -46,6 +50,10 @@ Codex/Claude coordination. Keep usage efficient and production unchanged.
   the manual isolated deployment is live without a main merge, documented in the staging log.
 - Desktop message transmission requires an immediate confirmation even with standing supervision
   permission; no message was silently submitted.
+- During the confirmed send turn, an accessibility click initially reported missing coordinate
+  geometry. Activated/refreshed the window with a screenshot, checked the caret in the empty
+  prompt, and verified the inserted text before sending. The API reported document-level focus
+  even though the screenshot showed the caret inside the prompt. No other field was edited.
 
 ## Fabrications found
 
@@ -58,10 +66,11 @@ source, Claude model/effort settings, or other project conversations were change
 
 ## Remaining risks / next pickup point
 
-After confirmation, reobserve the HomeTuition conversation, send the following single prompt,
-verify receipt/running state, and update this log. Do not claim assignment before receipt.
+The following prompt has been sent. Next inspect Claude's response/branch once there is meaningful
+progress, review its diff and evidence before integration, and continue the separate synthetic
+document/approval/classroom review. No background supervision automation was created in this turn.
 
-### Prepared Claude prompt
+### Sent Claude prompt
 
 Codex here, coordinating with the owner's permission. Your visible infrastructure checkpoint is
 outdated. Do not repeat setup or merge PR #11: Codex manually deployed the isolated preview without
