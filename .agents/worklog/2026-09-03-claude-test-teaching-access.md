@@ -129,3 +129,34 @@ tests assert no purchase record appears.
 - **`db:push` is needed** before the API serving this code reads the new table. The table is only
   touched by new code, so the ordering is safe either way, but the feature is inert until it exists.
 - Next: section 5, disabling automatic whiteboard shape conversion.
+
+---
+
+## Closeout: deployment ordering, verified empirically (3 Sep)
+
+The question was whether live code can query `test_teaching_grants` before `db:push` has created
+it — the deploy-window hazard in `.agents/memory/schema-change-deploy-window.md`. Tested by
+dropping the table and exercising the real routes, rather than by reading the code.
+
+| Table | `ALLOW_TEST_TEACHING_ACCESS` | `GET /teachers/me/allowance` | `POST /sessions` | `GET /teachers/me/plan-eligibility` |
+|---|---|---|---|---|
+| **missing** | **unset (the default)** | **200** | **201** | **200** |
+| missing | `true` | **500** | — | — |
+| present | either | 200 | 201 | 200 |
+
+**The flag being off by default is what makes the deploy safe**, not the choice of a table over a
+column — that choice removes a *different* hazard (a bare `select()` on a widened table). The guard
+in `liveTestGrant()` returns before the query when the flag is unset, so with production's default
+the table is never touched. No missing-relation error reached the log in the safe case.
+
+**The ordering rule this establishes, for whoever deploys it:**
+
+1. Push the code. The API redeploys itself. Nothing queries the new table, because the flag is off.
+2. Run `pnpm run db:push` to create the table.
+3. Only then may `ALLOW_TEST_TEACHING_ACCESS` be set on the API service.
+
+Setting the flag before step 2 gives a 500 on the allowance endpoint, which is on the teacher
+dashboard. It is recoverable by unsetting the flag, but it is a live error and avoidable.
+
+Confirmed alongside: `ALLOW_TEST_TEACHING_ACCESS` is set **nowhere** in the repository — no
+workflow, no config, no example env — so it can only be turned on deliberately, on the service.
