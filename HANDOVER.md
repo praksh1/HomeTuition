@@ -8,6 +8,14 @@ Everything here is read from the code as it stands on **26 August 2026**, not fr
 Where a claim could not be verified, it says so. Where the owner has decided something, it is
 marked as a decision rather than an opinion, and it should not be re-argued.
 
+**3 September staging checkpoint:** the isolated review site is
+[hometuition-preview](https://hometuition-preview.praksh-dhakal.workers.dev), backed by its own
+Railway service and a NEW Neon project. Production is unchanged. Read
+`.agents/memory/staging-preview-isolation.md` and the continuation of
+`.agents/worklog/2026-09-03-codex-staging-setup.md` for the current deployment, controlled fixtures,
+verified checks and unfinished upload/approval/classroom tests. The older long Claude-branch
+Worker still talks to production and must not be used for test writes.
+
 ---
 
 ## 0. How to use this document

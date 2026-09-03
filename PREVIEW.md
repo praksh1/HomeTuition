@@ -14,17 +14,22 @@ API, and its own data, with every outbound credential withheld.
 
 ---
 
-## Before any of this works: PR #11 must be merged
+## Workflow dispatch needs PR #11 on main; manual preview deployment does not
 
 GitHub only offers a `workflow_dispatch` workflow once the file exists on the **default branch**.
 While `preview.yml` lives only on `claude/preview-infrastructure`, **"Preview a branch" does not
 appear in the Actions list and cannot be triggered** — the API returns 404 for a dispatch.
 
-So the order is: review and merge PR #11 first, then the manual workflow becomes available for
-every branch afterwards, including the branch in PR #10 that it exists to review.
+Merging PR #11 makes workflow dispatch available, but also triggers the production web workflow.
+Do not merge solely to obtain a preview. The first isolated preview was instead built from
+`codex/staging-preview-integration`, which combines PR #10 product commit `bc0aa17` and reviewed
+PR #11 infrastructure, and deployed with authenticated Wrangler **`deploy --env preview`**.
+No product code or `main` merge is needed for that path. The same isolation checks still apply.
 
-Nothing in this document can be exercised before that merge. Do not read the sections below as
-"available now".
+For the manual path, set `EXPO_NO_DOTENV=1` and the exact reviewed `EXPO_PUBLIC_API_URL`, build,
+scan the generated files for the production API hostname, run a preview dry run, deploy with
+`--env preview`, then run `node scripts/verify-preview.mjs <reported-preview-url> <staging-api-url>`.
+The agent performs these commands; the owner is only asked to review the resulting HTTPS site.
 
 ---
 
@@ -178,8 +183,9 @@ that session and never printed, pasted into chat, or committed.
 
 - New service from the `HomeTuition` GitHub repo, in the existing workspace so the saved limits
   still apply.
-- Name it without the word "production" — e.g. `hometuition-api-staging`. The preview workflow
-  rejects any URL containing `-production.`
+- Name the service `hometuition-api-staging`. Railway may append its environment name
+  `-production` to the generated hostname; this does not mean the service is the live API.
+  The workflow allows the exact reviewed `STAGING_API_URL` and separately rejects the live host.
 - **Source branch: the branch under review** (`claude/excalidraw-whiteboard-sync-gjoqaz` for
   PR #10), **not `main`.** A staging API on `main` reproduces the original defect: new screens
   against an old server.
@@ -196,16 +202,19 @@ that session and never printed, pasted into chat, or committed.
   that staging will actually run (`artifacts/api-server/src` at the reviewed commit), and each
   effect was read in the source rather than assumed:
 
-  | Withheld                                                                                        | Verified effect of leaving it unset                                                                                                  |
-  | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-  | `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM`                                                 | `isEmailConfigured()` requires a provider key **and** `EMAIL_FROM`; without them it returns false and **no email is sent to anyone** |
-  | `ESEWA_MERCHANT_ID`, `KHALTI_SECRET_KEY`, `PAYMENT_WEBHOOK_SECRET`                              | `paymentMode()` returns `gateway` if _any_ of these is set. With none, payments stay **simulated** and no real charge is possible    |
-  | `DAILY_API_KEY`, `EXPO_PUBLIC_DAILY_DOMAIN`                                                     | no real Daily room is created                                                                                                        |
-  | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ENDPOINT`         | no write reaches production object storage                                                                                           |
-  | `GOOGLE_CLIENT_IDS`, `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID` | Google sign-in reports itself disabled                                                                                               |
-  | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`                                                        | Facebook sign-in reports itself disabled                                                                                             |
-  | **`APPLE_CLIENT_IDS`**                                                                          | `socialIdentity.ts` reports `apple.enabled: false`, and `verifySocialCredential("apple")` returns null before any token is checked   |
-  | `APP_URL`, `PUBLIC_APP_URL`, **`EXPO_PUBLIC_DOMAIN`**                                           | notification and account-security links have no live-site base URL available                                                         |
+  | Withheld                                                                                        | Verified effect of leaving it unset                                                                                                                      |
+  | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM`                                                 | `isEmailConfigured()` requires a provider key **and** `EMAIL_FROM`; without them it returns false and **no email is sent to anyone**                     |
+  | `ESEWA_MERCHANT_ID`, `KHALTI_SECRET_KEY`, `PAYMENT_WEBHOOK_SECRET`                              | `paymentMode()` returns `gateway` if _any_ of these is set. With none, payments stay **simulated** and no real charge is possible                        |
+  | `DAILY_API_KEY`, `EXPO_PUBLIC_DAILY_DOMAIN`                                                     | no real Daily room is created                                                                                                                            |
+  | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ENDPOINT`         | no write reaches production object storage                                                                                                               |
+  | `GOOGLE_CLIENT_IDS`, `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID` | Google sign-in reports itself disabled                                                                                                                   |
+  | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`                                                        | Facebook sign-in reports itself disabled                                                                                                                 |
+  | **`APPLE_CLIENT_IDS`**                                                                          | `socialIdentity.ts` reports `apple.enabled: false`, and `verifySocialCredential("apple")` returns null before any token is checked                       |
+  | `APP_URL`, `PUBLIC_APP_URL`, **`EXPO_PUBLIC_DOMAIN`**                                           | not an email safety control: `accountSecurity.ts` falls back to the live web origin when `PUBLIC_APP_URL` is absent; withheld mail keys prevent delivery |
+
+  Before enabling any sandbox email, explicitly set `PUBLIC_APP_URL` to the isolated preview
+  origin. Never assume an absent URL disables link generation or safely redirects it to staging.
 
   Names that are safe to set and are _not_ outbound: `LOG_LEVEL`, `WS_HEARTBEAT_MS`,
   `MODERATION_TERMS`, `PRIVATE_OBJECT_DIR`, `PUBLIC_OBJECT_SEARCH_PATHS`. They change behaviour or
@@ -229,7 +238,8 @@ that session and never printed, pasted into chat, or committed.
 1. Run `pnpm run db:push` with the **staging** `DATABASE_URL`. This creates the tables in the empty
    database.
 2. Deploy the staging API and confirm `/api/healthz` returns the expected healthy response. Point
-   `STAGING_API_URL` at it, merge the reviewed preview infrastructure, and run the preview workflow.
+   `STAGING_API_URL` at it, then use the reviewed manual preview path above (or the workflow once
+   it is available on main). Do not merge main merely to unblock this step.
 3. Only after the preview exists, create a handful of synthetic teacher and student accounts through
    its real registration screens. Because outbound email is deliberately disabled, Codex must mark
    only those named synthetic accounts email-verified in the staging database. Never relax the

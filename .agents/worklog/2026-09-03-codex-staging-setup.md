@@ -5,7 +5,11 @@
 - Product branch deployed to staging: `claude/excalidraw-whiteboard-sync-gjoqaz`
 - Product commit deployed to staging: `bc0aa17`
 - Preview-infrastructure branch: `claude/preview-infrastructure`
-- Status: staging API healthy; preview-infrastructure corrections ready for commit; PR #11 remains unmerged
+- Integration branch: `codex/staging-preview-integration` (merge commit `f908870`)
+- Status: in progress — isolated preview deployed and verified; controlled fixture smoke checks done; staging-only upload setup authorized
+
+The first sections below preserve the initial checkpoint. The continuation at the end supersedes
+its old "not yet" statements and pickup list.
 
 ## Requested
 
@@ -128,3 +132,127 @@ Codex and an independent audit then found remaining gaps and corrected them loca
 5. Add `ALLOW_TEST_TEACHING_ACCESS=true` only after the schema and fixtures are verified.
 6. Give the owner the HTTPS preview link for visual review. Pause the Railway staging service after
    that review to protect the shared USD 10 hard limit.
+
+## Continuation — isolated preview and controlled fixtures
+
+### Requested and approved
+
+- Owner resumed work and requested efficient use of usage.
+- Explicit follow-up approval: create exactly three synthetic staging accounts, verify only their
+  test emails, and enable staging-only operator-granted teaching access.
+- Further explicit approval: investigate/configure a separate staging R2 upload bucket under the
+  existing free allowance. No new paid plan and no production bucket/key reuse.
+
+### Changed
+
+- PR #11 correction was already committed/pushed as `5d0e00f`; no PR was merged into main.
+- Created integration branch from product `bc0aa17`, merged infrastructure `5d0e00f`, yielding
+  `f908870`. `git diff bc0aa17 HEAD -- artifacts lib` was empty before adding infrastructure checks.
+- Built with `EXPO_NO_DOTENV=1`, explicit staging API, two Metro workers and 2048 MB Node heap.
+- Published ONLY Worker `hometuition-preview` using pinned Wrangler 4.124.0 and `--env preview`.
+- Live preview: https://hometuition-preview.praksh-dhakal.workers.dev
+- Cloudflare version: `d7094446-252b-486b-98e4-e235027bd05f`.
+- Added `scripts/verify-preview.mjs` and seven tests. Verification reads the actual script paths
+  from the generated HTML, compares served HTML references and SHA-256 bytes of every initial
+  script, requires the staging API, and refuses the known production API. This handles split
+  Metro runtime/common/entry output instead of assuming one `index-*.js` file.
+- Updated preview workflow to run the verifier/tests. Corrected PREVIEW.md's claim that all setup
+  needs a main merge and its obsolete Railway hostname rejection rule.
+- Added staging `ALLOW_TEST_TEACHING_ACCESS=true` only after confirming the grant table exists.
+- Added staging `PUBLIC_APP_URL` equal to the isolated preview. Absent PUBLIC_APP_URL actually
+  falls back to production in accountSecurity.ts; withheld email credentials prevent delivery,
+  but absence is NOT a safe link-origin control. Documentation corrected.
+- Railway redeployment with these two additions succeeded:
+  `39e46902-cb50-463a-ac88-c86cbf07b6dc`. Six service variables; no shared production variables.
+
+### Fixture details and limitations
+
+- Before fixtures, Neon SQL proved `users` count zero and both `operator_accounts` and
+  `test_teaching_grants` present in separate project `odd-glitter-76212521`.
+- Registered teacher through the actual preview UI: ID 1, `staging.teacher.20260903@example.com`.
+- Created student ID 2, `staging.student.20260903@example.com`, and operator ID 3,
+  `staging.operator.20260903@example.com`, with a small targeted SQL transaction (not bulk seed).
+- Operator has its real `operator_accounts` row, login ID `staging-review`,
+  `is_administrator=false`; its bootstrap credential is a final test credential, so
+  `must_change_password=false`. It cannot create other operators.
+- The three disposable fixtures share one cryptographically generated test password, kept in the
+  browser automation session, never emitted, committed, or put in this log. The student/operator
+  bootstrap copied the teacher's existing salted hash inside SQL without retrieving it. Do not
+  reuse this convenience for real accounts. Credentials must be independently re-established or
+  fixtures recreated if the browser automation session disappears.
+- Verified email only for those three exact fixture identities. Gave teacher/student clearly
+  synthetic onboarding rows with completed_at so disabled R2 does not block unrelated plan review.
+  No real face, phone number, school affiliation, or identity document was invented. Student DOB
+  is the synthetic adult date 2000-01-01. This is NOT evidence that onboarding/upload works.
+- Teacher remains pending. No document acceptance, account approval, paid subscription, session,
+  booking or teaching grant was fabricated. Exactly three users were verified by SQL after commit.
+- Operator sign-in was tested through the app's existing email login, not the separate
+  `/operator/login` API. Do not claim the dedicated operator-ID UI was tested.
+
+### Verification actually performed
+
+- Named workspace typechecks passed: shared libraries, API, app and scripts. Root wildcard
+  selection is unreliable on Windows, so explicit filters were used.
+- App unit tests: 154 passed. API unit tests: 280 passed. Preview verifier: seven passed.
+- Design ratchet passed unchanged: 223 hex / 429 raw font sizes across 57 files.
+- Web build completed; dry run passed; local generated files contained staging and no production
+  API hostname. Live HTML and all three startup JS bundles matched local bytes exactly.
+- Browser rendered welcome, teacher signup/check-email, teacher dashboard/subscription, operator
+  support queue, People and teacher detail.
+- Unapproved teacher: all five tiers disabled; eSewa/Khalti and payment disabled; explanatory
+  approval message present before payment.
+- Operator People queue: synthetic teacher has Approve/Review controls and opens correct detail.
+  Detail says no identity document submitted; test access requires approved account + verified email.
+- Clicked approval with no documents; no successful approval was observed. Browser tooling did
+  not expose the notification dialog, so this is NOT claimed as a fully verified UI refusal.
+- Railway usage UI: $0.17 compute used, $10 shared compute cap, $0 agent cap. Limits not changed.
+
+### Problems and surprises
+
+- Initial local preflight correctly stopped before deploy because the old fingerprint regex
+  expected `index-*.js`; the real export has `__expo-metro-runtime`, `__common`, and `entry`.
+  Replaced the same faulty assumption in CI with tested multi-bundle verification.
+- Expo printed very large existing Excalidraw CSS local-resource warnings. Build nevertheless
+  completed. No claim that native fonts/rendering were verified.
+- AX setValue did not populate email/password inputs reliably. Used browser Playwright fill with
+  observed placeholders, checked registration outcome, and never printed password values.
+- Teacher signup needs an explicit subject selection. First submit was refused until Mathematics
+  was chosen; it did not create a duplicate account.
+- New finding: check-email rendered "We sent a verification link" on email-disabled staging.
+  AuthGuard can route without delivery params; CheckEmail defaults unknown params to success.
+  Registration API correctly reports delivery false. Product fix still required.
+- Claude native UI is unavailable in the current tool surface. Its existing web code-session link
+  redirected to sign-in. No fresh instruction was sent and no new Claude work was assumed.
+
+### Fabrications found
+
+- Reconfirmed the already-tracked welcome claims (5,000+ teachers, 50,000+ students, 77 districts)
+  and the misleading login demo-account hint on this empty deployment.
+- Newly reproduced unsupported email-sent claim described above. Left product source unchanged
+  during infrastructure verification; these are queued fixes, not silently declared complete.
+
+### Deliberately not changed / remaining work
+
+- No main merge, production deployment, production data, shared secrets, spending-limit changes,
+  paid-service activation, or video-provider replacement. Daily remains production; echo is staging.
+- No real mail/payment/video test. Reset-token expiry/reuse and device touch behavior remain
+  unverified in this public staging run. Passing unit tests are not those manual tests.
+- Staging upload setup is next, then real synthetic-file upload/review, test grant, and a synthetic
+  teacher/student class. Never bypass missing document approval just to make the test green.
+- Owner review still pending. Pause Railway staging when review ends; cap is shared with production.
+
+### Upload-setup checkpoint
+
+- Read the R2 skill configuration and current Cloudflare pricing/authentication docs. Standard R2
+  includes 10 GB-month, 1 million Class A and 10 million Class B operations per month; this is a
+  shared allowance, not a separate free allowance for each bucket. Infrequent Access is excluded.
+  Source: https://developers.cloudflare.com/r2/pricing/ (checked 3 Sep 2026).
+- `wrangler@4.124.0 r2 bucket list` succeeded and showed only existing `hometuition-uploads`.
+  No bucket was created, no production object was read/changed, and no token was issued yet.
+- Cloudflare dashboard is signed out. CLI OAuth still permits deployments, but it is not a
+  substitute for dashboard sign-in to inspect usage and issue a narrowly scoped S3 credential.
+  Asked owner to sign in; never requested their password or codes.
+- Next storage step after sign-in: inspect account usage, create a distinct Standard staging
+  bucket, restrict new Object Read & Write credentials to that bucket, keep public access off,
+  allow CORS only from the isolated preview, store keys only in staging Railway, verify upload.
+  Do not enable a new paid plan, reuse the production key, or claim setup succeeded before this.

@@ -175,6 +175,9 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Test preview verification
+        run: node --test scripts/verify-preview.test.mjs
+
       - name: Build the web app for the preview
         run: pnpm --filter @workspace/sikshya run build
         env:
@@ -206,16 +209,11 @@ jobs:
         run: |
           set -euo pipefail
           URL="$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/deploy.log | head -1 || true)"
-          ASSET="$(grep -oE '_expo/static/js/web/index-[^"[:space:]]+\.js' artifacts/sikshya/web-build/index.html | head -1 || true)"
 
           # No URL means the deploy did not report one, which is a failure and not a warning: the
           # summary below would otherwise announce a preview nobody can open.
           if [ -z "$URL" ]; then
             echo "::error title=No preview URL::wrangler printed no URL. Check the Deploy step output."
-            exit 1
-          fi
-          if [ -z "$ASSET" ]; then
-            echo "::error title=No build fingerprint::The built index did not name its JavaScript bundle."
             exit 1
           fi
 
@@ -224,11 +222,11 @@ jobs:
           # handed a link to a dead page and told it was ready.
           LIVE=""
           for attempt in 1 2 3 4 5 6; do
-            if curl -sfL --max-time 10 "${URL}/${ASSET}" -o /tmp/remote-preview.js; then
+            if node scripts/verify-preview.mjs "$URL" "$API"; then
               LIVE=yes
               break
             fi
-            echo "Attempt ${attempt}: the just-built asset ${ASSET} was not available at $URL."
+            echo "Attempt ${attempt}: served HTML/bundles did not match the verified build at $URL."
             echo "A CDN can serve the previous bundle for a few seconds after a deploy. Retrying."
             sleep 10
           done
@@ -238,15 +236,7 @@ jobs:
             echo "Not printing a preview link for a page that does not load."
             exit 1
           fi
-          if ! grep -Fq -- "$API" /tmp/remote-preview.js; then
-            echo "::error title=Wrong preview bundle::The served bundle does not contain the staging API URL."
-            exit 1
-          fi
-          if grep -Fq -- "$PROD_API_HOST" /tmp/remote-preview.js; then
-            echo "::error title=Production reference::The served bundle contains the production API host."
-            exit 1
-          fi
-          echo "The exact new bundle responded and contains the staging API URL."
+          echo "The served HTML and every initial bundle match this build and target staging."
           {
             echo "### Preview ready"
             echo ""
