@@ -82,7 +82,21 @@ function AuthGuard() {
     if (!user) {
       if (inProtectedGroup || onSharedScreen || onOnboarding) router.replace("/welcome");
     } else if ((user.role === "teacher" || user.role === "student") && !user.emailVerified) {
-      if (firstSegment !== "check-email" && firstSegment !== "verify-email") router.replace("/check-email" as never);
+      /*
+        The address travels; the delivery state deliberately does not.
+
+        This redirect happens because somebody unverified reached a screen they may not have, not
+        because Sikshya just tried to email them — so it has nothing truthful to say about whether
+        a link went out, and passes no `sent` or `configured`. The screen reads that absence as
+        "unknown" and offers a resend, rather than the "We sent a verification link" it used to
+        assume. Passing the address is what stops it falling back to "your email address".
+
+        The gate itself is unchanged: an unverified teacher or student still cannot be anywhere
+        but check-email or verify-email.
+      */
+      if (firstSegment !== "check-email" && firstSegment !== "verify-email") {
+        router.replace({ pathname: "/check-email", params: { email: user.email } } as never);
+      }
     } else if ((user.role === "teacher" || user.role === "student") && !user.onboardingComplete) {
       if (!onOnboarding) router.replace("/onboarding" as never);
     } else if (user.role === "teacher") {
