@@ -122,15 +122,6 @@ export default function Login() {
             : "Log in to discover teachers and join sessions"}
         </Text>
 
-        {isTeacher && (
-          <View style={[styles.demoHint, { backgroundColor: colors.accent + "15", borderColor: colors.accent + "30" }]}>
-            <Feather name="info" size={14} color={colors.accent} />
-            <Text style={[styles.demoText, { color: colors.accentForeground }]}>
-              Demo: try ram@example.com, sunita@example.com, or any email
-            </Text>
-          </View>
-        )}
-
         <View style={styles.form}>
           <View style={styles.fieldGroup}>
             <Text style={[styles.label, { color: colors.foreground }]}>Email Address</Text>
@@ -240,11 +231,6 @@ const styles = StyleSheet.create({
   roleTagText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   title: { fontSize: 30, fontFamily: "Inter_700Bold", letterSpacing: -1, marginBottom: 8 },
   subtitle: { fontSize: 15, fontFamily: "Inter_400Regular", lineHeight: 22, marginBottom: 24 },
-  demoHint: {
-    flexDirection: "row", alignItems: "flex-start", gap: 8,
-    borderRadius: 12, borderWidth: 1, padding: 12, marginBottom: 20,
-  },
-  demoText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
   form: { gap: 16 },
   fieldGroup: { gap: 8 },
   passwordLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },

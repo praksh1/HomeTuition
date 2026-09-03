@@ -29,7 +29,7 @@
   },
   "app/(auth)/login.tsx": {
     "hex": 6,
-    "size": 11
+    "size": 10
   },
   "app/(auth)/register.tsx": {
     "hex": 2,
