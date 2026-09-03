@@ -18,6 +18,7 @@
     "test:reviews": "node scripts/review-tests/run.mjs",
     "test:thread": "node scripts/thread-tests/run.mjs",
     "test:admin": "node scripts/admin-tests/run.mjs",
+    "test:test-access": "node scripts/test-access/run.mjs",
     "test:reset": "node scripts/password-reset/run.mjs",
     "test:refunds": "node scripts/refund-tests/run.mjs",
     "test:round": "node scripts/round-tests/run.mjs",

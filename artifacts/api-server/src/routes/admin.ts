@@ -14,6 +14,7 @@ import {
   teacherCredentialsTable,
   accountSecurityTable,
   moderationFlagsTable,
+  testTeachingGrantsTable,
   userOnboardingTable,
   usersTable,
 } from "@workspace/db";
@@ -38,6 +39,9 @@ import {
   type AccountNotice,
   type EmailOutcome,
 } from "../lib/accountNotices";
+import { emailVerifiedFor } from "../lib/accountSecurity";
+import { isTierKey } from "../lib/tierLimits";
+import { DEFAULT_GRANT_DAYS, MAX_GRANT_DAYS, liveTestGrant, testTeachingAllowed } from "../lib/testTeachingAccess";
 
 /**
  * The support desk.
@@ -707,7 +711,132 @@ router.get("/admin/users/:id", async (req, res): Promise<void> => {
     onboarding: onboarding ?? null,
     emailVerified: security ? security.emailVerifiedAt !== null : true,
     activity,
+    /*
+      Test teaching access, for the operator screen.
+
+      `enabled` is the server's kill switch, sent so the screen can explain why the control is
+      unavailable rather than hiding it and leaving an operator wondering. `grant` is null unless
+      one is live right now — a lapsed grant is deliberately not shown as current, though it stays
+      in the table and in the activity log for the audit question.
+    */
+    testAccess: {
+      enabled: testTeachingAllowed(),
+      grant: profile ? await liveTestGrant(id) : null,
+    },
   });
+});
+
+/**
+ * Grant a teacher temporary permission to teach without paying.
+ *
+ * Read `lib/testTeachingAccess.ts` and the table's own comment first. In short: this opens the
+ * payment door and nothing else, it expires by itself, and it does nothing at all unless
+ * `ALLOW_TEST_TEACHING_ACCESS` is on.
+ *
+ * The two human gates are re-checked here rather than trusted from the screen. An operator can see
+ * a pending teacher on the same page as this button, and the request is only a POST — so the
+ * eligibility rule has to be enforced where the row is written, not where the button is drawn.
+ */
+router.post("/admin/teachers/:userId/test-access", async (req, res): Promise<void> => {
+  const userId = parseInt(String(req.params.userId), 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+
+  if (!testTeachingAllowed()) {
+    res.status(409).json({
+      error: "Test teaching access is switched off on this server. Set ALLOW_TEST_TEACHING_ACCESS to enable it.",
+      code: "TEST_ACCESS_DISABLED",
+    });
+    return;
+  }
+
+  const { tier, reason, days } = req.body as { tier?: string; reason?: string; days?: number };
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (!text) {
+    res.status(400).json({ error: "Say why this account needs test access. An unexplained grant cannot be audited." });
+    return;
+  }
+  if (!isTierKey(tier)) {
+    res.status(400).json({ error: "Choose which tier's allowance the grant carries." });
+    return;
+  }
+  const length = Number.isFinite(days) ? Math.trunc(Number(days)) : DEFAULT_GRANT_DAYS;
+  if (length < 1 || length > MAX_GRANT_DAYS) {
+    res.status(400).json({ error: `A grant lasts between 1 and ${MAX_GRANT_DAYS} days.` });
+    return;
+  }
+
+  // Payment is the only door this opens. Both human gates must already be open.
+  const [verified, [profile]] = await Promise.all([
+    emailVerifiedFor(userId),
+    db
+      .select({ approvalStatus: teacherProfilesTable.approvalStatus })
+      .from(teacherProfilesTable)
+      .where(eq(teacherProfilesTable.userId, userId))
+      .limit(1),
+  ]);
+  if (!profile) { res.status(404).json({ error: "Teacher not found" }); return; }
+  if (!verified) {
+    res.status(409).json({ error: "This teacher has not verified their email. Test access does not skip that." });
+    return;
+  }
+  if (profile.approvalStatus !== "approved") {
+    res.status(409).json({ error: "Approve the teacher account first. Test access does not skip operator review." });
+    return;
+  }
+
+  const validUntil = new Date(Date.now() + length * 24 * 60 * 60_000);
+  // Any grant still running is closed first, so a teacher never holds two and "revoke" always
+  // means one row rather than however many happen to exist.
+  await db
+    .update(testTeachingGrantsTable)
+    .set({ revokedAt: new Date(), revokedBy: req.user!.userId })
+    .where(and(eq(testTeachingGrantsTable.teacherId, userId), isNull(testTeachingGrantsTable.revokedAt)));
+
+  const [grant] = await db
+    .insert(testTeachingGrantsTable)
+    .values({ teacherId: userId, tier, reason: text, grantedBy: req.user!.userId, validUntil })
+    .returning();
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.test_teaching.granted",
+    subjectType: "user",
+    subjectId: userId,
+    detail: { tier, reason: text, validUntil: validUntil.toISOString(), days: length },
+    ip: callerIp(req),
+  });
+
+  notifyInApp(userId, {
+    kind: "message",
+    fromName: "Sikshya Support",
+    preview: "Test access was added to your account. No payment was processed.",
+    at: new Date().toISOString(),
+  });
+
+  res.status(201).json({ grant });
+});
+
+/** End a grant now. Expiry needs nobody; this is for ending one early. */
+router.post("/admin/teachers/:userId/test-access/revoke", async (req, res): Promise<void> => {
+  const userId = parseInt(String(req.params.userId), 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+
+  const revoked = await db
+    .update(testTeachingGrantsTable)
+    .set({ revokedAt: new Date(), revokedBy: req.user!.userId })
+    .where(and(eq(testTeachingGrantsTable.teacherId, userId), isNull(testTeachingGrantsTable.revokedAt)))
+    .returning({ id: testTeachingGrantsTable.id });
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.test_teaching.revoked",
+    subjectType: "user",
+    subjectId: userId,
+    detail: { grants: revoked.length },
+    ip: callerIp(req),
+  });
+
+  res.json({ revoked: revoked.length });
 });
 
 router.post("/admin/users/:id/suspend", async (req, res): Promise<void> => {

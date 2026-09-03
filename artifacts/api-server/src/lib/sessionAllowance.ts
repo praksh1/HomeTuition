@@ -1,6 +1,7 @@
 import { and, eq, gte, lte, ne } from "drizzle-orm";
 import { db, sessionsTable, teacherProfilesTable } from "@workspace/db";
 import { notARecurringDay } from "./monthlyStore";
+import { liveTestGrant } from "./testTeachingAccess";
 import { TIER_WINDOW_MS, judgeAllowance, tierOf, type AllowanceVerdict } from "./tierLimits";
 
 // Re-exported so a route needs one import rather than two.
@@ -77,14 +78,28 @@ export async function neighbouringClassTimes(args: {
     .map((r) => r.date.getTime());
 }
 
-/** The tier a teacher is on. Absent profile means the cheapest, never a crash. */
+/**
+ * The tier a teacher is on. Absent profile means the cheapest, never a crash.
+ *
+ * A paid subscription always wins. With none, a live operator test grant supplies the tier instead,
+ * so a granted teacher is limited by a real allowance rather than teaching without end. Free access
+ * to test the product is not free access to a product nobody else gets: the point of a grant is to
+ * exercise what a paying teacher experiences, and an unlimited account exercises something the
+ * owner does not sell.
+ */
 export async function tierForTeacher(teacherId: number): Promise<string | null> {
   const [row] = await db
-    .select({ tier: teacherProfilesTable.subscriptionTier })
+    .select({
+      tier: teacherProfilesTable.subscriptionTier,
+      subscriptionActive: teacherProfilesTable.subscriptionActive,
+    })
     .from(teacherProfilesTable)
     .where(eq(teacherProfilesTable.userId, teacherId))
     .limit(1);
-  return row?.tier ?? null;
+
+  if (row?.subscriptionActive) return row.tier ?? null;
+  const grant = await liveTestGrant(teacherId);
+  return grant ? grant.tier : (row?.tier ?? null);
 }
 
 /**
@@ -120,6 +135,15 @@ export interface AllowanceSummary {
   /** How many more could be added at the busiest point. Never negative. */
   remaining: number;
   price: number;
+  /**
+   * Present only when the teacher is teaching on an operator's temporary test grant.
+   *
+   * It rides along with the allowance because the allowance is what every teacher screen already
+   * fetches, so one field puts the label everywhere it belongs. A screen that shows the tier and
+   * omits this is showing a plan the teacher never bought as though they had — the exact
+   * fabrication this project keeps finding.
+   */
+  testAccess?: { validUntil: string; reason: string };
 }
 
 /**
@@ -160,6 +184,8 @@ export async function allowanceSummary(teacherId: number, now = new Date()): Pro
     base: "Base", tier1: "Tier 1", tier2: "Tier 2", tier3: "Tier 3", tier4: "Tier 4",
   };
 
+  const grant = await liveTestGrant(teacherId);
+
   return {
     tier: key,
     tierName: names[key] ?? "Base",
@@ -167,5 +193,8 @@ export async function allowanceSummary(teacherId: number, now = new Date()): Pro
     used: busiest,
     remaining: Math.max(0, limit - busiest),
     price,
+    ...(grant
+      ? { testAccess: { validUntil: grant.validUntil.toISOString(), reason: grant.reason } }
+      : {}),
   };
 }

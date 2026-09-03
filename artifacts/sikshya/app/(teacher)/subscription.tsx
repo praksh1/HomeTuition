@@ -126,7 +126,12 @@ export default function Subscription() {
    * It used to come from `teacher.sessionsThisMonth`, a column nothing has ever written to — so
    * this screen told every teacher they had used none of their classes, whatever they had done.
    */
-  const [allowance, setAllowance] = useState<{ used: number; limit: number } | null>(null);
+  const [allowance, setAllowance] = useState<{
+    used: number;
+    limit: number;
+    /** Set when an operator granted temporary access instead of this being a bought plan. */
+    testAccess?: { validUntil: string; reason: string };
+  } | null>(null);
   /**
    * Loading and unavailable are different claims and must look different.
    *
@@ -139,7 +144,7 @@ export default function Subscription() {
   useEffect(() => {
     let live = true;
     setAllowanceLoading(true);
-    apiGet<{ used: number; limit: number }>("/teachers/me/allowance")
+    apiGet<NonNullable<typeof allowance>>("/teachers/me/allowance")
       .then((a) => { if (live) { setAllowance(a); setAllowanceLoading(false); } })
       .catch(() => { if (live) { setAllowance(null); setAllowanceLoading(false); } });
     return () => { live = false; };
@@ -346,6 +351,33 @@ export default function Subscription() {
         likely to assume otherwise — they have just paid. Surfaced here because the server
         stopped treating payment as approval.
       */}
+      {/*
+        A plan nobody paid for must never look like one somebody bought.
+
+        The gradient card above says "Sikshya Pro — Base, NPR 2,000/month", which is the truth for
+        a paying teacher and a fabrication for a granted one. This sits directly under it and says
+        so, for as long as the grant lasts.
+      */}
+      {allowance?.testAccess && (
+        <View
+          testID="test-access-banner"
+          style={[
+            styles.banner,
+            { backgroundColor: colors.warnSoft, borderColor: colors.warn, borderRadius: radius.md, padding: space.sm },
+          ]}
+        >
+          <Feather name="alert-triangle" size={16} color={colors.warn} />
+          <View style={{ flex: 1, gap: space.xxs }}>
+            <Text style={[t.bodyStrong, { color: colors.warn }]}>TEST ACCESS — no payment was processed</Text>
+            <Text style={[t.caption, { color: colors.warn }]}>
+              A Sikshya operator gave you temporary access to teach. It ends on{" "}
+              {new Date(allowance.testAccess.validUntil).toLocaleString()}, after which you will need
+              a paid plan to create classes.
+            </Text>
+          </View>
+        </View>
+      )}
+
       {/*
         Why the plan is locked, in the server's own words.
 

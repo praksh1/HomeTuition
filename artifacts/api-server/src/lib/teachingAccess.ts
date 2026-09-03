@@ -2,9 +2,18 @@ import { eq } from "drizzle-orm";
 import { db, teacherProfilesTable } from "@workspace/db";
 
 import { emailVerifiedFor } from "./accountSecurity";
+import { liveTestGrant } from "./testTeachingAccess";
 
 export type TeachingAccess =
-  | { allowed: true }
+  | {
+      allowed: true;
+      /**
+       * Set only when a paid plan was *not* what let this through — an operator's temporary test
+       * grant was. Callers that show money or record revenue must branch on it; everything else
+       * can ignore it, because a grant changes nothing else about what the teacher may do.
+       */
+      viaTestGrant?: { tier: string; validUntil: Date };
+    }
   | { allowed: false; status: number; code: "EMAIL_UNVERIFIED" | "OPERATOR_REVIEW" | "PLAN_REQUIRED"; message: string };
 
 /** The three independent doors before an ordinary class may be created. */
@@ -31,6 +40,17 @@ export async function ordinaryTeachingAccess(teacherId: number): Promise<Teachin
     };
   }
   if (!profile.subscriptionActive) {
+    /*
+      The only door a test grant opens, and it opens it here — *after* email verification and
+      operator approval have both already passed above.
+
+      Placing it last is the whole safety argument. An unverified or unapproved teacher has already
+      returned by this point, so a grant cannot rescue one; and because every class-creation route
+      calls this one function, there is no screen-level bypass to keep in step with it.
+    */
+    const grant = await liveTestGrant(teacherId);
+    if (grant) return { allowed: true, viaTestGrant: { tier: grant.tier, validUntil: grant.validUntil } };
+
     return {
       allowed: false,
       status: 402,

@@ -28,6 +28,16 @@ interface PersonDetail {
     status: string; rejectionReason: string | null;
   }[];
   activity: { known: boolean; rows: { id: number; action: string; subjectType: string | null; subjectId: number | null; createdAt: string }[] };
+  /**
+   * Temporary permission to teach without paying.
+   *
+   * `enabled` is the server's kill switch, carried so the screen can say *why* the control is
+   * unavailable instead of hiding it. `grant` is null unless one is live right now.
+   */
+  testAccess?: {
+    enabled: boolean;
+    grant: { id: number; tier: string; reason: string; grantedAt: string; validUntil: string } | null;
+  };
 }
 
 /**
@@ -50,6 +60,7 @@ export default function AdminPerson() {
   const [reason, setReason] = useState("");
   const [note, setNote] = useState("");
   const [resetCode, setResetCode] = useState<string | null>(null);
+  const [grantReason, setGrantReason] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +139,34 @@ export default function AdminPerson() {
     }
   };
 
+  const grantTestAccess = async () => {
+    if (!grantReason.trim()) {
+      notify("Say why", "An unexplained grant cannot be audited later.");
+      return;
+    }
+    try {
+      await apiPost(`/admin/teachers/${id}/test-access`, {
+        tier: "base", reason: grantReason.trim(), days: 7,
+      });
+      setGrantReason("");
+      await load();
+      notify("Test access granted.", "Seven days, Base allowance. No payment was processed.");
+    } catch (e) {
+      notify("Could not grant test access", e instanceof Error ? e.message : "Please try again.");
+    }
+  };
+
+  const revokeTestAccess = async () => {
+    if (!(await confirm("End test access?", "They will need a paid plan to create classes again.", "End it"))) return;
+    try {
+      await apiPost(`/admin/teachers/${id}/test-access/revoke`, {});
+      await load();
+      notify("Test access ended.", "It stops applying on their next action.");
+    } catch (e) {
+      notify("Could not end test access", e instanceof Error ? e.message : "Please try again.");
+    }
+  };
+
   const decideDocument = async (credentialId: number, decision: "approved" | "rejected") => {
     if (decision === "rejected" && !note.trim()) {
       notify("Say what is wrong", "The teacher needs a specific reason before the upload can be reopened.");
@@ -161,6 +200,7 @@ export default function AdminPerson() {
   }
 
   const { user, teacherProfile, activity, credentials } = data;
+  const grant = data.testAccess?.grant ?? null;
 
   return (
     <ScrollView
@@ -242,6 +282,79 @@ export default function AdminPerson() {
               <Text style={[styles.actionText, { color: "#fff" }]}>Approve</Text>
             </TouchableOpacity>
           </View>}
+        </View>
+      )}
+
+      {/*
+        Temporary test access.
+
+        Only rendered for a teacher, and the controls only go live once the account is approved and
+        its email verified — because those are exactly what the grant does *not* skip. The server
+        re-checks both when the row is written; this only stops the screen offering something it
+        already knows will be refused.
+      */}
+      {teacherProfile && (
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Test teaching access</Text>
+          <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+            Lets this teacher create classes without paying for a plan. It skips payment and nothing
+            else, it still obeys the tier&apos;s session limit, and it ends by itself on the date shown.
+            No payment is recorded and nothing appears as revenue.
+          </Text>
+
+          {!data.testAccess?.enabled ? (
+            <Text style={[styles.meta, { color: colors.warn }]}>
+              Switched off on this server. ALLOW_TEST_TEACHING_ACCESS must be set on the API before
+              grants work.
+            </Text>
+          ) : grant ? (
+            <>
+              <View style={[styles.codeBox, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                <Text testID="admin-test-access-active" style={[styles.actionText, { color: colors.foreground }]}>
+                  Active until {new Date(grant.validUntil).toLocaleString()}
+                </Text>
+                <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+                  {grant.tier} allowance · {grant.reason}
+                </Text>
+              </View>
+              <TouchableOpacity
+                testID="admin-revoke-test-access"
+                style={[styles.action, { borderColor: colors.destructive }]}
+                onPress={() => void revokeTestAccess()}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.actionText, { color: colors.destructive }]}>End test access now</Text>
+              </TouchableOpacity>
+            </>
+          ) : teacherProfile.approvalStatus !== "approved" || !data.emailVerified ? (
+            <Text style={[styles.meta, { color: colors.mutedForeground }]}>
+              Available once the account is approved and its email verified. Test access does not
+              skip either of those.
+            </Text>
+          ) : (
+            <>
+              <TextInput
+                testID="admin-test-access-reason"
+                style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                placeholder="Why does this account need test access?"
+                placeholderTextColor={colors.mutedForeground}
+                value={grantReason}
+                onChangeText={setGrantReason}
+                multiline
+                textAlignVertical="top"
+              />
+              <TouchableOpacity
+                testID="admin-grant-test-access"
+                style={[styles.action, { borderColor: colors.border }]}
+                onPress={() => void grantTestAccess()}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.actionText, { color: colors.foreground }]}>
+                  Give 7 days of test access (Base allowance)
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       )}
 

@@ -66,7 +66,7 @@ build number and reports "Executable doesn't exist", which reads like an absent 
 - `board-tests/harness.mjs` now falls back to a browser already on the machine when the pinned
   build is missing. That unblocks **every** browser suite in the repo here, not just mine.
 - `scripts/account-gates/run.mjs` is new: `pnpm --filter @workspace/sikshya run test:gates`.
-  **9 checks, all passing**, against the real built app, a real API and a real database.
+  **10 checks, all passing**, against the real built app, a real API and a real database.
 
 Rendering immediately earned its keep. It found that a teacher passes **two** gates before the
 subscription screen — email verification, then profile onboarding — so the lock is only reachable
@@ -111,7 +111,7 @@ This entry, plus corrections written into the slice-1 and slice-3 entries rather
 | `pnpm --filter @workspace/api-server run test` | 280 passed, 0 failed |
 | `pnpm --filter @workspace/sikshya run test` | 154 passed, 0 failed |
 | `pnpm --filter @workspace/sikshya run lint:design` | no new leaks |
-| `test:gates` (real browser, real API, real DB) | 9 passed, 0 failed — **run before the rollback; re-run below** |
+| `test:gates` (real browser, real API, real DB) | **10 passed, 0 failed** — re-run after the rollback, in this container |
 
 ## Problems and surprises
 

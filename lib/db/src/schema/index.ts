@@ -27,3 +27,4 @@ export * from "./recurringEnrollments";
 export * from "./homework";
 export * from "./accountSecurity";
 export * from "./onboarding";
+export * from "./testTeachingGrants";
