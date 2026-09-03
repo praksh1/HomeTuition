@@ -6,7 +6,7 @@
 - Product commit deployed to staging: `bc0aa17`
 - Preview-infrastructure branch: `claude/preview-infrastructure`
 - Integration branch: `codex/staging-preview-integration` (merge commit `f908870`)
-- Status: in progress — isolated preview deployed and verified; controlled fixture smoke checks done; staging-only upload setup authorized
+- Status: blocked on dashboard sign-in for upload setup; isolated preview deployment complete and verified; production unchanged
 
 The first sections below preserve the initial checkpoint. The continuation at the end supersedes
 its old "not yet" statements and pickup list.
@@ -256,3 +256,17 @@ Codex and an independent audit then found remaining gaps and corrected them loca
   bucket, restrict new Object Read & Write credentials to that bucket, keep public access off,
   allow CORS only from the isolated preview, store keys only in staging Railway, verify upload.
   Do not enable a new paid plan, reuse the production key, or claim setup succeeded before this.
+
+### Saved handoff checkpoint
+
+- Commit `53e3f7e` pushed successfully to `origin/codex/staging-preview-integration`; branch tracks
+  its own remote, not the product branch. Worktree clean immediately after push.
+- Final staging health probe after the variable redeploy: HTTP 200, `{"status":"ok"}`.
+- Synthetic student sign-in and Discover rendered successfully. No approved teacher is listed;
+  pending teacher ID 1 is correctly excluded. This is a real empty state, not missing fixtures.
+- Owner opened Cloudflare login through GitHub. Last observed page was GitHub two-factor/passkey
+  authentication; completion is for the owner. No passkey, password or one-time code was handled.
+- No staging R2 bucket/token exists yet. Do not repeat DB/service/preview setup on resume.
+- Next agent should read `.agents/backlog/2026-09-03-preview-smoke-followups.md` for the exact
+  bounded Claude prompt and unverified flows. Claude web is not signed in, so prompt is prepared,
+  not sent. The desktop/native surface is unavailable in the current toolset.
