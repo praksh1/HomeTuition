@@ -23,8 +23,16 @@
 # deployment, and `--env preview` never touches the top-level one. Production still changes only
 # on a push to `main`.
 #
-# It does **not** deploy an API and does not touch a database. Those are the owner's to create
-# once, in Railway and Neon, and the setup is written up in `PREVIEW.md`.
+# It does **not** deploy an API and does not touch a database. Those are set up once in the Railway
+# and Neon dashboards by whoever has the signed-in session — see `PREVIEW.md`, which also carries
+# the rule that matters most: the staging database is a **new, empty** Neon database, never a branch
+# of production, because a Neon branch is a clone of the live data and would arrive full of real
+# users.
+#
+# Two further requirements live in that document rather than here, because this file cannot enforce
+# them: the staging Railway service must deploy **the commit under review**, not `main`, and it must
+# be started with every outbound credential withheld — no Brevo, payment, Daily, R2, or OAuth keys —
+# so a preview can never email a real person, take money, or write production storage.
 name: Preview a branch
 
 on:
@@ -74,7 +82,7 @@ jobs:
             echo "::error title=No staging API::A preview needs an API of its own, and this repository has none configured."
             echo "Set a STAGING_API_URL repository variable (Settings -> Secrets and variables ->"
             echo "Actions -> Variables), or type the URL into the api_url box when starting this run."
-            echo "PREVIEW.md has the one-time Railway and Neon setup."
+            echo "PREVIEW.md has the one-time Railway and Neon setup, and who performs it."
             echo "Nothing was built and nothing was deployed."
             exit 1
           fi
@@ -90,11 +98,14 @@ jobs:
           if [ "$URL" = "https://${PROD_API_HOST}" ] \
             || echo "$URL" | grep -qi -- "${PROD_API_HOST}" \
             || echo "$URL" | grep -qi -- "${PROD_WEB_HOST}" \
-            || echo "$URL" | grep -qi -- "-production\."; then
+            || echo "$URL" | grep -qi -- "-production\." \
+            || echo "$URL" | grep -qi -- "\.workers\.dev"; then
             echo "::error title=That is production::Refusing to build a preview against the production API."
             echo "A preview exists to exercise unmerged server changes, which production does not have,"
             echo "and reviewing this app writes rows — approvals, grants, password resets."
-            echo "Point it at a staging Railway service with its own database. See PREVIEW.md."
+            echo "The API is never a Cloudflare Worker, so a *.workers.dev address is refused too —"
+            echo "including the hand-deployed frontend-only branch Worker, which talks to production."
+            echo "Point it at a staging Railway service with its own empty database. See PREVIEW.md."
             exit 1
           fi
 
