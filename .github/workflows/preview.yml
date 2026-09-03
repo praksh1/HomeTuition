@@ -120,6 +120,30 @@ jobs:
           echo "Settings -> Secrets and variables -> Actions."
           exit 1
 
+      # Fail before spending build minutes, and before anything is uploaded, if the staging API is
+      # not actually answering. A preview built against an API that is down is indistinguishable at
+      # a glance from one that works — the screens render and every request quietly fails.
+      - name: Prove the staging API is up
+        env:
+          API: ${{ steps.api.outputs.url }}
+        run: |
+          set -euo pipefail
+          OK=""
+          for attempt in 1 2 3 4 5; do
+            CODE="$(curl -sS -o /tmp/healthz.json -w '%{http_code}' --max-time 10 "${API}/api/healthz" || echo 000)"
+            if [ "$CODE" = "200" ]; then OK=yes; break; fi
+            echo "Attempt ${attempt}: ${API}/api/healthz returned ${CODE}. A Railway service that is"
+            echo "paused between reviews takes a few seconds to wake. Retrying."
+            sleep 6
+          done
+          if [ -z "$OK" ]; then
+            echo "::error title=Staging API not answering::${API}/api/healthz never returned 200."
+            echo "Nothing was built and nothing was deployed."
+            echo "Most likely the staging Railway service is paused, still deploying, or failing to boot."
+            exit 1
+          fi
+          echo "Staging API answered: $(cat /tmp/healthz.json)"
+
       - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
@@ -167,16 +191,31 @@ jobs:
         run: |
           set -euo pipefail
           URL="$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/deploy.log | head -1 || true)"
+
+          # No URL means the deploy did not report one, which is a failure and not a warning: the
+          # summary below would otherwise announce a preview nobody can open.
           if [ -z "$URL" ]; then
-            echo "::warning::wrangler printed no URL. Check the deploy step's output."
-            URL="(see the Deploy step output)"
-          else
-            for _ in 1 2 3 4 5 6; do
-              curl -sfL "$URL" -o /dev/null && { echo "The preview responded."; break; }
-              echo "Not up yet; a CDN can serve the previous bundle for a few seconds. Retrying."
-              sleep 10
-            done
+            echo "::error title=No preview URL::wrangler printed no URL. Check the Deploy step output."
+            exit 1
           fi
+
+          # An exhausted retry loop is a failure too. This previously fell through to the summary
+          # and printed "Preview ready" even when every attempt had failed — the reviewer would be
+          # handed a link to a dead page and told it was ready.
+          LIVE=""
+          for attempt in 1 2 3 4 5 6; do
+            if curl -sfL --max-time 10 "$URL" -o /dev/null; then LIVE=yes; break; fi
+            echo "Attempt ${attempt}: $URL did not respond. A CDN can serve the previous bundle for"
+            echo "a few seconds after a deploy. Retrying."
+            sleep 10
+          done
+          if [ -z "$LIVE" ]; then
+            echo "::error title=Preview did not come up::$URL never responded after 6 attempts."
+            echo "The Worker was uploaded, so the deployment exists, but it is not serving."
+            echo "Not printing a preview link for a page that does not load."
+            exit 1
+          fi
+          echo "The preview responded."
           {
             echo "### Preview ready"
             echo ""

@@ -14,6 +14,20 @@ API, and its own data, with every outbound credential withheld.
 
 ---
 
+## Before any of this works: PR #11 must be merged
+
+GitHub only offers a `workflow_dispatch` workflow once the file exists on the **default branch**.
+While `preview.yml` lives only on `claude/preview-infrastructure`, **"Preview a branch" does not
+appear in the Actions list and cannot be triggered** — the API returns 404 for a dispatch.
+
+So the order is: review and merge PR #11 first, then the manual workflow becomes available for
+every branch afterwards, including the branch in PR #10 that it exists to review.
+
+Nothing in this document can be exercised before that merge. Do not read the sections below as
+"available now".
+
+---
+
 ## Who does what
 
 | | Responsibility |
@@ -91,6 +105,62 @@ No additional paid plan is authorized, and no limit may be raised.
 
 ---
 
+## What the workflow can prove, and what it cannot
+
+Worth stating plainly, because a green run is easy to mistake for a safety guarantee.
+
+**It proves, automatically, on every run:**
+
+| Check | How |
+|---|---|
+| The API is not production | the URL guard, before anything is built |
+| The API is not a Cloudflare Worker | same guard — rejects any `*.workers.dev`, including the hand-deployed frontend-only branch Worker |
+| The staging API is actually answering | a `GET /api/healthz` that must return 200 before the build starts |
+| The built bundle does not contain the production host | a grep of `web-build` before upload |
+| The deployed preview really serves | a retry loop that **fails the job** when exhausted, rather than printing a link to a dead page |
+
+**It cannot prove any of these, and does not claim to:**
+
+- **Which branch or commit the staging Railway service is running.** Nothing in the API reports its
+  own commit — `/api/healthz` returns `{"status":"ok"}` and nothing else — and CI holds no Railway
+  credential to ask. A staging service left on `main` would pass every check above while serving
+  the wrong code.
+- **That the staging database is separate from production.** The workflow never sees a connection
+  string, by design.
+- **That the outbound credentials are withheld.** Same reason. A staging service with a live
+  `BREVO_API_KEY` would pass every check and email real people.
+
+There is no repository-only assertion available for these three: each needs either a Railway
+credential in CI, which is deliberately absent because a token that can deploy the API can deploy
+production, or an API change to report its own commit and configuration. Adding a build-SHA field to
+`/api/healthz` would make the first one checkable and is worth considering — as its own change, with
+its own review, not as part of preview setup.
+
+Until then they are verified by a person, before every run.
+
+### Codex — mandatory verification before each preview run
+
+Do these in the signed-in session and record the result. If any does not match, stop and correct it
+before running the workflow; a preview built on a wrong answer is worse than none.
+
+1. **Railway → the staging service → Deployments.** Confirm the *active* deployment's **source
+   branch and commit SHA** are the branch and commit under review. Not `main`, not an older commit
+   of the right branch.
+2. **Railway → the staging service → Variables.** Read the full list and confirm:
+   - `DATABASE_URL` is the **staging** Neon database, not production;
+   - `SESSION_SECRET` differs from production;
+   - `VIDEO_PROVIDER` is `echo`;
+   - **none** of the withheld names in the table above is present — check the whole list, not only
+     the ones you set.
+3. **Neon → projects.** Confirm the staging database is a **separate project or database**, not a
+   branch of production, and that it holds only synthetic accounts.
+4. **Railway → workspace usage.** Confirm current spend is within the saved USD 5 warning / USD 10
+   hard limit before starting, since the limit stops production too.
+
+After the review, pause the staging service.
+
+---
+
 ## Codex checklist — account-side setup
 
 Each step is a UI action in the owner's signed-in session. Secret values are read and entered inside
@@ -121,16 +191,24 @@ that session and never printed, pasted into chat, or committed.
   | `NODE_ENV` | `production` |
   | `VIDEO_PROVIDER` | `echo` — the built-in stub, so no real Daily room is ever created |
 
-- Variables to **leave unset**, deliberately. Each one is an outbound side effect:
+- Variables to **leave unset**, deliberately. Every name below was re-audited against the branch
+  that staging will actually run (`artifacts/api-server/src` at the reviewed commit), and each
+  effect was read in the source rather than assumed:
 
-  | Withheld | Effect of leaving it unset |
+  | Withheld | Verified effect of leaving it unset |
   |---|---|
-  | `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` | `isEmailConfigured()` returns false, so **no email is sent to anyone** and the app says so rather than pretending |
-  | `ESEWA_MERCHANT_ID`, `KHALTI_SECRET_KEY`, `PAYMENT_WEBHOOK_SECRET` | payments stay in **simulated** mode; no real charge is possible |
-  | `DAILY_API_KEY`, `EXPO_PUBLIC_DAILY_DOMAIN` | no real video room is created |
-  | `R2_*` (five names) | no write reaches production object storage |
-  | `GOOGLE_*`, `FACEBOOK_*` | social sign-in reports itself disabled, as it already does in production |
-  | `APP_URL`, `PUBLIC_APP_URL` | no links in outbound messages point anywhere real |
+  | `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` | `isEmailConfigured()` requires a provider key **and** `EMAIL_FROM`; without them it returns false and **no email is sent to anyone** |
+  | `ESEWA_MERCHANT_ID`, `KHALTI_SECRET_KEY`, `PAYMENT_WEBHOOK_SECRET` | `paymentMode()` returns `gateway` if *any* of these is set. With none, payments stay **simulated** and no real charge is possible |
+  | `DAILY_API_KEY`, `EXPO_PUBLIC_DAILY_DOMAIN` | no real Daily room is created |
+  | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ENDPOINT` | no write reaches production object storage |
+  | `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID` | Google sign-in reports itself disabled |
+  | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | Facebook sign-in reports itself disabled |
+  | **`APPLE_CLIENT_IDS`** | `socialIdentity.ts` reports `apple.enabled: false`, and `verifySocialCredential("apple")` returns null before any token is checked |
+  | `APP_URL`, **`EXPO_PUBLIC_DOMAIN`** | `appUrl()` in `notify.ts` reads `APP_URL ?? EXPO_PUBLIC_DOMAIN` and returns an empty string when both are absent, so **no link in an outbound message points at the live site** |
+
+  Names that are safe to set and are *not* outbound: `LOG_LEVEL`, `WS_HEARTBEAT_MS`,
+  `MODERATION_TERMS`, `PRIVATE_OBJECT_DIR`, `PUBLIC_OBJECT_SEARCH_PATHS`. They change behaviour or
+  tuning, not who gets contacted.
 
   Do **not** set `PORT`; Railway provides it.
   Do **not** set `ALLOW_TEST_TEACHING_ACCESS` yet — see step 4.
@@ -149,8 +227,24 @@ that session and never printed, pasted into chat, or committed.
 
 1. Run `pnpm run db:push` with the **staging** `DATABASE_URL`. This creates the tables in the empty
    database.
-2. Create synthetic test accounts (`pnpm run seed`, or registering throwaway accounts through the
-   preview). Never import production users.
+2. Create a handful of synthetic accounts **by registering them through the preview itself**, and
+   an operator by promoting one of them in the staging database.
+
+   **Do not run `pnpm run seed`.** It was read before being ruled out. `scripts/src/seed.ts` opens
+   with six unconditional `DELETE FROM` statements — `reviews`, `session_enrollments`, `sessions`,
+   `teacher_profiles`, `student_profiles`, `users` — with **no guard on which database it is
+   pointed at**, so the wrong `DATABASE_URL` in the environment wipes that database's core tables.
+   It then writes roughly 200 teachers, 500 students, thousands of randomised sessions and up to
+   50 reviews for every approved teacher.
+
+   Two reasons that is the wrong fixture here, beyond the risk: thousands of fabricated rows are
+   not a reviewable state — a reviewer cannot tell a real defect from generated noise — and the
+   script **creates no operator account at all**, so it cannot exercise the operator screens that
+   PR #10 is largely about.
+
+   No replacement fixture is proposed in this document. Inventing one is its own task with its own
+   review; a few hand-registered accounts are enough to review a screen.
+
 3. Only now, if the test-access feature is being reviewed, add `ALLOW_TEST_TEACHING_ACCESS=true`
    **on the staging service only.**
 
