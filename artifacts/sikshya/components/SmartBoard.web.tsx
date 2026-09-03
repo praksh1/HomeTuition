@@ -237,6 +237,33 @@ const EyeIcon = () => (
   </svg>
 );
 
+/**
+ * Automatic freehand-to-shape conversion. **Off, and it must stay off.**
+ *
+ * The recogniser in `components/recognition/` works as designed and has 27 tests. It failed the
+ * only test that decides the matter: a real teacher using it. Ordinary writing was replaced with
+ * shapes — the first stroke of a handwritten `A` became an arrow — and on a board where a teacher
+ * is mid-sentence in front of a class, having your letter silently turned into an arrow is worse
+ * than any wobble it was correcting.
+ *
+ * The three safeguards written into `tidyFreehand` below were all real and none of them was
+ * enough. Declining below a confidence threshold does not help when the recogniser is *confident*
+ * and wrong. One-step undo does not help when the teacher is looking at the class rather than the
+ * board. Keeping the pen's colour makes the wrong shape look deliberate.
+ *
+ * A compile-time constant rather than a deleted function, because the owner may want to revisit
+ * this — perhaps as an explicit "tidy this stroke" the teacher asks for, which is a different
+ * feature from one that acts on its own. The implementation and its tests stay for that. **No
+ * end-user setting**: a switch labelled "smart shapes" that silently rewrites handwriting is the
+ * same defect with a checkbox in front of it.
+ *
+ * Typed as `boolean` rather than left to infer `false` so the guarded call does not narrow to dead
+ * code and disappear from typechecking.
+ *
+ * Owner decision, 2 Sep 2026 — `.agents/backlog/2026-09-02-owner-corrections-and-stream-poc.md` §5.
+ */
+const AUTOMATIC_SHAPE_RECOGNITION: boolean = false;
+
 export default function SmartBoard({
   readOnly = false,
   sceneUpdates,
@@ -509,9 +536,10 @@ export default function SmartBoard({
   const handleChange = useCallback(
     (_elements: readonly ExcalidrawElement[], appState: { newElement?: unknown | null }) => {
       if (readOnly || applyingRemote.current) return;
-      // Only once the pointer is up. While `newElement` is set the stroke is still being drawn,
-      // and recognising it mid-gesture would rewrite it under the teacher's finger.
-      if (!appState?.newElement) tidyFreehand();
+      // Off by default — see AUTOMATIC_SHAPE_RECOGNITION. When it was on, this ran only once the
+      // pointer was up: while `newElement` is set the stroke is still being drawn, and recognising
+      // it mid-gesture rewrites it under the teacher's finger.
+      if (AUTOMATIC_SHAPE_RECOGNITION && !appState?.newElement) tidyFreehand();
       // Drawing at the edge of the screen scrolls the canvas, so the view is worth re-checking
       // on any change; `publishViewport` drops it again if the rectangle has not moved.
       scheduleViewportPublish();
