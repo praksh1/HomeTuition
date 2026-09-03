@@ -338,3 +338,24 @@ Codex and an independent audit then found remaining gaps and corrected them loca
 - Claude's older `claude/slice5-shape-recognition-wip` at `c908d7f` is not safe to merge: relative
   to product `bc0aa17` it carries unrelated preview workflow/wrangler changes and deletes part of
   an earlier worklog. A clean shape-recognition branch is required; do not cherry-pick that WIP.
+
+### Email-verification preview deployment
+
+- Rebuilt the Expo web export with the explicit isolated API, after all 168 app tests, 280 API
+  tests, named workspace typechecks and the design ratchet passed. Dry-run read 242 assets and
+  found no bindings. Direct bundle inspection found the staging API and no known production host.
+- Deployed ONLY `hometuition-preview` with `wrangler@4.124.0 deploy --env preview`. Cloudflare
+  version: `d1ee552f-a0e1-4e3b-beea-63e45b893e00`. Production Worker remains untouched.
+- Post-deploy verifier passed: live HTML and all three initial script bundles exactly match the
+  tested local export and use the staging API.
+- A browser tab already held the synthetic operator token. Both a normal and requested named
+  browser session shared the same origin storage and AuthGuard redirected `/check-email` back to
+  operator Support, so Codex did not log the operator out or pretend it had rendered the route.
+  The saved fixture passwords no longer exist in this browser runtime. The live authenticated
+  resend outcomes therefore remain unverified; Claude's 390 px initial-state renders remain the
+  only rendered evidence for this slice.
+- Codex then completed two separate, documented one-file truth cleanups: welcome at `900097d`
+  removes unsupported user/district counts and all of that screen's 18 hex/10 raw sizes; login at
+  `38212e0` removes fabricated demo credentials. Tests/typechecks/design checks pass and the design
+  baseline is now 205 hex/418 sizes. These two later commits are deliberately NOT in the current
+  live bundle yet; one future build will batch them with the clean reviewed shape-recognition fix.
