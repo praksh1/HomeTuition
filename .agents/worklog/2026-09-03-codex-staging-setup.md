@@ -6,7 +6,7 @@
 - Product commit deployed to staging: `bc0aa17`
 - Preview-infrastructure branch: `claude/preview-infrastructure`
 - Integration branch: `codex/staging-preview-integration` (merge commit `f908870`)
-- Status: blocked on dashboard sign-in for upload setup; isolated preview deployment complete and verified; production unchanged
+- Status: complete for isolated preview infrastructure; document/approval/classroom product review remains open; production unchanged
 
 The first sections below preserve the initial checkpoint. The continuation at the end supersedes
 its old "not yet" statements and pickup list.
@@ -270,3 +270,50 @@ Codex and an independent audit then found remaining gaps and corrected them loca
 - Next agent should read `.agents/backlog/2026-09-03-preview-smoke-followups.md` for the exact
   bounded Claude prompt and unverified flows. Claude web is not signed in, so prompt is prepared,
   not sent. The desktop/native surface is unavailable in the current toolset.
+
+### Upload setup resumed after owner sign-in
+
+- Owner completed Cloudflare sign-in in a NEW browser tab; the old tab remained at GitHub passkey
+  authentication. Inventory located the signed-in tab without repeating authentication.
+- R2 dashboard before creation: 9.49 MB, 11 objects, 35 Class A / 64 Class B operations, $0.00
+  billable. No new paid plan was activated.
+- Created `sikshya-staging-uploads`, Standard storage, `enam` location hint, with no Worker binding
+  changes. Production bucket `hometuition-uploads` was untouched.
+- Applied `scripts/staging-r2-cors.json` only to staging. It allows the exact preview origin,
+  GET/PUT/HEAD, content/x-amz headers, exposes ETag and caches preflight for one hour. CLI readback
+  matched; live OPTIONS returned HTTP 204 with the correct origin/methods. Unsigned S3 GET returned
+  400, not content. No public/custom-domain access was enabled.
+- Issued USER token `Sikshya staging uploads 2026-09-03`, Object Read & Write on ONLY the staging
+  bucket. No admin or production-bucket rights. TTL widget was not exposed; no expiry was set or
+  claimed. Revoke this testing key after the staging review is retired.
+- Kept one-time values in browser automation memory and printed only redacted labels. Saved both
+  key fields in staging Railway, plus R2_BUCKET and R2_ACCOUNT_ID; ten service variables, zero
+  production shared variables. Never opened Railway Details with staged secret edits.
+- A safety check stopped navigation away from the one-time key page before secure persistence.
+  Saved both fields in Railway first, then navigated away successfully. No credential was lost,
+  exposed or stored in Git, and the rejected action was not bypassed.
+- Storage redeployment `80925eca-3abf-44e1-a014-8e788d7ecceb` became ACTIVE / successful.
+- First storage diagnostic refused authorization because the student test had replaced the
+  origin-wide saved token while another tab still displayed the operator UI. This is a shared
+  browser-session test limitation; re-sign into the operator before testing operator actions.
+  Do not test concurrent teacher/student roles in tabs sharing the same local storage.
+
+### Final verified storage checkpoint
+
+- Re-authenticated the synthetic operator after the student test and ran Check file uploads.
+  It reported: a file can be written, read back and deleted in `sikshya-staging-uploads`.
+  R2_ENDPOINT is intentionally absent: the app resolves the correct endpoint from R2_ACCOUNT_ID.
+- CLI bucket info after diagnostic: ENAM, Standard, zero objects, zero bytes. Only the diagnostic
+  test object was removed; no user document or production object was deleted.
+- Re-ran the live preview verifier after storage redeploy; HTML and all three JS bundles still
+  match the tested build. No frontend rebuild was needed for server-only storage configuration.
+- Current totals: 154 app + 280 API + seven verifier tests passed; named workspace typechecks and
+  design ratchet passed. No real video, emailed reset flow, document review, teaching grant or
+  two-device classroom touch test is being claimed as passed.
+- Infrastructure is now available for those next tests. Claude's exact scoped next task remains
+  in the smoke-followups backlog; its browser still needs sign-in. This is not a product launch
+  approval, main merge or permission to put production credentials in staging.
+- Final environment: ten staging variables, private isolated R2 with bucket-restricted object key,
+  echo video, mail/payment/social keys absent, test-access flag on but zero grants, pending teacher.
+- Two documentation patches failed exact-context checks and wrote nothing; corrected the patch
+  context and applied successfully. No source or deployed runtime was affected.

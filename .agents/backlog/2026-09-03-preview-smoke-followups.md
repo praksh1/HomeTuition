@@ -2,8 +2,8 @@
 
 Read CLAUDE.md, MEMORY.md, the staging-isolation note and the current staging worklog first.
 Do not repeat infrastructure setup, replace production credentials, or claim current access from
-old chat history. Codex's browser cannot currently sign into Claude or Cloudflare dashboards;
-Wrangler OAuth deployment access remains working. No new task was sent to Claude this run.
+old chat history. Cloudflare sign-in was completed by the owner and staging storage now works.
+Claude's browser remains signed out; no new task was sent to Claude this run.
 
 ## First bounded Claude assignment once signed in
 
@@ -33,8 +33,9 @@ to Codex for review. Keep a detailed chronological worklog including failed appr
   rows. Real onboarding/photo/document upload is NOT proven by this fixture setup.
 - Tier and payment locking for pending teacher are verified in browser. Support/People and the
   test-access approval gate rendered. No teacher approval or grant has been manufactured.
-- Need isolated R2 bucket and bucket-restricted credentials before document review tests.
-  Owner approved setup under existing free allowance; dashboard sign-in is required first.
+- Isolated R2 bucket and bucket-restricted credentials are now configured. The authenticated
+  storage write/read/delete diagnostic passed. Proceed to synthetic document flow tests; do not
+  repeat storage setup or treat the diagnostic as proof of document-review UX.
 - Test real synthetic-file selection, upload, operator opening/locking, reject/reupload,
   accept-document wording vs teacher-account approval, and truthful unavailable-email notice.
 - Then grant a short-lived test entitlement through the actual operator action and create a

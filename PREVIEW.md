@@ -3,7 +3,8 @@
 A preview lets a change be _looked at_ before it reaches students and teachers. Reviewing this app
 means doing things — approving a document, granting test access, resetting a password — and every
 one of those writes to a database and can send email. So a preview needs its own web app, its own
-API, and its own data, with every outbound credential withheld.
+API, and its own data, with production outbound credentials withheld. Separately authorized
+staging storage may use a key restricted to its own bucket, never production objects.
 
 |                                   | Production — do not touch                                                 | Preview                                                     |
 | --------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------- |
@@ -89,6 +90,11 @@ is a separate decision with its own review, not a step in a preview setup.
 ## What exists already, and what is missing
 
 Checked 3 Sep 2026.
+
+Latest continuation: the preview Worker is deployed; Railway now has ten service variables,
+including the test-access flag, explicit preview link origin, and four credentials/settings for
+the separate staging-only R2 bucket `sikshya-staging-uploads`. The table below records initial
+bootstrap state; consult the staging worklog for deployment IDs and actual smoke-test outcomes.
 
 | Piece                                           | State                                                                                                                            |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |

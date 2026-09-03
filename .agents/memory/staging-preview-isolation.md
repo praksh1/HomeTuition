@@ -21,7 +21,9 @@ at production. Do not use it to test writes. The new preview has its own API and
 `EXPO_NO_DOTENV=1` avoids accidental local env loading. Use `scripts/verify-preview.mjs` after
 deploy; this Expo export uses multiple runtime/common/entry bundles, not `index-*.js`.
 
-Email/payment/Daily credentials remain absent. Echo is not a real video test. PUBLIC_APP_URL is
+Email/payment/Daily credentials remain absent. Separately authorized staging storage uses
+`sikshya-staging-uploads` and a bucket-restricted key, never production credentials. Its CORS
+allows only the preview. Echo is not a real video test. PUBLIC_APP_URL is
 explicitly staging: absence otherwise falls back to the live site. The test-access table was
 verified before the flag was enabled. Teacher is still pending; no fake paid plan/grant/approval.
 
