@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CaptureUpdateAction,
-  convertToExcalidrawElements,
   Excalidraw,
   MainMenu,
   WelcomeScreen,
@@ -10,8 +8,6 @@ import "@excalidraw/excalidraw/index.css";
 import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 import { teachingLibrary } from "./boardLibrary";
 import { isShareableSize, shrinkForSharing } from "../utils/boardImage";
-import { MIN_CONFIDENCE, recognizeShape, squareUp } from "./recognition/recognizeShape";
-import { absolutePoints, skeletonFor, type FreehandElement } from "./recognition/toExcalidraw";
 
 /**
  * The classroom whiteboard, on Excalidraw.
@@ -426,99 +422,16 @@ export default function SmartBoard({
     pendingView.current = setTimeout(publishViewport, VIEWPORT_SYNC_MS);
   }, [readOnly, publishViewport]);
 
-  /**
-   * Freehand strokes already looked at, so each is considered once.
-   *
-   * `onChange` fires on every pointer move and again on every later edit, so without this the
-   * same stroke would be examined hundreds of times — and a stroke the teacher chose to keep,
-   * having undone the correction, would be corrected again the moment anything else moved.
-   */
-  const consideredStrokes = useRef<Set<string>>(new Set());
-
-  /**
-   * Tidy a finished freehand stroke into the shape it was meant to be.
-   *
-   * Drawing a straight line or a round circle with a finger, on a phone, at arm's length in
-   * front of a class, is genuinely hard — which is the market this is for. The recogniser is
-   * geometric rather than learned: no model to download, no round trip, the same answer on
-   * every device, and it works offline.
-   *
-   * Three things make it safe to leave on, and all three are load-bearing:
-   *
-   *  - It declines far more often than it acts. Below `MIN_CONFIDENCE` the ink is untouched,
-   *    and open curved strokes — which is what writing is — are refused outright.
-   *  - The replacement is a single undoable step. A teacher who meant the wobble presses undo
-   *    and has it back, which is why `captureUpdate` is set rather than left to default.
-   *  - It keeps the pen: same colour, width and opacity, so the board reads as having tidied
-   *    your stroke rather than drawn one of its own.
-   */
-  const tidyFreehand = useCallback(() => {
-    if (!api || readOnly) return;
-
-    // Read from the scene rather than from what `onChange` handed over, and read it
-    // *including deleted*, for the same reason the sync diff does: the array is written back
-    // below, and one built from the visible elements alone would quietly drop every stroke
-    // the teacher had erased — undoing erasures that students have already been told about.
-    const elements = api.getSceneElementsIncludingDeleted();
-
-    const fresh = elements.filter(
-      (el) =>
-        el.type === "freedraw" &&
-        !el.isDeleted &&
-        typeof el.id === "string" &&
-        !consideredStrokes.current.has(el.id),
-    );
-    if (fresh.length === 0) return;
-
-    const replacements: unknown[] = [];
-    const retired = new Map<string, ExcalidrawElement>();
-
-    for (const el of fresh) {
-      consideredStrokes.current.add(el.id);
-      const ink = el as unknown as FreehandElement;
-      if (!Array.isArray(ink.points)) continue;
-
-      const found = recognizeShape(absolutePoints(ink));
-      if (!found || found.confidence < MIN_CONFIDENCE) continue;
-
-      const skeleton = skeletonFor(squareUp(found), ink);
-      if (!skeleton) continue;
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const built = convertToExcalidrawElements([skeleton as any]);
-      if (built.length === 0) continue;
-
-      replacements.push(...built);
-      // Flagged rather than dropped: the sync diff reports deletions as edits, and a stroke
-      // simply removed from the array would produce no delta — leaving every student looking
-      // at the wobbly original underneath the teacher's tidy shape.
-      retired.set(el.id, { ...el, isDeleted: true, version: el.version + 1 });
-    }
-
-    if (replacements.length === 0) return;
-
-    const next = elements.map((el) => retired.get(el.id) ?? el);
-    api.updateScene({
-      elements: [...next, ...replacements],
-      // Undoable in one step. Without this the teacher has no way back to what they drew,
-      // which would make the whole feature something to be endured rather than helped by.
-      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
-    });
-  }, [api, readOnly]);
-
   const handleChange = useCallback(
-    (_elements: readonly ExcalidrawElement[], appState: { newElement?: unknown | null }) => {
+    (_elements: readonly ExcalidrawElement[]) => {
       if (readOnly || applyingRemote.current) return;
-      // Only once the pointer is up. While `newElement` is set the stroke is still being drawn,
-      // and recognising it mid-gesture would rewrite it under the teacher's finger.
-      if (!appState?.newElement) tidyFreehand();
       // Drawing at the edge of the screen scrolls the canvas, so the view is worth re-checking
       // on any change; `publishViewport` drops it again if the rectangle has not moved.
       scheduleViewportPublish();
       if (pendingSync.current) return;
       pendingSync.current = setTimeout(flush, SYNC_INTERVAL_MS);
     },
-    [readOnly, flush, scheduleViewportPublish, tidyFreehand],
+    [readOnly, flush, scheduleViewportPublish],
   );
 
   // Publish the opening view as soon as the board is up, so a student arriving later is put

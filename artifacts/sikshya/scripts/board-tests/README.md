@@ -40,6 +40,8 @@ npx.cmd playwright install chromium
 | clearing the board clears it for the class | Excalidraw's own reset empties one screen and leaves everyone else's full |
 | a student with no teacher view still lands on the lesson | a student joining before a viewport is published stares at blank canvas |
 | the properties panel stays out of the way | the Stroke/Background panel covered a quarter of the board with no way to dismiss it |
+| rough freehand stays ink and syncs unchanged | automatic recognition changed handwriting into unintended arrows and shapes |
+| explicit rectangle and arrow tools still work | disabling automatic conversion must not remove deliberate Excalidraw geometry |
 
 A failure prints the assertion that broke and why that property matters, and the run exits
 non-zero — so this can gate a deploy.

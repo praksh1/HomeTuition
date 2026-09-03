@@ -352,19 +352,16 @@ export const tests = [
   },
 
   {
-    name: "a roughly drawn circle becomes a real circle, and the class gets the circle",
+    name: "rough freehand stays ink, and the class gets the same ink",
     why:
-      "Drawing a round circle with a finger, on a phone, in front of a class is genuinely " +
-      "hard — and that is the market. The recogniser has existed since before Excalidraw " +
-      "arrived and reached nothing: its only caller was the drawing surface Excalidraw " +
-      "replaced. This is the whole of it, from a wobbling gesture to what a student sees.",
+      "Automatic shape recognition changed ordinary handwriting into arrows and other shapes. " +
+      "A teacher's rough stroke must remain exactly what they drew unless they deliberately " +
+      "choose one of Excalidraw's shape tools.",
     async run(ctx, baseUrl, assert) {
       const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
       const student = await openBoard(ctx, baseUrl, { readOnly: true });
 
-      // Last state per element wins. An element is re-sent every time it changes, so the
-      // stroke appears twice: once live while it was being drawn, and again withdrawn once it
-      // was tidied. Asking "what does the student end up with" means asking the latest.
+      // Last state per element wins because an element is re-sent every time it changes.
       const sent = async () =>
         [
           ...(
@@ -383,16 +380,14 @@ export const tests = [
 
       const after = await sent();
       const live = after.filter((e) => !e.isDeleted);
-      assert("the class is sent an ellipse", live.some((e) => e.type === "ellipse"));
+      assert("the class is sent the freehand stroke", live.some((e) => e.type === "freedraw"));
       assert(
-        "and not the wobbling stroke it replaced",
-        !live.some((e) => e.type === "freedraw"),
+        "and no automatic shape replaces it",
+        !live.some((e) => ["ellipse", "rectangle", "diamond", "line", "arrow"].includes(e.type)),
       );
-      // The stroke has to be *reported* deleted, not merely dropped. A board that only ever
-      // reports additions leaves students looking at the original underneath the tidy shape.
       assert(
-        "the original stroke is withdrawn rather than abandoned",
-        after.some((e) => e.type === "freedraw" && e.isDeleted),
+        "the original ink is not silently withdrawn",
+        !after.some((e) => e.type === "freedraw" && e.isDeleted),
       );
 
       await pump(teacher, student);
@@ -403,11 +398,11 @@ export const tests = [
   },
 
   {
-    name: "writing is left exactly as written, and undo gives back a stroke that was tidied",
+    name: "writing stays freehand while explicit shape tools still create shapes",
     why:
-      "The two ways this feature could hurt rather than help. Turning a teacher's sentence " +
-      "into a triangle loses the sentence; correcting a stroke they meant to leave wobbly, " +
-      "with no way back, makes the board something to be fought. Neither may happen.",
+      "Removing the inaccurate automatic conversion must not remove the tools a teacher uses " +
+      "deliberately. Handwriting stays ink, while the rectangle and arrow tools still create " +
+      "real selectable Excalidraw shapes.",
     async run(ctx, baseUrl, assert) {
       const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
 
@@ -432,22 +427,15 @@ export const tests = [
         !written.some((e) => ["ellipse", "rectangle", "line", "arrow"].includes(e.type)),
       );
 
-      // Now a stroke that *is* corrected, and taken back.
-      await drawPath(teacher, roughCircle(600, 300, 90));
-      await teacher.waitForTimeout(700);
-      const tidied = [...(await live()).values()].filter((e) => !e.isDeleted);
-      assert("the circle was tidied", tidied.some((e) => e.type === "ellipse"));
-
-      await teacher.keyboard.press("Control+z");
+      await selectTool(teacher, "2");
+      await stroke(teacher, 500, 250, 650, 380);
+      await selectTool(teacher, "5");
+      await stroke(teacher, 700, 300, 850, 420);
       await teacher.waitForTimeout(700);
 
-      const undone = [...(await live()).values()];
-      const ellipse = undone.find((e) => e.type === "ellipse");
-      assert("undo withdraws the shape", ellipse?.isDeleted === true);
-      assert(
-        "and restores the stroke the teacher actually drew",
-        undone.some((e) => e.type === "freedraw" && !e.isDeleted),
-      );
+      const explicit = [...(await live()).values()].filter((e) => !e.isDeleted);
+      assert("the rectangle tool creates a rectangle", explicit.some((e) => e.type === "rectangle"));
+      assert("the arrow tool creates an arrow", explicit.some((e) => e.type === "arrow"));
       assert("no errors were thrown", teacher.errors.length === 0);
     },
   },
