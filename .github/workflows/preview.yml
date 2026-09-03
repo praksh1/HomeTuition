@@ -40,9 +40,8 @@ on:
     inputs:
       api_url:
         description: >-
-          Staging API base URL, e.g. https://<your-staging>.up.railway.app .
-          Leave blank to use the STAGING_API_URL repository variable.
-          There is deliberately no default: a blank here and no variable stops the run.
+          Optional confirmation of the configured staging API URL. Leave blank to use
+          STAGING_API_URL. If supplied, it must match that repository variable exactly.
         required: false
         type: string
 
@@ -76,14 +75,23 @@ jobs:
           PROD_WEB_HOST: hometuition.praksh-dhakal.workers.dev
         run: |
           set -euo pipefail
-          URL="${INPUT_URL:-${VAR_URL:-}}"
+          URL="${VAR_URL:-}"
 
           if [ -z "$URL" ]; then
             echo "::error title=No staging API::A preview needs an API of its own, and this repository has none configured."
             echo "Set a STAGING_API_URL repository variable (Settings -> Secrets and variables ->"
-            echo "Actions -> Variables), or type the URL into the api_url box when starting this run."
+            echo "Actions -> Variables. The per-run input is not a fallback and cannot override it."
             echo "PREVIEW.md has the one-time Railway and Neon setup, and who performs it."
             echo "Nothing was built and nothing was deployed."
+            exit 1
+          fi
+
+          # The repository variable is the single allowlisted API. A free-form run input used to
+          # bypass that control, so it may now only confirm the configured value, never replace it.
+          URL="${URL%/}"
+          if [ -n "${INPUT_URL:-}" ] && [ "${INPUT_URL%/}" != "$URL" ]; then
+            echo "::error title=Staging API mismatch::The api_url input does not match STAGING_API_URL."
+            echo "Refusing a one-off destination that has not passed the account-side safety review."
             exit 1
           fi
 
@@ -92,13 +100,13 @@ jobs:
             *) echo "::error::The staging API URL must start with https://. Got: $URL"; exit 1 ;;
           esac
 
-          # The guard the first version lacked. Three ways of naming production are all refused,
-          # including the substring "-production", which is how Railway names a production service
-          # by default and therefore the likeliest thing to be pasted here by accident.
+          # Known production destinations are refused even if the repository variable is changed
+          # incorrectly. Railway includes the environment name in generated domains, so a genuinely
+          # isolated service created inside its `production` environment may itself end in
+          # `-production.up.railway.app`; exact allowlisting is the stronger control.
           if [ "$URL" = "https://${PROD_API_HOST}" ] \
             || echo "$URL" | grep -qi -- "${PROD_API_HOST}" \
             || echo "$URL" | grep -qi -- "${PROD_WEB_HOST}" \
-            || echo "$URL" | grep -qi -- "-production\." \
             || echo "$URL" | grep -qi -- "\.workers\.dev"; then
             echo "::error title=That is production::Refusing to build a preview against the production API."
             echo "A preview exists to exercise unmerged server changes, which production does not have,"
@@ -113,9 +121,9 @@ jobs:
           echo "Preview will talk to: $URL"
 
       - name: Stop if Cloudflare access is not configured
-        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == '' }}
         run: |
-          echo "::error::No CLOUDFLARE_API_TOKEN, so there is nowhere to deploy to."
+          echo "::error::Cloudflare deployment access is incomplete."
           echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID under"
           echo "Settings -> Secrets and variables -> Actions."
           exit 1
@@ -130,14 +138,18 @@ jobs:
           set -euo pipefail
           OK=""
           for attempt in 1 2 3 4 5; do
-            CODE="$(curl -sS -o /tmp/healthz.json -w '%{http_code}' --max-time 10 "${API}/api/healthz" || echo 000)"
-            if [ "$CODE" = "200" ]; then OK=yes; break; fi
+            CODE="$(curl -sS -o /tmp/healthz.json -w '%{http_code}' --max-time 10 "${API}/api/healthz" || true)"
+            if [ "$CODE" = "200" ] \
+              && grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' /tmp/healthz.json; then
+              OK=yes
+              break
+            fi
             echo "Attempt ${attempt}: ${API}/api/healthz returned ${CODE}. A Railway service that is"
             echo "paused between reviews takes a few seconds to wake. Retrying."
             sleep 6
           done
           if [ -z "$OK" ]; then
-            echo "::error title=Staging API not answering::${API}/api/healthz never returned 200."
+            echo "::error title=Staging API not answering::${API}/api/healthz never returned the expected healthy response."
             echo "Nothing was built and nothing was deployed."
             echo "Most likely the staging Railway service is paused, still deploying, or failing to boot."
             exit 1
@@ -188,14 +200,22 @@ jobs:
       # `wrangler deploy` succeeding only means files were uploaded. The URL is read back out of
       # wrangler's own output rather than guessed from a subdomain this workflow cannot know.
       - name: Say where the preview is
+        env:
+          API: ${{ steps.api.outputs.url }}
+          PROD_API_HOST: workspaceapi-server-production-5a63.up.railway.app
         run: |
           set -euo pipefail
           URL="$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/deploy.log | head -1 || true)"
+          ASSET="$(grep -oE '_expo/static/js/web/index-[^"[:space:]]+\.js' artifacts/sikshya/web-build/index.html | head -1 || true)"
 
           # No URL means the deploy did not report one, which is a failure and not a warning: the
           # summary below would otherwise announce a preview nobody can open.
           if [ -z "$URL" ]; then
             echo "::error title=No preview URL::wrangler printed no URL. Check the Deploy step output."
+            exit 1
+          fi
+          if [ -z "$ASSET" ]; then
+            echo "::error title=No build fingerprint::The built index did not name its JavaScript bundle."
             exit 1
           fi
 
@@ -204,18 +224,29 @@ jobs:
           # handed a link to a dead page and told it was ready.
           LIVE=""
           for attempt in 1 2 3 4 5 6; do
-            if curl -sfL --max-time 10 "$URL" -o /dev/null; then LIVE=yes; break; fi
-            echo "Attempt ${attempt}: $URL did not respond. A CDN can serve the previous bundle for"
-            echo "a few seconds after a deploy. Retrying."
+            if curl -sfL --max-time 10 "${URL}/${ASSET}" -o /tmp/remote-preview.js; then
+              LIVE=yes
+              break
+            fi
+            echo "Attempt ${attempt}: the just-built asset ${ASSET} was not available at $URL."
+            echo "A CDN can serve the previous bundle for a few seconds after a deploy. Retrying."
             sleep 10
           done
           if [ -z "$LIVE" ]; then
-            echo "::error title=Preview did not come up::$URL never responded after 6 attempts."
+            echo "::error title=Preview did not come up::The new bundle never appeared after 6 attempts."
             echo "The Worker was uploaded, so the deployment exists, but it is not serving."
             echo "Not printing a preview link for a page that does not load."
             exit 1
           fi
-          echo "The preview responded."
+          if ! grep -Fq -- "$API" /tmp/remote-preview.js; then
+            echo "::error title=Wrong preview bundle::The served bundle does not contain the staging API URL."
+            exit 1
+          fi
+          if grep -Fq -- "$PROD_API_HOST" /tmp/remote-preview.js; then
+            echo "::error title=Production reference::The served bundle contains the production API host."
+            exit 1
+          fi
+          echo "The exact new bundle responded and contains the staging API URL."
           {
             echo "### Preview ready"
             echo ""

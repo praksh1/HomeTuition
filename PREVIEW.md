@@ -1,16 +1,16 @@
 # Previewing a branch before it goes live
 
-A preview lets a change be *looked at* before it reaches students and teachers. Reviewing this app
+A preview lets a change be _looked at_ before it reaches students and teachers. Reviewing this app
 means doing things — approving a document, granting test access, resetting a password — and every
 one of those writes to a database and can send email. So a preview needs its own web app, its own
 API, and its own data, with every outbound credential withheld.
 
-| | Production — do not touch | Preview |
-|---|---|---|
-| Web app | `hometuition` Worker | `hometuition-preview` Worker |
-| API | `workspaceapi-server-production-5a63.up.railway.app`, auto-deploys `main` | a second Railway service, deploying **the reviewed commit** |
-| Data | the live Neon database | **a new, empty Neon database with synthetic accounts** |
-| Email / payment / video / storage | live credentials | **withheld or stubbed** |
+|                                   | Production — do not touch                                                 | Preview                                                     |
+| --------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Web app                           | `hometuition` Worker                                                      | `hometuition-preview` Worker                                |
+| API                               | `workspaceapi-server-production-5a63.up.railway.app`, auto-deploys `main` | a second Railway service, deploying **the reviewed commit** |
+| Data                              | the live Neon database                                                    | **a new, empty Neon database with synthetic accounts**      |
+| Email / payment / video / storage | live credentials                                                          | **withheld or stubbed**                                     |
 
 ---
 
@@ -30,11 +30,11 @@ Nothing in this document can be exercised before that merge. Do not read the sec
 
 ## Who does what
 
-| | Responsibility |
-|---|---|
-| **Claude** | The repository: workflow, `wrangler.jsonc`, this document, and the exact variable **names** and non-secret values below. Never handles or asks for secret values. |
-| **Codex** | Account-side work in the owner's signed-in browser — Railway, Neon, GitHub, Cloudflare — plus local commands such as `db:push`. Obtains any confirmation each action requires. |
-| **Owner** | Product decisions and visual approval. Not expected to run commands, open dashboards, or configure services. |
+|            | Responsibility                                                                                                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Claude** | The repository: workflow, `wrangler.jsonc`, this document, and the exact variable **names** and non-secret values below. Never handles or asks for secret values.              |
+| **Codex**  | Account-side work in the owner's signed-in browser — Railway, Neon, GitHub, Cloudflare — plus local commands such as `db:push`. Obtains any confirmation each action requires. |
+| **Owner**  | Product decisions and visual approval. Not expected to run commands, open dashboards, or configure services.                                                                   |
 
 Nothing in this document is a task for the owner.
 
@@ -51,10 +51,11 @@ wrong twice:
   a real teacher.
 
 A preview that silently points at production is more dangerous than no preview, because it looks
-safe. So the staging API must be named explicitly and the run stops if it is not. It also refuses
-any URL that looks like production, anything containing `-production.` (Railway's default naming,
-and so the likeliest accidental paste), and any `*.workers.dev` address, since the API is never a
-Worker.
+safe. So the staging API must be named explicitly in the reviewed `STAGING_API_URL` repository
+variable and the run stops if it is not. The per-run field can only confirm that exact value; it
+cannot redirect a run to a different host. Known production and `*.workers.dev` addresses are also
+refused. Railway-generated domains include the Railway environment name, so the allowlist is the
+control rather than guessing from a `-production` substring.
 
 ### There is already a frontend-only Worker, and it is not this
 
@@ -84,16 +85,16 @@ is a separate decision with its own review, not a step in a preview setup.
 
 Checked 3 Sep 2026.
 
-| Piece | State |
-|---|---|
-| Railway Hobby | **Active.** USD 5 compute warning, USD 10 workspace hard limit, Agent limit USD 0 — all saved and verified on 31 Aug |
-| Brevo Free | Configured **on the production service**, one verified sender |
-| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Present and working — deploy run `33500697922` succeeded 1 Sep, which it cannot do without them |
-| `hometuition-preview` Worker | Defined in `wrangler.jsonc`; created on first deploy |
-| Staging Railway service | **Missing** |
-| Staging Neon database | **Missing** |
-| `STAGING_API_URL` repository variable | **Missing** |
-| Railway / Neon credentials in GitHub CI | **Absent, and to stay absent** unless separately authorized — a token that can deploy the API can deploy production |
+| Piece                                           | State                                                                                                                            |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Railway Hobby                                   | **Active.** USD 5 compute warning, USD 10 workspace hard limit, Agent limit USD 0 — all saved and verified on 31 Aug             |
+| Brevo Free                                      | Configured **on the production service**, one verified sender                                                                    |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Present and working — deploy run `33500697922` succeeded 1 Sep, which it cannot do without them                                  |
+| `hometuition-preview` Worker                    | Defined in `wrangler.jsonc`; created on first deploy                                                                             |
+| Staging Railway service                         | **Healthy.** `hometuition-api-staging`, pinned to the PR #10 branch; four service variables and zero production shared variables |
+| Staging Neon database                           | **Created.** Separate `Sikshya Staging` project; empty before schema creation and never copied from production                   |
+| `STAGING_API_URL` repository variable           | **Set** to the staging Railway domain                                                                                            |
+| Railway / Neon credentials in GitHub CI         | **Absent, and to stay absent** unless separately authorized — a token that can deploy the API can deploy production              |
 
 ### Spend
 
@@ -111,13 +112,13 @@ Worth stating plainly, because a green run is easy to mistake for a safety guara
 
 **It proves, automatically, on every run:**
 
-| Check | How |
-|---|---|
-| The API is not production | the URL guard, before anything is built |
-| The API is not a Cloudflare Worker | same guard — rejects any `*.workers.dev`, including the hand-deployed frontend-only branch Worker |
-| The staging API is actually answering | a `GET /api/healthz` that must return 200 before the build starts |
-| The built bundle does not contain the production host | a grep of `web-build` before upload |
-| The deployed preview really serves | a retry loop that **fails the job** when exhausted, rather than printing a link to a dead page |
+| Check                                                 | How                                                                                                                               |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| The API is the reviewed destination                   | it must equal the single `STAGING_API_URL` allowlist; a per-run override is refused                                               |
+| The API is not a Cloudflare Worker                    | same guard — rejects any `*.workers.dev`, including the hand-deployed frontend-only branch Worker                                 |
+| The staging API is actually answering                 | a `GET /api/healthz` that must return 200 with the expected healthy body before the build starts                                  |
+| The built bundle does not contain the production host | a grep of `web-build` before upload                                                                                               |
+| The new deployed preview really serves                | the exact fingerprinted bundle from this build must appear remotely, contain the staging API URL, and exclude the production host |
 
 **It cannot prove any of these, and does not claim to:**
 
@@ -143,7 +144,7 @@ Until then they are verified by a person, before every run.
 Do these in the signed-in session and record the result. If any does not match, stop and correct it
 before running the workflow; a preview built on a wrong answer is worse than none.
 
-1. **Railway → the staging service → Deployments.** Confirm the *active* deployment's **source
+1. **Railway → the staging service → Deployments.** Confirm the _active_ deployment's **source
    branch and commit SHA** are the branch and commit under review. Not `main`, not an older commit
    of the right branch.
 2. **Railway → the staging service → Variables.** Read the full list and confirm:
@@ -184,29 +185,29 @@ that session and never printed, pasted into chat, or committed.
   against an old server.
 - Variables to **set**:
 
-  | Name | Value |
-  |---|---|
-  | `DATABASE_URL` | the staging Neon connection string from step 1 |
+  | Name             | Value                                                                                                             |
+  | ---------------- | ----------------------------------------------------------------------------------------------------------------- |
+  | `DATABASE_URL`   | the staging Neon connection string from step 1                                                                    |
   | `SESSION_SECRET` | a **new random value**, different from production, so a production token cannot sign in to staging or the reverse |
-  | `NODE_ENV` | `production` |
-  | `VIDEO_PROVIDER` | `echo` — the built-in stub, so no real Daily room is ever created |
+  | `NODE_ENV`       | `production`                                                                                                      |
+  | `VIDEO_PROVIDER` | `echo` — the built-in stub, so no real Daily room is ever created                                                 |
 
 - Variables to **leave unset**, deliberately. Every name below was re-audited against the branch
   that staging will actually run (`artifacts/api-server/src` at the reviewed commit), and each
   effect was read in the source rather than assumed:
 
-  | Withheld | Verified effect of leaving it unset |
-  |---|---|
-  | `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` | `isEmailConfigured()` requires a provider key **and** `EMAIL_FROM`; without them it returns false and **no email is sent to anyone** |
-  | `ESEWA_MERCHANT_ID`, `KHALTI_SECRET_KEY`, `PAYMENT_WEBHOOK_SECRET` | `paymentMode()` returns `gateway` if *any* of these is set. With none, payments stay **simulated** and no real charge is possible |
-  | `DAILY_API_KEY`, `EXPO_PUBLIC_DAILY_DOMAIN` | no real Daily room is created |
-  | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ENDPOINT` | no write reaches production object storage |
-  | `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID` | Google sign-in reports itself disabled |
-  | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET` | Facebook sign-in reports itself disabled |
-  | **`APPLE_CLIENT_IDS`** | `socialIdentity.ts` reports `apple.enabled: false`, and `verifySocialCredential("apple")` returns null before any token is checked |
-  | `APP_URL`, **`EXPO_PUBLIC_DOMAIN`** | `appUrl()` in `notify.ts` reads `APP_URL ?? EXPO_PUBLIC_DOMAIN` and returns an empty string when both are absent, so **no link in an outbound message points at the live site** |
+  | Withheld                                                                                        | Verified effect of leaving it unset                                                                                                  |
+  | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+  | `BREVO_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM`                                                 | `isEmailConfigured()` requires a provider key **and** `EMAIL_FROM`; without them it returns false and **no email is sent to anyone** |
+  | `ESEWA_MERCHANT_ID`, `KHALTI_SECRET_KEY`, `PAYMENT_WEBHOOK_SECRET`                              | `paymentMode()` returns `gateway` if _any_ of these is set. With none, payments stay **simulated** and no real charge is possible    |
+  | `DAILY_API_KEY`, `EXPO_PUBLIC_DAILY_DOMAIN`                                                     | no real Daily room is created                                                                                                        |
+  | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ENDPOINT`         | no write reaches production object storage                                                                                           |
+  | `GOOGLE_CLIENT_IDS`, `GOOGLE_WEB_CLIENT_ID`, `GOOGLE_IOS_CLIENT_ID`, `GOOGLE_ANDROID_CLIENT_ID` | Google sign-in reports itself disabled                                                                                               |
+  | `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`                                                        | Facebook sign-in reports itself disabled                                                                                             |
+  | **`APPLE_CLIENT_IDS`**                                                                          | `socialIdentity.ts` reports `apple.enabled: false`, and `verifySocialCredential("apple")` returns null before any token is checked   |
+  | `APP_URL`, `PUBLIC_APP_URL`, **`EXPO_PUBLIC_DOMAIN`**                                           | notification and account-security links have no live-site base URL available                                                         |
 
-  Names that are safe to set and are *not* outbound: `LOG_LEVEL`, `WS_HEARTBEAT_MS`,
+  Names that are safe to set and are _not_ outbound: `LOG_LEVEL`, `WS_HEARTBEAT_MS`,
   `MODERATION_TERMS`, `PRIVATE_OBJECT_DIR`, `PUBLIC_OBJECT_SEARCH_PATHS`. They change behaviour or
   tuning, not who gets contacted.
 
@@ -223,12 +224,19 @@ that session and never printed, pasted into chat, or committed.
 - A variable rather than a secret on purpose: it is a public hostname, and keeping it readable means
   anyone can confirm at a glance that a preview is not aimed at production.
 
-### 4. Schema, then synthetic accounts, then the flag — in that order
+### 4. Schema, deployment, synthetic accounts, then the flag — in that order
 
 1. Run `pnpm run db:push` with the **staging** `DATABASE_URL`. This creates the tables in the empty
    database.
-2. Create a handful of synthetic accounts **by registering them through the preview itself**, and
-   an operator by promoting one of them in the staging database.
+2. Deploy the staging API and confirm `/api/healthz` returns the expected healthy response. Point
+   `STAGING_API_URL` at it, merge the reviewed preview infrastructure, and run the preview workflow.
+3. Only after the preview exists, create a handful of synthetic teacher and student accounts through
+   its real registration screens. Because outbound email is deliberately disabled, Codex must mark
+   only those named synthetic accounts email-verified in the staging database. Never relax the
+   application-wide verification rule.
+4. Bootstrap a separate synthetic operator using the supported two-row model: an `admin` user and
+   its `operator_accounts` record. Merely changing a registered user's `role` is not sufficient.
+   This account-side step must be recorded and must target the new Neon staging project only.
 
    **Do not run `pnpm run seed`.** It was read before being ruled out. `scripts/src/seed.ts` opens
    with six unconditional `DELETE FROM` statements — `reviews`, `session_enrollments`, `sessions`,
@@ -245,17 +253,17 @@ that session and never printed, pasted into chat, or committed.
    No replacement fixture is proposed in this document. Inventing one is its own task with its own
    review; a few hand-registered accounts are enough to review a screen.
 
-3. Only now, if the test-access feature is being reviewed, add `ALLOW_TEST_TEACHING_ACCESS=true`
+5. Only now, if the test-access feature is being reviewed, add `ALLOW_TEST_TEACHING_ACCESS=true`
    **on the staging service only.**
 
    The order is not stylistic. Verified by experiment: flag off with the table missing, the app is
    fine — the code never queries it. Flag **on** with the table missing, the teacher dashboard
    returns **500**.
 
-   | Table | Flag | Teacher dashboard |
-   |---|---|---|
-   | missing | unset | 200 |
-   | missing | `true` | **500** |
+   | Table   | Flag   | Teacher dashboard |
+   | ------- | ------ | ----------------- |
+   | missing | unset  | 200               |
+   | missing | `true` | **500**           |
 
    It must never be set on production, and must be off everywhere before launch with no live grants
    left.
