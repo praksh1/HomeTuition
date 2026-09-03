@@ -1,0 +1,181 @@
+# Puts a branch on its own URL, pointed at its own API, so it can be reviewed before it merges.
+#
+# ## Why this is not simply "deploy the branch"
+#
+# The first version of this workflow defaulted the API address to the production Railway service.
+# That was withdrawn in review, and the reasoning is worth keeping because it is easy to redo:
+#
+#  - A preview pointed at the production API **cannot exercise the change it exists to review.**
+#    The API is deployed from `main`; unmerged endpoints simply are not there, so the reviewer
+#    tests old server behaviour behind a new screen and learns nothing.
+#  - Worse, it invites writes to live data. Reviewing this project means approving a document,
+#    granting test access, resetting a password — every one of those mutates rows. A reviewer
+#    doing their job on such a preview would be editing the real database.
+#
+# So the API address is **required and never defaulted**. If no staging API is configured the
+# workflow stops before it builds anything. Failing closed is the entire point: a preview that
+# quietly falls back to production is more dangerous than no preview, because it looks safe.
+#
+# ## What this deploys, and what it does not
+#
+# It deploys **only** the `preview` Worker in `wrangler.jsonc` — a separate Worker with its own
+# name and its own URL. It cannot overwrite the live site; a different Worker is a different
+# deployment, and `--env preview` never touches the top-level one. Production still changes only
+# on a push to `main`.
+#
+# It does **not** deploy an API and does not touch a database. Those are the owner's to create
+# once, in Railway and Neon, and the setup is written up in `PREVIEW.md`.
+name: Preview a branch
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: >-
+          Staging API base URL, e.g. https://<your-staging>.up.railway.app .
+          Leave blank to use the STAGING_API_URL repository variable.
+          There is deliberately no default: a blank here and no variable stops the run.
+        required: false
+        type: string
+
+# One preview at a time. Two racing deploys of the same Worker is a coin toss over which wins.
+concurrency:
+  group: preview-web
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Metro keeps a coordinator and a transform worker and both inherit this, so their combined
+      # ceiling has to fit under the runner's — see the deploy workflow.
+      NODE_OPTIONS: --max-old-space-size=1024
+
+    steps:
+      # Everything that could go wrong is checked before a single minute of build time is spent,
+      # and before anything is uploaded anywhere.
+      - name: Resolve the staging API, and refuse to guess one
+        id: api
+        env:
+          INPUT_URL: ${{ inputs.api_url }}
+          VAR_URL: ${{ vars.STAGING_API_URL }}
+          # Named here so the guard below is auditable in one place. These are public hostnames,
+          # not secrets.
+          PROD_API_HOST: workspaceapi-server-production-5a63.up.railway.app
+          PROD_WEB_HOST: hometuition.praksh-dhakal.workers.dev
+        run: |
+          set -euo pipefail
+          URL="${INPUT_URL:-${VAR_URL:-}}"
+
+          if [ -z "$URL" ]; then
+            echo "::error title=No staging API::A preview needs an API of its own, and this repository has none configured."
+            echo "Set a STAGING_API_URL repository variable (Settings -> Secrets and variables ->"
+            echo "Actions -> Variables), or type the URL into the api_url box when starting this run."
+            echo "PREVIEW.md has the one-time Railway and Neon setup."
+            echo "Nothing was built and nothing was deployed."
+            exit 1
+          fi
+
+          case "$URL" in
+            https://*) : ;;
+            *) echo "::error::The staging API URL must start with https://. Got: $URL"; exit 1 ;;
+          esac
+
+          # The guard the first version lacked. Three ways of naming production are all refused,
+          # including the substring "-production", which is how Railway names a production service
+          # by default and therefore the likeliest thing to be pasted here by accident.
+          if [ "$URL" = "https://${PROD_API_HOST}" ] \
+            || echo "$URL" | grep -qi -- "${PROD_API_HOST}" \
+            || echo "$URL" | grep -qi -- "${PROD_WEB_HOST}" \
+            || echo "$URL" | grep -qi -- "-production\."; then
+            echo "::error title=That is production::Refusing to build a preview against the production API."
+            echo "A preview exists to exercise unmerged server changes, which production does not have,"
+            echo "and reviewing this app writes rows — approvals, grants, password resets."
+            echo "Point it at a staging Railway service with its own database. See PREVIEW.md."
+            exit 1
+          fi
+
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Preview will talk to: $URL"
+
+      - name: Stop if Cloudflare access is not configured
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+        run: |
+          echo "::error::No CLOUDFLARE_API_TOKEN, so there is nowhere to deploy to."
+          echo "Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID under"
+          echo "Settings -> Secrets and variables -> Actions."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # A preview that does not compile is not worth looking at, and this is cheap next to the
+      # build. The full test gate stays on the production workflow: this exists to let somebody
+      # *see* a change, not to certify it.
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build the web app for the preview
+        run: pnpm --filter @workspace/sikshya run build
+        env:
+          # Baked in at build time, not read at run time — see .agents/memory/deploy-url-baked-in.md.
+          EXPO_PUBLIC_API_URL: ${{ steps.api.outputs.url }}
+
+      # The build verifies its own baked-in address, but this checks the one thing that would be
+      # catastrophic and silent: a bundle that talks to production.
+      - name: Prove the bundle does not point at production
+        env:
+          PROD_API_HOST: workspaceapi-server-production-5a63.up.railway.app
+        run: |
+          set -euo pipefail
+          if grep -rql -- "$PROD_API_HOST" artifacts/sikshya/web-build; then
+            echo "::error::The built bundle contains the production API host. Refusing to deploy it."
+            exit 1
+          fi
+          echo "Checked: the bundle does not reference the production API."
+
+      - name: Deploy the preview Worker
+        run: npx --yes wrangler@4.124.0 deploy --env preview 2>&1 | tee /tmp/deploy.log
+
+      # `wrangler deploy` succeeding only means files were uploaded. The URL is read back out of
+      # wrangler's own output rather than guessed from a subdomain this workflow cannot know.
+      - name: Say where the preview is
+        run: |
+          set -euo pipefail
+          URL="$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/deploy.log | head -1 || true)"
+          if [ -z "$URL" ]; then
+            echo "::warning::wrangler printed no URL. Check the deploy step's output."
+            URL="(see the Deploy step output)"
+          else
+            for _ in 1 2 3 4 5 6; do
+              curl -sfL "$URL" -o /dev/null && { echo "The preview responded."; break; }
+              echo "Not up yet; a CDN can serve the previous bundle for a few seconds. Retrying."
+              sleep 10
+            done
+          fi
+          {
+            echo "### Preview ready"
+            echo ""
+            echo "**$URL**"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| API | \`${{ steps.api.outputs.url }}\` |"
+            echo ""
+            echo "Separate Worker, separate API. The live site and the live database are untouched."
+          } >> "$GITHUB_STEP_SUMMARY"
