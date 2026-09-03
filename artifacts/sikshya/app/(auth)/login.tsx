@@ -82,6 +82,8 @@ export default function Login() {
         return;
       }
       if (!loggedInUser.emailVerified) {
+        // Signing in sends nothing, so no `sent` or `configured` is passed and the screen says it
+        // cannot confirm a link went out. It previously read that silence as a successful send.
         router.replace({ pathname: "/check-email" as never, params: { email: loggedInUser.email } });
         return;
       }
