@@ -13,5 +13,24 @@
     // still be served index.html. Without this, refreshing a page or opening a shared link
     // returns a 404.
     "not_found_handling": "single-page-application"
+  },
+
+  // A second, separate Worker for reviewing a branch before it reaches anybody.
+  //
+  // Its own name, so its own URL, sharing nothing with production but the build command.
+  // Deploying it cannot affect the live site: a different Worker is a different deployment, and
+  // `--env preview` never touches the top-level one above.
+  //
+  // The Worker is only half of a preview. The other half is an API and a database of its own —
+  // this file cannot express those, and `PREVIEW.md` explains why they must exist before the
+  // "Preview a branch" workflow will run at all.
+  "env": {
+    "preview": {
+      "name": "hometuition-preview",
+      "assets": {
+        "directory": "artifacts/sikshya/web-build",
+        "not_found_handling": "single-page-application"
+      }
+    }
   }
 }
