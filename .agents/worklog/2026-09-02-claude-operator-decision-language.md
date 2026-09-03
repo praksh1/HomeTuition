@@ -53,6 +53,34 @@ acceptance criteria.
   so I followed the packet's stated rule — delivery truth must come from the result — over its
   example. `deliveryLine()` distinguishes `sent`, `failed` and `not_configured`, and describes the
   in-app half separately and accurately.
+
+### Correction after Codex review, 3 Sep
+
+Codex reviewed this slice and found a real defect **in my own fix**. My first `deliveryLine()` told
+the operator, for an offline teacher: *"They were not connected, so they will see it when they next
+open the app."*
+
+That is false, and false for the reason recorded two sections below **in this same entry**: there
+is no server-side notification store, so an offline teacher receives nothing in-app then **or
+later** — it is not queued and does not arrive on next open. I wrote the finding down correctly and
+then wrote a sentence contradicting it, because it was the reassuring thing to say. That is exactly
+the failure this slice exists to remove, and it got past my own review.
+
+The six sentences now:
+
+| Email | Connected | What the operator reads |
+|---|---|---|
+| sent | yes | The teacher was emailed. The notification appeared in their open app. |
+| sent | no | The teacher was emailed. No in-app notification was delivered because the teacher was not connected. |
+| failed | yes | The decision was saved. The email could not be delivered, but the notification appeared in their open app. |
+| failed | no | The decision was saved, but the teacher has NOT been notified: the email could not be delivered and they were not connected to receive an in-app notification. |
+| not configured | yes | The decision was saved. Email is not configured on this server, so none was sent. The notification appeared in their open app. |
+| not configured | no | The decision was saved, but the teacher has NOT been notified: email is not configured on this server and they were not connected to receive an in-app notification. |
+
+Two tests guard it: one asserts no variant promises future in-app delivery (`/next open|will see
+it|later/` must not match any of the three offline forms), the other that both no-channel-reached
+cases say "has NOT been notified" in those words. No promise of future in-app delivery may return
+until persistent notifications exist — `HANDOVER.md` §8.8.
 - Rejection subjects carry `— action needed` so the teacher notices; the body names the document,
   quotes the reviewer's reason, and says the upload is open again, with no judgement of the person.
 
@@ -138,9 +166,22 @@ Added to the running table in `.agents/backlog/ui-upgrade-progress.md`.
 
 ## Remaining risks / next pickup point
 
-- **Not yet verified in a browser preview.** The gate above is automated plus a live-server
-  integration run. The operator screen's new confirmation text has not been looked at by a human.
-  The owner should check it on the preview before this merges.
+- **Now verified in a real browser.** The original claim here — that it could not be — was wrong,
+  and it was an assumption inherited from an earlier container rather than something retested.
+  Chromium *is* in this one, at `/opt/pw-browsers/chromium`; the installed Playwright pins a
+  different build and fails with "Executable doesn't exist", which reads like an absent browser.
+  `board-tests/harness.mjs` now falls back to a browser already on the machine, and
+  `scripts/account-gates/run.mjs` renders this decision. The operator sees:
+
+  > Document review saved.
+  > The decision was saved, but the teacher has NOT been notified: email is not configured on this
+  > server and they were not connected to receive an in-app notification.
+
+  Screenshot handed to the owner.
+- **Not deployed anywhere.** There was no branch-preview path in this repository at all: the only
+  deploy targets production on a push to `main`. One is added alongside this correction
+  (`wrangler.jsonc` `env.preview` plus `.github/workflows/preview.yml`) but **it has never been
+  run** — deploying needs the owner's Cloudflare credentials, so they start it from Actions.
 - **A previously approved teacher may hold the old wording** in their AsyncStorage notification
   list. Nothing clears it; it will age out.
 - Next: section 2, locking teaching tiers before operator approval. `mayBuyTeacherPlan()` is

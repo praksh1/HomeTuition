@@ -22,6 +22,7 @@
     "test:perf": "node scripts/perf-tests/run.mjs",
     "test:messaging": "node scripts/messaging-tests/run.mjs",
     "test:call-leave": "node scripts/call-leave-tests/run.mjs",
+    "test:gates": "node scripts/account-gates/run.mjs",
     "test:nav": "node scripts/nav-tests/run.mjs",
     "test:refunds": "node scripts/refund-tests/run.mjs",
     "test:uploads": "node scripts/upload-browser/run.mjs",

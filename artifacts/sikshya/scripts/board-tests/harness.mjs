@@ -12,27 +12,82 @@
  * rules are under test without needing a database, a login or a live class.
  */
 import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import path from "node:path";
+
+/**
+ * A browser that is already on the machine, when the one Playwright wants is not.
+ *
+ * Playwright pins an exact Chromium build and refuses to launch anything else, so a machine with
+ * build 1194 on disk and a Playwright expecting 1234 fails with "Executable doesn't exist" — and
+ * every browser suite in the repo goes dark at once.
+ *
+ * That is not hypothetical. Two rounds of UI work were shipped with "not verified in a browser"
+ * against them, on the belief that this container had no Chromium. It had one the whole time, at
+ * `/opt/pw-browsers/chromium`. The build numbers differed; the browser did not, for anything these
+ * tests ask of it.
+ */
+function fallbackExecutable() {
+  return [
+    process.env.CHROMIUM_PATH,
+    "/opt/pw-browsers/chromium",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
+  ].filter(Boolean).find((p) => existsSync(p)) ?? null;
+}
 
 /**
  * Playwright is deliberately not a project dependency: it pulls a browser download into every
  * `pnpm install`, on every machine, for a test suite most contributors will never run. It is
  * found wherever it happens to be installed instead.
+ *
+ * What comes back is Playwright's `chromium` with one change: `launch()` retries once against a
+ * browser already on the machine if the pinned build is missing. Callers are unchanged — they
+ * still do `(await getChromium()).launch()`.
  */
 export async function getChromium() {
+  let browserType = null;
   try {
-    return (await import("playwright")).chromium;
+    browserType = (await import("playwright")).chromium;
   } catch {}
-  try {
-    const globalRoot = execSync("npm root -g", { encoding: "utf8" }).trim();
-    const entry = pathToFileURL(path.join(globalRoot, "playwright", "index.mjs")).href;
-    return (await import(entry)).chromium;
-  } catch {}
-  throw new Error(
-    "Playwright not found. Install it first:\n" +
-      "  npm.cmd i -g playwright && npx.cmd playwright install chromium",
-  );
+  if (!browserType) {
+    try {
+      const globalRoot = execSync("npm root -g", { encoding: "utf8" }).trim();
+      const entry = pathToFileURL(path.join(globalRoot, "playwright", "index.mjs")).href;
+      browserType = (await import(entry)).chromium;
+    } catch {}
+  }
+  if (!browserType) {
+    throw new Error(
+      "Playwright not found. Install it first:\n" +
+        "  npm.cmd i -g playwright && npx.cmd playwright install chromium",
+    );
+  }
+
+  const launch = browserType.launch.bind(browserType);
+  return new Proxy(browserType, {
+    get(target, prop, receiver) {
+      if (prop !== "launch") return Reflect.get(target, prop, receiver);
+      return async (options = {}) => {
+        try {
+          return await launch(options);
+        } catch (error) {
+          const missing = /Executable doesn't exist|Failed to launch/i.test(String(error?.message));
+          const fallback = missing && !options.executablePath ? fallbackExecutable() : null;
+          if (!fallback) throw error;
+          // --no-sandbox because these containers run as root, where Chromium's sandbox refuses
+          // to start. It is a test browser loading a local build, not a browsing session.
+          return launch({
+            ...options,
+            executablePath: fallback,
+            args: [...(options.args ?? []), "--no-sandbox"],
+          });
+        }
+      };
+    },
+  });
 }
 
 /** Pretends to be the host app, so the page's outgoing messages can be read back. */

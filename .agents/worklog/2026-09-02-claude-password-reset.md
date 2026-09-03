@@ -13,7 +13,37 @@ to work two days after issue, then fix the flow: enumeration-safe responses, one
 tokens, older tokens invalidated, current password rejected, show/hide controls, a confirmation
 state and a server-enforced 60-second resend cooldown.
 
-## The reported defect could not be reproduced
+## Status of the reported defect: UNREPRODUCED — open, not explained, not fixed
+
+Stated first because the rest of this section is easy to misread as a diagnosis. **It is not one.**
+Nothing below explains what happened to the owner. Every check I could run says an expired link is
+refused, which means either the link was not what it appeared to be, or the failure is somewhere I
+could not reach from this container. Both remain open.
+
+What is **not** claimed:
+
+- Not that it is fixed. No behaviour that could have caused it was changed, because nothing was
+  found to change.
+- Not that the owner was mistaken. The alternative below is a hypothesis with no evidence for it
+  beyond being possible.
+- Not that local checks clear the deployed system. Everything here ran against a **local** server
+  and database. The deployed API was never exercised, and the owner's link was.
+
+**Still to do, and it needs the owner.** Run the same expired-token check against the deployed API
+once a preview exists, for the two routes *separately*:
+
+| | Emailed link | Legacy operator code |
+|---|---|---|
+| Table | `account_tokens` | `password_resets` |
+| Endpoint | `POST /auth/password/reset` | `POST /admin/users/:id/password-reset` then the code flow |
+| Shape | 64-char hex in a `/reset-password?token=…` URL | six digits read out over the phone |
+| Lifetime | 30 minutes | 30 minutes |
+
+This entry does not establish which one the owner actually used, and that alone could decide it. If
+they still have the email, the `/reset-password?token=` path identifies it as the emailed route
+immediately.
+
+## What was checked, and what it rules out
 
 The packet was explicit that this needed diagnosis rather than another expiry check, and it was
 right to be. Everything I could test says the expiry works.
@@ -31,18 +61,19 @@ right to be. Everything I could test says the expiry works.
 - **Checked the client.** `apiPost` throws on any non-2xx and `reset-password.tsx` only sets its
   success state inside `try`, so a refusal cannot render as success.
 
-**The most probable explanation is that the link used was not the old one.** Every reset email was
-word-for-word identical, with the subject "Reset your Sikshya password" and the only timing
-information being "expires in 30 minutes" — meaningful solely at the moment of reading. Mail
-clients thread on subject, so a second request collapses into the same conversation as the first,
-and the two messages are indistinguishable. Requesting a new link (which silently invalidates the
-old one) and then opening the thread would look exactly like using the original.
+**One hypothesis, offered as a hypothesis.** Every reset email was word-for-word identical, with
+the subject "Reset your Sikshya password" and the only timing information being "expires in 30
+minutes" — meaningful solely at the moment of reading. Mail clients thread on subject, so a second
+request collapses into the same conversation as the first and the two are indistinguishable.
+Requesting a new link (which silently invalidates the old one) and then opening the thread would
+look exactly like using the original. **There is no evidence this is what happened.** It is
+consistent with the report and with the code; so are other things I could not test from here.
 
 I have not changed the expiry logic, because nothing indicates it is wrong and the packet warned
-against cargo culting. Instead every reset email now carries an absolute issue time and expiry time
-in Nepal time, and says that only the newest link works — so the next report is diagnosable rather
-than a mystery. **If the owner sees this again, the email will now name its own issue time**, which
-settles the question immediately.
+against cargo culting. What did change is that every reset email now carries an absolute issue time
+and expiry time in Nepal time and says only the newest link works — **not a fix, an instrument**. It
+does not make the defect go away. It makes the next occurrence answerable, because the email will
+name its own issue time and the owner can read it off directly.
 
 ## Changed
 

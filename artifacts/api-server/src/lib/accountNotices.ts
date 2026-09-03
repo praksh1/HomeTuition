@@ -159,22 +159,41 @@ export type EmailOutcome = "sent" | "failed" | "not_configured";
 /**
  * The sentence the operator reads under a saved decision.
  *
- * `inAppDelivered` is whether the notification reached a live app connection. It is deliberately
- * not called "notified": Sikshya has no server-side notification store, so a teacher whose app is
- * closed receives nothing in-app at all and only the email reaches them. Claiming otherwise is
- * the same class of untruth this module exists to remove.
+ * `inAppDelivered` is whether the notification reached a live app connection, and that is the
+ * *only* thing it can mean. Sikshya has no server-side notification store: `notifyUser()` writes
+ * to whatever sockets are open at that instant and the app keeps its own list in device storage.
+ * A teacher whose app was closed receives nothing in-app, then or later — the notification is not
+ * queued and does not arrive on next open.
+ *
+ * An earlier version of this function said "they will see it when they next open the app", which
+ * is false for exactly that reason. It was the same class of untruth as the "They have been told."
+ * this module was written to delete, and it survived one review because it *sounds* like the
+ * reassuring thing to say. Do not reintroduce a promise of future in-app delivery until persistent
+ * notifications actually exist — `HANDOVER.md` §8.8 tracks that gap.
+ *
+ * When neither channel reached the teacher, the sentence says so in those words. An operator who
+ * reads "the decision was saved" and nothing else will reasonably assume the person was told.
  */
 export function deliveryLine(outcome: EmailOutcome, inAppDelivered: boolean): string {
-  const inApp = inAppDelivered
-    ? " It also appeared in their open app."
-    : " They were not connected, so they will see it when they next open the app.";
+  const noInApp = "No in-app notification was delivered because the teacher was not connected.";
+  const inApp = "The notification appeared in their open app.";
 
   switch (outcome) {
     case "sent":
-      return `The teacher was emailed.${inApp}`;
+      return inAppDelivered
+        ? `The teacher was emailed. ${inApp}`
+        : `The teacher was emailed. ${noInApp}`;
+
     case "failed":
-      return `The decision was saved, but the email could not be delivered.${inApp}`;
+      return inAppDelivered
+        ? `The decision was saved. The email could not be delivered, but the notification appeared in their open app.`
+        : "The decision was saved, but the teacher has NOT been notified: the email could not be " +
+          "delivered and they were not connected to receive an in-app notification.";
+
     case "not_configured":
-      return `The decision was saved. Email is not configured on this server, so no email was sent.${inApp}`;
+      return inAppDelivered
+        ? `The decision was saved. Email is not configured on this server, so none was sent. ${inApp}`
+        : "The decision was saved, but the teacher has NOT been notified: email is not configured " +
+          "on this server and they were not connected to receive an in-app notification.";
   }
 }

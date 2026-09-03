@@ -13,5 +13,28 @@
     // still be served index.html. Without this, refreshing a page or opening a shared link
     // returns a 404.
     "not_found_handling": "single-page-application"
+  },
+
+  // A second, separate Worker for looking at a branch before it reaches anybody.
+  //
+  // There was no way to do this. `wrangler deploy` had exactly one target — production — and the
+  // workflow only ran on a push to `main`, so "deploy a branch preview and send the owner the
+  // link" was asking for something that did not exist. Reviewing a change meant merging it to
+  // find out, or taking somebody's word for it.
+  //
+  // This is its own Worker with its own name and therefore its own URL, sharing nothing with
+  // production but the build. Deploying it cannot affect the live site: a different Worker is a
+  // different deployment, and `--env preview` will not touch the top-level one.
+  //
+  // Run it from Actions -> "Preview a branch" -> Run workflow, choosing the branch. The workflow
+  // prints the URL when it finishes.
+  "env": {
+    "preview": {
+      "name": "hometuition-preview",
+      "assets": {
+        "directory": "artifacts/sikshya/web-build",
+        "not_found_handling": "single-page-application"
+      }
+    }
   }
 }

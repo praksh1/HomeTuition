@@ -64,6 +64,7 @@ Found and fixed so far:
 | Operator person screen | "They have been told." — asserted after a fire-and-forget email whose result was thrown away. With no mail provider configured, nothing was sent and the operator was told it had been |
 | Operator decisions (server) | "Your citizenship was approved." — Sikshya accepted a copy of a document for its own check. It does not approve citizenship and has no standing to say so |
 | Operator decisions (server) | "Your teaching credentials have been approved. You can schedule classes now." — announced a *document* outcome for an *account* decision, and an approved teacher still cannot schedule anything without a teaching plan |
+| Operator decisions (server) | "They were not connected, so they will see it when they next open the app." — mine, not inherited. There is no server-side notification store, so an offline teacher receives nothing then *or later*. Written by the same pass that had just documented why that is false; caught by Codex, not by me |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

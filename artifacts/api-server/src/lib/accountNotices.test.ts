@@ -116,20 +116,46 @@ test("a missing first name does not produce a broken greeting", () => {
 });
 
 test("the delivery line never claims an email that did not go", () => {
-  assert.match(deliveryLine("sent", true), /was emailed/);
+  // Only the "sent" outcome may say the teacher was emailed — in either connection state.
+  for (const online of [true, false]) {
+    assert.match(deliveryLine("sent", online), /was emailed/);
+    assert.doesNotMatch(deliveryLine("failed", online), /was emailed/);
+    assert.doesNotMatch(deliveryLine("not_configured", online), /was emailed/);
+  }
 
-  const failed = deliveryLine("failed", false);
-  assert.match(failed, /could not be delivered/);
-  assert.doesNotMatch(failed, /was emailed/);
-
-  const unconfigured = deliveryLine("not_configured", false);
-  assert.match(unconfigured, /no email was sent/);
-  assert.doesNotMatch(unconfigured, /was emailed/);
+  // And each failure says which of the two it was, so the operator knows whether to chase it.
+  assert.match(deliveryLine("failed", true), /could not be delivered/);
+  assert.match(deliveryLine("failed", false), /could not be delivered/);
+  assert.match(deliveryLine("not_configured", true), /not configured/);
+  assert.match(deliveryLine("not_configured", false), /not configured/);
 });
 
-test("the delivery line is honest about the in-app half", () => {
-  // There is no server-side notification store: an offline teacher receives nothing in-app.
-  // The operator must not read "they have been told" when only a socket push was attempted.
-  assert.match(deliveryLine("sent", false), /next open the app/);
+test("the delivery line never promises in-app delivery that will not happen", () => {
+  /*
+    There is no server-side notification store. An offline teacher receives nothing in-app, then
+    or later — the notification is not queued and does not arrive on next open.
+
+    An earlier version said "they will see it when they next open the app". It read as the
+    reassuring thing to say and was false, which is the exact defect this module exists to remove.
+  */
+  for (const outcome of ["sent", "failed", "not_configured"] as const) {
+    const offline = deliveryLine(outcome, false);
+    assert.match(
+      offline,
+      /No in-app notification was delivered because the teacher was not connected\.|not connected to receive an in-app notification/,
+    );
+    assert.doesNotMatch(offline, /next open|when they open|will see it|later/i);
+  }
   assert.match(deliveryLine("sent", true), /appeared in their open app/);
+});
+
+test("when neither channel reached the teacher, the operator is told in those words", () => {
+  // "The decision was saved" on its own reads as "and they were told". It has to say otherwise.
+  for (const outcome of ["failed", "not_configured"] as const) {
+    assert.match(deliveryLine(outcome, false), /has NOT been notified/);
+  }
+
+  // And it must not say that when one channel did land.
+  assert.doesNotMatch(deliveryLine("failed", true), /has NOT been notified/);
+  assert.doesNotMatch(deliveryLine("sent", false), /has NOT been notified/);
 });
