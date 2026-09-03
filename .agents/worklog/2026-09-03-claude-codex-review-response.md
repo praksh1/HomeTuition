@@ -81,10 +81,12 @@ Screenshots went to the owner: pending-locked, approved-unlocked, and the operat
 
 **A branch preview is a different matter and I could not produce one.** The repository had no
 preview path: `wrangler.jsonc` had a single target and the deploy workflow only runs on a push to
-`main`, so "deploy a branch preview" was asking for something that did not exist. I have built it —
-a separate `hometuition-preview` Worker and a manually-triggered **Preview a branch** workflow — but
-**it has never been run.** Deploying needs the owner's Cloudflare credentials, which I will not ask
-for or handle. The owner starts it from Actions and the workflow prints the URL.
+`main`, so "deploy a branch preview" was asking for something that did not exist.
+
+My first attempt at one was **withdrawn from this PR after owner review, because it was unsafe**: it
+defaulted to the production Railway API, so a preview could not exercise unmerged API changes and
+any manual operator testing on it would have written to live data. The corrected design is on its
+own branch — see `2026-09-03-claude-preview-architecture.md`.
 
 ### 5. Keep exact worklogs — DONE
 
