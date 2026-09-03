@@ -46,54 +46,16 @@ scaled with everything else, is the piece still waiting to move across.
 
 ### Shape recognition
 
-`components/recognition/` works: draw a rough circle and you get a clean circle; a lumpy box
-becomes a rectangle; a sketched triangle becomes a triangle; a dashed-off line straightens; a
-line with a barb becomes an arrow.
+`components/recognition/` contains a dependency-free geometric recogniser and its isolated test
+suite, but it is **not connected to the classroom board**. A real teacher test showed why the
+confidence thresholds were not enough: ordinary writing, including the first stroke of a
+handwritten `A`, could still be replaced by an arrow or another unintended shape.
 
-**It reaches the board now.** For a long stretch it did not: its only caller was the old SVG
-surface, and that stopped being rendered when Excalidraw arrived — the **Smart** toggle lived in
-a toolbar whose buttons had all been disconnected, and that toolbar has since been removed.
-Being engine-agnostic is what it was built for, and it paid off: `SmartBoard.web.tsx` offers it
-each finished freehand stroke and swaps in a real Excalidraw element when it is confident.
-
-Two things about the swap, beyond the three properties below:
-
-- **It is one undoable step.** `updateScene` is called with `CaptureUpdateAction.IMMEDIATELY`,
-  so a teacher who meant the wobble presses undo and has their stroke back. Without that this
-  would be a feature to be fought rather than helped by.
-- **The stroke is withdrawn, not dropped.** It is flagged `isDeleted` with its version bumped,
-  because the sync diff reports deletions as edits — an element simply removed from the array
-  produces no delta, and every student would be left looking at the wobbly original underneath
-  the teacher's tidy shape.
-
-Wiring it up turned up a bug that had been there the whole time: **every arrow was recognised as
-a plain line.** The barb was measured one sample at a time against a threshold that a resampled
-corner never reaches on its own, because resampling spreads it across the two samples bracketing
-it. A short flick still worked, which is how it survived being tried by hand.
-
-Three properties worth knowing, because they are what make it safe to leave on:
-
-- **It is geometric, not machine-learned.** No model to download, no weights to ship, under a
-  millisecond per stroke, identical results on every device, and it works offline. In a
-  low-bandwidth market, anything that needed a server round-trip per stroke would be unusable.
-- **It knows when it is unsure.** Below a confidence threshold the original ink is kept
-  untouched. Wrongly "correcting" what a teacher drew is much worse than not helping.
-- **It never touches handwriting.** Open curved strokes are rejected outright, and closed
-  strokes must enclose a plausible fraction of their own bounding box. A line of Devanagari —
-  a long horizontal bar with letterforms hanging beneath — starts and ends close enough
-  together to look like a closed loop, and an earlier version turned it into a triangle. It
-  now stays as writing.
-
-The classifier's core insight is that **enclosed area is the cleanest signal**: a rectangle
-fills its bounding box, an ellipse fills π/4 (~0.785) of it, a triangle fills half. That ratio
-is a property of the shape, not of how it was drawn. Counting corners was tried first and was
-unreliable — the point where a stroke closes lands on a corner about as often as not, so
-squares counted three corners and triangles counted two.
-
-Output goes onto the wire in the **existing** message format: recognised circles, rectangles,
-lines and arrows use the protocol's own types, and ellipses and triangles are sent as ordinary
-freehand paths whose `d` happens to be perfect geometry. So the server needed no change, and a
-student on a phone that has not updated still sees the snapped shapes correctly.
+`SmartBoard.web.tsx` therefore leaves every freehand stroke exactly as ink. It does not import
+or invoke the recogniser or the conversion helpers. Teachers who want a clean line, arrow,
+rectangle, ellipse, diamond, or text use Excalidraw's explicit tools, which remain available.
+The standalone module is retained only for possible future research; changing its tests cannot
+silently reactivate it because a source-level regression test guards the production board path.
 
 ---
 
@@ -283,9 +245,9 @@ Each step ships on its own and leaves the product working. Do not do them all at
    with pdf.js's *legacy* build; students receive plain pictures and never run a PDF engine.
    The phone apps read a picked PDF into bytes and post those to the board, so they share one
    the same way; the size a phone will carry across that bridge is the part still unproven.
-8. **Re-wire shape recognition** — done. A finished freehand stroke is offered to the
-   recogniser, and a confident match replaces it with a real Excalidraw shape in one undoable
-   step, keeping the teacher's colour and stroke width. See section 1.
+8. **Keep automatic shape recognition out of the active board** — done after a real teacher
+   test found false corrections. Freehand stays freehand; Excalidraw's explicit shape tools
+   remain available. The experimental recogniser and isolated tests are retained but uncalled.
 9. **Persist board state** — done. Boards are written down as they change and read back once
    when the first person joins after a restart.
 10. **Nepali handwriting**, when there is a budget for it.
@@ -295,7 +257,8 @@ Each step ships on its own and leaves the product working. Do not do them all at
 ## 6. What is deliberately not being done
 
 - **No custom rendering engine.** Adopt, do not build.
-- **No per-stroke network recognition.** Shape recognition stays local and instant.
+- **No automatic per-stroke recognition.** Freehand ink is neither sent to a recogniser nor
+  rewritten locally. Teachers choose explicit Excalidraw shape tools when they want geometry.
 - **No live handwriting conversion.** Deliberate "select, then convert" is better UX and
   honest about the latency. And no OCR standing in for handwriting recognition at all: a
   confident wrong answer costs a teacher more than a missing feature.

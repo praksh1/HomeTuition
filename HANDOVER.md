@@ -449,8 +449,9 @@ section 10.
 - **Excalidraw whiteboard** with object manipulation, an infinite canvas, shared images and
   PDFs as real board objects, and a scene that stays in step with every student — including
   erasures and the teacher's viewport.
-- **Shape recognition** — a confident freehand stroke is replaced with a real shape in one
-  undoable step; writing and uncertain strokes are left alone. 27 tests.
+- **Explicit Excalidraw shape tools** — freehand ink is never auto-converted. The experimental
+  geometric recogniser remains isolated for research, but the classroom board does not import
+  or call it after false corrections were observed in a real teacher test.
 - In-class chat on web and native, unread counts.
 - 5-minute early-join lobby.
 - Attendance: who was in the class, when they arrived, how long they were connected, how much
@@ -610,11 +611,10 @@ in ~140 ms — and it still paints at 25× slowdown. That says the code is not d
 foolish. It does **not** reproduce a weak GPU, memory pressure or thermal throttling.
 `artifacts/sikshya/scripts/perf-tests` runs on every deploy.
 
-**3. Shape recognition failed a real teacher test and is now queued for removal from the active
-path.** A handwritten `A` and ordinary rough ink can be replaced with an unintended arrow or
-shape. Preserve explicit Excalidraw shape tools, but disable automatic freehand conversion. The
-owner's acceptance criteria are in
-`.agents/backlog/2026-09-02-owner-corrections-and-stream-poc.md`, section 5.
+**3. Automatic shape recognition was removed from the active board after failing a real teacher
+test.** A handwritten `A` and ordinary rough ink could be replaced with an unintended arrow or
+shape. Freehand now stays ink, while explicit Excalidraw shape tools remain. The experimental
+recogniser and its isolated tests remain in the repository for possible future research.
 
 **4. Handwriting-to-text is not built.** On-device OCR was tried and withdrawn: Tesseract reads
 printed text, and on handwriting a clearly drawn "B" came back "L". Doing it properly needs ML

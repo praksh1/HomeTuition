@@ -202,6 +202,10 @@ request to weaken approval or payment for every user.
 
 ## 5. Disable inaccurate automatic shape conversion
 
+**Status: implemented on the isolated shape-recognition-disabled branch; awaiting preview and
+owner verification before production integration.** The active `SmartBoard.web.tsx` no longer
+imports or calls the recogniser. The standalone research module and tests remain.
+
 ### Problem observed
 
 The recognition pass in `artifacts/sikshya/components/SmartBoard.web.tsx` calls
