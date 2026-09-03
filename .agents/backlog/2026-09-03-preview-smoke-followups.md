@@ -9,6 +9,13 @@ pending. See `.agents/worklog/2026-09-03-codex-claude-reconnection.md` for the e
 
 ## Active bounded Claude assignment
 
+Claude completed this first assignment on `claude/verification-message-truth` at `6eca5ba`.
+Codex reviewed and cherry-picked it into staging integration as `ee446c7`; 168 app tests, 280 API
+tests, named workspace typechecks and the design ratchet passed locally. A staging build pinned to
+the isolated API also completed. Live preview deployment/resend-flow review is recorded separately
+in the staging setup worklog; do not reimplement this slice or confuse unit-tested resend outcomes
+with a live authenticated check.
+
 Base a separate `claude/verification-message-truth` branch on reviewed product `bc0aa17` (or
 coordinate a newer base with Codex). Own ONLY email-verification status messaging and tests.
 Do not change auth rules, DB schema, token lifetime, payments, infrastructure, or deploy anything.

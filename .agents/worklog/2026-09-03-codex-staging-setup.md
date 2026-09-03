@@ -317,3 +317,24 @@ Codex and an independent audit then found remaining gaps and corrected them loca
   echo video, mail/payment/social keys absent, test-access flag on but zero grants, pending teacher.
 - Two documentation patches failed exact-context checks and wrote nothing; corrected the patch
   context and applied successfully. No source or deployed runtime was affected.
+
+### Email-verification truth integration
+
+- Owner asked Codex to lead and keep Claude on non-overlapping bounded work. After the computer-use
+  action-time confirmation, Codex sent Claude only the check-email messaging task. Claude completed
+  `claude/verification-message-truth` at `6eca5ba`; no Claude deployment or main merge occurred.
+- Codex reviewed the six-file diff and cherry-picked it into this integration branch as `ee446c7`.
+  The screen now distinguishes unknown delivery, unconfigured mail, configured send failure,
+  provider-accepted send and already-verified resend. AuthGuard passes the email address but does
+  not invent delivery state; the resend UI reads the 200 response body rather than treating every
+  successful HTTP status as proof another email was sent.
+- Independent checks after integration: 168 app tests passed, 280 API tests passed, all named
+  workspace typechecks passed and design ratchet remained 223 hex / 429 sizes across 57 files.
+  The staging web export completed with EXPO_NO_DOTENV=1 and the explicit isolated Railway API.
+- Claude rendered the four initial route states at 390 px and reported 14 browser assertions, but
+  did not use the public isolated preview. Codex has not yet claimed the authenticated resend cases
+  as rendered; already-verified and failed resend remain unit-only until the rebuilt preview is
+  deployed and checked.
+- Claude's older `claude/slice5-shape-recognition-wip` at `c908d7f` is not safe to merge: relative
+  to product `bc0aa17` it carries unrelated preview workflow/wrangler changes and deletes part of
+  an earlier worklog. A clean shape-recognition branch is required; do not cherry-pick that WIP.
