@@ -208,7 +208,8 @@ them any more — which is right, because the permission that let them in has en
 - **"This student has not verified their email" / "has not finished onboarding" / "This account is
   suspended"** → exactly what it says. Test access deliberately does not skip any of those; fix
   the underlying thing first.
-- **The student is asked to pay** → see step 4 above.
+- **The button says "Book & pay", or a payment screen opens** → see step 4 above. The app is
+  telling you this booking is a real one, and it is right to charge for it.
 - **No orange label anywhere** → the booking was a normal paid one. That is safe, but it means the
   class was not a test class; check the teacher had test teaching access *before* they created it.
   A class is marked when it is made, and giving the teacher access afterwards does not change a

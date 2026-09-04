@@ -83,6 +83,33 @@ So when touching this feature, the question is never only "does the door open". 
 **not** the money list, and its doc comment says so, because it is the obvious thing to reach for
 when widening an earnings query and doing that would put a free booking into somebody's revenue.
 
+## And the mistake the *fix* makes: one flag for two facts
+
+A second review found the correction had overshot. **A test class is only eligible for granted
+bookings; everybody else pays the price on the card.** One `test` flag carrying "no payment was
+processed" went to every viewer of one, so an ordinary student was told no payment before being
+charged, and one who had paid sat in the classroom under a banner saying their money had not been
+taken.
+
+Keep these apart, in the data and in the words:
+
+| | field | true of | may say |
+|---|---|---|---|
+| class | `testClass` / `testClassLabel` | the class, immutably | "TEST-ENABLED CLASS — only approved test bookings bypass payment" |
+| booking | `testBooking` / `testBookingLabel` | one viewer's own enrolment | "TEST — no payment was processed" |
+
+**Only the booking-level fact may claim a payment did not happen.** A student sees what is true of
+them and nothing else; a student who paid sees no test wording at all. The teacher sees the
+class-level marker, because it qualifies their income.
+
+## And a payment sheet is only opened when there is a payment
+
+The gateway was being bypassed *behind* the sheet — method, phone number, PIN, then no payment
+attempted. `GET /sessions/:id/access` answers `canBookAsTest` from the authenticated user, a live
+grant and the durable class marker; the Book button skips the sheet when it is true and sends no
+payment credentials at all. `POST /book` re-derives all three gates regardless: the screen's
+verdict is a convenience, never the decision.
+
 ## Before launch
 
 Turn **both** switches off. Every outstanding grant of either kind stops mattering the same

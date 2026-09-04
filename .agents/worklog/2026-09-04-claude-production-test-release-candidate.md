@@ -4,7 +4,7 @@
 - Agent: claude
 - Branch: `claude/production-test-release-candidate`
 - Base commit: `b29bb07` (itself branched from `origin/claude/staging-user-journey-audit`)
-- Status: complete — Codex's five release blockers fixed; nothing merged, nothing deployed
+- Status: complete — Codex's first five and second two release blockers fixed; nothing merged, nothing deployed
 
 ## Requested
 
@@ -98,8 +98,8 @@ in items 1–5 was rewritten.
 | `sikshya/app/(admin)/person/[id].tsx` | The operator card: grant with a reason, the live grant with its end date, revoke, and the eligibility rules stated. Student records only. |
 | `sikshya/utils/testAccess.ts` *(new)* | The fallback wording, mirroring the server's `TEST_LABEL`. |
 | both `classroom/[id].tsx`, `components/SessionCard.tsx` | The label, painted where somebody would misread the absence of it. |
-| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 89 checks. |
-| `sikshya/scripts/test-access-ui/run.mjs` *(new, `test:test-access-ui`)* | 38 rendered checks. |
+| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 108 checks. |
+| `sikshya/scripts/test-access-ui/run.mjs` *(new, `test:test-access-ui`)* | 72 rendered checks. |
 
 ### Codex's five release blockers, found in an independent review of `914c210`
 
@@ -137,6 +137,60 @@ and the **same row** becomes `paid` with a real reference — no second enrolmen
 `routes/sessions.ts`, `useUserChannel.ts`, `NotificationContext.tsx`, `notifications.ts`,
 `testAccess.ts`, `SessionCard.tsx`, both `sessions.tsx` lists, `(student)/teacher/[id].tsx`,
 `notificationKinds.test.ts`.
+
+### Codex's second review: one flag was doing the work of two facts
+
+The first round of fixes made a test place visible everywhere. The second review found that it was
+now visible *to everyone*, saying the wrong thing:
+
+> A test class is only **eligible** for granted bookings. An ordinary student still pays full
+> price for that same class. But one `test` flag carrying "TEST — no payment was processed" went
+> to every viewer of one.
+
+So an ordinary student was told no payment would be taken **before being charged**, and an
+ordinary student who *had* paid sat in the classroom under a banner saying their money had not
+been taken. Both are the same fabrication the first round was meant to end, pointed the other way.
+
+**The model now has two facts and they never share a field:**
+
+| | field | true of | may say |
+|---|---|---|---|
+| class | `testClass` / `testClassLabel` | the class, immutably, from `test_classes` | "TEST-ENABLED CLASS — only approved test bookings bypass payment" |
+| booking | `testBooking` / `testBookingLabel` | one viewer's own enrolment | "TEST — no payment was processed" |
+
+Only the second may claim a payment did not happen. Who sees which:
+
+- **A student** sees only what is true of them — their own granted place, or nothing at all.
+  Somebody who paid gets the ordinary price and the ordinary payment screen, with no test wording
+  anywhere. (I first showed them the class marker in the classroom and not on the card; that
+  inconsistency was caught in my own audit and removed. A paying student now sees neither.)
+- **The teacher** sees the class-level marker, on their own list and in their classroom, because
+  it is their income it qualifies.
+- The notification event, the email, the push and the in-app entry carry the **booking** fact under
+  its own name.
+
+### The payment sheet for a payment that never happened
+
+The second blocker was not wording. `POST /book` was bypassing the gateway **behind** a payment
+sheet: the student chose eSewa or Khalti, typed a phone number and a PIN, and no payment was ever
+attempted — while `TESTING-ON-THE-LIVE-SITE.md` promised no payment screen would appear.
+
+`GET /sessions/:id/access` now answers `canBookAsTest`, derived server-side from the authenticated
+user, a live grant and the durable class marker — never from a client-supplied `studentId`, never
+from the class marker alone. When it is true the Book button reads **"Take a test place — no
+payment"** and calls the booking endpoint with **no method, no phone number and no PIN**. `POST`
+re-derives all three gates inside its own transaction and remains the only thing that decides: the
+same empty body from somebody without a grant is refused.
+
+**A pre-existing defect had to be fixed first, because it made the whole thing impossible.**
+`(student)/teacher/[id].tsx` loaded per-session access only on `[id]`. On a cold open — a refresh,
+a shared link — `useAuth` had not restored the session, `studentId` was `undefined`, the entire
+access block was skipped, and it never ran again. `access` stayed empty for the life of the
+screen, so every upcoming class showed "Book & pay" whatever the server thought — including to a
+student who had already booked and paid for it. Both effects now depend on `studentId` too.
+
+Also fixed: the plain-text booking email carried literal Markdown asterisks around the one
+sentence that most needed to be believed.
 
 ## Decisions and assumptions
 
@@ -177,7 +231,7 @@ Run against Postgres 16 on `127.0.0.1:55432` (database `rc`) and an API on `:808
 | Command | Result |
 |---|---|
 | `pnpm run typecheck` (4 packages) | clean |
-| `pnpm --filter @workspace/api-server run test` | **293 / 293** |
+| `pnpm --filter @workspace/api-server run test` | **294 / 294** |
 | `pnpm --filter @workspace/sikshya run test` | **213 / 213** |
 | `pnpm --filter @workspace/sikshya run lint:design` | 205 hex / 418 sizes — **unchanged**, no new leaks |
 | `git diff --check` | clean |
@@ -189,7 +243,7 @@ and removed again by using `useLayout().t.overline`, rather than blessing a high
 
 | Suite | Result | | Suite | Result |
 |---|---|---|---|---|
-| `test:test-student` *(new)* | **89 / 89** | | `test:refunds` | 152 / 152 |
+| `test:test-student` *(new)* | **108 / 108** | | `test:refunds` | 152 / 152 |
 | `test:test-access` | 26 / 26 | | `test:tickets` | 62 / 62 |
 | `test:payments` | 10 / 10 | | `test:journey` | 57 / 57 |
 | `test:sessions` | 56 / 56 | | `test:video` | 16 / 16 |
@@ -213,7 +267,7 @@ the first attempt and was re-run with a real restart script, then passed 7/7.
 | Suite | Result |
 |---|---|
 | `test:lobby` | **90 / 90** — both roles, both viewports |
-| `test:test-access-ui` *(new)* | **38 / 38** — both roles, both viewports |
+| `test:test-access-ui` *(new)* | **72 / 72** — every audience, both viewports |
 | `test:classroom` | 47 / 47 |
 | `test:board` | 44 / 44 |
 | `test:gates` | 10 / 10 |
@@ -311,9 +365,22 @@ prove the app's socket union covers every kind the server can send. Moving the d
 `notificationEmails.ts` made three app tests fail with "did it get renamed?" — the test doing
 exactly its job. Pointed at the new file.
 
+**Three test-harness faults of my own, each of which looked like a product bug:** the rendered
+suite routed to `/(student)/teacher/:userId` when that route keys on the *profile* id
+(`.agents/memory/teacher-id-convention.md`) and rendered an empty page; the profile screen opens on
+the **Live** tab when a class is running, so the Upcoming block holding the Book button was never
+drawn; and the laptop pass booked the shared spare class, so the narrow pass found the student
+already enrolled and reported "the button is missing on a phone" — a fixture leak wearing the
+costume of a layout bug. Fixtures are per-viewport now.
+
+**A dialog that is dismissed is a dialog nobody read.** `confirm()` is `window.confirm` on web, so
+the booking confirmation never reaches `document.body`. The harness dismissed it without looking,
+which is how a suite can watch a booking succeed and never notice the sentence announcing it names
+a payment method nobody used. Dialog text is captured and asserted now.
+
 **Postgres stopped mid-run**, which showed up as `register student: 500` and looked briefly like a
 regression in the notify split. It was `connect ECONNREFUSED 127.0.0.1:55432` in the server log —
-the container's database had gone, not the code. Restarted; every suite green afterwards.
+the container's database had gone, not the code. It stopped three more times over the session, twice taking `test:phone` and `test:uploads` down with it; both passed on a re-run. `/tmp/ensure-env.sh` now brings Postgres and the API back before every suite.
 
 **`overline` uppercases its text**, so the first rendered assertion for the label failed against
 "TEST — NO PAYMENT WAS PROCESSED". The assertion is case-insensitive now; the banner was correct
