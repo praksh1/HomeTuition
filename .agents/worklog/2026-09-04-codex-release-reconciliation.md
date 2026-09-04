@@ -77,18 +77,20 @@ test, reconciliation of correction items 1–6, full authorization/concurrency/r
 deployment/rollback handoff. It forbids deployments, external accounts, credentials, billing,
 Daily changes, Stream integration, main changes, and PR creation.
 
-The prompt is drafted in the open Claude app but not sent yet because Windows automation requires
-action-time confirmation before transmitting a message. Claude's current five-hour window was 96%
-used and due to reset in about one hour; the task tells Claude to push a checkpoint and resume on
-the same branch after reset rather than restart.
+At 01:01 America/Chicago, the owner gave action-time confirmation and Codex sent the complete task
+through the open Claude app. Claude accepted it and entered a running state. Claude's current
+five-hour window was 96% used and due to reset at 01:50; the task tells Claude to push a checkpoint
+and resume on the same branch after reset rather than restart.
 
 ## Low-polling supervision
 
-Created the thread heartbeat `claude-release-candidate-monitor`, every fifteen minutes. It watches
-`origin/claude/production-test-release-candidate`, stays silent while unchanged, and reports only a
-new meaningful checkpoint, completion, test failure, blocker, or required owner action. It is
-forbidden to merge, deploy, purchase, modify production, or send redundant Claude prompts. Disable
-it after final review.
+Created the thread heartbeat `claude-release-candidate-monitor`. It is anchored at 01:52
+America/Chicago and then checks every fifteen minutes. On its first post-reset run, it must resume
+Claude on the same branch only if the usage limit stopped the task; otherwise it stays silent. It
+watches `origin/claude/production-test-release-candidate` and reports only a new meaningful
+checkpoint, completion, test failure, blocker, or required owner action. It is forbidden to merge,
+deploy, purchase, modify production, create another branch, or send redundant Claude prompts.
+Disable it after final review.
 
 ## Live evidence gathered
 
@@ -114,11 +116,10 @@ commit Railway or Cloudflare used, a real Daily call, a payment, or device behav
 
 ## Next pickup
 
-1. After the owner's action-time confirmation, press Send on the already-drafted Claude task.
-2. Let the heartbeat report a checkpoint instead of manually polling Claude.
-3. Independently review Claude's branch and rerun risk-proportionate tests.
-4. Build and deploy a preview release candidate first. Then, only with passing evidence and owner
+1. Let the heartbeat report a checkpoint instead of manually polling Claude.
+2. Independently review Claude's branch and rerun risk-proportionate tests.
+3. Build and deploy a preview release candidate first. Then, only with passing evidence and owner
    approval, fast-forward/merge the reviewed release into `main`, deploy the API in the documented
    additive-schema-first order, enable the two production test kill switches, create only explicit
    short-lived owner test grants, and verify the real Daily classroom on the main domain.
-5. Keep payment credentials configured; ordinary users must never gain the test bypass.
+4. Keep payment credentials configured; ordinary users must never gain the test bypass.
