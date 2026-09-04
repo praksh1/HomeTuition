@@ -38,6 +38,16 @@ interface PersonDetail {
     enabled: boolean;
     grant: { id: number; tier: string; reason: string; grantedAt: string; validUntil: string } | null;
   };
+  /**
+   * Temporary permission to book a test class without paying. The student-side companion.
+   *
+   * Same shape, separate switch: the teaching one governs whether test *classes* can be created,
+   * this one whether they can be *booked* for free.
+   */
+  testStudentAccess?: {
+    enabled: boolean;
+    grant: { id: number; reason: string; grantedAt: string; validUntil: string } | null;
+  };
 }
 
 /**
@@ -61,6 +71,7 @@ export default function AdminPerson() {
   const [note, setNote] = useState("");
   const [resetCode, setResetCode] = useState<string | null>(null);
   const [grantReason, setGrantReason] = useState("");
+  const [studentGrantReason, setStudentGrantReason] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -167,6 +178,32 @@ export default function AdminPerson() {
     }
   };
 
+  const grantStudentTestAccess = async () => {
+    if (!studentGrantReason.trim()) {
+      notify("Say why", "An unexplained grant cannot be audited later.");
+      return;
+    }
+    try {
+      await apiPost(`/admin/students/${id}/test-access`, { reason: studentGrantReason.trim(), days: 7 });
+      setStudentGrantReason("");
+      await load();
+      notify("Test booking access granted.", "Seven days. No payment will be processed for test classes.");
+    } catch (e) {
+      notify("Could not grant test booking access", e instanceof Error ? e.message : "Please try again.");
+    }
+  };
+
+  const revokeStudentTestAccess = async () => {
+    if (!(await confirm("End test booking access?", "They will pay for every class from now on.", "End it"))) return;
+    try {
+      await apiPost(`/admin/students/${id}/test-access/revoke`, {});
+      await load();
+      notify("Test booking access ended.", "It stops applying on their next booking.");
+    } catch (e) {
+      notify("Could not end test booking access", e instanceof Error ? e.message : "Please try again.");
+    }
+  };
+
   const decideDocument = async (credentialId: number, decision: "approved" | "rejected") => {
     if (decision === "rejected" && !note.trim()) {
       notify("Say what is wrong", "The teacher needs a specific reason before the upload can be reopened.");
@@ -201,6 +238,7 @@ export default function AdminPerson() {
 
   const { user, teacherProfile, activity, credentials } = data;
   const grant = data.testAccess?.grant ?? null;
+  const studentGrant = data.testStudentAccess?.grant ?? null;
 
   return (
     <ScrollView
@@ -353,6 +391,89 @@ export default function AdminPerson() {
                   Give 7 days of test access (Base allowance)
                 </Text>
               </TouchableOpacity>
+            </>
+          )}
+        </View>
+      )}
+
+      {/*
+        Test booking access — the student-side companion, and only ever on a student's record.
+
+        The same shape as the teaching card above on purpose: an operator moving between the two
+        should not have to learn a second control. The eligibility rules the server enforces are
+        stated here rather than hidden, so a refusal is never a surprise.
+      */}
+      {user.role === "student" && (
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Test booking access</Text>
+          <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+            Lets this student book a class that a teacher created under test teaching access, without
+            paying. It works on those classes only — every other class is paid for in full, by them
+            and by everyone else. Nothing is recorded as revenue and no refund can be claimed against
+            it. It ends by itself on the date shown.
+          </Text>
+
+          {!data.testStudentAccess?.enabled ? (
+            <Text style={[styles.meta, { color: colors.warn }]}>
+              Switched off on this server. ALLOW_TEST_STUDENT_ACCESS must be set on the API before
+              grants work.
+            </Text>
+          ) : studentGrant ? (
+            <>
+              <View style={[styles.codeBox, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+                <Text testID="admin-student-test-active" style={[styles.actionText, { color: colors.foreground }]}>
+                  Active until {new Date(studentGrant.validUntil).toLocaleString()}
+                </Text>
+                <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+                  Granted {new Date(studentGrant.grantedAt).toLocaleString()} · {studentGrant.reason}
+                </Text>
+              </View>
+              <TouchableOpacity
+                testID="admin-revoke-student-test"
+                style={[styles.action, { borderColor: colors.destructive }]}
+                onPress={() => void revokeStudentTestAccess()}
+                accessibilityRole="button"
+                accessibilityLabel="End this student's test booking access now"
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.actionText, { color: colors.destructive }]}>End test booking access now</Text>
+              </TouchableOpacity>
+            </>
+          ) : !data.emailVerified || user.suspendedAt ? (
+            <Text style={[styles.meta, { color: colors.mutedForeground }]}>
+              {user.suspendedAt
+                ? "Not available while this account is suspended. Lift the suspension first."
+                : "Available once this account's email is verified. Test access does not skip that."}
+            </Text>
+          ) : (
+            <>
+              <TextInput
+                testID="admin-student-test-reason"
+                style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.background }]}
+                placeholder="Why does this account need test booking access?"
+                placeholderTextColor={colors.mutedForeground}
+                value={studentGrantReason}
+                onChangeText={setStudentGrantReason}
+                accessibilityLabel="Reason for granting test booking access"
+                multiline
+                textAlignVertical="top"
+              />
+              <TouchableOpacity
+                testID="admin-grant-student-test"
+                style={[styles.action, { borderColor: colors.border }]}
+                onPress={() => void grantStudentTestAccess()}
+                accessibilityRole="button"
+                accessibilityLabel="Give this student seven days of test booking access"
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.actionText, { color: colors.foreground }]}>
+                  Give 7 days of test booking access
+                </Text>
+              </TouchableOpacity>
+              <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+                The server checks again before it writes the grant: verified email, finished
+                onboarding, and an account in good standing.
+              </Text>
             </>
           )}
         </View>

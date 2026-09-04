@@ -25,7 +25,8 @@ interface Session {
   price: number;
   status: "upcoming" | "live" | "completed" | "cancelled";
   /** How this student stands with the class: still in it, or dropped out of it. */
-  enrolment?: "paid" | "refunded" | null;
+  /** `test` means an operator granted this place for testing. See utils/testAccess.ts. */
+  enrolment?: "paid" | "refunded" | "test" | null;
 }
 
 /** How often the session list re-checks for classes going live while the screen is open. */

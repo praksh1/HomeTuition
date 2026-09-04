@@ -26,6 +26,7 @@ import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
 import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
+import { TEST_CLASS_LABEL } from "@/utils/testAccess";
 import {
   callWindowControls,
   callWindowReducer,
@@ -322,6 +323,14 @@ export default function Classroom() {
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
+  /**
+   * Set when this class is a test class, to the server's own words for it.
+   *
+   * Nobody in this room paid for it, and neither of them should have to work that out from the
+   * absence of a receipt. The server decides — it is the only side that knows what the enrolment
+   * says — and the banner just repeats what it was told.
+   */
+  const [testClass, setTestClass] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
   /**
    * Set when this class is too old to open. Nothing about the call is set up while it is —
@@ -599,12 +608,18 @@ export default function Classroom() {
         roomUrl: url,
         token,
         provider,
+        test,
+        testLabel,
       } = await apiGet<{
         roomUrl: string;
         token?: string | null;
         provider?: string;
+        /** Set when this class was created, or this place taken, under an operator test grant. */
+        test?: boolean;
+        testLabel?: string;
       }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
+      setTestClass(test ? testLabel || TEST_CLASS_LABEL : null);
       setRoomUrl(url);
       setMeetingToken(token ?? null);
       setRoomError(false);
@@ -1217,6 +1232,36 @@ export default function Classroom() {
               </View>
             ) : null}
           </View>
+          {/*
+            A class nobody paid for says so, to everybody in it.
+
+            In the always-visible pill rather than a dismissible notice: the point is that it
+            cannot be mistaken for an ordinary class at any moment during the lesson, by either
+            person in the room. The sentence is the server's — this side never decides that a
+            class was free.
+          */}
+          {testClass ? (
+            <View
+              testID="classroom-test-banner"
+              accessibilityRole="alert"
+              style={[
+                s.testBanner,
+                {
+                  marginTop: space.xs,
+                  paddingHorizontal: space.sm,
+                  paddingVertical: space.xxs,
+                  borderRadius: radius.pill,
+                  backgroundColor: colors.warnSoft,
+                  borderColor: colors.warn,
+                },
+              ]}
+            >
+              <Feather name="alert-triangle" size={12} color={colors.warn} />
+              <Text style={[t.overline, { color: colors.warn }]} numberOfLines={2}>
+                {testClass}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Presence — do not render avatar bubbles or an "active" count at all when
@@ -2288,6 +2333,13 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   sessionInfo: { flex: 1 },
+  testBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    borderWidth: 1,
+  },
   liveTag: { flexDirection: "row", alignItems: "center" },
   liveDot: { width: 8, height: 8, borderRadius: 4 },
   presence: {

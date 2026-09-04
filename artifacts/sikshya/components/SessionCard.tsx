@@ -2,8 +2,10 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { numeric } from "@/constants/typography";
+import { TEST_CLASS_LABEL } from "@/utils/testAccess";
 
 interface Session {
   id: string;
@@ -16,6 +18,12 @@ interface Session {
   enrolledStudents: string[];
   price: number;
   status: "upcoming" | "live" | "completed" | "cancelled";
+  /**
+   * This viewer's own place in the class, as the server reports it. `test` means an operator
+   * granted the place for testing and no payment was taken — which the card has to say, because
+   * the price beside it is the price everybody else pays.
+   */
+  enrolment?: string | null;
 }
 
 interface SessionCardProps {
@@ -26,6 +34,7 @@ interface SessionCardProps {
 
 export default function SessionCard({ session, onPress, showTeacher = false }: SessionCardProps) {
   const colors = useColors();
+  const { t } = useLayout();
   const date = new Date(session.date);
   const isLive = session.status === "live";
   const isCompleted = session.status === "completed";
@@ -83,6 +92,23 @@ export default function SessionCard({ session, onPress, showTeacher = false }: S
           NPR {session.price.toLocaleString()} per class
         </Text>
       </View>
+
+      {/*
+        Said next to the price, which is the number it contradicts.
+
+        A card that shows "NPR 500 per class" above a seat nobody paid for is the fabrication this
+        project keeps finding. The label goes where the misreading would happen.
+      */}
+      {session.enrolment === "test" ? (
+        <View
+          testID={`session-test-label-${session.id}`}
+          accessibilityRole="text"
+          style={[styles.testLabel, { backgroundColor: colors.warnSoft, borderColor: colors.warn }]}
+        >
+          <Feather name="alert-triangle" size={12} color={colors.warn} />
+          <Text style={[t.overline, { color: colors.warn }]}>{TEST_CLASS_LABEL}</Text>
+        </View>
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -115,4 +141,15 @@ const styles = StyleSheet.create({
   metaItem: { flexDirection: "row", alignItems: "center", gap: 4 },
   metaText: { fontSize: 12, fontFamily: "Inter_400Regular" },
   price: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginLeft: "auto" },
+  testLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
 });
