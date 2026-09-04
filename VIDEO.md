@@ -19,15 +19,22 @@ a rewrite of every classroom screen.
 
 ## What a provider has to do
 
-Two things. That is the whole contract — `artifacts/api-server/src/lib/video/types.ts`.
+Two things, and one optional third. That is the whole contract —
+`artifacts/api-server/src/lib/video/types.ts`.
 
 ```ts
 ensureRoom(sessionId): Promise<string>            // where to join
-joinToken(sessionId, { isOwner, userName }): Promise<string | null>   // who may join it
+joinToken(sessionId, { isOwner, userName, userId }): Promise<string | null>   // who may join it
+identityFor?(userId): string                      // what it will call that person, if anything
 ```
 
 Plus a name, a `configured()` check, and a statement of what it can do (`screenShare`,
 `builtInChat`).
+
+`userId` and `identityFor` arrived with the Stream experiment and are not a Stream detail: every
+candidate that mints its own token binds it to an identity, and the app has to send back the
+*same* string or fail to authenticate. `identityFor` is optional, so Daily — which has no
+identities — returns `null` in the room grant rather than being made to invent one.
 
 It is this small because **the provider carries audio and video and nothing else.** Presence,
 chat, the whiteboard, the attendance record and the time limit all run over this project's own
@@ -41,7 +48,11 @@ the provider does not touch any of them.
 | LiveKit | the `wss://` server URL | a JWT with room, identity and grants |
 | Jitsi | the room URL | a JWT, or null for an open instance |
 | 100ms | the room URL | an auth token |
+| **Stream** | **a locator, `stream:call/<type>/<id>?api_key=…` — it has no per-call URL** | **a JWT scoped to one call, valid an hour** |
 | Built here | your own URL | your own token |
+
+Stream is the one that stretched the shape, and it still fits: a string that says where to join
+is a string whether or not it happens to be a link. See STREAM.md.
 
 ## Doing it
 
@@ -51,18 +62,28 @@ the provider does not touch any of them.
    An iframe-based provider may need nothing — point it at the existing embed.
 4. Set `VIDEO_PROVIDER=<name>` on Railway.
 
+Stream has been through all four, on `claude/stream-video-poc`, and STREAM.md is the write-up:
+what it took, what it proved, and the native-dependency conflict that stops a phone test until
+somebody decides about it.
+
 Nothing in the routes changes. Nothing in the classroom screens changes.
 
 ## Checking it
 
-`pnpm --filter @workspace/api-server run test:video` starts the real server twice — once on
-Daily and once on `echo`, a provider that carries no video and exists only for this — and
-checks that every rule around the room is identical either way: who may have one, when the door
-opens, and who gets moderator rights.
+`pnpm --filter @workspace/api-server run test:video` starts the real server three times — on
+Daily, on `echo` (a provider that carries no video and exists only for this), and on `stream`
+with no credentials — and checks that every rule around the room is identical each way: who may
+have one, when the door opens, and who gets moderator rights.
 
-That last one is the one to watch. **Moderator rights come from the server's own membership
-check, never from the client and never from the provider.** A swap that quietly handed every
-student the teacher's powers would be a bad day; there is a test that says it does not.
+Moderator rights are the one to watch. **They come from the server's own membership check, never
+from the client and never from the provider.** A swap that quietly handed every student the
+teacher's powers would be a bad day; there is a test that says it does not.
+
+The third run adds a second thing to watch: the *order* the refusals come in. With an
+unconfigured provider a member gets a 502 and no room, but somebody who never booked gets a
+**403** and somebody signed out a **401** — the membership check runs before the provider is ever
+consulted. If those ever swapped over, an unconfigured provider would look like an access control
+and a configured one would quietly stop being one.
 
 Point the suite at your new provider by adding it to `PROVIDERS` and running with
 `VIDEO_PROVIDER=<name>`.

@@ -744,6 +744,25 @@ Which provider, and self-hosted or managed. The trade is roughly *cost* against 
 up when a class will not connect at 8pm in Kathmandu*. The owner is non-technical, which is the
 strongest argument against self-hosting and has to be weighed honestly against the numbers.
 
+**The Stream experiment is built and is waiting on two answers.** `claude/stream-video-poc` holds
+a complete Stream Video adapter behind the existing seam — server, app window, 86 tests — with
+Daily still the default and still untouched. It stops at a boundary that turned out to be earlier
+than expected, and the two questions are:
+
+1. **May a free Stream account be created?** Nothing has been. Without a key nothing can be
+   tried, and with one the web half can be tried the same afternoon. It is free and needs no
+   card; STREAM.md §7 has what little of the route could be verified from here.
+2. **How far is a phone test worth going?** Stream's phone SDK and Daily's cannot be installed in
+   the same app — they ship two conflicting copies of the same WebRTC library, and the build
+   simply refuses. Testing Stream on a phone therefore means a **separate throwaway build with
+   Daily taken out**, installed alongside the real app. That is a day's work and it cannot be
+   compared side by side with Daily on one handset.
+
+The web test answers most questions — quality from Kathmandu, whether the whiteboard still feels
+right beside it, whether the controls suit a phone screen. Only one thing genuinely needs the
+phone build: **screen sharing from a phone**, which Daily cannot do here at all and Stream can.
+That is the whole of the decision.
+
 ### 8.5 Chat, once an installed app exists
 
 **Daily's chat is web-only.** The moment an installed app is in someone's hands, a class mixing
