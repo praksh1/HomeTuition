@@ -26,14 +26,16 @@ interface Session {
   /** Its start time has been and gone and nobody started it. Decided by the server. */
   expired?: boolean;
   /**
-   * Created under a test grant, so its price is not money anybody will ever be paid.
+   * Created under a test grant, so an approved test booking may take a place in it for nothing.
    *
    * The server's own fact, from `test_classes`. Without it this list showed "NPR 500 per class"
-   * against a class that had never taken a rupee, and a teacher adding up their month from this
-   * screen counted income that does not exist.
+   * with nothing to say the class is open to bookings that will never pay it, and a teacher adding
+   * up their month from this screen counted income that may not arrive. It does **not** mean every
+   * booking is free — an ordinary student pays in full — which is why the wording says
+   * "test-enabled" rather than anything about payment.
    */
-  test?: boolean;
-  testLabel?: string;
+  testClass?: boolean;
+  testClassLabel?: string;
 }
 
 /**
@@ -83,7 +85,7 @@ export default function TeacherSessions() {
       : filter === "expired" ? "&status=upcoming"
       : `&status=${filter}`;
     try {
-      const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; expired?: boolean; test?: boolean; testLabel?: string }[] }>(
+      const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; expired?: boolean; testClass?: boolean; testClassLabel?: string }[] }>(
         `/sessions?teacherId=${teacher.userId}${statusParam}&limit=100`
       );
       setSessions(res.sessions.map((s) => ({
@@ -99,8 +101,8 @@ export default function TeacherSessions() {
         price: s.price,
         status: s.status as Session["status"],
         expired: s.expired === true,
-        test: s.test === true,
-        testLabel: s.testLabel,
+        testClass: s.testClass === true,
+        testClassLabel: s.testClassLabel,
       })));
     } catch (_e) {
       // An empty list and a failed request used to look identical: both showed "No sessions
@@ -354,6 +356,9 @@ export default function TeacherSessions() {
           <SessionCard
             session={item}
             onPress={() => openSession(item)}
+            // The teacher owns these classes, so this is the one list where "test-enabled"
+            // is the right thing to say: it is their income the marker is qualifying.
+            showTestClass
           />
         )}
         ListEmptyComponent={

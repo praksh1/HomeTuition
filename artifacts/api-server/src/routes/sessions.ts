@@ -40,7 +40,8 @@ import { refundsTable, scheduleChangesTable } from "@workspace/db";
 import { isRecurringDay, notARecurringDay } from "../lib/monthlyStore";
 import { mayCreateClassAt } from "../lib/sessionAllowance";
 import {
-  TEST_LABEL,
+  TEST_BOOKING_LABEL,
+  TEST_CLASS_LABEL,
   TEST_PAYMENT_METHOD,
   TEST_PAYMENT_STATUS,
   admitsTestEnrolment,
@@ -96,11 +97,19 @@ async function markEnrolmentPaid(sessionId: number, studentId: number, reference
  *
  * Attached to the response rather than stored on the row: `sessions` is read with a bare
  * `select()` in six routes, where a new column is a 500 until the schema is pushed by hand.
+ *
+ * **`testClass` is eligibility, not a payment claim.** A test class is only *open* to approved
+ * test bookings; everybody else pays the price on the card. This used to send `test: true` with
+ * the label "no payment was processed" to every viewer, so an ordinary student was told they
+ * would not be charged and then charged. The class-level field says what is true of the class and
+ * nothing about anybody's money; the booking-level field, on the enrolment, is the only place a
+ * no-payment claim belongs.
  */
 async function tagTestClasses<T extends { id: number }>(rows: T[]): Promise<T[]> {
   const marked = await testClassIds(rows.map((row) => row.id));
   if (marked.size === 0) return rows;
-  return rows.map((row) => (marked.has(row.id) ? { ...row, test: true, testLabel: TEST_LABEL } : row));
+  return rows.map((row) =>
+    marked.has(row.id) ? { ...row, testClass: true, testClassLabel: TEST_CLASS_LABEL } : row);
 }
 
 const router: IRouter = Router();
@@ -668,6 +677,15 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
      * a banner from this, and it travels with the room rather than being looked up separately, so
      * a screen cannot show the call without also knowing what kind of class it is.
      */
+    /**
+     * Two separate facts, and the classroom paints different things from each.
+     *
+     * `testClass` — this class is open to test bookings. True for everybody in it, and it says
+     * nothing about whether *this* person paid. `testBooking` — this viewer's own place was
+     * granted and no money moved for it. It used to be one flag, so an ordinary student who had
+     * genuinely paid for a seat in a test class sat under a banner telling them their payment had
+     * not been taken.
+     */
     const testClass = await isTestClass(id);
     res.json({
       roomUrl,
@@ -675,9 +693,8 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       isOwner: membership!.isSessionTeacher,
       provider: video.name,
       capabilities: video.capabilities,
-      ...(testClass || membership!.viaTestAccess
-        ? { test: true, testLabel: TEST_LABEL }
-        : null),
+      ...(testClass ? { testClass: true, testClassLabel: TEST_CLASS_LABEL } : null),
+      ...(membership!.viaTestAccess ? { testBooking: true, testBookingLabel: TEST_BOOKING_LABEL } : null),
     });
   } catch (err) {
     req.log.error({ err, sessionId: id, provider: video.name }, "could not set up the video room");
@@ -1462,7 +1479,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         res.status(200).json({
           alreadyBooked: true,
           paid: !result.viaTestAccess,
-          ...(result.viaTestAccess ? { test: true, testLabel: TEST_LABEL } : null),
+          ...(result.viaTestAccess ? { testBooking: true, testBookingLabel: TEST_BOOKING_LABEL } : null),
         });
         return;
       default: {
@@ -1494,7 +1511,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
            * one saying they were. It reports zero and says why.
            */
           amount: result.viaTestAccess ? 0 : session.price,
-          ...(result.viaTestAccess ? { test: true } : null),
+          ...(result.viaTestAccess ? { testBooking: true } : null),
           at: new Date().toISOString(),
         });
         res.status(201).json({
@@ -1509,7 +1526,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
            * the app asks again straight afterwards; whether they were charged is this field.
            */
           paid: !result.viaTestAccess,
-          ...(result.viaTestAccess ? { test: true, testLabel: TEST_LABEL } : null),
+          ...(result.viaTestAccess ? { testBooking: true, testBookingLabel: TEST_BOOKING_LABEL } : null),
         });
         return;
       }
@@ -1591,8 +1608,33 @@ router.get("/sessions/:id/access", requireAuth, async (req, res): Promise<void> 
     ? new Date(membership.scheduledFor.getTime() - JOIN_WINDOW_MINUTES * 60_000).toISOString()
     : null;
 
+  /**
+   * May **this signed-in person** book **this class** without paying?
+   *
+   * The same three gates the booking transaction enforces, asked in advance so the app knows
+   * whether to open a payment sheet at all. Without it the student was walked through choosing a
+   * method and typing a phone number and a PIN, and the server then bypassed the gateway behind
+   * their back — a payment ritual for a payment that never happens, and a walkthrough document
+   * that said no payment screen would appear.
+   *
+   * **Every input is server-side.** The user comes from the verified token, never from a
+   * `studentId` the client sent; the grant is read live, so an expired or revoked one is false
+   * the moment it lapses; and the class marker alone is never enough, because a test class is
+   * merely *eligible* — an ordinary student booking one pays in full.
+   *
+   * This is a convenience for the screen and nothing more. `POST /sessions/:id/book` re-derives
+   * all three inside its own transaction and is the only thing that decides.
+   */
+  const canBookAsTest =
+    !membership.isSessionTeacher &&
+    !membership.isEnrolledStudent &&
+    testStudentAllowed() &&
+    (await isTestClass(id)) &&
+    (await liveTestStudentGrant(req.user!.userId)) !== null;
+
   res.json({
     canJoin: canAccessSession(membership),
+    canBookAsTest,
     isTeacher: membership.isSessionTeacher,
     isEnrolled: membership.isEnrolledStudent,
     hasPaid: membership.hasPaid,

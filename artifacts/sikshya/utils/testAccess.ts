@@ -1,15 +1,25 @@
 /**
- * What a test class is called, on the screens that show one.
+ * **Two facts, two sentences, and they are not interchangeable.**
  *
- * The server sends its own wording with the room (`testLabel`), and that is what gets painted —
- * this is the fallback for a build talking to a server too old to send it, and the single place
- * the sentence is written on this side. It mirrors `TEST_LABEL` in
- * `api-server/src/lib/testStudentAccess.ts`.
+ * Mirrors `TEST_CLASS_LABEL` and `TEST_BOOKING_LABEL` in
+ * `api-server/src/lib/testStudentAccess.ts`. The server sends its own wording with every response;
+ * these are the fallback for a build talking to an older server, and the single place either
+ * sentence is written on this side.
  *
- * The wording matters and is deliberate. "Test class" alone leaves somebody wondering whether they
- * were charged; the sentence answers that in the same breath.
+ * The distinction was learned the hard way. One flag and one label went to every viewer of a test
+ * class, so an ordinary student — who pays full price for that same class, because a test class is
+ * only *eligible* for test bookings — read "no payment was processed" **before being charged**,
+ * and an ordinary paid student sat in the classroom under a banner saying their money had not been
+ * taken.
+ *
+ * - **Class-level.** True of the class, for everyone, forever. Says what the class is open to and
+ *   makes no claim about anybody's money.
+ * - **Booking-level.** True of one person's own place. The only place a no-payment claim is honest.
  */
-export const TEST_CLASS_LABEL = "TEST — no payment was processed";
+export const TEST_CLASS_LABEL = "TEST-ENABLED CLASS — only approved test bookings bypass payment";
+
+/** One person's own enrolment took no money. Never shown to somebody who paid. */
+export const TEST_BOOKING_LABEL = "TEST — no payment was processed";
 
 /**
  * What a teacher is told when somebody takes a place in one of their classes.
@@ -21,20 +31,21 @@ export const TEST_CLASS_LABEL = "TEST — no payment was processed";
  * "Sita booked your class". Nothing in the old wording was a lie on its own — it simply left out
  * the only part that mattered, and a teacher reading it counts a sale that never happened.
  *
- * `test` is a flag, never inferred from `amount === 0`. A genuinely free class and a class nobody
- * was charged for are different facts, and guessing gets both of them wrong.
+ * `testBooking` is a flag, never inferred from `amount === 0`. A genuinely free class and a class
+ * nobody was charged for are different facts, and guessing gets both of them wrong.
  */
 export function bookingNotice(booking: {
   topic: string;
   studentName?: string;
   amount?: number;
-  test?: boolean;
+  /** *This booking* took no money. Not "the class is a test class" — see the labels above. */
+  testBooking?: boolean;
 }): { title: string; body: string } {
   const who = booking.studentName ?? "A student";
-  if (booking.test) {
+  if (booking.testBooking) {
     return {
       title: `${who} joined your class — TEST`,
-      body: `"${booking.topic}" — ${TEST_CLASS_LABEL}.`,
+      body: `"${booking.topic}" — ${TEST_BOOKING_LABEL}.`,
     };
   }
   return {

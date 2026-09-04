@@ -30,12 +30,17 @@ export interface UserEvent {
   /** What was paid, when the news is about money. */
   amount?: number;
   /**
-   * Set by the server when no payment was taken at all — an operator-granted test booking.
+   * Set by the server when **this booking** took no payment — an operator-granted test booking.
+   *
+   * Named for the booking, not the class. A class being *open* to test bookings is a separate
+   * fact and says nothing about whether this one took money; one field for both is how an
+   * ordinary student came to be told "no payment was processed" about a class they were about to
+   * be charged full price for.
    *
    * Carried as its own flag rather than read off `amount`, because a free class and a class
    * nobody was charged for are different things and only one of them needs saying.
    */
-  test?: boolean;
+  testBooking?: boolean;
   /** Where a moved class now is, and where it was. ISO strings. */
   newDate?: string;
   previousDate?: string;

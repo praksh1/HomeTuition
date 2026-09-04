@@ -131,8 +131,27 @@ export const TEST_PAYMENT_STATUS = "test";
 /** The method a test booking records, in place of a gateway that was never called. */
 export const TEST_PAYMENT_METHOD = "test_access";
 
-/** What a person is told, wherever a test enrolment or a test class is shown. */
-export const TEST_LABEL = "TEST — no payment was processed";
+/**
+ * **Two facts, two sentences. They are not interchangeable and must never share a field.**
+ *
+ * Collapsing them is a mistake that was made here and shipped: one `test` boolean carrying one
+ * label went to every viewer of a test class, so an ordinary student — who pays full price for
+ * that same class, because a test class is only *eligible* for test bookings — was shown "no
+ * payment was processed" **before being charged**, and an ordinary paid student sat in the
+ * classroom under a banner saying their money had not been taken.
+ *
+ * | | fact | true of | may say |
+ * |---|---|---|---|
+ * | `TEST_CLASS_LABEL` | this class was created under a teacher's test grant, so an approved test booking *may* bypass payment | the class, immutably | that the class is test-**enabled** |
+ * | `TEST_BOOKING_LABEL` | *this* enrolment was granted, and no money moved for it | one viewer's own place | "no payment was processed" |
+ *
+ * Only the second may ever claim a payment did not happen. The first says what is true of the
+ * class and stops there — everybody without a grant pays the price on the card.
+ */
+export const TEST_CLASS_LABEL = "TEST-ENABLED CLASS — only approved test bookings bypass payment";
+
+/** True of one person's own enrolment, and the only place a no-payment claim is honest. */
+export const TEST_BOOKING_LABEL = "TEST — no payment was processed";
 
 /**
  * The enrolment statuses that mean "in this class, right now".

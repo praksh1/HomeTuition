@@ -5,7 +5,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { numeric } from "@/constants/typography";
-import { TEST_CLASS_LABEL } from "@/utils/testAccess";
+import { TEST_BOOKING_LABEL, TEST_CLASS_LABEL } from "@/utils/testAccess";
 
 interface Session {
   id: string;
@@ -20,31 +20,42 @@ interface Session {
   status: "upcoming" | "live" | "completed" | "cancelled";
   /**
    * This viewer's own place in the class, as the server reports it. `test` means an operator
-   * granted the place for testing and no payment was taken.
+   * granted the place and no money was taken **for them**.
    */
   enrolment?: string | null;
   /**
-   * The class itself was created under a teacher's test grant — the server's own fact, from
-   * `test_classes`, sent with every session.
+   * The class was created under a teacher's test grant — the server's fact, from `test_classes`.
    *
-   * Separate from `enrolment` and this is the important half. The label used to hang off the
-   * viewer's enrolment alone, so only the test student ever saw it: the **teacher's** list showed
-   * "NPR 500 per class" against a class that had never taken a rupee and never would, with
-   * nothing to say so. A teacher adding up their month from that screen counts money that does
-   * not exist.
+   * **Eligibility, not a payment claim.** A test class is merely *open* to approved test
+   * bookings; anybody without a grant pays the price on this card in full. Shown only to the
+   * teacher who owns the class (see `showTestClass`), because to a student browsing it the class
+   * is an ordinary paid one and the marker would invite exactly the misreading it is trying to
+   * prevent.
    */
-  test?: boolean;
-  /** The server's own wording. Falls back to the shared constant on an older server. */
-  testLabel?: string;
+  testClass?: boolean;
+  /** The server's own wording for the class-level fact. */
+  testClassLabel?: string;
 }
 
 interface SessionCardProps {
   session: Session;
   onPress?: () => void;
   showTeacher?: boolean;
+  /**
+   * Show the class-level "test-enabled" marker.
+   *
+   * Off by default, and on only where the audience is the teacher who owns the class. An
+   * ordinary student pays full price for a test class, so telling them the class is test-enabled
+   * answers a question they did not ask with a word that sounds like "free". They get normal
+   * price and payment language; the marker on their own card is about *their* booking, and comes
+   * from `enrolment` instead.
+   */
+  showTestClass?: boolean;
 }
 
-export default function SessionCard({ session, onPress, showTeacher = false }: SessionCardProps) {
+export default function SessionCard({
+  session, onPress, showTeacher = false, showTestClass = false,
+}: SessionCardProps) {
   const colors = useColors();
   const { t } = useLayout();
   const date = new Date(session.date);
@@ -106,21 +117,36 @@ export default function SessionCard({ session, onPress, showTeacher = false }: S
       </View>
 
       {/*
-        Said next to the price, which is the number it contradicts.
+        Two different sentences, next to the price, and never both at once.
 
-        A card that shows "NPR 500 per class" above a seat nobody paid for is the fabrication this
-        project keeps finding. The label goes where the misreading would happen — and it is shown
-        for the class being a test class *or* for this viewer's place being one, so the teacher
-        who created it sees it as surely as the student who took a seat in it.
+        A card showing "NPR 500 per class" above a seat nobody paid for is the fabrication this
+        project keeps finding — but the fix for it produced a second one, in the other direction:
+        the same "no payment was processed" label went to every viewer of a test class, so a
+        student about to be charged full price for it read that they would not be.
+
+        So: this viewer's own place being a granted one is the only thing that may say no payment
+        was taken. The class merely being open to such bookings is a different sentence, and is
+        shown only to the teacher who owns it.
       */}
-      {session.test || session.enrolment === "test" ? (
+      {session.enrolment === "test" ? (
         <View
-          testID={`session-test-label-${session.id}`}
+          testID={`session-test-booking-${session.id}`}
           accessibilityRole="text"
           style={[styles.testLabel, { backgroundColor: colors.warnSoft, borderColor: colors.warn }]}
         >
           <Feather name="alert-triangle" size={12} color={colors.warn} />
-          <Text style={[t.overline, { color: colors.warn }]}>{session.testLabel ?? TEST_CLASS_LABEL}</Text>
+          <Text style={[t.overline, { color: colors.warn }]}>{TEST_BOOKING_LABEL}</Text>
+        </View>
+      ) : showTestClass && session.testClass ? (
+        <View
+          testID={`session-test-class-${session.id}`}
+          accessibilityRole="text"
+          style={[styles.testLabel, { backgroundColor: colors.warnSoft, borderColor: colors.warn }]}
+        >
+          <Feather name="alert-triangle" size={12} color={colors.warn} />
+          <Text style={[t.overline, { color: colors.warn }]}>
+            {session.testClassLabel ?? TEST_CLASS_LABEL}
+          </Text>
         </View>
       ) : null}
     </TouchableOpacity>

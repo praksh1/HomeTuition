@@ -24,9 +24,19 @@ classes pays the full price. The only thing that is free is your test student bo
 teacher's class.
 
 Nothing you do in a test class is counted as money. It never appears as earnings, it never
-becomes a refund somebody owes, and no receipt is created. Every screen that shows one says
-**"TEST — no payment was processed"**, so nobody — including you, in three weeks — can mistake it
-for a real sale.
+becomes a refund somebody owes, and no receipt is created.
+
+### Two labels, and they mean different things
+
+This matters, because the app is careful about it and you will see both:
+
+| What you see | What it means | Who sees it |
+|---|---|---|
+| **TEST-ENABLED CLASS — only approved test bookings bypass payment** | This class was created under test teaching access, so an approved test booking *may* take a place in it for nothing. It does **not** mean the class is free. | The teacher who created it, on their own class list and in their classroom. |
+| **TEST — no payment was processed** | *This particular person* took their place with test booking access, and no money changed hands for it. | Only the person it is true of, on their own class card and in their classroom. |
+
+A student who genuinely pays for a seat in a test class sees **neither** — they see the ordinary
+price and the ordinary payment screen, because for them it is an ordinary paid class.
 
 ---
 
@@ -135,13 +145,21 @@ different — the class being a test class is recorded, not advertised on this s
 1. In another window, sign in as the **student** account.
 2. Find the class and book it. Choose any payment method.
 
-**What you should see:** it books immediately, and the class appears under **My Sessions** with an
-orange label reading **TEST — NO PAYMENT WAS PROCESSED** underneath the price. No payment screen
-appears, because no payment provider is contacted at all.
+**What you should see, in this order:**
 
-If you are asked to pay, one of three things is true: the switch in step 0 is not set, this
-student's grant has expired or been ended, or this class was not created by a teacher who had test
-teaching access at the time. All three are working as intended.
+1. On the teacher's profile, the button under the class does **not** say "Book & pay NPR 500". It
+   says **"Take a test place — no payment"**.
+2. Pressing it books immediately. **No payment screen appears at all** — you are never asked to
+   choose eSewa or Khalti, and never asked for a phone number or a PIN. Nothing is sent that could
+   be mistaken for a payment.
+3. A confirmation appears reading **"You're in — no payment was taken"**.
+4. The class then appears under **My Sessions** with an orange label reading
+   **TEST — NO PAYMENT WAS PROCESSED** underneath the price.
+
+If the button says "Book & pay" and a payment screen opens, one of three things is true: the
+switch in step 0 is not set, this student's grant has expired or been ended, or this class was not
+created by a teacher who had test teaching access at the time. All three are working as intended —
+the app is telling you that this booking is a real one.
 
 ---
 
@@ -151,11 +169,17 @@ teaching access at the time. All three are working as intended.
 2. As the student, join it.
 
 **What you should see:** the real classroom — the real Daily video, the real whiteboard, the real
-chat. At the top of both screens, under the class name, an orange strip reading
-**TEST — NO PAYMENT WAS PROCESSED**, for the whole lesson.
+chat. At the top of each screen, under the class name, an orange strip that says the thing that is
+true for whoever is reading it:
+
+- the **student** sees **TEST — NO PAYMENT WAS PROCESSED**, because that is true of their place;
+- the **teacher** sees **TEST-ENABLED CLASS — ONLY APPROVED TEST BOOKINGS BYPASS PAYMENT**,
+  because that is true of the class they are running.
 
 This is the actual product. Nothing about the video, the board, the chat, the attendance record or
-the clock behaves differently in a test class.
+the clock behaves differently in a test class. Your test student appears on the teacher's list of
+who is coming and in the attendance record, and a message the teacher writes in the class's own
+thread reaches them like anybody else's.
 
 ---
 
@@ -189,3 +213,5 @@ them any more — which is right, because the permission that let them in has en
   class was not a test class; check the teacher had test teaching access *before* they created it.
   A class is marked when it is made, and giving the teacher access afterwards does not change a
   class that already exists.
+- **A student who paid sees no label at all** → correct, and deliberate. For them it is an
+  ordinary paid class, and the app does not put the word "test" next to their money.

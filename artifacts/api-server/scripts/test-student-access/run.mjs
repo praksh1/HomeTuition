@@ -163,6 +163,10 @@ const grantStudent = (api, agentToken, id, days = 7) =>
 const book = (api, token, sessionId) =>
   api(`/sessions/${sessionId}/book`, { method: "POST", token, body: { paymentMethod: "esewa" } });
 
+/** Exactly what the app sends when the server said the payment sheet is not needed: nothing. */
+const bookWithNoPaymentDetails = (api, token, sessionId) =>
+  api(`/sessions/${sessionId}/book`, { method: "POST", token, body: {} });
+
 const enrolmentRow = (sessionId, studentId) =>
   sql(`select coalesce(payment_status,'-') || '|' || coalesce(payment_method,'-') || '|' || coalesce(payment_reference,'-')
        from session_enrollments where session_id = ${sessionId} and student_id = ${studentId}`);
@@ -282,8 +286,9 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
     `select count(*) from session_enrollments where session_id = ${id} and student_id = ${tested.id}
      and payment_reference is not null`) === "0");
   check("the response says plainly that no payment was processed",
-    testTry.body?.test === true && /no payment was processed/i.test(testTry.body?.testLabel ?? ""),
+    testTry.body?.testBooking === true && /no payment was processed/i.test(testTry.body?.testBookingLabel ?? ""),
     JSON.stringify(testTry.body));
+  check("and does not claim a payment was taken", testTry.body?.paid === false, JSON.stringify(testTry.body));
 
   /* ---- the two ways a grant is not a season ticket ---- */
 
@@ -315,9 +320,14 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
   const room = await api(`/sessions/${id}/room`, { token: tested.token });
   check("the test student is let into the video room", room.status === 200,
     `${room.status} ${JSON.stringify(room.body)}`);
-  check("and the room says what kind of class this is",
-    room.body?.test === true && /no payment was processed/i.test(room.body?.testLabel ?? ""),
+  check("the room tells them their own place took no money",
+    room.body?.testBooking === true && /no payment was processed/i.test(room.body?.testBookingLabel ?? ""),
     JSON.stringify(room.body));
+  check("and separately that the class is open to such bookings",
+    room.body?.testClass === true && /test-enabled class/i.test(room.body?.testClassLabel ?? ""),
+    JSON.stringify(room.body));
+  check("the class-level sentence never claims a payment did not happen",
+    !/no payment/i.test(room.body?.testClassLabel ?? ""), String(room.body?.testClassLabel));
   check("the provider is still whatever the server was configured with",
     room.body?.provider === "echo", String(room.body?.provider));
   check("the whiteboard socket agrees with the room",
@@ -363,7 +373,7 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
     `${again.status} ${JSON.stringify(again.body)}`);
   check("and does not claim they paid", again.body?.paid !== true, JSON.stringify(again.body));
   check("it says which kind of place they hold",
-    again.body?.test === true && /no payment was processed/i.test(again.body?.testLabel ?? ""),
+    again.body?.testBooking === true && /no payment was processed/i.test(again.body?.testBookingLabel ?? ""),
     JSON.stringify(again.body));
   check("still exactly one enrolment row", sql(
     `select count(*) from session_enrollments where session_id = ${id} and student_id = ${tested.id}`) === "1");
@@ -371,16 +381,79 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
   /* ---- and the class says what it is to the teacher, not only to the student ---- */
   const teacherList = await api(`/sessions?teacherId=${teacher.id}&limit=100`, { token: teacher.token });
   const onTeachersList = (teacherList.body?.sessions ?? []).find((row) => row.id === id);
-  check("the teacher's own list marks the class as a test class",
-    onTeachersList?.test === true, JSON.stringify(onTeachersList && { id: onTeachersList.id, test: onTeachersList.test }));
-  check("with the same wording everything else uses",
-    /no payment was processed/i.test(onTeachersList?.testLabel ?? ""), String(onTeachersList?.testLabel));
+  check("the teacher's own list marks the class as test-enabled",
+    onTeachersList?.testClass === true,
+    JSON.stringify(onTeachersList && { id: onTeachersList.id, testClass: onTeachersList.testClass }));
+  check("in wording that claims nothing about anybody's payment",
+    /test-enabled class/i.test(onTeachersList?.testClassLabel ?? "") &&
+      !/no payment/i.test(onTeachersList?.testClassLabel ?? ""),
+    String(onTeachersList?.testClassLabel));
+  check("and never sends the booking-level sentence on a class row",
+    onTeachersList?.testBooking === undefined && onTeachersList?.testBookingLabel === undefined,
+    JSON.stringify(onTeachersList));
   const detail = await api(`/sessions/${id}`);
-  check("and so does the class's own page", detail.body?.test === true, JSON.stringify(detail.body?.test));
+  check("and so does the class's own page", detail.body?.testClass === true, JSON.stringify(detail.body?.testClass));
 
   const ordinaryDetail = await api(`/sessions/${ordinaryClass.body.id}`);
-  check("an ordinary class carries no such mark", ordinaryDetail.body?.test === undefined,
-    JSON.stringify(ordinaryDetail.body?.test));
+  check("an ordinary class carries no such mark", ordinaryDetail.body?.testClass === undefined,
+    JSON.stringify(ordinaryDetail.body?.testClass));
+
+  /* ---- the false banner: a paying student inside a test class ---- */
+  /*
+    The defect Codex found on the second review. One flag carried "no payment was processed" to
+    every viewer of a test class, so an ordinary student was told they would not be charged
+    before being charged, and — having paid — sat in the classroom under a banner saying their
+    money had not been taken.
+  */
+  const payer = await readyStudent(api, "Paying Prakash");
+  sql(`insert into session_enrollments (session_id, student_id, payment_status, payment_method, payment_reference)
+       values (${id}, ${payer.id}, 'paid', 'esewa', 'REAL-BANNER')`);
+  const payerRoom = await api(`/sessions/${id}/room`, { token: payer.token });
+  check("a student who paid for a seat in a test class is let in", payerRoom.status === 200,
+    `${payerRoom.status} ${JSON.stringify(payerRoom.body)}`);
+  check("and is never told no payment was processed",
+    payerRoom.body?.testBooking === undefined &&
+      !/no payment was processed/i.test(JSON.stringify(payerRoom.body)),
+    JSON.stringify(payerRoom.body));
+  check("though the class is still honestly described as test-enabled",
+    payerRoom.body?.testClass === true, JSON.stringify(payerRoom.body?.testClass));
+
+  /* ---- who may book without paying, decided by the server ---- */
+  const eligible = await api(`/sessions/${id}/access`, { token: tested.token });
+  check("the server tells the granted student's app it may skip the payment sheet",
+    eligible.body?.canBookAsTest === false, "they already hold a place, so there is nothing to book");
+  const fresh = await readyStudent(api, "Fresh Falguni");
+  await grantStudent(api, agentToken, fresh.id);
+  const freshEligible = await api(`/sessions/${id}/access`, { token: fresh.token });
+  check("a granted student who has not booked yet is told they may",
+    freshEligible.body?.canBookAsTest === true, JSON.stringify(freshEligible.body));
+
+  /*
+    And the booking goes through with no payment details at all — which is what the app sends
+    once it has been told the sheet is unnecessary. No method, no phone number, no PIN.
+  */
+  const noDetails = await bookWithNoPaymentDetails(api, fresh.token, id);
+  check("and can book with no payment details whatsoever", noDetails.status === 201,
+    `${noDetails.status} ${JSON.stringify(noDetails.body)}`);
+  check("still written as a test row, with no method invented for it",
+    enrolmentRow(id, fresh.id) === "test|test_access|-", enrolmentRow(id, fresh.id));
+
+  // The same empty body from somebody with no grant is refused, so an empty body is not the key.
+  const spoof = await bookWithNoPaymentDetails(api, payer.token, ordinaryClass.body.id);
+  check("sending no payment details is not itself a way to skip payment",
+    spoof.status === 402, `${spoof.status} ${JSON.stringify(spoof.body)}`);
+  const ordinaryEligible = await api(`/sessions/${id}/access`, { token: payer.token });
+  check("an ordinary student is not, on the same class",
+    ordinaryEligible.body?.canBookAsTest === false, JSON.stringify(ordinaryEligible.body));
+  const crossEligible = await api(`/sessions/${ordinaryClass.body.id}/access`, { token: fresh.token });
+  check("and a granted student is not, on an ordinary class",
+    crossEligible.body?.canBookAsTest === false, JSON.stringify(crossEligible.body));
+  check("nobody can ask the question about somebody else",
+    (await api(`/sessions/${id}/access?studentId=${fresh.id}`, { token: payer.token }))
+      .body?.canBookAsTest === false,
+    "a studentId in the query must change nothing");
+  check("and signed out, the question is refused outright",
+    (await api(`/sessions/${id}/access`)).status === 401);
 
   /* ---- the class is the student's own, and says what it is ---- */
   const mine = await api(`/sessions?studentId=${tested.id}`, { token: tested.token });
@@ -493,6 +566,11 @@ await withServer(8105, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
     written down when it was created, so it stays what it was.
   */
   await api(`/admin/teachers/${teacher.id}/test-access/revoke`, { method: "POST", token: agentToken });
+  check("an expired grant also stops the app being told it may skip payment",
+    (await api(`/sessions/${two}/access`, { token: expiring.token })).body?.canBookAsTest === false);
+  check("and so does a revoked one",
+    (await api(`/sessions/${two}/access`, { token: revoked.token })).body?.canBookAsTest === false);
+
   check("the class is still marked, after the teacher's grant is revoked",
     sql(`select count(*) from test_classes where session_id = ${two}`) === "1");
   const later = await readyStudent(api, "Later Laxmi");
@@ -568,6 +646,9 @@ await withServer(8107, { ALLOW_TEST_STUDENT_ACCESS: "" }, async (api) => {
     (await quiet.next((e) => e.kind === "session_message", 2500)) === null,
     JSON.stringify(quiet.seen()));
   quiet.close();
+
+  check("with the switch off, no app is told it may skip the payment sheet",
+    (await api(`/sessions/${id}/access`, { token: tested.token })).body?.canBookAsTest === false);
 
   const closedRoster = await api(`/sessions/${id}/attendance`, { token: switchedOff.teacher.token });
   check("and the roster no longer lists them",

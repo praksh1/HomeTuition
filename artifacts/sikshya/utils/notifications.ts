@@ -225,8 +225,8 @@ export async function notifySessionBooked(booking: {
   studentName?: string;
   sessionId?: number | string;
   amount?: number;
-  /** Set when no payment was taken — an operator-granted test booking. See utils/testAccess.ts. */
-  test?: boolean;
+  /** Set when *this booking* took no payment — an operator-granted one. See utils/testAccess.ts. */
+  testBooking?: boolean;
 }): Promise<void> {
   // The wording lives in `utils/testAccess.ts`, pure, so it can be tested without a phone.
   const { title, body } = bookingNotice(booking);
@@ -240,7 +240,7 @@ export async function notifySessionBooked(booking: {
     }
   }
   // A test booking is not a payment, so it does not carry the payment icon in the in-app list.
-  await addInAppNotification({ title, body, type: booking.test ? "general" : "payment", data });
+  await addInAppNotification({ title, body, type: booking.testBooking ? "general" : "payment", data });
 }
 
 /** And somebody leaving — the same news from the other direction, and the seat is back on sale. */

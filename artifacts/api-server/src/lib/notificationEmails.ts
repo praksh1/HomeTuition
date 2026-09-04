@@ -32,16 +32,19 @@ export interface NotificationEvent {
   /** What was paid, for the notifications about money arriving or going back. */
   amount?: number;
   /**
-   * True when the thing being announced involved **no payment at all** — an operator-granted
-   * test booking.
+   * True when **this particular booking** took no payment — an operator-granted test booking.
+   *
+   * Named for the booking, not the class, because they are different facts and one field for both
+   * is how an ordinary student came to be told "no payment was processed" about a class they were
+   * about to be charged full price for. A class being *open* to test bookings says nothing about
+   * whether this one took money.
    *
    * Typed rather than inferred, and never inferred from `amount === 0`: a free class and a class
    * nobody was charged for are different facts, and one of them needs saying out loud. Every
    * formatter that mentions money must branch on this. A teacher told "booked and paid" about a
-   * booking that took no money is being told something untrue about their own income, which is
-   * the exact class of defect this project keeps finding.
+   * booking that took no money is being told something untrue about their own income.
    */
-  test?: boolean;
+  testBooking?: boolean;
   /** When a class has been moved: where it is now, as an ISO string. */
   newDate?: string;
   /** When a class has been moved: where it was before. */
@@ -96,14 +99,16 @@ export function emailFor(event: NotificationEvent, recipientName: string): { sub
       const link = appUrl(`/session/${event.sessionId ?? ""}`);
       // A test booking took no money, and the email a teacher reads about their own income must
       // not say it did. Same event, two sentences; nothing about the paid one changes.
-      if (event.test) {
+      if (event.testBooking) {
         return {
           subject: `${event.fromName ?? "A student"} joined "${event.topic ?? "your class"}" — TEST, no payment`,
           text:
             `${hello}\n\n${event.fromName ?? "A student"} has taken a place in your class ` +
             `"${event.topic ?? ""}".\n\n` +
             `This is a test booking made with operator-granted access. ` +
-            `**No payment was processed** and nothing was added to your earnings.\n` +
+            // Plain text, so no Markdown: asterisks around a phrase are read as asterisks in a
+            // mail client, and emphasis that renders as punctuation is worse than none.
+            `NO PAYMENT WAS PROCESSED and nothing was added to your earnings.\n` +
             (link ? `\nSee who is coming: ${link}\n` : "") +
             signoff,
         };

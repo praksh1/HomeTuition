@@ -26,7 +26,7 @@ import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
 import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
-import { TEST_CLASS_LABEL } from "@/utils/testAccess";
+import { TEST_BOOKING_LABEL, TEST_CLASS_LABEL } from "@/utils/testAccess";
 import {
   callWindowControls,
   callWindowReducer,
@@ -324,13 +324,18 @@ export default function Classroom() {
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
   /**
-   * Set when this class is a test class, to the server's own words for it.
+   * What, if anything, this room has to say about payment — and to *this* person.
    *
-   * Nobody in this room paid for it, and neither of them should have to work that out from the
-   * absence of a receipt. The server decides — it is the only side that knows what the enrolment
-   * says — and the banner just repeats what it was told.
+   * Two facts arrive from the server and they are not the same. `booking` means this viewer's own
+   * place was granted and took no money. `class` means only that the class is open to such
+   * bookings; everybody else in it paid the full price. Painting the first sentence at everybody,
+   * which is what a single flag did, told a paying student their money had not been taken.
+   *
+   * The server decides — it is the only side that knows what the enrolment says — and the banner
+   * repeats what it was told.
    */
-  const [testClass, setTestClass] = useState<string | null>(null);
+  const [testNotice, setTestNotice] =
+    useState<{ kind: "booking" | "class"; text: string } | null>(null);
   const [roomError, setRoomError] = useState(false);
   /**
    * Set when this class is too old to open. Nothing about the call is set up while it is —
@@ -608,18 +613,43 @@ export default function Classroom() {
         roomUrl: url,
         token,
         provider,
-        test,
-        testLabel,
+        testClass,
+        testClassLabel,
+        testBooking,
+        testBookingLabel,
       } = await apiGet<{
         roomUrl: string;
         token?: string | null;
         provider?: string;
-        /** Set when this class was created, or this place taken, under an operator test grant. */
-        test?: boolean;
-        testLabel?: string;
+        /** The class is open to test bookings. Says nothing about whether *you* paid. */
+        testClass?: boolean;
+        testClassLabel?: string;
+        /** *Your own* place here was granted and took no money. */
+        testBooking?: boolean;
+        testBookingLabel?: string;
       }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
-      setTestClass(test ? testLabel || TEST_CLASS_LABEL : null);
+      /**
+       * The narrower, personal fact wins; the class-level one is the fallback.
+       *
+       * Both used to arrive as one flag, so an ordinary student who had genuinely paid for a seat
+       * in a test class sat under a banner telling them no payment had been processed. Now the
+       * only person shown that sentence is the person it is true of.
+       */
+      /**
+       * The teacher is told what is true of the class they are running.
+       *
+       * They hold no enrolment, so `testBooking` is never set for them; the branch stays because
+       * the shape is shared with the student's classroom and a silent divergence between the two
+       * is how these screens drifted apart before.
+       */
+      setTestNotice(
+        testBooking
+          ? { kind: "booking" as const, text: testBookingLabel || TEST_BOOKING_LABEL }
+          : testClass
+            ? { kind: "class" as const, text: testClassLabel || TEST_CLASS_LABEL }
+            : null,
+      );
       setRoomUrl(url);
       setMeetingToken(token ?? null);
       setRoomError(false);
@@ -1240,9 +1270,9 @@ export default function Classroom() {
             person in the room. The sentence is the server's — this side never decides that a
             class was free.
           */}
-          {testClass ? (
+          {testNotice ? (
             <View
-              testID="classroom-test-banner"
+              testID={testNotice.kind === "booking" ? "classroom-test-booking" : "classroom-test-class"}
               accessibilityRole="alert"
               style={[
                 s.testBanner,
@@ -1258,7 +1288,7 @@ export default function Classroom() {
             >
               <Feather name="alert-triangle" size={12} color={colors.warn} />
               <Text style={[t.overline, { color: colors.warn }]} numberOfLines={2}>
-                {testClass}
+                {testNotice.text}
               </Text>
             </View>
           ) : null}

@@ -9,6 +9,9 @@ import { emailFor, type NotificationEvent } from "./notificationEmails.ts";
  * student had "booked and paid" for their class. The event carried `amount: 0`, which nothing
  * read, and the formatter had no way to tell the two apart. A teacher reading that is being told
  * something false about their own income by the app that is supposed to be counting it.
+ *
+ * The field is `testBooking`, named for what it is true of. A class being *open* to test bookings
+ * is a different fact and must not reach a sentence about somebody's money.
  */
 
 const booked = (extra: Partial<NotificationEvent> = {}): NotificationEvent => ({
@@ -30,29 +33,40 @@ test("an ordinary booking still says booked and paid", () => {
 });
 
 test("a test booking never claims a payment was made", () => {
-  const mail = emailFor(booked({ amount: 0, test: true }), "Ram Bahadur");
+  const mail = emailFor(booked({ amount: 0, testBooking: true }), "Ram Bahadur");
   assert.ok(mail);
   assert.doesNotMatch(mail.text, /paid/i, "not even in passing");
-  assert.match(mail.text, /No payment was processed/i);
+  assert.match(mail.text, /NO PAYMENT WAS PROCESSED/);
   assert.match(mail.text, /nothing was added to your earnings/i);
+});
+
+test("the body is plain text, so it carries no Markdown to read as punctuation", () => {
+  // These are sent as `text`, not HTML. A mail client shows `**No payment**` with the asterisks
+  // in it, which reads as a typo in the one sentence that most needs to be believed.
+  for (const event of [booked({ amount: 500 }), booked({ testBooking: true })]) {
+    const mail = emailFor(event, "Ram");
+    assert.ok(mail);
+    assert.doesNotMatch(mail.text, /\*\*/, mail.text);
+    assert.doesNotMatch(mail.subject, /\*\*/);
+  }
 });
 
 test("and says so in the subject, which is all a phone shows", () => {
   // A teacher glancing at a notification bar reads the subject and nothing else.
-  const mail = emailFor(booked({ test: true }), "Ram");
+  const mail = emailFor(booked({ testBooking: true }), "Ram");
   assert.ok(mail);
   assert.match(mail.subject, /TEST, no payment/);
 });
 
 test("the two are genuinely different emails, not one with a suffix", () => {
   const paid = emailFor(booked({ amount: 500 }), "Ram");
-  const free = emailFor(booked({ amount: 0, test: true }), "Ram");
+  const free = emailFor(booked({ amount: 0, testBooking: true }), "Ram");
   assert.ok(paid && free);
   assert.notEqual(paid.subject, free.subject);
   assert.notEqual(paid.text, free.text);
 });
 
-test("`test` is read as a flag, never inferred from a zero amount", () => {
+test("`testBooking` is read as a flag, never inferred from a zero amount", () => {
   /**
    * A free class and a class nobody was charged for are different facts. If the formatter guessed
    * from `amount === 0` it would relabel any genuinely free class as a test booking, and it would
@@ -62,7 +76,7 @@ test("`test` is read as a flag, never inferred from a zero amount", () => {
   assert.ok(zeroButReal);
   assert.match(zeroButReal.text, /booked and paid/, "a zero amount alone is not a test booking");
 
-  const testWithPrice = emailFor(booked({ amount: 500, test: true }), "Ram");
+  const testWithPrice = emailFor(booked({ amount: 500, testBooking: true }), "Ram");
   assert.ok(testWithPrice);
   assert.match(testWithPrice.text, /No payment was processed/i, "and the flag wins over the number");
 });

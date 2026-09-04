@@ -27,9 +27,14 @@ interface Session {
   /** How this student stands with the class: still in it, or dropped out of it. */
   /** `test` means an operator granted this place for testing. See utils/testAccess.ts. */
   enrolment?: "paid" | "refunded" | "test" | null;
-  /** The class itself was created under a test grant — the server's fact, not this viewer's. */
-  test?: boolean;
-  testLabel?: string;
+  /**
+   * The class is open to test bookings — the server's fact about the class, not about this
+   * viewer's money. Carried but deliberately not shown here: a student without a grant pays the
+   * full price for a test class, and telling them the class is "test-enabled" answers a question
+   * they did not ask with a word that sounds like "free". Their own place is `enrolment`.
+   */
+  testClass?: boolean;
+  testClassLabel?: string;
 }
 
 /** How often the session list re-checks for classes going live while the screen is open. */
@@ -101,13 +106,13 @@ export default function StudentSessions() {
     try {
       const [myRes] = await Promise.all([
         student?.userId
-          ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; test?: boolean; testLabel?: string }[] }>(
+          ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string }[] }>(
               `/sessions?studentId=${student.userId}&limit=50`
             )
           : Promise.resolve({ sessions: [] }),
       ]);
 
-      const mapSession = (s: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; test?: boolean; testLabel?: string }): Session => ({
+      const mapSession = (s: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string }): Session => ({
         id: String(s.id),
         teacherId: "",
         teacherName: s.teacherName,
@@ -120,8 +125,8 @@ export default function StudentSessions() {
         price: s.price,
         status: s.status as Session["status"],
         enrolment: (s.enrolment as Session["enrolment"]) ?? null,
-        test: s.test === true,
-        testLabel: s.testLabel,
+        testClass: s.testClass === true,
+        testClassLabel: s.testClassLabel,
       });
 
       /**
