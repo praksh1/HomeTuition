@@ -20,10 +20,22 @@ interface Session {
   status: "upcoming" | "live" | "completed" | "cancelled";
   /**
    * This viewer's own place in the class, as the server reports it. `test` means an operator
-   * granted the place for testing and no payment was taken — which the card has to say, because
-   * the price beside it is the price everybody else pays.
+   * granted the place for testing and no payment was taken.
    */
   enrolment?: string | null;
+  /**
+   * The class itself was created under a teacher's test grant — the server's own fact, from
+   * `test_classes`, sent with every session.
+   *
+   * Separate from `enrolment` and this is the important half. The label used to hang off the
+   * viewer's enrolment alone, so only the test student ever saw it: the **teacher's** list showed
+   * "NPR 500 per class" against a class that had never taken a rupee and never would, with
+   * nothing to say so. A teacher adding up their month from that screen counts money that does
+   * not exist.
+   */
+  test?: boolean;
+  /** The server's own wording. Falls back to the shared constant on an older server. */
+  testLabel?: string;
 }
 
 interface SessionCardProps {
@@ -97,16 +109,18 @@ export default function SessionCard({ session, onPress, showTeacher = false }: S
         Said next to the price, which is the number it contradicts.
 
         A card that shows "NPR 500 per class" above a seat nobody paid for is the fabrication this
-        project keeps finding. The label goes where the misreading would happen.
+        project keeps finding. The label goes where the misreading would happen — and it is shown
+        for the class being a test class *or* for this viewer's place being one, so the teacher
+        who created it sees it as surely as the student who took a seat in it.
       */}
-      {session.enrolment === "test" ? (
+      {session.test || session.enrolment === "test" ? (
         <View
           testID={`session-test-label-${session.id}`}
           accessibilityRole="text"
           style={[styles.testLabel, { backgroundColor: colors.warnSoft, borderColor: colors.warn }]}
         >
           <Feather name="alert-triangle" size={12} color={colors.warn} />
-          <Text style={[t.overline, { color: colors.warn }]}>{TEST_CLASS_LABEL}</Text>
+          <Text style={[t.overline, { color: colors.warn }]}>{session.testLabel ?? TEST_CLASS_LABEL}</Text>
         </View>
       ) : null}
     </TouchableOpacity>

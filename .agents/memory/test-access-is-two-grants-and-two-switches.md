@@ -55,6 +55,34 @@ and the kill switch is read there — so the room URL, the WebSocket and the stu
 list open and close together. A second `payment_status = 'test'` check written into either door
 is exactly the drift that once let an unenrolled student watch a teacher's video.
 
+## The mistake this feature makes, over and over
+
+Codex's independent review found five release blockers in the first cut, and all five were the
+same mistake wearing different clothes:
+
+> **The three gates were implemented where access is decided, and forgotten everywhere the result
+> is described.**
+
+`membership.ts` admitted a test place correctly. Then the class thread's audience, the teacher's
+roster, the attendance record, the booking response, the booking email, the phone notification and
+the class card each independently asked `payment_status = 'paid'` — so a test place was either
+invisible or reported as a payment. A teacher's own list showed "NPR 500 per class" against a
+class that had never taken a rupee; a teacher's email said a student had "booked and paid".
+
+So when touching this feature, the question is never only "does the door open". It is:
+
+1. **Who is told?** Any audience built from `paid` misses them — the class thread was one.
+2. **Who is listed?** Any roster built from `paid` misses them — attendance was one.
+3. **What is it called?** Any sentence about money must branch on the fact, not on `amount === 0`.
+   A free class and a class nobody was charged for are different things.
+4. **Who sees the price?** The label must come from the class's own `test_classes` row, not from
+   the viewer's enrolment — or only the test student ever sees it, and the teacher counts income
+   that does not exist.
+
+`activeEnrolmentStatuses()` in `testStudentAccess.ts` is the roster list for 1 and 2. It is
+**not** the money list, and its doc comment says so, because it is the obvious thing to reach for
+when widening an earnings query and doing that would put a free booking into somebody's revenue.
+
 ## Before launch
 
 Turn **both** switches off. Every outstanding grant of either kind stops mattering the same

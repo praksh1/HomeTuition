@@ -185,6 +185,24 @@ async function main() {
       await page.close();
     }
 
+    /* ---- the teacher's own list, where the price sits ---- */
+    /*
+      The label used to hang off the viewer's enrolment alone, so only the student ever saw it.
+      The teacher's list showed "NPR 500 per class" against a class that had never taken a rupee
+      and never would — a teacher adding up their month from this screen counts money that does
+      not exist. The card now reads the class's own fact, which the server sends with every row.
+    */
+    {
+      const { page, crashes } = await open(context, teacher.token, "/(teacher)/sessions");
+      check(`[${viewport.name}] the teacher's list opens`, crashes.length === 0, crashes[0] ?? "");
+      check(`[${viewport.name}] the teacher sees their own class is a test class`,
+        (await seen(page, `session-test-label-${id}`)) > 0);
+      const text = await textOf(page);
+      check(`[${viewport.name}] beside the price, in the same words`,
+        /TEST\s*—\s*no payment was processed/i.test(text), text.slice(0, 500));
+      await page.close();
+    }
+
     /* ---- the classroom, for both people in it ---- */
     for (const who of [
       { name: "student", token: student.token, route: `/(student)/classroom/${id}` },

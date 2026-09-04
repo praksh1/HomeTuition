@@ -23,14 +23,20 @@ import path from "node:path";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (...parts: string[]) => readFileSync(path.resolve(here, "..", ...parts), "utf8");
 
-/** The union declared on the server, which is the list everything else must cover. */
+/**
+ * The union declared on the server, which is the list everything else must cover.
+ *
+ * It lives in `notificationEmails.ts` alongside the wording, because that module has to be pure
+ * — no database — so the sentences about money can be unit-tested. `notify.ts` re-exports the
+ * type for the routes that already import it from there.
+ */
 function serverKinds(): string[] {
   const source = readFileSync(
-    path.resolve(here, "..", "..", "api-server", "src", "lib", "notify.ts"),
+    path.resolve(here, "..", "..", "api-server", "src", "lib", "notificationEmails.ts"),
     "utf8",
   );
   const block = source.match(/export type NotificationKind =([\s\S]*?);/);
-  assert.ok(block, "NotificationKind is not declared on the server — did it get renamed?");
+  assert.ok(block, "NotificationKind is not declared on the server — did it get renamed or moved?");
   const kinds = [...block[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
   assert.ok(kinds.length > 0, "no kinds found in the server's NotificationKind");
   return kinds;

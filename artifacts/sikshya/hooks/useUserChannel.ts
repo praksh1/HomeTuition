@@ -29,6 +29,13 @@ export interface UserEvent {
   topic?: string;
   /** What was paid, when the news is about money. */
   amount?: number;
+  /**
+   * Set by the server when no payment was taken at all — an operator-granted test booking.
+   *
+   * Carried as its own flag rather than read off `amount`, because a free class and a class
+   * nobody was charged for are different things and only one of them needs saying.
+   */
+  test?: boolean;
   /** Where a moved class now is, and where it was. ISO strings. */
   newDate?: string;
   previousDate?: string;

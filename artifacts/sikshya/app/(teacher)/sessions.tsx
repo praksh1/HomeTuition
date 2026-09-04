@@ -25,6 +25,15 @@ interface Session {
   status: "upcoming" | "live" | "completed" | "cancelled";
   /** Its start time has been and gone and nobody started it. Decided by the server. */
   expired?: boolean;
+  /**
+   * Created under a test grant, so its price is not money anybody will ever be paid.
+   *
+   * The server's own fact, from `test_classes`. Without it this list showed "NPR 500 per class"
+   * against a class that had never taken a rupee, and a teacher adding up their month from this
+   * screen counted income that does not exist.
+   */
+  test?: boolean;
+  testLabel?: string;
 }
 
 /**
@@ -74,7 +83,7 @@ export default function TeacherSessions() {
       : filter === "expired" ? "&status=upcoming"
       : `&status=${filter}`;
     try {
-      const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; expired?: boolean }[] }>(
+      const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; expired?: boolean; test?: boolean; testLabel?: string }[] }>(
         `/sessions?teacherId=${teacher.userId}${statusParam}&limit=100`
       );
       setSessions(res.sessions.map((s) => ({
@@ -90,6 +99,8 @@ export default function TeacherSessions() {
         price: s.price,
         status: s.status as Session["status"],
         expired: s.expired === true,
+        test: s.test === true,
+        testLabel: s.testLabel,
       })));
     } catch (_e) {
       // An empty list and a failed request used to look identical: both showed "No sessions

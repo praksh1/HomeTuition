@@ -1,5 +1,6 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, sessionParticipationTable, sessionEnrollmentsTable, usersTable } from "@workspace/db";
+import { activeEnrolmentStatuses } from "./testStudentAccess";
 
 /**
  * Writing down who was in a class and reading it back.
@@ -167,9 +168,21 @@ export async function enrolledStudents(sessionId: number): Promise<EnrolledStude
     .where(
       and(
         eq(sessionEnrollmentsTable.sessionId, sessionId),
-        // Booking is atomic and there is no pending state, so anything that is not paid is
-        // either a refund or a row from before that rule existed. Neither is someone to expect.
-        eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+        /**
+         * Booking is atomic and there is no pending state, so anything that is not paid is
+         * either a refund or a row from before that rule existed. Neither is someone to expect.
+         *
+         * The one exception is an operator-granted test place, which is a real place for as long
+         * as `ALLOW_TEST_STUDENT_ACCESS` allows it. A teacher walking the product end to end has
+         * to see their test student on the roster and in the attendance record — a class whose
+         * "who is coming" list is empty while somebody is sitting in it is not a test of
+         * anything. `activeEnrolmentStatuses()` is switch-gated, so the roster and the classroom
+         * door open and close together.
+         *
+         * This is a roster question, not a money one. Nothing that counts earnings, refund debt
+         * or a drop reads this function.
+         */
+        inArray(sessionEnrollmentsTable.paymentStatus, activeEnrolmentStatuses()),
       ),
     );
   return rows;

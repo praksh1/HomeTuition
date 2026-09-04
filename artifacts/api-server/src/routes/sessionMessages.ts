@@ -1,4 +1,4 @@
-import { and, asc, eq, gt } from "drizzle-orm";
+import { and, asc, eq, gt, inArray } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   db,
@@ -9,6 +9,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership } from "../lib/membership";
+import { activeEnrolmentStatuses } from "../lib/testStudentAccess";
 import {
   attachToClassMessage,
   decorateClassMessages,
@@ -64,7 +65,20 @@ function mayPost(membership: { isSessionTeacher: boolean; hasPaid: boolean }): b
   return membership.isSessionTeacher || membership.hasPaid;
 }
 
-/** Everyone who should hear about a new message: the teacher and every paying student. */
+/**
+ * Everyone who should hear about a new message: the teacher and everyone holding a place.
+ *
+ * **This list has to match who `threadAccess` lets in, or messages vanish.** It did not: this
+ * asked for `payment_status = 'paid'` while `threadAccess` admits an operator-granted test place
+ * through `membership.hasPaid`. So a teacher writing "running five minutes late" into the thread
+ * of a test class was read by nobody — the message was stored, the student could open the thread
+ * and see it, and no notification and no unread mark ever reached them. Exactly the case the
+ * thread exists for.
+ *
+ * `activeEnrolmentStatuses()` is the same switch-gated list the roster uses, so turning
+ * `ALLOW_TEST_STUDENT_ACCESS` off removes a test student from the audience at the same moment it
+ * shuts the classroom door on them. Paid students are unaffected either way.
+ */
 async function participantIds(sessionId: number): Promise<number[]> {
   const [session] = await db
     .select({ teacherId: sessionsTable.teacherId })
@@ -78,7 +92,7 @@ async function participantIds(sessionId: number): Promise<number[]> {
     .where(
       and(
         eq(sessionEnrollmentsTable.sessionId, sessionId),
-        eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+        inArray(sessionEnrollmentsTable.paymentStatus, activeEnrolmentStatuses()),
       ),
     );
 

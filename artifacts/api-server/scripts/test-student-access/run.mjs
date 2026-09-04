@@ -181,6 +181,39 @@ function classroomSocket(api, token, sessionId, name) {
   });
 }
 
+/**
+ * The signed-in socket the app keeps open — how a red dot and a push both reach somebody.
+ *
+ * Borrowed shape from `attendance-tests`. Used here to prove a message actually *reaches* the test
+ * student, rather than merely being readable if they happen to open the thread.
+ */
+function channel(api, token) {
+  const ws = new WebSocket(`${api.ws}/api/ws?token=${encodeURIComponent(token)}`);
+  const events = [];
+  const waiters = [];
+  ws.on("message", (raw) => {
+    let data; try { data = JSON.parse(String(raw)); } catch { return; }
+    if (data?.type !== "notification") return;
+    events.push(data);
+    for (const w of waiters.splice(0)) w(data);
+  });
+  return {
+    open: () => new Promise((resolve, reject) => {
+      if (ws.readyState === 1) return resolve();
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    }),
+    next: (predicate, ms = 5000) => new Promise((resolve) => {
+      const found = events.find(predicate);
+      if (found) return resolve(found);
+      const timer = setTimeout(() => resolve(null), ms);
+      waiters.push((event) => { if (!predicate(event)) return; clearTimeout(timer); resolve(event); });
+    }),
+    seen: () => events.slice(),
+    close: () => { try { ws.close(); } catch { /* gone */ } },
+  };
+}
+
 /* ================================================================== off by default */
 
 console.log("\nOff unless the server says otherwise\n");
@@ -284,6 +317,59 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
     `${shutOut.status} ${JSON.stringify(shutOut.body)}`);
   check("including the socket",
     (await classroomSocket(api, ordinary.token, id, "Ordinary Ojaswi")) === false);
+
+  /* ---- the class thread reaches them, which is the whole point of it ---- */
+  /*
+    `participantIds()` asked for `payment_status = 'paid'` while `threadAccess` admits a test place
+    through membership. So a teacher writing "running five minutes late" into a test class's thread
+    was read by nobody: stored, visible if the student happened to open the thread, and announced
+    to no one. That is precisely the case the thread exists for.
+  */
+  const heard = channel(api, tested.token);
+  await heard.open();
+  const posted = await api(`/sessions/${id}/messages`, { method: "POST", token: teacher.token,
+    body: { body: "Running five minutes late." } });
+  check(`the teacher can write in the class thread`, posted.status <= 201,
+    `${posted.status} ${JSON.stringify(posted.body)}`);
+  const arrived = await heard.next((e) => e.kind === "session_message");
+  check("and the test student is told about it", !!arrived, "no session_message arrived");
+  check("with the message itself, so a red dot has something behind it",
+    /five minutes late/.test(arrived?.preview ?? ""), JSON.stringify(arrived));
+  heard.close();
+
+  /* ---- the roster, which a teacher reads before the class ---- */
+  const record = await api(`/sessions/${id}/attendance`, { token: teacher.token });
+  const roster = record.body?.enrolled ?? [];
+  check("the teacher's roster shows the test student",
+    roster.some((r) => r.userId === tested.id), JSON.stringify(roster.map((r) => r.userId)));
+  check("and marks the place as a test one rather than paid",
+    roster.find((r) => r.userId === tested.id)?.paymentStatus === "test",
+    JSON.stringify(roster.find((r) => r.userId === tested.id)));
+
+  /* ---- booking again says something true ---- */
+  const again = await book(api, tested.token, id);
+  check("booking again is idempotent", again.status === 200 && again.body?.alreadyBooked === true,
+    `${again.status} ${JSON.stringify(again.body)}`);
+  check("and does not claim they paid", again.body?.paid !== true, JSON.stringify(again.body));
+  check("it says which kind of place they hold",
+    again.body?.test === true && /no payment was processed/i.test(again.body?.testLabel ?? ""),
+    JSON.stringify(again.body));
+  check("still exactly one enrolment row", sql(
+    `select count(*) from session_enrollments where session_id = ${id} and student_id = ${tested.id}`) === "1");
+
+  /* ---- and the class says what it is to the teacher, not only to the student ---- */
+  const teacherList = await api(`/sessions?teacherId=${teacher.id}&limit=100`, { token: teacher.token });
+  const onTeachersList = (teacherList.body?.sessions ?? []).find((row) => row.id === id);
+  check("the teacher's own list marks the class as a test class",
+    onTeachersList?.test === true, JSON.stringify(onTeachersList && { id: onTeachersList.id, test: onTeachersList.test }));
+  check("with the same wording everything else uses",
+    /no payment was processed/i.test(onTeachersList?.testLabel ?? ""), String(onTeachersList?.testLabel));
+  const detail = await api(`/sessions/${id}`);
+  check("and so does the class's own page", detail.body?.test === true, JSON.stringify(detail.body?.test));
+
+  const ordinaryDetail = await api(`/sessions/${ordinaryClass.body.id}`);
+  check("an ordinary class carries no such mark", ordinaryDetail.body?.test === undefined,
+    JSON.stringify(ordinaryDetail.body?.test));
 
   /* ---- the class is the student's own, and says what it is ---- */
   const mine = await api(`/sessions?studentId=${tested.id}`, { token: tested.token });
@@ -455,6 +541,31 @@ await withServer(8107, { ALLOW_TEST_STUDENT_ACCESS: "" }, async (api) => {
   check("the dormant row is still exactly what it was", enrolmentRow(id, tested.id) === "test|test_access|-",
     enrolmentRow(id, tested.id));
 
+  /*
+    The audience and the roster close with the door.
+
+    Both used to be `payment_status = 'paid'` only, which was the defect in the other direction:
+    a test student heard nothing about the class thread and never appeared on the teacher's list.
+    Now that they do, turning the switch off has to take them back out again — otherwise the
+    switch closes one door and leaves two windows open.
+  */
+  const quiet = channel(api, tested.token);
+  await quiet.open();
+  await api(`/sessions/${id}/messages`, { method: "POST", token: switchedOff.teacher.token,
+    body: { body: "Anyone still here?" } });
+  check("with the switch off, a thread message no longer reaches them",
+    (await quiet.next((e) => e.kind === "session_message", 2500)) === null,
+    JSON.stringify(quiet.seen()));
+  quiet.close();
+
+  const closedRoster = await api(`/sessions/${id}/attendance`, { token: switchedOff.teacher.token });
+  check("and the roster no longer lists them",
+    !(closedRoster.body?.enrolled ?? []).some((r) => r.userId === tested.id),
+    JSON.stringify((closedRoster.body?.enrolled ?? []).map((r) => r.userId)));
+  check("while the student who paid is still on it",
+    (closedRoster.body?.enrolled ?? []).some((r) => r.userId === paying.id),
+    JSON.stringify((closedRoster.body?.enrolled ?? []).map((r) => r.userId)));
+
   const stillPaid = await api(`/sessions/${id}/room`, { token: paying.token });
   check("the student who actually paid is unaffected", stillPaid.status === 200,
     `${stillPaid.status} ${JSON.stringify(stillPaid.body)}`);
@@ -462,6 +573,51 @@ await withServer(8107, { ALLOW_TEST_STUDENT_ACCESS: "" }, async (api) => {
     await classroomSocket(api, paying.token, id, "Paying Puja"));
   check("the class the switch does not touch is still marked",
     sql(`select count(*) from test_classes where session_id = ${id}`) === "1");
+});
+
+/* ================================================================== recovering a dormant row */
+
+/**
+ * The other half of "a dormant test row must not be a dead end".
+ *
+ * Every other server here has the gateway configured, which refuses — which is what proves the
+ * gateway is never called for a test booking, but it also means no booking can ever *succeed*. So
+ * this one server runs without it, in simulated mode, purely to show that a student holding a
+ * dormant test row can pay their way in and end up with a real paid place in the same row: no
+ * second enrolment, no second seat.
+ */
+console.log("\nA dormant test row is not a dead end\n");
+let dormant = null;
+await withServer(8109, { ALLOW_TEST_STUDENT_ACCESS: "true", PAYMENT_WEBHOOK_SECRET: "" }, async (api) => {
+  const agentToken = await makeAgent(api);
+  const teacher = await testTeacher(api, agentToken, "Recovering Radha");
+  const tested = await readyStudent(api, "Recovering Rajan");
+  await grantStudent(api, agentToken, tested.id);
+  const id = (await makeClass(api, teacher.token, "Recovery")).body.id;
+  check("the test booking still skips the gateway even where one would have succeeded",
+    (await book(api, tested.token, id)).status === 201);
+  check("and is still written as a test row", enrolmentRow(id, tested.id) === "test|test_access|-",
+    enrolmentRow(id, tested.id));
+  dormant = { id, tested, teacher, seats: sql(`select enrolled_count from sessions where id = ${id}`) };
+});
+
+await withServer(8110, { ALLOW_TEST_STUDENT_ACCESS: "", PAYMENT_WEBHOOK_SECRET: "" }, async (api) => {
+  const { id, tested, seats } = dormant;
+  const recovered = await book(api, tested.token, id);
+  check("with the switch off they can pay their way in", recovered.status === 201,
+    `${recovered.status} ${JSON.stringify(recovered.body)}`);
+  check("and this time it really is a payment", recovered.body?.paid === true && !recovered.body?.test,
+    JSON.stringify(recovered.body));
+  const row = enrolmentRow(id, tested.id);
+  check("the same row became a paid one, with a real reference",
+    row.startsWith("paid|") && !row.endsWith("|-"), row);
+  check("no second enrolment was created", sql(
+    `select count(*) from session_enrollments where session_id = ${id} and student_id = ${tested.id}`) === "1");
+  check("and no second seat was taken",
+    sql(`select enrolled_count from sessions where id = ${id}`) === seats,
+    `${sql(`select enrolled_count from sessions where id = ${id}`)} vs ${seats}`);
+  check("they are back in the room, on a place they paid for",
+    (await api(`/sessions/${id}/room`, { token: tested.token })).status === 200);
 });
 
 /* ================================================================== who may grant, and to whom */

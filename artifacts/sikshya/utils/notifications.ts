@@ -1,6 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import { bookingNotice } from "./testAccess";
 
 const NOTIFICATIONS_KEY = "@sikshya_notifications";
 
@@ -224,12 +225,11 @@ export async function notifySessionBooked(booking: {
   studentName?: string;
   sessionId?: number | string;
   amount?: number;
+  /** Set when no payment was taken — an operator-granted test booking. See utils/testAccess.ts. */
+  test?: boolean;
 }): Promise<void> {
-  const who = booking.studentName ?? "A student";
-  const title = `${who} booked your class`;
-  const body = booking.amount
-    ? `NPR ${booking.amount.toLocaleString()} for "${booking.topic}".`
-    : `"${booking.topic}" — tap to see who is coming.`;
+  // The wording lives in `utils/testAccess.ts`, pure, so it can be tested without a phone.
+  const { title, body } = bookingNotice(booking);
   const data = { type: "booked", sessionId: booking.sessionId != null ? String(booking.sessionId) : undefined };
 
   if (Platform.OS !== "web") {
@@ -239,7 +239,8 @@ export async function notifySessionBooked(booking: {
       // Permission refused or notifications unavailable — the in-app entry below still lands.
     }
   }
-  await addInAppNotification({ title, body, type: "payment", data });
+  // A test booking is not a payment, so it does not carry the payment icon in the in-app list.
+  await addInAppNotification({ title, body, type: booking.test ? "general" : "payment", data });
 }
 
 /** And somebody leaving — the same news from the other direction, and the seat is back on sale. */

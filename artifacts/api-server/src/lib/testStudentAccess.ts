@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { db, testClassesTable, testStudentGrantsTable } from "@workspace/db";
 
 /**
@@ -97,6 +97,27 @@ export async function isTestClass(sessionId: number): Promise<boolean> {
 }
 
 /**
+ * Which of these classes are test classes — one query for a whole page of them.
+ *
+ * The list endpoints return up to a hundred rows and asking `isTestClass` per row would be a
+ * hundred round trips. Returns a Set so the caller can tag rows in a single pass.
+ *
+ * Like `isTestClass`, deliberately **not** gated on the kill switch. Whether a class was created
+ * under a grant is a fact about the class; whether test bookings are currently permitted is a
+ * separate question, asked separately. A teacher must be able to see that last month's class was
+ * a test one even after the switch is off — otherwise a price sits on a card with nothing to say
+ * that no money ever came from it.
+ */
+export async function testClassIds(sessionIds: number[]): Promise<Set<number>> {
+  if (sessionIds.length === 0) return new Set();
+  const rows = await db
+    .select({ sessionId: testClassesTable.sessionId })
+    .from(testClassesTable)
+    .where(inArray(testClassesTable.sessionId, sessionIds));
+  return new Set(rows.map((r) => r.sessionId));
+}
+
+/**
  * The payment status a test booking writes. Never `paid`.
  *
  * Every query that counts money — earnings, refund debt, the drop route, the schedule-change
@@ -112,6 +133,22 @@ export const TEST_PAYMENT_METHOD = "test_access";
 
 /** What a person is told, wherever a test enrolment or a test class is shown. */
 export const TEST_LABEL = "TEST — no payment was processed";
+
+/**
+ * The enrolment statuses that mean "in this class, right now".
+ *
+ * One list, because three different questions need it — who hears about a message in the class's
+ * thread, who is on the teacher's roster, and who the attendance record expects — and three
+ * copies of `["paid", "test"]` would drift the moment one of them was edited.
+ *
+ * **This is the roster list, never the money list.** Every query that counts earnings, refund
+ * debt, a drop, or schedule-change compensation still asks for `'paid'` on its own and must go on
+ * doing so. Widening one of those by reaching for this function would put a booking nobody paid
+ * for into somebody's revenue.
+ */
+export function activeEnrolmentStatuses(): string[] {
+  return testStudentAllowed() ? ["paid", TEST_PAYMENT_STATUS] : ["paid"];
+}
 
 /**
  * May a `test` enrolment be treated as a place in the class?

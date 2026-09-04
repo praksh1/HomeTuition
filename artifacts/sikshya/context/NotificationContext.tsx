@@ -182,6 +182,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             studentName: event.fromName,
             sessionId: event.sessionId,
             amount: event.amount,
+            // The server says whether money moved. Guessing from `amount` would call a genuinely
+            // free class a test booking, and miss a test booking that carried a price.
+            test: event.test === true,
           });
         } else if (event.kind === "session_dropped") {
           await notifySessionDropped({

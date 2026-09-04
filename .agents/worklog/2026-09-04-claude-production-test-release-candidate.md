@@ -4,7 +4,7 @@
 - Agent: claude
 - Branch: `claude/production-test-release-candidate`
 - Base commit: `b29bb07` (itself branched from `origin/claude/staging-user-journey-audit`)
-- Status: complete — nothing merged, nothing deployed
+- Status: complete — Codex's five release blockers fixed; nothing merged, nothing deployed
 
 ## Requested
 
@@ -98,8 +98,34 @@ in items 1–5 was rewritten.
 | `sikshya/app/(admin)/person/[id].tsx` | The operator card: grant with a reason, the live grant with its end date, revoke, and the eligibility rules stated. Student records only. |
 | `sikshya/utils/testAccess.ts` *(new)* | The fallback wording, mirroring the server's `TEST_LABEL`. |
 | both `classroom/[id].tsx`, `components/SessionCard.tsx` | The label, painted where somebody would misread the absence of it. |
-| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 64 checks. |
-| `sikshya/scripts/test-access-ui/run.mjs` *(new, `test:test-access-ui`)* | 32 rendered checks. |
+| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 88 checks. |
+| `sikshya/scripts/test-access-ui/run.mjs` *(new, `test:test-access-ui`)* | 38 rendered checks. |
+
+### Codex's five release blockers, found in an independent review of `914c210`
+
+All five were real, all five are fixed, and each has a check that fails without the fix. They
+share one root: **the three-gate model was implemented in the two places that decide access and
+not in the six places that describe the result.** A test place was admitted by `membership.ts` and
+then, everywhere downstream, either treated as absent or described as paid.
+
+| # | What was wrong | Fix |
+|---|---|---|
+| 1 | `sessionMessages.ts` `participantIds()` asked for `payment_status = 'paid'` while `threadAccess` admits a test place through `membership.hasPaid`. A teacher writing "running five minutes late" into a test class's thread was **read by nobody** — stored, visible if the student happened to open the thread, announced to no one. Exactly the case the thread exists for. | Both that query and the roster now use one switch-gated `activeEnrolmentStatuses()`. |
+| 2 | `session_booked` carried `amount: 0, test: true`, but `NotificationEvent` had no `test` field, `emailFor` always said **"has booked and paid for your class"**, and the in-app formatter filed it under the payment icon. A teacher was told something false about their own income. | `test` is now a typed field on the event, carried to the email, the push and the in-app entry. The formatter moved to a pure `notificationEmails.ts` so the wording is unit-testable. |
+| 3 | `bookSession` answered `{ alreadyBooked: true, paid: true }` for any existing `test` row, so a second tap produced "You have already paid for this session" about a booking that took nothing. | `paid` now answers only "did money move". A test place returns `paid: false, test: true, testLabel`, and the student's confirmation says "You're in — no payment was taken" instead of naming a payment method. |
+| 4 | `participation.ts` filtered `paid` only, so the teacher's roster and the attendance record were **empty while a test student was sitting in the class**. | Same shared status list, switch-gated. Not reachable from any earnings, refund or drop query — those still ask for `'paid'` alone and were not touched. |
+| 5 | `SessionCard`'s label hung off the **viewer's** enrolment, so only the test student ever saw it. The teacher's own list showed "NPR 500 per class" against a class that had never taken a rupee. | Every session response now carries the server's own `test`/`testLabel` from `test_classes`, and the card shows the label for the class being test *or* the viewer's place being test. |
+
+The half of #3 about a **dormant** row — `paid: true` while the classroom refused the same person —
+was already fixed in `35aaecb`, after Codex's review of `914c210`. It now has its own proof: on a
+server in simulated mode, a student holding a dormant test row books again, is genuinely charged,
+and the **same row** becomes `paid` with a real reference — no second enrolment, no second seat.
+
+**New files:** `api-server/src/lib/notificationEmails.ts` (+ its test), `sikshya/utils/testAccess.test.ts`.
+**Changed:** `sessionMessages.ts`, `participation.ts`, `testStudentAccess.ts`, `notify.ts`,
+`routes/sessions.ts`, `useUserChannel.ts`, `NotificationContext.tsx`, `notifications.ts`,
+`testAccess.ts`, `SessionCard.tsx`, both `sessions.tsx` lists, `(student)/teacher/[id].tsx`,
+`notificationKinds.test.ts`.
 
 ## Decisions and assumptions
 
@@ -140,8 +166,8 @@ Run against Postgres 16 on `127.0.0.1:55432` (database `rc`) and an API on `:808
 | Command | Result |
 |---|---|
 | `pnpm run typecheck` (4 packages) | clean |
-| `pnpm --filter @workspace/api-server run test` | **286 / 286** |
-| `pnpm --filter @workspace/sikshya run test` | **208 / 208** |
+| `pnpm --filter @workspace/api-server run test` | **293 / 293** |
+| `pnpm --filter @workspace/sikshya run test` | **213 / 213** |
 | `pnpm --filter @workspace/sikshya run lint:design` | 205 hex / 418 sizes — **unchanged**, no new leaks |
 | `git diff --check` | clean |
 
@@ -152,7 +178,7 @@ and removed again by using `useLayout().t.overline`, rather than blessing a high
 
 | Suite | Result | | Suite | Result |
 |---|---|---|---|---|
-| `test:test-student` *(new)* | **64 / 64** | | `test:refunds` | 152 / 152 |
+| `test:test-student` *(new)* | **88 / 88** | | `test:refunds` | 152 / 152 |
 | `test:test-access` | 26 / 26 | | `test:tickets` | 62 / 62 |
 | `test:payments` | 10 / 10 | | `test:journey` | 57 / 57 |
 | `test:sessions` | 56 / 56 | | `test:video` | 16 / 16 |
@@ -176,7 +202,7 @@ the first attempt and was re-run with a real restart script, then passed 7/7.
 | Suite | Result |
 |---|---|
 | `test:lobby` | **90 / 90** — both roles, both viewports |
-| `test:test-access-ui` *(new)* | **32 / 32** — both roles, both viewports |
+| `test:test-access-ui` *(new)* | **38 / 38** — both roles, both viewports |
 | `test:classroom` | 47 / 47 |
 | `test:board` | 44 / 44 |
 | `test:gates` | 10 / 10 |
@@ -268,6 +294,16 @@ green.** All three were real and all three are fixed, with a check each:
    the guard costs one condition in the `where` and the cost of being wrong is a booking nobody
    paid for appearing in the earnings.
 
+**Splitting `notify.ts` broke a drift-detector, which is what it is for.**
+`utils/notificationKinds.test.ts` reads `NotificationKind` out of the server's source text to
+prove the app's socket union covers every kind the server can send. Moving the declaration into
+`notificationEmails.ts` made three app tests fail with "did it get renamed?" — the test doing
+exactly its job. Pointed at the new file.
+
+**Postgres stopped mid-run**, which showed up as `register student: 500` and looked briefly like a
+regression in the notify split. It was `connect ECONNREFUSED 127.0.0.1:55432` in the server log —
+the container's database had gone, not the code. Restarted; every suite green afterwards.
+
 **`overline` uppercases its text**, so the first rendered assertion for the label failed against
 "TEST — NO PAYMENT WAS PROCESSED". The assertion is case-insensitive now; the banner was correct
 the whole time.
@@ -292,9 +328,17 @@ None found in this session.
   excluded from earnings, refund debt, the drop route, schedule-change compensation and the
   invitable-students list *because* those queries were left alone.
 - **Correction items 1–5.** Reconciled with evidence, not rewritten.
-- Attendance and the class thread still count `paid` only, so a test enrolment does not appear in
-  either. That is the safe direction and is stated rather than fixed; if the owner needs the
-  attendance record to include a test student, that is a deliberate follow-up.
+- **`teacher_profiles.total_students` is not incremented when a dormant test row is upgraded to a
+  genuine paid one.** The test booking deliberately did not count it, and the upgrade path leaves
+  it alone because Codex's instruction for that fix was explicit: "no new seat/count". The result
+  is a public count that is short by one in the narrow case where a test student later pays for
+  the same class. It is the safe direction — understating a real number rather than inventing one
+  — and it matches how a leftover `pending` row has always upgraded. Worth revisiting only if that
+  path stops being a testing artefact.
+- **Earnings, refund debt, the drop route, schedule-change compensation and the invitable-students
+  list were not touched.** They still ask for `payment_status = 'paid'` alone. `activeEnrolmentStatuses()`
+  says so in its own doc comment, because it is the obvious function to reach for when widening one
+  of them, and doing that would put a booking nobody paid for into somebody's revenue.
 
 ## Migrations and deploy order
 

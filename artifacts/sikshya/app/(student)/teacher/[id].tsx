@@ -22,6 +22,7 @@ import { apiGet, apiPost, apiDelete } from "@/utils/api";
 import StarRating from "@/components/StarRating";
 import SessionCard from "@/components/SessionCard";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
+import { TEST_CLASS_LABEL } from "@/utils/testAccess";
 import type { Teacher, Student } from "@/context/AuthContext";
 
 interface Session {
@@ -330,10 +331,13 @@ export default function TeacherDetail() {
       // One call. It either comes back booked and paid, or nothing was created and we say so.
       // The old flow enrolled first and paid second, which is why students ended up holding
       // classes marked "payment pending" that they could never get into.
-      const res = await apiPost<{ paid?: boolean; alreadyBooked?: boolean }>(
-        `/sessions/${session.id}/book`,
-        { paymentMethod },
-      );
+      const res = await apiPost<{
+        paid?: boolean;
+        alreadyBooked?: boolean;
+        /** The server's own word for it: no payment was taken. See utils/testAccess.ts. */
+        test?: boolean;
+        testLabel?: string;
+      }>(`/sessions/${session.id}/book`, { paymentMethod });
       await refreshAccess(session.id);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
@@ -341,8 +345,32 @@ export default function TeacherDetail() {
       if (res?.alreadyBooked) {
         notify(
           "Already booked",
-          "You have already paid for this session. Check your Sessions tab to join.",
+          res.test
+            // Saying "you have already paid" about a place nobody was charged for is the same
+            // untruth the label exists to prevent, said at the one moment somebody is thinking
+            // about money.
+            ? `You already have a place in this class. ${res.testLabel ?? TEST_CLASS_LABEL}. ` +
+              "Check your Sessions tab to join."
+            : "You have already paid for this session. Check your Sessions tab to join.",
         );
+        return;
+      }
+
+      if (res?.test) {
+        // No payment sheet was involved and no method was charged, so the confirmation must not
+        // name one. "Paid with eSewa. You're in." after a booking that charged nobody is exactly
+        // the sentence a teacher or student would later quote back as evidence they had paid.
+        if (
+          await confirm(
+            "You're in — no payment was taken",
+            `${res.testLabel ?? TEST_CLASS_LABEL}.\n\n` +
+              "This is a test class, so nothing was charged. You can join from your Sessions " +
+              "tab — the class opens a few minutes before it starts.",
+            "View My Sessions",
+          )
+        ) {
+          router.push("/(student)/sessions");
+        }
         return;
       }
       if (

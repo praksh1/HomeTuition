@@ -46,6 +46,7 @@ import {
   admitsTestEnrolment,
   isTestClass,
   liveTestStudentGrant,
+  testClassIds,
   testStudentAllowed,
 } from "../lib/testStudentAccess";
 
@@ -77,6 +78,28 @@ async function markEnrolmentPaid(sessionId: number, studentId: number, reference
     )
     .returning();
   return updated ?? null;
+}
+
+/**
+ * Mark the classes in a list that were created under a teacher's test grant.
+ *
+ * **A fact about the class, from the server, for everybody who can see the class.** The label used
+ * to be drawn from the viewer's own enrolment, which meant only the test student ever saw it: the
+ * teacher's own list showed "NPR 500 per class" against a class that had never taken and never
+ * would take a rupee, with nothing to say so. A teacher counting their month from that screen
+ * counts money that does not exist — the fabrication this project keeps finding, one column over.
+ *
+ * Never inferred from whether the teacher holds a grant *now*: that would relabel every class
+ * they ever ran the moment one was issued, and unlabel last month's the moment it lapsed. The
+ * `test_classes` row was written when the class was created and is the only thing consulted.
+ *
+ * Attached to the response rather than stored on the row: `sessions` is read with a bare
+ * `select()` in six routes, where a new column is a 500 until the schema is pushed by hand.
+ */
+async function tagTestClasses<T extends { id: number }>(rows: T[]): Promise<T[]> {
+  const marked = await testClassIds(rows.map((row) => row.id));
+  if (marked.size === 0) return rows;
+  return rows.map((row) => (marked.has(row.id) ? { ...row, test: true, testLabel: TEST_LABEL } : row));
 }
 
 const router: IRouter = Router();
@@ -179,7 +202,7 @@ router.get("/sessions", async (req, res): Promise<void> => {
     const total = sorted.length;
     const paged = sorted.slice(offset, offset + limitNum);
 
-    res.json({ sessions: paged, total, page: pageNum, limit: limitNum });
+    res.json({ sessions: await tagTestClasses(paged), total, page: pageNum, limit: limitNum });
     return;
   }
 
@@ -217,7 +240,7 @@ router.get("/sessions", async (req, res): Promise<void> => {
       isPastCutoff({ date: row.date, duration: row.duration, startedAt: row.startedAt, endedAt: null, status: row.status }, now),
   }));
 
-  res.json({ sessions: withState, total, page: pageNum, limit: limitNum });
+  res.json({ sessions: await tagTestClasses(withState), total, page: pageNum, limit: limitNum });
 });
 
 /**
@@ -489,7 +512,10 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
   // server still decides — see the room endpoint — but the two now judge on the same facts,
   // so the app cannot offer what the server will refuse.
   const activity = await activityFor(id);
-  res.json({ ...session, endedAt: activity.endedAt });
+  // A class that was created under a test grant says so here too, so the class's own page and
+  // anything that opens from it carry the same fact the list does.
+  const [tagged] = await tagTestClasses([{ ...session, endedAt: activity.endedAt }]);
+  res.json(tagged);
 });
 
 /**
@@ -1297,11 +1323,14 @@ async function bookSession(req: Request, res: Response): Promise<void> {
            * the classroom is refusing is exactly the contradiction that had students staring at
            * "Booked & paid" for a class they had been dropped from. Left out of this branch, the
            * booking runs on: they are charged properly and the dormant row is upgraded in place
-           * to a real paid one, which is the outcome they were asking for.
+           * to a real paid one, which is the outcome they were asking for — and no second seat is
+           * taken, because `existing` is truthy and the seat count only moves for a new row.
            */
           admitsTestEnrolment(existing.paymentStatus))
       ) {
-        return { kind: "already" as const };
+        // Which kind of place they already hold, so the answer can say so rather than assuming
+        // money changed hands.
+        return { kind: "already" as const, viaTestAccess: existing.paymentStatus === TEST_PAYMENT_STATUS };
       }
 
       // Capacity only blocks genuinely new enrolments; upgrading a leftover pending row does
@@ -1413,7 +1442,19 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         });
         return;
       case "already":
-        res.status(200).json({ alreadyBooked: true, paid: true });
+        /**
+         * `paid` means money moved, and for a test place it did not.
+         *
+         * This used to answer `{ alreadyBooked: true, paid: true }` whatever kind of place the
+         * student held, so a second tap on a test booking produced "You have already paid for
+         * this session" about a booking that took nothing. The app now has the fact instead of
+         * having to assume it.
+         */
+        res.status(200).json({
+          alreadyBooked: true,
+          paid: !result.viaTestAccess,
+          ...(result.viaTestAccess ? { test: true, testLabel: TEST_LABEL } : null),
+        });
         return;
       default: {
         req.log.info({ sessionId: id, studentId: user.userId, price }, "session booked and paid");
@@ -1449,9 +1490,16 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         });
         res.status(201).json({
           ...result.enrolment,
-          // `paid` has meant "this seat is yours" to every screen that reads it, and it still
-          // does. `test` is what separates a seat that was bought from one that was granted.
-          paid: true,
+          /**
+           * `paid` answers "did money move", and nothing else.
+           *
+           * It used to be sent as `true` for a test booking with `test: true` beside it, on the
+           * reasoning that every screen read it as "this seat is yours". That is the reasoning
+           * that produces a confirmation saying "Paid with eSewa. You're in." after a booking
+           * that charged nobody. Whether the seat is theirs is a question for the server, which
+           * the app asks again straight afterwards; whether they were charged is this field.
+           */
+          paid: !result.viaTestAccess,
           ...(result.viaTestAccess ? { test: true, testLabel: TEST_LABEL } : null),
         });
         return;
