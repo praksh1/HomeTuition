@@ -133,6 +133,76 @@ async function run() {
   check("the message names the missing thing", /not configured/i.test(String(resend.body?.error)),
     String(resend.body?.error));
 
+  /**
+   * And it leaves nothing behind, which is the half of this that was missed the first time.
+   *
+   * Reading the configuration before the cooldown was not enough: the token was still minted, and
+   * minting one **spends the one-minute cooldown** and marks every older unused token used. A
+   * server that had mail switched on a moment later would have refused the first genuine resend
+   * with "Please wait a minute" — and would already have invalidated the link that would have
+   * worked.
+   *
+   * Checked in the database rather than through the API, because the whole point is that nothing
+   * observable happened.
+   */
+  for (let i = 0; i < 3; i += 1) {
+    await api("/auth/verification/resend", { method: "POST", token: teacher.token, body: {} });
+  }
+  const tokenCount = sql(`select count(*) from account_tokens
+                           where user_id = ${teacher.user.id} and purpose = 'verify_email'`);
+  check("registration and three refused resends mint no verification token at all",
+    tokenCount === "0", `count=${tokenCount}`);
+
+  /**
+   * And the moment a provider is configured, the very first resend can send.
+   *
+   * The defect this guards: minting a token on an unconfigured server spends the one-minute
+   * cooldown, so switching mail on and pressing Resend answered "Please wait a minute" — about a
+   * link the same call had just invalidated. A second server, same database, mail configured.
+   */
+  {
+    const mailPort = PORT + 1;
+    const withMail = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
+      cwd: repoRoot,
+      env: {
+        PATH: process.env.PATH, HOME: process.env.HOME,
+        PORT: String(mailPort), DATABASE_URL: PGURL,
+        SESSION_SECRET: process.env.SESSION_SECRET ?? "journey-audit-secret",
+        NODE_ENV: "production", VIDEO_PROVIDER: "echo",
+        // Deliberately not a real key. Nothing here may reach a mail provider; what is being
+        // checked is that the server *tries*, rather than refusing on a spent cooldown.
+        BREVO_API_KEY: "journey-audit-not-a-real-key",
+        EMAIL_FROM: "Sikshya Audit <audit@example.invalid>",
+      },
+      stdio: "ignore",
+    });
+    process.on("exit", () => { try { withMail.kill("SIGKILL"); } catch { /* gone */ } });
+    let up = false;
+    for (let i = 0; i < 80 && !up; i += 1) {
+      try { up = (await fetch(`http://127.0.0.1:${mailPort}/api/healthz`)).ok; } catch { /* not up */ }
+      if (!up) await new Promise((r) => setTimeout(r, 250));
+    }
+    check("a second server, with mail configured, comes up", up);
+
+    const res = await fetch(`http://127.0.0.1:${mailPort}/api/auth/verification/resend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${teacher.token}` },
+      body: "{}",
+    });
+    const body = await res.json().catch(() => ({}));
+    check("the first resend after mail is switched on is not refused on a cooldown",
+      res.status !== 429, `status=${res.status} ${JSON.stringify(body)}`);
+    check("and it reports the server as configured", body?.emailConfigured === true,
+      JSON.stringify(body?.emailConfigured));
+    check("and it does not tell an operator to configure something that is configured",
+      !/not configured/i.test(String(body?.error ?? "")), String(body?.error));
+    const nowMinted = sql(`select count(*) from account_tokens
+                            where user_id = ${teacher.user.id} and purpose = 'verify_email'`);
+    check("a link is minted now that one could actually arrive", Number(nowMinted) >= 1,
+      `count=${nowMinted}`);
+    try { withMail.kill("SIGKILL"); } catch { /* gone */ }
+  }
+
   console.log("\nVerified sign-in\n");
 
   verify(teacher.user.id);

@@ -291,7 +291,11 @@ router.post("/auth/verification/resend", requireAuth, async (req, res): Promise<
       ? "Please wait a minute before asking for another email."
       : delivery.sent
         ? undefined
-        : "Email delivery is not configured yet. Please contact Sikshya support.",
+        : delivery.configured
+          ? // Configured, and the provider still would not take it. Saying "not configured" here
+            // sends the operator to check an environment variable that is already correct.
+            "The email could not be sent just now. Please try again in a few minutes."
+          : "Email delivery is not configured yet. Please contact Sikshya support.",
   });
 });
 
