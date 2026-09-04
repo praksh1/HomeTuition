@@ -309,6 +309,13 @@ await withServer(8103, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
     `select count(*) from session_enrollments where session_id = ${id} and payment_status = 'paid'`) === "0");
   check("the seat is still taken, so the class cannot be oversold",
     sql(`select enrolled_count from sessions where id = ${id}`) === "1");
+  /*
+    `total_students` is public — Discover sorts on it and the teacher's profile shows it. Nobody
+    taught this student, so the number a real student reads must not move.
+  */
+  check("and the teacher's public student count is not inflated by it",
+    sql(`select total_students from teacher_profiles where user_id = ${teacher.id}`) === "0",
+    sql(`select total_students from teacher_profiles where user_id = ${teacher.id}`));
 
   // Dropping is the route that creates a refund debt. It reads `payment_status = 'paid'`.
   const dropped = await api(`/sessions/${id}/drop`, { method: "POST", token: tested.token, body: { reason: "x" } });
@@ -431,6 +438,22 @@ await withServer(8107, { ALLOW_TEST_STUDENT_ACCESS: "" }, async (api) => {
     (await classroomSocket(api, tested.token, id, "Closing Chetan")) === false);
   check("the row is still there, unchanged — closing a door is not a refund",
     enrolmentRow(id, tested.id) === "test|test_access|-", enrolmentRow(id, tested.id));
+
+  /*
+    And it does not claim to be a booking either.
+
+    Answering "you already have it" to somebody the classroom is refusing is the contradiction that
+    had students staring at "Booked & paid" for a class they had been dropped from. With the switch
+    off the booking runs on instead — straight to the gateway, which refuses it here because this
+    suite configures one.
+  */
+  const rebook = await api(`/sessions/${id}/book`, { method: "POST", token: tested.token,
+    body: { paymentMethod: "esewa" } });
+  check("and booking again is not answered \"you already have it\"",
+    rebook.status === 402 && !rebook.body?.alreadyBooked,
+    `${rebook.status} ${JSON.stringify(rebook.body)}`);
+  check("the dormant row is still exactly what it was", enrolmentRow(id, tested.id) === "test|test_access|-",
+    enrolmentRow(id, tested.id));
 
   const stillPaid = await api(`/sessions/${id}/room`, { token: paying.token });
   check("the student who actually paid is unaffected", stillPaid.status === 200,

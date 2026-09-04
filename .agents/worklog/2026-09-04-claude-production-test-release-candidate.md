@@ -98,7 +98,7 @@ in items 1–5 was rewritten.
 | `sikshya/app/(admin)/person/[id].tsx` | The operator card: grant with a reason, the live grant with its end date, revoke, and the eligibility rules stated. Student records only. |
 | `sikshya/utils/testAccess.ts` *(new)* | The fallback wording, mirroring the server's `TEST_LABEL`. |
 | both `classroom/[id].tsx`, `components/SessionCard.tsx` | The label, painted where somebody would misread the absence of it. |
-| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 61 checks. |
+| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 64 checks. |
 | `sikshya/scripts/test-access-ui/run.mjs` *(new, `test:test-access-ui`)* | 32 rendered checks. |
 
 ## Decisions and assumptions
@@ -152,7 +152,7 @@ and removed again by using `useLayout().t.overline`, rather than blessing a high
 
 | Suite | Result | | Suite | Result |
 |---|---|---|---|---|
-| `test:test-student` *(new)* | **61 / 61** | | `test:refunds` | 152 / 152 |
+| `test:test-student` *(new)* | **64 / 64** | | `test:refunds` | 152 / 152 |
 | `test:test-access` | 26 / 26 | | `test:tickets` | 62 / 62 |
 | `test:payments` | 10 / 10 | | `test:journey` | 57 / 57 |
 | `test:sessions` | 56 / 56 | | `test:video` | 16 / 16 |
@@ -249,6 +249,24 @@ hazard already in memory, in two more files.
 defects:** the teacher grant needed a real tier key (`tier4`, not `unlimited`), and the classes the
 room tests used were 30 minutes out, outside the ten-minute door — seven checks failed until they
 were moved inside it. Neither was a product fault.
+
+**Three findings in my own diff, on a deliberate adversarial re-read after the suites were
+green.** All three were real and all three are fixed, with a check each:
+
+1. **A test booking raised `teacher_profiles.total_students`** — a *public* number, which Discover
+   sorts on and the teacher's profile shows. Nobody taught that student. It is not revenue, so it
+   slipped past the "exclude it from money" rule, and it is precisely the fabrication this project
+   keeps finding wearing a different column. The seat count still moves, because the seat is
+   genuinely taken.
+2. **With the switch off, a dormant test row still answered "you already have it"** while the
+   classroom refused the same person — the exact contradiction that once had students staring at
+   "Booked & paid" for a class they had been dropped from. The short-circuit is now gated on the
+   same `admitsTestEnrolment` the door uses, so with the switch off the booking runs on: they are
+   charged properly and the dormant row is upgraded in place to a real paid one.
+3. **The payment webhook could have promoted a `test` row to `paid`.** Unreachable today — the
+   gateway is never called for a test booking, so it has nothing to send a callback about — but
+   the guard costs one condition in the `where` and the cost of being wrong is a booking nobody
+   paid for appearing in the earnings.
 
 **`overline` uppercases its text**, so the first rendered assertion for the label failed against
 "TEST — NO PAYMENT WAS PROCESSED". The assertion is case-insensitive now; the banner was correct

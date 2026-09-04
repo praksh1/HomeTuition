@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, testClassesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
@@ -43,6 +43,7 @@ import {
   TEST_LABEL,
   TEST_PAYMENT_METHOD,
   TEST_PAYMENT_STATUS,
+  admitsTestEnrolment,
   isTestClass,
   liveTestStudentGrant,
   testStudentAllowed,
@@ -57,10 +58,23 @@ async function markEnrolmentPaid(sessionId: number, studentId: number, reference
     .where(and(eq(sessionEnrollmentsTable.sessionId, sessionId), eq(sessionEnrollmentsTable.studentId, studentId)));
   if (!enrollment) return null;
 
+  /**
+   * A `test` row is never promoted to `paid`, by this route or any other.
+   *
+   * Unreachable today — the gateway is never called for a test booking, so it has nothing to send
+   * a callback about — but the cost of the condition is one line and the cost of being wrong is a
+   * booking nobody paid for appearing in the earnings. The guard is in the `where`, so a second
+   * delivery of the same event finds nothing to update rather than racing.
+   */
   const [updated] = await db
     .update(sessionEnrollmentsTable)
     .set({ paymentStatus: "paid", ...(reference ? { paymentReference: reference } : {}) })
-    .where(eq(sessionEnrollmentsTable.id, enrollment.id))
+    .where(
+      and(
+        eq(sessionEnrollmentsTable.id, enrollment.id),
+        ne(sessionEnrollmentsTable.paymentStatus, TEST_PAYMENT_STATUS),
+      ),
+    )
     .returning();
   return updated ?? null;
 }
@@ -1272,7 +1286,21 @@ async function bookSession(req: Request, res: Response): Promise<void> {
       // counts here too — without it a second tap would run the whole booking again, and a test
       // student whose grant had lapsed in between would be sent to the gateway for a class they
       // are already in.
-      if (existing && (price <= 0 || existing.paymentStatus === "paid" || existing.paymentStatus === TEST_PAYMENT_STATUS)) {
+      if (
+        existing &&
+        (price <= 0 ||
+          existing.paymentStatus === "paid" ||
+          /**
+           * A test row counts as "already booked" **only while it still opens the door**.
+           *
+           * With the switch off it opens nothing, and answering "you already have it" to somebody
+           * the classroom is refusing is exactly the contradiction that had students staring at
+           * "Booked & paid" for a class they had been dropped from. Left out of this branch, the
+           * booking runs on: they are charged properly and the dormant row is upgraded in place
+           * to a real paid one, which is the outcome they were asking for.
+           */
+          admitsTestEnrolment(existing.paymentStatus))
+      ) {
         return { kind: "already" as const };
       }
 
@@ -1346,12 +1374,21 @@ async function bookSession(req: Request, res: Response): Promise<void> {
           }).returning();
 
       if (!existing) {
+        // The seat is genuinely taken either way, so the class cannot be oversold.
         await tx.update(sessionsTable)
           .set({ enrolledCount: locked.enrolledCount + 1 })
           .where(eq(sessionsTable.id, id));
-        await tx.update(teacherProfilesTable)
-          .set({ totalStudents: sql`${teacherProfilesTable.totalStudents} + 1` })
-          .where(eq(teacherProfilesTable.userId, session.teacherId));
+        /**
+         * `totalStudents` is a public number — Discover sorts on it and the teacher's profile
+         * shows it — so a test booking must not raise it. Nobody taught that student, and a
+         * count inflated by a booking that never happened is the fabrication this project keeps
+         * finding, just wearing a different column.
+         */
+        if (!viaTestAccess) {
+          await tx.update(teacherProfilesTable)
+            .set({ totalStudents: sql`${teacherProfilesTable.totalStudents} + 1` })
+            .where(eq(teacherProfilesTable.userId, session.teacherId));
+        }
       }
 
       return { kind: "booked" as const, enrolment, viaTestAccess };
