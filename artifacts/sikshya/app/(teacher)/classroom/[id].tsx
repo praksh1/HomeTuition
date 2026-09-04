@@ -1,13 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, {
-  useRef,
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -32,6 +26,14 @@ import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
 import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
+import {
+  callWindowControls,
+  callWindowReducer,
+  dragBounds,
+  initialCallWindow,
+  windowRect,
+  type Viewport,
+} from "@/utils/callWindow";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import PdfViewer from "@/components/PdfViewer";
@@ -286,9 +288,18 @@ export default function Classroom() {
   const [mode, setMode] = useState<Mode>("whiteboard");
   const [elapsed, setElapsed] = useState(0);
   const [chatMsg, setChatMsg] = useState("");
-  /** The call never unmounts while its app-owned shell is hidden or resized. */
-  const [videoWindowSize, setVideoWindowSize] =
-    useState<VideoWindowSize>("small");
+  /**
+   * The call never unmounts while its app-owned shell is hidden, moved or resized.
+   *
+   * The window itself lives in `utils/callWindow.ts`, shared with the student's classroom and
+   * tested on its own. Both screens had their own copy of this and they had already drifted:
+   * minus toggled two sizes a finger apart and left the window wherever it had been dragged,
+   * which the owner reasonably read as a button that did nothing.
+   */
+  const [callWindow, dispatchWindow] = useReducer(callWindowReducer, undefined, initialCallWindow);
+  /** The names the rest of this screen has always used. One map, so nothing else had to change. */
+  const videoWindowSize: VideoWindowSize =
+    callWindow.state === "compact" ? "small" : callWindow.state === "normal" ? "medium" : callWindow.state;
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   /** Upload options stay folded away until asked for — they are occasional actions, and as
    * two permanent full-width buttons they were consuming screen the video should have. */
@@ -335,9 +346,6 @@ export default function Classroom() {
   const chatScrollRef = useRef<ScrollView>(null);
   const chatProgress = useRef(new Animated.Value(0)).current;
   const pipDrag = useRef(new Animated.ValueXY()).current;
-  const pipOffset = useRef({ x: 0, y: 0 });
-  const lastVisibleVideoSizeRef = useRef<VisibleVideoWindowSize>("small");
-  const lastWindowedVideoSizeRef = useRef<WindowedVideoSize>("small");
   const lastSeenIncomingRef = useRef(0);
   const previousIncomingRef = useRef(0);
 
@@ -356,48 +364,49 @@ export default function Classroom() {
   const videoHidden = videoWindowSize === "hidden";
   const videoFull = videoWindowSize === "full";
   const videoSmall = videoWindowSize === "small";
+  const windowControls = callWindowControls(callWindow);
 
-  // Small is a true thumbnail. Medium is the first size intended for Daily's own controls.
-  const smallVideoWidth = Math.min(
-    width - space.xxl,
-    space.huge * (isCompact ? 4 : 6),
+  /**
+   * Everything about where the window goes, in one shared place.
+   *
+   * `reservedTop` and `reservedBottom` are the bands Excalidraw owns — its hamburger and tools at
+   * the top, its zoom controls at the bottom. The helper clamps the window between them, so
+   * floating chrome can cover canvas but never the controls that make the canvas usable.
+   */
+  const viewport: Viewport = useMemo(
+    () => ({
+      width,
+      height,
+      insets,
+      reservedTop: boardToolbarBottom - insets.top + HIT_SLOP_MIN + (isLandscapeLayout ? space.xs : space.lg),
+      reservedBottom: pipBottomClearance - insets.bottom,
+      hitSlopMin: HIT_SLOP_MIN,
+    }),
+    [width, height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
   );
-  const mediumVideoWidth = Math.min(
-    width - space.xxl,
-    space.huge * (isCompact ? 7 : 10),
-  );
-  const pipTop =
-    boardToolbarBottom +
-    HIT_SLOP_MIN +
-    (isLandscapeLayout ? space.xs : space.lg);
-  const availableVideoHeight = Math.max(
-    space.huge * 2,
-    height - pipTop - pipBottomClearance,
-  );
-  const smallVideoHeight = Math.min(space.huge * 3, availableVideoHeight);
-  const mediumVideoHeight = Math.min(
-    space.huge * (isLandscapeLayout ? 5 : 6),
-    availableVideoHeight,
-  );
-  const windowedVideoWidth = videoSmall ? smallVideoWidth : mediumVideoWidth;
-  const windowedVideoHeight = videoSmall ? smallVideoHeight : mediumVideoHeight;
-  const windowedVideoBaseLeft = Math.max(
-    space.md,
-    width - windowedVideoWidth - space.md,
-  );
-  const expandedVideoWidth = width - space.xxl;
-  const expandedVideoHeight = Math.max(
-    space.huge * 3,
-    height - pipTop - hudBottom - HIT_SLOP_MIN - space.lg,
-  );
-  const videoWidth = videoFull ? expandedVideoWidth : windowedVideoWidth;
-  const videoHeight = videoFull ? expandedVideoHeight : windowedVideoHeight;
-  const videoLeft = videoFull ? space.md : windowedVideoBaseLeft;
+
+  const rect = windowRect(callWindow.state, viewport, callWindow.offset);
+  const pipTop = rect.top;
+  const videoWidth = rect.width;
+  const videoHeight = rect.height;
+  const videoLeft = rect.left;
+  const windowedVideoWidth = rect.width;
+  const windowedVideoHeight = rect.height;
+  const windowedVideoBaseLeft = rect.left;
   const noticeTop = videoHidden
-    ? pipTop
+    ? rect.top
     : videoFull
-      ? pipTop + space.sm
-      : pipTop + windowedVideoHeight + space.sm;
+      ? rect.top + space.sm
+      : rect.top + rect.height + space.sm;
+
+  /**
+   * A rotation or a resized browser re-clamps the window; it does not throw it back to the
+   * corner. Somebody who moved their window keeps it where they put it, as far as it still fits.
+   */
+  useEffect(() => {
+    dispatchWindow({ type: "viewport", bounds: dragBounds(callWindow.state, viewport) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [width, height, insets.top, insets.bottom, insets.left, insets.right]);
   const incomingMessageCount = useMemo(
     () =>
       messages.reduce((total, message) => total + (message.isMe ? 0 : 1), 0),
@@ -411,7 +420,7 @@ export default function Classroom() {
         onMoveShouldSetPanResponder: (_, gesture) =>
           Math.abs(gesture.dx) > space.xxs || Math.abs(gesture.dy) > space.xxs,
         onPanResponderGrant: () => {
-          pipDrag.setOffset(pipOffset.current);
+          pipDrag.setOffset({ x: 0, y: 0 });
           pipDrag.setValue({ x: 0, y: 0 });
         },
         onPanResponderMove: Animated.event(
@@ -421,129 +430,51 @@ export default function Classroom() {
           },
         ),
         onPanResponderRelease: (_, gesture) => {
-          const next = {
-            x: Math.max(
-              space.md - windowedVideoBaseLeft,
-              Math.min(
-                pipOffset.current.x + gesture.dx,
-                width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
-              ),
-            ),
-            y: Math.max(
-              0,
-              Math.min(
-                pipOffset.current.y + gesture.dy,
-                height - pipTop - windowedVideoHeight - pipBottomClearance,
-              ),
-            ),
-          };
+          /**
+           * The drag is recorded in the shared model, which clamps it.
+           *
+           * The clamping used to be written out here, twice, in terms of six local variables —
+           * and the student's classroom had its own copy. `dragBounds` is the one rule now, and
+           * it is what a rotation re-applies.
+           */
           pipDrag.flattenOffset();
-          pipDrag.setValue(next);
-          pipOffset.current = next;
+          dispatchWindow({ type: "drag", dx: gesture.dx, dy: gesture.dy });
+          // The model has absorbed the movement and the rectangle already includes it, so the
+          // animated value goes back to zero. Leaving it would double the offset on every drag.
+          pipDrag.setValue({ x: 0, y: 0 });
         },
         onPanResponderTerminate: (_, gesture) => {
           pipDrag.flattenOffset();
-          const next = {
-            x: Math.max(
-              space.md - windowedVideoBaseLeft,
-              Math.min(
-                pipOffset.current.x + gesture.dx,
-                width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
-              ),
-            ),
-            y: Math.max(
-              0,
-              Math.min(
-                pipOffset.current.y + gesture.dy,
-                height - pipTop - windowedVideoHeight - pipBottomClearance,
-              ),
-            ),
-          };
-          pipDrag.setValue(next);
-          pipOffset.current = next;
+          dispatchWindow({ type: "drag", dx: gesture.dx, dy: gesture.dy });
+          pipDrag.setValue({ x: 0, y: 0 });
         },
       }),
-    [
-      height,
-      windowedVideoBaseLeft,
-      pipDrag,
-      pipTop,
-      pipBottomClearance,
-      space.md,
-      space.xxs,
-      windowedVideoHeight,
-      windowedVideoWidth,
-      width,
-    ],
+    // The geometry moved into the shared model, so the responder no longer depends on it.
+    [pipDrag, space.xxs],
   );
 
-  useEffect(() => {
-    const next = {
-      x: Math.max(
-        space.md - windowedVideoBaseLeft,
-        Math.min(
-          pipOffset.current.x,
-          width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
-        ),
-      ),
-      y: Math.max(
-        0,
-        Math.min(
-          pipOffset.current.y,
-          height - pipTop - windowedVideoHeight - pipBottomClearance,
-        ),
-      ),
-    };
-    pipOffset.current = next;
-    pipDrag.setOffset({ x: 0, y: 0 });
-    pipDrag.setValue(next);
-  }, [
-    height,
-    windowedVideoBaseLeft,
-    pipDrag,
-    pipTop,
-    pipBottomClearance,
-    space.md,
-    windowedVideoHeight,
-    windowedVideoWidth,
-    width,
-  ]);
+  /**
+   * The old clamp lived here, written out in six local variables, once per classroom.
+   *
+   * `dragBounds` in `utils/callWindow.ts` is the one rule now, applied on every viewport change
+   * by the effect above — which is also what makes a rotation re-clamp the window instead of
+   * losing it off the edge.
+   */
 
-  const hideVideoWindow = useCallback(() => {
-    if (videoWindowSize === "hidden") return;
-    lastVisibleVideoSizeRef.current = videoWindowSize;
-    if (videoWindowSize !== "full") {
-      lastWindowedVideoSizeRef.current = videoWindowSize;
-    }
-    setVideoWindowSize("hidden");
-  }, [videoWindowSize]);
-
-  const showVideoWindow = useCallback(() => {
-    setVideoWindowSize(lastVisibleVideoSizeRef.current);
-  }, []);
-
-  const toggleWindowedVideoSize = useCallback(() => {
-    const next: WindowedVideoSize =
-      videoWindowSize === "small" ? "medium" : "small";
-    lastVisibleVideoSizeRef.current = next;
-    lastWindowedVideoSizeRef.current = next;
-    setVideoWindowSize(next);
-  }, [videoWindowSize]);
+  const hideVideoWindow = useCallback(() => dispatchWindow({ type: "hide" }), []);
+  const showVideoWindow = useCallback(() => dispatchWindow({ type: "show" }), []);
+  /**
+   * Minus. One meaning, everywhere: make it small and put it back in the corner.
+   *
+   * It used to swap between two docked sizes and leave the window wherever it had been dragged.
+   */
+  const minimizeVideoWindow = useCallback(() => dispatchWindow({ type: "minimize" }), []);
 
   const toggleFullVideoWindow = useCallback(() => {
-    if (videoWindowSize === "full") {
-      const next = lastWindowedVideoSizeRef.current;
-      lastVisibleVideoSizeRef.current = next;
-      setVideoWindowSize(next);
-      return;
-    }
-
-    if (videoWindowSize !== "hidden") {
-      lastWindowedVideoSizeRef.current = videoWindowSize;
-    }
-    lastVisibleVideoSizeRef.current = "full";
-    setVideoWindowSize("full");
-  }, [videoWindowSize]);
+    dispatchWindow({ type: "toggle-full" });
+  }, []);
+  /** Compact's one control: back to the working size. */
+  const restoreVideoWindow = useCallback(() => dispatchWindow({ type: "restore" }), []);
 
   useEffect(() => {
     Animated.timing(chatProgress, {
@@ -1586,6 +1517,8 @@ export default function Classroom() {
               onPress={showVideoWindow}
               activeOpacity={0.75}
               accessibilityLabel="Show call window"
+              accessibilityRole="button"
+              testID="video-show-call-btn"
             >
               <Feather name="video" size={18} color={colors.primary} />
               <Text style={[t.caption, { color: colors.primary }]}>
@@ -1598,6 +1531,7 @@ export default function Classroom() {
         {/* Daily stays mounted through hide and every size change; only its shell moves. */}
         <View style={s.contentArea}>
           <Animated.View
+            testID="video-window"
             pointerEvents={mode === "chat" || videoHidden ? "none" : "auto"}
             style={[
               s.videoArea,
@@ -1610,7 +1544,8 @@ export default function Classroom() {
                 borderRadius: videoFull ? radius.lg : radius.md,
                 backgroundColor: colors.secondary,
                 borderColor: colors.lineStrong,
-                transform: videoFull ? [] : pipDrag.getTranslateTransform(),
+                // Position comes from the shared model; the animated value only tracks a live drag.
+                transform: windowControls.canDrag ? pipDrag.getTranslateTransform() : [],
               },
               (mode === "chat" || videoHidden) && s.videoAreaHidden,
             ]}
@@ -1643,6 +1578,31 @@ export default function Classroom() {
                 <View style={s.callDragZone} />
               )}
 
+              {/*
+                Compact is a preview, so it gets one control rather than three.
+
+                Three 44-point buttons do not fit across a 132-point window; they render as a row
+                of half-buttons nobody can hit, which is the "unusable provider control row" this
+                is meant to avoid. Restore is the one thing somebody wants from a thumbnail, and
+                Hide stays reachable from the classroom's own HUD.
+              */}
+              {videoSmall ? (
+                <View style={s.callFrameActions}>
+                  <TouchableOpacity
+                    style={[
+                      s.callFrameButton,
+                      { width: HIT_SLOP_MIN + space.lg, height: HIT_SLOP_MIN, gap: space.xxs },
+                    ]}
+                    onPress={restoreVideoWindow}
+                    accessibilityRole="button"
+                    accessibilityLabel="Restore the call window"
+                    testID="video-restore-btn"
+                  >
+                    <Feather name="maximize-2" size={18} color={colors.onInverse} />
+                    <Text style={[t.caption, { color: colors.onInverse }]}>Restore</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
               <View style={s.callFrameActions}>
                 <TouchableOpacity
                   style={[
@@ -1666,18 +1626,16 @@ export default function Classroom() {
                     s.callFrameButton,
                     { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN },
                   ]}
-                  onPress={toggleWindowedVideoSize}
-                  accessibilityLabel={
-                    videoSmall
-                      ? "Make call window medium"
-                      : "Make call window small"
-                  }
+                  onPress={minimizeVideoWindow}
+                  disabled={!windowControls.canMinimize}
+                  accessibilityLabel="Make the call window small and put it back in the corner"
+                  accessibilityState={{ disabled: !windowControls.canMinimize }}
                   testID="video-window-size-btn"
                 >
                   <Feather
-                    name={videoSmall ? "maximize" : "minimize"}
+                    name="minimize"
                     size={18}
-                    color={colors.onInverse}
+                    color={windowControls.canMinimize ? colors.onInverse : colors.onInverseMuted}
                   />
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1704,6 +1662,7 @@ export default function Classroom() {
                   />
                 </TouchableOpacity>
               </View>
+              )}
             </View>
 
             <View style={s.callFrameBody}>
@@ -2387,6 +2346,8 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderBottomWidth: 1,
+    // Above the call itself, so nothing the provider paints can end up on top of these controls.
+    zIndex: 1,
   },
   callDragZone: {
     flex: 1,
@@ -2405,7 +2366,15 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  callFrameBody: { flex: 1, position: "relative" },
+  /**
+   * The call is clipped to its own half of the window.
+   *
+   * Without this the call's contents paint outside the body. A provider message too tall for a
+   * 132-point preview rendered 140 points high in a 72-point box, centred, so it overflowed
+   * *upwards* across the header — and swallowed every tap meant for Hide, minus and maximise.
+   * The buttons were there, drawn, and dead, which is exactly what the owner reported.
+   */
+  callFrameBody: { flex: 1, position: "relative", overflow: "hidden" },
   permissionGate: { alignItems: "center", justifyContent: "center" },
   boardArea: { flex: 1, overflow: "hidden" },
   whiteboardArea: { flex: 1 },

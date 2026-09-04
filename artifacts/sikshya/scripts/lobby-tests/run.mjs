@@ -124,6 +124,15 @@ async function openClassroom(context, token, route) {
   });
   // The key the app itself reads. Same preamble the classroom suite uses.
   await page.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), token);
+  // Counting room requests is how "never remounts the call" is checked from outside.
+  await page.addInitScript(() => {
+    window.__roomCalls = 0;
+    const original = window.fetch;
+    window.fetch = (...args) => {
+      if (/\/sessions\/\d+\/room/.test(String(args[0]))) window.__roomCalls += 1;
+      return original(...args);
+    };
+  });
   // Nothing here should reach a camera, and a headless prompt would hang if it tried.
   await page.addInitScript(() => {
     if (navigator.mediaDevices) {
@@ -166,6 +175,15 @@ async function main() {
   await api(`/sessions/${past.body.id}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
   sql(`update sessions set date = now() - interval '3 days' where id = ${past.body.id}`);
   const over = past.body.id;
+
+  // A class that is open right now, for the window tests.
+  const now = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    topic: `Lobby live ${Date.now()}`, subject: "Mathematics", description: "d",
+    date: new Date(Date.now() + 120_000).toISOString(),
+    duration: 60, price: 500, maxStudents: 5 } });
+  const live = now.body.id;
+  await api(`/sessions/${live}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
+  await api(`/sessions/${live}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
 
   const chromium = await getChromium();
   const browser = await chromium.launch();
@@ -223,6 +241,124 @@ async function main() {
         !/must be enrolled/i.test(text), text.slice(0, 200));
       check(`[${viewport.name}] and is not shown an ending`, !/has finished/i.test(text),
         text.slice(0, 200));
+      await page.close();
+    }
+
+    /* ---- the call window, in a class that is actually open ---- */
+    /**
+     * Both classrooms, because both draw the same window and both used to draw it themselves.
+     *
+     * The student's is the one that matters most: they are the person on a cheap Android phone
+     * with the board open, and they are the half that had its own copy of this geometry.
+     */
+    for (const who of [
+      { name: "teacher", token: teacher.token, route: `/(teacher)/classroom/${live}` },
+      { name: "student", token: student.token, route: `/(student)/classroom/${live}` },
+    ]) {
+      const label = `${viewport.name}/${who.name}`;
+      const { page } = await openClassroom(context, who.token, who.route);
+      const rectOf = async () =>
+        page.evaluate(() => {
+          const frame = document.querySelector('[data-testid="video-window"], [testid="video-window"]');
+          const r = frame?.getBoundingClientRect();
+          return r ? { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) } : null;
+        });
+
+      /**
+       * Pressed the way a finger presses it — no `force`.
+       *
+       * `click({ force: true })` skips Playwright's hit-target check, and skipping it is how a
+       * real defect stayed invisible: the call body did not clip its contents, so a provider
+       * message rendered 140 points tall inside a 72-point box overflowed *upwards* across the
+       * header and took every tap meant for Hide, minus and maximise. Forced clicks reported
+       * success while the events went to a paragraph of text. An unforced click fails instead,
+       * and says what is in the way.
+       */
+      const press = async (testId) => {
+        const btn = page.locator(`[data-testid="${testId}"], [testid="${testId}"]`).first();
+        if ((await btn.count()) === 0) return { pressed: false, blockedBy: "no such control" };
+        try {
+          await btn.click({ timeout: 4000 });
+        } catch (error) {
+          const blockedBy = await page.evaluate((id) => {
+            const el = document.querySelector(`[data-testid="${id}"]`);
+            if (!el) return "gone";
+            const b = el.getBoundingClientRect();
+            const top = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+            if (!top) return "nothing at that point";
+            return `${top.tagName}[${top.getAttribute("data-testid") ?? ""}] "${(top.textContent ?? "").slice(0, 60)}"`;
+          }, testId);
+          return { pressed: false, blockedBy: `${blockedBy} — ${String(error).split("\n")[0]}` };
+        }
+        await page.waitForTimeout(700);
+        return { pressed: true, blockedBy: "" };
+      };
+
+      const compact = await rectOf();
+      check(`[${label}] the call window renders`, compact !== null, JSON.stringify(compact));
+
+      // Compact offers Restore, not a row of half-buttons.
+      const restoreVisible = await page.locator('[data-testid="video-restore-btn"], [testid="video-restore-btn"]').count();
+      check(`[${label}] compact offers one obvious Restore`, restoreVisible > 0, String(restoreVisible));
+
+      const restorePress = await press("video-restore-btn");
+      check(`[${label}] Restore can actually be pressed`, restorePress.pressed, restorePress.blockedBy);
+      const normal = await rectOf();
+      check(`[${label}] Restore makes the window bigger`,
+        normal !== null && compact !== null && normal.w > compact.w,
+        JSON.stringify({ compact, normal }));
+
+      const fullPress = await press("video-fullscreen-btn");
+      check(`[${label}] maximise can actually be pressed`, fullPress.pressed, fullPress.blockedBy);
+      const full = await rectOf();
+      check(`[${label}] maximise fills more of the screen`,
+        full !== null && normal !== null && full.w >= normal.w && full.h >= normal.h,
+        JSON.stringify({ normal, full }));
+      check(`[${label}] and stays inside the viewport`,
+        full !== null && full.x >= 0 && full.y >= 0 &&
+          full.x + full.w <= viewport.width + 1 && full.y + full.h <= viewport.height + 1,
+        JSON.stringify(full));
+
+      /**
+       * The owner's actual complaint, rendered.
+       *
+       * Minus used to swap two sizes a finger apart and leave the window wherever it had been
+       * dragged. From full screen it did nothing at all.
+       */
+      const minusPress = await press("video-window-size-btn");
+      check(`[${label}] the minus button can actually be pressed`,
+        minusPress.pressed, minusPress.blockedBy);
+      const backToCompact = await rectOf();
+      check(`[${label}] minus from full snaps back to the small preview`,
+        backToCompact !== null && full !== null && backToCompact.w < full.w,
+        JSON.stringify({ full, backToCompact }));
+      check(`[${label}] and puts it back in the bottom-right corner`,
+        backToCompact !== null && compact !== null &&
+          Math.abs(backToCompact.x - compact.x) <= 2 && Math.abs(backToCompact.y - compact.y) <= 2,
+        JSON.stringify({ compact, backToCompact }));
+
+      // Hide and Show are their own control, and the call is never torn down by any of it.
+      const roomCalls = await page.evaluate(() => window.__roomCalls ?? 0);
+      const hidePress = await press("video-visibility-btn");
+      check(`[${label}] Hide is its own control and can be pressed`,
+        hidePress.pressed, hidePress.blockedBy);
+      await page.waitForTimeout(500);
+      const hiddenRect = await rectOf();
+      check(`[${label}] hiding takes the window out of the board's way`,
+        hiddenRect === null || hiddenRect.w === 0 || hiddenRect.h === 0,
+        JSON.stringify(hiddenRect));
+      // The affordance a person actually sees while the call is hidden, not the HUD toggle.
+      const showPress = await press("video-show-call-btn");
+      check(`[${label}] a hidden call offers an obvious "Show call"`,
+        showPress.pressed, showPress.blockedBy);
+      const shownAgain = await rectOf();
+      check(`[${label}] and Show brings back the size that was hidden`,
+        shownAgain !== null && backToCompact !== null && shownAgain.w === backToCompact.w,
+        JSON.stringify({ backToCompact, shownAgain }));
+      const roomCallsAfter = await page.evaluate(() => window.__roomCalls ?? 0);
+      check(`[${label}] hiding and showing never re-asks for the room`,
+        roomCallsAfter === roomCalls, `${roomCalls} -> ${roomCallsAfter}`);
+
       await page.close();
     }
 
