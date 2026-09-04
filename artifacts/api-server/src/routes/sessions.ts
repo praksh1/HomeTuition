@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, usersTable } from "@workspace/db";
+import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, testClassesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import {
   JOIN_WINDOW_MINUTES,
@@ -39,6 +39,14 @@ import {
 import { refundsTable, scheduleChangesTable } from "@workspace/db";
 import { isRecurringDay, notARecurringDay } from "../lib/monthlyStore";
 import { mayCreateClassAt } from "../lib/sessionAllowance";
+import {
+  TEST_LABEL,
+  TEST_PAYMENT_METHOD,
+  TEST_PAYMENT_STATUS,
+  isTestClass,
+  liveTestStudentGrant,
+  testStudentAllowed,
+} from "../lib/testStudentAccess";
 
 
 /** Flips an enrolment to paid. Returns null when no such enrolment exists. */
@@ -106,7 +114,17 @@ router.get("/sessions", async (req, res): Promise<void> => {
       .where(
         and(
           eq(sessionEnrollmentsTable.studentId, parseInt(studentId, 10)),
-          inArray(sessionEnrollmentsTable.paymentStatus, ["paid", "refunded"]),
+          /**
+           * A test enrolment appears here too, and only while the kill switch is on.
+           *
+           * Without it the owner books a class and watches it disappear from their own list —
+           * the enrolment exists, the door would open, and the app shows nothing. With the
+           * switch off it disappears again, which is the same closure the door applies.
+           */
+          inArray(
+            sessionEnrollmentsTable.paymentStatus,
+            testStudentAllowed() ? ["paid", "refunded", TEST_PAYMENT_STATUS] : ["paid", "refunded"],
+          ),
         ),
       );
     enrolmentBySession = new Map(enrolled.map((e) => [e.sessionId, e.paymentStatus]));
@@ -367,6 +385,33 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
     price: price!,
     status: "upcoming",
   }).returning();
+
+  /**
+   * A class created under a test grant is written down as one, once, now.
+   *
+   * `access.viaTestGrant` is set only when the teacher got through `ordinaryTeachingAccess` on a
+   * grant rather than on a paid plan. Recording it here — instead of asking at booking time what
+   * the teacher's grant looks like *then* — is the whole reason `test_classes` exists: a grant
+   * that lapses on Tuesday must not turn Monday's test classes into paid ones nobody paid for,
+   * and a grant issued on Friday must not make every class the teacher ever ran retroactively
+   * free. See the table's own comment.
+   *
+   * Best-effort: the class is already created and committed, and failing to write this row must
+   * not fail the creation. The consequence of losing it is that the class is an ordinary paid one,
+   * which is the safe direction — nobody gets in for free.
+   */
+  if (access.viaTestGrant) {
+    try {
+      await db.insert(testClassesTable).values({
+        sessionId: session.id,
+        teacherId: user.userId,
+        grantId: access.viaTestGrant.grantId,
+      });
+    } catch (e) {
+      req.log.error({ err: e, sessionId: session.id }, "could not mark class as a test class");
+    }
+  }
+
   await flagContent({ userId: user.userId, surface: "session_title", subjectId: session.id, text: `${subject} ${topic}` });
 
   /**
@@ -574,12 +619,24 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
      * `capabilities` are added so the app can mount the right call UI and stop guessing at what
      * a provider can do; nothing that exists today has to change.
      */
+    /**
+     * A class being a test class is said plainly, to everyone in it.
+     *
+     * The teacher created it under a grant and the student booked it under one; neither paid, and
+     * neither should be left to work that out from the absence of a receipt. The classroom paints
+     * a banner from this, and it travels with the room rather than being looked up separately, so
+     * a screen cannot show the call without also knowing what kind of class it is.
+     */
+    const testClass = await isTestClass(id);
     res.json({
       roomUrl,
       token,
       isOwner: membership!.isSessionTeacher,
       provider: video.name,
       capabilities: video.capabilities,
+      ...(testClass || membership!.viaTestAccess
+        ? { test: true, testLabel: TEST_LABEL }
+        : null),
     });
   } catch (err) {
     req.log.error({ err, sessionId: id, provider: video.name }, "could not set up the video room");
@@ -1211,8 +1268,11 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         .where(and(eq(sessionEnrollmentsTable.sessionId, id), eq(sessionEnrollmentsTable.studentId, user.userId)));
 
       // Already paid: booking again is a no-op success rather than an error, because a student
-      // tapping a stale "Book & Pay" button should end up informed, not scolded.
-      if (existing && (price <= 0 || existing.paymentStatus === "paid")) {
+      // tapping a stale "Book & Pay" button should end up informed, not scolded. A test enrolment
+      // counts here too — without it a second tap would run the whole booking again, and a test
+      // student whose grant had lapsed in between would be sent to the gateway for a class they
+      // are already in.
+      if (existing && (price <= 0 || existing.paymentStatus === "paid" || existing.paymentStatus === TEST_PAYMENT_STATUS)) {
         return { kind: "already" as const };
       }
 
@@ -1220,8 +1280,34 @@ async function bookSession(req: Request, res: Response): Promise<void> {
       // not consume another seat because it already holds one.
       if (!existing && locked.enrolledCount >= locked.maxStudents) return { kind: "full" as const };
 
+      /**
+       * The one booking that may skip the gateway, and the three things it needs.
+       *
+       * Decided **before** `chargeForSession` is reached, because the requirement is not merely
+       * that no money moves — it is that the payment provider is never called at all for this
+       * booking. A gateway that is called and then ignored still writes a transaction somewhere.
+       *
+       * All three conditions, every time: the server's own kill switch, a live unexpired grant
+       * for *this* student, and this class having been marked a test class when it was created.
+       * An ordinary student booking a test class pays; a test student booking an ordinary
+       * teacher's class pays. Only the intersection is free, which is the narrowest door that
+       * still lets the owner walk the whole journey.
+       *
+       * Asked inside the transaction so that a revoke committed a moment ago is already visible,
+       * rather than being read before the row lock and acted on after it.
+       */
+      const viaTestAccess =
+        price > 0 &&
+        testStudentAllowed() &&
+        (await tx
+          .select({ sessionId: testClassesTable.sessionId })
+          .from(testClassesTable)
+          .where(eq(testClassesTable.sessionId, id))
+          .limit(1)).length > 0 &&
+        (await liveTestStudentGrant(user.userId)) !== null;
+
       let reference: string | null = null;
-      if (price > 0) {
+      if (price > 0 && !viaTestAccess) {
         const charge = await chargeForSession({
           sessionId: id,
           studentId: user.userId,
@@ -1235,19 +1321,28 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         reference = charge.reference ?? null;
       }
 
+      /**
+       * What a test booking writes, and what it deliberately does not.
+       *
+       * `test`, never `paid`. `test_access`, never a payment method somebody chose. And no
+       * reference at all, because there is no transaction to reference — inventing one is how a
+       * test booking would end up in a report as a real sale.
+       */
+      const enrolmentValues = viaTestAccess
+        ? { paymentStatus: TEST_PAYMENT_STATUS, paymentMethod: TEST_PAYMENT_METHOD, paymentReference: null }
+        : { paymentStatus: "paid", paymentMethod: paymentMethod ?? null, paymentReference: reference };
+
       // A leftover "pending" row from the old two-step flow is upgraded in place rather than
       // colliding with the unique constraint.
       const [enrolment] = existing
         ? await tx.update(sessionEnrollmentsTable)
-            .set({ paymentStatus: "paid", paymentMethod: paymentMethod ?? null, paymentReference: reference })
+            .set(enrolmentValues)
             .where(eq(sessionEnrollmentsTable.id, existing.id))
             .returning()
         : await tx.insert(sessionEnrollmentsTable).values({
             sessionId: id,
             studentId: user.userId,
-            paymentStatus: "paid",
-            paymentMethod: paymentMethod ?? null,
-            paymentReference: reference,
+            ...enrolmentValues,
           }).returning();
 
       if (!existing) {
@@ -1259,7 +1354,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
           .where(eq(teacherProfilesTable.userId, session.teacherId));
       }
 
-      return { kind: "booked" as const, enrolment };
+      return { kind: "booked" as const, enrolment, viaTestAccess };
     });
 
     switch (result.kind) {
@@ -1306,12 +1401,22 @@ async function bookSession(req: Request, res: Response): Promise<void> {
           topic: session.topic,
           fromUserId: user.userId,
           fromName: studentRow?.name ?? "A student",
-          // The number is the point of this notification. A teacher wants to know they were
-          // paid, not merely that somebody clicked something.
-          amount: session.price,
+          /**
+           * The number is the point of this notification. A teacher wants to know they were
+           * paid, not merely that somebody clicked something — so a test booking must not send
+           * one saying they were. It reports zero and says why.
+           */
+          amount: result.viaTestAccess ? 0 : session.price,
+          ...(result.viaTestAccess ? { test: true } : null),
           at: new Date().toISOString(),
         });
-        res.status(201).json({ ...result.enrolment, paid: true });
+        res.status(201).json({
+          ...result.enrolment,
+          // `paid` has meant "this seat is yours" to every screen that reads it, and it still
+          // does. `test` is what separates a seat that was bought from one that was granted.
+          paid: true,
+          ...(result.viaTestAccess ? { test: true, testLabel: TEST_LABEL } : null),
+        });
         return;
       }
     }

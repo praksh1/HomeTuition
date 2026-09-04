@@ -12,7 +12,7 @@ export type TeachingAccess =
        * grant was. Callers that show money or record revenue must branch on it; everything else
        * can ignore it, because a grant changes nothing else about what the teacher may do.
        */
-      viaTestGrant?: { tier: string; validUntil: Date };
+      viaTestGrant?: { grantId: number; tier: string; validUntil: Date };
     }
   | { allowed: false; status: number; code: "EMAIL_UNVERIFIED" | "OPERATOR_REVIEW" | "PLAN_REQUIRED"; message: string };
 
@@ -49,7 +49,7 @@ export async function ordinaryTeachingAccess(teacherId: number): Promise<Teachin
       calls this one function, there is no screen-level bypass to keep in step with it.
     */
     const grant = await liveTestGrant(teacherId);
-    if (grant) return { allowed: true, viaTestGrant: { tier: grant.tier, validUntil: grant.validUntil } };
+    if (grant) return { allowed: true, viaTestGrant: { grantId: grant.id, tier: grant.tier, validUntil: grant.validUntil } };
 
     return {
       allowed: false,

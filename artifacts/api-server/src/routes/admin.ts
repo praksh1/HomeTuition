@@ -15,6 +15,7 @@ import {
   accountSecurityTable,
   moderationFlagsTable,
   testTeachingGrantsTable,
+  testStudentGrantsTable,
   userOnboardingTable,
   usersTable,
 } from "@workspace/db";
@@ -42,6 +43,12 @@ import {
 import { emailVerifiedFor } from "../lib/accountSecurity";
 import { isTierKey } from "../lib/tierLimits";
 import { DEFAULT_GRANT_DAYS, MAX_GRANT_DAYS, liveTestGrant, testTeachingAllowed } from "../lib/testTeachingAccess";
+import {
+  DEFAULT_STUDENT_GRANT_DAYS,
+  MAX_STUDENT_GRANT_DAYS,
+  liveTestStudentGrant,
+  testStudentAllowed,
+} from "../lib/testStudentAccess";
 
 /**
  * The support desk.
@@ -723,6 +730,17 @@ router.get("/admin/users/:id", async (req, res): Promise<void> => {
       enabled: testTeachingAllowed(),
       grant: profile ? await liveTestGrant(id) : null,
     },
+    /*
+      Test *booking* access, the student-side companion. Same shape, separate switch.
+
+      Two switches rather than one because they close different doors: the teaching one stops new
+      test classes being created, this one stops test bookings — including on classes that are
+      already marked. An operator sees whichever applies to the account they are looking at.
+    */
+    testStudentAccess: {
+      enabled: testStudentAllowed(),
+      grant: user.role === "student" ? await liveTestStudentGrant(id) : null,
+    },
   });
 });
 
@@ -830,6 +848,133 @@ router.post("/admin/teachers/:userId/test-access/revoke", async (req, res): Prom
   recordActivity({
     userId: req.user!.userId,
     action: "admin.test_teaching.revoked",
+    subjectType: "user",
+    subjectId: userId,
+    detail: { grants: revoked.length },
+    ip: callerIp(req),
+  });
+
+  res.json({ revoked: revoked.length });
+});
+
+/**
+ * Grant a student temporary permission to book a **test class** without paying.
+ *
+ * The companion to the teacher route above, and deliberately its mirror rather than a second
+ * security model. Read `lib/testStudentAccess.ts` and the table's own comment first.
+ *
+ * The eligibility rules are re-checked here rather than trusted from the screen, for the same
+ * reason as the teacher route: an operator can see an unverified or suspended account on the same
+ * page as this button, and the request is only a POST.
+ */
+router.post("/admin/students/:userId/test-access", async (req, res): Promise<void> => {
+  const userId = parseInt(String(req.params.userId), 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+
+  if (!testStudentAllowed()) {
+    res.status(409).json({
+      error: "Test student access is switched off on this server. Set ALLOW_TEST_STUDENT_ACCESS to enable it.",
+      code: "TEST_STUDENT_ACCESS_DISABLED",
+    });
+    return;
+  }
+
+  const { reason, days } = req.body as { reason?: string; days?: number };
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (!text) {
+    res.status(400).json({ error: "Say why this account needs test access. An unexplained grant cannot be audited." });
+    return;
+  }
+  const length = Number.isFinite(days) ? Math.trunc(Number(days)) : DEFAULT_STUDENT_GRANT_DAYS;
+  if (length < 1 || length > MAX_STUDENT_GRANT_DAYS) {
+    res.status(400).json({ error: `A grant lasts between 1 and ${MAX_STUDENT_GRANT_DAYS} days.` });
+    return;
+  }
+
+  /*
+    Payment is the only door this opens, so every other one must already be open.
+
+    Verified, onboarded and in good standing — the same three things Sikshya asks of any student
+    before they book anything. A grant is not a way around an account that is not ready; it is a
+    way around the gateway for an account that is.
+  */
+  const [verified, [account], [onboarding]] = await Promise.all([
+    emailVerifiedFor(userId),
+    db
+      .select({ role: usersTable.role, suspendedAt: usersTable.suspendedAt })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId))
+      .limit(1),
+    db
+      .select({ completedAt: userOnboardingTable.completedAt })
+      .from(userOnboardingTable)
+      .where(eq(userOnboardingTable.userId, userId))
+      .limit(1),
+  ]);
+  if (!account) { res.status(404).json({ error: "Account not found" }); return; }
+  if (account.role !== "student") {
+    res.status(409).json({ error: "Test booking access is for student accounts. Use test teaching access for a teacher." });
+    return;
+  }
+  if (!verified) {
+    res.status(409).json({ error: "This student has not verified their email. Test access does not skip that." });
+    return;
+  }
+  if (!onboarding?.completedAt) {
+    res.status(409).json({ error: "This student has not finished onboarding. Test access does not skip that." });
+    return;
+  }
+  if (account.suspendedAt) {
+    res.status(409).json({ error: "This account is suspended. Lift the suspension before granting test access." });
+    return;
+  }
+
+  const validUntil = new Date(Date.now() + length * 24 * 60 * 60_000);
+  // Any grant still running is closed first, so a student never holds two and "revoke" always
+  // means one row rather than however many happen to exist.
+  await db
+    .update(testStudentGrantsTable)
+    .set({ revokedAt: new Date(), revokedBy: req.user!.userId })
+    .where(and(eq(testStudentGrantsTable.studentId, userId), isNull(testStudentGrantsTable.revokedAt)));
+
+  const [grant] = await db
+    .insert(testStudentGrantsTable)
+    .values({ studentId: userId, reason: text, grantedBy: req.user!.userId, validUntil })
+    .returning();
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.test_student.granted",
+    subjectType: "user",
+    subjectId: userId,
+    detail: { reason: text, validUntil: validUntil.toISOString(), days: length },
+    ip: callerIp(req),
+  });
+
+  notifyInApp(userId, {
+    kind: "message",
+    fromName: "Sikshya Support",
+    preview: "Test booking access was added to your account. No payment will be processed for test classes.",
+    at: new Date().toISOString(),
+  });
+
+  res.status(201).json({ grant });
+});
+
+/** End a student grant now. Expiry needs nobody; this is for ending one early. */
+router.post("/admin/students/:userId/test-access/revoke", async (req, res): Promise<void> => {
+  const userId = parseInt(String(req.params.userId), 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+
+  const revoked = await db
+    .update(testStudentGrantsTable)
+    .set({ revokedAt: new Date(), revokedBy: req.user!.userId })
+    .where(and(eq(testStudentGrantsTable.studentId, userId), isNull(testStudentGrantsTable.revokedAt)))
+    .returning({ id: testStudentGrantsTable.id });
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.test_student.revoked",
     subjectType: "user",
     subjectId: userId,
     detail: { grants: revoked.length },
