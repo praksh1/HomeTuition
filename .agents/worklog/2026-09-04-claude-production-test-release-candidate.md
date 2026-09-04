@@ -98,7 +98,7 @@ in items 1–5 was rewritten.
 | `sikshya/app/(admin)/person/[id].tsx` | The operator card: grant with a reason, the live grant with its end date, revoke, and the eligibility rules stated. Student records only. |
 | `sikshya/utils/testAccess.ts` *(new)* | The fallback wording, mirroring the server's `TEST_LABEL`. |
 | both `classroom/[id].tsx`, `components/SessionCard.tsx` | The label, painted where somebody would misread the absence of it. |
-| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 88 checks. |
+| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 89 checks. |
 | `sikshya/scripts/test-access-ui/run.mjs` *(new, `test:test-access-ui`)* | 38 rendered checks. |
 
 ### Codex's five release blockers, found in an independent review of `914c210`
@@ -115,6 +115,17 @@ then, everywhere downstream, either treated as absent or described as paid.
 | 3 | `bookSession` answered `{ alreadyBooked: true, paid: true }` for any existing `test` row, so a second tap produced "You have already paid for this session" about a booking that took nothing. | `paid` now answers only "did money move". A test place returns `paid: false, test: true, testLabel`, and the student's confirmation says "You're in — no payment was taken" instead of naming a payment method. |
 | 4 | `participation.ts` filtered `paid` only, so the teacher's roster and the attendance record were **empty while a test student was sitting in the class**. | Same shared status list, switch-gated. Not reachable from any earnings, refund or drop query — those still ask for `'paid'` alone and were not touched. |
 | 5 | `SessionCard`'s label hung off the **viewer's** enrolment, so only the test student ever saw it. The teacher's own list showed "NPR 500 per class" against a class that had never taken a rupee. | Every session response now carries the server's own `test`/`testLabel` from `test_classes`, and the card shows the label for the class being test *or* the viewer's place being test. |
+
+**A sixth of the same shape, found by re-reading the diff against the pattern the five made.**
+`PATCH /sessions/:id` builds the "your class has started" audience from `payment_status = 'paid'`
+too, so a test student waiting in the app for a class they were about to walk into was never told
+it had begun — the same "who is told" defect as the class thread, on the notification that matters
+most during the end-to-end run this whole feature exists to allow. Fixed with the same shared
+switch-gated list, with its own check.
+
+Every other `= 'paid'` query in the server was read and left alone. Each one is money: the refund
+loop, the drop route, schedule-change compensation, the invitable-students list, the agent refund.
+One audience-shaped query survives deliberately — see **Deliberately not changed**.
 
 The half of #3 about a **dormant** row — `paid: true` while the classroom refused the same person —
 was already fixed in `35aaecb`, after Codex's review of `914c210`. It now has its own proof: on a
@@ -178,7 +189,7 @@ and removed again by using `useLayout().t.overline`, rather than blessing a high
 
 | Suite | Result | | Suite | Result |
 |---|---|---|---|---|
-| `test:test-student` *(new)* | **88 / 88** | | `test:refunds` | 152 / 152 |
+| `test:test-student` *(new)* | **89 / 89** | | `test:refunds` | 152 / 152 |
 | `test:test-access` | 26 / 26 | | `test:tickets` | 62 / 62 |
 | `test:payments` | 10 / 10 | | `test:journey` | 57 / 57 |
 | `test:sessions` | 56 / 56 | | `test:video` | 16 / 16 |
@@ -335,6 +346,13 @@ None found in this session.
   the same class. It is the safe direction — understating a real number rather than inventing one
   — and it matches how a leftover `pending` row has always upgraded. Worth revisiting only if that
   path stops being a testing artefact.
+- **The Messages contact list still counts `paid` only** (`routes/messages.ts`, the "In your
+  class" / "Your teacher" suggestions). So a test student does not see their test teacher among
+  the people they can start a conversation with, and vice versa. It is the same audience-shaped
+  query as the two that were fixed, and it was left because it is not on the classroom path this
+  feature exists for and because "who may message whom" is a surface that deserves its own
+  thought rather than being widened in passing. The class's own thread — the one a teacher uses
+  to say they are running late — does reach them, which is the case that mattered.
 - **Earnings, refund debt, the drop route, schedule-change compensation and the invitable-students
   list were not touched.** They still ask for `payment_status = 'paid'` alone. `activeEnrolmentStatuses()`
   says so in its own doc comment, because it is the obvious function to reach for when widening one

@@ -44,6 +44,7 @@ import {
   TEST_PAYMENT_METHOD,
   TEST_PAYMENT_STATUS,
   admitsTestEnrolment,
+  activeEnrolmentStatuses,
   isTestClass,
   liveTestStudentGrant,
   testClassIds,
@@ -1135,7 +1136,15 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       .where(
         and(
           eq(sessionEnrollmentsTable.sessionId, id),
-          eq(sessionEnrollmentsTable.paymentStatus, "paid"),
+          /**
+           * Everyone holding a place, which includes an operator-granted test one.
+           *
+           * The same shape of defect as the class thread's audience: a list of *who to tell*
+           * built from `payment_status = 'paid'`. A student sitting in the app waiting for a
+           * class they are about to walk into was never told it had started, which is most of
+           * what this notification exists to fix. Switch-gated, so it closes with the door.
+           */
+          inArray(sessionEnrollmentsTable.paymentStatus, activeEnrolmentStatuses()),
         ),
       );
     notifyMany(

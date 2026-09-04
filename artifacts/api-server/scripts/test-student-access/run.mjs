@@ -300,7 +300,18 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
 
   /* ---- both doors into the classroom agree ---- */
 
+  /*
+    Being told the class has started is the same "who to tell" question the thread was, and had
+    the same answer: a list built from `payment_status = 'paid'`. A student waiting in the app for
+    a class they are about to walk into heard nothing.
+  */
+  const waiting = channel(api, tested.token);
+  await waiting.open();
   await api(`/sessions/${id}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+  check("the test student is told their class has started",
+    !!(await waiting.next((e) => e.kind === "session_live" && Number(e.sessionId) === id)),
+    JSON.stringify(waiting.seen()));
+  waiting.close();
   const room = await api(`/sessions/${id}/room`, { token: tested.token });
   check("the test student is let into the video room", room.status === 200,
     `${room.status} ${JSON.stringify(room.body)}`);
