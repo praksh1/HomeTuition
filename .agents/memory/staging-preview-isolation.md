@@ -21,8 +21,13 @@ at production. Do not use it to test writes. The new preview has its own API and
 `EXPO_NO_DOTENV=1` avoids accidental local env loading. Use `scripts/verify-preview.mjs` after
 deploy; this Expo export uses multiple runtime/common/entry bundles, not `index-*.js`.
 
-Payment/Daily credentials remain absent. Staging email is still absent as of the access-recovery
-checkpoint; a separate Brevo key has been prepared but not generated. Separately authorized staging storage uses
+Payment/Daily credentials remain absent. Staging email is now configured with its own Brevo key and
+the existing verified sender; it is not the production key. Railway deployment
+`0fc81119-d31e-4429-89e5-490eccf22c95` succeeded. A synthetic reset was accepted by Brevo and then
+hard-bounced at the deliberately fake `example.com` recipient, so provider connectivity is proven
+but real inbox delivery and verification-link completion are not. Rotate the staging key after
+review because its one-time value appeared in the private automation transcript; never copy it
+into Git. Separately authorized staging storage uses
 `sikshya-staging-uploads` and a bucket-restricted key, never production credentials. Its CORS
 allows only the preview. Echo is not a real video test. PUBLIC_APP_URL is
 explicitly staging: absence otherwise falls back to the live site. The test-access table was

@@ -416,3 +416,36 @@ Codex and an independent audit then found remaining gaps and corrected them loca
   required action-time confirmation. Codex owns staging access/email/deployment, so the proposed
   Claude task must stay on its own branch and must not touch the current integration branch,
   production provider choice, payments, or deployments.
+
+### Staging email activation and Stream delegation
+
+- After the owner's explicit action-time confirmation, generated a separate one-year Brevo API
+  key named `Sikshya Staging API`. The existing `Sikshya Production API` key was neither opened nor
+  reused. Added the new key plus the already-verified sender identity only to Railway service
+  `hometuition-api-staging`; `PUBLIC_APP_URL` was already the isolated preview URL. No social-login,
+  payment, Daily, production, workspace-shared, plan, or spending setting changed.
+- Railway applied exactly two variable changes and completed deployment
+  `0fc81119-d31e-4429-89e5-490eccf22c95` successfully. The staging service returned Online with
+  twelve service variables; the production service remained a separate online service.
+- Called the normal forgot-password endpoint for only the synthetic staging student. The public
+  response was `accepted=true`, `emailConfigured=true`, with the existing 60-second resend delay.
+  Brevo's transactional log then recorded the message as Sent and subsequently Hard bounce for
+  `staging.student.20260903@example.com`. That bounce is expected because `example.com` is a
+  deliberately non-deliverable fixture domain. This proves staging reached Brevo and Brevo accepted
+  the message; it does **not** prove inbox delivery or a clicked verification/reset link.
+- A valid real email used for a new staging signup should now receive the standard verification
+  message. The complete register -> inbox -> click -> verified-login loop remains a manual test;
+  Codex did not create another account or send mail to a real person merely to manufacture that
+  claim.
+- Security note: Brevo's one-time key page exposed the generated value in the private browser
+  automation output before it was saved to Railway. The value is not written to Git or this log,
+  but it now exists in the private task transcript. Rotate this staging-only key after the current
+  preview review, or sooner with a separately confirmed revoke/create action. Production's key was
+  never exposed.
+- Created `claude/stream-video-poc` from exact product commit `bc0aa17` and pushed the empty branch
+  before dispatch, because Claude Code writes directly to the selected branch. This prevented it
+  from writing to the product, integration, or main branches. Sent Claude the full isolated Stream
+  Video adapter/client/test/research task in Claude Code session
+  `session_01Rr8aqbg2EcazGEGDjqzcdu`. It is forbidden to create accounts, buy services, deploy,
+  change Daily defaults, touch payments, or claim unmeasured real media. Claude was still running
+  when this checkpoint was written; none of its changes have been reviewed or integrated.
