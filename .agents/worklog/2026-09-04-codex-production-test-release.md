@@ -81,9 +81,11 @@ fixes documented in `2026-09-04-claude-production-test-release-candidate.md`.
 
 ## Remaining risks / next pickup point
 
-- In the production operator UI, grant a short-lived teaching entitlement to one already approved,
-  email-verified teacher and a short-lived booking entitlement to one verified, onboarded,
-  unsuspended student. Use an explicit testing reason.
+- The owner selected `praksh.temp@gmail.com` for the short-lived teaching entitlement and
+  `student@sikshya.np` for the short-lived booking entitlement. The production browser is not
+  authenticated as an operator yet, so neither grant has been written. Sign in through either
+  ordinary role login (an admin account is redirected to the desk), then use the operator person
+  pages. Do not grant by SQL.
 - On the main website, the teacher creates a class; confirm it is marked test-enabled. The granted
   student books it without a payment form, then both devices join the real Daily room.
 - Manually verify laptop, iPhone and Android: Excalidraw tools, stroke fidelity, resize/hide/restore
