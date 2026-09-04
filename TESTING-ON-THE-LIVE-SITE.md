@@ -143,7 +143,7 @@ different — the class being a test class is recorded, not advertised on this s
 ## Step 4 — book it, as the student
 
 1. In another window, sign in as the **student** account.
-2. Find the class and book it. Choose any payment method.
+2. Open the teacher's profile, find the class, and press the button under it.
 
 **What you should see, in this order:**
 
