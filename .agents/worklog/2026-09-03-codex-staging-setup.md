@@ -449,3 +449,23 @@ Codex and an independent audit then found remaining gaps and corrected them loca
   `session_01Rr8aqbg2EcazGEGDjqzcdu`. It is forbidden to create accounts, buy services, deploy,
   change Daily defaults, touch payments, or claim unmeasured real media. Claude was still running
   when this checkpoint was written; none of its changes have been reviewed or integrated.
+
+### Owner test path after email activation
+
+- Existing production users intentionally cannot sign into the isolated preview because it has a
+  separate Neon database. Use the three fixture emails and shared password supplied in the private
+  task chat. Do not copy that password into repo documentation.
+- Use separate devices or separate browser profiles for teacher and student. Two ordinary tabs at
+  the same preview origin share local storage, so the second login replaces the first.
+- The synthetic teacher is ready to create a **Single Class** immediately under its temporary Base
+  allowance. A student can book it because staging has no payment-provider keys and therefore uses
+  the existing simulated-payment path. No money moves. Schedule close to the actual test time so
+  the normal classroom door is open; do not distort production time rules for a fixture.
+- Staging deliberately uses `VIDEO_PROVIDER=echo`, not Daily. It can exercise authentication,
+  teacher/student authorization, class creation/booking, whiteboard, Sikshya chat, layout, and
+  lifecycle without consuming video minutes. It cannot prove real camera, microphone, screen share,
+  Daily controls, or media quality. Those remain production-provider/manual-device tests.
+- New staging registration is now available for the email-verification journey. Use an address the
+  owner can actually open, follow the link back to the preview, and complete onboarding. A new
+  teacher still must submit a document, be reviewed by the synthetic operator, and receive either
+  a real plan or an explicit staging test grant; email verification must not bypass those gates.
