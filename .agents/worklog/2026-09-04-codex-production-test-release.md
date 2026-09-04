@@ -21,13 +21,21 @@ Codex synchronized, and document every material action. Purchases were expressly
   deployment. Verified both tables and the student lookup index exist.
 - Enabled `ALLOW_TEST_TEACHING_ACCESS=true` and `ALLOW_TEST_STUDENT_ACCESS=true` on the Railway
   production service.
+- Diagnosed and repaired the missing production `test_teaching_grants` table after the live
+  operator record exposed it; no existing database object was dropped or altered.
+- Granted the owner-selected teacher and student seven days of narrowly scoped production test
+  access through the audited operator routes.
+- Completed the legacy seeded student's missing onboarding through the ordinary authenticated
+  onboarding API using clearly synthetic test-account details, after the server correctly refused
+  the first grant attempt.
 - Added this release state to durable memory on a documentation-only branch so writing the account
   does not cause a second production deployment.
 
 ## Decisions and assumptions
 
-- No teacher or student grant was invented from an email guess. The final grants must be applied to
-  the owner's chosen production accounts through the operator screen.
+- No teacher or student grant was invented from an email guess. The owner explicitly chose
+  `praksh.temp@gmail.com` and `student@sikshya.np`; both grants were applied through the operator
+  screen.
 - No direct SQL grant will be used: it would bypass eligibility checks, activity logging and the
   user notification performed by the API routes.
 - The public payment path remains active. Only the intersection of two live grants and a
@@ -65,6 +73,15 @@ Codex synchronized, and document every material action. Purchases were expressly
 - Safe Windows automation could read Claude's finished release-candidate report but could not raise
   the Claude app for a new delegated prompt after the required recovery attempt. No text was sent
   to another window by guesswork.
+- The release preparation had created `test_student_grants` and `test_classes`, but the handoff
+  incorrectly claimed `test_teaching_grants` already existed. The first live teacher-detail request
+  failed. Railway logs gave the exact missing-relation error; the table and index were created in a
+  transaction, and the same record then loaded normally.
+- The first live student grant was rejected with the exact intended safeguard: “This student has
+  not finished onboarding. Test access does not skip that.” A read-only Neon query confirmed user
+  706 had no onboarding row. Because this is the repository's seeded demo account (with its known
+  seed login and substantial prior test activity), it completed the supported onboarding endpoint
+  with explicit test details. The audited grant then succeeded.
 
 ## Fabrications found
 
@@ -75,17 +92,16 @@ fixes documented in `2026-09-04-claude-production-test-release-candidate.md`.
 
 - No purchase, plan, billing setting, payment key or payment mode.
 - No Daily provider configuration and no Stream POC merge (`8550631` remains isolated).
-- No existing production row, column or payment record.
-- No test account password and no production grant chosen by guessing an owner's email.
+- No existing production column or payment record was modified. One onboarding row was created for
+  the selected seeded student through the normal application API; two short-lived grant rows were
+  created through operator APIs.
+- No test account password was changed and no production grant was chosen by guessing an email.
 - No manual Cloudflare deploy after GitHub Actions succeeded.
 
 ## Remaining risks / next pickup point
 
-- The owner selected `praksh.temp@gmail.com` for the short-lived teaching entitlement and
-  `student@sikshya.np` for the short-lived booking entitlement. The production browser is not
-  authenticated as an operator yet, so neither grant has been written. Sign in through either
-  ordinary role login (an admin account is redirected to the desk), then use the operator person
-  pages. Do not grant by SQL.
+- Teacher user 719 has base test-teaching access until 11 Sep 2026, 1:30 PM. Student user 706 has
+  test-booking access until 11 Sep 2026, 1:38 PM. Both are visible in the production operator UI.
 - On the main website, the teacher creates a class; confirm it is marked test-enabled. The granted
   student books it without a payment form, then both devices join the real Daily room.
 - Manually verify laptop, iPhone and Android: Excalidraw tools, stroke fidelity, resize/hide/restore

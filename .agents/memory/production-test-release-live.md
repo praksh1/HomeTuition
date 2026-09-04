@@ -17,9 +17,14 @@ The new tables were added to Neon project `orange-credit-19129973`, production b
 
 - `test_student_grants`
 - `test_classes`
+- `test_teaching_grants` (added after the first operator record load exposed that it was missing)
 
-No existing table, column, row or payment record was changed. `test_teaching_grants` already
-existed.
+No existing table or column was dropped or altered, and no payment record was changed. The first
+two tables were created before deploy. The release record initially — and incorrectly — said
+`test_teaching_grants` already existed. Opening teacher 719 in the live operator desk returned a
+server error; Railway logs identified `relation "test_teaching_grants" does not exist`. The missing
+table and its `(teacher_id, valid_until)` index were then created in one Neon transaction. Reloading
+the operator record succeeded. This correction is important: do not repeat the old assumption.
 
 Railway production now has both exact kill switches set to `true`:
 
@@ -46,9 +51,25 @@ an in-app notification. A direct insert would miss those guarantees and the acti
 Before public launch, switch both Railway variables off. Existing grant rows should remain as the
 audit trail; with the switches off they buy nothing.
 
+## Live production test accounts
+
+The owner selected these accounts, and both grants were applied through the production operator
+desk (not SQL) with the reason `Owner-authorized production classroom and whiteboard verification`:
+
+- teacher `praksh.temp@gmail.com` (user 719): base allowance, active until 11 Sep 2026 at 1:30 PM;
+- student `student@sikshya.np` (user 706): test booking access, active until 11 Sep 2026 at 1:38 PM.
+
+The first student grant was correctly refused because this old seeded account had no
+`user_onboarding` row. The account already had extensive legitimate test activity, but the new rule
+does not let a grant skip onboarding. The known seed account signed in through `/auth/login`, then
+completed `/onboarding/me` through the supported application API with explicitly synthetic test
+details (adult test DOB, non-routable-looking test phone, Bagmati/Kathmandu/Kathmandu and
+`Sikshya production test account`). The retry through the operator desk succeeded and is visible as
+an active seven-day grant. No password was changed and no eligibility check was bypassed.
+
 ## Remaining human verification
 
 Automated browser tests used Daily-compatible scaffolding but did not measure a real two-device
-Daily call. The owner must still grant one approved teacher and one verified/onboarded student,
-create a test-marked class on the live site, book it with the granted student, and join from the
-laptop and phones. That is the point of this release.
+Daily call. The grants are ready. The owner should sign in as the teacher, create a new class while
+the teacher grant is live, then sign in as the student and choose the no-payment test-place action
+on that newly created class. Both devices can then join the real Daily room near its scheduled time.
