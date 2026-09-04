@@ -258,6 +258,13 @@ tests, a 24-check provider contract suite against the real server, and a 56-chec
 They prove the code does what it is supposed to do with a Stream that answers instantly and
 truthfully. They prove nothing about Stream.
 
+One other thing was measured, because it is the cost this experiment imposes on people who did
+not ask for it. The web bundle was built on `bc0aa17` and on this branch: the entry bundle grew
+by **15,913 bytes uncompressed and 3,494 gzipped — 0.33%**, all of it this app's own files, with
+no `@stream-io` code in the export and no `STREAM_API_KEY` or `STREAM_API_SECRET` anywhere in it.
+A student on a Nepali mobile connection pays about three kilobytes for the experiment. Taking the
+web SDK as a dependency is what would change that number, which is why §2 does not.
+
 ## 7. Setting it up, when the owner decides to
 
 **Do not do any of this without the owner's say-so.** It creates an account.

@@ -133,6 +133,24 @@ Baselines were captured on `bc0aa17` before any edit: typecheck pass, 280 / 154 
 `lint:design` at 223 hex / 429 sizes across 57 files. `lint:design:update` was **not** run and
 the baseline file is untouched — the new files contribute zero violations.
 
+**The web bundle was built on both commits and compared**, because a typecheck cannot prove Metro
+resolves a platform-split file and cannot prove what reaches a student's phone:
+
+| | `bc0aa17` | this branch |
+|---|---|---|
+| `expo export -p web` | succeeds | succeeds |
+| entry bundle | 4,770,466 bytes | 4,786,379 bytes (**+15,913, +0.33%**) |
+| entry bundle, gzipped | 1,252,742 bytes | 1,256,236 bytes (**+3,494, +0.28%**) |
+
+Grepping the produced bundle:
+
+- the **web** loader's wording is present and the **native** loader's wording is absent, so
+  Metro really did resolve `streamSdk.web.ts` over `streamSdk.ts`;
+- `stream:call/` is present, so the shell is wired in;
+- **no `@stream-io/video*` code is in the bundle** — the +16 KB is entirely this app's own files;
+- **no `STREAM_API_KEY` or `STREAM_API_SECRET` appears anywhere in the export**, which is the
+  "no secret in a public bundle" requirement checked rather than asserted.
+
 **Daily and echo unchanged.** `test:video` starts the real server on `echo` and on `daily` and
 checks the same sixteen things it checked before; all sixteen still pass, with the same
 assertions. The seventeenth is new and is about `identity` being null for a provider that has no
