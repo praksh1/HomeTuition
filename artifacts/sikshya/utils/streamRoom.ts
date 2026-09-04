@@ -51,17 +51,30 @@ export function parseStreamRoom(uri: string | null | undefined): StreamRoom | nu
   const path = rest.slice(0, queryAt).split("/");
   if (path.length !== 2) return null;
 
-  let apiKey = "";
-  for (const pair of rest.slice(queryAt + 1).split("&")) {
-    const eq = pair.indexOf("=");
-    if (eq < 0) continue;
-    if (pair.slice(0, eq) === "api_key") apiKey = decodeURIComponent(pair.slice(eq + 1));
-  }
+  try {
+    /**
+     * All of the decoding, inside one `try`.
+     *
+     * `decodeURIComponent` **throws** on a malformed percent escape — `%zz`, or a bare `%` at the
+     * end — so this function documented that anything unreadable comes back as null and then
+     * threw instead. Those are not the same thing to the classroom: a null is a state it already
+     * handles and shows a message for, and a throw inside a `useMemo` during render is a blank
+     * screen.
+     */
+    let apiKey = "";
+    for (const pair of rest.slice(queryAt + 1).split("&")) {
+      const eq = pair.indexOf("=");
+      if (eq < 0) continue;
+      if (pair.slice(0, eq) === "api_key") apiKey = decodeURIComponent(pair.slice(eq + 1));
+    }
 
-  const callType = decodeURIComponent(path[0]);
-  const callId = decodeURIComponent(path[1]);
-  if (!callType || !callId || !apiKey) return null;
-  return { callType, callId, apiKey };
+    const callType = decodeURIComponent(path[0]);
+    const callId = decodeURIComponent(path[1]);
+    if (!callType || !callId || !apiKey) return null;
+    return { callType, callId, apiKey };
+  } catch {
+    return null;
+  }
 }
 
 /**

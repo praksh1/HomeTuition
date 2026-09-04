@@ -226,13 +226,31 @@ async function run() {
     await streamApi(`/sessions/${sid}`, { method: "PATCH", token: t3.token, body: { status: "live" } });
 
     const room = await streamApi(`/sessions/${sid}/room`, { token: t3.token });
+    /**
+     * 503, not 502. A server that was never set up is not a provider having a bad minute: no
+     * amount of retrying fixes the first, and the operator is the only person who can.
+     */
     check("with no Stream credentials the teacher gets no room at all",
-      room.status === 502, `status=${room.status} ${JSON.stringify(room.body)}`);
+      room.status === 503, `status=${room.status} ${JSON.stringify(room.body)}`);
     check("and no pretend address to join", !room.body?.roomUrl, JSON.stringify(room.body?.roomUrl));
     check("and no token", !room.body?.token, JSON.stringify(room.body?.token));
+    check("and is told, in a sentence, that video is not set up here",
+      /not set up on this server/i.test(String(room.body?.error)), JSON.stringify(room.body?.error));
+
+    /**
+     * Which variables are missing stays in the log.
+     *
+     * Naming `STREAM_API_SECRET` to anybody who can open a class tells them what to go looking
+     * for, and this project has already had one key leak. The documentation used to claim the
+     * person is told which variable is missing; they are not, and this is the check that keeps
+     * that claim from creeping back.
+     */
+    const said = JSON.stringify(room.body);
+    check("but never which environment variable it is",
+      !/STREAM_API_KEY|STREAM_API_SECRET/.test(said), said);
 
     const paid = await streamApi(`/sessions/${sid}/room`, { token: s3.token });
-    check("a paid student gets the same honest refusal", paid.status === 502, `status=${paid.status}`);
+    check("a paid student gets the same honest refusal", paid.status === 503, `status=${paid.status}`);
 
     /**
      * The order these two are answered in is the whole point.

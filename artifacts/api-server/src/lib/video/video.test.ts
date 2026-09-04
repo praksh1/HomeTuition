@@ -65,13 +65,13 @@ const pretend: VideoProvider = {
 
 test("a provider that has never heard of Daily satisfies the contract", async () => {
   assert.equal(await pretend.ensureRoom(42), "wss://video.example/room/42");
-  assert.equal(await pretend.joinToken(42, { isOwner: true, userName: "Ram", userId: "7" }), "token-42-owner-Ram");
-  assert.equal(await pretend.joinToken(42, { isOwner: false, userName: "Sita", userId: "8" }), "token-42-guest-Sita");
+  assert.equal(await pretend.joinToken(42, { isOwner: true, userName: "Ram", userId: "7", durationMinutes: 60 }), "token-42-owner-Ram");
+  assert.equal(await pretend.joinToken(42, { isOwner: false, userName: "Sita", userId: "8", durationMinutes: 60 }), "token-42-guest-Sita");
 });
 
 test("moderator rights are a parameter, never something the provider decides", async () => {
-  const owner = await pretend.joinToken(1, { isOwner: true, userName: "T", userId: "7" });
-  const guest = await pretend.joinToken(1, { isOwner: false, userName: "S", userId: "8" });
+  const owner = await pretend.joinToken(1, { isOwner: true, userName: "T", userId: "7", durationMinutes: 60 });
+  const guest = await pretend.joinToken(1, { isOwner: false, userName: "S", userId: "8", durationMinutes: 60 });
   assert.notEqual(owner, guest);
   // The server decides who is the owner from its own membership check. A provider that worked
   // it out for itself would be a provider that could be talked into it by a client.

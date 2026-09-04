@@ -24,17 +24,20 @@ Two things, and one optional third. That is the whole contract —
 
 ```ts
 ensureRoom(sessionId): Promise<string>            // where to join
-joinToken(sessionId, { isOwner, userName, userId }): Promise<string | null>   // who may join it
+joinToken(sessionId, { isOwner, userName, userId, durationMinutes }): Promise<string | null>
 identityFor?(userId): string                      // what it will call that person, if anything
 ```
 
 Plus a name, a `configured()` check, and a statement of what it can do (`screenShare`,
 `builtInChat`).
 
-`userId` and `identityFor` arrived with the Stream experiment and are not a Stream detail: every
-candidate that mints its own token binds it to an identity, and the app has to send back the
-*same* string or fail to authenticate. `identityFor` is optional, so Daily — which has no
-identities — returns `null` in the room grant rather than being made to invent one.
+`userId`, `durationMinutes` and `identityFor` arrived with the Stream experiment and none of them
+is a Stream detail. Every candidate that mints its own token binds it to an identity, and the app
+has to send back the *same* string or fail to authenticate; and every one of those tokens carries
+an expiry, whose only honest input is how long the lesson lasts — a flat lifetime drops somebody
+mid-class and refuses the rejoin. `identityFor` is optional, so Daily, which has no identities,
+returns `null` in the room grant rather than being made to invent one. Daily ignores the other
+two.
 
 It is this small because **the provider carries audio and video and nothing else.** Presence,
 chat, the whiteboard, the attendance record and the time limit all run over this project's own
@@ -79,11 +82,16 @@ Moderator rights are the one to watch. **They come from the server's own members
 from the client and never from the provider.** A swap that quietly handed every student the
 teacher's powers would be a bad day; there is a test that says it does not.
 
-The third run adds a second thing to watch: the *order* the refusals come in. With an
-unconfigured provider a member gets a 502 and no room, but somebody who never booked gets a
+The third run adds two more things to watch. First the *order* the refusals come in: with an
+unconfigured provider a member gets a **503** and no room, but somebody who never booked gets a
 **403** and somebody signed out a **401** — the membership check runs before the provider is ever
 consulted. If those ever swapped over, an unconfigured provider would look like an access control
 and a configured one would quietly stop being one.
+
+Second, what the refusal *says*. A server that was never set up answers 503 with a sentence about
+video not being set up here; a provider having a bad minute keeps its 502. Which environment
+variable is missing goes to the log and never into the response — there is a check for that, so
+the convenience of putting it in the error message cannot creep back.
 
 Point the suite at your new provider by adding it to `PROVIDERS` and running with
 `VIDEO_PROVIDER=<name>`.

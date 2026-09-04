@@ -3,7 +3,6 @@ import { logger } from "../logger.ts";
 import {
   STREAM_API_BASE,
   STREAM_DEFAULT_CALL_TYPE,
-  STREAM_TOKEN_TTL_SECONDS,
   buildStreamRoomUri,
   redactStreamKey,
   streamCallCid,
@@ -11,7 +10,9 @@ import {
   streamConfigProblem,
   streamCreateCallBody,
   streamTokenClaims,
+  streamTokenTtlSeconds,
 } from "./streamCall.ts";
+import { VideoNotConfiguredError } from "./types.ts";
 import type { JoinOptions, VideoProvider } from "./types.ts";
 
 /**
@@ -70,7 +71,10 @@ async function ensureRoom(sessionId: string | number): Promise<string> {
   const problem = streamConfigProblem({ STREAM_API_KEY: apiKey, STREAM_API_SECRET: apiSecret });
   if (problem) {
     logger.error({ provider: "stream", apiKey: redactStreamKey(apiKey) }, problem);
-    throw new Error(problem);
+    // Typed, so the room route can answer "this server was never set up" differently from "the
+    // provider had a bad minute" — and so the variable names stay in this log rather than
+    // travelling to whoever opened the classroom.
+    throw new VideoNotConfiguredError(problem);
   }
 
   const callId = streamCallId(sessionId);
@@ -105,7 +109,7 @@ async function ensureRoom(sessionId: string | number): Promise<string> {
 }
 
 /**
- * A token for one person, for one call, for one hour.
+ * A token for one person, for one call, for as long as that class can legitimately run.
  *
  * Signed here and only here. `isOwner` arrives from `getSessionMembership` and is the only
  * thing that decides whether the token asks for the teacher's role — a client cannot influence
@@ -119,7 +123,7 @@ async function ensureRoom(sessionId: string | number): Promise<string> {
 async function joinToken(sessionId: string | number, options: JoinOptions): Promise<string> {
   const { apiKey, apiSecret, callType } = config();
   const problem = streamConfigProblem({ STREAM_API_KEY: apiKey, STREAM_API_SECRET: apiSecret });
-  if (problem) throw new Error(problem);
+  if (problem) throw new VideoNotConfiguredError(problem);
 
   const callId = streamCallId(sessionId);
   const claims = streamTokenClaims({
@@ -127,7 +131,8 @@ async function joinToken(sessionId: string | number, options: JoinOptions): Prom
     callCid: streamCallCid(callType, callId),
     isOwner: options.isOwner,
     nowSeconds: Math.floor(Date.now() / 1000),
-    ttlSeconds: STREAM_TOKEN_TTL_SECONDS,
+    // Measured against the class this token opens, not against a number somebody liked.
+    ttlSeconds: streamTokenTtlSeconds(options.durationMinutes),
   });
 
   /**
@@ -158,12 +163,14 @@ export const streamProvider: VideoProvider = {
 
   capabilities: {
     /**
-     * True on every platform, which is the difference that makes this worth trying.
+     * Stream's SDKs can capture a screen on every platform, which is the difference that makes
+     * this worth trying.
      *
      * Daily can only share a screen from a browser here — the native path is a WebView and a
-     * WebView cannot capture a screen. Stream's React Native SDK does it natively on both
-     * phones. **Not measured on a device by this branch:** it needs a development build and
-     * credentials, and the native-dependency conflict in STREAM.md has to be resolved first.
+     * WebView cannot capture a screen. **Nothing on this branch has seen either work:** the
+     * native SDK cannot be installed beside Daily's (STREAM.md §2) and the web SDK is not
+     * installed either, so this flag states what Stream documents about itself, not something
+     * measured here.
      */
     screenShare: true,
     /**

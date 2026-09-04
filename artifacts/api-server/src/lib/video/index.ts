@@ -5,6 +5,7 @@ import { selectProvider } from "./select";
 import type { VideoProvider } from "./types";
 
 export type { JoinOptions, RoomGrant, VideoCapabilities, VideoProvider } from "./types";
+export { VideoNotConfiguredError } from "./types";
 
 /**
  * Which provider is carrying the video.
@@ -26,8 +27,9 @@ const PROVIDERS: Record<string, VideoProvider> = {
    *
    * Registered so it can be run, and nothing more: `daily` is still the fallback and still what
    * an unset or misspelled `VIDEO_PROVIDER` gets. With no Stream credentials this provider
-   * refuses to open a room and says which variable is missing, so selecting it by accident is
-   * loud rather than silent.
+   * refuses to open a room, and the **server log** names the missing variable — the response to
+   * whoever opened the class says only that video is not set up here. Selecting it by accident is
+   * loud in the place that can act on it and quiet everywhere else.
    */
   stream: streamProvider,
 };

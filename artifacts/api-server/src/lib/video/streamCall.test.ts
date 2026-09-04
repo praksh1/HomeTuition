@@ -5,7 +5,8 @@ import {
   STREAM_ROOM_URI_PREFIX,
   STREAM_STUDENT_ROLE,
   STREAM_TEACHER_ROLE,
-  STREAM_TOKEN_TTL_SECONDS,
+  STREAM_TOKEN_MAX_TTL_SECONDS,
+  STREAM_TOKEN_MIN_TTL_SECONDS,
   buildStreamRoomUri,
   parseStreamRoomUri,
   redactStreamKey,
@@ -15,6 +16,7 @@ import {
   streamConfigProblem,
   streamCreateCallBody,
   streamTokenClaims,
+  streamTokenTtlSeconds,
 } from "./streamCall.ts";
 
 /**
@@ -61,6 +63,12 @@ test("anything that is not a Stream locator parses as nothing, rather than as ha
     "stream:call/default?api_key=k", // no id
     "stream:call/a/b/c?api_key=k", // too many parts
     "stream:call/default/sikshya-42?api_key=", // empty key
+    // `decodeURIComponent` throws on these rather than returning anything, which is how a
+    // documented "returns null" quietly became an exception thrown out of the room route.
+    "stream:call/default/sikshya-42?api_key=%zz",
+    "stream:call/default/sikshya-42?api_key=%",
+    "stream:call/%E0%A4/sikshya-42?api_key=k",
+    "stream:call/default/%?api_key=k",
   ]) {
     assert.equal(parseStreamRoomUri(bad as string), null, JSON.stringify(bad));
   }
@@ -79,6 +87,7 @@ test("a token opens exactly one call", () => {
     callCid: streamCallCid(STREAM_DEFAULT_CALL_TYPE, streamCallId(42)),
     isOwner: false,
     nowSeconds: 1_000_000,
+    ttlSeconds: streamTokenTtlSeconds(60),
   });
   assert.deepEqual(claims.call_cids, ["default:sikshya-42"]);
   // The bug this prevents: without call_cids a Stream token is a key to every call in the app,
@@ -90,37 +99,61 @@ test("a token opens exactly one call", () => {
 test("only the teacher's token asks for the moderator role", () => {
   const now = 1_000_000;
   const cid = "default:sikshya-42";
-  const teacher = streamTokenClaims({ userId: "1", callCid: cid, isOwner: true, nowSeconds: now });
-  const student = streamTokenClaims({ userId: "2", callCid: cid, isOwner: false, nowSeconds: now });
+  const ttlSeconds = streamTokenTtlSeconds(60);
+  const teacher = streamTokenClaims({ userId: "1", callCid: cid, isOwner: true, nowSeconds: now, ttlSeconds });
+  const student = streamTokenClaims({ userId: "2", callCid: cid, isOwner: false, nowSeconds: now, ttlSeconds });
   assert.equal(teacher.role, STREAM_TEACHER_ROLE);
   assert.equal(student.role, STREAM_STUDENT_ROLE);
   assert.notEqual(teacher.role, student.role);
 });
 
-test("a token expires, and within the hour", () => {
+test("a token outlives the class it is for, by exactly the class's own grace", () => {
+  /**
+   * The defect this replaced would have failed in front of a teacher. The lifetime was a flat
+   * hour while the monthly tier is a **ninety-minute** lesson, and Stream's client reconnects
+   * with the token it already holds — so a class would have dropped somebody at the hour mark
+   * and refused to let them back in, on exactly the connections where reconnecting is normal.
+   *
+   * Ten minutes for the doors opening early, the booked length, ten for the teacher's overtime.
+   * Those two tens are imported from `sessionStart.ts`, so they cannot drift from the clock the
+   * rest of the class runs on.
+   */
+  assert.equal(streamTokenTtlSeconds(90), (10 + 90 + 10) * 60);
+  assert.equal(streamTokenTtlSeconds(120), (10 + 120 + 10) * 60);
+});
+
+test("a short class still gets a token long enough to rejoin with", () => {
+  // A fifteen-minute class would otherwise mint a thirty-five-minute token, which is fine until
+  // somebody's bus goes through a tunnel.
+  assert.equal(streamTokenTtlSeconds(15), STREAM_TOKEN_MIN_TTL_SECONDS);
+  assert.equal(STREAM_TOKEN_MIN_TTL_SECONDS, 3600);
+});
+
+test("an absurd class cannot mint an absurd token", () => {
+  // `duration` is validated as "a positive integer" and nothing more, so a typo of 100000 must
+  // not produce a credential that lives ten weeks.
+  assert.equal(streamTokenTtlSeconds(100_000), STREAM_TOKEN_MAX_TTL_SECONDS);
+  assert.equal(STREAM_TOKEN_MAX_TTL_SECONDS, 6 * 3600);
+  // Still a fraction of the eight hours the Daily path mints, and still bound to one call.
+  assert.ok(STREAM_TOKEN_MAX_TTL_SECONDS < 8 * 3600);
+});
+
+test("nonsense durations fall back to the floor rather than to a negative lifetime", () => {
+  for (const bad of [0, -5, Number.NaN]) {
+    assert.equal(streamTokenTtlSeconds(bad as number), STREAM_TOKEN_MIN_TTL_SECONDS, String(bad));
+  }
+});
+
+test("the expiry is measured from the moment the token was minted", () => {
   const claims = streamTokenClaims({
     userId: "1",
     callCid: "default:sikshya-1",
     isOwner: true,
     nowSeconds: 1_000_000,
+    ttlSeconds: streamTokenTtlSeconds(90),
   });
   assert.equal(claims.iat, 1_000_000);
-  assert.equal(claims.exp, 1_000_000 + STREAM_TOKEN_TTL_SECONDS);
-  assert.equal(STREAM_TOKEN_TTL_SECONDS, 3600);
-  // Deliberately not the eight hours the Daily path uses. A short-lived token is the whole
-  // point of minting one per join.
-  assert.ok(claims.exp - claims.iat <= 3600);
-});
-
-test("a token can be pinned to a shorter life", () => {
-  const claims = streamTokenClaims({
-    userId: "1",
-    callCid: "default:sikshya-1",
-    isOwner: false,
-    nowSeconds: 500,
-    ttlSeconds: 60,
-  });
-  assert.equal(claims.exp, 560);
+  assert.equal(claims.exp, 1_000_000 + (10 + 90 + 10) * 60);
 });
 
 test("a class is created at the resolution the pricing model is built on", () => {
@@ -165,7 +198,7 @@ test("the room belongs to the platform, not to whoever opened it first", () => {
   assert.ok(!("created_by_id" in body.data));
 });
 
-test("with no credentials it says which variable is missing", () => {
+test("with no credentials the log line names which variable is missing", () => {
   assert.match(streamConfigProblem({}) ?? "", /STREAM_API_KEY and STREAM_API_SECRET/);
   assert.match(streamConfigProblem({ STREAM_API_KEY: "k" }) ?? "", /STREAM_API_SECRET is not set/);
   assert.match(streamConfigProblem({ STREAM_API_SECRET: "s" }) ?? "", /STREAM_API_KEY is not set/);

@@ -32,7 +32,8 @@ import type { IncomingVideoPreference } from "@/utils/streamRoom";
 
 /** One participant's picture. The shell asks for it by id and never touches a track. */
 export interface StreamVideoViewProps {
-  participantId: string;
+  /** A **session** id — a video track belongs to a connection, not to a person. */
+  sessionId: string;
   kind: "camera" | "screen";
   mirror?: boolean;
   style?: StyleProp<ViewStyle>;
@@ -46,10 +47,18 @@ export interface StreamBridgeEvents {
   onLeft(): void;
   /** A reason a person can read. Not an error code. */
   onError(message: string): void;
-  /** The device refused the camera or microphone; the call itself is fine. */
-  onPermissionDenied(message: string): void;
+  /**
+   * One device was refused; the call itself is fine.
+   *
+   * Per device, not one flag for both. Somebody who allows the microphone and refuses the camera
+   * must keep the microphone — it is the sensible thing to do on a shared family phone, and the
+   * earlier single flag switched it off for them.
+   */
+  onPermissionDenied(device: "camera" | "microphone", message: string): void;
+  /** They changed their mind in the browser's own settings. The control comes back. */
+  onPermissionGranted(device: "camera" | "microphone"): void;
   onParticipants(participants: CallParticipant[]): void;
-  onReaction(reaction: { id: string; participantId: string; emoji: string }): void;
+  onReaction(reaction: { userId: string; name: string; emoji: string }): void;
   onScreenShare(phase: "idle" | "starting" | "sharing"): void;
 }
 
@@ -69,16 +78,25 @@ export interface StreamBridgeSession {
   stopScreenShare(): Promise<void>;
 
   /**
-   * Moderation. The teacher's, and refused twice.
+   * Moderation. The teacher's, refused twice, and addressed to a **person**.
    *
-   * The shell only draws these when the server's room grant said `isOwner`, and Stream refuses
-   * them unless the token's role carries `mute-users` / `kick-user` on the call type. Neither
-   * check trusts the other.
+   * `userId`, never a session id: Stream's `muteUser` and `kickUser` both take the persistent
+   * user id, and handing them a session id matches nobody and reports no error. The shell only
+   * draws these when the server's room grant said `isOwner`, and Stream refuses them unless the
+   * token's role carries `mute-users` / `kick-user` on the call type. Neither check trusts the
+   * other.
    */
-  muteParticipant(participantId: string): Promise<void>;
-  removeParticipant(participantId: string): Promise<void>;
-  endForEveryone(): Promise<void>;
+  muteParticipant(userId: string): Promise<void>;
+  removeParticipant(userId: string): Promise<void>;
 
+  /**
+   * Leave. There is no "end for everyone" here on purpose.
+   *
+   * Ending a class is Sikshya's, not the provider's: it marks the session completed, cancels the
+   * reminder and closes the attendance record, and the teacher's classroom HUD already asks for
+   * confirmation before doing it. A provider-side `endCall()` would stop the video while the
+   * application went on believing the lesson was running. See `callControls`.
+   */
   leave(): Promise<void>;
 
   /**

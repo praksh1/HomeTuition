@@ -6,6 +6,8 @@
 - Base commit: `bc0aa17` ("Withdraw the unsafe branch preview from this PR")
 - Status: blocked — everything buildable without a Stream account is built and tested; the next
   step needs an account **and** a decision about a native dependency conflict (see below)
+- Updated 2026-09-04 with a correction pass answering Codex's review — §"Correction pass" at the
+  end. Nothing above it has been rewritten; the defects it found are recorded there as found.
 
 ## Requested
 
@@ -277,3 +279,234 @@ dated; it covers roughly three monthly-tier teachers, so it is a pilot allowance
 business model. Nothing is known about Kathmandu latency to Stream's edge. And `identity` is now
 in the room grant but only Stream uses it — if a third provider arrives and does not, the
 `null` case is already the tested default.
+
+
+---
+
+# Correction pass — Codex review, 2026-09-04
+
+- Base for this pass: `30c59f5`
+- Scope: the eight correctness gaps Codex raised. No new research, no account, no dependency, no
+  deploy, no PR, and Daily untouched.
+
+## Defects found, and what each correction actually was
+
+### 1. Moderation was being handed the wrong identifier — the worst of the eight
+
+`toCallParticipant()` put Stream's **session** id into a single `CallParticipant.id`, and the
+shell passed that same field to `muteUser()` and `kickUser({ user_id })`. Both take the
+**persistent user** id. Stream would have matched nobody and returned no error: a teacher presses
+Mute, sees no complaint, and watches the student keep talking. Rendering, meanwhile, genuinely
+needs the session id — a video track belongs to a connection, and somebody signed in on a laptop
+and a phone at once has two of those and one user id.
+
+**Correction.** `CallParticipant` now carries `userId` and `sessionId` as separate fields and no
+`id` at all, so there is nothing left to pass to the wrong place. Moderation takes `userId`;
+`VideoView` takes `sessionId` (the prop was renamed from `participantId` to say so); tiles are
+keyed by `sessionId`. The bridge's `muteParticipant`/`removeParticipant` parameters are named
+`userId`. Every fixture in the tests now uses deliberately unlike values (`user-9` vs
+`sess-ZZZ`), and the new test asserts both that the right string arrives **and** that the session
+id appears nowhere in what was sent — the old fixtures used `"s"` and `"1"`, which would have
+passed either way.
+
+### 2. Reconnection and permission handling were scaffolding
+
+`onReconnecting`, `onRejoined` and `onPermissionDenied` existed on the bridge and in the reducer,
+and **the adapter never emitted any of them.** A call that dropped would have sat there looking
+connected. Worse, `permission-denied` was one flag for both devices and switched *both* off: a
+student who allowed the microphone and refused the camera — the sensible thing on a shared family
+phone — had their working microphone taken away and was told both were blocked.
+
+**Correction, from Stream's own published types rather than invented.**
+`call.state.callingState$` is a real `Observable<CallingState>` (`store/CallingState.d.ts`), and
+each device manager's state carries a real `hasBrowserPermission$`
+(`devices/DeviceManagerState.d.ts`) — one per manager, so camera and microphone are genuinely
+separate. The adapter now subscribes to all three:
+
+- `reconnecting` and `migrating` → `onReconnecting` (a migration looks identical from a student's
+  chair); `joined` → `onRejoined`, but only if something was actually reconnecting, so the first
+  join does not race the connect path's own `onJoined`; `reconnecting-failed` and `offline` →
+  `onError` with a sentence, rather than spinning on "trying to get back in…" forever; `left` →
+  `onLeft`.
+- Each device's permission → `onPermissionDenied(device, …)` / `onPermissionGranted(device)`.
+  `state` is optional on the shape, so a manager version that does not expose the observable
+  means the shell simply never claims a device was refused — the honest failure direction.
+
+Reducer: `permissionDenied` became `cameraDenied` + `micDenied`, only the refused device is
+switched off, `callControls` gates each button on its own device, and the status line names the
+device that was actually blocked.
+
+The `CallingState` strings are copied rather than imported (the SDK is not installed) and
+**pinned by a test**, so a drift is a failing test rather than a call that silently stops
+reporting that it dropped.
+
+### 3. Received reactions were collected and never drawn
+
+`state.reactions` was written on every incoming reaction and rendered nowhere, which made
+"reactions" a capability the app claimed and did not have.
+
+**Correction.** A chip row above the control bar: emoji plus the sender's name, `pointerEvents:
+"none"` so it can never take a tap meant for a button behind it, `flexWrap` so it survives phone
+width, tokenised colours and type only (`lint:design` unchanged). Bounded and deterministic
+without a timer or an animation: at most three, **one per person** — somebody's newer reaction
+replaces their own older one, so one student tapping twenty times occupies one place. They stay
+until replaced rather than fading, which on a budget Android is the point.
+
+The adapter also now passes the sender's `userId` and `name` (previously a synthetic
+`` `${from}-${Date.now()}` `` id, which could not be attributed to anybody).
+
+### 4. The shell had a second, weaker way to end a class
+
+"End the class for everyone" called Stream's `endCall()` and nothing else — so the video would
+stop while Sikshya went on believing the lesson was running: no `status: completed`, no cancelled
+reminder, no closed attendance record, and none of the confirmation the teacher's own End Session
+button asks for.
+
+**Correction: removed, at four levels**, so it cannot come back by accident.
+
+- The control is gone from `StreamCall.tsx`.
+- `endForEveryone` is gone from `CallControls` — the test asserts the key is *absent* rather than
+  false, so re-adding it cannot quietly satisfy the test.
+- `endForEveryone` is gone from `StreamBridgeSession`.
+- `endCall` is not even declared on `StreamCallLike`, so a later edit cannot reach for it.
+
+Verified against the teacher HUD: `endSession()` in `app/(teacher)/classroom/[id].tsx` clears
+`roomUrl`, which unmounts the call component, whose cleanup leaves the call. The provider's media
+stops as part of the application's lifecycle. Students never had this control and still do not.
+
+### 5. Two false messages, one in the app and one in the documentation
+
+Both loaders ended "The class is running on Daily; nothing here is broken." That is false —
+this code only runs when the **server has selected Stream** — and it told somebody staring at a
+dead video window that everything was fine.
+
+And the documentation claimed the person is told which configuration is missing. They were not:
+the route returned a flat `Failed to set up video room`.
+
+**Correction.** The loaders now say the class is set up to use Stream, the Stream client is not
+part of this build, the call cannot open, and nothing the person does will fix it. On the server,
+`VideoNotConfiguredError` (a typed error carrying a `detail`) separates "never set up" from "bad
+minute": the route logs the detail — which names the variables — and answers **503** with
+*"Video calling is not set up on this server yet, so this class cannot open its call."* A
+provider failure keeps its 502. The contract suite asserts both the sentence and that
+`STREAM_API_KEY`/`STREAM_API_SECRET` appear nowhere in the response.
+
+Also removed: the claim that the room route and the classroom screens were untouched. They were
+not, and STREAM.md now says exactly what changed in each.
+
+### 6. A one-hour token against a ninety-minute class
+
+The client received a static one-hour token. Stream's client reconnects with the token it already
+holds, so a ninety-minute lesson would have dropped somebody at the hour mark and refused the
+rejoin — worst on exactly the connections this product is built for.
+
+**Correction: a bounded TTL derived from the class**, not a refresh endpoint.
+`streamTokenTtlSeconds(duration)` = `DOORS_OPEN_MINUTES + duration + OVERTIME_CUTOFF_MINUTES`,
+with those two imported from `sessionStart.ts` rather than copied, so the token cannot drift from
+the clock the rest of the class runs on. That span is the widest gap between the earliest moment a
+token can be minted and the last moment `canStart` will still open the door.
+
+Clamped to **1–6 hours**, because `duration` is validated as "a positive integer" and nothing
+more (checked: `routes/sessions.ts` has no upper bound) — a typo of 100000 must not mint a
+credential that lives ten weeks. It needed one new `JoinOptions` field, `durationMinutes`, which
+the route already had in hand. Still scoped to exactly one call via `call_cids`.
+
+**The refresh path was considered and rejected for this pass, not overlooked.** Stream's
+`tokenProvider` option is real in `@stream-io/video-client@1.59.0`'s types; wiring it needs a
+route of its own repeating the membership and timing checks, which is more surface than a proof
+of concept should add. Nothing on this branch claims refresh support. The trade-off — a
+longer-lived token is worth more if stolen — is written into the code comment and STREAM.md.
+
+### 7. Both parsers could throw where they promised null
+
+`decodeURIComponent` throws on a malformed percent escape (`%zz`, or a bare `%`). Both parsers
+documented that anything unreadable returns null and then threw instead — on the client, out of a
+`useMemo` during render.
+
+**Correction.** All decoding moved inside one `try` on both sides, returning null. Four new
+malformed cases in each test file (`%zz`, trailing `%`, a truncated multi-byte sequence in the
+path, a bare `%` as the call id).
+
+### 8. Documentation reconciled
+
+The parity matrix now uses a four-rung evidence ladder — **source-verified**, **adapter-tested**,
+**reducer-tested**, **not implemented** — instead of a flat "Implemented", because the review was
+right that reducer-only coverage was being presented as though it proved integration. Reconnect
+and permission rows moved up to source-verified + adapter-tested; the end-session row became
+"deliberately absent"; reactions split into sending and receiving. Real media, Stream's acceptance
+of anything, device behaviour, pricing and Kathmandu network quality all stay explicitly
+unverified, and two new "untested" entries were added for reconnect timing and real permission
+prompts. The Daily/Stream WebRTC collision finding, Daily as default, no Stream dependency and no
+external account are all unchanged.
+
+## Failed attempts and surprises in this pass
+
+**`readonly detail: string` as a constructor parameter property broke the whole test file.**
+Node's `--experimental-strip-types` refuses TypeScript parameter properties outright
+(`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`), so `streamProvider.test.ts` failed to load entirely rather
+than failing one test. Fixed by declaring the field and assigning it in the body. Same family of
+constraint as the extensionless-import one `select.ts` already documents.
+
+**A test I had written was itself asserting the defect.** `"a teacher on a provider that cannot
+share a screen is not offered one"` ended with `assert.equal(controls.endForEveryone, true)` —
+so removing the wrong control turned a passing test red for the right reason. Rewritten to assert
+`moderate` instead, which is what that test was actually about.
+
+**The first `.web.ts` edit went to the wrong layer.** The truthful-message change initially
+touched a copy of the connect logic that had already been moved into `streamSession.ts` during
+the first pass; the loader file was left holding only the message. Caught by grep rather than by a
+test, since both compiled.
+
+## Verification (this pass)
+
+Narrow first, as asked:
+
+| Command | Result |
+|---|---|
+| `node --test` on the two server Stream files | **39 pass, 0 fail** (21 + 18) |
+| `node --test` on the three app Stream files | **71 pass, 0 fail** (10 + 24 + 37) |
+| `pnpm run typecheck` | **pass, all four packages** |
+| `pnpm --filter @workspace/api-server run test` | **319 pass, 0 fail** (was 315) |
+| `pnpm --filter @workspace/sikshya run test` | **225 pass, 0 fail** (was 205) |
+| `pnpm --filter @workspace/api-server run test:video` | **26 passed, 0 failed** (was 24) |
+| `pnpm --filter @workspace/sikshya run lint:design` | **no new leaks**; 223 hex / 429 sizes across 57 files, unchanged |
+| `git diff --check` | clean |
+
+`lint:design:update` was **not** run; the baseline file is untouched and the counts did not move.
+
+**Bundle comparison re-run**, because the shell changed:
+
+| | entry bundle | gzipped |
+|---|---|---|
+| `bc0aa17` (baseline) | 4,770,466 | 1,252,742 |
+| `30c59f5` (first pass) | 4,786,379 | 1,256,236 |
+| this pass | **4,787,300** (+16,834 / +0.35% vs baseline) | **1,256,354** (+3,612) |
+
+The reaction overlay and the extra observables cost 921 bytes over the previous pass. Grepping
+the new export: `stream-io/video` 0 files, `STREAM_API_KEY` 0, `STREAM_API_SECRET` 0, `running on
+Daily` 0, `endForEveryone` 0 — and `stream:call/` and the new truthful loader message each in 1,
+so the platform split still resolves to the web loader.
+
+## What remains unverified after this pass
+
+Unchanged and still true: no Stream account, no real call, no second device, no Android hardware,
+no screen share, no measured reconnect timing, no bitrate/CPU/memory/battery, nothing about
+Kathmandu latency, no confirmation that Stream accepts the call-creation body or that the
+`default` call type's role grants match what the code assumes.
+
+Two things this pass specifically did **not** make real:
+
+- **Reconnection is wired, not exercised.** `callingState$` is Stream's own observable and the
+  adapter is driven through it in tests, but no connection has ever dropped here.
+- **Permission handling is wired, not exercised.** `hasBrowserPermission$` is Stream's own
+  observable; nobody has denied a camera on a phone.
+
+Both are now described that way in the parity matrix rather than as "Implemented".
+
+## Next pickup point
+
+Unchanged from the first pass, and §7 of STREAM.md is still the route: an account, then confirm
+the call-creation body and the role grants, then re-read the pricing page, then install the web
+SDK and finish `loadStreamSdk`, then the two-device web test. The native decision — a throwaway
+build with Daily removed, for screen sharing from a phone — is still the owner's and still the
+only question a browser cannot answer.

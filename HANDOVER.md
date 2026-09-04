@@ -745,7 +745,7 @@ up when a class will not connect at 8pm in Kathmandu*. The owner is non-technica
 strongest argument against self-hosting and has to be weighed honestly against the numbers.
 
 **The Stream experiment is built and is waiting on two answers.** `claude/stream-video-poc` holds
-a complete Stream Video adapter behind the existing seam — server, app window, 86 tests — with
+a complete Stream Video adapter behind the existing seam — server, app window, 110 tests — with
 Daily still the default and still untouched. It stops at a boundary that turned out to be earlier
 than expected, and the two questions are:
 

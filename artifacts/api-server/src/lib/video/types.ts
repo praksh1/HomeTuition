@@ -40,6 +40,45 @@ export interface JoinOptions {
    * else, and because the app has to send the *same* identity back when it opens the call.
    */
   userId: string;
+  /**
+   * How long the class is booked for, in minutes.
+   *
+   * Here because a token's expiry is only defensible if it is measured against the thing it
+   * authorises. A flat lifetime was the first version of this and it was wrong: the monthly tier
+   * is a ninety-minute lesson, and a provider whose client reconnects with the token it already
+   * holds would have dropped somebody at the hour mark and refused to let them back in.
+   *
+   * Cross-provider for the same reason `userId` is: LiveKit, Jitsi and 100ms tokens all carry an
+   * expiry, and the only honest input to it is how long the lesson lasts. Daily ignores it.
+   */
+  durationMinutes: number;
+}
+
+/**
+ * The provider is selected but has no credentials.
+ *
+ * Its own type so the room route can tell "this server was never set up" apart from "the
+ * provider had a bad minute", and answer differently: the first is a 503 the owner can act on,
+ * the second a 502 worth retrying.
+ *
+ * `detail` names the missing environment variables and is **for the log, not for the response**.
+ * Which variables a server is missing is not a thing to hand to anybody who can open a class.
+ */
+export class VideoNotConfiguredError extends Error {
+  /**
+   * Declared and assigned rather than written as a constructor parameter property.
+   *
+   * `readonly detail: string` in the parameter list is TypeScript-only syntax, and Node's
+   * `--experimental-strip-types` refuses it outright — which took the whole provider test file
+   * down rather than one test. The same constraint `select.ts` already documents, in a new place.
+   */
+  readonly detail: string;
+
+  constructor(detail: string) {
+    super(detail);
+    this.name = "VideoNotConfiguredError";
+    this.detail = detail;
+  }
 }
 
 /**

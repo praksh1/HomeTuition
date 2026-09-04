@@ -13,6 +13,8 @@
  * is only reachable when `VIDEO_PROVIDER=stream` is set deliberately. See STREAM.md.
  */
 
+import { DOORS_OPEN_MINUTES, OVERTIME_CUTOFF_MINUTES } from "../sessionStart.ts";
+
 /**
  * How the app is told where to join.
  *
@@ -45,16 +47,42 @@ export const STREAM_ROOM_URI_PREFIX = "stream:call/";
 export const STREAM_DEFAULT_CALL_TYPE = "default";
 
 /**
- * An hour, which is Stream's own default for a user token.
+ * How long a join token lives, measured from the class it is for.
  *
- * Long enough for a ninety-minute class to *start* and short enough to be worth stealing for
- * only an hour. It does not have to cover the whole lesson: the token authenticates the join,
- * and this app already re-fetches the room whenever the classroom is opened.
+ * The first version of this was a flat hour, which was wrong and would have failed in front of
+ * a teacher: the monthly tier is a **ninety-minute** lesson, and Stream's client reconnects with
+ * the token it already holds rather than asking for a new one. A ninety-minute class would have
+ * dropped somebody at the hour mark and refused to let them back in — worst on exactly the
+ * connections this product is built for, where reconnecting is normal.
  *
- * Deliberately not the eight hours the Daily path uses. That number predates this seam and is
- * the one thing about Daily's tokens worth not copying.
+ * So the lifetime is derived from this project's own clock rather than picked:
+ *
+ *     doors open 10 min early  +  the booked length  +  10 min of teacher overtime
+ *
+ * which is the widest gap between the earliest moment a token can be minted and the last moment
+ * `canStart` will still open the door. Those two numbers are imported from `sessionStart.ts`
+ * rather than copied, because a class having two ideas about its own clock is how this project
+ * ended up with a socket and a room URL that disagreed about who was allowed in.
+ *
+ * **Both ends are clamped**, because `duration` is validated as "a positive integer" and nothing
+ * more — a teacher who types 100000 must not mint a token that lives ten weeks. The floor keeps
+ * a fifteen-minute class from holding a token too short to survive one rejoin.
+ *
+ * The trade-off, stated plainly: a longer token is a token worth more if it is stolen. It is
+ * bounded to one call by `call_cids`, so the worst case is one class, and it is still a fraction
+ * of the eight hours the Daily path mints. The alternative — a refresh endpoint feeding Stream's
+ * `tokenProvider` — is real (the option exists in `@stream-io/video-client@1.59.0`'s types) and
+ * is **not implemented here**; it needs a route of its own that repeats the membership and
+ * timing checks, which is more surface than a proof of concept should add.
  */
-export const STREAM_TOKEN_TTL_SECONDS = 60 * 60;
+export const STREAM_TOKEN_MIN_TTL_SECONDS = 60 * 60;
+export const STREAM_TOKEN_MAX_TTL_SECONDS = 6 * 60 * 60;
+
+export function streamTokenTtlSeconds(durationMinutes: number): number {
+  const wanted =
+    (DOORS_OPEN_MINUTES + Math.max(0, durationMinutes || 0) + OVERTIME_CUTOFF_MINUTES) * 60;
+  return Math.min(STREAM_TOKEN_MAX_TTL_SECONDS, Math.max(STREAM_TOKEN_MIN_TTL_SECONDS, wanted));
+}
 
 /**
  * The two roles this product has, named as Stream names them.
@@ -130,17 +158,30 @@ export function parseStreamRoomUri(uri: string | null | undefined): ParsedStream
   const path = rest.slice(0, queryAt).split("/");
   if (path.length !== 2) return null;
 
-  let apiKey = "";
-  for (const pair of rest.slice(queryAt + 1).split("&")) {
-    const eq = pair.indexOf("=");
-    if (eq < 0) continue;
-    if (pair.slice(0, eq) === "api_key") apiKey = decodeURIComponent(pair.slice(eq + 1));
-  }
+  try {
+    /**
+     * All of the decoding, inside one `try`.
+     *
+     * `decodeURIComponent` **throws** on a malformed percent escape — `%zz`, or a `%` at the end
+     * of the string — so the earlier version of this function documented that it returns null for
+     * anything unreadable and then threw instead. The two are not the same to a caller: a null is
+     * a state the classroom already handles and a throw is an unhandled rejection inside an
+     * effect.
+     */
+    let apiKey = "";
+    for (const pair of rest.slice(queryAt + 1).split("&")) {
+      const eq = pair.indexOf("=");
+      if (eq < 0) continue;
+      if (pair.slice(0, eq) === "api_key") apiKey = decodeURIComponent(pair.slice(eq + 1));
+    }
 
-  const callType = decodeURIComponent(path[0]);
-  const callId = decodeURIComponent(path[1]);
-  if (!callType || !callId || !apiKey) return null;
-  return { callType, callId, apiKey };
+    const callType = decodeURIComponent(path[0]);
+    const callId = decodeURIComponent(path[1]);
+    if (!callType || !callId || !apiKey) return null;
+    return { callType, callId, apiKey };
+  } catch {
+    return null;
+  }
 }
 
 export interface StreamTokenClaims {
@@ -174,9 +215,10 @@ export function streamTokenClaims(options: {
   isOwner: boolean;
   /** Unix seconds. Passed in so a test can pin the clock. */
   nowSeconds: number;
-  ttlSeconds?: number;
+  /** From `streamTokenTtlSeconds`. Required, so nobody can forget the class's own length. */
+  ttlSeconds: number;
 }): StreamTokenClaims {
-  const ttl = options.ttlSeconds ?? STREAM_TOKEN_TTL_SECONDS;
+  const ttl = options.ttlSeconds;
   return {
     user_id: options.userId,
     call_cids: [options.callCid],
@@ -265,6 +307,11 @@ export function streamCreateCallBody(): Record<string, unknown> {
  * from what is in the environment, and when nothing is there the app *says so* rather than
  * pretending. A proof of concept with no credentials must fail closed and name the variable,
  * because "Failed to set up video room" is the least diagnosable sentence in the product.
+ *
+ * **This sentence is for the log.** It goes into `VideoNotConfiguredError.detail`, and the room
+ * route logs it and answers with a message that says video is not set up here and stops there.
+ * Telling anybody who can open a class that `STREAM_API_SECRET` is unset tells them what to go
+ * looking for, and this project has already had one key leak.
  */
 export function streamConfigProblem(env: {
   STREAM_API_KEY?: string;

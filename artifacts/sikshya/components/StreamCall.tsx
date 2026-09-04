@@ -156,8 +156,10 @@ export default function StreamCall({
               cbRef.current.onLeft?.();
             },
             onError: (message) => !cancelled && dispatch({ type: "failed", error: message }),
-            onPermissionDenied: (message) =>
-              !cancelled && dispatch({ type: "permission-denied", error: message }),
+            onPermissionDenied: (device, message) =>
+              !cancelled && dispatch({ type: "permission-denied", device, error: message }),
+            onPermissionGranted: (device) =>
+              !cancelled && dispatch({ type: "permission-granted", device }),
             onParticipants: (participants) => {
               if (cancelled) return;
               dispatch({ type: "participants", participants });
@@ -362,6 +364,32 @@ export default function StreamCall({
           borderRadius: radius.pill,
           backgroundColor: colors.surfaceSunk,
         },
+        /**
+         * Where a reaction somebody else sent appears.
+         *
+         * Above the control bar and below the drag handle, so it covers video rather than
+         * anything anybody has to press — and `pointerEvents="none"` so a chip can never take a
+         * tap meant for the button behind it.
+         */
+        incoming: {
+          position: "absolute",
+          left: space.xs,
+          right: space.xs,
+          bottom: HIT_SLOP_MIN + space.md,
+          flexDirection: "row",
+          flexWrap: "wrap",
+          gap: space.xxs,
+        },
+        incomingChip: {
+          flexDirection: "row",
+          alignItems: "center",
+          gap: space.xxs,
+          maxWidth: "100%",
+          borderRadius: radius.pill,
+          paddingHorizontal: space.xs,
+          paddingVertical: space.xxs,
+          backgroundColor: colors.secondary,
+        },
       }),
     [colors, space, radius],
   );
@@ -399,7 +427,7 @@ export default function StreamCall({
         {presenter && VideoView ? (
           <>
             <VideoView
-              participantId={presenter.id}
+              sessionId={presenter.sessionId}
               kind="screen"
               style={StyleSheet.absoluteFill}
             />
@@ -412,7 +440,7 @@ export default function StreamCall({
           </>
         ) : shown.length > 0 && VideoView ? (
           <VideoView
-            participantId={(shown.find((p) => !p.isLocal) ?? shown[0]).id}
+            sessionId={(shown.find((p) => !p.isLocal) ?? shown[0]).sessionId}
             kind="camera"
             style={StyleSheet.absoluteFill}
           />
@@ -445,10 +473,12 @@ export default function StreamCall({
         contentContainerStyle={s.stripInner}
       >
         {shown.map((p) => (
-          <View key={p.id} style={s.tile}>
+          // A tile is one connection, so it is keyed and drawn by session id. Somebody signed
+          // in on a laptop and a phone at once really is two tiles.
+          <View key={p.sessionId} style={s.tile}>
             {VideoView && p.camOn ? (
               <VideoView
-                participantId={p.id}
+                sessionId={p.sessionId}
                 kind="camera"
                 mirror={p.isLocal}
                 style={StyleSheet.absoluteFill}
@@ -469,6 +499,32 @@ export default function StreamCall({
           </Text>
         ) : null}
       </ScrollView>
+
+      {/*
+        Reactions other people sent.
+
+        They were being collected into state and never drawn, which made "reactions" a capability
+        the app claimed and did not have. This is deliberately the cheapest thing that is real: no
+        animation, no timers, at most three chips, one per person — somebody's newer reaction
+        replaces their own older one — and a name beside each emoji so a class of forty-five knows
+        who said it. They stay until replaced rather than fading, which on a budget Android is a
+        feature: a fade is a frame budget nobody here has spare.
+      */}
+      {state.reactions.length > 0 ? (
+        <View style={s.incoming} pointerEvents="none" testID="stream-incoming-reactions">
+          {state.reactions.map((r) => (
+            <View key={r.userId} style={s.incomingChip}>
+              <Text style={t.callout}>{r.emoji}</Text>
+              <Text
+                style={[t.caption, { color: colors.onInverse, flexShrink: 1 }]}
+                numberOfLines={1}
+              >
+                {r.name}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       {showReactions && controls.reactions ? (
         <View style={s.reactionRow} testID="stream-reactions">
@@ -493,12 +549,14 @@ export default function StreamCall({
           <ScrollView>
             {state.participants.map((p) => (
               <PersonRow
-                key={p.id}
+                key={p.sessionId}
                 person={p}
                 canModerate={controls.moderate && !p.isLocal}
                 styles={s}
-                onMute={() => sessionRef.current?.muteParticipant(p.id).catch(() => {})}
-                onRemove={() => sessionRef.current?.removeParticipant(p.id).catch(() => {})}
+                // Both by **user** id. Stream's muteUser and kickUser match a person, not a
+                // connection, and a session id passed here matches nobody and says nothing.
+                onMute={() => sessionRef.current?.muteParticipant(p.userId).catch(() => {})}
+                onRemove={() => sessionRef.current?.removeParticipant(p.userId).catch(() => {})}
               />
             ))}
           </ScrollView>
@@ -566,17 +624,16 @@ export default function StreamCall({
             testID="stream-screenshare"
           />
         ) : null}
-        {controls.endForEveryone ? (
-          <ControlButton
-            icon="x-circle"
-            label="End the class for everyone"
-            enabled
-            active={false}
-            onPress={() => sessionRef.current?.endForEveryone().catch(() => {})}
-            styles={s}
-            testID="stream-end-all"
-          />
-        ) : null}
+        {/*
+          There is no "end the class for everyone" here, for the teacher or for anybody.
+
+          It was here, and it called the provider's `endCall()` and nothing else — so the video
+          stopped while Sikshya went on believing the lesson was running: no completed status, no
+          cancelled reminder, no closed attendance, and none of the confirmation the teacher's own
+          End Session button asks for. The classroom HUD owns ending a class; clearing the room
+          unmounts this component, which leaves the call. The provider's media stops as part of
+          that lifecycle rather than starting a competing one.
+        */}
         <ControlButton
           icon="phone-off"
           label="Leave call"

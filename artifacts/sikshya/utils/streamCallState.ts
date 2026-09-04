@@ -33,7 +33,24 @@ export type CallPhase =
 export type ScreenSharePhase = "idle" | "starting" | "sharing";
 
 export interface CallParticipant {
-  id: string;
+  /**
+   * Who the person is. Stable for as long as they have an account.
+   *
+   * **This is the one to hand to anything that acts on a person** — muting them, removing them,
+   * attributing a reaction. The first version of this type had a single `id` holding the session
+   * id, which meant the moderation calls were given the wrong string entirely: Stream's
+   * `muteUser` and `kickUser` both want a user id, and would have silently matched nobody. A
+   * teacher would have pressed Mute, seen no error, and watched the student keep talking.
+   */
+  userId: string;
+  /**
+   * Which *connection* this is. New every time the same person rejoins.
+   *
+   * **This is the one to hand to anything that draws a picture** — a video track belongs to a
+   * connection, not to a person, and somebody signed in on a laptop and a phone at once has two
+   * of these and one `userId`.
+   */
+  sessionId: string;
   name: string;
   isLocal: boolean;
   /** Decided from the server's own room grant, not from anything the participant says. */
@@ -52,14 +69,37 @@ export interface CallState {
   camOn: boolean;
   handRaised: boolean;
   screenShare: ScreenSharePhase;
-  /** True once the device has refused the camera or microphone. Not the same as "off". */
-  permissionDenied: boolean;
+  /**
+   * Which device the phone or browser refused, kept apart.
+   *
+   * They were one flag, and that was a real fault rather than a tidiness one: a student who
+   * allows the microphone and refuses the camera — the sensible thing to do on a shared family
+   * phone — had their **working microphone switched off** and was told both were blocked. They
+   * would have sat through a lesson unable to answer a question, with the app insisting that was
+   * their own choice.
+   */
+  cameraDenied: boolean;
+  micDenied: boolean;
   participants: CallParticipant[];
-  /** Most recent first, and bounded — a class of forty-five can send a lot of these. */
-  reactions: { id: string; participantId: string; emoji: string }[];
+  /**
+   * Reactions currently on screen. Newest first, one per person, and bounded.
+   *
+   * One per person is what makes it deterministic without a timer: a new reaction from somebody
+   * replaces their old one, and the oldest falls off the end when the list is full. Nothing
+   * fades, nothing is scheduled, and a class of forty-five cannot push more than
+   * `MAX_VISIBLE_REACTIONS` of these onto a cheap Android at once.
+   */
+  reactions: VisibleReaction[];
 }
 
-export const MAX_REMEMBERED_REACTIONS = 5;
+export interface VisibleReaction {
+  userId: string;
+  name: string;
+  emoji: string;
+}
+
+/** Few enough to fit one row at phone width without covering the video underneath. */
+export const MAX_VISIBLE_REACTIONS = 3;
 
 export function initialCallState(): CallState {
   return {
@@ -71,7 +111,8 @@ export function initialCallState(): CallState {
     camOn: false,
     handRaised: false,
     screenShare: "idle",
-    permissionDenied: false,
+    cameraDenied: false,
+    micDenied: false,
     participants: [],
     reactions: [],
   };
@@ -83,13 +124,14 @@ export type CallAction =
   | { type: "rejoined" }
   | { type: "left" }
   | { type: "failed"; error: string }
-  | { type: "permission-denied"; error: string }
+  | { type: "permission-denied"; device: "camera" | "microphone"; error: string }
+  | { type: "permission-granted"; device: "camera" | "microphone" }
   | { type: "mic"; on: boolean }
   | { type: "camera"; on: boolean }
   | { type: "hand"; raised: boolean }
   | { type: "screen-share"; phase: ScreenSharePhase }
   | { type: "participants"; participants: CallParticipant[] }
-  | { type: "reaction"; id: string; participantId: string; emoji: string };
+  | { type: "reaction"; userId: string; name: string; emoji: string };
 
 export function callReducer(state: CallState, action: CallAction): CallState {
   switch (action.type) {
@@ -119,9 +161,24 @@ export function callReducer(state: CallState, action: CallAction): CallState {
       return { ...state, phase: "failed", error: action.error, screenShare: "idle" };
 
     case "permission-denied":
-      // Not a failure of the call — the call is fine, the device said no. The person can still
-      // hear the lesson, so the shell keeps running and says what happened.
-      return { ...state, permissionDenied: true, micOn: false, camOn: false, error: action.error };
+      /**
+       * Not a failure of the call — the call is fine, the device said no.
+       *
+       * Only the refused device is switched off. Somebody who allowed the microphone and refused
+       * the camera can still answer a question, which on a shared family phone is the common
+       * case rather than the odd one.
+       */
+      return action.device === "camera"
+        ? { ...state, cameraDenied: true, camOn: false, error: action.error }
+        : { ...state, micDenied: true, micOn: false, error: action.error };
+
+    case "permission-granted":
+      // Somebody changed their mind in the browser's own settings, which is a thing people do
+      // once they understand why they were asked. The control comes back rather than staying
+      // greyed out until they reload.
+      return action.device === "camera"
+        ? { ...state, cameraDenied: false }
+        : { ...state, micDenied: false };
 
     case "mic":
       return { ...state, micOn: action.on };
@@ -142,9 +199,11 @@ export function callReducer(state: CallState, action: CallAction): CallState {
       return {
         ...state,
         reactions: [
-          { id: action.id, participantId: action.participantId, emoji: action.emoji },
-          ...state.reactions,
-        ].slice(0, MAX_REMEMBERED_REACTIONS),
+          { userId: action.userId, name: action.name, emoji: action.emoji },
+          // Somebody's newer reaction replaces their older one rather than stacking beside it,
+          // so one person tapping five times cannot fill the row.
+          ...state.reactions.filter((r) => r.userId !== action.userId),
+        ].slice(0, MAX_VISIBLE_REACTIONS),
       };
   }
 }
@@ -164,8 +223,6 @@ export interface CallControls {
   screenShare: boolean;
   /** Mute somebody else, or remove them. The teacher's, and only while the call is up. */
   moderate: boolean;
-  /** Ends the class for everybody. Never a student's. */
-  endForEveryone: boolean;
   leave: boolean;
 }
 
@@ -182,16 +239,29 @@ export function callControls(options: {
   // does nothing teaches people to press it repeatedly, and the layout jumping as the network
   // wobbles is its own small cruelty on a bus.
   return {
-    mic: live && !state.permissionDenied,
-    camera: live && !state.permissionDenied,
+    // Each control follows its own device's permission. A refused camera does not take the
+    // microphone with it.
+    mic: live && !state.micDenied,
+    camera: live && !state.cameraDenied,
     hand: live,
     reactions: live,
     participants: state.phase !== "failed",
     screenShare: live && canScreenShare && isOwner,
     moderate: live && isOwner,
-    endForEveryone: live && isOwner,
-    // Always available. Somebody must always be able to get out, including out of a call that
-    // is failing to connect.
+    /**
+     * There is no "end for everyone" here, and that is deliberate.
+     *
+     * The shell had one, and it was wrong: it called the provider's `endCall()` and nothing
+     * else, so the class's video stopped while Sikshya went on believing the lesson was running
+     * — no `status: completed`, no cancelled reminder, no attendance closed, and none of the
+     * confirmation the teacher's own End Session button asks for. Two buttons that look alike
+     * and do different amounts of work is exactly the trap this project already removed from
+     * Daily Prebuilt.
+     *
+     * **The teacher's classroom HUD owns ending a class**, and always did. It clears the room,
+     * which unmounts this component, which leaves the call — the provider's media stops as part
+     * of the application's lifecycle rather than starting a competing one.
+     */
     leave: state.phase !== "left",
   };
 }
@@ -213,9 +283,13 @@ export function callStatusLine(state: CallState): string | null {
     case "left":
       return "You have left the call.";
     case "joined":
-      if (state.permissionDenied) {
-        return state.error ?? "Camera and microphone are blocked. You can still hear the class.";
+      // Named per device, because "camera and microphone are blocked" to somebody who
+      // deliberately allowed the microphone reads as the app not having listened.
+      if (state.micDenied && state.cameraDenied) {
+        return "Camera and microphone are blocked. You can still hear the class.";
       }
+      if (state.micDenied) return "Your microphone is blocked. You can hear, but not speak.";
+      if (state.cameraDenied) return "Your camera is blocked. Everything else works.";
       return null;
   }
 }

@@ -54,7 +54,7 @@ still not installed here, for a different reason: it would land in the bundle ev
 downloads over a Nepali mobile connection, for a provider that is switched off.
 
 So this branch ships the **whole integration and none of the dependency**: the server adapter,
-the app's call shell, the mapping from a Stream call object onto this app's session, and 86 tests
+the app's call shell, the mapping from a Stream call object onto this app's session, and 110 tests
 that drive all of it with fakes. What it cannot do is prove Stream behaves as its documentation
 says. Section 6 is the exact list of what that costs.
 
@@ -117,8 +117,22 @@ An HS256 JWT signed with `STREAM_API_SECRET`, minted per join:
   reopened underneath.
 - **`role` is `host` only for the teacher who owns the session**, decided by
   `getSessionMembership`, never by anything the client says.
-- **One hour**, which is Stream's own default and deliberately not the eight hours the Daily path
-  uses. The token authenticates the join; the classroom re-fetches the room whenever it opens.
+- **It lasts as long as the class can legitimately run**: ten minutes of early doors, the booked
+  length, ten minutes of teacher overtime — the two tens imported from `sessionStart.ts` rather
+  than copied. Clamped to between one and six hours, because `duration` is validated as "a
+  positive integer" and nothing more.
+
+  This was a flat hour in the first version of the branch and it was a real defect: the monthly
+  tier is a **ninety-minute** lesson, and Stream's client reconnects with the token it already
+  holds rather than asking for a new one, so a class would have dropped somebody at the hour mark
+  and refused to let them back in — worst on exactly the connections this product is built for.
+
+  **The trade-off, stated:** a longer-lived token is worth more if it is stolen. It still opens
+  one call and nothing else, and it is still a fraction of the eight hours the Daily path mints.
+  The alternative is a refresh endpoint feeding Stream's `tokenProvider` — that option is real in
+  `@stream-io/video-client@1.59.0`'s types and is **not implemented here**, because it needs a
+  route of its own repeating the membership and timing checks. Nothing on this branch claims
+  refresh support.
 
 `role` is a *request*, not a grant — what `host` may actually do is configured against the call
 type in Stream's dashboard. So the app is told `isOwner` separately and draws its teacher-only
@@ -129,7 +143,7 @@ front of a student, and a tampered client cannot make Stream honour one.
 
 | File | What it is |
 |---|---|
-| `components/VideoCall.tsx` | Gains a `stream` branch. The Daily branch is byte-for-byte what it was. |
+| `components/VideoCall.tsx` | Gains a `stream` branch and three optional props. The Daily branch passes none of them and behaves as before. |
 | `components/StreamCall.tsx` | Sikshya's window: controls, participant strip, status line, people sheet. One file for both platforms. |
 | `components/stream/streamBridge.ts` | The line between Sikshya and Stream. Everything above it has never heard of Stream. |
 | `components/stream/streamSession.ts` | Maps a Stream `Call` onto this app's session, and builds a client from whichever module a platform loaded. |
@@ -144,35 +158,63 @@ Stream object.
 
 ## 4. Parity matrix
 
-**Read the right-hand column carefully.** "Implemented" means the code path exists and is
-covered by a test with a fake Stream. Nothing in this table has been seen working against
-Stream's servers, because there are none to reach.
+**Read the right-hand column carefully.** Nothing in this table has been seen working against
+Stream's servers, because there are none to reach. The evidence column uses four words and they
+mean different things:
+
+- **source-verified** — the API this uses was read out of Stream's own published package. It says
+  the call is spelled correctly, not that it works.
+- **adapter-tested** — driven end to end through the adapter with a fake Stream call: the event
+  or the command really does travel between the shell and the provider boundary.
+- **reducer-tested** — only the shell's own state machine is covered. Weaker, and named as such.
+- **not implemented** — said plainly rather than dressed up.
 
 | Capability | Daily today | Stream on this branch | Evidence |
 |---|---|---|---|
-| Teacher joins / leaves | ✅ web + native | Implemented | fake-call test |
-| **End the class for everyone** | ✅ (classroom's own End) | Implemented, `call.endCall()` | fake-call test; drawn only when `isOwner` |
-| Microphone on/off | ✅ | Implemented | fake-call test |
-| Camera on/off | ✅ | Implemented | fake-call test |
-| Raise / lower hand | ❌ not built | Implemented, as Stream's `raised-hand` reaction | fake-call test |
-| Reactions | ❌ not built | Implemented, four emoji | fake-call test |
-| Participant list | ❌ not built | Implemented, from `participants$` | fake-call test |
-| **Mute another participant** | ✅ (Daily owner token) | Implemented, `muteUser(id, "audio")` | fake-call test; teacher only |
-| Remove a participant | ✅ (Daily owner token) | Implemented, `kickUser({block:false})` | fake-call test; teacher only |
-| Screen share — web | ✅ Daily Prebuilt's own button | Implemented | teacher only; **unverified against Stream** |
+| Teacher joins / leaves | ✅ web + native | Implemented | adapter-tested |
+| **End the class for everyone** | ✅ (classroom's own End) | **Deliberately absent** — see below | reducer-tested (asserted absent for both roles) |
+| Microphone on/off | ✅ | Implemented | adapter-tested |
+| Camera on/off | ✅ | Implemented | adapter-tested |
+| Raise / lower hand | ❌ not built | Implemented, as Stream's `raised-hand` reaction | adapter-tested; source-verified |
+| Reactions — sending | ❌ not built | Implemented, four emoji | adapter-tested |
+| Reactions — receiving and showing | ❌ not built | Implemented: a chip per person, name beside the emoji, three at most | adapter-tested (delivery), reducer-tested (what is shown) |
+| Participant list | ❌ not built | Implemented, from `participants$` | adapter-tested |
+| **Mute another participant** | ✅ (Daily owner token) | Implemented, `muteUser(userId, "audio")` | adapter-tested; teacher only |
+| Remove a participant | ✅ (Daily owner token) | Implemented, `kickUser({block:false})` | adapter-tested; teacher only |
+| Screen share — web | ✅ Daily Prebuilt's own button | Implemented | adapter-tested; **never seen against Stream** |
 | Screen share — Android/iOS | ❌ **impossible** (WebView) | Implemented in code | **blocked**: needs the native SDK, §2 |
-| Student: no end-session authority | ✅ | Implemented | reducer test asserts the control is absent |
-| Student: sees teacher's screen share | ✅ web only | Implemented | **unverified** |
-| Device choice | ❌ | Optional; drawn only where the loader supplies it | fake-call test |
-| Hidden / compact / normal / full without remount | ✅ | Implemented, and it changes what is *received* | fake-call test: five resizes, zero joins |
-| Reconnect after a network drop | Daily's own | Reducer handles the states; `setDisconnectionTimeout` exists in the SDK | **unmeasured** |
-| Denied camera/microphone | ✅ handled | Implemented — call keeps running, person is told | reducer test |
+| Student: no end-session authority | ✅ | Implemented — no such control exists in this shell at all | reducer-tested |
+| Student: sees teacher's screen share | ✅ web only | Implemented | **never seen against Stream** |
+| Device choice | ❌ | Optional; drawn only where the loader supplies it | adapter-tested |
+| Hidden / compact / normal / full without remount | ✅ | Implemented, and it changes what is *received* | adapter-tested: five resizes, zero joins |
+| Reconnect after a network drop | Daily's own | Implemented, from `call.state.callingState$` | source-verified + adapter-tested; **timing never measured** |
+| Denied camera **or** microphone | ✅ handled | Implemented per device — a refused camera leaves the microphone working | source-verified + adapter-tested |
 | Provider chat | disabled at the room | **does not exist** — Stream Chat is a separate product and is not installed | — |
-| Provider picture-in-picture | disabled (`showFullscreenButton: false`) | `CallContent` takes `disablePictureInPicture`; this app does not use `CallContent` at all | — |
+| Provider picture-in-picture | disabled (`showFullscreenButton: false`) | `CallContent` takes `disablePictureInPicture`; this app does not use `CallContent` at all | source-verified |
+
+### Why there is no "end for everyone"
+
+The shell had one in the first version of this branch, and it was wrong. It called Stream's
+`endCall()` and nothing else — so the video would stop while Sikshya went on believing the lesson
+was running: no `status: completed`, no cancelled reminder, no closed attendance record, and none
+of the confirmation the teacher's own **End Session** button asks for. Two buttons that look alike
+and do different amounts of work is exactly the trap this project already removed from Daily
+Prebuilt.
+
+**The teacher's classroom HUD owns ending a class.** It clears the room, which unmounts the call
+component, which leaves the call — the provider's media stops as part of the application's
+lifecycle rather than starting a competing one. `endCall` is not even declared on the call shape
+the adapter is written against, so a later edit cannot reach for it by accident.
 
 Sikshya's WebSocket remains the only authority for the whiteboard, presence, attendance, session
 lifecycle, the unread badge and the one class chat. Nothing in this branch touches
 `classroomHub.ts` or `userHub.ts`.
+
+Three files that *were* touched, since an earlier draft of this document wrongly called them
+untouched: `routes/sessions.ts` gained the identity, the class length and a 503 branch for an
+unconfigured provider; and both classroom screens gained three optional props on the call they
+already mounted. Neither screen imports a Stream type or object, and the Daily path through all
+three is unchanged.
 
 ## 5. Research: what is verified, and what is not
 
@@ -247,23 +289,31 @@ measured, observed, or run:
 - Two devices, or one device, or a browser tab.
 - Android hardware of any kind.
 - Screen sharing, on any platform.
-- Reconnect behaviour or reconnect timing.
+- **Reconnect timing, and reconnection against a real network.** The wiring is real and
+  adapter-tested — `callingState$` is Stream's own observable and the adapter drives the shell
+  from it — but no connection has ever actually dropped here. How long Stream takes to come back,
+  and whether it does on a Kathmandu mobile network, is unknown.
+- **Permission prompts on a real device.** Per-device handling is wired to Stream's own
+  `hasBrowserPermission$` and adapter-tested; nobody has denied a camera on a phone.
 - Time to first media, received bitrate, CPU, memory, battery, or thermal behaviour.
 - Behaviour on a throttled or poor connection.
 - Whether Stream's servers accept the call-creation body this branch sends.
 - Whether the role grants on the `default` call type match what the code assumes.
+- Whether a token that outlives its class is honoured for a reconnection at the 89th minute.
+  The arithmetic is tested; Stream's acceptance of it is not.
 
-What *is* measured is in the test evidence in the worklog: 315 server unit tests, 205 app unit
-tests, a 24-check provider contract suite against the real server, and a 56-check sessions suite.
+What *is* measured is in the test evidence in the worklog: 319 server unit tests, 225 app unit
+tests, a 26-check provider contract suite against the real server, and a 56-check sessions suite.
 They prove the code does what it is supposed to do with a Stream that answers instantly and
 truthfully. They prove nothing about Stream.
 
 One other thing was measured, because it is the cost this experiment imposes on people who did
 not ask for it. The web bundle was built on `bc0aa17` and on this branch: the entry bundle grew
-by **15,913 bytes uncompressed and 3,494 gzipped — 0.33%**, all of it this app's own files, with
-no `@stream-io` code in the export and no `STREAM_API_KEY` or `STREAM_API_SECRET` anywhere in it.
-A student on a Nepali mobile connection pays about three kilobytes for the experiment. Taking the
-web SDK as a dependency is what would change that number, which is why §2 does not.
+by **16,834 bytes uncompressed and 3,612 gzipped — 0.35%**, all of it this app's own files. The
+export contains no `@stream-io` code, no `STREAM_API_KEY` or `STREAM_API_SECRET`, and — checked
+after this correction pass — no `endForEveryone` and no "running on Daily". A student on a Nepali
+mobile connection pays about three and a half kilobytes for the experiment. Taking the web SDK as
+a dependency is what would change that number, which is why §2 does not.
 
 ## 7. Setting it up, when the owner decides to
 
@@ -366,6 +416,16 @@ pnpm --filter @workspace/api-server run test:video       # needs a database
 credentials — and checks that the class's rules are identical each time. It needs Postgres; the
 worklog records how one was started for this branch.
 
+The narrow Stream suites, worth running first because they are fast and need nothing:
+
+```
+node --test --experimental-strip-types \
+  "artifacts/api-server/src/lib/video/stream*.test.ts"
+node --test --experimental-strip-types \
+  "artifacts/sikshya/utils/stream*.test.ts" \
+  "artifacts/sikshya/components/stream/*.test.ts"
+```
+
 ### The two-device test to run first
 
 Not yet possible, and the shortest path to it is: web on a laptop as the teacher, web on a phone
@@ -383,7 +443,26 @@ browser as the student. That needs only Step 5's web dependency and a Stream key
 Every one of those is a question this branch's tests answer with a fake and cannot answer for
 real.
 
-## 9. Turning it off
+## 9. What a person actually sees when it is not set up
+
+Two different refusals, and neither of them names a secret:
+
+- **No Stream credentials on the server.** `GET /sessions/:id/room` answers **503** with
+  *"Video calling is not set up on this server yet, so this class cannot open its call."* The
+  server log carries which variables are missing; the response does not, because telling anybody
+  who can open a class that `STREAM_API_SECRET` is unset tells them what to go looking for. A
+  provider having a bad minute still gets the 502 it always had — worth retrying, where this is
+  not.
+- **Credentials, but no Stream client in the build** — which is where this branch stands. The
+  classroom says the class is set up to use Stream, the Stream client is not part of this build,
+  the call cannot open, and nothing the person does will fix it. It does **not** say the class is
+  running on Daily; an earlier version did, and that was false, because this code only runs when
+  the server has chosen Stream.
+
+Both leave the Leave button working. Somebody must always be able to get out of a call that will
+not start.
+
+## 10. Turning it off
 
 Unset `VIDEO_PROVIDER`, or set it to `daily`. An unrecognised value falls back to Daily too — a
 typo in an environment variable must not take video down for the whole platform. Nothing else has

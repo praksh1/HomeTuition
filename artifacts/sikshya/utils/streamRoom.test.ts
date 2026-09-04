@@ -67,6 +67,12 @@ test("anything that is not a locator is nothing, not half of one", () => {
     "stream:call/default?api_key=k",
     "stream:call/a/b/c?api_key=k",
     "stream:call/default/sikshya-42?api_key=",
+    // `decodeURIComponent` throws on these rather than returning anything, which is how a
+    // documented "returns null" quietly became an exception.
+    "stream:call/default/sikshya-42?api_key=%zz",
+    "stream:call/default/sikshya-42?api_key=%",
+    "stream:call/%E0%A4/sikshya-42?api_key=k",
+    "stream:call/default/%?api_key=k",
   ]) {
     assert.equal(parseStreamRoom(bad as string), null, JSON.stringify(bad));
   }

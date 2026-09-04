@@ -12,7 +12,7 @@ import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/
 import { ordinaryTeachingAccess } from "../lib/teachingAccess";
 import { flagContent } from "../lib/moderation";
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
-import { videoProvider } from "../lib/video";
+import { VideoNotConfiguredError, videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
@@ -506,6 +506,9 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       isOwner: membership!.isSessionTeacher,
       userName: userRow?.name ?? "Guest",
       userId: String(req.user!.userId),
+      // The token's expiry is measured against the class it opens. A flat lifetime would drop
+      // somebody out of a ninety-minute lesson at whatever hour it happened to be.
+      durationMinutes: session.duration,
     });
     /**
      * `roomUrl`, `token` and `isOwner` keep their names.
@@ -531,6 +534,29 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       identity: video.identityFor?.(String(req.user!.userId)) ?? null,
     });
   } catch (err) {
+    /**
+     * A server that was never set up is not the same as a provider having a bad minute.
+     *
+     * The first is nobody's fault but the operator's and no amount of retrying fixes it, so it
+     * gets a 503 and a sentence a person can act on. The second is worth trying again and keeps
+     * the 502 it always had.
+     *
+     * **Which variables are missing stays in the log.** The response says that video is not set
+     * up on this server and stops there: naming `STREAM_API_SECRET` to anybody who can open a
+     * class tells them what to go looking for, and this project has already had one key leak.
+     */
+    if (err instanceof VideoNotConfiguredError) {
+      req.log.error(
+        { sessionId: id, provider: video.name, detail: err.detail },
+        "video provider is selected but not configured",
+      );
+      res.status(503).json({
+        error:
+          "Video calling is not set up on this server yet, so this class cannot open its call.",
+        configured: false,
+      });
+      return;
+    }
     req.log.error({ err, sessionId: id, provider: video.name }, "could not set up the video room");
     res.status(502).json({ error: "Failed to set up video room" });
   }

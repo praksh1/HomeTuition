@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { streamProvider } from "./streamProvider.ts";
-import { STREAM_STUDENT_ROLE, STREAM_TEACHER_ROLE } from "./streamCall.ts";
+import { STREAM_STUDENT_ROLE, STREAM_TEACHER_ROLE, streamTokenTtlSeconds } from "./streamCall.ts";
+import { VideoNotConfiguredError } from "./types.ts";
 
 /**
  * The provider, with fake credentials and no network.
@@ -82,8 +83,14 @@ test("half-configured is not configured", async () => {
   await withEnv({ STREAM_API_SECRET: "s" }, () => assert.equal(streamProvider.configured(), false));
 });
 
-test("with no credentials it refuses a room and names the variable", async () => {
+test("with no credentials it refuses a room, typed, and names the variable in the detail", async () => {
   await withEnv({}, async () => {
+    // Typed so the room route can answer 503 "this server was never set up" rather than 502
+    // "try again", and so the variable names stay in the log rather than in the response.
+    await assert.rejects(
+      () => streamProvider.ensureRoom(42),
+      (err: Error) => err instanceof VideoNotConfiguredError,
+    );
     // The one behaviour that matters most today. There is no Stream account yet, so the only
     // honest outcome is a refusal somebody can act on — not a plausible-looking locator that
     // becomes a black rectangle on a phone.
@@ -101,7 +108,7 @@ test("with no credentials it refuses a room and names the variable", async () =>
 test("with no credentials it refuses a token too, rather than minting an unsigned one", async () => {
   await withEnv({}, async () => {
     await assert.rejects(
-      () => streamProvider.joinToken(42, { isOwner: true, userName: "Ram", userId: "1" }),
+      () => streamProvider.joinToken(42, { isOwner: true, userName: "Ram", userId: "1", durationMinutes: 60 }),
       /STREAM_API_KEY and STREAM_API_SECRET/,
     );
   });
@@ -180,11 +187,13 @@ test("the teacher's token and the student's differ only in what the server decid
       isOwner: true,
       userName: "Ram",
       userId: "11",
+      durationMinutes: 90,
     });
     const student = await streamProvider.joinToken(42, {
       isOwner: false,
       userName: "Sita",
       userId: "12",
+      durationMinutes: 90,
     });
 
     const t = claimsOf(String(teacher));
@@ -203,27 +212,57 @@ test("the teacher's token and the student's differ only in what the server decid
 test("a token is bound to one call, so it cannot open the next one", async () => {
   await withEnv({ STREAM_API_KEY: "pubkey", STREAM_API_SECRET: "test-secret" }, async () => {
     const forOne = claimsOf(
-      String(await streamProvider.joinToken(1, { isOwner: false, userName: "S", userId: "5" })),
+      String(await streamProvider.joinToken(1, { isOwner: false, userName: "S", userId: "5", durationMinutes: 60 })),
     );
     assert.deepEqual(forOne.call_cids, ["default:sikshya-1"]);
     assert.ok(!forOne.call_cids.includes("default:sikshya-2"));
   });
 });
 
-test("a token expires within the hour", async () => {
+test("a ninety-minute class gets a token that outlives it", async () => {
   await withEnv({ STREAM_API_KEY: "pubkey", STREAM_API_SECRET: "test-secret" }, async () => {
     const claims = claimsOf(
-      String(await streamProvider.joinToken(1, { isOwner: true, userName: "T", userId: "5" })),
+      String(
+        await streamProvider.joinToken(1, {
+          isOwner: true,
+          userName: "T",
+          userId: "5",
+          durationMinutes: 90,
+        }),
+      ),
     );
-    assert.equal(claims.exp - claims.iat, 3600);
-    assert.ok(claims.exp > Math.floor(Date.now() / 1000));
+    // The lifetime the class needs, not a round number somebody liked: a flat hour would have
+    // dropped a ninety-minute lesson at the hour mark and refused the rejoin.
+    assert.equal(claims.exp - claims.iat, streamTokenTtlSeconds(90));
+    assert.equal(claims.exp - claims.iat, (10 + 90 + 10) * 60);
+    assert.ok(claims.exp > Math.floor(Date.now() / 1000) + 90 * 60);
+  });
+});
+
+test("a class's length is what decides its token's lifetime", async () => {
+  await withEnv({ STREAM_API_KEY: "pubkey", STREAM_API_SECRET: "test-secret" }, async () => {
+    const forLength = async (durationMinutes: number) => {
+      const c = claimsOf(
+        String(
+          await streamProvider.joinToken(1, {
+            isOwner: false,
+            userName: "S",
+            userId: "5",
+            durationMinutes,
+          }),
+        ),
+      );
+      return c.exp - c.iat;
+    };
+    assert.ok((await forLength(180)) > (await forLength(90)));
+    assert.equal(await forLength(180), streamTokenTtlSeconds(180));
   });
 });
 
 test("a token is signed, so a client cannot write itself one", async () => {
   await withEnv({ STREAM_API_KEY: "pubkey", STREAM_API_SECRET: "test-secret" }, async () => {
     const token = String(
-      await streamProvider.joinToken(1, { isOwner: true, userName: "T", userId: "5" }),
+      await streamProvider.joinToken(1, { isOwner: true, userName: "T", userId: "5", durationMinutes: 60 }),
     );
     assert.equal(headerOf(token).alg, "HS256");
     assert.equal(token.split(".").length, 3);
@@ -262,7 +301,7 @@ test("the call type can be pointed at a configured one without touching code", a
         const room = await streamProvider.ensureRoom(42);
         assert.equal(room, "stream:call/sikshya-class/sikshya-42?api_key=pubkey");
         const claims = claimsOf(
-          String(await streamProvider.joinToken(42, { isOwner: true, userName: "T", userId: "1" })),
+          String(await streamProvider.joinToken(42, { isOwner: true, userName: "T", userId: "1", durationMinutes: 60 })),
         );
         // The token's scope follows the call type, or it would authorise the wrong call.
         assert.deepEqual(claims.call_cids, ["sikshya-class:sikshya-42"]);

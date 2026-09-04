@@ -13,6 +13,10 @@ import type { StreamSdk } from "./streamBridge";
  * for a provider that is switched off. Dead weight on that connection is a real cost paid by
  * real people for an experiment none of them asked for.
  *
+ * The message it returns says so honestly. It used to end "the class is running on Daily", which
+ * was false — this code only runs when the server has chosen Stream — and told somebody looking
+ * at a dead video window that nothing was wrong.
+ *
  * So the wiring is written and the dependency is not taken. Everything the integration actually
  * does lives in `streamSession.ts` — `createStreamSdkFrom` builds the client, joins the call and
  * maps it onto this app's own session — and is driven in tests by a fake module, which is how
@@ -42,9 +46,9 @@ export async function loadStreamSdk(): Promise<StreamSdk> {
   return {
     ok: false,
     reason:
-      "Stream video is not built into this app. The Stream web SDK is not installed — it is " +
-      "one dependency away and would not conflict with Daily, but it is deliberately left out " +
-      "so it does not ship in the bundle students download. See STREAM.md. The class is " +
-      "running on Daily; nothing here is broken.",
+      "This class is set up to use Stream video, and the Stream client is not part of this " +
+      "build — so the call cannot open. Nothing you can do will fix it from here; the server " +
+      "needs to be switched back to Daily, or the Stream web client added to the build. " +
+      "See STREAM.md.",
   };
 }

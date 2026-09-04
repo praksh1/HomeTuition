@@ -31,6 +31,11 @@ import type { StreamSdk } from "./streamBridge";
  * work — the same rule the payments and email layers already follow: the mode follows from what
  * is actually installed, and when nothing is, the app says so.
  *
+ * **And it does not say the class is running on Daily.** The first version of this message did,
+ * which was simply false: this code only runs when the server has chosen Stream, and a class on
+ * Stream is not a class on Daily. Telling somebody staring at a dead video window that everything
+ * is fine is worse than telling them nothing.
+ *
  * ### Turning it on
  *
  * When STREAM.md's setup has been done in a throwaway development build, this whole function
@@ -40,8 +45,9 @@ export async function loadStreamSdk(): Promise<StreamSdk> {
   return {
     ok: false,
     reason:
-      "Stream video is not built into this app. The Stream React Native SDK needs its own " +
-      "WebRTC library, which cannot be installed alongside Daily's — see STREAM.md. The class " +
-      "is running on Daily; nothing here is broken.",
+      "This class is set up to use Stream video, and the Stream client is not part of this " +
+      "build — so the call cannot open. Nothing you can do will fix it from here; the server " +
+      "needs to be switched back to Daily, or a build with the Stream client installed. " +
+      "See STREAM.md.",
   };
 }
