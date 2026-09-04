@@ -134,6 +134,16 @@ async function run() {
   check("the provider's abilities come with the room",
     forTeacher.body?.capabilities?.screenShare === false, JSON.stringify(forTeacher.body?.capabilities));
 
+  /**
+   * A provider with no idea who anybody is says so, rather than inventing a name.
+   *
+   * `identity` was added to the room grant when Stream arrived — every candidate that mints its
+   * own token binds it to one — and it is optional precisely so a provider without identities is
+   * not made to pretend. Echo has none; nor does Daily.
+   */
+  check("a provider without identities returns none", forTeacher.body?.identity === null,
+    JSON.stringify(forTeacher.body?.identity));
+
   console.log("\nThe timing rules are untouched by the swap\n");
 
   {
@@ -179,6 +189,75 @@ async function run() {
         room.status === 502, `status=${room.status} ${JSON.stringify(room.body)}`);
     }
     try { dailyServer.kill("SIGKILL"); } catch { /* gone */ }
+  }
+
+  /**
+   * The Stream experiment, with nothing configured — which is how it stands today.
+   *
+   * Two things are being proved and they matter in opposite directions. First, that selecting an
+   * unconfigured provider **fails closed**: no room, no token, and an error rather than a
+   * plausible-looking address that would become a black rectangle on somebody's phone. Second,
+   * that the checks in front of the provider still run *first* — an outsider is refused for not
+   * being in the class, not because the video happens to be broken. If those two ever swapped
+   * over, an unconfigured provider would look like an access control and a configured one would
+   * quietly stop being one.
+   *
+   * Nothing here reaches Stream. There are no credentials to reach it with, which is the point.
+   */
+  console.log("\nAn unconfigured provider refuses, and the door is still locked in front of it\n");
+
+  {
+    const streamPort = PORT + 2;
+    const streamServer = startServer(streamPort, "stream");
+    process.on("exit", () => { try { streamServer.kill("SIGKILL"); } catch { /* gone */ } });
+    if (!(await waitFor(streamPort))) throw new Error("the stream server never came up");
+    const streamApi = makeApi(streamPort);
+
+    const t3 = await register(streamApi, "teacher", "Third Teacher");
+    const s3 = await register(streamApi, "student", "Third Student");
+    const outsider3 = await register(streamApi, "student", "Still Nobody");
+
+    const created3 = await streamApi("/sessions", { method: "POST", token: t3.token, body: {
+      topic: "Stream experiment", subject: "Maths", description: "d",
+      date: new Date(Date.now() + 60_000).toISOString(),
+      duration: 60, price: 500, maxStudents: 10 } });
+    const sid = created3.body.id;
+    await streamApi(`/sessions/${sid}/book`, { method: "POST", token: s3.token, body: { paymentMethod: "esewa" } });
+    await streamApi(`/sessions/${sid}`, { method: "PATCH", token: t3.token, body: { status: "live" } });
+
+    const room = await streamApi(`/sessions/${sid}/room`, { token: t3.token });
+    check("with no Stream credentials the teacher gets no room at all",
+      room.status === 502, `status=${room.status} ${JSON.stringify(room.body)}`);
+    check("and no pretend address to join", !room.body?.roomUrl, JSON.stringify(room.body?.roomUrl));
+    check("and no token", !room.body?.token, JSON.stringify(room.body?.token));
+
+    const paid = await streamApi(`/sessions/${sid}/room`, { token: s3.token });
+    check("a paid student gets the same honest refusal", paid.status === 502, `status=${paid.status}`);
+
+    /**
+     * The order these two are answered in is the whole point.
+     *
+     * 403 rather than 502 means the membership check ran before the provider was ever consulted
+     * — so the class's door does not depend on which company is carrying the video, and an
+     * outsider is refused for the right reason.
+     */
+    const outside = await streamApi(`/sessions/${sid}/room`, { token: outsider3.token });
+    check("somebody who never booked is refused for not being in the class, not for the video",
+      outside.status === 403, `status=${outside.status}`);
+    const anon3 = await streamApi(`/sessions/${sid}/room`);
+    check("and somebody signed out is refused before anything else", anon3.status === 401,
+      `status=${anon3.status}`);
+
+    const over = await streamApi("/sessions", { method: "POST", token: t3.token, body: {
+      topic: "Over on stream", subject: "Maths", description: "d",
+      date: new Date(Date.now() + 3600_000).toISOString(),
+      duration: 60, price: 500, maxStudents: 10 } });
+    sql(`update sessions set date = now() - interval '3 days' where id = ${over.body.id}`);
+    const late = await streamApi(`/sessions/${over.body.id}/room`, { token: t3.token });
+    check("a class that is long over is still refused on its own terms, not the provider's",
+      late.status === 409, `status=${late.status}`);
+
+    try { streamServer.kill("SIGKILL"); } catch { /* gone */ }
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

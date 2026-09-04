@@ -31,6 +31,7 @@ import type { Teacher } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
+import { neutralVideoWindowState } from "@/utils/callWindow";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import PdfViewer from "@/components/PdfViewer";
@@ -296,6 +297,8 @@ export default function Classroom() {
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
+  /** The identity the join token was minted for, when the provider uses one. */
+  const [videoIdentity, setVideoIdentity] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
   /**
    * Set when this class is too old to open. Nothing about the call is set up while it is —
@@ -632,14 +635,18 @@ export default function Classroom() {
         roomUrl: url,
         token,
         provider,
+        identity,
       } = await apiGet<{
         roomUrl: string;
         token?: string | null;
         provider?: string;
+        /** Who the token was minted for. Null for a provider with no identities, like Daily. */
+        identity?: string | null;
       }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
       setRoomUrl(url);
       setMeetingToken(token ?? null);
+      setVideoIdentity(identity ?? null);
       setRoomError(false);
     } catch (err) {
       // The server applies the same window on this endpoint, and it is the one that counts.
@@ -1600,6 +1607,9 @@ export default function Classroom() {
                   provider={videoProvider}
                   roomUrl={roomUrl}
                   token={meetingToken}
+                  identity={videoIdentity}
+                  isOwner
+                  windowState={neutralVideoWindowState(videoWindowSize)}
                   displayName={teacherName}
                   style={StyleSheet.absoluteFill}
                   onLeft={handleDailyLeft}

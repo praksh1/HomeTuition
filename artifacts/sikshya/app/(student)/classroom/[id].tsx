@@ -29,6 +29,7 @@ import type { Student } from "@/context/AuthContext";
 import { ApiError, apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
+import { neutralVideoWindowState } from "@/utils/callWindow";
 import SmartBoard from "@/components/SmartBoard";
 import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
 import { useAloneInCall } from "@/hooks/useAloneInCall";
@@ -199,6 +200,8 @@ export default function StudentClassroom() {
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
+  /** The identity the join token was minted for, when the provider uses one. */
+  const [videoIdentity, setVideoIdentity] = useState<string | null>(null);
   const [roomError, setRoomError] = useState(false);
   /** Set when the server refuses a room because the class is over. */
   const [roomExpired, setRoomExpired] = useState<string | null>(null);
@@ -489,14 +492,18 @@ export default function StudentClassroom() {
         roomUrl: url,
         token,
         provider,
+        identity,
       } = await apiGet<{
         roomUrl: string;
         token?: string | null;
         provider?: string;
+        /** Who the token was minted for. Null for a provider with no identities, like Daily. */
+        identity?: string | null;
       }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
       setRoomUrl(url);
       setMeetingToken(token ?? null);
+      setVideoIdentity(identity ?? null);
       setRoomError(false);
     } catch (err) {
       // A class that is over is refused by the server rather than given a room. Say that,
@@ -1054,6 +1061,8 @@ export default function StudentClassroom() {
                   provider={videoProvider}
                   roomUrl={roomUrl}
                   token={meetingToken}
+                  identity={videoIdentity}
+                  windowState={neutralVideoWindowState(videoWindowSize)}
                   displayName={studentName}
                   style={StyleSheet.absoluteFill}
                   onLeft={handleDailyLeft}

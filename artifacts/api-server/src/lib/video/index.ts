@@ -1,5 +1,6 @@
 import { dailyProvider } from "./dailyProvider";
 import { echoProvider } from "./echoProvider";
+import { streamProvider } from "./streamProvider.ts";
 import { selectProvider } from "./select";
 import type { VideoProvider } from "./types";
 
@@ -20,6 +21,15 @@ const PROVIDERS: Record<string, VideoProvider> = {
   // Carries no video. Present so the seam can be proved against the real server rather than
   // asserted — see scripts/video-tests. Nothing selects it unless the environment names it.
   echo: echoProvider,
+  /**
+   * An experiment, not a migration. See STREAM.md.
+   *
+   * Registered so it can be run, and nothing more: `daily` is still the fallback and still what
+   * an unset or misspelled `VIDEO_PROVIDER` gets. With no Stream credentials this provider
+   * refuses to open a room and says which variable is missing, so selecting it by accident is
+   * loud rather than silent.
+   */
+  stream: streamProvider,
 };
 
 export function videoProvider(): VideoProvider {

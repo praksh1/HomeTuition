@@ -29,6 +29,17 @@ export interface JoinOptions {
   isOwner: boolean;
   /** The name other people in the call see. */
   userName: string;
+  /**
+   * This server's own id for the person, as a string.
+   *
+   * Added when Stream arrived, and genuinely cross-provider rather than a Stream detail: every
+   * candidate that mints its own token binds it to an identity — LiveKit's `identity`, Jitsi's
+   * `context.user.id`, Stream's `user_id`. Daily does not use one and ignores it.
+   *
+   * It matters because a token bound to a person is a token that cannot be passed to somebody
+   * else, and because the app has to send the *same* identity back when it opens the call.
+   */
+  userId: string;
 }
 
 /**
@@ -67,6 +78,16 @@ export interface VideoProvider {
    * about itself — `isOwner` comes from the server's own membership check.
    */
   joinToken(sessionId: string | number, options: JoinOptions): Promise<string | null>;
+
+  /**
+   * What this provider will call the person the token was minted for.
+   *
+   * Optional, because a provider may not have identities at all — Daily does not implement this
+   * and the room grant then carries `null`. Implemented by anything whose client has to be
+   * handed a user object alongside the token, which is most of them, and it lives here rather
+   * than in the route so the transformation and the token can never disagree.
+   */
+  identityFor?(userId: string): string;
 }
 
 /** What the room route hands back. Named for what it is, not for whoever is providing it. */
@@ -76,4 +97,6 @@ export interface RoomGrant {
   token: string | null;
   isOwner: boolean;
   capabilities: VideoCapabilities;
+  /** Who the token says you are, when the provider uses identities. Null when it does not. */
+  identity: string | null;
 }

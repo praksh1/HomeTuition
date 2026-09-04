@@ -505,6 +505,7 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
     const token = await video.joinToken(id, {
       isOwner: membership!.isSessionTeacher,
       userName: userRow?.name ?? "Guest",
+      userId: String(req.user!.userId),
     });
     /**
      * `roomUrl`, `token` and `isOwner` keep their names.
@@ -520,6 +521,14 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       isOwner: membership!.isSessionTeacher,
       provider: video.name,
       capabilities: video.capabilities,
+      /**
+       * Who the token says you are — null for a provider that has no idea, which is Daily.
+       *
+       * It comes from the provider rather than being computed here so that the identity the
+       * token was signed for and the identity the app sends back can never be two different
+       * strings. That mismatch fails as an authentication error with nothing readable in it.
+       */
+      identity: video.identityFor?.(String(req.user!.userId)) ?? null,
     });
   } catch (err) {
     req.log.error({ err, sessionId: id, provider: video.name }, "could not set up the video room");
