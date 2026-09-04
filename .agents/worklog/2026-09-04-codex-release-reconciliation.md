@@ -114,6 +114,31 @@ commit Railway or Cloudflare used, a real Daily call, a payment, or device behav
 - No claim that echo reproduces Daily media or that the current call window is finished.
 - No Stream merge; its fake-tested scaffolding remains research only.
 
+## Post-completion independent review
+
+Claude completed the first release-candidate pass at `914c210`. Codex did not accept it as
+deployable after tracing the new test enrolment through the existing notification, attendance and
+idempotent-booking paths:
+
+1. `sessionMessages.ts::participantIds()` still selected only `payment_status = 'paid'`, so a
+   teacher's class-thread message could not reach an active test student's user channel. This is
+   the same missing red-dot/buzz direction the owner had already reported.
+2. The booking route emitted `test: true`, but `NotificationEvent`, the email formatter and the
+   in-app booking formatter did not consume it. The transactional email still said the test
+   student had "booked and paid" even though no payment occurred.
+3. Any existing `payment_status = 'test'` row returned `{ alreadyBooked: true, paid: true }`, even
+   after the test-access switch was disabled and membership correctly refused the classroom. The
+   same early return prevented that dormant row being upgraded through the real gateway.
+4. `participation.ts` selected paid enrolments only, so the teacher's roster/attendance response
+   omitted the active test student during the supposedly end-to-end test.
+5. `SessionCard` derived its test label only from the viewing student's enrolment. Teacher-facing
+   cards therefore had no durable class-level test marker, despite showing the ordinary price.
+
+After explicit action-time confirmation, Codex sent these findings to Claude with narrow fixes,
+targeted regression requirements and the original branch/deployment constraints. Claude accepted
+the prompt and resumed work on `claude/production-test-release-candidate`. The monitor was
+reactivated after `914c210`; production remains unchanged.
+
 ## Next pickup
 
 1. Let the heartbeat report a checkpoint instead of manually polling Claude.
