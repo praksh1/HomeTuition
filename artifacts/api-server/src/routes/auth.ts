@@ -279,6 +279,14 @@ router.post("/auth/verification/resend", requireAuth, async (req, res): Promise<
   res.status(delivery.rateLimited ? 429 : delivery.sent ? 200 : 503).json({
     verified: false,
     sent: delivery.sent,
+    /**
+     * Reported the way `/auth/password/forgot` already reports it.
+     *
+     * The two screens ask the same question — "will an email actually arrive?" — and only one of
+     * them could answer. A screen that has to infer configuration from an error string is a
+     * screen that will infer it wrongly.
+     */
+    emailConfigured: delivery.configured,
     error: delivery.rateLimited
       ? "Please wait a minute before asking for another email."
       : delivery.sent

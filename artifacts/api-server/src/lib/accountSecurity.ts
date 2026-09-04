@@ -10,7 +10,7 @@ import {
 } from "@workspace/db";
 
 import { hashPassword, verifyPassword } from "./auth";
-import { sendEmail } from "./mailer";
+import { isEmailConfigured, sendEmail } from "./mailer";
 
 export const EMAIL_VERIFY_HOURS = 24;
 export const PASSWORD_RESET_MINUTES = 30;
@@ -112,10 +112,27 @@ function buttonHtml(label: string, url: string, explanation: string): string {
 export async function sendVerificationEmail(user: { id: number; email: string; name: string }): Promise<{
   sent: boolean;
   rateLimited: boolean;
+  /** Whether this server can send email at all. Decides which refusal is the true one. */
+  configured: boolean;
 }> {
-  if (await emailVerifiedFor(user.id)) return { sent: true, rateLimited: false };
+  if (await emailVerifiedFor(user.id)) return { sent: true, rateLimited: false, configured: true };
+  /**
+   * Read before the cooldown is consulted, and that order is the whole point.
+   *
+   * The cooldown used to win. Registration issues a token, so the *first* resend anybody can ask
+   * for is always inside the minute — which meant a server with no mail provider answered "Please
+   * wait a minute before asking for another email" on the ordinary path. Nobody was waiting for
+   * anything: no email had been sent and none could be. On staging, where email is deliberately
+   * withheld, that was the answer every tester got.
+   *
+   * It also defeated the fix one layer up: `check-email.tsx` was rewritten to stop claiming an
+   * email it could not confirm, and then faithfully rendered this sentence instead.
+   *
+   * A server that cannot send says so, whatever the cooldown thinks.
+   */
+  const configured = isEmailConfigured();
   const token = await issueToken(user.id, "verify_email", EMAIL_VERIFY_HOURS * 60 * 60_000);
-  if (!token) return { sent: false, rateLimited: true };
+  if (!token) return { sent: false, rateLimited: configured, configured };
   const url = `${appOrigin()}/verify-email?token=${encodeURIComponent(token)}`;
   const sent = await sendEmail({
     to: safeEmail(user.email),
@@ -129,7 +146,7 @@ export async function sendVerificationEmail(user: { id: number; email: string; n
       `Hello ${user.name}. Verify your email before your Sikshya account can teach or book classes.`,
     ),
   });
-  return { sent, rateLimited: false };
+  return { sent, rateLimited: false, configured };
 }
 
 export async function consumeVerificationToken(token: string): Promise<number | null> {

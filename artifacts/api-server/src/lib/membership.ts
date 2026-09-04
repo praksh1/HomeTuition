@@ -133,9 +133,37 @@ export function joinWindowOpen(m: SessionMembership, now = new Date()): boolean 
  * open the room; what they may *do* once inside is `canStart`, checked on the room route.
  */
 export function canAccessSession(m: SessionMembership | null, now = new Date()): boolean {
-  if (!m) return false;
-  if (m.isSessionTeacher) return true;
-  if (!m.isEnrolledStudent || !m.hasPaid) return false;
-  if (m.status === "cancelled") return false;
-  return joinWindowOpen(m, now);
+  return accessRefusalFor(m, now) === null;
+}
+
+/**
+ * Why somebody may not be in the class — or null, meaning they may.
+ *
+ * `canAccessSession` used to be the whole answer, and it collapsed four different situations into
+ * one `false`. The room route turned that into a single sentence: **"You must be enrolled in this
+ * session to join it."**
+ *
+ * For a student who opens their booked class the evening before, that sentence is not merely
+ * unhelpful, it is **false** — they are enrolled, they have paid, and the only thing wrong is the
+ * clock. This project has fixed that shape of bug before, when a dropped student's screen went on
+ * saying "Booked & paid"; a paid student being told they are not enrolled is the same wound the
+ * other way round.
+ *
+ * So the rule is written once, here, and returns *which* refusal it is. `canAccessSession` is
+ * defined in terms of it, so the WebSocket and the room route cannot start disagreeing about who
+ * gets in — the thing this file exists to prevent. Only the *wording* differs between them.
+ */
+export type AccessRefusal = "not-enrolled" | "unpaid" | "cancelled" | "outside-window";
+
+export function accessRefusalFor(
+  m: SessionMembership | null,
+  now = new Date(),
+): AccessRefusal | null {
+  if (!m) return "not-enrolled";
+  // Someone has to be able to open the room. What the teacher may *do* once inside is `canStart`.
+  if (m.isSessionTeacher) return null;
+  if (!m.isEnrolledStudent) return "not-enrolled";
+  if (!m.hasPaid) return "unpaid";
+  if (m.status === "cancelled") return "cancelled";
+  return joinWindowOpen(m, now) ? null : "outside-window";
 }

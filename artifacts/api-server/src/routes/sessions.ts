@@ -4,6 +4,7 @@ import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptions
 import { requireAuth } from "../middlewares/requireAuth";
 import {
   JOIN_WINDOW_MINUTES,
+  accessRefusalFor,
   canAccessSession,
   getSessionMembership,
   joinWindowOpen,
@@ -448,8 +449,38 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
   // unenrolled student watch a class they never paid for — the whiteboard socket refused
   // them, so they saw the "not enrolled" banner while the video played behind it.
   const membership = await getSessionMembership(id, req.user!.userId);
-  if (!canAccessSession(membership)) {
-    res.status(403).json({ error: "You must be enrolled in this session to join it." });
+  const refusal = accessRefusalFor(membership);
+  if (refusal !== null) {
+    /**
+     * The same door, with the true reason for it being shut.
+     *
+     * Who gets in has not changed — `accessRefusalFor` is the rule `canAccessSession` is now
+     * defined in terms of, so this route and the whiteboard socket still answer identically. What
+     * changed is that a paid student who opens their class the evening before is no longer told
+     * "You must be enrolled in this session to join it", which for them is simply untrue.
+     *
+     * Too early or too late is a **409 with the timing sentence**, the same shape the window check
+     * below already returns, so the classroom shows it the way it shows every other timing
+     * refusal. Everything else keeps the 403 it had.
+     */
+    if (refusal === "outside-window") {
+      const timing = canJoin({ ...session, endedAt: (await activityFor(id)).endedAt });
+      res.status(409).json({
+        // `canJoin` only carries a reason when it refuses, and it has just refused — the window
+        // is why we are here. The fallback covers a clock that moved between the two checks.
+        error: timing.ok ? "This class is not open just now." : timing.reason,
+        expired: true,
+      });
+      return;
+    }
+    res.status(403).json({
+      error:
+        refusal === "unpaid"
+          ? "This class has not been paid for yet."
+          : refusal === "cancelled"
+            ? "This class was cancelled."
+            : "You must be enrolled in this session to join it.",
+    });
     return;
   }
 

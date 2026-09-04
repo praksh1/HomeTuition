@@ -35,7 +35,8 @@
     "test:teacher-leave": "node scripts/teacher-leave/run.mjs",
     "test:messages": "node scripts/message-tests/run.mjs",
     "test:class-chat": "node scripts/class-chat/run.mjs",
-    "test:tiers": "node scripts/tier-limits/run.mjs"
+    "test:tiers": "node scripts/tier-limits/run.mjs",
+    "test:journey": "node scripts/journey-audit/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",
