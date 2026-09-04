@@ -19,6 +19,7 @@ import {
   callReducer,
   callStatusLine,
   initialCallState,
+  nextReactionExpiryMs,
   type CallParticipant,
 } from "@/utils/streamCallState";
 import {
@@ -165,7 +166,8 @@ export default function StreamCall({
               dispatch({ type: "participants", participants });
               noticeDepartures(participants, seenNames, cbRef);
             },
-            onReaction: (reaction) => !cancelled && dispatch({ type: "reaction", ...reaction }),
+            onReaction: (reaction) =>
+              !cancelled && dispatch({ type: "reaction", ...reaction, at: Date.now() }),
             onScreenShare: (phase) => !cancelled && dispatch({ type: "screen-share", phase }),
           },
         });
@@ -212,6 +214,22 @@ export default function StreamCall({
     if (!sessionReady) return;
     sessionRef.current?.setIncomingVideo(incomingVideoFor(windowState));
   }, [windowState, sessionReady]);
+
+  /**
+   * One timer, only while something is on screen.
+   *
+   * A reaction is a moment, not a status — five seconds and it stops being drawn. This is a
+   * single `setTimeout` scheduled for the next thing that expires rather than an interval
+   * ticking behind a call nobody is reacting in, and the arithmetic behind it is
+   * `nextReactionExpiryMs`, which is tested with a pinned clock. It is cleared on every change
+   * and on unmount, so a class that ends mid-reaction leaves nothing running.
+   */
+  useEffect(() => {
+    const wait = nextReactionExpiryMs(state.reactions, Date.now());
+    if (wait === null) return;
+    const timer = setTimeout(() => dispatch({ type: "reactions-expired", now: Date.now() }), wait);
+    return () => clearTimeout(timer);
+  }, [state.reactions]);
 
   const controls = callControls({ state, isOwner, canScreenShare });
   const status = callStatusLine(state);

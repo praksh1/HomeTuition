@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   MAX_VISIBLE_REACTIONS,
+  REACTION_VISIBLE_MS,
+  liveReactions,
+  nextReactionExpiryMs,
   callControls,
   callReducer,
   callStatusLine,
@@ -232,11 +235,12 @@ test("one person tapping twenty times occupies one place, not twenty", () => {
     userId: "sita",
     name: "Sita",
     emoji: "👍",
+    at: 1_000,
   }));
   const state = reduce([{ type: "joined" }, ...many]);
   // Deterministic without a timer: a person's newer reaction replaces their older one.
   assert.equal(state.reactions.length, 1);
-  assert.deepEqual(state.reactions[0], { userId: "sita", name: "Sita", emoji: "👍" });
+  assert.deepEqual(state.reactions[0], { userId: "sita", name: "Sita", emoji: "👍", at: 1_000 });
 });
 
 test("a class of forty-five cannot fill the screen with reactions", () => {
@@ -245,6 +249,7 @@ test("a class of forty-five cannot fill the screen with reactions", () => {
     userId: `student-${i}`,
     name: `Student ${i}`,
     emoji: "🎉",
+    at: 1_000,
   }));
   const state = reduce([{ type: "joined" }, ...many]);
   assert.equal(state.reactions.length, MAX_VISIBLE_REACTIONS);
@@ -254,13 +259,13 @@ test("a class of forty-five cannot fill the screen with reactions", () => {
 test("a reaction keeps the name of whoever sent it", () => {
   const state = reduce([
     { type: "joined" },
-    { type: "reaction", userId: "11", name: "Ram Prasad", emoji: "👏" },
-    { type: "reaction", userId: "12", name: "Sita Sharma", emoji: "❓" },
+    { type: "reaction", userId: "11", name: "Ram Prasad", emoji: "👏", at: 1_000 },
+    { type: "reaction", userId: "12", name: "Sita Sharma", emoji: "❓", at: 1_100 },
   ]);
   // Rendered beside the emoji. In a class of forty-five an unattributed emoji says nothing.
   assert.deepEqual(state.reactions, [
-    { userId: "12", name: "Sita Sharma", emoji: "❓" },
-    { userId: "11", name: "Ram Prasad", emoji: "👏" },
+    { userId: "12", name: "Sita Sharma", emoji: "❓", at: 1_100 },
+    { userId: "11", name: "Ram Prasad", emoji: "👏", at: 1_000 },
   ]);
 });
 
@@ -305,4 +310,92 @@ test("a screen share that is being started cannot be started twice", () => {
   const state = reduce([{ type: "joined" }, { type: "screen-share", phase: "starting" }]);
   assert.equal(state.screenShare, "starting");
   // The OS consent dialog is up. The button holds until the provider reports back.
+});
+
+
+/* ---------------------------------------------------------------------------
+ * Reactions run out, on a clock this test controls.
+ *
+ * Every time below is a number handed to the reducer, so nothing here waits, sleeps, or depends
+ * on how fast the machine is. The component's own timer is one `setTimeout` around
+ * `nextReactionExpiryMs`, which is the part tested here; the `setTimeout` call itself is not
+ * rendered in a test, and STREAM.md says so rather than implying otherwise.
+ * ------------------------------------------------------------------------- */
+
+test("a reaction stops being shown about five seconds after it arrives", () => {
+  assert.equal(REACTION_VISIBLE_MS, 5_000);
+  const state = reduce([
+    { type: "joined" },
+    { type: "reaction", userId: "11", name: "Ram", emoji: "👏", at: 10_000 },
+  ]);
+  assert.equal(state.reactions.length, 1);
+
+  // A moment before it runs out, it is still there.
+  assert.equal(callReducer(state, { type: "reactions-expired", now: 14_999 }).reactions.length, 1);
+  // A moment after, it is not.
+  assert.equal(callReducer(state, { type: "reactions-expired", now: 15_001 }).reactions.length, 0);
+});
+
+test("only what has run out goes; the rest stays", () => {
+  const state = reduce([
+    { type: "joined" },
+    { type: "reaction", userId: "11", name: "Ram", emoji: "👏", at: 1_000 },
+    { type: "reaction", userId: "12", name: "Sita", emoji: "🎉", at: 4_000 },
+  ]);
+  const later = callReducer(state, { type: "reactions-expired", now: 6_500 });
+  assert.deepEqual(
+    later.reactions.map((r) => r.userId),
+    ["12"],
+  );
+});
+
+test("expiring nothing does not make a new state, so a timer cannot cause a re-render", () => {
+  const state = reduce([
+    { type: "joined" },
+    { type: "reaction", userId: "11", name: "Ram", emoji: "👏", at: 1_000 },
+  ]);
+  // Identity, not equality: a timer firing a millisecond early must be free.
+  assert.equal(callReducer(state, { type: "reactions-expired", now: 2_000 }), state);
+});
+
+test("a phone whose timers were asleep still does not show a stale reaction", () => {
+  /**
+   * A backgrounded tab or a dozing Android can miss a `setTimeout` entirely. Arriving reactions
+   * therefore sweep the expired ones out as well, so the worst case is a reaction that lingers
+   * until the next one — not one that lingers for the rest of the lesson.
+   */
+  const stale = reduce([
+    { type: "joined" },
+    { type: "reaction", userId: "11", name: "Ram", emoji: "👏", at: 1_000 },
+  ]);
+  const muchLater = callReducer(stale, {
+    type: "reaction",
+    userId: "12",
+    name: "Sita",
+    emoji: "🎉",
+    at: 600_000,
+  });
+  assert.deepEqual(
+    muchLater.reactions.map((r) => r.userId),
+    ["12"],
+  );
+});
+
+test("the timer is asked for the earliest thing that expires, and never for a negative wait", () => {
+  const at = (ms: number, userId: string) => ({ userId, name: "n", emoji: "👍", at: ms });
+  assert.equal(nextReactionExpiryMs([], 0), null, "nothing on screen means no timer at all");
+  assert.equal(nextReactionExpiryMs([at(1_000, "a")], 1_000), REACTION_VISIBLE_MS);
+  // The oldest decides, not the newest.
+  assert.equal(nextReactionExpiryMs([at(4_000, "b"), at(1_000, "a")], 2_000), 4_000);
+  // Already overdue asks for zero rather than a time in the past.
+  assert.equal(nextReactionExpiryMs([at(1_000, "a")], 99_000), 0);
+});
+
+test("liveReactions is the same rule the reducer uses, on its own", () => {
+  const rs = [
+    { userId: "a", name: "A", emoji: "👍", at: 1_000 },
+    { userId: "b", name: "B", emoji: "👏", at: 9_000 },
+  ];
+  assert.deepEqual(liveReactions(rs, 7_000).map((r) => r.userId), ["b"]);
+  assert.deepEqual(liveReactions(rs, 500).map((r) => r.userId), ["a", "b"]);
 });

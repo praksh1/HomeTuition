@@ -423,6 +423,51 @@ test("the call state saying it has left is a departure", () => {
   assert.equal(s.seen.left?.length, 1);
 });
 
+test("a call that ends is announced once, not twice", () => {
+  /**
+   * Stream reports the end of a call **both** ways: the `call.ended` event fires *and*
+   * `callingState$` moves to `left`. Both used to reach `onLeft` — and in the teacher's
+   * classroom `onLeft` marks the session completed and cancels its reminder, so ending a class
+   * sent that twice.
+   */
+  const s = session();
+  s.emit("call.ended", {});
+  s.emitCallingState(CALLING_STATE_LEFT);
+  assert.equal(s.seen.left?.length, 1);
+});
+
+test("and once in the other order, too", () => {
+  const s = session();
+  s.emitCallingState(CALLING_STATE_LEFT);
+  s.emit("call.ended", {});
+  assert.equal(s.seen.left?.length, 1);
+});
+
+test("nothing contradicts a departure after it has happened", () => {
+  // A `reconnecting` that lands after the call ended is not a wobble worth showing anybody. The
+  // reducer already refuses it; refusing it here as well means the two ends cannot disagree.
+  const s = session();
+  s.emitCallingState(CALLING_STATE_LEFT);
+  s.emitCallingState(CALLING_STATE_RECONNECTING);
+  s.emitCallingState(CALLING_STATE_JOINED);
+  s.emitCallingState(CALLING_STATE_OFFLINE);
+  assert.equal(s.seen.left?.length, 1);
+  assert.equal(s.seen.reconnecting, undefined);
+  assert.equal(s.seen.rejoined, undefined);
+  assert.equal(s.seen.error, undefined);
+});
+
+test("a wobble before the end is still reported, and the end still only once", () => {
+  const s = session();
+  s.emitCallingState(CALLING_STATE_RECONNECTING);
+  s.emitCallingState(CALLING_STATE_JOINED);
+  s.emitCallingState(CALLING_STATE_LEFT);
+  s.emit("call.ended", {});
+  assert.equal(s.seen.reconnecting?.length, 1);
+  assert.equal(s.seen.rejoined?.length, 1);
+  assert.equal(s.seen.left?.length, 1);
+});
+
 test("a state this shell does not act on changes nothing", () => {
   const s = session();
   s.emitCallingState("joining");
@@ -493,9 +538,16 @@ test("a raised hand does not also fly across the screen as a reaction", () => {
   assert.equal(s.seen.reaction === undefined, true);
 
   s.emit("call.reaction_new", {
-    reaction: { type: "reaction", emoji_code: "👍", user: { id: "9" } },
+    reaction: { type: "reaction", emoji_code: "👍", user: { id: "user-9", name: "Sita" } },
   });
   assert.equal(s.seen.reaction?.length, 1);
+  // The person, by user id, with their name — so the shell can attribute it and so one person
+  // tapping repeatedly replaces their own chip rather than filling the row.
+  assert.deepEqual(s.seen.reaction?.[0], {
+    userId: "user-9",
+    name: "Sita",
+    emoji: "👍",
+  });
 });
 
 test("a listener that refuses to detach does not strand the call", async () => {

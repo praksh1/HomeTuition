@@ -510,3 +510,106 @@ the call-creation body and the role grants, then re-read the pricing page, then 
 SDK and finish `loadStreamSdk`, then the two-device web test. The native decision — a throwaway
 build with Daily removed, for screen sharing from a phone — is still the owner's and still the
 only question a browser cannot answer.
+
+
+---
+
+# Acceptance audit — 2026-09-04
+
+- Base for this pass: `a550d75`
+- Scope: the six remaining risks named in the acceptance brief. No new research, no account, no
+  dependency, no deploy, no PR.
+
+## Two defects found and fixed
+
+### A. Reactions never went away
+
+The correction pass made them bounded and deterministic (three at most, one per person, newest
+replaces your own) but not **temporary**. A class where three people react and then nobody does
+again left three chips sitting over the video for the rest of the lesson — a thumbs-up from
+twenty minutes ago reading as though it were about whatever the teacher had just said.
+
+**Fix.** A reaction now carries `at`, and `REACTION_VISIBLE_MS` is 5,000. The reducer gained
+`{ type: "reactions-expired", now }`, and the component runs **one** `setTimeout` scheduled for
+the next thing that expires — not an interval ticking behind a call nobody is reacting in —
+cleared on every change and on unmount. Arriving reactions also sweep out anything already
+overdue, so a phone whose timers were asleep in the background cannot show a stale one.
+
+The arithmetic is split into `nextReactionExpiryMs()` and `liveReactions()` precisely so it can
+be tested with a pinned clock: six new tests cover the boundary either side of five seconds,
+partial expiry, the no-op re-render guard, the background-tab sweep, and "already overdue asks
+for zero, not a negative wait". Still no animation.
+
+### B. A call that ended was announced twice
+
+Stream reports the end of a call **both** ways — the `call.ended` event fires *and*
+`callingState$` moves to `left` — and both reached `onLeft`. In the teacher's classroom `onLeft`
+runs `PATCH /sessions/:id {status:"completed"}` and cancels the session reminder, so ending a
+class sent both of those twice. Found by reading the wiring against the SDK during item 3, not by
+a failing test.
+
+**Fix.** The adapter announces a departure once, through a `departed` guard, and stops acting on
+calling-state transitions afterwards — so a `reconnecting` arriving after the end cannot
+contradict it either. Five new tests: both orderings, the contradictory-state case, and a wobble
+before the end still being reported.
+
+## What the audit checked and found already correct
+
+- **`durationMinutes` is authoritative.** It is `session.duration`, read from the row the route
+  loads with `db.select().from(sessionsTable)`. The only client input to that handler is the path
+  `:id` — verified by grep over the whole handler for `req.body` / `req.query`.
+- **Calling-state spelling.** All six pinned strings compared byte-for-byte against
+  `CallingState` in `@stream-io/video-client@1.59.0`: `joined`, `left`, `reconnecting`,
+  `migrating`, `reconnecting-failed`, `offline`. Correct.
+- **Subscriptions.** Four now (participants, calling state, camera permission, microphone
+  permission); the existing test asserts every one is unsubscribed on leave, by name.
+- **Camera denial and the microphone.** `callControls` gates `mic` on `micDenied` and `camera` on
+  `cameraDenied` — separate fields, separate tests, and the status line names the device actually
+  refused. Recovery through `permission-granted` restores the control and clears the line.
+- **Identity separation.** Grep over `StreamCall.tsx`: `sessionId` appears only as the
+  `VideoView` prop and as React keys for tiles and rows; `userId` appears only on
+  `muteParticipant`, `removeParticipant` and the reaction chip's key. The adapter passes `userId`
+  to `muteUser` and `kickUser({user_id})`. Fixtures use `user-9` vs `sess-ZZZ`.
+- **Failure handling.** 503 for `VideoNotConfiguredError` with a fixed sentence and
+  `configured: false`; 502 kept for a real upstream failure with its fixed string. No environment
+  variable name, secret, or JWT appears in either response — the contract suite asserts the
+  absence. The API secret is never logged; the publishable key is logged only through
+  `redactStreamKey`.
+- **Loader messages** say the class is set up to use Stream and the client is not in the build.
+  Neither implies Daily is running.
+- **The diff.** `bc0aa17..HEAD` touches 30 files. Outside `lib/video/`, `components/stream/`,
+  `utils/stream*`, `StreamCall.tsx`, `VideoCall.tsx` and documentation, the only production file
+  is `routes/sessions.ts` — reviewed line by line: an import, two arguments to `joinToken`, one
+  field in the response, one `instanceof` branch. No generated output, no lockfile change, no
+  `package.json` change, nothing under `ws/`, nothing touching payments, membership, booking or
+  the database schema.
+
+## Verification (this pass)
+
+| Command | Result |
+|---|---|
+| narrow server Stream tests | **40 pass, 0 fail** (22 + 18) |
+| narrow app Stream tests | **81 pass, 0 fail** (10 + 30 + 41) |
+| `pnpm run typecheck` | **pass, all four packages** |
+| `pnpm --filter @workspace/api-server run test` | **320 pass, 0 fail** (319 before) |
+| `pnpm --filter @workspace/sikshya run test` | **235 pass, 0 fail** (225 before) |
+| `pnpm --filter @workspace/api-server run test:video` | **26 passed, 0 failed** (unchanged) |
+| `pnpm --filter @workspace/sikshya run lint:design` | **no new leaks**; 223 / 429 across 57 files, unchanged |
+| `git diff --check` | clean |
+
+`lint:design:update` not run; the baseline is untouched.
+
+## Still unverified after the audit
+
+Everything about Stream itself, unchanged: no account, no real call, no device, no screen share,
+no measured reconnect timing, no real permission prompt, no bitrate/CPU/memory/battery, nothing
+about Kathmandu latency, and no confirmation that Stream accepts the call-creation body or that
+the `default` call type's grants match what the code assumes.
+
+Two new entries, both narrow and both written into STREAM.md rather than left implied:
+
+- The reaction **timer** is not rendered in a test — this project has no component renderer. Its
+  arithmetic and the reducer's expiry are tested with pinned clocks; the `setTimeout` around them
+  is not.
+- The token window is tested against the class's own clock (minted at the earliest legal moment,
+  still valid at the latest) but Stream's acceptance of such a token is not.

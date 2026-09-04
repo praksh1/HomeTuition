@@ -54,7 +54,7 @@ still not installed here, for a different reason: it would land in the bundle ev
 downloads over a Nepali mobile connection, for a provider that is switched off.
 
 So this branch ships the **whole integration and none of the dependency**: the server adapter,
-the app's call shell, the mapping from a Stream call object onto this app's session, and 110 tests
+the app's call shell, the mapping from a Stream call object onto this app's session, and 120 tests
 that drive all of it with fakes. What it cannot do is prove Stream behaves as its documentation
 says. Section 6 is the exact list of what that costs.
 
@@ -177,7 +177,7 @@ mean different things:
 | Camera on/off | ✅ | Implemented | adapter-tested |
 | Raise / lower hand | ❌ not built | Implemented, as Stream's `raised-hand` reaction | adapter-tested; source-verified |
 | Reactions — sending | ❌ not built | Implemented, four emoji | adapter-tested |
-| Reactions — receiving and showing | ❌ not built | Implemented: a chip per person, name beside the emoji, three at most | adapter-tested (delivery), reducer-tested (what is shown) |
+| Reactions — receiving and showing | ❌ not built | Implemented: a chip per person, name beside the emoji, three at most, gone after 5s | adapter-tested (delivery), reducer-tested with a pinned clock (what is shown and when it goes) |
 | Participant list | ❌ not built | Implemented, from `participants$` | adapter-tested |
 | **Mute another participant** | ✅ (Daily owner token) | Implemented, `muteUser(userId, "audio")` | adapter-tested; teacher only |
 | Remove a participant | ✅ (Daily owner token) | Implemented, `kickUser({block:false})` | adapter-tested; teacher only |
@@ -187,7 +187,7 @@ mean different things:
 | Student: sees teacher's screen share | ✅ web only | Implemented | **never seen against Stream** |
 | Device choice | ❌ | Optional; drawn only where the loader supplies it | adapter-tested |
 | Hidden / compact / normal / full without remount | ✅ | Implemented, and it changes what is *received* | adapter-tested: five resizes, zero joins |
-| Reconnect after a network drop | Daily's own | Implemented, from `call.state.callingState$` | source-verified + adapter-tested; **timing never measured** |
+| Reconnect after a network drop | Daily's own | Implemented, from `call.state.callingState$`; a call ends once however Stream reports it | source-verified + adapter-tested; **timing never measured** |
 | Denied camera **or** microphone | ✅ handled | Implemented per device — a refused camera leaves the microphone working | source-verified + adapter-tested |
 | Provider chat | disabled at the room | **does not exist** — Stream Chat is a separate product and is not installed | — |
 | Provider picture-in-picture | disabled (`showFullscreenButton: false`) | `CallContent` takes `disablePictureInPicture`; this app does not use `CallContent` at all | source-verified |
@@ -300,9 +300,13 @@ measured, observed, or run:
 - Whether Stream's servers accept the call-creation body this branch sends.
 - Whether the role grants on the `default` call type match what the code assumes.
 - Whether a token that outlives its class is honoured for a reconnection at the 89th minute.
-  The arithmetic is tested; Stream's acceptance of it is not.
+  The arithmetic is tested against the class's own clock — minted at the earliest legal moment,
+  still valid at the latest — but Stream's acceptance of it is not.
+- The reaction timer itself. Its arithmetic (`nextReactionExpiryMs`) is tested with a pinned
+  clock and the reducer's expiry with fake times; the one `setTimeout` around them is not
+  rendered in a test, because this project has no component renderer.
 
-What *is* measured is in the test evidence in the worklog: 319 server unit tests, 225 app unit
+What *is* measured is in the test evidence in the worklog: 320 server unit tests, 235 app unit
 tests, a 26-check provider contract suite against the real server, and a 56-check sessions suite.
 They prove the code does what it is supposed to do with a Stream that answers instantly and
 truthfully. They prove nothing about Stream.

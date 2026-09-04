@@ -224,7 +224,26 @@ export function createStreamSession(options: {
    * reconnecting, so the first join does not race the `onJoined` the connect path already sends.
    */
   let sawReconnecting = false;
+  /**
+   * A departure is announced once, and it ends the story.
+   *
+   * Stream reports the end of a call **twice**: the `call.ended` event fires and `callingState$`
+   * moves to `left`. Both used to reach `onLeft`, and in the teacher's classroom `onLeft` marks
+   * the session completed and cancels its reminder — so ending a class sent that twice.
+   *
+   * `departed` also stops anything arriving afterwards. A `reconnecting` that lands after a call
+   * has ended is not a wobble to show somebody; the reducer already refuses it, and refusing it
+   * here as well means the two ends cannot disagree about what happened.
+   */
+  let departed = false;
+  const announceLeft = () => {
+    if (departed) return;
+    departed = true;
+    events.onLeft();
+  };
+
   track(call.state.callingState$, (callingState) => {
+    if (departed) return;
     switch (callingState) {
       case CALLING_STATE_RECONNECTING:
       case CALLING_STATE_MIGRATING:
@@ -244,7 +263,7 @@ export function createStreamSession(options: {
         events.onError("This device is offline. Please rejoin when you have a connection.");
         return;
       case CALLING_STATE_LEFT:
-        events.onLeft();
+        announceLeft();
         return;
       default:
         // joining, idle, ringing, unknown — nothing this shell shows differently.
@@ -295,9 +314,11 @@ export function createStreamSession(options: {
 
   offs.push(
     call.on("call.ended", () => {
-      // The teacher ended it for everybody. Not an error and not a network failure — the same
+      // The call is over for everybody. Not an error and not a network failure — the same
       // outcome as this person pressing Leave, and it must read that way in the classroom.
-      events.onLeft();
+      // Announced through the same guard as `callingState$`, because Stream reports the end
+      // both ways and the classroom acts on it.
+      announceLeft();
     }),
   );
 

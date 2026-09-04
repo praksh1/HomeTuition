@@ -96,10 +96,44 @@ export interface VisibleReaction {
   userId: string;
   name: string;
   emoji: string;
+  /** When it arrived, in milliseconds. Passed in rather than read, so expiry can be tested. */
+  at: number;
 }
 
 /** Few enough to fit one row at phone width without covering the video underneath. */
 export const MAX_VISIBLE_REACTIONS = 3;
+
+/**
+ * How long a reaction stays on screen.
+ *
+ * A reaction is a moment, not a status. The first version of this kept one until somebody else
+ * sent one, which meant a class where three people react and then nobody does again leaves three
+ * chips sitting over the video for the rest of the lesson — a thumbs-up from twenty minutes ago
+ * reading as though it were about whatever the teacher just said.
+ *
+ * Five seconds, and no animation to go with it: a fade is a frame budget the phones this product
+ * is built for do not have spare. It simply stops being drawn.
+ */
+export const REACTION_VISIBLE_MS = 5_000;
+
+/**
+ * How long until the next reaction needs removing, or null if none does.
+ *
+ * The arithmetic lives here, on its own, so that the part of expiry that can be tested with a
+ * pinned clock is tested with one — the component is then a single `setTimeout` around this
+ * number, and there is no interval ticking behind a call nobody is reacting in.
+ */
+export function nextReactionExpiryMs(reactions: VisibleReaction[], now: number): number | null {
+  if (reactions.length === 0) return null;
+  const earliest = Math.min(...reactions.map((r) => r.at));
+  // Never negative: an already-expired reaction wants removing now, not in the past.
+  return Math.max(0, earliest + REACTION_VISIBLE_MS - now);
+}
+
+/** Everything still worth showing at `now`. */
+export function liveReactions(reactions: VisibleReaction[], now: number): VisibleReaction[] {
+  return reactions.filter((r) => r.at + REACTION_VISIBLE_MS > now);
+}
 
 export function initialCallState(): CallState {
   return {
@@ -131,7 +165,9 @@ export type CallAction =
   | { type: "hand"; raised: boolean }
   | { type: "screen-share"; phase: ScreenSharePhase }
   | { type: "participants"; participants: CallParticipant[] }
-  | { type: "reaction"; userId: string; name: string; emoji: string };
+  | { type: "reaction"; userId: string; name: string; emoji: string; at: number }
+  /** A timer fired, or another reaction arrived. Either way, drop whatever has run out. */
+  | { type: "reactions-expired"; now: number };
 
 export function callReducer(state: CallState, action: CallAction): CallState {
   switch (action.type) {
@@ -199,12 +235,24 @@ export function callReducer(state: CallState, action: CallAction): CallState {
       return {
         ...state,
         reactions: [
-          { userId: action.userId, name: action.name, emoji: action.emoji },
+          { userId: action.userId, name: action.name, emoji: action.emoji, at: action.at },
           // Somebody's newer reaction replaces their older one rather than stacking beside it,
-          // so one person tapping five times cannot fill the row.
-          ...state.reactions.filter((r) => r.userId !== action.userId),
+          // so one person tapping five times cannot fill the row. Anything already out of time
+          // goes at the same moment, so a phone whose timers were throttled in the background
+          // still cannot show a reaction from ten minutes ago.
+          ...liveReactions(
+            state.reactions.filter((r) => r.userId !== action.userId),
+            action.at,
+          ),
         ].slice(0, MAX_VISIBLE_REACTIONS),
       };
+
+    case "reactions-expired": {
+      const remaining = liveReactions(state.reactions, action.now);
+      // Same array when nothing expired, so a timer that fires a millisecond early cannot cause
+      // a re-render on its own.
+      return remaining.length === state.reactions.length ? state : { ...state, reactions: remaining };
+    }
   }
 }
 

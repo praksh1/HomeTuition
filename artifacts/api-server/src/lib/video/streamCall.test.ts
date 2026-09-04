@@ -122,6 +122,36 @@ test("a token outlives the class it is for, by exactly the class's own grace", (
   assert.equal(streamTokenTtlSeconds(120), (10 + 120 + 10) * 60);
 });
 
+test("a ninety-minute class can still reconnect at the last moment its door is open", () => {
+  /**
+   * The requirement rather than the arithmetic.
+   *
+   * Mint a token at the **earliest** moment one can exist — doors open ten minutes before the
+   * booked start — and ask whether it is still valid at the **latest** moment `canStart` will let
+   * the teacher back in, which is ten minutes past the booked finish. If it is not, a lesson that
+   * drops at minute 89 cannot be rejoined, and Stream reconnects with the token it already holds.
+   */
+  const bookedStart = 1_700_000_000;
+  const durationMinutes = 90;
+  const mintedAt = bookedStart - 10 * 60; // doors open
+  const lastRecoveryMoment = bookedStart + (durationMinutes + 10) * 60; // teacher's cutoff
+
+  const claims = streamTokenClaims({
+    userId: "1",
+    callCid: "default:sikshya-1",
+    isOwner: true,
+    nowSeconds: mintedAt,
+    ttlSeconds: streamTokenTtlSeconds(durationMinutes),
+  });
+
+  assert.ok(
+    claims.exp >= lastRecoveryMoment,
+    `token expires ${lastRecoveryMoment - claims.exp}s before the door does`,
+  );
+  // And not wildly beyond it: the whole point of a per-class lifetime is that it is not open-ended.
+  assert.ok(claims.exp - lastRecoveryMoment < 60);
+});
+
 test("a short class still gets a token long enough to rejoin with", () => {
   // A fifteen-minute class would otherwise mint a thirty-five-minute token, which is fine until
   // somebody's bus goes through a tunnel.
