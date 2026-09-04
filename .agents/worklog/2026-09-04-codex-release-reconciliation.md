@@ -148,3 +148,33 @@ reactivated after `914c210`; production remains unchanged.
    additive-schema-first order, enable the two production test kill switches, create only explicit
    short-lived owner test grants, and verify the real Daily classroom on the main domain.
 4. Keep payment credentials configured; ordinary users must never gain the test bypass.
+
+## Second independent review after `edd0425`
+
+Claude's follow-up fixed the first five cross-cutting defects and additionally corrected the
+`session_live` audience. Its reported gates were green at `edd0425`, but Codex found one remaining
+release-blocking truthfulness/model contradiction before any deployment:
+
+1. The implementation reused a single `test`/`testLabel` fact for two different meanings: a class
+   being eligible for tightly authorized test bookings, and a particular viewer's enrollment
+   actually having bypassed payment. Ordinary students still pay full price for a test-enabled
+   class, so showing “TEST — no payment was processed” on every such session or classroom is false.
+2. The student Book action still mounted `PaymentSheet` and collected payment method, phone and PIN
+   before the server bypassed the gateway for an eligible test student. This contradicted the live
+   testing walkthrough's claim that no payment screen appears and needlessly collected credentials.
+3. A plain-text transactional email contained literal Markdown emphasis markers around the
+   no-payment sentence.
+
+With the owner's action-time confirmation, Codex sent Claude a final correction prompt on the same
+`claude/production-test-release-candidate` branch. It requires separate class-level
+`testClass`/`testEnabled` truth from viewer-level `testBooking`/`viaTestAccess` truth; a
+server-authored `canBookAsTest` eligibility fact using the existing authenticated access endpoint;
+direct booking without mounting `PaymentSheet` only when all three server gates are currently
+satisfied; independent gate enforcement again at POST; truthful labels for ordinary, paid and test
+viewers; removal of Markdown stars; rendered/API regression tests; full gates; updated walkthrough
+and worklog; commit and push.
+
+Claude visibly resumed after receiving the prompt. The quiet fifteen-minute heartbeat was
+reactivated to watch only for a meaningful checkpoint, completion or actionable blocker. No merge,
+deployment, account/configuration change, purchase, credential change or production-data mutation
+was authorized or performed.
