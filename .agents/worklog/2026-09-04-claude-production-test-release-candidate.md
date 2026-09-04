@@ -4,7 +4,7 @@
 - Agent: claude
 - Branch: `claude/production-test-release-candidate`
 - Base commit: `b29bb07` (itself branched from `origin/claude/staging-user-journey-audit`)
-- Status: complete — Codex's first five and second two release blockers fixed; nothing merged, nothing deployed
+- Status: **released.** `999fe3b` is `main` and is deployed. Codex coordinated the release; this entry now also carries the post-release reconciliation audit.
 
 ## Requested
 
@@ -449,5 +449,92 @@ they are never counted as revenue by either version of the code, because both as
 - **The two switches must both be off before public launch,** and no active grant of either kind
   should remain. Turning them off is sufficient — grants stop mattering without being found — but
   the check is worth doing so nobody is surprised later.
-- **Nothing here has been deployed or merged.** The branch is `claude/production-test-release-candidate`
-  and production is untouched.
+- ~~Nothing here has been deployed or merged.~~ **Superseded 4 Sep 2026.** Codex fast-forwarded
+  `main` from `2663ac2` to `999fe3b` and it is live. See
+  `.agents/memory/production-test-release-live.md` and
+  `.agents/worklog/2026-09-04-codex-production-test-release.md` (branch
+  `codex/production-release-log`), and the reconciliation audit appended below.
+
+
+---
+
+# Post-release reconciliation audit — 4 Sep 2026
+
+- Agent: claude (secondary), reconciling against Codex's release
+- Commit audited: **`999fe3b`**, verified byte-identical to `origin/main` and to
+  `origin/claude/production-test-release-candidate` (`git diff --stat` between them is empty)
+- Nothing was changed, deployed or merged by this audit.
+
+## What was verified about **production**, not just the source
+
+| Check | Result |
+|---|---|
+| `origin/main` | `999fe3b`, and contains the release candidate exactly |
+| Stream POC in `main`? | **no** — `8550631` still isolated (`git merge-base --is-ancestor` says no) |
+| `GET /api/healthz` | `200 {"status":"ok"}` |
+| Protected routes with no token | `/sessions/:id/access`, `/sessions/:id/room`, `/teachers/me/plan-eligibility`, and `POST /admin/{students,teachers}/:id/test-access`, `POST /admin/users` — **all 401** |
+| Does a 401 write anything? | No. `middlewares/activityLog.ts:28` returns before recording on any status ≥ 400, so these probes left no trace. |
+| Deployed web bundle | `entry-da308df1a79efb1e2a688f67e07be405.js`, and it contains **both** labels (em dash as `\u2014`), plus `canBookAsTest`, `testBookingLabel`, `testClassLabel`, `Take a test place`, `no payment was taken`. The deployed artefact **is** the audited code. |
+| Ordinary production classes | `GET /api/sessions/2707`, `/2687` and a 20-row listing: **no** `testClass`, **no** `testClassLabel`, and **no booking-level field on any class row**. Nothing is blanket-marked. |
+
+## Gates re-run against the deployed commit on this checkout
+
+typecheck 4/4 packages · api unit **294/294** · app unit **213/213** · design ratchet unchanged
+(205 hex / 418 sizes, no new leaks) · `test:test-student` **108/108** · `test:test-access` 26/26 ·
+`test:reset` 25/25 · `test:admin` 58/58 · `test:operators` 50/50 · `test:tiers` 31/31 ·
+`test:video` 16/16 · `test:payments` 10/10 · `test:sessions` 56/56 · `test:journey` 57/57 ·
+`test:test-access-ui` **72/72** · `test:lobby` 90/90 · `test:classroom` 47/47 · `test:gates` 10/10.
+
+## Adversarial re-read of the payment-truth split
+
+- `admitsTestEnrolment` (`testStudentAccess.ts`) requires `payment_status === 'test'` **and** the
+  kill switch, so a `paid` row can never produce `viaTestAccess`. All three server sites that emit
+  `testBooking` derive from it (`sessions.ts:697`, `1482`, `1529`) — there is no path from a class
+  fact to a no-payment claim.
+- `canBookAsTest` (`sessions.ts`, inside `GET /sessions/:id/access`) takes the user from
+  `req.user!.userId`. That route reads **nothing** from `req.query` or `req.body`, so a client
+  cannot nominate somebody else or assert eligibility.
+- `activeEnrolmentStatuses()` has exactly three callers — `participation.ts:185` (roster),
+  `sessions.ts:1164` (the class-went-live audience) and `sessionMessages.ts:95` (the thread
+  audience). None is a money query; all nine `= 'paid'` money conditions are untouched.
+- Client-side, the booking label renders only from `session.enrolment === "test"` or the server's
+  `testBooking`; the class label only where `showTestClass` is passed, which is the teacher's own
+  list alone.
+
+## Finding — not release-blocking, pre-existing, slightly widened
+
+**`GET /api/sessions?studentId=N` is unauthenticated**, and when `studentId` is supplied it returns
+that student's own enrolment status per class (`sessions.ts:117` has no `requireAuth`; the
+enrichment is at ~`:130`). Anybody who knows a numeric student id can list which classes that
+student holds and whether each is `paid`, `refunded` or now `test`.
+
+- **Pre-existing.** The same unauthenticated route and the same `["paid","refunded"]` enrichment
+  are present at `2663ac2`, the commit `main` sat on before this release.
+- **What this release added:** `test` joins that set while the switch is on, and every row now
+  carries `testClass`/`testClassLabel`. So the leak now also reveals *that a given student id holds
+  operator-granted free access*, and which classes are test-enabled.
+- **Not a money or access defect.** No name, email or contact detail is exposed; nothing here lets
+  anybody book without paying.
+- **Smallest safe fix, if the owner wants it:** put `requireAuth` on `GET /sessions` and serve the
+  `enrolment` enrichment only when `parseInt(studentId) === req.user.userId` (or drop the query
+  parameter and read the caller from the token, as `/sessions/invitable-students` already does).
+  That is a behaviour change to a route six screens call, so it belongs in its own slice with its
+  own tests — **not** a hot patch on a live release.
+
+**No change was made to `main`.** Nothing found here meets the bar the brief set for touching a
+live release.
+
+## Attempted, and deliberately not done
+
+- **No production grant, session, user, payment or ticket was created.** The owner has not yet
+  supplied the teacher and student emails, and no account was guessed.
+- **No direct SQL grant**, per Codex's note and the memory note: the operator routes are what check
+  eligibility, close a previous grant, write the activity row and notify the person.
+- No deploy, no `main` change, no Railway/Cloudflare/Neon/Daily/billing change, no Stream merge.
+
+## Still unmeasured after this audit
+
+Everything about a **real Daily call on real hardware**: two-device media, screen share readability,
+the call window under a real rotation, whiteboard latency on a cheap Android, a large PDF over the
+phone bridge, and battery/thermal behaviour. `LIVE-TEST-SCRIPT.md` is the checklist for it. No claim
+in this entry rests on a physical device.
