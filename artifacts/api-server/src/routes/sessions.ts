@@ -18,6 +18,7 @@ import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLife
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
 import { canJoin, canStart, isCreatableAt, isPastCutoff, studentDoorClosesAt } from "../lib/sessionStart";
+import type { StartCheck, StartRefusal } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
 import {
@@ -432,6 +433,33 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
   res.json({ ...session, endedAt: activity.endedAt });
 });
 
+/**
+ * A timing refusal, said in a way a screen can act on.
+ *
+ * `expired: true` used to be on every one of these, and both classrooms read it as terminal: the
+ * student's screen set `roomExpired`, and the teacher's offered "Session already expired — create
+ * a new session." So a teacher who opened their own class fifteen minutes early was told to throw
+ * it away and make another, and a paid student who arrived early was shown an ending.
+ *
+ * `code` is the fix and `expired` is now honest rather than constant: only a class that has
+ * genuinely elapsed or been cancelled carries it. `opensAt` lets a waiting screen retry at the
+ * exact moment the door opens instead of polling, or asking the person to.
+ */
+function timingRefusal(timing: Extract<StartCheck, { ok: false }>): {
+  error: string;
+  code: StartRefusal;
+  opensAt?: number;
+  expired: boolean;
+} {
+  return {
+    error: timing.reason,
+    code: timing.code,
+    ...(timing.opensAt !== undefined ? { opensAt: timing.opensAt } : null),
+    // Kept for older app builds, which read only this. It is now true only when it is true.
+    expired: timing.code !== "too_early",
+  };
+}
+
 // Ensures a Daily.co room exists for this session and returns its join URL. Daily rooms
 // must be explicitly created via the REST API before anyone can join them — visiting a
 // room URL for a room that was never created fails with "The meeting you're trying to
@@ -465,12 +493,13 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
      */
     if (refusal === "outside-window") {
       const timing = canJoin({ ...session, endedAt: (await activityFor(id)).endedAt });
-      res.status(409).json({
-        // `canJoin` only carries a reason when it refuses, and it has just refused — the window
-        // is why we are here. The fallback covers a clock that moved between the two checks.
-        error: timing.ok ? "This class is not open just now." : timing.reason,
-        expired: true,
-      });
+      // `canJoin` only carries a reason when it refuses, and it has just refused — the window is
+      // why we are here. The fallback covers a clock that moved between the two checks.
+      if (timing.ok) {
+        res.status(409).json({ error: "This class is not open just now.", code: "finished", expired: true });
+        return;
+      }
+      res.status(409).json(timingRefusal(timing));
       return;
     }
     res.status(403).json({
@@ -512,7 +541,7 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
     ? canStart({ ...session, endedAt: activity.endedAt })
     : canJoin({ ...session, endedAt: activity.endedAt });
   if (!timing.ok) {
-    res.status(409).json({ error: timing.reason, expired: true });
+    res.status(409).json(timingRefusal(timing));
     return;
   }
 

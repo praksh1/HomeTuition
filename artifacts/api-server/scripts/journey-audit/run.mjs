@@ -302,8 +302,30 @@ async function run() {
     !/enrolled/i.test(String(early.body?.error)), String(early.body?.error));
   check("the message says when the doors open", /opens/i.test(String(early.body?.error)),
     String(early.body?.error));
-  check("and the classroom can show it, because it is shaped like every other timing refusal",
-    early.body?.expired === true);
+  /**
+   * And it is a *different* shape from a class that is over.
+   *
+   * `expired: true` used to be on every timing refusal, and both classrooms read it as terminal —
+   * so a teacher who was early was offered "create a new session" for a class their students had
+   * booked. The code now says which kind it is, and `expired` is only true when it is true.
+   */
+  check("a class that has not opened yet is not labelled expired",
+    early.body?.code === "too_early" && early.body?.expired === false,
+    JSON.stringify({ code: early.body?.code, expired: early.body?.expired }));
+  check("and says when the door opens, so a screen can wait exactly that long",
+    typeof early.body?.opensAt === "number" && early.body.opensAt > Date.now(),
+    JSON.stringify(early.body?.opensAt));
+
+  // A class that really is over keeps the terminal shape.
+  const longOver = await api("/sessions", { method: "POST", token: T, body: {
+    topic: "Long over", subject: "Mathematics", description: "d",
+    date: new Date(Date.now() + 3600_000).toISOString(), duration: 60, price: 500, maxStudents: 5 } });
+  await api(`/sessions/${longOver.body.id}/book`, { method: "POST", token: S, body: { paymentMethod: "esewa" } });
+  sql(`update sessions set date = now() - interval '3 days' where id = ${longOver.body.id}`);
+  const finished = await api(`/sessions/${longOver.body.id}/room`, { token: S });
+  check("a class that finished is still terminal, and says so",
+    finished.status === 409 && finished.body?.code === "finished" && finished.body?.expired === true,
+    JSON.stringify({ status: finished.status, code: finished.body?.code, expired: finished.body?.expired }));
 
   console.log("\nWhat nobody may reach\n");
 

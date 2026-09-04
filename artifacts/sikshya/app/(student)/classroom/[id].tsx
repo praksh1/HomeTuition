@@ -29,6 +29,7 @@ import type { Student } from "@/context/AuthContext";
 import { ApiError, apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
+import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
 import SmartBoard from "@/components/SmartBoard";
 import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
 import { useAloneInCall } from "@/hooks/useAloneInCall";
@@ -166,9 +167,14 @@ export default function StudentClassroom() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const student = user as Student;
-  if (!student || student.role !== "student") return null;
+  /**
+   * Remembered here, applied after the hooks. See the teacher classroom for the whole story: a
+   * `return null` above forty hooks turns a cold open of a class link — a refresh, a bookmark —
+   * into React error 310 and "Something went wrong. Please reload the app."
+   */
+  const wrongRole = !student || student.role !== "student";
 
-  const studentName = student.name ?? "Student";
+  const studentName = student?.name ?? "Student";
 
   const {
     connected,
@@ -200,8 +206,16 @@ export default function StudentClassroom() {
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
   const [roomError, setRoomError] = useState(false);
-  /** Set when the server refuses a room because the class is over. */
+  /** Set when the server refuses a room because the class is genuinely over. */
   const [roomExpired, setRoomExpired] = useState<string | null>(null);
+  /**
+   * Set when the doors simply have not opened yet, which is not the same thing at all.
+   *
+   * Both states used to be one. Every timing refusal arrived as a 409 and became `roomExpired`,
+   * so a student who had booked and paid and opened their class early was shown an ending — for
+   * a lesson they were about to attend.
+   */
+  const [roomWaiting, setRoomWaiting] = useState<RoomRefusal | null>(null);
   /**
    * Set the moment this student leaves.
    *
@@ -502,7 +516,16 @@ export default function StudentClassroom() {
       // A class that is over is refused by the server rather than given a room. Say that,
       // instead of "couldn't set up the video room", which sounds like a fault to retry.
       if (err instanceof ApiError && err.status === 409) {
-        setRoomExpired(err.message || "This class has finished.");
+        const refusal = readRoomRefusal(err.status, err.data, err.message);
+        if (refusal.kind === "waiting") {
+          // Early, not over. The video area says when it opens, and the effect below asks again
+          // at that moment rather than leaving somebody to guess.
+          setRoomWaiting(refusal);
+          setRoomExpired(null);
+          return;
+        }
+        setRoomWaiting(null);
+        setRoomExpired(refusal.message || "This class has finished.");
         return;
       }
       setRoomError(true);
@@ -549,6 +572,24 @@ export default function StudentClassroom() {
     `${Math.floor(s / 60)
       .toString()
       .padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
+
+  /**
+   * Ask again when the door opens.
+   *
+   * Clamped to five minutes by `retryDelayMs`: one timer set for tomorrow morning is a promise a
+   * throttled tab or a dozing phone will not keep.
+   */
+  useEffect(() => {
+    if (!roomWaiting) return;
+    const delay = retryDelayMs(roomWaiting, Date.now());
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+      setRoomWaiting(null);
+      void loadRoom();
+    }, delay);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomWaiting]);
 
   const sendMessage = () => {
     if (!chatMsg.trim()) return;
@@ -637,11 +678,14 @@ export default function StudentClassroom() {
      * phone died looks exactly like a teacher who hung up.
      */
     alone: teacherGone || classEnded,
-    active: !!roomUrl && !roomExpired,
+    active: !!roomUrl && !roomExpired && !roomWaiting,
     onCutoff: () => {
       leaveNow();
     },
   });
+
+  // Every hook above has run. Now it is safe to render nothing for the wrong role.
+  if (wrongRole) return null;
 
   return (
     <KeyboardAvoidingView
@@ -1076,6 +1120,7 @@ export default function StudentClassroom() {
                     ]}
                   >
                     {roomExpired ??
+                      roomWaiting?.message ??
                       (roomError
                         ? "Couldn't set up the video room."
                         : "Setting up video room…")}

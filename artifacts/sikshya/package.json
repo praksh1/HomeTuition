@@ -33,7 +33,8 @@
     "test:filters": "node scripts/sessions-filters/run.mjs",
     "test:storage-check": "node scripts/storage-check/run.mjs",
     "lint:design": "node scripts/design-lint/run.mjs",
-    "lint:design:update": "node scripts/design-lint/run.mjs --update"
+    "lint:design:update": "node scripts/design-lint/run.mjs --update",
+    "test:lobby": "node scripts/lobby-tests/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

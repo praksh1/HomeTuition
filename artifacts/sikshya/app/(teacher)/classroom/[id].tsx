@@ -31,6 +31,7 @@ import type { Teacher } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
+import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import PdfViewer from "@/components/PdfViewer";
@@ -241,9 +242,23 @@ export default function Classroom() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const teacher = user as Teacher;
-  if (!teacher || teacher.role !== "teacher") return null;
+  /**
+   * The guard is remembered here and applied at the bottom, after every hook has run.
+   *
+   * It used to `return null` on this line, which is above roughly forty hooks. On a cold open of
+   * a classroom link — a refresh, a bookmark, a link somebody was sent — `useAuth` has not
+   * restored the session yet, so the first render took the early exit and ran three hooks and the
+   * next ran forty. React calls that error 310, and the person got **"Something went wrong. Please
+   * reload the app."** on a class that was perfectly fine.
+   *
+   * Found by rendering rather than by reading: every API test passed while this was true. It is
+   * the hazard `.agents/memory/authguard-role-cast-crash.md` already describes, in the one screen
+   * where a refresh is most likely — nobody reloads a dashboard mid-lesson, but they certainly
+   * reload a classroom.
+   */
+  const wrongRole = !teacher || teacher.role !== "teacher";
 
-  const teacherName = teacher.name ?? "Teacher";
+  const teacherName = teacher?.name ?? "Teacher";
 
   const {
     connected,
@@ -307,6 +322,15 @@ export default function Classroom() {
     title: string;
     message: string;
   } | null>(null);
+  /**
+   * The doors have not opened yet — which is not the same as the class being over.
+   *
+   * Kept apart from `expired` on purpose. Every timing refusal used to arrive as one 409 and land
+   * in `expired`, so a teacher who opened their own class fifteen minutes early was shown
+   * "Session already expired" and a button to **create a new session** — advice that would have
+   * had them abandon a class their students had already booked.
+   */
+  const [waiting, setWaiting] = useState<RoomRefusal | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatScrollRef = useRef<ScrollView>(null);
   const chatProgress = useRef(new Animated.Value(0)).current;
@@ -557,6 +581,13 @@ export default function Classroom() {
       if (!current) return;
       const check = canOpenSession(current);
       if (!check.ok) {
+        if (check.code === "too_early") {
+          // The app's own mirror of the clock reaches this before the server does. A class that
+          // has not opened yet is a lobby, not an ending — the same distinction the room route
+          // now makes, so the two cannot disagree about what a teacher is looking at.
+          setWaiting({ kind: "waiting", message: check.message });
+          return;
+        }
         setExpired({ title: check.title, message: check.message });
         return;
       }
@@ -599,7 +630,12 @@ export default function Classroom() {
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setExpired({ title: "Cannot rejoin this class", message: err.message });
+        const refusal = readRoomRefusal(err.status, err.data, err.message);
+        if (refusal.kind === "waiting") {
+          setWaiting(refusal);
+          return false;
+        }
+        setExpired({ title: "Cannot rejoin this class", message: refusal.message });
         return false;
       }
       // Anything else is a connection problem rather than a decision, and the video area
@@ -645,10 +681,17 @@ export default function Classroom() {
       // The server applies the same window on this endpoint, and it is the one that counts.
       // If it refuses, say so rather than showing a broken video area.
       if (err instanceof ApiError && err.status === 409) {
+        const refusal = readRoomRefusal(err.status, err.data, err.message);
+        if (refusal.kind === "waiting") {
+          // Nothing is wrong and nothing is over. The lobby below says when it opens and comes
+          // back on its own, so nobody has to sit pressing a button at a class they own.
+          setWaiting(refusal);
+          return;
+        }
         setExpired({
           title: "Session already expired",
           message:
-            err.message ||
+            refusal.message ||
             "This class ended more than 3 hours ago. Please create a new one.",
         });
         return;
@@ -1009,6 +1052,25 @@ export default function Classroom() {
     onCutoff: endBecauseTimeIsUp,
   });
 
+  /**
+   * Come back when the door opens, once.
+   *
+   * `retryDelayMs` clamps this to at most five minutes, because a single timer set for "in 26
+   * hours" is a promise a throttled browser tab or a dozing Android will not keep. Waking
+   * occasionally and asking again is cheap and always correct.
+   */
+  useEffect(() => {
+    if (!waiting) return;
+    const delay = retryDelayMs(waiting, Date.now());
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+      setWaiting(null);
+      void loadRoom();
+    }, delay);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting]);
+
   const endSession = async () => {
     const doEnd = async () => {
       setRoomUrl(null);
@@ -1053,6 +1115,56 @@ export default function Classroom() {
    * used for teaching and nothing on this screen suggests a lesson is running. Someone can
    * still arrive here from a stale link or a back-stack entry; this is what they get.
    */
+  /**
+   * The lobby, and the one screen this classroom was missing.
+   *
+   * A teacher who is early sees when their class opens and waits here; the effect below asks
+   * again at that moment. There is deliberately no "create a new session" — the class is fine.
+   */
+  // Every hook above has run. Now it is safe to render nothing for the wrong role.
+  if (wrongRole) return null;
+
+  if (waiting) {
+    return (
+      <View
+        style={[
+          s.container,
+          s.expiredScreen,
+          {
+            gap: space.md,
+            paddingTop: insets.top,
+            paddingHorizontal: space.xxl,
+            backgroundColor: colors.background,
+          },
+        ]}
+        testID="classroom-lobby"
+      >
+        <Feather name="clock" size={44} color={colors.primary} />
+        <Text style={[t.title2, { color: colors.foreground, textAlign: "center" }]}>
+          This class has not opened yet
+        </Text>
+        <Text
+          style={[t.body, { color: colors.mutedForeground, textAlign: "center" }]}
+          testID="classroom-lobby-message"
+        >
+          {waiting.message}
+        </Text>
+        <Text style={[t.callout, { color: colors.inkFaint, textAlign: "center" }]}>
+          This page opens the class by itself when the doors do. You can wait here or come back.
+        </Text>
+        <TouchableOpacity
+          style={[s.expiredBackButton, { minHeight: HIT_SLOP_MIN }]}
+          onPress={leaveScreen}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          testID="classroom-lobby-back"
+        >
+          <Text style={[t.body, { color: colors.primary }]}>Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (expired) {
     return (
       <View

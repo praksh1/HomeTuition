@@ -130,9 +130,22 @@ export async function sendVerificationEmail(user: { id: number; email: string; n
    *
    * A server that cannot send says so, whatever the cooldown thinks.
    */
-  const configured = isEmailConfigured();
+  if (!isEmailConfigured()) {
+    /**
+     * Nothing is issued, spent, or rotated.
+     *
+     * Reading the configuration first was only half the fix. The token was still minted, which
+     * costs two things a server with no mail provider cannot afford: `issueToken` **spends the
+     * one-minute cooldown**, and it marks every older unused token used. So a server that had
+     * mail switched on a moment later refused the first genuine resend with "Please wait a
+     * minute" — and had already invalidated the link that would have worked.
+     *
+     * A resend nobody can receive is not a resend. It leaves no trace at all.
+     */
+    return { sent: false, rateLimited: false, configured: false };
+  }
   const token = await issueToken(user.id, "verify_email", EMAIL_VERIFY_HOURS * 60 * 60_000);
-  if (!token) return { sent: false, rateLimited: configured, configured };
+  if (!token) return { sent: false, rateLimited: true, configured: true };
   const url = `${appOrigin()}/verify-email?token=${encodeURIComponent(token)}`;
   const sent = await sendEmail({
     to: safeEmail(user.email),
@@ -146,7 +159,7 @@ export async function sendVerificationEmail(user: { id: number; email: string; n
       `Hello ${user.name}. Verify your email before your Sikshya account can teach or book classes.`,
     ),
   });
-  return { sent, rateLimited: false, configured };
+  return { sent, rateLimited: false, configured: true };
 }
 
 export async function consumeVerificationToken(token: string): Promise<number | null> {
