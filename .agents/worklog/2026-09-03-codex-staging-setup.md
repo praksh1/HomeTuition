@@ -380,3 +380,39 @@ Codex and an independent audit then found remaining gaps and corrected them loca
   draw handwriting plus rough lines/circles and confirm they remain ink, then use explicit
   Excalidraw rectangle/arrow tools. This deployment does not claim a real Daily call or a
   simultaneous two-device classroom test.
+
+### Preview-account access recovery
+
+- The owner correctly reported that the isolated preview was not practically testable: production
+  accounts are intentionally absent, staging mail is intentionally unconfigured, and the original
+  random fixture password had existed only in an earlier browser-automation runtime. The earlier
+  wording that called the preview ready did not make this access limitation clear enough.
+- Used the still-authenticated synthetic operator session to issue normal one-use, 30-minute
+  assisted-reset codes for only the three documented staging users. Redeemed those codes against
+  the isolated Railway API and assigned one new shared preview password. The password was given to
+  the owner in chat and is deliberately not written to Git, this worklog, browser password storage,
+  or an environment file.
+- Verified all three credentials through the real staging `/api/auth/login` endpoint without
+  printing tokens: teacher returned `role=teacher`, student returned `role=student`, operator
+  returned `role=admin`; all three returned `emailVerified=true`. Teacher and student onboarding
+  are complete. The operator has no student/teacher onboarding by design.
+- A verified email alone did not let the teacher create classes: the real server correctly still
+  required a reviewed document, approved account, and either paid plan or explicit test grant.
+  Uploaded one existing app icon to the private staging bucket as a clearly named **synthetic
+  review document**, submitted it as `professional_certificate`, opened and approved that exact
+  staging document, approved only the synthetic teacher, then granted seven days of Base test
+  teaching access with an audit reason stating that no payment was recorded. The grant expires
+  automatically on 2026-09-11 UTC.
+- No production identity document, user, database, bucket, payment, email key, plan, or permission
+  changed. The staging server still has no mail credential. Existing production users should not
+  work on the preview, and a brand-new staging signup still cannot self-verify until staging mail
+  is configured. The recovered fixtures are the immediate manual-testing path.
+- Brevo's existing free-plan account was inspected read-only. Its production key remains active.
+  A separate key form is prepared with the name `Sikshya Staging API`, but the key has **not** been
+  generated or saved to Railway; creation requires the owner's action-time confirmation. No key
+  value was viewed, copied, logged, or committed.
+- Claude Web was reachable and signed in. A fresh task is prepared for a separate Stream Video
+  provider proof-of-concept, but no prompt has been transmitted yet; sending it also awaits the
+  required action-time confirmation. Codex owns staging access/email/deployment, so the proposed
+  Claude task must stay on its own branch and must not touch the current integration branch,
+  production provider choice, payments, or deployments.

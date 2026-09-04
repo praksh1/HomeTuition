@@ -21,11 +21,15 @@ at production. Do not use it to test writes. The new preview has its own API and
 `EXPO_NO_DOTENV=1` avoids accidental local env loading. Use `scripts/verify-preview.mjs` after
 deploy; this Expo export uses multiple runtime/common/entry bundles, not `index-*.js`.
 
-Email/payment/Daily credentials remain absent. Separately authorized staging storage uses
+Payment/Daily credentials remain absent. Staging email is still absent as of the access-recovery
+checkpoint; a separate Brevo key has been prepared but not generated. Separately authorized staging storage uses
 `sikshya-staging-uploads` and a bucket-restricted key, never production credentials. Its CORS
 allows only the preview. Echo is not a real video test. PUBLIC_APP_URL is
 explicitly staging: absence otherwise falls back to the live site. The test-access table was
-verified before the flag was enabled. Teacher is still pending; no fake paid plan/grant/approval.
+verified before the flag was enabled. The synthetic teacher is now document-reviewed and approved,
+with a seven-day Base test-access grant expiring automatically on 2026-09-11 UTC. This is not a paid
+plan. The three fixture passwords were deliberately re-established outside Git so the owner can
+enter the preview; never copy the password into documentation or environment files.
 
 Railway's $10 cap is shared with production, not a staging allowance. Last checked usage $0.17.
 Pause staging after owner review. Do not raise the cap or add a paid plan.
