@@ -4,7 +4,7 @@
 - Agent: claude
 - Branch: `claude/production-test-release-candidate`
 - Base commit: `b29bb07` (itself branched from `origin/claude/staging-user-journey-audit`)
-- Status: in progress
+- Status: complete — nothing merged, nothing deployed
 
 ## Requested
 
@@ -64,19 +64,42 @@ now deferred past every hook. This is the `authguard-role-cast-crash` hazard alr
 in two more files. It was **pre-existing**, proved by reproducing it on a code path this task had
 not touched.
 
-### Item B — the call window
+### Item B — the call window (commit `33de42d`)
 
 | File | What |
 |---|---|
 | `sikshya/utils/callWindow.ts` *(new)* | One pure module, shared by both classrooms: the four states, the reducer, the geometry, and what each state offers. No React, no styles, no imports. |
 | `sikshya/utils/callWindow.test.ts` *(new)* | 24 tests. |
 | both `classroom/[id].tsx` | `useReducer(callWindowReducer)` replaces the local `useState` size; the geometry, the drag clamp and the rotation re-clamp all come from the shared module. Compact renders one **Restore**; normal and full render the original three. |
-| both `classroom/[id].tsx` styles | `callFrameBody` gained `overflow: "hidden"`, `callFrameHeader` gained `zIndex: 1`. **See below — this was the actual bug.** |
-| `sikshya/scripts/lobby-tests/run.mjs` | The window states are now rendered and pressed for **both** roles at both viewports, with unforced clicks. |
+| both `classroom/[id].tsx` styles | `callFrameBody` gained `overflow: "hidden"`, `callFrameHeader` gained `zIndex: 1`. **See "Problems" — this was the actual bug.** |
+| `sikshya/scripts/lobby-tests/run.mjs` | The window states are rendered and pressed for **both** roles at both viewports, with unforced clicks. |
 
 **Minus is now a snap.** From any visible size it goes to `compact` *and returns the window to
 the bottom-right corner*. It used to toggle two docked sizes about a finger's width apart and
 leave the window wherever it had been dragged, which from the outside is a dead control.
+
+### Item A — reconciliation, not rebuilding (commit `bfb50fc`)
+
+Correction items 1–6 were checked against the branch rather than re-implemented. The evidence
+table is at the top of `.agents/backlog/2026-09-02-owner-corrections-and-stream-poc.md`. Items 1–5
+were carried in from earlier work and re-checked; item 6 is the one this branch completed. Nothing
+in items 1–5 was rewritten.
+
+### Item C — test student access (commits `3a2abd9`, `06c3ff8`)
+
+| File | What |
+|---|---|
+| `lib/db/src/schema/testStudentAccess.ts` *(new)* | Two additive tables: `test_student_grants` (student, operator, reason, granted/revoked, `valid_until`) and `test_classes` (session id, teacher, the grant that was live at creation). No existing column touched or dropped. |
+| `api-server/src/lib/testStudentAccess.ts` *(new)* | `ALLOW_TEST_STUDENT_ACCESS` (default off, read per request), `liveTestStudentGrant`, `isTestClass`, `admitsTestEnrolment`, and the `test` / `test_access` / label constants. |
+| `api-server/src/lib/teachingAccess.ts` | `viaTestGrant` now carries the grant id, so a class can record which grant created it. |
+| `api-server/src/routes/sessions.ts` | Marks a class in `test_classes` at creation; decides the test booking **inside** the transaction and **before** `chargeForSession`; writes `test` / `test_access` / no reference; carries the label into the booking response and the room response; includes `test` rows in the student's own class list while the switch is on. |
+| `api-server/src/lib/membership.ts` | A `test` row is a real place, gated on the switch, answered in the one function both doors already share. `viaTestAccess` added to `SessionMembership` for callers that show money. |
+| `api-server/src/routes/admin.ts` | `POST /admin/students/:id/test-access` and `…/revoke`, with the eligibility gates re-checked server-side, one live grant per student, and both actions in the activity log. `testStudentAccess` added to the person payload. |
+| `sikshya/app/(admin)/person/[id].tsx` | The operator card: grant with a reason, the live grant with its end date, revoke, and the eligibility rules stated. Student records only. |
+| `sikshya/utils/testAccess.ts` *(new)* | The fallback wording, mirroring the server's `TEST_LABEL`. |
+| both `classroom/[id].tsx`, `components/SessionCard.tsx` | The label, painted where somebody would misread the absence of it. |
+| `api-server/scripts/test-student-access/run.mjs` *(new, `test:test-student`)* | 61 checks. |
+| `sikshya/scripts/test-access-ui/run.mjs` *(new, `test:test-access-ui`)* | 32 rendered checks. |
 
 ## Decisions and assumptions
 
@@ -91,35 +114,115 @@ leave the window wherever it had been dragged, which from the outside is a dead 
 - **An unknown refusal code reads as "over".** A screen that waits forever for a class that
   finished is worse than one that ends a few minutes early, and the person can reopen it.
 - **The retry sleeps at most five minutes** even when the door is a day away. A backgrounded tab
-  throttles timers and a dozing Android may not run one at all, so "sleep for 26 hours" is a
-  promise this app cannot make. It wakes and checks the clock.
+  throttles timers and a dozing Android may not run one at all.
+- **Three conditions for a free booking, never fewer.** The switch, a live student grant, and a
+  class marked test. A granted student pays for an ordinary teacher's class; an ordinary student
+  pays for a test class. Only the intersection is free.
+- **A class is marked when it is created, never inferred later.** See the memory note; asking at
+  booking time what the teacher's grant looks like *then* is wrong in both directions.
+- **`payment_status = 'test'`, and no reference.** Every money query already asks for `'paid'`, so
+  a distinct status is excluded by construction rather than by editing each query. A reference
+  would be an invented receipt.
+- **Two tables, no column changes.** `.agents/memory/schema-change-deploy-window.md`: the API
+  redeploys itself on push while `db:push` is manual, and a new column on a table read with a bare
+  `select()` is a 500 for the length of that window. A new table is only touched by new code.
+- **Membership is the only place that admits a test row.** A second `payment_status = 'test'`
+  check written into the room route or the socket is exactly the drift that once let an unenrolled
+  student watch a teacher's video.
 
 ## Verification
 
-Run against Postgres 16 on `127.0.0.1:55432` and an API on `:8080` with `VIDEO_PROVIDER=echo`,
-`NODE_ENV=test`, `ALLOW_TEST_TEACHING_ACCESS=true`.
+Run against Postgres 16 on `127.0.0.1:55432` (database `rc`) and an API on `:8080` with
+`VIDEO_PROVIDER=echo`, `NODE_ENV=test`, both test-access switches on.
+
+### Gates
 
 | Command | Result |
 |---|---|
 | `pnpm run typecheck` (4 packages) | clean |
 | `pnpm --filter @workspace/api-server run test` | **286 / 286** |
 | `pnpm --filter @workspace/sikshya run test` | **208 / 208** |
-| `pnpm --filter @workspace/sikshya run lint:design` | 205 hex / 418 sizes — unchanged, no new leaks |
-| `api-server/scripts/journey-audit/run.mjs` | **57 / 57** |
-| `pnpm --filter @workspace/sikshya run test:lobby` | **90 / 90** |
+| `pnpm --filter @workspace/sikshya run lint:design` | 205 hex / 418 sizes — **unchanged**, no new leaks |
+| `git diff --check` | clean |
 
-`test:lobby` renders in headless Chromium at 1280×800 and 360×740, for the teacher and the
-student, and now presses every window control **without** `force`.
+`lint:design:update` was **not** run. One new font-size literal was introduced in `SessionCard`
+and removed again by using `useLayout().t.overline`, rather than blessing a higher baseline.
 
-**A browser is not a phone.** Nothing above is evidence about iOS or Android hardware, about a
-real Daily call, about a payment gateway, or about two devices in one class.
+### API suites
+
+| Suite | Result | | Suite | Result |
+|---|---|---|---|---|
+| `test:test-student` *(new)* | **61 / 61** | | `test:refunds` | 152 / 152 |
+| `test:test-access` | 26 / 26 | | `test:tickets` | 62 / 62 |
+| `test:payments` | 10 / 10 | | `test:journey` | 57 / 57 |
+| `test:sessions` | 56 / 56 | | `test:video` | 16 / 16 |
+| `test:tiers` | 31 / 31 | | `test:class-chat` | 36 / 36 |
+| `test:monthly` | 199 / 199 | | `test:one-chat` | 8 / 8 |
+| `test:attendance` | 72 / 72 | | `test:late-joiner` | 13 / 13 |
+| `test:admin` | 58 / 58 | | `test:teacher-leave` | 17 / 17 |
+| `test:operators` | 50 / 50 | | `test:portal` | 72 / 72 |
+| `test:reset` | 25 / 25 | | `test:notifications` | 44 / 44 |
+| `test:board-limits` | 12 / 12 | | `test:board-persistence` | 7 / 7 |
+| `test:reviews` | 17 / 17 | | `test:thread` | 23 / 23 |
+| `test:round` | 48 / 48 | | `test:alerts` | 14 / 14 |
+| `test:uploads` | 51 / 51 | | `test:upgrade` | 13 / 13 |
+| `test:messages` | 52 / 52 | | | |
+
+`test:board-persistence` needs `RESTART_CMD`; it reported "cannot prove anything without it" on
+the first attempt and was re-run with a real restart script, then passed 7/7.
+
+### Rendered suites (headless Chromium, 1280×800 and 360×740)
+
+| Suite | Result |
+|---|---|
+| `test:lobby` | **90 / 90** — both roles, both viewports |
+| `test:test-access-ui` *(new)* | **32 / 32** — both roles, both viewports |
+| `test:classroom` | 47 / 47 |
+| `test:board` | 44 / 44 |
+| `test:gates` | 10 / 10 |
+| `test:nav` | 41 / 41 |
+| `test:filters` | 33 / 33 |
+| `test:dashboard` | 6 / 6 |
+| `test:call-chat` | 17 / 17 |
+| `test:call-leave` | 9 / 9 |
+| `test:messaging` | 10 / 10 |
+| `test:refunds` | 69 / 69 |
+| `test:tickets` | 23 / 23 |
+| `test:calendar` | 16 / 16 |
+| `test:phone` | 18 / 18 |
+| `test:photo` | 7 / 7 |
+| `test:monthly-browser` | 37 / 37 |
+| `test:uploads` | 14 / 14 |
+| `test:notifications` | 12 / 12 |
+| `test:storage-check` | 10 / 10 |
+| `test:perf` | no blocking problems at 6× slowdown; a stroke start-to-finish 1167 ms on a full board |
+
+### The security claim, and how it is actually proved
+
+`test:test-student` runs every server with `PAYMENT_WEBHOOK_SECRET` set — production's shape, where
+`paymentMode()` is `gateway` and `chargeForSession` refuses because the redirect-and-callback dance
+is not implemented. So on one server, one class:
+
+- the **ordinary** student booking it gets 402 and no enrolment row;
+- the **granted** student is enrolled with `test | test_access | (no reference)`.
+
+Nothing but "the gateway was never called" explains the second result. The same suite proves the
+switch is off by default, that a planted grant row buys nothing while it is off, expiry without
+anybody revoking, revocation taking effect on the next booking, eight simultaneous bookings landing
+exactly one enrolment and one seat, that no refund can be claimed against a test enrolment and
+cancelling the class owes nobody anything, that both classroom doors agree for a test place and both
+close when the switch goes off while the paid place beside it is untouched, and that a class stays
+marked after the teacher's own grant is revoked.
+
+**Not measured, and not claimed:** real Daily media, an iPhone, an Android handset, a real payment
+gateway settling anything, or two devices in one class.
 
 ## Problems and surprises
 
 **The window controls were drawn, and dead — and forced clicks hid it.** After wiring the shared
 model in, the rendered rectangle refused to change: 132×118 through Restore and through maximise,
-at both viewports. The model was right (24/24 in isolation) and the wiring was right, so the
-press was not arriving. Dumping the subtree found it:
+at both viewports. The model was right (24/24 in isolation) and the wiring was right, so the press
+was not arriving. Dumping the subtree found it:
 
 ```
 DIV[video-provider-unknown] rect=1141,595 130x72   ← the call body
@@ -127,34 +230,77 @@ DIV[video-provider-unknown] rect=1141,595 130x72   ← the call body
 BUTTON[video-restore-btn]   rect=1207,551  64x44   ← buried under that text
 ```
 
-`callFrameBody` did not clip. A message too tall for a 132-point preview rendered 140 points high
-in a 72-point box, centred, so it overflowed **upwards** across the header and took every tap
-meant for Hide, minus and maximise. The buttons were painted, visible, and inert — which is
-exactly what the owner reported and which no unit test could ever have seen.
+`callFrameBody` did not clip. A message too tall for a 132-point preview rendered 140 points high in
+a 72-point box, centred, so it overflowed **upwards** across the header and took every tap meant for
+Hide, minus and maximise. The buttons were painted, visible, and inert — which is exactly what the
+owner reported and which no unit test could have seen.
 
-The suite had been using `click({ force: true })`, which skips Playwright's hit-target check.
-That is how a real defect reported success while the events went to a paragraph of text. Every
-press in the suite is now unforced, and a blocked one fails naming what is in the way.
+The suite had been using `click({ force: true })`, which skips Playwright's hit-target check. That
+is how a real defect reported success while the events went to a paragraph of text. Every press is
+now unforced, and a blocked one fails naming what is in the way.
 
-`overflow: hidden` on the body and `zIndex: 1` on the header fix it in both classrooms.
+**A pre-existing classroom crash, found only by rendering.** Both classrooms returned `null` for the
+wrong role on a line above about forty hooks. On a cold open — a refresh, or a shared link — the
+first render ran three hooks and the next ran forty, and React threw error 310. Proved pre-existing
+by reproducing it on a code path this task had not touched. This is the `authguard-role-cast-crash`
+hazard already in memory, in two more files.
+
+**Two test-harness mistakes of my own, both recorded because they were briefly mistaken for
+defects:** the teacher grant needed a real tier key (`tier4`, not `unlimited`), and the classes the
+room tests used were 30 minutes out, outside the ten-minute door — seven checks failed until they
+were moved inside it. Neither was a product fault.
+
+**`overline` uppercases its text**, so the first rendered assertion for the label failed against
+"TEST — NO PAYMENT WAS PROCESSED". The assertion is case-insensitive now; the banner was correct
+the whole time.
 
 ## Fabrications found
 
-None found in this session so far.
+None found in this session.
 
 ## Deliberately not changed
 
 - **Daily.** No room logic, no token logic, no provider selection. `VIDEO_PROVIDER` still decides
-  and still defaults to Daily.
+  and still defaults to Daily; `test:video` (16/16) and a check inside `test:test-student` confirm
+  the provider in the room response is whatever the server was configured with.
 - **Stream.** Untouched at `8550631` on its own branch, not merged, not referenced.
-- **Booking atomicity and the payment mode rules.** Nothing in this session writes an enrolment
-  or reads a gateway.
-- **`main`, `codex/staging-preview-integration`, Railway, Cloudflare, production data.**
-- The classroom's own chat, board, socket and attendance behaviour.
+- **Payment mode.** `lib/payments.ts` is unmodified. Test access is a branch *before*
+  `chargeForSession`, not a change to what it does.
+- **Booking atomicity.** The transaction and its row lock are unchanged; the test decision was
+  placed inside them.
+- **`main`, `codex/staging-preview-integration`, Railway, Cloudflare, production data, credentials,
+  DNS, billing.**
+- **Every money query.** No `payment_status = 'paid'` condition was widened. A test enrolment is
+  excluded from earnings, refund debt, the drop route, schedule-change compensation and the
+  invitable-students list *because* those queries were left alone.
+- **Correction items 1–5.** Reconciled with evidence, not rewritten.
+- Attendance and the class thread still count `paid` only, so a test enrolment does not appear in
+  either. That is the safe direction and is stated rather than fixed; if the owner needs the
+  attendance record to include a test student, that is a deliberate follow-up.
+
+## Migrations and deploy order
+
+Two new tables, no column added, changed or dropped:
+
+- `test_student_grants`
+- `test_classes`
+
+**Order matters, and only one way round is safe.** `db:push` **first**, deploy **second**. New
+tables are invisible to the old code, so pushing them early breaks nothing; deploying first would
+give the new code tables that do not exist yet. See `.agents/memory/schema-change-deploy-window.md`.
+
+**Rollback:** revert the deploy. The two tables can be left in place — nothing else reads them, and
+dropping them would lose the audit trail of who could book for free and who said so. Any `test`
+enrolment rows already written stop opening anything the moment `ALLOW_TEST_STUDENT_ACCESS` is unset;
+they are never counted as revenue by either version of the code, because both ask for `'paid'`.
 
 ## Remaining risks / next pickup point
 
-- **Rendered ≠ phone.** The window has been proved in Chromium at two sizes. A real Android
-  phone, a real rotation and a real Daily call are still unmeasured.
-- Items **A**, **C**, **D** and the rest of **E** are still open. Next: item A — reconcile
-  correction items 1–6 against the branch with targeted evidence, then item C.
+- **Rendered is not a phone.** Everything visual here was proved in headless Chromium at two
+  viewport sizes. A real Android handset, a real rotation, a weak GPU and a real Daily call are
+  still unmeasured. This is the single largest gap in the release candidate.
+- **The two switches must both be off before public launch,** and no active grant of either kind
+  should remain. Turning them off is sufficient — grants stop mattering without being found — but
+  the check is worth doing so nobody is surprised later.
+- **Nothing here has been deployed or merged.** The branch is `claude/production-test-release-candidate`
+  and production is untouched.

@@ -450,6 +450,18 @@ section 10.
 - Simulated / gateway payment mode inferred from the environment.
 - Refund arithmetic for both tiers, with tests that money is never invented or lost.
 - Refund queue an agent works.
+- **Test access, so the product can be walked while the gateway is live.** An operator can grant a
+  named teacher the right to create classes without a plan, and a named student the right to book
+  *those* classes without paying. Both grants are temporary, carry a written reason, expire by
+  themselves, and are recorded in the activity log; each has its own environment kill switch
+  (`ALLOW_TEST_TEACHING_ACCESS`, `ALLOW_TEST_STUDENT_ACCESS`), **both off by default**. A booking is
+  free only where all three meet: the switch, the student's grant, and a class that was marked a
+  test class when it was created. Everyone else pays, including a granted student booking an
+  ordinary teacher's class. The enrolment is written as `test`, never `paid`, with no payment
+  reference — so it is excluded from earnings, refund debt and every other money query by
+  construction — and it is labelled **"TEST — no payment was processed"** on the class card, in the
+  classroom for the whole lesson, and on the operator's screen. **Turn both switches off before
+  public launch.** See `.agents/memory/test-access-is-two-grants-and-two-switches.md`.
 
 ### The classroom
 
@@ -462,6 +474,11 @@ section 10.
   or call it after false corrections were observed in a real teacher test.
 - In-class chat on web and native, unread counts.
 - 5-minute early-join lobby.
+- **A call window the buttons actually move.** Four states — hidden, a small preview docked
+  bottom-right, a working window, and full screen — in one shared file both classrooms read, so the
+  two cannot drift. Minus always means the same thing: make it small and put it back in the corner.
+  The call is never unmounted by hiding, minimising, resizing, dragging, rotating or switching to
+  chat.
 - Attendance: who was in the class, when they arrived, how long they were connected, how much
   they drew.
 
@@ -835,8 +852,15 @@ cheap next to what it costs afterwards. Live list at the top of `ISSUES.md`.
       `EMAIL_FROM`, `APP_URL`.
 - [ ] **Create the Cloudflare R2 bucket and set four variables on Railway.** The code is done
       and tested; it needs a bucket. Step by step in `DEPLOY.md` under *Uploaded files*.
+- [ ] **Turn both test-access switches off**, and check no live grant of either kind remains.
+      `ALLOW_TEST_TEACHING_ACCESS` and `ALLOW_TEST_STUDENT_ACCESS` must be unset on Railway before
+      the public arrives. Unsetting them is enough on its own — every outstanding grant stops
+      mattering the same second, and no test enrolment has ever counted as revenue — but look
+      anyway, so nobody is surprised. `.agents/memory/test-access-is-two-grants-and-two-switches.md`.
 - [ ] **Test the whiteboard on the cheapest Android you can find.** The target market is a
-      phone nobody on this project has held.
+      phone nobody on this project has held. This now also covers the call window: hide,
+      minimise, drag, rotate and full screen were proved in a desktop browser at phone width,
+      which is not the same as a phone.
 - [ ] **Settle the name, then the bundle identifier, in that order.** The *name* is cheap to
       change at any time (`name`, `slug`, `scheme` in `artifacts/sikshya/app.json`, then a
       rebuild). The **identifier** is not: `com.sikshya.app` on both platforms today, free to
@@ -848,19 +872,26 @@ cheap next to what it costs afterwards. Live list at the top of `ISSUES.md`.
 
 ## 10. Testing
 
-**411 unit tests pass** — 257 in the API, 154 in the app. Verified by running them, not
+**494 unit tests pass** — 286 in the API, 208 in the app. Verified by running them, not
 recalled.
 
 ```
 pnpm run typecheck                              # all four packages
-pnpm --filter @workspace/api-server run test    # 257 unit tests
-pnpm --filter @workspace/sikshya run test       # 154 unit tests
+pnpm --filter @workspace/api-server run test    # 286 unit tests
+pnpm --filter @workspace/sikshya run test       # 208 unit tests
 ```
 
-On top of that, **28 integration suites** in the API and **19 browser suites** in the app, each
+On top of that, **30 integration suites** in the API and **21 browser suites** in the app, each
 a `pnpm --filter … run test:<name>`. The full list is in the two `package.json` files. Notable
-ones: `test:monthly` (190 checks), `test:portal` (72), `test:sessions`, `test:payments`,
+ones: `test:monthly` (199 checks), `test:refunds` (152), `test:portal` (72), `test:test-student`
+(61, the free-booking door), `test:journey` (57), `test:sessions`, `test:payments`,
 `test:tickets`, `test:board-persistence`, `test:attendance`, `test:perf`.
+
+Two of the browser suites exist because an API-only test cannot see what they check:
+`test:lobby` (90 checks) renders both classrooms for both roles at laptop and phone width — it
+found a crash on a cold link and a call window whose buttons were painted and inert — and
+`test:test-access-ui` (32) checks that a class nobody paid for says so where somebody would
+read it.
 
 ### What the owner expects
 

@@ -45,8 +45,24 @@ is cheap next to what it costs afterwards. Tick them off in order.
       somewhere to put files is chosen, a report goes through without its attachment and the
       person is told so. This blocks the part of the refund policy that assumes somebody can
       hand over a video. See F1.
+- [ ] **Turn both test-access switches off and check no live grant remains.**
+      `ALLOW_TEST_TEACHING_ACCESS` lets a named teacher create classes without paying for a plan;
+      `ALLOW_TEST_STUDENT_ACCESS` lets a named student book *those* classes without paying. Both
+      default to off and both must be unset on Railway before the public arrives. Unsetting them
+      is enough on its own — a grant does nothing while its switch is off, whatever the table
+      says, and no test booking has ever counted as revenue — but look anyway:
+
+      ```sql
+      select * from test_teaching_grants where revoked_at is null and valid_until > now();
+      select * from test_student_grants  where revoked_at is null and valid_until > now();
+      ```
+
+      Leave any rows in place; they are the record of who could act for free and who said so.
+      See `.agents/memory/test-access-is-two-grants-and-two-switches.md`.
 - [ ] **Test the whiteboard on the cheapest Android you can find.** The target market is a
-      phone nobody here has held.
+      phone nobody here has held. The same run should cover the call window — hide, minimise,
+      drag, rotate, full screen. Those were proved in a desktop browser sized to a phone, which
+      is not a phone: it has no weak GPU, no thermal throttling and no real touch.
 - [ ] **Settle the name, then the bundle identifier, before the first store build.** The owner
       expects to rename once more before launch — "probably GharTuition or TuitionGhar or
       something similar". The name itself is cheap to change at any time: `name`, `slug` and
