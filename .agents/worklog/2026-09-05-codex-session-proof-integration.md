@@ -114,3 +114,89 @@ membership, classroom, socket, or live-call behavior.
 Run both Postgres suites in an isolated test database, review the uncommitted diff, and only then
 consider committing this disabled evidence scaffolding. Real provider activation still requires a
 captured Daily delivery and contract verification.
+
+---
+
+## Operator account integration — one narrative instead of two
+
+### Requested
+
+Fold the already-computed `SessionProofSummary` into the deterministic operator case narrative for
+one unique session. Explain provider meetings, named-person source agreement or conflict, and coarse
+device quality without re-querying, exposing diagnostics, inventing zeroes or making a decision.
+Reduce the duplicate operator presentation. Leave all evidence collection and live behavior alone.
+
+### Changed
+
+- `sessionCaseNarrative.ts` now accepts the already-computed proof summary from the route. It does
+  not import a database reader or query any source.
+- The readable summary names availability for the classroom ledger, independent video-provider
+  record and participant-device reports.
+- Every provider meeting is described separately with its own start, end and measured span. A
+  missing endpoint stays unavailable, and multiple meetings are never merged across a gap.
+- Teacher, reporter and any other person whose sources conflict receive a named, plain-language
+  comparison. Agreement is explicitly agreement about presence only. Conflict explicitly says the
+  record does not establish its cause.
+- Coarse good/warning/bad/unknown device buckets and reconnect counts are shown only when reported,
+  and are labelled as coming from the participant's own device. Missing reports are not rendered as
+  a zero or as a good connection.
+- Provider and device timeline events are translated into names and source labels. Provider meeting
+  ids, numeric user references embedded in technical text, raw diagnostics and provider event prose
+  are not copied into the narrative.
+- Timeline ordering now has a deterministic tie-break after timestamp and continues to render in
+  Nepal time.
+- The operator UI's parallel “What each source saw” block was removed. Its facts and cautions now
+  appear inside the single case summary and the single source-labelled timeline. Existing attendance
+  rows and factual findings remain visible underneath as the inspectable source record.
+- `sourceNotes` is optional in the app response type so an older API cannot crash a newer web build
+  during a staggered deployment.
+
+### Focused tests added
+
+- Named socket/provider agreement, with the scope limited to presence.
+- Named-source disagreement with no guessed cause.
+- Unavailable provider and device sources never becoming zero observations.
+- A provider-only observation while the classroom ledger is unavailable remaining single-source,
+  rather than being mislabeled as a conflict with a readable ledger.
+- Two provider meeting instances remaining separate, including one with an unavailable end.
+- Deterministic Nepal-time meeting wording.
+- Coarse self-reported quality and reconnect evidence without raw diagnostics.
+- Provider timeline sanitisation: person names survive, internal meeting and numeric user ids do not.
+- A combined account contains none of the decision phrases `refund`, `recommend`, `verdict`,
+  `should be`, `at fault` or `entitled` in the ordinary paid-booking fixture.
+
+### Verification actually run
+
+- Focused narrative suite: **18 passed, 0 failed**.
+- API unit suite: **420 passed, 1 failed**. The only failure is the pre-existing local inability to
+  resolve `jose` in `socialIdentity.test.ts`; all narrative and session-proof tests passed.
+- Sikshya app unit suite: **215 passed, 0 failed**.
+- Design ratchet: **pass**, 204 hex / 418 raw sizes, baseline unchanged.
+- API typecheck: blocked only by the same pre-existing missing `jose` module.
+- App typecheck: blocked only by the pre-existing missing `expo-apple-authentication` and Expo
+  Facebook/Google auth-session provider modules.
+- `git diff --check`: clean except Windows LF-to-CRLF notices.
+
+### Failures and corrections during this slice
+
+- The first focused run was **15 passed, 2 failed**. One old test still expected the superseded
+  “strong, moderate or weak” unavailable sentence; it was updated to the new source-unavailable
+  statement. One new no-diagnostics regex matched the letters `ip` inside “participant”; it was
+  narrowed to the whole word `IP`. The rerun passed all 17; the later unavailable-ledger case
+  brought the final focused suite to 18.
+- No browser or device rendering was run. Removing roughly 150 lines of duplicate proof UI reduces
+  the phone-length page, but visual scannability is not claimed until an operator ticket with proof
+  data is rendered.
+
+### Deliberately not done
+
+- No schema or state change, `db:push`, Postgres command, retention run or schedule.
+- No payment, refund, membership, socket, classroom, Daily room or provider configuration change.
+- No telemetry sender, webhook activation, Daily dashboard action, recording or purchase.
+- No commit, push, merge or deployment. The edits remain in the working tree for lead review.
+
+### Next pickup
+
+Review the uncommitted diff and render a session-linked operator ticket at phone and laptop widths.
+The underlying provider/telemetry sources remain disabled; a real Daily callback still has to be
+verified before activation.

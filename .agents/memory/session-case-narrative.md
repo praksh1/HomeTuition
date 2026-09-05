@@ -18,4 +18,12 @@ share history; message read receipts; first whiteboard stroke, clear operations 
 coarse connection-quality buckets; independent payment-provider reconciliation; independent media-
 provider presence. The operator screen says each of these plainly.
 
+The disabled session-proof scaffolding is now adapted into that same account when its already-
+computed summary is present. Provider meetings stay separate, named participant observations are
+compared with the classroom socket, and coarse device reports are labelled self-reported. The
+provider's internal meeting ids and raw diagnostic fields never reach the prose. The older parallel
+technical proof block was removed from the screen; its facts, sources, uncertainties and timeline
+entries now live in the one readable narrative, while the attendance rows and factual findings stay
+visible underneath for auditability.
+
 This narrative is evidence for a person. It never approves or denies a refund.

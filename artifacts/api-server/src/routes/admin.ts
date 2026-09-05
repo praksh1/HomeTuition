@@ -488,6 +488,9 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
         enrollments: bookings,
         scheduleChanges,
         messages,
+        // Already computed above from the same source reads. The narrative never requeries or
+        // reconstructs provider evidence, so these two operator views cannot drift.
+        proof,
       });
     }
   }

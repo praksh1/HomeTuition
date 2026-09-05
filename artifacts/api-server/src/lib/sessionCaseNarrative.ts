@@ -6,6 +6,8 @@
  * a claim that something did not happen.
  */
 
+import type { SessionProofSummary } from "./sessionProof/aggregate.ts";
+
 export interface CaseSession {
   id: number;
   teacherId: number;
@@ -66,7 +68,7 @@ export interface CaseTimelineEntry {
   at: string;
   code: string;
   detail: string;
-  source: "session" | "booking" | "message" | "classroom-socket";
+  source: "session" | "booking" | "message" | "classroom-socket" | "video-provider" | "device-report";
 }
 
 export interface SessionCaseNarrative {
@@ -74,6 +76,8 @@ export interface SessionCaseNarrative {
   summary: CaseNarrativeLine[];
   timeline: CaseTimelineEntry[];
   unavailable: string[];
+  /** Source limitations and disagreements that must travel with the readable account. */
+  sourceNotes: string[];
 }
 
 export interface NarrativeInput {
@@ -84,6 +88,8 @@ export interface NarrativeInput {
   enrollments: CaseEnrollment[];
   scheduleChanges: CaseScheduleChange[];
   messages: CaseMessage[];
+  /** Already assembled by the route. This function never reads an evidence source itself. */
+  proof?: SessionProofSummary | null;
   formatTime?: (value: Date | string) => string;
 }
 
@@ -118,6 +124,201 @@ function timingSentence(actualMs: number, expectedMs: number, subject: string): 
   if (Math.abs(delta) <= 1) return `${subject} on time.`;
   if (delta > 0) return `${subject} ${delta} minutes late.`;
   return `${subject} ${Math.abs(delta)} minutes early.`;
+}
+
+function sourcePerson(proof: SessionProofSummary, userId: number | undefined): string | null {
+  if (userId === undefined) return null;
+  return proof.people.find((person) => person.userId === userId)?.name ?? null;
+}
+
+function addProofAccount(
+  input: NarrativeInput,
+  summary: CaseNarrativeLine[],
+  timeline: CaseTimelineEntry[],
+  unavailableFacts: string[],
+  sourceNotes: string[],
+  formatTime: (value: Date | string) => string,
+): void {
+  const proof = input.proof;
+  if (!proof) {
+    unavailableFacts.push(
+      "Independent video-provider records and device connection reports were not assembled for this account.",
+    );
+    return;
+  }
+
+  summary.push({
+    code: "evidence_sources",
+    detail:
+      `Sikshya's classroom attendance record is ${proof.sources.ledger ? "available" : "unavailable"}. ` +
+      `The independent video-provider record is ${proof.sources.provider ? "available" : "unavailable"}. ` +
+      `Participants' coarse device connection reports are ${proof.sources.telemetry ? "available" : "unavailable"}.`,
+  });
+
+  if (!proof.sources.provider) {
+    unavailableFacts.push(
+      "The independent video-provider record is unavailable. This does not mean that no video meeting occurred.",
+    );
+  } else if (proof.providerMeetings.length === 0) {
+    summary.push({
+      code: "provider_meetings_none",
+      detail:
+        "The video-provider source was readable but supplied no meeting start-and-end record for this session. " +
+        "That is a missing provider record, not proof that the class did not occur.",
+    });
+  } else {
+    summary.push({
+      code: "provider_meeting_count",
+      detail:
+        `The video provider recorded ${proof.providerMeetings.length} separate meeting ` +
+        `${proof.providerMeetings.length === 1 ? "instance" : "instances"} for this session. ` +
+        (proof.providerMeetings.length > 1
+          ? "They are listed separately because time between them is not measured meeting time."
+          : "It is kept separate from Sikshya's classroom-socket attendance."),
+    });
+    proof.providerMeetings.forEach((meeting, index) => {
+      const start = meeting.startedAtMs === null
+        ? "its start time was not supplied"
+        : `it started on ${formatTime(new Date(meeting.startedAtMs))}`;
+      const end = meeting.endedAtMs === null
+        ? "its end time was not supplied"
+        : `it ended on ${formatTime(new Date(meeting.endedAtMs))}`;
+      const length = meeting.spanMs.available
+        ? `The provider-measured span was about ${minutes(meeting.spanMs.value)} minutes.`
+        : "Its provider-measured length is unavailable because both ends were not supplied.";
+      summary.push({
+        code: `provider_meeting_${index + 1}`,
+        detail: `Provider meeting ${index + 1}: ${start}; ${end}. ${length}`,
+      });
+    });
+  }
+
+  const relevantPeople = proof.people.filter((person) => {
+    const inSocket = person.presentMs.available;
+    const namedByProvider = person.providerJoinCount.available && person.providerJoinCount.value > 0;
+    const disagreement =
+      proof.sources.ledger && proof.sources.provider && person.providerJoinCount.available && inSocket !== namedByProvider;
+    return person.role === "teacher" || person.userId === input.reporterId || disagreement;
+  });
+
+  relevantPeople.forEach((person, index) => {
+    const ledgerReadable = proof.sources.ledger;
+    const inSocket = person.presentMs.available;
+    const namedJoins = person.providerJoinCount.available ? person.providerJoinCount.value : null;
+    let detail: string;
+    if (inSocket && namedJoins !== null && namedJoins > 0) {
+      detail =
+        `Two sources recorded ${person.name}: Sikshya's authenticated classroom socket was open for about ` +
+        `${minutes(person.presentMs.value)} minutes, and the video provider named the account in ` +
+        `${namedJoins} join ${namedJoins === 1 ? "event" : "events"}. This is source agreement about presence only.`;
+    } else if (inSocket && namedJoins === 0) {
+      detail =
+        `The sources do not agree about ${person.name}: Sikshya's authenticated classroom socket was open for about ` +
+        `${minutes(person.presentMs.value)} minutes, while the readable video-provider record contains no named join ` +
+        "for this account. The record does not identify why they differ.";
+    } else if (!inSocket && ledgerReadable && namedJoins !== null && namedJoins > 0) {
+      detail =
+        `The sources do not agree about ${person.name}: the video provider named the account in ${namedJoins} join ` +
+        `${namedJoins === 1 ? "event" : "events"}, while Sikshya's readable classroom-socket ledger has no row for ` +
+        "this account. The record does not identify why they differ.";
+    } else if (!ledgerReadable && namedJoins !== null && namedJoins > 0) {
+      detail =
+        `The video provider named ${person.name} in ${namedJoins} join ${namedJoins === 1 ? "event" : "events"}. ` +
+        "Sikshya's classroom-socket ledger was unavailable, so the two sources cannot be compared.";
+    } else if (inSocket) {
+      detail =
+        `Sikshya's authenticated classroom socket recorded ${person.name} for about ` +
+        `${minutes(person.presentMs.value)} minutes. The provider could not tie its participant events to this account, ` +
+        "so independent participant corroboration is unavailable.";
+    } else if (ledgerReadable && namedJoins !== null && namedJoins === 0) {
+      detail =
+        `Neither readable source has a person-specific presence record for ${person.name}. This says only what these ` +
+        "sources stored; it does not establish the reason.";
+    } else if (!ledgerReadable && namedJoins !== null && namedJoins === 0) {
+      detail =
+        `The readable video-provider record contains no named join for ${person.name}. Sikshya's classroom-socket ` +
+        "ledger was unavailable, so the sources cannot be compared.";
+    } else {
+      detail =
+        `Person-specific source comparison is unavailable for ${person.name}: the classroom ledger has no row and ` +
+        "the provider could not tie participant events to this account.";
+    }
+    summary.push({ code: `participant_source_account_${index + 1}`, detail });
+
+    if (!proof.sources.telemetry) return;
+    if (!person.qualityBuckets.available) {
+      summary.push({
+        code: `device_quality_unavailable_${index + 1}`,
+        detail:
+          `No device connection-quality report is available for ${person.name}. This is not evidence of a good connection.`,
+      });
+      return;
+    }
+    const labels = Object.entries(person.qualityBuckets.value)
+      .filter(([, count]) => count > 0)
+      .map(([quality, count]) => `${count} ${quality}`)
+      .join(", ");
+    const reconnects = person.reportedReconnects.available
+      ? ` The device also reported ${person.reportedReconnects.value} ` +
+        `${person.reportedReconnects.value === 1 ? "reconnection" : "reconnections"}.`
+      : " The number of device-reported reconnections is unavailable.";
+    summary.push({
+      code: `device_quality_${index + 1}`,
+      detail:
+        `${person.name}'s device submitted coarse connection reports: ${labels || "no labelled samples"}.` +
+        reconnects + " These reports came from the participant's own device and do not establish a cause.",
+    });
+  });
+
+  for (const entry of proof.timeline) {
+    if (entry.source !== "provider" && entry.source !== "client-telemetry") continue;
+    if (!Number.isFinite(entry.atMs)) continue;
+    const name = sourcePerson(proof, entry.userId);
+    let detail: string;
+    switch (entry.code) {
+      case "provider_meeting_started":
+        detail = "The video provider recorded a meeting starting.";
+        break;
+      case "provider_meeting_ended":
+        detail = "The video provider recorded a meeting ending.";
+        break;
+      case "provider_participant_joined":
+        detail = name
+          ? `The video provider recorded ${name} joining the meeting.`
+          : "The video provider recorded a participant joining but could not tie the event to a Sikshya account.";
+        break;
+      case "provider_participant_left":
+        detail = name
+          ? `The video provider recorded ${name} leaving the meeting.`
+          : "The video provider recorded a participant leaving but could not tie the event to a Sikshya account.";
+        break;
+      case "reconnected":
+        detail = name ? `${name}'s device reported reconnecting.` : "A participant's device reported reconnecting.";
+        break;
+      case "connection_degraded": {
+        const quality = entry.detail.includes("bad") ? "bad" : entry.detail.includes("warning") ? "warning" : "degraded";
+        detail = name
+          ? `${name}'s device reported its connection as ${quality}.`
+          : `A participant's device reported its connection as ${quality}.`;
+        break;
+      }
+      default:
+        continue;
+    }
+    timeline.push({
+      at: new Date(entry.atMs).toISOString(),
+      code: entry.code,
+      detail,
+      source: entry.source === "provider" ? "video-provider" : "device-report",
+    });
+  }
+
+  if (!proof.sources.telemetry) {
+    unavailableFacts.push(
+      "Coarse participant-device connection reports are unavailable. Their absence is not evidence of a problem-free connection.",
+    );
+  }
+  sourceNotes.push(...proof.caveats);
 }
 
 function paymentSentence(
@@ -158,6 +359,13 @@ export function buildSessionCaseNarrative(input: NarrativeInput): SessionCaseNar
   const scheduledEndMs = scheduledMs === null ? null : scheduledMs + session.duration * 60_000;
   const summary: CaseNarrativeLine[] = [];
   const timeline: CaseTimelineEntry[] = [];
+  const unavailableFacts: string[] = [
+    "Camera, microphone, reactions, hand-raise and screen-share state are not recorded by Sikshya.",
+    "Message read/seen receipts are not stored, so this record cannot say who read a message.",
+    "The first whiteboard stroke, clear actions and per-tool use are not stored; only accepted change counts are available.",
+    "A stored payment status or reference is not independent confirmation that the payment provider settled the money.",
+  ];
+  const sourceNotes: string[] = [];
 
   summary.push({
     code: "created",
@@ -350,19 +558,19 @@ export function buildSessionCaseNarrative(input: NarrativeInput): SessionCaseNar
     summary.push({ code: "class_end_unavailable", detail: "No class-end time is recorded." });
   }
 
-  timeline.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  addProofAccount(input, summary, timeline, unavailableFacts, sourceNotes, formatTime);
+
+  timeline.sort((a, b) => {
+    const byTime = new Date(a.at).getTime() - new Date(b.at).getTime();
+    if (byTime !== 0) return byTime;
+    return `${a.source}|${a.code}|${a.detail}`.localeCompare(`${b.source}|${b.code}|${b.detail}`);
+  });
 
   return {
     sessionId: session.id,
     summary,
     timeline,
-    unavailable: [
-      "Camera, microphone, reactions, hand-raise and screen-share state are not recorded by Sikshya.",
-      "Message read/seen receipts are not stored, so this record cannot say who read a message.",
-      "The first whiteboard stroke, clear actions and per-tool use are not stored; only accepted change counts are available.",
-      "Connection-quality labels such as strong, moderate or weak are not collected yet. Reconnects and socket gaps are available.",
-      "A stored payment status or reference is not independent confirmation that the payment provider settled the money.",
-      "The current attendance record proves the authenticated Sikshya classroom socket was open; it does not by itself prove usable Daily audio or video.",
-    ],
+    unavailable: [...new Set(unavailableFacts)],
+    sourceNotes: [...new Set(sourceNotes)],
   };
 }
