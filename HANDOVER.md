@@ -840,6 +840,42 @@ The question for the owner is whether it blocks launch. It is a real security ga
 while the product has few users and no attacker; it gets more serious the moment accounts are
 worth taking.
 
+### 8.10 Independent proof that a class happened — and whether it costs money
+
+Right now, when a student says the teacher never showed up and the teacher says they were there,
+**the only record is our own.** The app's classroom connection writes down who was connected and
+for how long. That is the right main record, and it has one weakness a real argument will find: a
+teacher disputing it is disputing the very thing being used against them.
+
+Daily saw the same call. If Daily tells us what it saw, and the two agree, a decision is far
+harder to argue with. All the code for that is written, tested, and **switched off** — see
+`SESSION-PROOF.md`.
+
+Two things stop it being turned on, and one of them is yours to decide:
+
+1. **Several details of how Daily talks to us could not be checked against Daily's own
+   documentation** — the site is unreachable from the environment this was built in. How it proves
+   a message came from it, and which field names it uses for a participant and for a meeting, are
+   all written from a specification given in review rather than read from the source. One real
+   message needs to be received and checked before any of it is trusted. That is engineering work,
+   not a decision.
+
+2. **Turning it on may require a payment card on the Daily account.** This could not be checked
+   without opening your account, and **nothing was bought, no card was added and no plan was
+   changed.** So:
+
+   - **Leave it off.** Costs nothing. Refund arguments keep resting on our own record alone.
+   - **Add a card to Daily** (if it turns out to be needed) so Daily can notify us. A real cost,
+     and it would need your say-so.
+   - **Build the free alternative instead** — after each class, *ask* Daily what happened rather
+     than waiting to be told. No card, no public address for Daily to call, and it uses the key
+     the platform already has. It costs one extra request per class, only works after the lesson
+     rather than during it, and it is not certain a free account can make that request either. It
+     has not been built.
+
+None of the three is urgent. The point of writing it down is that "we have independent proof of
+attendance" is currently **not true**, and nobody should plan a refund policy as though it were.
+
 ---
 
 ## 9. Before this goes to a store or a real launch

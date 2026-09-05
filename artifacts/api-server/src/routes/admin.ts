@@ -25,6 +25,8 @@ import { recordActivity, readActivity } from "../lib/activityLog";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor } from "../lib/sessionEvidence";
 import { buildSessionCaseNarrative, type SessionCaseNarrative } from "../lib/sessionCaseNarrative";
+import { summarizeSessionProof, type SessionProofSummary } from "../lib/sessionProof/aggregate";
+import { providerEventsFor, qualitySamplesFor } from "./sessionProof";
 import { costAt, egressGbAt, monthWindow, usageIn } from "../lib/videoUsage";
 import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
@@ -329,6 +331,13 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
   let findings: ReturnType<typeof findingsFor> = [];
   let messages: { senderName: string; senderRole: string; body: string; createdAt: Date }[] = [];
   let caseNarrative: SessionCaseNarrative | null = null;
+  /**
+   * The provider-corroborated view, or null when there is no class to summarise.
+   *
+   * Additive: `attendance` and `findings` above are unchanged and remain the primary evidence. This
+   * sits beside them and says which sources agreed — and, more importantly, which were not there.
+  */
+  let proof: SessionProofSummary | null = null;
 
   if (ticket.sessionId !== null) {
     const [row] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, ticket.sessionId));
@@ -337,6 +346,17 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
       session = { ...row, endedAt: activity.endedAt };
       attendance = await attendanceFor(row.id);
       const paid = await enrolledStudents(row.id);
+      /*
+        The teacher, by name, from the session's own row rather than from who happened to turn up.
+
+        A teacher who never joined leaves no trace in any of the sources below, so without this
+        they simply would not appear — and "the teacher is absent from the evidence" is the single
+        most consequential thing this page can say.
+      */
+      const [teacher] = await db
+        .select({ userId: usersTable.id, name: usersTable.name })
+        .from(usersTable)
+        .where(eq(usersTable.id, row.teacherId));
       if (attendance.known) {
         findings = findingsFor(
           { date: row.date, duration: row.duration, startedAt: row.startedAt, endedAt: activity.endedAt },
@@ -350,6 +370,71 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
        * Shown in full rather than summarised: what somebody actually wrote, and when, is the
        * thing being judged.
        */
+      /*
+        Every source is read with its own availability, never inferred from an empty list.
+
+        An empty array is exactly what a failed query and a quiet class both look like, and
+        `summarizeSessionProof` is built so the difference reaches an operator instead of being
+        flattened into a zero. See `lib/sessionProof/aggregate.ts`.
+      */
+      const [providerEvents, quality] = await Promise.all([
+        providerEventsFor(row.id),
+        qualitySamplesFor(row.id),
+      ]);
+      proof = summarizeSessionProof({
+        session: {
+          scheduledStartMs: new Date(row.date).getTime(),
+          durationMinutes: row.duration,
+          startedAtMs: row.startedAt ? new Date(row.startedAt).getTime() : null,
+          endedAtMs: activity.endedAt ? new Date(activity.endedAt).getTime() : null,
+        },
+        ledger: attendance.rows.map((r) => ({
+          userId: r.userId,
+          name: r.name,
+          role: r.role === "teacher" ? "teacher" : "student",
+          firstJoinedAtMs: new Date(r.firstJoinedAt).getTime(),
+          lastSeenAtMs: new Date(r.lastSeenAt).getTime(),
+          presentMs: r.presentMs,
+          joinCount: r.joinCount,
+          drawCount: r.drawCount,
+          messageCount: r.messageCount,
+        })),
+        providerEvents: providerEvents.rows.map((e) => ({
+          eventType: e.eventType as "meeting.started" | "meeting.ended" | "participant.joined" | "participant.left",
+          eventAtMs: new Date(e.eventAt).getTime(),
+          eventAtSource: e.eventAtSource === "occurred" ? ("occurred" as const) : ("delivery" as const),
+          providerMeetingId: e.providerMeetingId,
+          participantUserId: e.participantUserId,
+          identityRejected: e.identityRejected,
+          participantIsOwner: e.participantIsOwner,
+          durationSeconds: e.durationSeconds,
+        })),
+        quality: quality.rows.map((q) => ({
+          userId: q.userId,
+          observedAtMs: new Date(q.observedAt).getTime(),
+          quality: (["good", "warning", "bad", "unknown"].includes(q.quality) ? q.quality : "unknown") as
+            "good" | "warning" | "bad" | "unknown",
+          reconnect: q.reconnect,
+        })),
+        available: { ledger: attendance.known, provider: providerEvents.known, telemetry: quality.known },
+        /*
+          Everybody who was supposed to be here — and the teacher is the point.
+
+          This listed only paid students, which meant the one person a dispute is usually about
+          vanished from the summary in exactly the case that matters: a teacher who never joined
+          has no ledger row, no provider event and no telemetry, so nothing else in this object
+          would have produced them. The page then showed a class with three students and no
+          teacher at all, which reads as a data problem rather than as the finding it is.
+
+          Seeded first, so `summarizeSessionProof` sorts them to the top even when every source is
+          silent about them.
+        */
+        expected: [
+          ...(teacher ? [{ userId: teacher.userId, name: teacher.name, role: "teacher" as const }] : []),
+          ...paid.map((pp) => ({ userId: pp.userId, name: pp.name, role: "student" as const })),
+        ],
+      });
+
       messages = await db
         .select({
           senderName: sessionMessagesTable.senderName,
@@ -432,6 +517,7 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
     attendance,
     findings,
     caseNarrative,
+    proof,
     messages,
     reporterActivity,
   });

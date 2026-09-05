@@ -37,7 +37,9 @@
     "test:class-chat": "node scripts/class-chat/run.mjs",
     "test:tiers": "node scripts/tier-limits/run.mjs",
     "test:journey": "node scripts/journey-audit/run.mjs",
-    "test:test-student": "node scripts/test-student-access/run.mjs"
+    "test:test-student": "node scripts/test-student-access/run.mjs",
+    "test:proof": "node scripts/session-proof/run.mjs",
+    "test:retention": "node scripts/retention-sweep/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1116.0",

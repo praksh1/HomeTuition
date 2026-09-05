@@ -1117,3 +1117,216 @@ export async function ensureAccountOnboardingTables(): Promise<void> {
     );
   }
 }
+
+/**
+ * Creates the two session-proof tables if they are not there yet.
+ *
+ * Same contract as every other function in this file, and the same reason for existing: the API
+ * redeploys itself on push while `db:push` is a command somebody runs by hand, and the two are
+ * never in step. Both statements are `CREATE TABLE IF NOT EXISTS`; nothing here drops, alters or
+ * rewrites anything, and a failure is logged and the server starts anyway.
+ *
+ * What stops working if this fails is the *corroboration*, not the classroom. Classes run, the
+ * socket ledger keeps recording, and the operator view says the provider source is unavailable —
+ * which is the honest answer and exactly what `aggregate.ts` is built to distinguish from zero.
+ *
+ * The column definitions must stay in step with `lib/db/src/schema/sessionProviderEvents.ts` and
+ * `sessionQualitySamples.ts`. Foreign keys and indexes are named explicitly to match what
+ * drizzle-kit generates, so a later `db:push` sees no drift and does not offer to recreate them.
+ */
+export async function ensureSessionProofTables(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_provider_events" (
+        "id" serial PRIMARY KEY,
+        "provider" text NOT NULL,
+        "provider_event_id" text NOT NULL,
+        "event_type" text NOT NULL,
+        "event_at" timestamp with time zone NOT NULL,
+        "event_at_source" text NOT NULL DEFAULT 'delivery',
+        "session_id" integer,
+        "provider_room" text NOT NULL,
+        "provider_meeting_id" text,
+        "provider_participant_id" text,
+        "participant_user_id" integer,
+        "identity_rejected" boolean,
+        "participant_is_owner" boolean,
+        "duration_seconds" integer,
+        "received_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_provider_events_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE SET NULL,
+        CONSTRAINT "session_provider_events_participant_user_id_users_id_fk"
+          FOREIGN KEY ("participant_user_id") REFERENCES "users"("id") ON DELETE SET NULL
+      )
+    `);
+    /*
+      The additive half, for a database that already has the table from an earlier build of this
+      branch. `CREATE TABLE IF NOT EXISTS` is a no-op there and would leave the new columns
+      missing, which is the failure this whole file exists to prevent.
+
+      Still create-only in the sense that matters: nothing is dropped, no type is changed, no row
+      is rewritten. `ADD COLUMN IF NOT EXISTS` on a nullable column (or one with a default) is a
+      catalogue update in modern Postgres, not a table rewrite.
+    */
+    await db.execute(sql`
+      ALTER TABLE "session_provider_events"
+        ADD COLUMN IF NOT EXISTS "event_at_source" text NOT NULL DEFAULT 'delivery'
+    `);
+    await db.execute(sql`
+      ALTER TABLE "session_provider_events"
+        ADD COLUMN IF NOT EXISTS "identity_rejected" boolean
+    `);
+    /*
+      Postgres has no `ADD CONSTRAINT IF NOT EXISTS`, so the catalogue is asked first.
+
+      The foreign key is only safe to add because the route resolves a provider's claimed user id
+      against `getSessionMembership` before storing and nulls anything that is not a member — so no
+      value in this column can fail to reference a user. `NOT VALID` avoids scanning existing rows
+      at boot: new rows are checked, and anything already stored predates the correlation rule and
+      is not worth a table scan during startup to prove.
+    */
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'session_provider_events_participant_user_id_users_id_fk'
+        ) THEN
+          ALTER TABLE "session_provider_events"
+            ADD CONSTRAINT "session_provider_events_participant_user_id_users_id_fk"
+            FOREIGN KEY ("participant_user_id") REFERENCES "users"("id") ON DELETE SET NULL NOT VALID;
+        END IF;
+      END $$;
+    `);
+    // The unique index is the idempotency guarantee, and it is enforced by the database rather
+    // than by a read-then-write that two concurrent deliveries of the same event could race.
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "session_provider_events_provider_event_idx"
+        ON "session_provider_events" ("provider", "provider_event_id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_provider_events_session_idx"
+        ON "session_provider_events" ("session_id", "event_at")
+    `);
+    /*
+      The second idempotency key, and the one that actually catches Daily.
+
+      Daily warns that a duplicate `participant.joined` or `participant.left` can arrive under a
+      *different* event id, and recommends deduplicating on the event type together with
+      `payload.session_id` — the participant's connection id, stored here as
+      `provider_participant_id`. The unique index above cannot see that: two ids, two rows, one
+      arrival, counted twice.
+
+      Partial on purpose. A delivery with no participant id cannot be deduplicated this way and
+      must not collide with every other such delivery, and meeting events describe the room rather
+      than a person — a room legitimately holds several meetings.
+
+      One trap worth knowing, found by breaking this on purpose: `CREATE UNIQUE INDEX IF NOT
+      EXISTS` silently does nothing when a **non-unique** index of the same name already exists.
+      It matches on the name alone, so a database that somehow acquired the plain version would
+      keep it forever and this guard would be off with no error anywhere. Nothing has ever deployed
+      the plain version — the index is new on this branch — but if that is ever in doubt, check
+      `pg_indexes.indexdef` for the word UNIQUE rather than trusting that this statement ran.
+    */
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "session_provider_events_participant_dedupe_idx"
+        ON "session_provider_events" ("provider", "event_type", "provider_participant_id")
+        WHERE "provider_participant_id" IS NOT NULL
+          AND "event_type" IN ('participant.joined', 'participant.left')
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_provider_events_event_at_idx"
+        ON "session_provider_events" ("event_at")
+    `);
+    // Retention sweeps by arrival rather than by the event's own clock, so every stored row is
+    // genuinely kept the full window. See `lib/sessionProof/retentionSweep.ts`.
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_provider_events_received_at_idx"
+        ON "session_provider_events" ("received_at")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_quality_samples" (
+        "id" serial PRIMARY KEY,
+        "session_id" integer NOT NULL,
+        "user_id" integer NOT NULL,
+        "role" text NOT NULL,
+        "quality" text NOT NULL,
+        "reconnect" boolean NOT NULL DEFAULT false,
+        "observed_at" timestamp with time zone NOT NULL,
+        "received_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_quality_samples_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "session_quality_samples_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_quality_samples_session_idx"
+        ON "session_quality_samples" ("session_id", "user_id", "observed_at")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_quality_samples_observed_at_idx"
+        ON "session_quality_samples" ("observed_at")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_quality_samples_received_at_idx"
+        ON "session_quality_samples" ("received_at")
+    `);
+
+    /*
+      The durable summary that outlives the fine-grained rows.
+
+      Created here so the retention decision and the table it implies land together, and so a
+      deployment is never in the state where a sweep could run with nowhere to write. **Nothing
+      writes it on a schedule** — `sweepExpiredSessionProof` is not called from anywhere in this
+      repository. See `lib/sessionProof/retentionSweep.ts`.
+    */
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_proof_aggregates" (
+        "id" serial PRIMARY KEY,
+        "session_id" integer NOT NULL,
+        "provider_saw_meeting" boolean,
+        "provider_meeting_count" integer,
+        "provider_meeting_span_ms" integer,
+        "provider_meetings_unmeasured" integer,
+        "provider_participant_join_events" integer,
+        "reported_reconnects_total" integer,
+        "quality_good" integer,
+        "quality_warning" integer,
+        "quality_bad" integer,
+        "quality_unknown" integer,
+        "unavailable_sources" text,
+        "late_arrivals" integer NOT NULL DEFAULT 0,
+        "covered_until" timestamp with time zone NOT NULL,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_proof_aggregates_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "session_proof_aggregates_session_idx"
+        ON "session_proof_aggregates" ("session_id")
+    `);
+    // Additive, for a database that already has the table from an earlier build of this branch.
+    await db.execute(sql`
+      ALTER TABLE "session_proof_aggregates"
+        ADD COLUMN IF NOT EXISTS "late_arrivals" integer NOT NULL DEFAULT 0
+    `);
+    await db.execute(sql`
+      ALTER TABLE "session_proof_aggregates"
+        ADD COLUMN IF NOT EXISTS "provider_meetings_unmeasured" integer
+    `);
+
+    logger.info("session proof tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the session proof tables; run `pnpm run db:push`. " +
+        "Classes still run and the attendance ledger still records them — but there is no " +
+        "independent provider corroboration, and the operator evidence view will say so rather " +
+        "than showing an empty timeline as though nothing happened.",
+    );
+  }
+}

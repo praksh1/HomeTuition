@@ -15,6 +15,7 @@ import dropsRouter from "./drops";
 import monthlyRouter from "./monthly";
 import monthlyPortalRouter from "./monthlyPortal";
 import onboardingRouter from "./onboarding";
+import sessionProofRouter from "./sessionProof";
 
 const router: IRouter = Router();
 
@@ -32,6 +33,7 @@ router.use(dropsRouter);
 router.use(monthlyRouter);
 router.use(monthlyPortalRouter);
 router.use(onboardingRouter);
+router.use(sessionProofRouter);
 router.use(operatorsRouter);
 router.use(adminRouter);
 router.use(passwordResetRouter);
