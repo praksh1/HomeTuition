@@ -34,9 +34,10 @@ socket being open does not prove Daily media worked.
 - The operator ticket view already brings attendance, findings and the persisted class thread
   together.
 
-Important limitations: this is classroom-socket evidence, not media-call evidence. The current
-board/chat counters can also be inflated by replayed or invalid frames and must never decide a
-payout alone. `startedAt`/`endedAt` are app actions, not provider facts.
+Important limitations: this is classroom-socket evidence, not media-call evidence. Before this
+branch, board/chat counters could also be inflated by replayed or invalid frames; Tier 2 now
+counts only accepted scene changes and non-empty messages. Even corrected counters must never
+decide a payout alone. `startedAt`/`endedAt` are app actions, not provider facts.
 
 ## Tier 1 — evidence and policy contract (Codex)
 
@@ -55,6 +56,9 @@ requires the classroom socket and media provider to be independently readable, d
 basic contradiction where one saw the teacher and the other did not, and reports optional
 network gaps without treating them as absence. It is intentionally not wired to production
 until provider evidence exists.
+
+The classroom hub now also refuses to count stale/replayed scene versions and blank/malformed
+chat frames as evidence. The existing attendance integration suite includes both cases.
 
 ## Tier 3 — signed provider evidence (Claude, isolated)
 

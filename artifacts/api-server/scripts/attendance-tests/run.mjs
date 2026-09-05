@@ -173,10 +173,15 @@ async function run() {
 
     t.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3, d: "M1,1 L2,2" });
     t.send({ type: "scene_update", elements: [{ id: "e1", version: 1, type: "rectangle" }] });
+    // The same version is stale/replayed and must not inflate the evidence ledger.
+    t.send({ type: "scene_update", elements: [{ id: "e1", version: 1, type: "rectangle" }] });
     // Refused by the sanitiser — a pen stroke with no path. Counted nowhere.
     t.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3 });
     t.send({ type: "chat", text: "Good morning" });
     s.send({ type: "chat", text: "Namaste" });
+    // Empty/malformed chat frames are not messages and must not inflate evidence either.
+    t.send({ type: "chat", text: "   " });
+    s.send({ type: "chat" });
     // A student trying to draw: refused by the hub, and must not be recorded as having drawn.
     s.send({ type: "draw_commit", tool: "pen", color: "#000", width: 3, d: "M5,5 L6,6" });
     await wait(400);
@@ -189,8 +194,13 @@ async function run() {
     check("board writes are counted for the teacher", finalTeacher?.drawCount === 2, `drawCount=${finalTeacher?.drawCount}`);
     check("a malformed stroke the board refused is not counted as drawing",
       finalTeacher?.drawCount === 2, `a stroke with no path was also sent; drawCount=${finalTeacher?.drawCount}`);
+    check("a stale scene replay is not counted as fresh board activity",
+      finalTeacher?.drawCount === 2, `the same element version was replayed; drawCount=${finalTeacher?.drawCount}`);
     check("a student's refused stroke is not counted as drawing", finalStudent?.drawCount === 0, `drawCount=${finalStudent?.drawCount}`);
     check("chat is counted for whoever sent it", finalTeacher?.messageCount === 1 && finalStudent?.messageCount === 1,
+      `teacher=${finalTeacher?.messageCount} student=${finalStudent?.messageCount}`);
+    check("blank and malformed chat frames are not counted as messages",
+      finalTeacher?.messageCount === 1 && finalStudent?.messageCount === 1,
       `teacher=${finalTeacher?.messageCount} student=${finalStudent?.messageCount}`);
     check("time in the room is written down when the socket closes",
       (finalTeacher?.presentMs ?? 0) >= 500, `presentMs=${finalTeacher?.presentMs}`);

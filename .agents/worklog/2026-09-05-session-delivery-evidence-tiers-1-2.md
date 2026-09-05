@@ -27,6 +27,9 @@ Work in parallel with Claude and preserve a detailed handover.
    the new assertions can detect removal of the protection.
 7. Assigned Claude Tiers 3–4 on a separate branch: signed Daily webhook evidence, coarse network
    quality, provider-independent aggregation, operator timeline, retention design and tests.
+8. Corrected two integrity weaknesses in the existing ledger: blank/malformed chat frames no
+   longer increase `messageCount`, and stale/replayed Excalidraw element versions no longer
+   increase `drawCount`. Added both cases to the attendance integration suite.
 
 ## Verification
 
@@ -37,6 +40,9 @@ Work in parallel with Claude and preserve a detailed handover.
   OneDrive dependency installation.
 - API typecheck: blocked by the same pre-existing local `jose` resolution problem in
   `socialIdentity.ts`.
+- Attendance integration suite: could not start because no local API was listening on
+  `127.0.0.1:8080`; it stopped immediately with `ECONNREFUSED` before exercising a test. The
+  two new cases are present in the suite but still require a running API/database harness.
 - `pnpm install --offline --frozen-lockfile` reported the workspace already up to date and did
   not repair that local filesystem/package-resolution issue.
 - `git diff --check`: clean.
@@ -52,9 +58,10 @@ Work in parallel with Claude and preserve a detailed handover.
 
 ## Problems and decisions
 
-- The existing `drawCount` and `messageCount` are useful context but are not strong proof by
-  themselves: the hub can count replayed/stale scene frames or invalid chat attempts. They must
-  not drive refund or payout decisions alone.
+- `drawCount` and `messageCount` are useful context but are not strong proof by themselves.
+  This branch stops replayed/stale scene frames and invalid chat attempts inflating them, but
+  legitimate activity can still be minimal or gamed. They must not drive refund or payout
+  decisions alone.
 - Camera-off and silence are not evidence of failure; low-bandwidth teaching may intentionally
   use audio-only, screen share, or the board.
 - Fine-grained evidence should be retained for 30 days, then rolled up/deleted only after the
