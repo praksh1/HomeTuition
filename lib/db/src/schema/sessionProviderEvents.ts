@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { boolean, index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sessionsTable } from "./sessions";
 import { usersTable } from "./users";
@@ -112,9 +113,37 @@ export const sessionProviderEventsTable = pgTable(
     // Idempotency, enforced by the database rather than by a read-then-write that can race two
     // concurrent deliveries of the same event.
     uniqueIndex("session_provider_events_provider_event_idx").on(table.provider, table.providerEventId),
+    /*
+      The second idempotency key, and the one that actually catches Daily.
+
+      Daily warns that a duplicate `participant.joined` or `participant.left` **can arrive with a
+      different event id**, and recommends deduplicating on the event type together with
+      `payload.session_id` — the id of that participant's connection, which this table stores as
+      `provider_participant_id`. The unique index above is powerless against that: two rows, two
+      event ids, one arrival, counted twice. In attendance evidence a duplicated `participant.left`
+      understates somebody's time and a duplicated `joined` overstates their comings and goings,
+      and both distort the record in a money argument.
+
+      Partial, and deliberately so:
+      - `provider_participant_id IS NOT NULL` — a delivery that carried no participant id cannot be
+        deduplicated this way, and must not collide with every other such delivery.
+      - the two participant types only — `meeting.started` and `meeting.ended` describe the room
+        rather than a person, carry no participant id, and a room legitimately holds several
+        meetings.
+
+      Postgres treats a partial unique index as a real constraint, so this is enforced by the
+      database rather than by a read-then-write that two concurrent deliveries could race.
+    */
+    uniqueIndex("session_provider_events_participant_dedupe_idx")
+      .on(table.provider, table.eventType, table.providerParticipantId)
+      .where(
+        sql`${table.providerParticipantId} is not null and ${table.eventType} in ('participant.joined', 'participant.left')`,
+      ),
     // The hot read: everything about one class, in order.
     index("session_provider_events_session_idx").on(table.sessionId, table.eventAt),
-    // Retention sweeps by age; see `lib/sessionProof/retention.ts`.
+    // Retention sweeps by *arrival*, not by when the event says it happened; see
+    // `lib/sessionProof/retentionSweep.ts` for why the two are not interchangeable.
+    index("session_provider_events_received_at_idx").on(table.receivedAt),
     index("session_provider_events_event_at_idx").on(table.eventAt),
   ],
 );

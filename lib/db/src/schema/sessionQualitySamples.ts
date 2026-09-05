@@ -64,6 +64,9 @@ export const sessionQualitySamplesTable = pgTable(
     // The hot read: one class's samples in order, and the per-user count the rate limit checks.
     index("session_quality_samples_session_idx").on(table.sessionId, table.userId, table.observedAt),
     // Retention sweeps by age; see `lib/sessionProof/retention.ts`.
+    // Retention sweeps by arrival, so a sample is kept the full window from when we got it rather
+    // than from a timestamp its own device chose. See `lib/sessionProof/retentionSweep.ts`.
+    index("session_quality_samples_received_at_idx").on(table.receivedAt),
     index("session_quality_samples_observed_at_idx").on(table.observedAt),
   ],
 );

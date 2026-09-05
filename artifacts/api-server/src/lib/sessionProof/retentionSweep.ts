@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import {
   db,
   sessionProofAggregatesTable,
@@ -7,7 +7,11 @@ import {
 } from "@workspace/db";
 import {
   RETENTION_WINDOW_MS,
+  mergeSummary,
+  planRetention,
+  sessionRollUpEligibility,
   summariseExpiring,
+  type ExistingSummary,
   type ExpiringEvent,
   type ExpiringSample,
 } from "./retention";
@@ -35,15 +39,35 @@ import {
  * useful to nobody after the window in which a class can still be disputed. `retention.ts` holds
  * the window and the reasoning; this file is the mechanism.
  *
+ * ## A class moves all at once, or not at all
+ *
+ * The defect this design replaces: retention used to work row by row. A meeting that started at
+ * 10:00 and ended at 11:00 has two rows an hour apart, so on the day the window passed **the start
+ * expired an hour before the end**. One sweep took the start and recorded "1 meeting, span 0"; the
+ * next took the end and added another. The class ended up permanently summarised as two meetings
+ * of no length — a lesson that plainly happened, reduced to evidence that it did not, with the
+ * rows gone and no way to correct it.
+ *
+ * So every row a class has must be past the window, or none of them moves. A class held back costs
+ * a few days of storage; a class rolled up in halves costs the lesson.
+ *
+ * ## Age is measured from arrival, not from the event's own clock
+ *
+ * `received_at` — when this server wrote the row — not `event_at`, which is when the provider says
+ * the thing happened. A webhook delivered a week late carries an `event_at` a week old, so an age
+ * taken from it would delete the row after twenty-three days of actually holding it. Thirty days
+ * has to mean thirty days of us having it.
+ *
  * ## Aggregate first, delete second, one transaction
  *
  * The ordering is the safety property. A crash between "deleted the samples" and "wrote the
  * summary" destroys evidence and leaves nothing behind that says what it was — and unlike almost
  * every other failure in this product, that one cannot be retried into correctness.
  *
- * So: the expiring rows are locked, summarised, the summary is written, and only then are those
- * exact rows removed **by id**. Locking rather than re-querying by age matters because a row
- * inserted between the read and the delete would otherwise be deleted without ever being counted.
+ * So: every row for the class is locked, checked for eligibility, summarised, the summary is
+ * written, and only then are those exact rows removed **by id**. Locking rather than re-querying
+ * by age matters because a row inserted between the read and the delete would otherwise be deleted
+ * without ever being counted.
  */
 
 /** What each source could say, stated by the caller and never inferred from an empty list. */
@@ -71,21 +95,24 @@ export interface SweepResult {
   cutoffMs: number;
   dryRun: boolean;
   sessionsSummarised: number;
+  /**
+   * Classes that had *something* past the window but were left alone because something else was
+   * not.
+   *
+   * Reported rather than hidden: on any given day this is where every class mid-expiry sits, and a
+   * sweep that quietly did nothing to them would be indistinguishable from one that had nothing to
+   * do.
+   */
+  sessionsHeldBack: number;
   providerEventsRemoved: number;
   qualitySamplesRemoved: number;
+  /** Rows removed for a class that had already been summarised. See `late_arrivals`. */
+  lateArrivalsRemoved: number;
   /** Expired events that never correlated to a class. Summarised nowhere; there is nothing to say. */
   unattachedEventsRemoved: number;
 }
 
 const DEFAULT_SESSION_LIMIT = 200;
-
-/** Sources that had nothing to say, so a later reader still knows zero from unknown. */
-function unavailableSources(available: SweepAvailability): string | null {
-  const missing: string[] = [];
-  if (!available.provider) missing.push("provider");
-  if (!available.telemetry) missing.push("client-telemetry");
-  return missing.length > 0 ? missing.join(",") : null;
-}
 
 /**
  * Summarise and remove fine-grained proof older than the retention window.
@@ -103,25 +130,31 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
       cutoffMs,
       dryRun,
       sessionsSummarised: 0,
+      sessionsHeldBack: 0,
       providerEventsRemoved: 0,
       qualitySamplesRemoved: 0,
+      lateArrivalsRemoved: 0,
       unattachedEventsRemoved: 0,
     };
 
     /*
-      Which classes have anything expiring. Bounded, and ordered, so a first run over a long
+      Which classes have anything past the window. Bounded and ordered, so a first run over a long
       backlog is a series of short predictable passes rather than one that locks a table for
       minutes on a database that is also serving live classes.
+
+      This is only the candidate list. Whether a class may actually move is decided below, after
+      *all* of its rows are locked — a class with one row past the window and one inside it appears
+      here and is then held back.
     */
     const [fromEvents, fromSamples] = await Promise.all([
       tx
         .selectDistinct({ sessionId: sessionProviderEventsTable.sessionId })
         .from(sessionProviderEventsTable)
-        .where(and(isNotNull(sessionProviderEventsTable.sessionId), lt(sessionProviderEventsTable.eventAt, cutoff))),
+        .where(and(isNotNull(sessionProviderEventsTable.sessionId), lt(sessionProviderEventsTable.receivedAt, cutoff))),
       tx
         .selectDistinct({ sessionId: sessionQualitySamplesTable.sessionId })
         .from(sessionQualitySamplesTable)
-        .where(lt(sessionQualitySamplesTable.observedAt, cutoff)),
+        .where(lt(sessionQualitySamplesTable.receivedAt, cutoff)),
     ]);
     const sessionIds = [
       ...new Set(
@@ -135,25 +168,58 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
 
     for (const sessionId of sessionIds) {
       /*
-        Locked, not merely read.
+        Every row the class has, locked — not just the expired ones.
 
-        `FOR UPDATE` pins exactly these rows for the rest of the transaction, so the ids summarised
-        below and the ids deleted below are the same set. Deleting by age instead would also remove
-        anything that arrived in between — rows that were never counted into the summary that
-        replaced them.
+        Two reasons, and both are load-bearing. The eligibility rule needs to see the rows that are
+        *still inside* the window, because one of those holds the whole class back. And `FOR UPDATE`
+        pins exactly this set for the rest of the transaction, so the ids summarised below and the
+        ids deleted below are the same ones; deleting by age instead would also sweep away anything
+        that arrived in between, uncounted.
       */
       const eventRows = await tx
         .select({
           id: sessionProviderEventsTable.id,
           eventType: sessionProviderEventsTable.eventType,
           eventAt: sessionProviderEventsTable.eventAt,
+          receivedAt: sessionProviderEventsTable.receivedAt,
           providerMeetingId: sessionProviderEventsTable.providerMeetingId,
           participantUserId: sessionProviderEventsTable.participantUserId,
         })
         .from(sessionProviderEventsTable)
-        .where(and(eq(sessionProviderEventsTable.sessionId, sessionId), lt(sessionProviderEventsTable.eventAt, cutoff)))
+        .where(eq(sessionProviderEventsTable.sessionId, sessionId))
         .orderBy(asc(sessionProviderEventsTable.id))
         .for("update");
+
+      const sampleRows = await tx
+        .select({
+          id: sessionQualitySamplesTable.id,
+          quality: sessionQualitySamplesTable.quality,
+          reconnect: sessionQualitySamplesTable.reconnect,
+          receivedAt: sessionQualitySamplesTable.receivedAt,
+        })
+        .from(sessionQualitySamplesTable)
+        .where(eq(sessionQualitySamplesTable.sessionId, sessionId))
+        .orderBy(asc(sessionQualitySamplesTable.id))
+        .for("update");
+
+      if (eventRows.length === 0 && sampleRows.length === 0) continue;
+
+      /*
+        All or nothing.
+
+        A concurrent sweep that got here first will have committed its deletes, so this one now
+        sees no rows and skipped above. A class with anything still inside the window is left
+        entirely alone — including the parts of it that *are* past the window, which is the point.
+      */
+      const eligibility = sessionRollUpEligibility(
+        [...eventRows.map((r) => r.receivedAt.getTime()), ...sampleRows.map((r) => r.receivedAt.getTime())],
+        nowMs,
+      );
+      if (!eligibility.eligible) {
+        result.sessionsHeldBack += 1;
+        continue;
+      }
+
       const events: ExpiringEvent[] = eventRows.map((row) => ({
         id: row.id,
         eventType: row.eventType,
@@ -161,19 +227,11 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
         providerMeetingId: row.providerMeetingId,
         participantUserId: row.participantUserId,
       }));
-
-      const samples: ExpiringSample[] = await tx
-        .select({
-          id: sessionQualitySamplesTable.id,
-          quality: sessionQualitySamplesTable.quality,
-          reconnect: sessionQualitySamplesTable.reconnect,
-        })
-        .from(sessionQualitySamplesTable)
-        .where(and(eq(sessionQualitySamplesTable.sessionId, sessionId), lt(sessionQualitySamplesTable.observedAt, cutoff)))
-        .orderBy(asc(sessionQualitySamplesTable.id))
-        .for("update");
-
-      if (events.length === 0 && samples.length === 0) continue;
+      const samples: ExpiringSample[] = sampleRows.map((row) => ({
+        id: row.id,
+        quality: row.quality,
+        reconnect: row.reconnect,
+      }));
 
       const delta = summariseExpiring(events, samples);
       result.sessionsSummarised += 1;
@@ -183,44 +241,69 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
       if (dryRun) continue;
 
       /*
-        Merged into any summary already there, rather than replacing it.
+        The summary row, locked before it is read.
 
-        A class can expire in pieces — a sweep that ran last month took the first week's rows — and
-        an overwrite would silently drop everything the earlier pass recorded. Addition is right
-        for every figure here because every figure here is a count or a sum of per-meeting spans.
+        Locked after the evidence rows and never before, so two sweeps always take the two locks in
+        the same order and cannot deadlock. Read-then-write is safe here precisely because of the
+        lock — and it is worth the extra statement: the merge rule below has three cases per source
+        and expressing it as an `ON CONFLICT DO UPDATE` expression made it unreadable, which is how
+        a rule that fabricates zeroes hides.
       */
-      await tx
-        .insert(sessionProofAggregatesTable)
-        .values({
-          sessionId,
-          providerSawMeeting: available.provider ? delta.providerSawMeeting : null,
-          providerMeetingCount: available.provider ? delta.providerMeetingCount : null,
-          providerMeetingSpanMs: available.provider ? delta.providerMeetingSpanMs : null,
-          providerParticipantJoinEvents: available.provider ? delta.providerParticipantJoinEvents : null,
-          reportedReconnectsTotal: available.telemetry ? delta.reportedReconnectsTotal : null,
-          qualityGood: available.telemetry ? delta.qualityGood : null,
-          qualityWarning: available.telemetry ? delta.qualityWarning : null,
-          qualityBad: available.telemetry ? delta.qualityBad : null,
-          qualityUnknown: available.telemetry ? delta.qualityUnknown : null,
-          unavailableSources: unavailableSources(available),
-          coveredUntil: cutoff,
-        })
-        .onConflictDoUpdate({
-          target: sessionProofAggregatesTable.sessionId,
-          set: {
-            providerSawMeeting: sql`coalesce(${sessionProofAggregatesTable.providerSawMeeting}, false) OR ${delta.providerSawMeeting}`,
-            providerMeetingCount: sql`coalesce(${sessionProofAggregatesTable.providerMeetingCount}, 0) + ${delta.providerMeetingCount}`,
-            providerMeetingSpanMs: sql`coalesce(${sessionProofAggregatesTable.providerMeetingSpanMs}, 0) + ${delta.providerMeetingSpanMs}`,
-            providerParticipantJoinEvents: sql`coalesce(${sessionProofAggregatesTable.providerParticipantJoinEvents}, 0) + ${delta.providerParticipantJoinEvents}`,
-            reportedReconnectsTotal: sql`coalesce(${sessionProofAggregatesTable.reportedReconnectsTotal}, 0) + ${delta.reportedReconnectsTotal}`,
-            qualityGood: sql`coalesce(${sessionProofAggregatesTable.qualityGood}, 0) + ${delta.qualityGood}`,
-            qualityWarning: sql`coalesce(${sessionProofAggregatesTable.qualityWarning}, 0) + ${delta.qualityWarning}`,
-            qualityBad: sql`coalesce(${sessionProofAggregatesTable.qualityBad}, 0) + ${delta.qualityBad}`,
-            qualityUnknown: sql`coalesce(${sessionProofAggregatesTable.qualityUnknown}, 0) + ${delta.qualityUnknown}`,
-            coveredUntil: cutoff,
-            updatedAt: new Date(),
-          },
-        });
+      const [existingRow] = await tx
+        .select()
+        .from(sessionProofAggregatesTable)
+        .where(eq(sessionProofAggregatesTable.sessionId, sessionId))
+        .for("update");
+
+      const existing: ExistingSummary | null = existingRow
+        ? {
+            providerCovered: existingRow.providerMeetingCount !== null,
+            telemetryCovered: existingRow.qualityGood !== null,
+            providerSawMeeting: existingRow.providerSawMeeting,
+            providerMeetingCount: existingRow.providerMeetingCount,
+            providerMeetingSpanMs: existingRow.providerMeetingSpanMs,
+            providerMeetingsUnmeasured: existingRow.providerMeetingsUnmeasured,
+            providerParticipantJoinEvents: existingRow.providerParticipantJoinEvents,
+            reportedReconnectsTotal: existingRow.reportedReconnectsTotal,
+            qualityGood: existingRow.qualityGood,
+            qualityWarning: existingRow.qualityWarning,
+            qualityBad: existingRow.qualityBad,
+            qualityUnknown: existingRow.qualityUnknown,
+            lateArrivals: existingRow.lateArrivals,
+          }
+        : null;
+
+      const merged = mergeSummary(existing, delta, available, {
+        providerEvents: events.length,
+        qualitySamples: samples.length,
+      });
+      result.lateArrivalsRemoved += merged.lateArrivals - (existing?.lateArrivals ?? 0);
+
+      const values = {
+        providerSawMeeting: merged.providerSawMeeting,
+        providerMeetingCount: merged.providerMeetingCount,
+        providerMeetingSpanMs: merged.providerMeetingSpanMs,
+        providerMeetingsUnmeasured: merged.providerMeetingsUnmeasured,
+        providerParticipantJoinEvents: merged.providerParticipantJoinEvents,
+        reportedReconnectsTotal: merged.reportedReconnectsTotal,
+        qualityGood: merged.qualityGood,
+        qualityWarning: merged.qualityWarning,
+        qualityBad: merged.qualityBad,
+        qualityUnknown: merged.qualityUnknown,
+        unavailableSources: merged.unavailableSources,
+        lateArrivals: merged.lateArrivals,
+        coveredUntil: cutoff,
+        updatedAt: new Date(),
+      };
+
+      if (existingRow) {
+        await tx
+          .update(sessionProofAggregatesTable)
+          .set(values)
+          .where(eq(sessionProofAggregatesTable.sessionId, sessionId));
+      } else {
+        await tx.insert(sessionProofAggregatesTable).values({ sessionId, ...values });
+      }
 
       // Only now, and only the rows that were locked and counted above.
       if (events.length > 0) {
@@ -232,21 +315,26 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
     }
 
     /*
-      Events that never correlated to a class expire with nothing written.
+      Events that never correlated to a class expire on their own, row by row.
 
-      There is no session to summarise them against and no question they could answer later. They
-      exist so an operator can see that deliveries were arriving and failing to correlate, and that
-      is a live diagnostic, not an archive.
+      Safe to sweep individually because there is nothing to pair them with: the all-or-nothing
+      rule above exists to keep a meeting's two ends together, and an uncorrelated event belongs to
+      no meeting and no summary. They exist so an operator can see that deliveries were arriving
+      and failing to correlate — a live diagnostic, not an archive.
     */
-    const unattached = await tx
-      .select({ id: sessionProviderEventsTable.id })
+    const unattachedRows = await tx
+      .select({ id: sessionProviderEventsTable.id, receivedAt: sessionProviderEventsTable.receivedAt })
       .from(sessionProviderEventsTable)
-      .where(and(isNull(sessionProviderEventsTable.sessionId), lt(sessionProviderEventsTable.eventAt, cutoff)))
+      .where(and(isNull(sessionProviderEventsTable.sessionId), lt(sessionProviderEventsTable.receivedAt, cutoff)))
       .limit(1000)
       .for("update");
-    result.unattachedEventsRemoved = unattached.length;
-    if (!dryRun && unattached.length > 0) {
-      await tx.delete(sessionProviderEventsTable).where(inArray(sessionProviderEventsTable.id, unattached.map((r) => r.id)));
+    const plan = planRetention(
+      unattachedRows.map((r) => ({ id: r.id, sessionId: null, receivedAtMs: r.receivedAt.getTime() })),
+      nowMs,
+    );
+    result.unattachedEventsRemoved = plan.expiredIds.length;
+    if (!dryRun && plan.expiredIds.length > 0) {
+      await tx.delete(sessionProviderEventsTable).where(inArray(sessionProviderEventsTable.id, plan.expiredIds));
     }
 
     return result;

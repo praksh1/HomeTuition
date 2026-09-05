@@ -1208,9 +1208,34 @@ export async function ensureSessionProofTables(): Promise<void> {
       CREATE INDEX IF NOT EXISTS "session_provider_events_session_idx"
         ON "session_provider_events" ("session_id", "event_at")
     `);
+    /*
+      The second idempotency key, and the one that actually catches Daily.
+
+      Daily warns that a duplicate `participant.joined` or `participant.left` can arrive under a
+      *different* event id, and recommends deduplicating on the event type together with
+      `payload.session_id` — the participant's connection id, stored here as
+      `provider_participant_id`. The unique index above cannot see that: two ids, two rows, one
+      arrival, counted twice.
+
+      Partial on purpose. A delivery with no participant id cannot be deduplicated this way and
+      must not collide with every other such delivery, and meeting events describe the room rather
+      than a person — a room legitimately holds several meetings.
+    */
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "session_provider_events_participant_dedupe_idx"
+        ON "session_provider_events" ("provider", "event_type", "provider_participant_id")
+        WHERE "provider_participant_id" IS NOT NULL
+          AND "event_type" IN ('participant.joined', 'participant.left')
+    `);
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS "session_provider_events_event_at_idx"
         ON "session_provider_events" ("event_at")
+    `);
+    // Retention sweeps by arrival rather than by the event's own clock, so every stored row is
+    // genuinely kept the full window. See `lib/sessionProof/retentionSweep.ts`.
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_provider_events_received_at_idx"
+        ON "session_provider_events" ("received_at")
     `);
 
     await db.execute(sql`
@@ -1237,6 +1262,10 @@ export async function ensureSessionProofTables(): Promise<void> {
       CREATE INDEX IF NOT EXISTS "session_quality_samples_observed_at_idx"
         ON "session_quality_samples" ("observed_at")
     `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_quality_samples_received_at_idx"
+        ON "session_quality_samples" ("received_at")
+    `);
 
     /*
       The durable summary that outlives the fine-grained rows.
@@ -1253,6 +1282,7 @@ export async function ensureSessionProofTables(): Promise<void> {
         "provider_saw_meeting" boolean,
         "provider_meeting_count" integer,
         "provider_meeting_span_ms" integer,
+        "provider_meetings_unmeasured" integer,
         "provider_participant_join_events" integer,
         "reported_reconnects_total" integer,
         "quality_good" integer,
@@ -1260,6 +1290,7 @@ export async function ensureSessionProofTables(): Promise<void> {
         "quality_bad" integer,
         "quality_unknown" integer,
         "unavailable_sources" text,
+        "late_arrivals" integer NOT NULL DEFAULT 0,
         "covered_until" timestamp with time zone NOT NULL,
         "created_at" timestamp with time zone NOT NULL DEFAULT now(),
         "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
@@ -1270,6 +1301,15 @@ export async function ensureSessionProofTables(): Promise<void> {
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS "session_proof_aggregates_session_idx"
         ON "session_proof_aggregates" ("session_id")
+    `);
+    // Additive, for a database that already has the table from an earlier build of this branch.
+    await db.execute(sql`
+      ALTER TABLE "session_proof_aggregates"
+        ADD COLUMN IF NOT EXISTS "late_arrivals" integer NOT NULL DEFAULT 0
+    `);
+    await db.execute(sql`
+      ALTER TABLE "session_proof_aggregates"
+        ADD COLUMN IF NOT EXISTS "provider_meetings_unmeasured" integer
     `);
 
     logger.info("session proof tables are present");

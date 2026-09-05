@@ -286,6 +286,122 @@ async function main() {
         sql(`select count(*) from session_provider_events where provider_event_id = 'evt_${RUN}_stable'`) === "1");
     }
 
+    console.log("\nThe same participant arrival, delivered twice under different ids\n");
+    {
+      /*
+        Daily's own warning, and the reason event-id idempotency is not enough.
+
+        A duplicate `participant.joined` or `participant.left` **can arrive with a different event
+        id**, and Daily recommends deduplicating on the event type together with
+        `payload.session_id` — the id of that participant's connection. Without the partial unique
+        index on (provider, event_type, provider_participant_id) both rows land: two ids, one
+        arrival, and somebody's comings and goings counted twice in the evidence for a refund.
+
+        Payload shaped the way Daily documents it: `session_id` is the participant's connection,
+        `meeting_session_id` the meeting instance, `user_id` the token's claim, `joined_at` the
+        arrival, `duration` on the departure.
+      */
+      const connection = `p_${RUN}_dup`;
+      const joined = (id) => evt(
+        { id, type: "participant.joined" },
+        { room, session_id: connection, meeting_session_id: `mtg_${RUN}_dup`, joined_at: CLASS_TS, owner: true },
+      );
+
+      const first = await api("/webhooks/daily", { method: "POST", ...signed(joined(`evt_${RUN}_dupA`)) });
+      check("the first delivery is stored", first.status === 200 && first.body?.stored === true,
+        JSON.stringify(first.body));
+
+      const second = await api("/webhooks/daily", { method: "POST", ...signed(joined(`evt_${RUN}_dupB`)) });
+      check("a second delivery of the same arrival under a NEW event id is refused storage",
+        second.status === 200 && second.body?.stored === false, `${second.status} ${JSON.stringify(second.body)}`);
+      check("and it is reported as a duplicate rather than as an error",
+        second.body?.duplicate === true, JSON.stringify(second.body));
+      check("exactly one row exists for that participant arrival",
+        sql(`select count(*) from session_provider_events
+             where provider_participant_id = '${connection}' and event_type = 'participant.joined'`) === "1");
+
+      /*
+        The departure is a different fact about the same connection and must still be storable.
+
+        A dedupe key of (provider, participant_id) alone would swallow it, leaving a class where
+        everyone joined and nobody ever left — which is worse than the duplicate it prevents.
+      */
+      const left = await api("/webhooks/daily", {
+        method: "POST",
+        ...signed(evt(
+          { id: `evt_${RUN}_dupLeft`, type: "participant.left" },
+          { room, session_id: connection, meeting_session_id: `mtg_${RUN}_dup`, joined_at: CLASS_TS, duration: 1800 },
+        )),
+      });
+      check("the matching departure for the same connection is stored",
+        left.status === 200 && left.body?.stored === true, JSON.stringify(left.body));
+      check("so the connection has exactly one join and one leave",
+        sql(`select count(*) from session_provider_events where provider_participant_id = '${connection}'`) === "2");
+
+      const leftAgain = await api("/webhooks/daily", {
+        method: "POST",
+        ...signed(evt(
+          { id: `evt_${RUN}_dupLeft2`, type: "participant.left" },
+          { room, session_id: connection, meeting_session_id: `mtg_${RUN}_dup`, joined_at: CLASS_TS, duration: 1800 },
+        )),
+      });
+      check("a duplicated departure under a new id is refused too", leftAgain.body?.stored === false,
+        JSON.stringify(leftAgain.body));
+      check("still exactly two rows for that connection",
+        sql(`select count(*) from session_provider_events where provider_participant_id = '${connection}'`) === "2");
+
+      // Two people, or one person joining twice, are two connections and must both be recorded.
+      const other = `p_${RUN}_other`;
+      const otherJoin = await api("/webhooks/daily", {
+        method: "POST",
+        ...signed(evt(
+          { id: `evt_${RUN}_dupOther`, type: "participant.joined" },
+          { room, session_id: other, meeting_session_id: `mtg_${RUN}_dup`, joined_at: CLASS_TS },
+        )),
+      });
+      check("a different participant connection is stored, not swallowed by the first",
+        otherJoin.status === 200 && otherJoin.body?.stored === true, JSON.stringify(otherJoin.body));
+
+      /*
+        Five simultaneous deliveries of one arrival, every one with its own event id.
+
+        A read-then-write would let all five through. The partial unique index is enforced by the
+        database, so exactly one wins and the other four conflict.
+      */
+      const racing = `p_${RUN}_race`;
+      const results = await Promise.all(
+        [1, 2, 3, 4, 5].map((n) => api("/webhooks/daily", {
+          method: "POST",
+          ...signed(evt(
+            { id: `evt_${RUN}_race${n}`, type: "participant.joined" },
+            { room, session_id: racing, meeting_session_id: `mtg_${RUN}_dup`, joined_at: CLASS_TS },
+          )),
+        })),
+      );
+      check("none of five concurrent duplicates errors", results.every((r) => r.status === 200),
+        results.map((r) => r.status).join(","));
+      check("exactly one of them was stored",
+        results.filter((r) => r.body?.stored === true).length === 1,
+        JSON.stringify(results.map((r) => r.body)));
+      check("and the database holds exactly one row for it",
+        sql(`select count(*) from session_provider_events where provider_participant_id = '${racing}'`) === "1");
+
+      /*
+        Meeting events are exempt, and must be.
+
+        They describe the room rather than a person, carry no participant id, and a room
+        legitimately holds several meetings — so a dedupe key that caught them would collapse a
+        dropped-and-rejoined class into one.
+      */
+      const m1 = await api("/webhooks/daily", { method: "POST", ...signed(evt(
+        { id: `evt_${RUN}_mA`, type: "meeting.started" }, { room, meeting_id: `mtg_${RUN}_x`, start_ts: CLASS_TS })) });
+      const m2 = await api("/webhooks/daily", { method: "POST", ...signed(evt(
+        { id: `evt_${RUN}_mB`, type: "meeting.started" }, { room, meeting_id: `mtg_${RUN}_y`, start_ts: CLASS_TS + 3600 })) });
+      check("two meeting starts in one room are both stored",
+        m1.body?.stored === true && m2.body?.stored === true,
+        `${JSON.stringify(m1.body)} ${JSON.stringify(m2.body)}`);
+    }
+
     console.log("\nWhich clock timed the row\n");
     {
       const scheduledS = CLASS_TS;

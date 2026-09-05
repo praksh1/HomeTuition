@@ -212,11 +212,23 @@ router.post("/webhooks/daily", async (req, res): Promise<void> => {
         participantIsOwner: event.participantIsOwner,
         durationSeconds: event.durationSeconds,
       })
-      // Idempotency, decided by the database. Two concurrent deliveries of one event cannot both
-      // win a read-then-write, and this needs no read at all.
-      .onConflictDoNothing({
-        target: [sessionProviderEventsTable.provider, sessionProviderEventsTable.providerEventId],
-      })
+      /*
+        Idempotency, decided by the database, against **either** of two keys.
+
+        No conflict target on purpose. There are two unique indexes on this table and a delivery
+        may collide with either:
+
+        - `(provider, provider_event_id)` — the same delivery arriving twice.
+        - `(provider, event_type, provider_participant_id)`, partial — the case Daily explicitly
+          warns about, where a duplicate `participant.joined` or `participant.left` arrives under a
+          *different* event id. Naming only the first target would let those through: two rows, two
+          ids, one arrival, and a person's comings and goings counted twice in the evidence for a
+          refund.
+
+        A bare `ON CONFLICT DO NOTHING` covers both, and it needs no read, so two concurrent
+        deliveries cannot both win a read-then-write.
+      */
+      .onConflictDoNothing()
       .returning({ id: sessionProviderEventsTable.id });
 
     res.status(200).json({

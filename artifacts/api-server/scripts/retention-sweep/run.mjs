@@ -7,7 +7,16 @@
  * rows are gone, an aggregate that was computed wrongly is simply wrong forever, and the evidence
  * it replaced is not coming back. So the arithmetic is tested pure in `retention.test.ts`, and
  * this suite tests the part that only a real database can show — the ordering, the transaction,
- * and the fact that exactly the rows counted are the rows deleted.
+ * the locking, and the fact that exactly the rows counted are the rows deleted.
+ *
+ * ## The defect at the centre of it
+ *
+ * Retention used to work row by row. A meeting that starts at 10:00 and ends at 11:00 has two rows
+ * an hour apart, so on the day the window passed **the start expired an hour before the end**. One
+ * sweep took the start and recorded "one meeting, span zero"; the next took the end and added
+ * another. The class was left permanently summarised as two meetings of no length — a lesson that
+ * plainly happened, reduced to evidence that it did not, with the rows gone and no way to correct
+ * it. The first two blocks below reproduce exactly that timeline and prove it no longer happens.
  *
  * ## Nothing in the product calls it
  *
@@ -19,14 +28,16 @@
  *
  * Usage: PGURL=... node scripts/retention-sweep/run.mjs
  */
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 
+const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -78,26 +89,40 @@ async function buildHarness() {
   return outfile;
 }
 
+const sweepEnv = () => ({ ...process.env, DATABASE_URL: PGURL, NODE_ENV: "test", LOG_LEVEL: "silent" });
+const lastJson = (out) => JSON.parse(out.trim().split("\n").filter(Boolean).pop());
+
 function runSweep(harness, options) {
-  const out = execFileSync(process.execPath, [harness, JSON.stringify(options)], {
+  return lastJson(execFileSync(process.execPath, [harness, JSON.stringify(options)], {
     encoding: "utf8",
-    env: { ...process.env, DATABASE_URL: PGURL, NODE_ENV: "test", LOG_LEVEL: "silent" },
-  });
-  const line = out.trim().split("\n").filter(Boolean).pop();
-  return JSON.parse(line);
+    env: sweepEnv(),
+    // Captured rather than inherited: one block below makes the sweep fail on purpose, and a
+    // stack trace printed in the middle of a passing suite reads as a broken suite.
+    stdio: ["ignore", "pipe", "pipe"],
+  }));
 }
 
+/** The same, asynchronously, so two sweeps can be raced against each other. */
+async function runSweepAsync(harness, options) {
+  const { stdout } = await execFileAsync(process.execPath, [harness, JSON.stringify(options)], {
+    encoding: "utf8", env: sweepEnv(),
+  });
+  return lastJson(stdout);
+}
+
+const MIN = 60_000;
 const DAY = 86_400_000;
-const NOW = Date.now();
-/** Comfortably past the thirty-day window, so "expired" is not a boundary question here. */
-const OLD = new Date(NOW - 45 * DAY);
-const RECENT = new Date(NOW - 2 * DAY);
+const WINDOW = 30 * DAY;
+/** A fixed base so every arrival time in this suite is written down rather than implied. */
+const BASE = Date.now() - 40 * DAY;
+
+const iso = (ms) => new Date(ms).toISOString();
 
 async function main() {
   const harness = await buildHarness();
 
   /*
-    A teacher, a student and a class, made directly.
+    A teacher and some classes, made directly.
 
     No HTTP: this suite is about a function nothing calls, and routing a request through the
     product to reach it would be testing the product rather than the sweep.
@@ -111,159 +136,295 @@ async function main() {
     VALUES (${teacherId}, 'Sweep Teacher ${RUN}', 'Maths', '${topic}', now() - interval '45 days',
             60, 10, 0, 0, 'completed')
     RETURNING id`));
-  const sessionId = newSession(`Retention ${RUN}`);
 
-  const ev = (tag, type, at, meeting, userId = "NULL") => sql(`
+  /**
+   * One stored provider event, with **both** clocks written down explicitly.
+   *
+   * `event_at` is when the provider says it happened; `received_at` is when this server wrote the
+   * row. Retention measures from the second, and the difference between them is the whole subject
+   * of the first two blocks below.
+   */
+  const ev = (sessionId, tag, type, eventAtMs, receivedAtMs, meeting, userId = "NULL") => sql(`
     INSERT INTO session_provider_events
       (provider, provider_event_id, event_type, event_at, event_at_source, session_id, provider_room,
-       provider_meeting_id, participant_user_id)
-    VALUES ('daily', 'sweep_${RUN}_${tag}', '${type}', '${at.toISOString()}', 'occurred', ${sessionId},
-            'sikshya${sessionId}', ${meeting === null ? "NULL" : `'${meeting}'`}, ${userId})
+       provider_meeting_id, participant_user_id, received_at)
+    VALUES ('daily', 'sweep_${RUN}_${tag}', '${type}', '${iso(eventAtMs)}', 'occurred', ${sessionId},
+            'sikshya${sessionId}', ${meeting === null ? "NULL" : `'${meeting}'`}, ${userId},
+            '${iso(receivedAtMs)}')
     RETURNING id`);
 
-  const sample = (tag, quality, reconnect, at) => sql(`
-    INSERT INTO session_quality_samples (session_id, user_id, role, quality, reconnect, observed_at)
-    VALUES (${sessionId}, ${teacherId}, 'teacher', '${quality}', ${reconnect}, '${at.toISOString()}')
+  const sample = (sessionId, quality, reconnect, observedAtMs, receivedAtMs) => sql(`
+    INSERT INTO session_quality_samples
+      (session_id, user_id, role, quality, reconnect, observed_at, received_at)
+    VALUES (${sessionId}, ${teacherId}, 'teacher', '${quality}', ${reconnect},
+            '${iso(observedAtMs)}', '${iso(receivedAtMs)}')
     RETURNING id`);
 
-  console.log("\nA class whose fine-grained proof has expired\n");
+  const summaryOf = (sessionId, column) =>
+    sql(`select coalesce(${column}::text, 'null') from session_proof_aggregates where session_id = ${sessionId}`);
+  const eventsFor = (sessionId) =>
+    sql(`select count(*) from session_provider_events where session_id = ${sessionId}`);
+  const samplesFor = (sessionId) =>
+    sql(`select count(*) from session_quality_samples where session_id = ${sessionId}`);
 
-  // Two meetings, an hour apart, both expired.
-  ev("a1", "meeting.started", new Date(OLD.getTime()), "mtg-a");
-  ev("a2", "meeting.ended", new Date(OLD.getTime() + 20 * 60_000), "mtg-a");
-  ev("b1", "meeting.started", new Date(OLD.getTime() + 80 * 60_000), "mtg-b");
-  ev("b2", "meeting.ended", new Date(OLD.getTime() + 90 * 60_000), "mtg-b");
-  ev("j1", "participant.joined", new Date(OLD.getTime() + 60_000), "mtg-a", String(teacherId));
-  ev("j2", "participant.joined", new Date(OLD.getTime() + 120_000), "mtg-a");
-  // One that has not expired, to prove the cutoff is respected.
-  ev("fresh", "meeting.started", RECENT, "mtg-c");
+  /* ------------------------------------------------------------------ the split-meeting defect */
 
-  sample("s1", "bad", true, new Date(OLD.getTime() + 5 * 60_000));
-  sample("s2", "good", false, new Date(OLD.getTime() + 6 * 60_000));
-  sample("s3", "warning", false, RECENT);
-
-  const eventsBefore = sql(`select count(*) from session_provider_events where session_id = ${sessionId}`);
-  const samplesBefore = sql(`select count(*) from session_quality_samples where session_id = ${sessionId}`);
-  check("the fixture is in place", eventsBefore === "7" && samplesBefore === "3",
-    `${eventsBefore} events, ${samplesBefore} samples`);
-
-  console.log("\nA dry run changes nothing\n");
+  console.log("\nA meeting whose two ends expire an hour apart\n");
+  const split = newSession(`Split ${RUN}`);
   {
-    /*
-      Asserted against this run's own class, never against totals.
+    // The lesson: started at BASE, ended an hour later, each row written as it arrived.
+    ev(split, "split_start", "meeting.started", BASE, BASE, "mtg-split");
+    ev(split, "split_end", "meeting.ended", BASE + 60 * MIN, BASE + 60 * MIN, "mtg-split");
 
-      The database is shared with the other suites and with earlier runs of this one, so a global
-      count passes once and fails forever after. This project has already been bitten by exactly
-      that: a suite that asserted absolute row counts went green on its first run and red on its
-      second.
+    /*
+      A sweep on the day the *start* passes thirty days, half an hour before the end does.
+
+      Row-by-row retention took the start here and wrote "one meeting, span zero". Everything below
+      asserts that nothing at all happens instead.
     */
-    const dry = runSweep(harness, { nowMs: NOW, available: { provider: true, telemetry: true }, dryRun: true });
-    check("it reports that there was something to remove",
-      dry.providerEventsRemoved >= 6 && dry.qualitySamplesRemoved >= 2, JSON.stringify(dry));
-    check("and says it was a dry run", dry.dryRun === true);
-    check("but every row is still there",
-      sql(`select count(*) from session_provider_events where session_id = ${sessionId}`) === eventsBefore &&
-      sql(`select count(*) from session_quality_samples where session_id = ${sessionId}`) === samplesBefore);
-    check("and no summary was written",
-      sql(`select count(*) from session_proof_aggregates where session_id = ${sessionId}`) === "0");
+    const half = runSweep(harness, {
+      nowMs: BASE + WINDOW + 30 * MIN,
+      available: { provider: true, telemetry: true },
+    });
+    check("the class is held back rather than half-swept", half.sessionsHeldBack >= 1, JSON.stringify(half));
+    check("nothing was summarised for it", half.sessionsSummarised === 0, JSON.stringify(half));
+    check("neither row was removed", eventsFor(split) === "2");
+    check("and no partial summary was written",
+      sql(`select count(*) from session_proof_aggregates where session_id = ${split}`) === "0");
+
+    /*
+      An hour later both ends are past the window, and the lesson survives as one meeting of one
+      hour — which is what actually happened.
+    */
+    const whole = runSweep(harness, {
+      nowMs: BASE + WINDOW + 90 * MIN,
+      available: { provider: true, telemetry: true },
+    });
+    check("once every row is past the window the class is rolled up", whole.sessionsSummarised >= 1,
+      JSON.stringify(whole));
+    check("exactly one meeting survives", summaryOf(split, "provider_meeting_count") === "1");
+    check("and its length is the hour it actually ran",
+      summaryOf(split, "provider_meeting_span_ms") === String(60 * MIN),
+      summaryOf(split, "provider_meeting_span_ms"));
+    check("with nothing left unmeasured", summaryOf(split, "provider_meetings_unmeasured") === "0");
+    check("both rows are gone", eventsFor(split) === "0");
+    check("no source is marked unknown", summaryOf(split, "unavailable_sources") === "null");
+    check("and nothing arrived too late to count", summaryOf(split, "late_arrivals") === "0");
   }
 
-  console.log("\nA real sweep summarises first, then removes\n");
+  console.log("\nA class that dropped and was rejoined\n");
+  const two = newSession(`Two ${RUN}`);
   {
-    const result = runSweep(harness, { nowMs: NOW, available: { provider: true, telemetry: true } });
-    check("it removed rows and said how many", result.providerEventsRemoved >= 6 && result.qualitySamplesRemoved >= 2,
-      JSON.stringify(result));
-    check("this class lost exactly its six expired events",
-      Number(eventsBefore) - Number(sql(`select count(*) from session_provider_events where session_id = ${sessionId}`)) === 6);
-    check("and exactly its two expired samples",
-      Number(samplesBefore) - Number(sql(`select count(*) from session_quality_samples where session_id = ${sessionId}`)) === 2);
-    check("a summary now exists for the class",
-      sql(`select count(*) from session_proof_aggregates where session_id = ${sessionId}`) === "1");
+    ev(two, "a1", "meeting.started", BASE, BASE, "mtg-a");
+    ev(two, "a2", "meeting.ended", BASE + 20 * MIN, BASE + 20 * MIN, "mtg-a");
+    ev(two, "b1", "meeting.started", BASE + 80 * MIN, BASE + 80 * MIN, "mtg-b");
+    ev(two, "b2", "meeting.ended", BASE + 90 * MIN, BASE + 90 * MIN, "mtg-b");
+    ev(two, "j1", "participant.joined", BASE + MIN, BASE + MIN, "mtg-a", String(teacherId));
+    ev(two, "j2", "participant.joined", BASE + 2 * MIN, BASE + 2 * MIN, "mtg-a");
+    sample(two, "bad", true, BASE + 5 * MIN, BASE + 5 * MIN);
+    sample(two, "good", false, BASE + 6 * MIN, BASE + 6 * MIN);
 
+    const r = runSweep(harness, { nowMs: BASE + WINDOW + 2 * DAY, available: { provider: true, telemetry: true } });
+    check("the class was rolled up", r.sessionsSummarised >= 1, JSON.stringify(r));
+    check("two meetings are recorded", summaryOf(two, "provider_meeting_count") === "2");
     /*
-      Two twenty-and-ten-minute meetings, not one ninety-minute one.
-
-      The span must be the sum of each meeting's own length. Measuring from the first start to the
-      last end would count the hour nobody was in the room as teaching, which is precisely the
-      number a refund argument would lean on.
+      Thirty minutes of meeting, not the ninety between the first start and the last end. The gap
+      is time nobody was in the room, and counting it would bill it as teaching.
     */
-    check("the surviving span is the sum of the meetings, not the distance between them",
-      sql(`select provider_meeting_span_ms from session_proof_aggregates where session_id = ${sessionId}`) === String(30 * 60_000),
-      sql(`select provider_meeting_span_ms from session_proof_aggregates where session_id = ${sessionId}`));
-    check("it counted two meetings",
-      sql(`select provider_meeting_count from session_proof_aggregates where session_id = ${sessionId}`) === "2");
-    check("only the named join survived as a named join",
-      sql(`select provider_participant_join_events from session_proof_aggregates where session_id = ${sessionId}`) === "1");
-    check("the reported reconnection survived",
-      sql(`select reported_reconnects_total from session_proof_aggregates where session_id = ${sessionId}`) === "1");
+    check("the span is the sum of the two, never the distance between them",
+      summaryOf(two, "provider_meeting_span_ms") === String(30 * MIN),
+      summaryOf(two, "provider_meeting_span_ms"));
+    check("only the join the provider could name is counted",
+      summaryOf(two, "provider_participant_join_events") === "1");
+    check("the reported reconnection survived", summaryOf(two, "reported_reconnects_total") === "1");
     check("the quality counts survived",
-      sql(`select quality_bad || '/' || quality_good from session_proof_aggregates where session_id = ${sessionId}`) === "1/1");
-
-    check("the rows inside the window were left alone",
-      sql(`select count(*) from session_provider_events where session_id = ${sessionId}`) === "1" &&
-      sql(`select count(*) from session_quality_samples where session_id = ${sessionId}`) === "1");
-    check("and the one left is the recent one",
-      sql(`select provider_event_id from session_provider_events where session_id = ${sessionId}`) === `sweep_${RUN}_fresh`);
+      sql(`select quality_bad || '/' || quality_good from session_proof_aggregates where session_id = ${two}`) === "1/1");
+    check("every fine-grained row is gone", eventsFor(two) === "0" && samplesFor(two) === "0");
 
     /*
-      The privacy property the whole window exists for.
-
-      "The teacher's device reported one bad period" is a fact about a lesson and may outlive the
-      dispute window. "At 19:42:11 this person's connection was bad" is surveillance and may not.
+      The privacy property the whole window exists for. "The teacher's device reported one bad
+      period" is a fact about a lesson and may outlive the dispute window; "at 19:42:11 this
+      person's connection was bad" is surveillance and may not.
     */
-    check("no per-sample timestamp survived into the summary",
+    check("no per-sample timestamp or identifier survived into the summary",
       sql(`select count(*) from information_schema.columns where table_name = 'session_proof_aggregates'
            and column_name in ('observed_at','event_at','user_id','participant_user_id','provider_room')`) === "0");
   }
 
-  console.log("\nThe class itself is untouched\n");
+  console.log("\nA meeting the provider never reported the end of\n");
+  const halfMeeting = newSession(`Half ${RUN}`);
   {
-    check("the session row is still there and unchanged",
-      sql(`select status from sessions where id = ${sessionId}`) === "completed");
-    check("and nobody's account was removed",
-      sql(`select count(*) from users where id = ${teacherId}`) === "1");
+    ev(halfMeeting, "h1", "meeting.started", BASE, BASE, "mtg-h");
+    runSweep(harness, { nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    check("it is counted as a meeting", summaryOf(halfMeeting, "provider_meeting_count") === "1");
+    check("its length contributes nothing", summaryOf(halfMeeting, "provider_meeting_span_ms") === "0");
+    // Without this the span reads as a complete measurement of a meeting nobody measured.
+    check("and it is declared unmeasured rather than silently zero",
+      summaryOf(halfMeeting, "provider_meetings_unmeasured") === "1");
   }
 
-  console.log("\nA second sweep adds to the summary rather than replacing it\n");
+  console.log("\nA dry run changes nothing\n");
+  const dry = newSession(`Dry ${RUN}`);
   {
-    // A class can expire in pieces; an overwrite would silently drop what an earlier pass recorded.
-    ev("c1", "meeting.started", new Date(OLD.getTime() - DAY), "mtg-d");
-    ev("c2", "meeting.ended", new Date(OLD.getTime() - DAY + 15 * 60_000), "mtg-d");
-    const second = runSweep(harness, { nowMs: NOW, available: { provider: true, telemetry: true } });
-    check("it swept the newly expired rows", second.providerEventsRemoved === 2, JSON.stringify(second));
-    check("and the span accumulated instead of being overwritten",
-      sql(`select provider_meeting_span_ms from session_proof_aggregates where session_id = ${sessionId}`) === String(45 * 60_000));
-    check("still one summary row for the class",
-      sql(`select count(*) from session_proof_aggregates where session_id = ${sessionId}`) === "1");
+    ev(dry, "d1", "meeting.started", BASE, BASE, "mtg-d");
+    ev(dry, "d2", "meeting.ended", BASE + 10 * MIN, BASE + 10 * MIN, "mtg-d");
+    const r = runSweep(harness, {
+      nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true }, dryRun: true,
+    });
+    check("it says it was a dry run", r.dryRun === true);
+    check("it reports what it would remove", r.providerEventsRemoved >= 2, JSON.stringify(r));
+    check("every row is still there", eventsFor(dry) === "2");
+    check("and no summary was written",
+      sql(`select count(*) from session_proof_aggregates where session_id = ${dry}`) === "0");
   }
 
-  console.log("\nA source that was never watching is recorded as unknown, not zero\n");
+  console.log("\nA source that was not being watched\n");
+  const unwatched = newSession(`Unwatched ${RUN}`);
   {
-    const otherSession = newSession(`Unwatched ${RUN}`);
-    sql(`
-      INSERT INTO session_quality_samples (session_id, user_id, role, quality, reconnect, observed_at)
-      VALUES (${otherSession}, ${teacherId}, 'teacher', 'bad', false, '${OLD.toISOString()}')`);
+    sample(unwatched, "bad", false, BASE, BASE);
+    runSweep(harness, { nowMs: BASE + WINDOW + DAY, available: { provider: false, telemetry: true } });
+    /*
+      The fabrication this guards. A zero written for a source nobody was watching is
+      indistinguishable from a real zero, and once the rows are deleted nothing can tell them apart
+      again.
+    */
+    check("a source that was not ingested is null, never zero",
+      summaryOf(unwatched, "provider_meeting_count") === "null");
+    check("and never false either", summaryOf(unwatched, "provider_saw_meeting") === "null");
+    check("it is named so a later reader knows why",
+      summaryOf(unwatched, "unavailable_sources") === "provider");
+    check("the source that was watching is recorded normally",
+      summaryOf(unwatched, "quality_bad") === "1");
 
-    runSweep(harness, { nowMs: NOW, available: { provider: false, telemetry: true } });
-    check("a source that was not being ingested is null, never a zero",
-      sql(`select coalesce(provider_meeting_count::text, 'null') from session_proof_aggregates
-           where session_id = ${otherSession}`) === "null");
-    check("and it is named so a later reader knows why",
-      sql(`select unavailable_sources from session_proof_aggregates where session_id = ${otherSession}`) === "provider");
+    /*
+      And it can be resolved honestly if evidence turns up later: null becomes a real number, and
+      the source stops being listed as unknown.
+    */
+    ev(unwatched, "u1", "meeting.started", BASE + DAY, BASE + DAY, "mtg-u");
+    ev(unwatched, "u2", "meeting.ended", BASE + DAY + 15 * MIN, BASE + DAY + 15 * MIN, "mtg-u");
+    runSweep(harness, { nowMs: BASE + DAY + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    check("later provider evidence fills in what was unknown",
+      summaryOf(unwatched, "provider_meeting_count") === "1");
+    check("with its real length", summaryOf(unwatched, "provider_meeting_span_ms") === String(15 * MIN));
+    check("and the source is no longer listed as unknown",
+      summaryOf(unwatched, "unavailable_sources") === "null");
+    check("the telemetry figures were not disturbed", summaryOf(unwatched, "quality_bad") === "1");
+  }
+
+  console.log("\nEvidence that arrives after the class was summarised\n");
+  const late = newSession(`Late ${RUN}`);
+  {
+    ev(late, "l1", "meeting.started", BASE, BASE, "mtg-l");
+    ev(late, "l2", "meeting.ended", BASE + 45 * MIN, BASE + 45 * MIN, "mtg-l");
+    runSweep(harness, { nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    check("the class is summarised as one meeting of forty-five minutes",
+      summaryOf(late, "provider_meeting_count") === "1" &&
+      summaryOf(late, "provider_meeting_span_ms") === String(45 * MIN));
+
+    /*
+      A `meeting.ended` delivered more than a month late, for a meeting whose start is already
+      gone.
+
+      Merging it would add "a second meeting of no length" to a class that had exactly one — the
+      same corruption the split-meeting defect produced, arriving by a different route. It is
+      counted as a late arrival and deleted.
+    */
+    ev(late, "l3", "meeting.ended", BASE + 50 * MIN, BASE + 5 * DAY, "mtg-late");
+    const r = runSweep(harness, { nowMs: BASE + 5 * DAY + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    check("the late row is removed", eventsFor(late) === "0");
+    check("the meeting count is unchanged", summaryOf(late, "provider_meeting_count") === "1");
+    check("the span is unchanged", summaryOf(late, "provider_meeting_span_ms") === String(45 * MIN));
+    check("and it is recorded as having arrived too late to count",
+      summaryOf(late, "late_arrivals") === "1", summaryOf(late, "late_arrivals"));
+    check("the sweep reports it too", r.lateArrivalsRemoved >= 1, JSON.stringify(r));
   }
 
   console.log("\nAn event that never correlated to a class\n");
   {
     sql(`
       INSERT INTO session_provider_events
-        (provider, provider_event_id, event_type, event_at, event_at_source, session_id, provider_room)
-      VALUES ('daily', 'sweep_${RUN}_orphan', 'meeting.started', '${OLD.toISOString()}', 'delivery', NULL,
-              'sikshya-not-ours')`);
-    const swept = runSweep(harness, { nowMs: NOW, available: { provider: true, telemetry: true } });
-    check("an uncorrelated event expires with nothing written for it", swept.unattachedEventsRemoved >= 1,
-      JSON.stringify(swept));
+        (provider, provider_event_id, event_type, event_at, event_at_source, session_id, provider_room, received_at)
+      VALUES ('daily', 'sweep_${RUN}_orphan', 'meeting.started', '${iso(BASE)}', 'delivery', NULL,
+              'sikshya-not-ours', '${iso(BASE)}')`);
+    const r = runSweep(harness, { nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    check("an uncorrelated event expires with nothing written for it", r.unattachedEventsRemoved >= 1,
+      JSON.stringify(r));
     check("and it is gone",
       sql(`select count(*) from session_provider_events where provider_event_id = 'sweep_${RUN}_orphan'`) === "0");
+  }
+
+  console.log("\nIf the delete fails, the summary is not written\n");
+  const rollback = newSession(`Rollback ${RUN}`);
+  {
+    ev(rollback, "r1", "meeting.started", BASE, BASE, "mtg-r");
+    ev(rollback, "r2", "meeting.ended", BASE + 25 * MIN, BASE + 25 * MIN, "mtg-r");
+
+    /*
+      A real failure, not an injected one.
+
+      A trigger that refuses the DELETE makes the sweep fail exactly where it matters — after the
+      summary has been written and before the rows are gone. If those two were not in one
+      transaction, this would leave a class summarised *and* still holding its evidence, and the
+      next sweep would count it all over again.
+    */
+    sql(`
+      CREATE OR REPLACE FUNCTION sweep_block_${RUN}() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'blocked for the rollback test'; END; $$ LANGUAGE plpgsql;
+      CREATE TRIGGER sweep_block_trg_${RUN} BEFORE DELETE ON session_provider_events
+        FOR EACH ROW WHEN (OLD.session_id = ${rollback}) EXECUTE FUNCTION sweep_block_${RUN}();
+    `);
+    let threw = false;
+    try {
+      runSweep(harness, { nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    } catch { threw = true; }
+    sql(`DROP TRIGGER sweep_block_trg_${RUN} ON session_provider_events; DROP FUNCTION sweep_block_${RUN}();`);
+
+    check("the sweep failed rather than half-completing", threw);
+    check("no summary was left behind for that class",
+      sql(`select count(*) from session_proof_aggregates where session_id = ${rollback}`) === "0");
+    check("and its rows are untouched", eventsFor(rollback) === "2");
+
+    // With the obstruction gone it completes normally, so the failure cost nothing but a retry.
+    runSweep(harness, { nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    check("a retry after the failure succeeds", summaryOf(rollback, "provider_meeting_span_ms") === String(25 * MIN));
+    check("and removes the rows", eventsFor(rollback) === "0");
+  }
+
+  console.log("\nTwo sweeps running at once\n");
+  const raced = newSession(`Raced ${RUN}`);
+  {
+    ev(raced, "c1", "meeting.started", BASE, BASE, "mtg-c");
+    ev(raced, "c2", "meeting.ended", BASE + 35 * MIN, BASE + 35 * MIN, "mtg-c");
+    sample(raced, "warning", true, BASE + MIN, BASE + MIN);
+
+    const opts = { nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true } };
+    const [a, b] = await Promise.all([
+      runSweepAsync(harness, opts).catch((e) => ({ error: String(e) })),
+      runSweepAsync(harness, opts).catch((e) => ({ error: String(e) })),
+    ]);
+    check("neither sweep errored", !a.error && !b.error, `${JSON.stringify(a)} | ${JSON.stringify(b)}`);
+    /*
+      One does the work and the other finds nothing: the loser waits on the row locks, and by the
+      time it gets them the rows are gone.
+    */
+    check("the class was rolled up exactly once, not twice",
+      summaryOf(raced, "provider_meeting_span_ms") === String(35 * MIN),
+      summaryOf(raced, "provider_meeting_span_ms"));
+    check("its meeting was not double counted", summaryOf(raced, "provider_meeting_count") === "1");
+    check("its reconnection was not double counted", summaryOf(raced, "reported_reconnects_total") === "1");
+    check("nothing was recorded as a late arrival", summaryOf(raced, "late_arrivals") === "0");
+    check("and every row is gone", eventsFor(raced) === "0" && samplesFor(raced) === "0");
+    check("exactly one summary row exists",
+      sql(`select count(*) from session_proof_aggregates where session_id = ${raced}`) === "1");
+  }
+
+  console.log("\nThe classes themselves are untouched\n");
+  {
+    check("every session row is still there and unchanged",
+      sql(`select count(*) from sessions where teacher_id = ${teacherId} and status = 'completed'`) ===
+      sql(`select count(*) from sessions where teacher_id = ${teacherId}`));
+    check("and nobody's account was removed",
+      sql(`select count(*) from users where id = ${teacherId}`) === "1");
   }
 
   console.log("\nNothing schedules any of this\n");

@@ -362,7 +362,27 @@ export function normalizeDailyEvent(raw: unknown, now: number = Date.now()): Nor
       eventAtSource,
       sessionId,
       providerRoom,
-      providerMeetingId: pickString(raw, ["payload.meeting_id", "meeting_id", "payload.mtg_session_id"]),
+      /*
+        The meeting *instance*. Daily names it differently depending on the event: `meeting_id` or
+        `mtg_session_id` on a meeting event, `meeting_session_id` inside a participant payload.
+        They are mutually exclusive in practice, so first match wins.
+      */
+      providerMeetingId: pickString(raw, [
+        "payload.meeting_id",
+        "meeting_id",
+        "payload.mtg_session_id",
+        "payload.meeting_session_id",
+        "meeting_session_id",
+      ]),
+      /*
+        The participant's *connection*, which Daily calls `session_id` in a participant payload —
+        confusingly, since it has nothing to do with a Sikshya session.
+
+        Load-bearing: it is the second idempotency key. Daily warns that a duplicate
+        `participant.joined` or `participant.left` can arrive under a different event id, and this
+        is the field that identifies the two as one arrival. A participant event that reaches
+        storage without it cannot be deduplicated at all.
+      */
       providerParticipantId: pickString(raw, ["payload.session_id", "payload.participant_id"]),
       participantUserId,
       participantIsOwner: pickBoolean(raw, ["payload.owner", "payload.is_owner", "owner"]),

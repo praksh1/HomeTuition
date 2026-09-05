@@ -55,6 +55,14 @@ export const sessionProofAggregatesTable = pgTable(
      * nobody was in the room, which the second form would silently bill as teaching.
      */
     providerMeetingSpanMs: integer("provider_meeting_span_ms"),
+    /**
+     * Meetings the provider reported only one end of, whose length is therefore unknown.
+     *
+     * Without it, `provider_meeting_span_ms` reads as a complete measurement of
+     * `provider_meeting_count` meetings when it may cover only some of them — and once the
+     * fine-grained rows are deleted there is nothing left to notice the shortfall against.
+     */
+    providerMeetingsUnmeasured: integer("provider_meetings_unmeasured"),
     /** Provider `participant.joined` events that named a verified member of this class. */
     providerParticipantJoinEvents: integer("provider_participant_join_events"),
     /** Reconnections the participants' own devices reported. Self-reported; never authoritative. */
@@ -71,6 +79,19 @@ export const sessionProofAggregatesTable = pgTable(
      * was switched off is indistinguishable from one written about a class the provider never saw.
      */
     unavailableSources: text("unavailable_sources"),
+    /**
+     * Fine-grained rows that arrived after this class had already been summarised.
+     *
+     * A class is rolled up once, all at once. Anything that turns up afterwards — a webhook
+     * delivered more than a month late — cannot be merged into the figures above without either
+     * double-counting a meeting or, worse, adding a lone `meeting.ended` as a second meeting of no
+     * length. It is counted here and deleted, so the summary says "some evidence arrived too late
+     * to be included" rather than silently swallowing it or silently corrupting the totals.
+     *
+     * Expected to be zero forever. A number here means deliveries are arriving a month late, which
+     * is worth knowing on its own.
+     */
+    lateArrivals: integer("late_arrivals").notNull().default(0),
     /** The instant before which fine-grained rows were removed to produce this. */
     coveredUntil: timestamp("covered_until", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
