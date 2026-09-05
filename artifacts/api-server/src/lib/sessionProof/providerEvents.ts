@@ -55,6 +55,25 @@ export const SUPPORTED_EVENT_TYPES = [
 
 export type ProviderEventType = (typeof SUPPORTED_EVENT_TYPES)[number];
 
+/**
+ * Where a stored timestamp came from, because the two mean different things.
+ *
+ * - `occurred` — the provider's own timestamp for the thing itself: `start_ts` for a meeting
+ *   starting, `end_ts` for it ending, `joined_at` for somebody arriving, and `joined_at` plus
+ *   `duration` for them leaving.
+ * - `delivery` — `event_ts`, which is when the provider *generated the callback*. Close to the
+ *   event on a healthy day and arbitrarily far from it after a retry, an outage or a backfill.
+ *
+ * Kept apart because a span is only as good as its ends. A meeting whose start is an occurrence
+ * timestamp and whose end is a delivery timestamp can be minutes longer than the meeting was, and
+ * that difference is a teacher's fee. An operator reading a duration is entitled to know which
+ * kind of clock produced it, so the distinction is stored rather than flattened on the way in.
+ *
+ * Separate again from `received_at`, which is when *this server* wrote the row — a third clock,
+ * and the only one this project controls.
+ */
+export type EventTimeSource = "occurred" | "delivery";
+
 /** Why an event was not stored. Counted in logs; never shown to a caller. */
 export type RejectionReason =
   | "not_an_object"
@@ -78,6 +97,8 @@ export interface NormalizedProviderEvent {
   eventType: ProviderEventType;
   /** When the provider says it happened, as epoch milliseconds. */
   eventAtMs: number;
+  /** Whether `eventAtMs` is the provider's timestamp for the event or for the callback. */
+  eventAtSource: EventTimeSource;
   /** The Sikshya session this room belongs to, or null when the room is not ours. */
   sessionId: number | null;
   /** The provider's room name, kept so an unmapped event is still diagnosable. */
@@ -89,11 +110,15 @@ export interface NormalizedProviderEvent {
   /**
    * The Sikshya user id, **only when the provider echoes one back from a token we minted.**
    *
-   * Null today, and that is a finding rather than an oversight: `lib/daily.ts` mints tokens with
-   * `room_name`, `is_owner`, `user_name` and `exp`, and no `user_id`. So Daily can tell us that
-   * *an owner* joined, never *which account*. Attribution therefore stops at the owner/non-owner
-   * line until a `user_id` claim is added to token minting — a one-line change to an already
-   * working path, deliberately not made here.
+   * `lib/daily.ts` now puts a `user_id` claim on every token it mints, so events for calls joined
+   * after that change can name an account. Events from before it cannot, and neither can an event
+   * for a room somebody opened by hand in the Daily dashboard.
+   *
+   * **A value here is a claim, not a fact, and this file does not check it.** The route correlates
+   * it against `getSessionMembership` before storing and nulls anything that is not actually in
+   * that class; see `routes/sessionProof.ts`. Null therefore means "the provider could not name
+   * this participant, or named somebody who does not belong to this class" — never "nobody was
+   * there".
    */
   participantUserId: number | null;
   /**
@@ -220,6 +245,56 @@ export function eventTimeMs(raw: unknown, now: number = Date.now()): number | nu
   return Math.round(ms);
 }
 
+/**
+ * The provider's timestamp for the *event*, per event type, or null.
+ *
+ * Daily carries the real instant in a field named for what happened — `start_ts`, `end_ts`,
+ * `joined_at` — and `event_ts` only says when it generated the callback. Reading `event_ts` for
+ * everything was the earlier mistake: after a retry or a backfill it can be minutes or hours off,
+ * and a meeting span built from two such timestamps overstates a lesson in the direction that
+ * costs a teacher money.
+ *
+ * `participant.left` is the one Daily does not give directly, so it is derived from the arrival
+ * plus the duration it reports — but only when both are usable and the duration is not absurd,
+ * because a derived timestamp built on a bad input is worse than an honest fallback.
+ */
+function occurredAtMs(
+  raw: Record<string, unknown>,
+  eventType: ProviderEventType,
+  now: number,
+): number | null {
+  switch (eventType) {
+    case "meeting.started":
+      return eventTimeMs(pickRaw(raw, ["payload.start_ts", "start_ts"]), now);
+    case "meeting.ended":
+      return eventTimeMs(pickRaw(raw, ["payload.end_ts", "end_ts"]), now);
+    case "participant.joined":
+      return eventTimeMs(pickRaw(raw, ["payload.joined_at", "joined_at"]), now);
+    case "participant.left": {
+      const joinedAt = eventTimeMs(pickRaw(raw, ["payload.joined_at", "joined_at"]), now);
+      if (joinedAt === null) return null;
+      const duration = pickNumber(raw, ["payload.duration", "duration"]);
+      // A negative duration would place the departure before the arrival; one longer than a day is
+      // not a class. Either way the delivery timestamp is the more honest answer.
+      if (duration === null || duration < 0 || duration >= 24 * 60 * 60) return null;
+      return eventTimeMs(joinedAt + Math.round(duration * 1000), now);
+    }
+  }
+}
+
+/** The value at the first of several dotted paths that exists at all, without coercion. */
+function pickRaw(source: Record<string, unknown>, paths: string[]): unknown {
+  for (const path of paths) {
+    let cursor: unknown = source;
+    for (const key of path.split(".")) {
+      if (!isObject(cursor)) { cursor = undefined; break; }
+      cursor = cursor[key];
+    }
+    if (cursor !== undefined && cursor !== null) return cursor;
+  }
+  return undefined;
+}
+
 /* ------------------------------------------------------------------------------ normalizing */
 
 function isSupportedType(value: string | null): value is ProviderEventType {
@@ -246,13 +321,22 @@ export function normalizeDailyEvent(raw: unknown, now: number = Date.now()): Nor
   const providerRoom = pickString(raw, ["payload.room", "payload.room_name", "room", "room_name"]);
   if (!providerRoom) return { ok: false, reason: "missing_room" };
 
-  const eventAtMs = eventTimeMs(
-    (raw as Record<string, unknown>).event_ts ??
-      (raw as Record<string, unknown>).timestamp ??
-      (isObject(raw.payload) ? raw.payload.event_ts ?? raw.payload.timestamp : undefined),
-    now,
-  );
+  /*
+    The event's own clock first, the callback's clock only as a fallback.
+
+    Both are the provider's, and they are not interchangeable: `event_ts` is when Daily generated
+    the delivery, which after a retry can sit well after the thing it describes. Which one was
+    used is carried on the row so a reader of a duration knows what kind of clock produced it.
+  */
+  const occurred = occurredAtMs(raw, eventType, now);
+  const eventAtMs =
+    occurred ??
+    eventTimeMs(
+      pickRaw(raw, ["event_ts", "timestamp", "payload.event_ts", "payload.timestamp"]),
+      now,
+    );
   if (eventAtMs === null) return { ok: false, reason: "missing_or_bad_timestamp" };
+  const eventAtSource: EventTimeSource = occurred !== null ? "occurred" : "delivery";
 
   const sessionId = sessionIdFromRoomName(providerRoom);
   if (sessionId === null) return { ok: false, reason: "unmapped_room" };
@@ -275,6 +359,7 @@ export function normalizeDailyEvent(raw: unknown, now: number = Date.now()): Nor
       providerEventId,
       eventType,
       eventAtMs,
+      eventAtSource,
       sessionId,
       providerRoom,
       providerMeetingId: pickString(raw, ["payload.meeting_id", "meeting_id", "payload.mtg_session_id"]),

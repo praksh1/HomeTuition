@@ -71,6 +71,9 @@ test("a well-formed participant event normalizes to the minimum worth keeping", 
     providerEventId: "evt_abc",
     eventType: "participant.joined",
     eventAtMs: NOW,
+    // No `joined_at` in this fixture, so the delivery clock is all there is — and the row says so
+    // rather than presenting `event_ts` as though it were when somebody arrived.
+    eventAtSource: "delivery",
     sessionId: 42,
     providerRoom: "sikshya42",
     providerMeetingId: "mtg_1",
@@ -79,6 +82,78 @@ test("a well-formed participant event normalizes to the minimum worth keeping", 
     participantIsOwner: true,
     durationSeconds: 900,
   });
+});
+
+/* ---------------------------------------------------------------- which clock a row is timed by */
+
+test("a meeting is timed by its own start and end, not by when the callback was generated", () => {
+  /*
+    The bug this replaces. `event_ts` is when Daily generated the delivery; after a retry it can
+    sit minutes after the thing it describes, and a span built from two of those overstates a
+    lesson in the direction that costs a teacher money.
+  */
+  const started = normalizeDailyEvent(
+    webhook({ type: "meeting.started", event_ts: AT_S + 600 }, { start_ts: AT_S }),
+    NOW,
+  );
+  assert.ok(started.ok);
+  assert.equal(started.event.eventAtMs, NOW);
+  assert.equal(started.event.eventAtSource, "occurred");
+
+  const ended = normalizeDailyEvent(
+    webhook({ type: "meeting.ended", event_ts: AT_S + 3600 }, { end_ts: AT_S + 1800 }),
+    NOW,
+  );
+  assert.ok(ended.ok);
+  assert.equal(ended.event.eventAtMs, NOW + 1_800_000);
+  assert.equal(ended.event.eventAtSource, "occurred");
+});
+
+test("an arrival is timed by joined_at", () => {
+  const joined = normalizeDailyEvent(
+    webhook({ type: "participant.joined", event_ts: AT_S + 120 }, { joined_at: AT_S }),
+    NOW,
+  );
+  assert.ok(joined.ok);
+  assert.equal(joined.event.eventAtMs, NOW);
+  assert.equal(joined.event.eventAtSource, "occurred");
+});
+
+test("a departure is derived from the arrival plus how long it lasted", () => {
+  // Daily reports no `left_at`, so the only honest occurrence timestamp is the one that can be
+  // computed from two fields it does report.
+  const left = normalizeDailyEvent(
+    webhook({ type: "participant.left", event_ts: AT_S + 5000 }, { joined_at: AT_S, duration: 1200 }),
+    NOW,
+  );
+  assert.ok(left.ok);
+  assert.equal(left.event.eventAtMs, NOW + 1_200_000);
+  assert.equal(left.event.eventAtSource, "occurred");
+});
+
+test("a departure with an unusable duration falls back rather than inventing a time", () => {
+  for (const duration of [-60, 25 * 60 * 60, "later", null]) {
+    const left = normalizeDailyEvent(
+      webhook({ type: "participant.left", event_ts: AT_S }, { joined_at: AT_S - 600, duration }),
+      NOW,
+    );
+    assert.ok(left.ok, `duration ${String(duration)} should still normalize`);
+    // A derived timestamp built on a bad input is worse than an honest fallback: it looks exact.
+    assert.equal(left.event.eventAtSource, "delivery", `duration ${String(duration)}`);
+    assert.equal(left.event.eventAtMs, NOW);
+  }
+});
+
+test("an occurrence timestamp outside the plausible window is not preferred to the delivery one", () => {
+  // Seconds read as milliseconds puts a 2026 class in 1970, which sorts to the top of every
+  // timeline and looks like a real event.
+  const started = normalizeDailyEvent(
+    webhook({ type: "meeting.started", event_ts: AT_S }, { start_ts: 1 }),
+    NOW,
+  );
+  assert.ok(started.ok);
+  assert.equal(started.event.eventAtSource, "delivery");
+  assert.equal(started.event.eventAtMs, NOW);
 });
 
 test("nothing but the listed fields survives normalization", () => {

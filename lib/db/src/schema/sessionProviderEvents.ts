@@ -1,5 +1,6 @@
 import { boolean, index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sessionsTable } from "./sessions";
+import { usersTable } from "./users";
 
 /**
  * What the video provider independently says happened in a class.
@@ -46,6 +47,16 @@ export const sessionProviderEventsTable = pgTable(
     /** When the provider says it happened, which is not when it reached us. */
     eventAt: timestamp("event_at", { withTimezone: true }).notNull(),
     /**
+     * Which of the provider's clocks `event_at` came from: `occurred` or `delivery`.
+     *
+     * Three different instants are involved and conflating them costs money. `occurred` is the
+     * provider's timestamp for the thing itself (`start_ts`, `end_ts`, `joined_at`); `delivery` is
+     * `event_ts`, when it generated the callback, which after a retry can sit long after the
+     * event; `received_at` below is when this server wrote the row. A span whose ends come from
+     * different clocks can be minutes longer than the meeting was, so a reader is told.
+     */
+    eventAtSource: text("event_at_source").notNull().default("delivery"),
+    /**
      * The class it belongs to, derived from the room name, or null.
      *
      * Nullable on purpose: a webhook for a room this app did not create is stored unattached rather
@@ -61,14 +72,30 @@ export const sessionProviderEventsTable = pgTable(
     /** The provider's id for one participant's connection, where it supplies one. */
     providerParticipantId: text("provider_participant_id"),
     /**
-     * The Sikshya user, only when the provider echoes one back from a token this server minted.
+     * The Sikshya user, only when the provider echoed one back from a token this server minted
+     * **and** that user really is part of this class.
      *
-     * Null for every event today. `lib/daily.ts` mints tokens without a `user_id` claim, so Daily
-     * can report that *an owner* joined and never *which account*. Deliberately not a foreign key:
-     * a value that arrives from outside should not be able to fail an insert, and a webhook that
-     * throws is a webhook that gets retried forever.
+     * A foreign key, which it could not have been while the value came straight off the wire — an
+     * insert that fails is a webhook that gets retried forever. It is safe now because the route
+     * checks the claim against `getSessionMembership` first and nulls anything that does not
+     * belong to this class, so by the time a value reaches this column it names a real member.
+     *
+     * `set null` on delete rather than cascade: when somebody deletes their account this row must
+     * stop pointing at them, but the fact that the provider saw a participant is still true and
+     * still the answer to "was anybody in the room". Deleting an account must not quietly rewrite
+     * the evidence about a class — nor leave a durable internal identifier behind, which is why
+     * this is a real reference and not a loose integer.
      */
-    participantUserId: integer("participant_user_id"),
+    participantUserId: integer("participant_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+    /**
+     * True when the provider named a user who is not part of this class, and we discarded the id.
+     *
+     * The contradiction is worth keeping. A stream of events claiming accounts that are not in the
+     * class means room names are colliding, a token is being reused, or somebody is forging
+     * payloads — and every one of those is invisible if a bad id is silently blanked. Null for
+     * events that carried no id at all, which is an absence rather than a disagreement.
+     */
+    identityRejected: boolean("identity_rejected"),
     /**
      * Whether the provider believed this participant was a moderator.
      *

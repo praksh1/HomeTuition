@@ -1,5 +1,6 @@
 import { logger } from "./logger";
 import { ROOM_PROPERTIES, propertiesToRepair, roomExpiry } from "./dailyRoom";
+import { providerUserId } from "./video/participantIdentity";
 
 const DAILY_API_BASE = "https://api.daily.co/v1";
 
@@ -11,7 +12,20 @@ export interface MeetingTokenOptions {
   /** Owners can mute and eject others; only the session's own teacher should get this. */
   isOwner: boolean;
   userName: string;
+  /**
+   * The authenticated Sikshya user id, echoed back to us on every webhook Daily sends.
+   *
+   * Without it Daily can report that *an owner* joined and never *which account*, which is the
+   * single limitation that stops provider events corroborating attendance for a named person.
+   *
+   * **It grants nothing.** Rights come from `isOwner`, which comes from this server's own
+   * membership check in `lib/membership.ts`. A token is minted server-side precisely so its claims
+   * are ours, and a `user_id` a client could choose would be a claim about identity with no check
+   * behind it — so this value is taken from `req.user`, never from a request body.
+   */
+  userId: number;
 }
+
 
 /**
  * Mints a Daily meeting token.
@@ -25,10 +39,12 @@ export interface MeetingTokenOptions {
  */
 export async function createMeetingToken(
   sessionId: string | number,
-  { isOwner, userName }: MeetingTokenOptions,
+  { isOwner, userName, userId }: MeetingTokenOptions,
 ): Promise<string | null> {
   const apiKey = process.env.DAILY_API_KEY;
   if (!apiKey) return null;
+
+  const claimedUserId = providerUserId(userId);
 
   try {
     const res = await fetch(`${DAILY_API_BASE}/meeting-tokens`, {
@@ -39,6 +55,14 @@ export async function createMeetingToken(
           room_name: sanitizeRoomName(String(sessionId)),
           is_owner: isOwner,
           user_name: userName,
+          /*
+            Identity, not permission.
+
+            Daily echoes this back on `participant.joined` / `participant.left`, which is the only
+            way a provider event can name an account rather than describing "somebody with
+            moderator rights". Omitted entirely when it would not fit, so a wrong id never lands.
+          */
+          ...(claimedUserId !== null ? { user_id: claimedUserId } : {}),
           // Tokens outlive a long class but not the day.
           exp: Math.floor(Date.now() / 1000) + 60 * 60 * 8,
         },

@@ -84,6 +84,103 @@ export function planRetention(rows: RetainableRow[], now: number): RetentionPlan
   };
 }
 
+/* ------------------------------------------------------------- what the survivors should say */
+
+/** The subset of a stored provider event a summary is computed from. */
+export interface ExpiringEvent {
+  id: number;
+  eventType: string;
+  eventAtMs: number;
+  providerMeetingId: string | null;
+  participantUserId: number | null;
+}
+
+/** The subset of a stored quality sample a summary is computed from. */
+export interface ExpiringSample {
+  id: number;
+  quality: string;
+  reconnect: boolean;
+}
+
+/** Counts and spans for one class's expiring rows. Never a timestamp for an individual sample. */
+export interface AggregateDelta {
+  providerSawMeeting: boolean;
+  providerMeetingCount: number;
+  providerMeetingSpanMs: number;
+  providerParticipantJoinEvents: number;
+  reportedReconnectsTotal: number;
+  qualityGood: number;
+  qualityWarning: number;
+  qualityBad: number;
+  qualityUnknown: number;
+}
+
+/**
+ * The durable figures for one class's expiring rows.
+ *
+ * Pure, so the arithmetic that decides what survives a deletion can be exercised without a
+ * database — which matters more here than anywhere else in this directory, because getting it
+ * wrong is not a bug that can be fixed later. The rows it summarises are gone.
+ *
+ * Spans are summed **per meeting instance**, never taken from the earliest start to the latest
+ * end. A room that held two twenty-minute meetings an hour apart did not hold one meeting of an
+ * hour and forty, and the difference is time nobody was teaching.
+ */
+export function summariseExpiring(events: ExpiringEvent[], samples: ExpiringSample[]): AggregateDelta {
+  const delta: AggregateDelta = {
+    providerSawMeeting: false,
+    providerMeetingCount: 0,
+    providerMeetingSpanMs: 0,
+    providerParticipantJoinEvents: 0,
+    reportedReconnectsTotal: 0,
+    qualityGood: 0,
+    qualityWarning: 0,
+    qualityBad: 0,
+    qualityUnknown: 0,
+  };
+
+  const meetings = new Map<string | null, { start: number | null; end: number | null }>();
+  for (const event of events) {
+    if (event.eventType === "participant.joined" && event.participantUserId !== null) {
+      // Counted only when the provider could name a verified member of this class. An anonymous
+      // join is evidence somebody was there and no evidence at all about who.
+      delta.providerParticipantJoinEvents += 1;
+    }
+    if (
+      event.eventType === "meeting.started" ||
+      event.eventType === "meeting.ended" ||
+      event.eventType === "participant.joined" ||
+      event.eventType === "participant.left"
+    ) {
+      delta.providerSawMeeting = true;
+    }
+    if (event.eventType !== "meeting.started" && event.eventType !== "meeting.ended") continue;
+
+    const found = meetings.get(event.providerMeetingId) ?? { start: null, end: null };
+    if (event.eventType === "meeting.started") {
+      found.start = found.start === null ? event.eventAtMs : Math.min(found.start, event.eventAtMs);
+    } else {
+      found.end = found.end === null ? event.eventAtMs : Math.max(found.end, event.eventAtMs);
+    }
+    meetings.set(event.providerMeetingId, found);
+  }
+
+  delta.providerMeetingCount = meetings.size;
+  for (const { start, end } of meetings.values()) {
+    if (start !== null && end !== null && end >= start) delta.providerMeetingSpanMs += end - start;
+  }
+
+  for (const sample of samples) {
+    if (sample.reconnect) delta.reportedReconnectsTotal += 1;
+    if (sample.quality === "good") delta.qualityGood += 1;
+    else if (sample.quality === "warning") delta.qualityWarning += 1;
+    else if (sample.quality === "bad") delta.qualityBad += 1;
+    else delta.qualityUnknown += 1;
+  }
+
+  return delta;
+}
+
 /**
  * The durable per-session shape that outlives the fine-grained rows.
  *

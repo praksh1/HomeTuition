@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { selectProvider } from "./select.ts";
+import { PROVIDER_USER_ID_MAX_LENGTH, providerUserId } from "./participantIdentity.ts";
 import type { VideoProvider } from "./types.ts";
 
 /**
@@ -60,23 +61,65 @@ const pretend: VideoProvider = {
   configured: () => true,
   ensureRoom: async (sessionId) => `wss://video.example/room/${sessionId}`,
   joinToken: async (sessionId, options) =>
-    `token-${sessionId}-${options.isOwner ? "owner" : "guest"}-${options.userName}`,
+    `token-${sessionId}-${options.isOwner ? "owner" : "guest"}-${options.userName}-${options.userId}`,
 };
 
 test("a provider that has never heard of Daily satisfies the contract", async () => {
   assert.equal(await pretend.ensureRoom(42), "wss://video.example/room/42");
-  assert.equal(await pretend.joinToken(42, { isOwner: true, userName: "Ram" }), "token-42-owner-Ram");
-  assert.equal(await pretend.joinToken(42, { isOwner: false, userName: "Sita" }), "token-42-guest-Sita");
+  assert.equal(await pretend.joinToken(42, { isOwner: true, userName: "Ram", userId: 7 }), "token-42-owner-Ram-7");
+  assert.equal(await pretend.joinToken(42, { isOwner: false, userName: "Sita", userId: 8 }), "token-42-guest-Sita-8");
 });
 
 test("moderator rights are a parameter, never something the provider decides", async () => {
-  const owner = await pretend.joinToken(1, { isOwner: true, userName: "T" });
-  const guest = await pretend.joinToken(1, { isOwner: false, userName: "S" });
+  const owner = await pretend.joinToken(1, { isOwner: true, userName: "T", userId: 1 });
+  const guest = await pretend.joinToken(1, { isOwner: false, userName: "S", userId: 2 });
   assert.notEqual(owner, guest);
   // The server decides who is the owner from its own membership check. A provider that worked
   // it out for itself would be a provider that could be talked into it by a client.
   assert.match(String(owner), /owner/);
   assert.match(String(guest), /guest/);
+});
+
+test("the teacher's and a student's tokens carry different identities", async () => {
+  const teacher = await pretend.joinToken(9, { isOwner: true, userName: "Guru", userId: 101 });
+  const student = await pretend.joinToken(9, { isOwner: false, userName: "Sita", userId: 202 });
+  // Without distinct ids the provider can only say "somebody with moderator rights joined", which
+  // is the limitation that made provider events useless for naming a person.
+  assert.match(String(teacher), /101/);
+  assert.match(String(student), /202/);
+  assert.notEqual(teacher, student);
+});
+
+test("an identity does not confer ownership", async () => {
+  /*
+    The failure this guards: a user id becoming a second route to moderator rights.
+
+    Two tokens for the *same* account, one asked for as an owner and one not, must differ in
+    ownership and agree on identity. A provider that read rights out of `user_id` — or a caller
+    that thought passing an id was enough — would collapse the two.
+  */
+  const asOwner = await pretend.joinToken(3, { isOwner: true, userName: "Ram", userId: 55 });
+  const asGuest = await pretend.joinToken(3, { isOwner: false, userName: "Ram", userId: 55 });
+  assert.match(String(asOwner), /owner/);
+  assert.match(String(asGuest), /guest/);
+  assert.match(String(asOwner), /55/);
+  assert.match(String(asGuest), /55/);
+});
+
+test("a provider user id is dropped rather than truncated when it could not fit", () => {
+  assert.equal(providerUserId(42), "42");
+  assert.equal(providerUserId(Number.MAX_SAFE_INTEGER), String(Number.MAX_SAFE_INTEGER));
+  // Not real ids, but the guard has to exist: a shortened or nonsense id would correlate a
+  // provider event to the wrong account, which is worse than leaving the event unattributed.
+  assert.equal(providerUserId(0), null);
+  assert.equal(providerUserId(-1), null);
+  assert.equal(providerUserId(1.5), null);
+  assert.equal(providerUserId(Number.NaN), null);
+});
+
+test("no real Sikshya id can exceed the provider's length cap", () => {
+  // Sixteen digits is already past Number.MAX_SAFE_INTEGER; the cap is 36.
+  assert.ok(String(Number.MAX_SAFE_INTEGER).length < PROVIDER_USER_ID_MAX_LENGTH);
 });
 
 test("a provider may say it cannot share a screen, so the app stops offering it", () => {

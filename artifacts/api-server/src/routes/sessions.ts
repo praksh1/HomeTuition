@@ -660,6 +660,9 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
     const token = await video.joinToken(id, {
       isOwner: membership!.isSessionTeacher,
       userName: userRow?.name ?? "Guest",
+      // From the authenticated request, never from the body. It identifies the participant in the
+      // provider's own records so a dispute can be corroborated per person; it confers nothing.
+      userId: req.user!.userId,
     });
     /**
      * `roomUrl`, `token` and `isOwner` keep their names.

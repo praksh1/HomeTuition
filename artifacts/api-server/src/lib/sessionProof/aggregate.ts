@@ -61,9 +61,41 @@ export interface LedgerPresence {
 export interface StoredProviderEvent {
   eventType: "meeting.started" | "meeting.ended" | "participant.joined" | "participant.left";
   eventAtMs: number;
+  /**
+   * Whether `eventAtMs` is the provider's clock for the event or for the callback.
+   *
+   * A span with one end of each kind can be minutes longer than the meeting was, so it is carried
+   * here and turned into a caveat rather than quietly averaged away.
+   */
+  eventAtSource: "occurred" | "delivery";
+  /**
+   * The provider's id for the meeting *instance* this event belongs to.
+   *
+   * A room is not a meeting. A call that drops and is rejoined produces a second meeting in the
+   * same room, and pairing the first start with the last end measures the gap between them as
+   * teaching. Null when the provider did not say.
+   */
+  providerMeetingId: string | null;
   participantUserId: number | null;
+  /** True when the provider named a user who is not in this class and the id was discarded. */
+  identityRejected: boolean | null;
   participantIsOwner: boolean | null;
   durationSeconds: number | null;
+}
+
+/**
+ * One meeting the provider recorded in this class's room, measured on its own.
+ *
+ * Reported separately and never merged. Two meetings of twenty minutes with an hour between them
+ * are not one meeting of an hour and forty, and the difference is the hour nobody was in the room.
+ */
+export interface ProviderMeetingInstance {
+  /** The provider's id, or null for events that carried none — grouped together as one bucket. */
+  meetingId: string | null;
+  startedAtMs: number | null;
+  endedAtMs: number | null;
+  /** Available only when this instance reported both of its own ends. */
+  spanMs: Measured<number>;
 }
 
 export type QualityBucket = "good" | "warning" | "bad" | "unknown";
@@ -151,7 +183,21 @@ export interface SessionProofSummary {
   people: PersonSummary[];
   /** Whether the provider independently saw a meeting at all. */
   providerSawMeeting: Measured<boolean>;
-  /** Provider's meeting span, when it reported both ends. */
+  /**
+   * Every meeting the provider recorded in this room, each measured on its own.
+   *
+   * The list, not a total. A reader deciding whether a lesson happened needs to see that the room
+   * held one meeting of fifty minutes or three of four, and no single number says both.
+   */
+  providerMeetings: ProviderMeetingInstance[];
+  /**
+   * The provider's meeting span — **only when there was exactly one meeting**.
+   *
+   * Deliberately unavailable rather than summed or spanned when there were several. Summing hides
+   * that the class was interrupted; spanning earliest-start to latest-end counts the interruption
+   * as teaching. Both are a single number that answers a question nobody asked, and this field
+   * used to be the second one.
+   */
   providerMeetingSpanMs: Measured<number>;
   /** Where each figure could have come from, restated for the reader. */
   sources: SourceAvailability;
@@ -224,6 +270,7 @@ export function summarizeSessionProof(input: AggregateInput, _now: number = Date
 
   let providerSawMeeting: Measured<boolean>;
   let providerMeetingSpanMs: Measured<number>;
+  let providerMeetings: ProviderMeetingInstance[] = [];
 
   if (!available.provider) {
     const because = "Provider events are not being ingested, or could not be read.";
@@ -234,22 +281,96 @@ export function summarizeSessionProof(input: AggregateInput, _now: number = Date
         "figures rest on this app's own socket alone.",
     );
   } else {
-    const started = providerEvents.filter((e) => e.eventType === "meeting.started").sort((a, b) => a.eventAtMs - b.eventAtMs)[0] ?? null;
-    const ended = providerEvents.filter((e) => e.eventType === "meeting.ended").sort((a, b) => b.eventAtMs - a.eventAtMs)[0] ?? null;
-
     providerSawMeeting = measured(providerEvents.length > 0);
 
-    if (started) {
-      timeline.push({ atMs: started.eventAtMs, code: "provider_meeting_started", source: "provider", detail: "The video provider recorded the meeting starting." });
-    }
-    if (ended) {
-      timeline.push({ atMs: ended.eventAtMs, code: "provider_meeting_ended", source: "provider", detail: "The video provider recorded the meeting ending." });
+    /*
+      Grouped by the provider's own meeting id, never flattened.
+
+      The bug this replaces: the earliest `meeting.started` was paired with the latest
+      `meeting.ended` across every meeting in the room. A class where the call dropped at 10:20 and
+      was rejoined at 10:40 reported a single fifty-minute meeting, twenty minutes of which nobody
+      was in the room — and reported it as the provider's *independent* corroboration, which is the
+      figure a refund argument would lean on hardest.
+    */
+    const byMeeting = new Map<string | null, StoredProviderEvent[]>();
+    for (const event of providerEvents) {
+      if (event.eventType !== "meeting.started" && event.eventType !== "meeting.ended") continue;
+      const key = event.providerMeetingId;
+      const bucket = byMeeting.get(key);
+      if (bucket) bucket.push(event);
+      else byMeeting.set(key, [event]);
     }
 
-    providerMeetingSpanMs =
-      started && ended && ended.eventAtMs >= started.eventAtMs
-        ? measured(ended.eventAtMs - started.eventAtMs)
-        : unavailable<number>("The provider did not report both a start and an end for this meeting.");
+    providerMeetings = [...byMeeting.entries()]
+      .map(([meetingId, events]) => {
+        const starts = events.filter((e) => e.eventType === "meeting.started").map((e) => e.eventAtMs).sort((a, b) => a - b);
+        const ends = events.filter((e) => e.eventType === "meeting.ended").map((e) => e.eventAtMs).sort((a, b) => b - a);
+        const startedAtMs = starts[0] ?? null;
+        const endedAtMs = ends[0] ?? null;
+        return {
+          meetingId,
+          startedAtMs,
+          endedAtMs,
+          spanMs:
+            startedAtMs !== null && endedAtMs !== null && endedAtMs >= startedAtMs
+              ? measured(endedAtMs - startedAtMs)
+              : unavailable<number>("The provider did not report both ends of this meeting."),
+        } satisfies ProviderMeetingInstance;
+      })
+      .sort((a, b) => (a.startedAtMs ?? Number.MAX_SAFE_INTEGER) - (b.startedAtMs ?? Number.MAX_SAFE_INTEGER));
+
+    for (const meeting of providerMeetings) {
+      const which = meeting.meetingId !== null ? ` (meeting ${meeting.meetingId})` : "";
+      if (meeting.startedAtMs !== null) {
+        timeline.push({
+          atMs: meeting.startedAtMs,
+          code: "provider_meeting_started",
+          source: "provider",
+          detail: `The video provider recorded a meeting starting${which}.`,
+        });
+      }
+      if (meeting.endedAtMs !== null) {
+        timeline.push({
+          atMs: meeting.endedAtMs,
+          code: "provider_meeting_ended",
+          source: "provider",
+          detail: `The video provider recorded a meeting ending${which}.`,
+        });
+      }
+    }
+
+    if (providerMeetings.length > 1) {
+      providerMeetingSpanMs = unavailable<number>(
+        `The provider recorded ${providerMeetings.length} separate meetings in this room. They are ` +
+          "listed individually rather than merged, because the time between them is time nobody " +
+          "was in the room.",
+      );
+      caveats.push(
+        `The video provider recorded ${providerMeetings.length} separate meetings for this class. ` +
+          "That usually means the call dropped and was rejoined. Each is timed on its own; do not " +
+          "add them together and do not treat the first start and last end as one lesson.",
+      );
+    } else {
+      providerMeetingSpanMs =
+        providerMeetings[0]?.spanMs ??
+        unavailable<number>("The provider did not report a meeting starting or ending for this class.");
+    }
+
+    if (providerEvents.some((e) => e.eventAtSource === "delivery")) {
+      caveats.push(
+        "Some provider timestamps are when the video provider sent us the notification rather " +
+          "than when the thing happened. After a retry those can differ by minutes, so treat the " +
+          "durations here as approximate.",
+      );
+    }
+
+    if (providerEvents.some((e) => e.identityRejected === true)) {
+      caveats.push(
+        "The video provider named at least one participant who is not part of this class, and " +
+          "that identification was discarded. It can mean a leftover meeting link was reused; it " +
+          "is worth checking before relying on anything else the provider says here.",
+      );
+    }
 
     for (const event of providerEvents) {
       if (event.eventType === "participant.joined" || event.eventType === "participant.left") {
@@ -273,12 +394,26 @@ export function summarizeSessionProof(input: AggregateInput, _now: number = Date
       }
     }
 
-    // The limitation that matters most, stated wherever provider events appear.
-    if (providerEvents.some((e) => e.participantUserId === null)) {
+    /*
+      The limitation that matters most, stated wherever provider events appear.
+
+      Only about the *participant* events: a `meeting.started` naturally carries no user id and
+      saying so about one would be noise. And it is `participantUserId === null` on a participant
+      event that is being described — never inferred from the owner flag, which says what the
+      provider believed about somebody's rights and nothing whatever about which account they are.
+    */
+    const unnamed = providerEvents.filter(
+      (e) =>
+        (e.eventType === "participant.joined" || e.eventType === "participant.left") &&
+        e.participantUserId === null,
+    );
+    if (unnamed.length > 0) {
       caveats.push(
-        "The video provider's participant events cannot be tied to a Sikshya account: the meeting " +
-          "tokens this app mints carry no user id, so the provider can only distinguish an owner " +
-          "from a non-owner. Treat them as evidence that somebody was in the room, not who.",
+        "Some of the video provider's participant events cannot be tied to a Sikshya account — " +
+          "usually because the class was joined with a meeting token minted before this app " +
+          "started identifying participants to the provider. For those, the provider can only " +
+          "distinguish an owner from a non-owner. Treat them as evidence that somebody was in the " +
+          "room, not who.",
       );
     }
   }
@@ -355,15 +490,50 @@ export function summarizeSessionProof(input: AggregateInput, _now: number = Date
   }
 
   if (available.provider) {
+    /*
+      Zero *named* joins only means something when the provider named somebody.
+
+      If every participant event is anonymous, "the provider recorded 0 joins for this teacher" is
+      not a fact about the teacher — it is a fact about the tokens, and rendering it as a zero is
+      the fabrication this whole file exists to prevent. Note what is *not* consulted: the owner
+      flag. "An owner joined and the teacher is the only owner, so it was the teacher" is a guess,
+      and a guess is not corroboration.
+    */
+    const namesAnybody = providerEvents.some(
+      (e) =>
+        (e.eventType === "participant.joined" || e.eventType === "participant.left") &&
+        e.participantUserId !== null,
+    );
     for (const person of byId.values()) {
       const joins = providerEvents.filter(
         (e) => e.eventType === "participant.joined" && e.participantUserId === person.userId,
       ).length;
-      // Zero *named* joins is only meaningful when the provider names anybody at all.
-      person.providerJoinCount =
-        providerEvents.some((e) => e.participantUserId !== null)
-          ? measured(joins)
-          : unavailable<number>("The provider's events carry no user id, so they cannot be attributed to this person.");
+      person.providerJoinCount = namesAnybody
+        ? measured(joins)
+        : unavailable<number>("The provider's events carry no user id, so they cannot be attributed to this person.");
+    }
+
+    /*
+      A contradiction worth a sentence: the provider said somebody had moderator rights, and that
+      account is not this class's teacher.
+
+      Rights are this server's decision and the provider's flag is only ever a record of what it
+      believed — but a disagreement here means a token was minted for the wrong person or reused
+      from another class, and either is more interesting than any duration on the page.
+    */
+    const ownerIds = new Set(
+      providerEvents
+        .filter((e) => e.participantIsOwner === true && e.participantUserId !== null)
+        .map((e) => e.participantUserId as number),
+    );
+    const teacherIds = new Set([...byId.values()].filter((p) => p.role === "teacher").map((p) => p.userId));
+    const strangers = [...ownerIds].filter((id) => !teacherIds.has(id));
+    if (strangers.length > 0) {
+      caveats.push(
+        "The video provider recorded somebody with moderator rights who is not this class's " +
+          "teacher. Rights in this app are decided by its own membership check and never by the " +
+          "provider, so nobody gained anything — but it is worth finding out why.",
+      );
     }
   }
 
@@ -405,6 +575,7 @@ export function summarizeSessionProof(input: AggregateInput, _now: number = Date
     // Teacher first: a refund argument is mostly about the teacher.
     people: [...byId.values()].sort((a, b) => (a.role === b.role ? a.userId - b.userId : a.role === "teacher" ? -1 : 1)),
     providerSawMeeting,
+    providerMeetings,
     providerMeetingSpanMs,
     sources: available,
     caveats,

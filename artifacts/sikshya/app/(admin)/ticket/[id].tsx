@@ -62,6 +62,18 @@ interface TicketDetail {
       confidence: "corroborated" | "single-source" | "self-reported" | "absent";
     }[];
     providerSawMeeting: Measured<boolean>;
+    /**
+     * Every meeting the provider recorded in this room, each timed on its own.
+     *
+     * A list rather than a total, because a room that held one meeting of fifty minutes and one
+     * that held three of four are different lessons and no single number says which.
+     */
+    providerMeetings?: {
+      meetingId: string | null;
+      startedAtMs: number | null;
+      endedAtMs: number | null;
+      spanMs: Measured<number>;
+    }[];
     sources: { ledger: boolean; provider: boolean; telemetry: boolean };
     caveats: string[];
   } | null;
@@ -345,6 +357,39 @@ export default function AdminTicket() {
                   {` · ${person.confidence}`}
                 </Text>
               ))}
+
+              {/*
+                Each meeting on its own line, never added up.
+
+                A call that drops and is rejoined makes two meetings in one room. Reporting the
+                first start and the last end as one lesson counts the gap between them as
+                teaching — which is the number a refund argument would lean on hardest, and the
+                one it would be most wrong about.
+              */}
+              {proof.providerMeetings && proof.providerMeetings.length > 0 && (
+                <>
+                  <Text style={[styles.meta, { color: colors.mutedForeground }]}>
+                    {proof.providerMeetings.length === 1
+                      ? "The video provider recorded one meeting:"
+                      : `The video provider recorded ${proof.providerMeetings.length} separate meetings — the call dropped and was rejoined. Do not add them together:`}
+                  </Text>
+                  {proof.providerMeetings.map((meeting, i) => (
+                    <Text key={`meeting-${i}`} style={[styles.meta, { color: colors.mutedForeground }]}>
+                      {`  ${i + 1}. `}
+                      {meeting.startedAtMs !== null
+                        ? new Date(meeting.startedAtMs).toLocaleTimeString()
+                        : "start not reported"}
+                      {" to "}
+                      {meeting.endedAtMs !== null
+                        ? new Date(meeting.endedAtMs).toLocaleTimeString()
+                        : "end not reported"}
+                      {meeting.spanMs.available
+                        ? ` — ${minutes(meeting.spanMs.value)} min`
+                        : " — length unknown"}
+                    </Text>
+                  ))}
+                </>
+              )}
 
               {proof.timeline.length > 0 && (
                 <>

@@ -22,6 +22,29 @@ const student: LedgerPresence = {
   presentMs: 54 * MIN, joinCount: 1, drawCount: 0, messageCount: 5,
 };
 
+/**
+ * A provider event with the boring fields filled in.
+ *
+ * Defaults are the *anonymous, occurrence-timed, single-meeting* case, so any test that cares
+ * about identity, clock source or a second meeting has to say so out loud rather than inheriting
+ * it — which is how a fixture ends up asserting something nobody meant.
+ */
+const ev = (
+  eventType: StoredProviderEvent["eventType"],
+  eventAtMs: number,
+  over: Partial<StoredProviderEvent> = {},
+): StoredProviderEvent => ({
+  eventType,
+  eventAtMs,
+  eventAtSource: "occurred",
+  providerMeetingId: "mtg-1",
+  participantUserId: null,
+  identityRejected: null,
+  participantIsOwner: null,
+  durationSeconds: null,
+  ...over,
+});
+
 const base = (over: Partial<AggregateInput> = {}): AggregateInput => ({
   session: { scheduledStartMs: START, durationMinutes: 60, startedAtMs: START, endedAtMs: START + 55 * MIN },
   ledger: [teacher, student],
@@ -80,8 +103,8 @@ test("no provider ingestion is a stated gap, not a silent one", () => {
 
 test("provider events corroborate the ledger and the span is only claimed when both ends arrived", () => {
   const events: StoredProviderEvent[] = [
-    { eventType: "meeting.started", eventAtMs: START, participantUserId: null, participantIsOwner: null, durationSeconds: null },
-    { eventType: "meeting.ended", eventAtMs: START + 55 * MIN, participantUserId: null, participantIsOwner: null, durationSeconds: null },
+    ev("meeting.started", START),
+    ev("meeting.ended", START + 55 * MIN),
   ];
   const s = summarizeSessionProof(base({ providerEvents: events }), NOW);
   assert.deepEqual(s.providerSawMeeting, { available: true, value: true });
@@ -92,10 +115,11 @@ test("provider events corroborate the ledger and the span is only claimed when b
 });
 
 test("unattributable provider events say so instead of implying nobody joined", () => {
-  // Today's real case: tokens carry no user_id, so Daily can only say "an owner joined".
+  // Still a real case after tokens started carrying a user id: a call joined before that change,
+  // or a room opened by hand, yields events on which Daily can only say "an owner joined".
   const s = summarizeSessionProof(base({
     providerEvents: [
-      { eventType: "participant.joined", eventAtMs: START, participantUserId: null, participantIsOwner: true, durationSeconds: null },
+      ev("participant.joined", START, { participantIsOwner: true }),
     ],
   }), NOW);
   const asha = s.people.find((p) => p.userId === 1)!;
@@ -107,7 +131,7 @@ test("unattributable provider events say so instead of implying nobody joined", 
 test("a named provider join corroborates that person and raises confidence", () => {
   const s = summarizeSessionProof(base({
     providerEvents: [
-      { eventType: "participant.joined", eventAtMs: START, participantUserId: 1, participantIsOwner: true, durationSeconds: null },
+      ev("participant.joined", START, { participantUserId: 1, participantIsOwner: true }),
     ],
   }), NOW);
   const asha = s.people.find((p) => p.userId === 1)!;
@@ -139,7 +163,7 @@ test("client telemetry is carried but always labelled self-reported", () => {
 test("the timeline is ordered and carries its source on every line", () => {
   const s = summarizeSessionProof(base({
     providerEvents: [
-      { eventType: "meeting.started", eventAtMs: START - MIN, participantUserId: null, participantIsOwner: null, durationSeconds: null },
+      ev("meeting.started", START - MIN),
     ],
     quality: [{ userId: 2, observedAtMs: START + 30 * MIN, quality: "warning", reconnect: false }],
   }), NOW);
@@ -169,4 +193,117 @@ test("no output contains a verdict, a recommendation or a refund", () => {
 
 test("the summary is deterministic for the same input and clock", () => {
   assert.deepEqual(summarizeSessionProof(base(), NOW), summarizeSessionProof(base(), NOW));
+});
+
+/* ------------------------------------------------------- meetings are counted one at a time */
+
+test("two meetings in one room are never merged into one span", () => {
+  /*
+    The defect this replaces.
+
+    The earliest `meeting.started` was paired with the latest `meeting.ended` across every meeting
+    in the room, so a class whose call dropped at 10:20 and was rejoined at 10:40 reported a single
+    fifty-minute meeting — twenty minutes of which nobody was in the room — and reported it as the
+    provider's *independent* corroboration, which is the figure a refund argument leans on hardest.
+  */
+  const s = summarizeSessionProof(base({
+    providerEvents: [
+      ev("meeting.started", START, { providerMeetingId: "mtg-a" }),
+      ev("meeting.ended", START + 20 * MIN, { providerMeetingId: "mtg-a" }),
+      ev("meeting.started", START + 40 * MIN, { providerMeetingId: "mtg-b" }),
+      ev("meeting.ended", START + 50 * MIN, { providerMeetingId: "mtg-b" }),
+    ],
+  }), NOW);
+
+  assert.equal(s.providerMeetings.length, 2);
+  assert.deepEqual(s.providerMeetings[0]!.spanMs, { available: true, value: 20 * MIN });
+  assert.deepEqual(s.providerMeetings[1]!.spanMs, { available: true, value: 10 * MIN });
+  assert.equal(
+    s.providerMeetingSpanMs.available,
+    false,
+    "one number cannot describe two meetings, so there must not be one",
+  );
+  assert.match(s.caveats.join(" "), /2 separate meetings/);
+  assert.match(s.caveats.join(" "), /do not add them together/i);
+});
+
+test("meeting instances are listed in the order they happened", () => {
+  const s = summarizeSessionProof(base({
+    providerEvents: [
+      ev("meeting.started", START + 40 * MIN, { providerMeetingId: "mtg-b" }),
+      ev("meeting.started", START, { providerMeetingId: "mtg-a" }),
+    ],
+  }), NOW);
+  assert.deepEqual(s.providerMeetings.map((m) => m.meetingId), ["mtg-a", "mtg-b"]);
+});
+
+test("a single meeting still reports its span", () => {
+  const s = summarizeSessionProof(base({
+    providerEvents: [
+      ev("meeting.started", START, { providerMeetingId: "mtg-a" }),
+      ev("meeting.ended", START + 55 * MIN, { providerMeetingId: "mtg-a" }),
+    ],
+  }), NOW);
+  assert.equal(s.providerMeetings.length, 1);
+  assert.deepEqual(s.providerMeetingSpanMs, { available: true, value: 55 * MIN });
+  assert.doesNotMatch(s.caveats.join(" "), /separate meetings/);
+});
+
+test("events with no meeting id are one bucket, not one meeting each", () => {
+  // A provider that does not name its meetings must not look like a room that held four of them.
+  const s = summarizeSessionProof(base({
+    providerEvents: [
+      ev("meeting.started", START, { providerMeetingId: null }),
+      ev("meeting.ended", START + 30 * MIN, { providerMeetingId: null }),
+    ],
+  }), NOW);
+  assert.equal(s.providerMeetings.length, 1);
+  assert.equal(s.providerMeetings[0]!.meetingId, null);
+  assert.deepEqual(s.providerMeetingSpanMs, { available: true, value: 30 * MIN });
+});
+
+test("a delivery-timed event puts an approximation warning on the page", () => {
+  const s = summarizeSessionProof(base({
+    providerEvents: [
+      ev("meeting.started", START, { eventAtSource: "delivery" }),
+      ev("meeting.ended", START + 55 * MIN),
+    ],
+  }), NOW);
+  assert.match(s.caveats.join(" "), /when the video provider sent us the notification/i);
+  assert.match(s.caveats.join(" "), /approximate/i);
+});
+
+test("a discarded identity is reported rather than silently blanked", () => {
+  const s = summarizeSessionProof(base({
+    providerEvents: [
+      ev("participant.joined", START, { participantUserId: null, identityRejected: true }),
+    ],
+  }), NOW);
+  assert.match(s.caveats.join(" "), /named at least one participant who is not part of this class/i);
+});
+
+test("an owner the provider names who is not the teacher is flagged", () => {
+  const s = summarizeSessionProof(base({
+    providerEvents: [
+      ev("participant.joined", START, { participantUserId: 2, participantIsOwner: true }),
+    ],
+  }), NOW);
+  assert.match(s.caveats.join(" "), /moderator rights who is not this class's teacher/i);
+  // And it changes nobody's rights: the summary says what the provider believed, nothing more.
+  assert.match(s.caveats.join(" "), /never by the provider/i);
+});
+
+test("the owner flag is never used to guess an identity", () => {
+  /*
+    The temptation: "an owner joined, and the teacher is the only owner, so the teacher joined."
+
+    That is a guess, and a guess dressed as corroboration is worse than an admitted gap — it is the
+    difference between a refund decided on evidence and one decided on an inference nobody stated.
+  */
+  const s = summarizeSessionProof(base({
+    providerEvents: [ev("participant.joined", START, { participantIsOwner: true })],
+  }), NOW);
+  const teacherRow = s.people.find((p) => p.userId === 1)!;
+  assert.equal(teacherRow.providerJoinCount.available, false);
+  assert.notEqual(teacherRow.confidence, "corroborated");
 });

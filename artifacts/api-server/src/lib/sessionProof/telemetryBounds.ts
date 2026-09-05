@@ -60,10 +60,53 @@ export interface CleanQualitySample {
 }
 
 export interface SampleWindow {
-  /** Earliest instant a sample may claim — normally the scheduled start, less the join window. */
+  /** Earliest instant a sample may claim — the scheduled start, less the join window. */
   fromMs: number;
-  /** Latest instant a sample may claim — normally the end, or now for a live class. */
+  /** Latest instant a sample may claim — the booked end, or now while the class is still running. */
   toMs: number;
+}
+
+/**
+ * How far past its booked end a class may still be reporting live.
+ *
+ * A lesson runs over, and a device reporting a bad line during the overrun is real evidence.
+ * Thirty minutes is generous for that and, crucially, finite.
+ */
+export const LIVE_OVERRUN_GRACE_MS = 30 * 60 * 1000;
+
+/**
+ * The window a client's samples must fall inside.
+ *
+ * ## The bug this replaces
+ *
+ * The window used to end at `Math.max(bookedEnd, now)`. That reads as "a live class may still be
+ * reporting" and it actually means **"any class, however old, accepts a timestamp from today"** —
+ * because for a finished class `now` is always the larger of the two. A student disputing a lesson
+ * from three months ago could file a wall of bad-connection reports dated this morning and have
+ * every one of them land on that lesson's timeline, against a teacher who has no way to contradict
+ * them.
+ *
+ * So the end is the booked end, extended to `now` **only while the class is genuinely still
+ * running**: within `LIVE_OVERRUN_GRACE_MS` of that booked end. The start reaches back to when the
+ * doors open, because trouble in the lobby is trouble. `sanitiseQualitySamples` then applies the
+ * explicit ±`CLOCK_TOLERANCE_MS` on top, for devices whose clocks are simply wrong.
+ *
+ * Pure, with `nowMs` passed in, so the old-class case is a test rather than a hope.
+ */
+export function observationWindow(input: {
+  scheduledStartMs: number;
+  durationMinutes: number;
+  /** How early the classroom doors open, in minutes. From `JOIN_WINDOW_MINUTES`. */
+  doorsOpenMinutes: number;
+  nowMs: number;
+}): SampleWindow {
+  const bookedEndMs = input.scheduledStartMs + input.durationMinutes * 60_000;
+  const overrunMs = input.nowMs - bookedEndMs;
+  const stillRunning = overrunMs > 0 && overrunMs <= LIVE_OVERRUN_GRACE_MS;
+  return {
+    fromMs: input.scheduledStartMs - input.doorsOpenMinutes * 60_000,
+    toMs: stillRunning ? input.nowMs : bookedEndMs,
+  };
 }
 
 export type SampleRejection = "not_an_object" | "bad_timestamp" | "outside_window";

@@ -1,13 +1,19 @@
-import crypto from "node:crypto";
 import { Router, type IRouter } from "express";
 import { and, count, desc, eq, sql } from "drizzle-orm";
-import { db, sessionProviderEventsTable, sessionQualitySamplesTable } from "@workspace/db";
+import { db, sessionProviderEventsTable, sessionQualitySamplesTable, sessionsTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
-import { getSessionMembership } from "../lib/membership";
+import { getSessionMembership, JOIN_WINDOW_MINUTES } from "../lib/membership";
 import { normalizeDailyEvent } from "../lib/sessionProof/providerEvents";
+import {
+  SIGNATURE_HEADER,
+  TIMESTAMP_HEADER,
+  isActivationProbe,
+  verifyWebhookSignature,
+} from "../lib/sessionProof/webhookSignature";
 import {
   MAX_SAMPLES_PER_SESSION_PER_USER,
   MIN_SECONDS_BETWEEN_REQUESTS,
+  observationWindow,
   sanitiseQualitySamples,
 } from "../lib/sessionProof/telemetryBounds";
 
@@ -28,22 +34,22 @@ function webhookSecret(): string | null {
 }
 
 /**
- * HMAC-SHA256 over the exact bytes the provider sent.
+ * How far outside a class's own times a provider event may sit and still be that class's.
  *
- * The raw body matters and is already captured for the payment webhook — `app.ts` stashes it in
- * `req.rawBody` before parsing, because re-serialising parsed JSON reorders keys and changes
- * spacing, producing a different digest and rejecting every genuine callback.
+ * Twelve hours, which is far wider than any real lesson overrun and far narrower than "some other
+ * day". It exists because a Daily room named `sikshya42` maps to session 42 by name alone: if a
+ * room outlives its class, or somebody opens it by hand, its events would otherwise attach to a
+ * lesson they have nothing to do with and stretch its recorded span across the gap.
+ *
+ * An event outside it is stored **unattached** rather than dropped, keeping its room name, so an
+ * operator asking "why is there no provider evidence for this class" can see events arriving and
+ * failing to correlate. That difference — nothing arriving versus nothing correlating — is exactly
+ * what a silent parser hides.
  */
-function signatureMatches(rawBody: string, given: string | undefined, secret: string): boolean {
-  if (!given) return false;
-  const expected = crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
-  const a = Buffer.from(expected, "utf8");
-  const b = Buffer.from(given.trim().replace(/^sha256=/i, ""), "utf8");
-  // Length is checked first because timingSafeEqual throws on a mismatch; comparing lengths leaks
-  // only the length, which is fixed for a hex digest anyway.
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
-}
+const CLASS_CORRELATION_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+/** Every reply this endpoint gives a provider, so the shapes are decided in one place. */
+type WebhookOutcome = { received: true; stored: boolean; duplicate?: boolean };
 
 /**
  * Daily's webhook.
@@ -53,20 +59,42 @@ function signatureMatches(rawBody: string, given: string | undefined, secret: st
  * A webhook endpoint is unauthenticated by definition — anybody can post to it — so it is written
  * to be uninteresting to probe and impossible to use as a lever on a live class.
  *
- * - **Not configured** answers 404, exactly as an unknown path would. Not 503 and not "webhook
- *   secret missing": a response that distinguishes "configured but wrong signature" from "not
- *   configured" tells a prober whether this deployment ingests webhooks at all, and naming the
- *   variable tells them what to look for. The route logs the reason; the caller learns nothing.
- * - **Bad signature** answers 401 with the same flat body.
- * - **Malformed or uncorrelated** answers 202. It is accepted-and-ignored rather than 400, because
- *   a 4xx makes a provider retry the same unparseable body on a schedule for hours.
- * - **Duplicate** answers 200. The unique index does the work; a retried delivery is a normal
- *   event, not an error.
+ * - **The activation probe** is answered 200 before anything else, unsigned, storing nothing. See
+ *   `isActivationProbe`: Daily returns the signing secret from the same call that fires the probe,
+ *   so demanding a signature here is a deadlock in which the endpoint can never be activated at
+ *   all. Configured and unconfigured deployments answer it identically, so it discloses nothing.
+ * - **Not configured** answers 404 for anything else, exactly as an unknown path would. Not 503
+ *   and not "webhook secret missing": a response that distinguishes "configured but wrong
+ *   signature" from "not configured" tells a prober whether this deployment ingests webhooks, and
+ *   naming the variable tells them what to look for.
+ * - **Bad or stale signature** answers 401 with the same flat body. Safe to be a hard failure:
+ *   Daily never sends an incorrectly signed body, so a 401 can only ever be somebody else's.
+ * - **Anything verified but not stored** answers **200**, not 4xx. Daily deactivates a webhook
+ *   whose endpoint keeps failing, so a body this product chooses to ignore — an event type it does
+ *   not use, a room that is not a class, a class that does not exist — must not look like a fault.
+ * - **Duplicate** answers 200 too. The unique index does the work; a retried delivery is normal.
  * - **Nothing here touches a classroom.** No socket is written, no session row is updated, no
- *   notification is sent. The worst a hostile caller with a valid signature could do is add rows to
- *   an evidence table that an operator reads with the source labelled.
+ *   notification is sent. The worst a hostile caller holding the signing secret could do is add
+ *   rows to an evidence table an operator reads with the source labelled.
  */
 router.post("/webhooks/daily", async (req, res): Promise<void> => {
+  /*
+    The activation probe, first and unsigned.
+
+    Order is the whole point. Creating the webhook is what *returns* the secret, and the probe is
+    fired during that same call, so at this moment there is nothing to verify against — on a
+    deployment where `DAILY_WEBHOOK_SECRET` is by definition not yet set. Every check below would
+    refuse it, and the endpoint could never be turned on.
+
+    Answering costs nothing: exactly the body `{"test":"test"}`, nothing stored, nothing read, no
+    class touched.
+  */
+  if (isActivationProbe(req.body)) {
+    req.log?.info("answered a Daily webhook activation probe; nothing was stored");
+    res.status(200).json({ received: true, stored: false } satisfies WebhookOutcome);
+    return;
+  }
+
   const secret = webhookSecret();
   if (!secret) {
     req.log?.warn("a Daily webhook arrived but ingestion is not configured on this deployment");
@@ -74,33 +102,97 @@ router.post("/webhooks/daily", async (req, res): Promise<void> => {
     return;
   }
 
-  const rawBody = (req as { rawBody?: string }).rawBody;
-  if (typeof rawBody !== "string") {
-    // Without the exact bytes there is nothing to verify against, and re-serialising would produce
-    // a digest that never matches.
-    req.log?.warn("a Daily webhook arrived without a raw body to verify");
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  const header = req.get("x-daily-signature") ?? req.get("x-webhook-signature");
-  if (!signatureMatches(rawBody, header, secret)) {
-    req.log?.warn("a Daily webhook failed signature verification");
+  const verified = verifyWebhookSignature({
+    secret,
+    timestamp: req.get(TIMESTAMP_HEADER),
+    signature: req.get(SIGNATURE_HEADER),
+    body: req.body,
+    nowMs: Date.now(),
+  });
+  if (!verified.ok) {
+    // The reason is logged and never returned. Telling a caller which check it failed is a free
+    // oracle for passing the next one.
+    req.log?.warn({ reason: verified.reason }, "a Daily webhook failed verification");
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
   const normalized = normalizeDailyEvent(req.body);
   if (!normalized.ok) {
-    // Counted, never echoed. Telling a caller *why* its payload was rejected is a free oracle for
-    // shaping one that is not.
     req.log?.info({ reason: normalized.reason }, "a Daily webhook was verified but not storable");
-    res.status(202).json({ accepted: true, stored: false });
+    res.status(200).json({ received: true, stored: false } satisfies WebhookOutcome);
     return;
   }
 
   const event = normalized.event;
+
   try {
+    /*
+      Does this class exist, and could this event be its own?
+
+      Without this, a signed event for `sikshya999999` parses cleanly, correlates to session
+      999999, and fails a foreign key on insert — a 500, which the provider retries on a schedule
+      forever for a row that can never be written.
+    */
+    const [session] = await db
+      .select({ id: sessionsTable.id, date: sessionsTable.date, duration: sessionsTable.duration })
+      .from(sessionsTable)
+      .where(eq(sessionsTable.id, event.sessionId!));
+
+    if (!session) {
+      // Not an error and not stored: a room named for a class this deployment has never had is
+      // somebody else's or a leftover, and attaching it to nothing is the honest outcome.
+      req.log?.info(
+        { room: event.providerRoom, type: event.eventType },
+        "a verified Daily event named a room whose class does not exist here; not stored",
+      );
+      res.status(200).json({ received: true, stored: false } satisfies WebhookOutcome);
+      return;
+    }
+
+    const scheduledMs = new Date(session.date).getTime();
+    const windowFrom = scheduledMs - CLASS_CORRELATION_WINDOW_MS;
+    const windowTo = scheduledMs + session.duration * 60_000 + CLASS_CORRELATION_WINDOW_MS;
+    const withinClassWindow = event.eventAtMs >= windowFrom && event.eventAtMs <= windowTo;
+    if (!withinClassWindow) {
+      req.log?.warn(
+        { room: event.providerRoom, type: event.eventType, sessionId: session.id },
+        "a verified Daily event fell outside its class's window; storing it unattached",
+      );
+    }
+
+    /*
+      The provider's claim about *who* joined, checked against this project's own membership.
+
+      A `user_id` on a provider event is a number that came back from outside. It is almost
+      certainly one this server minted into a token, but "almost certainly" is not the standard for
+      a row an operator will read as "this teacher was in the room" — and a room name collision, a
+      reused token or a forged payload all look identical at this point.
+
+      `getSessionMembership` is the single place this project answers "may this user be in this
+      class?" (CLAUDE.md), so it is what decides. Anything it does not recognise is discarded and
+      the discard is recorded, because a stream of unrecognised claims is a real signal and an
+      invisible one if bad ids are quietly blanked.
+    */
+    let participantUserId: number | null = null;
+    let identityRejected: boolean | null = null;
+    if (event.participantUserId !== null) {
+      const claimed = await getSessionMembership(session.id, event.participantUserId);
+      const belongs =
+        claimed !== null &&
+        (claimed.isSessionTeacher || claimed.isEnrolledStudent || claimed.wasRefunded);
+      if (belongs && withinClassWindow) {
+        participantUserId = event.participantUserId;
+        identityRejected = false;
+      } else {
+        identityRejected = true;
+        req.log?.warn(
+          { sessionId: session.id, type: event.eventType },
+          "a verified Daily event named a user who is not part of that class; the id was discarded",
+        );
+      }
+    }
+
     const inserted = await db
       .insert(sessionProviderEventsTable)
       .values({
@@ -108,11 +200,15 @@ router.post("/webhooks/daily", async (req, res): Promise<void> => {
         providerEventId: event.providerEventId,
         eventType: event.eventType,
         eventAt: new Date(event.eventAtMs),
-        sessionId: event.sessionId,
+        eventAtSource: event.eventAtSource,
+        // Never attached to a class the event could not belong to. The room name is kept either
+        // way, so an uncorrelated event is still diagnosable.
+        sessionId: withinClassWindow ? session.id : null,
         providerRoom: event.providerRoom,
         providerMeetingId: event.providerMeetingId,
         providerParticipantId: event.providerParticipantId,
-        participantUserId: event.participantUserId,
+        participantUserId,
+        identityRejected,
         participantIsOwner: event.participantIsOwner,
         durationSeconds: event.durationSeconds,
       })
@@ -123,14 +219,20 @@ router.post("/webhooks/daily", async (req, res): Promise<void> => {
       })
       .returning({ id: sessionProviderEventsTable.id });
 
-    res.json({ accepted: true, stored: inserted.length > 0, duplicate: inserted.length === 0 });
+    res.status(200).json({
+      received: true,
+      stored: inserted.length > 0,
+      duplicate: inserted.length === 0,
+    } satisfies WebhookOutcome);
   } catch (err) {
     /*
       A failure here must not become the provider's problem, and must never reach a classroom.
 
-      500 rather than 200 so a genuine outage is retried, but the class this event describes is
-      entirely unaffected either way: the socket ledger is the primary record and does not depend
-      on any of this.
+      500 rather than 200 so a genuine outage — a database that is down, a table that does not
+      exist yet — is retried. Everything this endpoint *chooses* not to store answers 200 above,
+      so a retry here means something is actually broken. The class this event describes is
+      unaffected either way: the socket ledger is the primary record and does not depend on any of
+      this.
     */
     req.log?.error({ err }, "could not store a verified Daily event");
     res.status(500).json({ error: "Could not store the event" });
@@ -142,9 +244,9 @@ router.post("/webhooks/daily", async (req, res): Promise<void> => {
 /**
  * Coarse connection quality, reported by a participant's own device.
  *
- * Authenticated, membership-checked, bounded and rate-limited — in that order, and every one of
- * them because this is the only place in the product where a party to a dispute writes to the
- * evidence about it.
+ * Authenticated, membership-checked, bounded, serialised and rate-limited — in that order, and
+ * every one of them because this is the only place in the product where a party to a dispute
+ * writes to the evidence about it.
  *
  * **Membership comes from `getSessionMembership`, never from the body.** That function is the one
  * place this project answers "may this user be in this class?", and CLAUDE.md is explicit that it
@@ -175,15 +277,27 @@ router.post("/sessions/:id/quality", requireAuth, async (req, res): Promise<void
   const role = membership.isSessionTeacher ? "teacher" : "student";
 
   /*
-    The window a sample may claim. Sanitising against the class's own times rather than "recently"
-    is what stops a device backdating trouble into a lesson it was not in.
+    The window a sample may claim: the class's own times, and nothing else.
+
+    `observationWindow` holds the rule and the history of getting it wrong. It is pure and takes
+    the clock as an argument, so "a class from three months ago rejects a timestamp from today" is
+    a test rather than a hope.
   */
-  const startMs = membership.scheduledFor ? membership.scheduledFor.getTime() : Date.now();
-  const endMs = startMs + membership.duration * 60_000;
-  const { accepted, rejected, truncated } = sanitiseQualitySamples(req.body?.samples, {
-    fromMs: startMs,
-    toMs: Math.max(endMs, Date.now()),
-  });
+  if (!membership.scheduledFor) {
+    // No scheduled time means no window, and an unbounded window is exactly the bug being fixed.
+    // Refused rather than guessed: a class with no date cannot be the subject of a timeline.
+    res.status(409).json({ error: "This class has no scheduled time to record against." });
+    return;
+  }
+  const { accepted, rejected, truncated } = sanitiseQualitySamples(
+    req.body?.samples,
+    observationWindow({
+      scheduledStartMs: membership.scheduledFor.getTime(),
+      durationMinutes: membership.duration,
+      doorsOpenMinutes: JOIN_WINDOW_MINUTES,
+      nowMs: Date.now(),
+    }),
+  );
 
   if (accepted.length === 0) {
     res.json({ stored: 0, rejected, truncated });
@@ -191,45 +305,69 @@ router.post("/sessions/:id/quality", requireAuth, async (req, res): Promise<void
   }
 
   try {
-    // Rate limit and per-session cap, both read from what is already stored rather than from
-    // memory, so they survive a restart and cannot be reset by reconnecting.
-    const [existing] = await db
-      .select({
-        total: count(),
-        latest: sql<Date | null>`max(${sessionQualitySamplesTable.receivedAt})`,
-      })
-      .from(sessionQualitySamplesTable)
-      .where(and(
-        eq(sessionQualitySamplesTable.sessionId, sessionId),
-        eq(sessionQualitySamplesTable.userId, req.user!.userId),
-      ));
+    /*
+      One transaction, and one writer per person per class at a time.
 
-    const already = existing?.total ?? 0;
-    if (already >= MAX_SAMPLES_PER_SESSION_PER_USER) {
-      res.status(429).json({ error: "Enough connection reports have been recorded for this class." });
+      The cap and the rate limit are read from what is already stored, so they survive a restart
+      and cannot be reset by reconnecting — but a read-then-write races itself. Ten parallel posts
+      from one device all read the same count, all see room, and all insert: the 500-sample cap
+      becomes a suggestion and the ten-second rate limit never fires. That is precisely the shape a
+      party to a dispute would exploit to bury a class in self-reported evidence.
+
+      `pg_advisory_xact_lock` serialises them on (session, user) for the length of the transaction.
+      It is per-pair rather than global, so two people in the same class never wait on each other,
+      and it is released by commit or rollback with nothing to clean up.
+    */
+    const outcome = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${sessionId}, ${req.user!.userId})`);
+
+      const [existing] = await tx
+        .select({
+          total: count(),
+          latest: sql<Date | null>`max(${sessionQualitySamplesTable.receivedAt})`,
+        })
+        .from(sessionQualitySamplesTable)
+        .where(and(
+          eq(sessionQualitySamplesTable.sessionId, sessionId),
+          eq(sessionQualitySamplesTable.userId, req.user!.userId),
+        ));
+
+      const already = existing?.total ?? 0;
+      if (already >= MAX_SAMPLES_PER_SESSION_PER_USER) {
+        return { refused: "cap" as const };
+      }
+      const latest = existing?.latest ? new Date(existing.latest).getTime() : null;
+      if (latest !== null && Date.now() - latest < MIN_SECONDS_BETWEEN_REQUESTS * 1000) {
+        return { refused: "rate" as const };
+      }
+
+      const room = Math.max(0, MAX_SAMPLES_PER_SESSION_PER_USER - already);
+      const toStore = accepted.slice(0, room);
+
+      await tx.insert(sessionQualitySamplesTable).values(
+        toStore.map((sample) => ({
+          sessionId,
+          userId: req.user!.userId,
+          role,
+          quality: sample.quality,
+          reconnect: sample.reconnect,
+          observedAt: new Date(sample.observedAtMs),
+        })),
+      );
+
+      return { stored: toStore.length };
+    });
+
+    if ("refused" in outcome) {
+      res.status(429).json({
+        error: outcome.refused === "cap"
+          ? "Enough connection reports have been recorded for this class."
+          : "Too many connection reports. Try again shortly.",
+      });
       return;
     }
-    const latest = existing?.latest ? new Date(existing.latest).getTime() : null;
-    if (latest !== null && Date.now() - latest < MIN_SECONDS_BETWEEN_REQUESTS * 1000) {
-      res.status(429).json({ error: "Too many connection reports. Try again shortly." });
-      return;
-    }
 
-    const room = Math.max(0, MAX_SAMPLES_PER_SESSION_PER_USER - already);
-    const toStore = accepted.slice(0, room);
-
-    await db.insert(sessionQualitySamplesTable).values(
-      toStore.map((sample) => ({
-        sessionId,
-        userId: req.user!.userId,
-        role,
-        quality: sample.quality,
-        reconnect: sample.reconnect,
-        observedAt: new Date(sample.observedAtMs),
-      })),
-    );
-
-    res.json({ stored: toStore.length, rejected, truncated });
+    res.json({ stored: outcome.stored, rejected, truncated });
   } catch (err) {
     /*
       Telemetry is the least important thing in this product and must behave like it.
@@ -247,17 +385,39 @@ export default router;
 
 /* --------------------------------------------------------------------------- reading it back */
 
+/** One provider event, as the aggregate needs it. */
+export interface StoredProviderEventRow {
+  eventType: string;
+  eventAt: Date;
+  eventAtSource: string;
+  /**
+   * The provider's id for the meeting *instance*.
+   *
+   * Carried rather than dropped because a room can hold several meetings — a call that drops and
+   * is rejoined starts a new one — and a span measured from the earliest start to the latest end
+   * across two of them bills the gap between as teaching.
+   */
+  providerMeetingId: string | null;
+  participantUserId: number | null;
+  identityRejected: boolean | null;
+  participantIsOwner: boolean | null;
+  durationSeconds: number | null;
+}
+
 /** Provider events for one class, oldest first. Empty array and "unavailable" are different. */
 export async function providerEventsFor(sessionId: number): Promise<{
   known: boolean;
-  rows: { eventType: string; eventAt: Date; participantUserId: number | null; participantIsOwner: boolean | null; durationSeconds: number | null }[];
+  rows: StoredProviderEventRow[];
 }> {
   try {
     const rows = await db
       .select({
         eventType: sessionProviderEventsTable.eventType,
         eventAt: sessionProviderEventsTable.eventAt,
+        eventAtSource: sessionProviderEventsTable.eventAtSource,
+        providerMeetingId: sessionProviderEventsTable.providerMeetingId,
         participantUserId: sessionProviderEventsTable.participantUserId,
+        identityRejected: sessionProviderEventsTable.identityRejected,
         participantIsOwner: sessionProviderEventsTable.participantIsOwner,
         durationSeconds: sessionProviderEventsTable.durationSeconds,
       })

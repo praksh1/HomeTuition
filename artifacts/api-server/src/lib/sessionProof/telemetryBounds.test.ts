@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CLOCK_TOLERANCE_MS,
+  LIVE_OVERRUN_GRACE_MS,
   MAX_SAMPLES_PER_REQUEST,
+  observationWindow,
   sanitiseQualitySamples,
 } from "./telemetryBounds.ts";
 
@@ -114,4 +116,66 @@ test("timestamps arrive in seconds or milliseconds and land in the same place", 
     { quality: "good", observedAt: new Date(START + 1000).toISOString() },
   ], WINDOW);
   assert.deepEqual(accepted.map((s) => s.observedAtMs), [START + 1000, START + 1000, START + 1000]);
+});
+
+/* ------------------------------------------------------------------- the window a class allows */
+
+test("a class still running accepts a report from right now", () => {
+  const start = Date.UTC(2026, 8, 5, 10, 0, 0);
+  const now = start + 40 * 60_000;
+  const w = observationWindow({ scheduledStartMs: start, durationMinutes: 60, doorsOpenMinutes: 5, nowMs: now });
+  assert.equal(w.fromMs, start - 5 * 60_000);
+  // Still inside the booked hour, so the booked end is the bound and it is later than now anyway.
+  assert.equal(w.toMs, start + 60 * 60_000);
+});
+
+test("a class that has just run over may still report", () => {
+  const start = Date.UTC(2026, 8, 5, 10, 0, 0);
+  const bookedEnd = start + 60 * 60_000;
+  const now = bookedEnd + 10 * 60_000;
+  const w = observationWindow({ scheduledStartMs: start, durationMinutes: 60, doorsOpenMinutes: 5, nowMs: now });
+  assert.equal(w.toMs, now, "a lesson that runs ten minutes over is still a lesson");
+});
+
+test("an old class does NOT accept a timestamp from today", () => {
+  /*
+    The defect this function exists for.
+
+    The window used to end at `Math.max(bookedEnd, now)`, which for any finished class is `now` —
+    so a student disputing a lesson from three months ago could file bad-connection reports dated
+    this morning and have them land on that lesson's timeline.
+  */
+  const start = Date.UTC(2026, 5, 1, 10, 0, 0);
+  const now = Date.UTC(2026, 8, 5, 9, 0, 0);
+  const w = observationWindow({ scheduledStartMs: start, durationMinutes: 60, doorsOpenMinutes: 5, nowMs: now });
+  assert.equal(w.toMs, start + 60 * 60_000, "the bound must be the class's own end, not the wall clock");
+
+  const { accepted, rejected } = sanitiseQualitySamples(
+    [{ quality: "bad", observedAt: now }, { quality: "bad", observedAt: start + 30 * 60_000 }],
+    w,
+  );
+  assert.equal(accepted.length, 1, "only the sample from inside the class survives");
+  assert.equal(accepted[0]!.observedAtMs, start + 30 * 60_000);
+  assert.equal(rejected.outside_window, 1);
+});
+
+test("the overrun grace is finite", () => {
+  const start = Date.UTC(2026, 8, 5, 10, 0, 0);
+  const bookedEnd = start + 60 * 60_000;
+  const justInside = observationWindow({
+    scheduledStartMs: start, durationMinutes: 60, doorsOpenMinutes: 5, nowMs: bookedEnd + LIVE_OVERRUN_GRACE_MS,
+  });
+  assert.equal(justInside.toMs, bookedEnd + LIVE_OVERRUN_GRACE_MS);
+
+  const justOutside = observationWindow({
+    scheduledStartMs: start, durationMinutes: 60, doorsOpenMinutes: 5, nowMs: bookedEnd + LIVE_OVERRUN_GRACE_MS + 1,
+  });
+  assert.equal(justOutside.toMs, bookedEnd, "past the grace, the class's own end is the bound again");
+});
+
+test("trouble in the lobby is inside the window", () => {
+  const start = Date.UTC(2026, 8, 5, 10, 0, 0);
+  const w = observationWindow({ scheduledStartMs: start, durationMinutes: 60, doorsOpenMinutes: 5, nowMs: start });
+  const { accepted } = sanitiseQualitySamples([{ quality: "warning", observedAt: start - 4 * 60_000 }], w);
+  assert.equal(accepted.length, 1, "a device reporting a bad line while waiting to be let in is reporting real trouble");
 });

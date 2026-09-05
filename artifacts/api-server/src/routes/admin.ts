@@ -343,6 +343,17 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
       session = { ...row, endedAt: activity.endedAt };
       attendance = await attendanceFor(row.id);
       const paid = await enrolledStudents(row.id);
+      /*
+        The teacher, by name, from the session's own row rather than from who happened to turn up.
+
+        A teacher who never joined leaves no trace in any of the sources below, so without this
+        they simply would not appear — and "the teacher is absent from the evidence" is the single
+        most consequential thing this page can say.
+      */
+      const [teacher] = await db
+        .select({ userId: usersTable.id, name: usersTable.name })
+        .from(usersTable)
+        .where(eq(usersTable.id, row.teacherId));
       if (attendance.known) {
         findings = findingsFor(
           { date: row.date, duration: row.duration, startedAt: row.startedAt, endedAt: activity.endedAt },
@@ -388,7 +399,10 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
         providerEvents: providerEvents.rows.map((e) => ({
           eventType: e.eventType as "meeting.started" | "meeting.ended" | "participant.joined" | "participant.left",
           eventAtMs: new Date(e.eventAt).getTime(),
+          eventAtSource: e.eventAtSource === "occurred" ? ("occurred" as const) : ("delivery" as const),
+          providerMeetingId: e.providerMeetingId,
           participantUserId: e.participantUserId,
+          identityRejected: e.identityRejected,
           participantIsOwner: e.participantIsOwner,
           durationSeconds: e.durationSeconds,
         })),
@@ -400,7 +414,22 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
           reconnect: q.reconnect,
         })),
         available: { ledger: attendance.known, provider: providerEvents.known, telemetry: quality.known },
-        expected: paid.map((pp) => ({ userId: pp.userId, name: pp.name, role: "student" as const })),
+        /*
+          Everybody who was supposed to be here — and the teacher is the point.
+
+          This listed only paid students, which meant the one person a dispute is usually about
+          vanished from the summary in exactly the case that matters: a teacher who never joined
+          has no ledger row, no provider event and no telemetry, so nothing else in this object
+          would have produced them. The page then showed a class with three students and no
+          teacher at all, which reads as a data problem rather than as the finding it is.
+
+          Seeded first, so `summarizeSessionProof` sorts them to the top even when every source is
+          silent about them.
+        */
+        expected: [
+          ...(teacher ? [{ userId: teacher.userId, name: teacher.name, role: "teacher" as const }] : []),
+          ...paid.map((pp) => ({ userId: pp.userId, name: pp.name, role: "student" as const })),
+        ],
       });
 
       messages = await db

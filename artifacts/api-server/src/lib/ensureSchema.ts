@@ -1143,17 +1143,60 @@ export async function ensureSessionProofTables(): Promise<void> {
         "provider_event_id" text NOT NULL,
         "event_type" text NOT NULL,
         "event_at" timestamp with time zone NOT NULL,
+        "event_at_source" text NOT NULL DEFAULT 'delivery',
         "session_id" integer,
         "provider_room" text NOT NULL,
         "provider_meeting_id" text,
         "provider_participant_id" text,
         "participant_user_id" integer,
+        "identity_rejected" boolean,
         "participant_is_owner" boolean,
         "duration_seconds" integer,
         "received_at" timestamp with time zone NOT NULL DEFAULT now(),
         CONSTRAINT "session_provider_events_session_id_sessions_id_fk"
-          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE SET NULL
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE SET NULL,
+        CONSTRAINT "session_provider_events_participant_user_id_users_id_fk"
+          FOREIGN KEY ("participant_user_id") REFERENCES "users"("id") ON DELETE SET NULL
       )
+    `);
+    /*
+      The additive half, for a database that already has the table from an earlier build of this
+      branch. `CREATE TABLE IF NOT EXISTS` is a no-op there and would leave the new columns
+      missing, which is the failure this whole file exists to prevent.
+
+      Still create-only in the sense that matters: nothing is dropped, no type is changed, no row
+      is rewritten. `ADD COLUMN IF NOT EXISTS` on a nullable column (or one with a default) is a
+      catalogue update in modern Postgres, not a table rewrite.
+    */
+    await db.execute(sql`
+      ALTER TABLE "session_provider_events"
+        ADD COLUMN IF NOT EXISTS "event_at_source" text NOT NULL DEFAULT 'delivery'
+    `);
+    await db.execute(sql`
+      ALTER TABLE "session_provider_events"
+        ADD COLUMN IF NOT EXISTS "identity_rejected" boolean
+    `);
+    /*
+      Postgres has no `ADD CONSTRAINT IF NOT EXISTS`, so the catalogue is asked first.
+
+      The foreign key is only safe to add because the route resolves a provider's claimed user id
+      against `getSessionMembership` before storing and nulls anything that is not a member — so no
+      value in this column can fail to reference a user. `NOT VALID` avoids scanning existing rows
+      at boot: new rows are checked, and anything already stored predates the correlation rule and
+      is not worth a table scan during startup to prove.
+    */
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'session_provider_events_participant_user_id_users_id_fk'
+        ) THEN
+          ALTER TABLE "session_provider_events"
+            ADD CONSTRAINT "session_provider_events_participant_user_id_users_id_fk"
+            FOREIGN KEY ("participant_user_id") REFERENCES "users"("id") ON DELETE SET NULL NOT VALID;
+        END IF;
+      END $$;
     `);
     // The unique index is the idempotency guarantee, and it is enforced by the database rather
     // than by a read-then-write that two concurrent deliveries of the same event could race.
@@ -1193,6 +1236,40 @@ export async function ensureSessionProofTables(): Promise<void> {
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS "session_quality_samples_observed_at_idx"
         ON "session_quality_samples" ("observed_at")
+    `);
+
+    /*
+      The durable summary that outlives the fine-grained rows.
+
+      Created here so the retention decision and the table it implies land together, and so a
+      deployment is never in the state where a sweep could run with nowhere to write. **Nothing
+      writes it on a schedule** — `sweepExpiredSessionProof` is not called from anywhere in this
+      repository. See `lib/sessionProof/retentionSweep.ts`.
+    */
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_proof_aggregates" (
+        "id" serial PRIMARY KEY,
+        "session_id" integer NOT NULL,
+        "provider_saw_meeting" boolean,
+        "provider_meeting_count" integer,
+        "provider_meeting_span_ms" integer,
+        "provider_participant_join_events" integer,
+        "reported_reconnects_total" integer,
+        "quality_good" integer,
+        "quality_warning" integer,
+        "quality_bad" integer,
+        "quality_unknown" integer,
+        "unavailable_sources" text,
+        "covered_until" timestamp with time zone NOT NULL,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_proof_aggregates_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "session_proof_aggregates_session_idx"
+        ON "session_proof_aggregates" ("session_id")
     `);
 
     logger.info("session proof tables are present");
