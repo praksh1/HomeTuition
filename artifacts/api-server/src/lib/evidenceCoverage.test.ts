@@ -99,4 +99,3 @@ test("board and chat counts cannot substitute for independent presence", () => {
   }));
   assert.equal(result.reviewability, "incomplete");
 });
-
