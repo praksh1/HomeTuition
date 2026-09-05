@@ -16,6 +16,8 @@ import {
   observationWindow,
   sanitiseQualitySamples,
 } from "../lib/sessionProof/telemetryBounds";
+import { lockSessionProofWriter } from "../lib/sessionProof/locks";
+import { providerEvidenceSchemaReady } from "../lib/sessionProof/schemaInvariant";
 
 const router: IRouter = Router();
 
@@ -117,6 +119,15 @@ router.post("/webhooks/daily", async (req, res): Promise<void> => {
     return;
   }
 
+  // The event-id key alone does not catch Daily's documented duplicate participant deliveries.
+  // If the database's partial UNIQUE invariant is absent or deceptive, refuse evidence rather
+  // than silently storing a money-relevant record that can double-count attendance.
+  if (!providerEvidenceSchemaReady()) {
+    req.log?.error("provider evidence storage is unavailable because its database invariant is not ready");
+    res.status(503).json({ error: "Evidence storage is temporarily unavailable" });
+    return;
+  }
+
   const normalized = normalizeDailyEvent(req.body);
   if (!normalized.ok) {
     req.log?.info({ reason: normalized.reason }, "a Daily webhook was verified but not storable");
@@ -193,43 +204,39 @@ router.post("/webhooks/daily", async (req, res): Promise<void> => {
       }
     }
 
-    const inserted = await db
-      .insert(sessionProviderEventsTable)
-      .values({
-        provider: event.provider,
-        providerEventId: event.providerEventId,
-        eventType: event.eventType,
-        eventAt: new Date(event.eventAtMs),
-        eventAtSource: event.eventAtSource,
-        // Never attached to a class the event could not belong to. The room name is kept either
-        // way, so an uncorrelated event is still diagnosable.
-        sessionId: withinClassWindow ? session.id : null,
-        providerRoom: event.providerRoom,
-        providerMeetingId: event.providerMeetingId,
-        providerParticipantId: event.providerParticipantId,
-        participantUserId,
-        identityRejected,
-        participantIsOwner: event.participantIsOwner,
-        durationSeconds: event.durationSeconds,
-      })
-      /*
-        Idempotency, decided by the database, against **either** of two keys.
+    const inserted = await db.transaction(async (tx) => {
+      if (withinClassWindow) await lockSessionProofWriter(tx, session.id);
 
-        No conflict target on purpose. There are two unique indexes on this table and a delivery
-        may collide with either:
+      return tx
+        .insert(sessionProviderEventsTable)
+        .values({
+          provider: event.provider,
+          providerEventId: event.providerEventId,
+          eventType: event.eventType,
+          eventAt: new Date(event.eventAtMs),
+          eventAtSource: event.eventAtSource,
+          // Never attached to a class the event could not belong to. The room name is kept either
+          // way, so an uncorrelated event remains independent of the per-session lock protocol.
+          sessionId: withinClassWindow ? session.id : null,
+          providerRoom: event.providerRoom,
+          providerMeetingId: event.providerMeetingId,
+          providerParticipantId: event.providerParticipantId,
+          participantUserId,
+          identityRejected,
+          participantIsOwner: event.participantIsOwner,
+          durationSeconds: event.durationSeconds,
+        })
+        /*
+          Idempotency, decided by the database, against **either** of two keys.
 
-        - `(provider, provider_event_id)` — the same delivery arriving twice.
-        - `(provider, event_type, provider_participant_id)`, partial — the case Daily explicitly
-          warns about, where a duplicate `participant.joined` or `participant.left` arrives under a
-          *different* event id. Naming only the first target would let those through: two rows, two
-          ids, one arrival, and a person's comings and goings counted twice in the evidence for a
-          refund.
-
-        A bare `ON CONFLICT DO NOTHING` covers both, and it needs no read, so two concurrent
-        deliveries cannot both win a read-then-write.
-      */
-      .onConflictDoNothing()
-      .returning({ id: sessionProviderEventsTable.id });
+          No conflict target on purpose. There are two unique indexes on this table and a delivery
+          may collide with either. The shared session-proof advisory lock also makes this insert
+          mutually exclusive with retention's complete-class read, without serialising ordinary
+          writers against one another.
+        */
+        .onConflictDoNothing()
+        .returning({ id: sessionProviderEventsTable.id });
+    });
 
     res.status(200).json({
       received: true,
@@ -331,6 +338,9 @@ router.post("/sessions/:id/quality", requireAuth, async (req, res): Promise<void
       and it is released by commit or rollback with nothing to clean up.
     */
     const outcome = await db.transaction(async (tx) => {
+      // Shared session lock first. Retention takes the exclusive form of this same key before it
+      // reads the class; the per-user lock below continues to protect the cap and rate limit.
+      await lockSessionProofWriter(tx, sessionId);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(${sessionId}, ${req.user!.userId})`);
 
       const [existing] = await tx

@@ -15,6 +15,7 @@ import {
   type ExpiringEvent,
   type ExpiringSample,
 } from "./retention";
+import { lockSessionProofRetention } from "./locks";
 
 /**
  * Summarising a class's fine-grained proof, and only then removing it.
@@ -125,52 +126,58 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
   const cutoffMs = nowMs - RETENTION_WINDOW_MS;
   const cutoff = new Date(cutoffMs);
 
-  return db.transaction(async (tx) => {
-    const result: SweepResult = {
-      cutoffMs,
-      dryRun,
-      sessionsSummarised: 0,
-      sessionsHeldBack: 0,
-      providerEventsRemoved: 0,
-      qualitySamplesRemoved: 0,
-      lateArrivalsRemoved: 0,
-      unattachedEventsRemoved: 0,
-    };
+  const result: SweepResult = {
+    cutoffMs,
+    dryRun,
+    sessionsSummarised: 0,
+    sessionsHeldBack: 0,
+    providerEventsRemoved: 0,
+    qualitySamplesRemoved: 0,
+    lateArrivalsRemoved: 0,
+    unattachedEventsRemoved: 0,
+  };
 
-    /*
-      Which classes have anything past the window. Bounded and ordered, so a first run over a long
-      backlog is a series of short predictable passes rather than one that locks a table for
-      minutes on a database that is also serving live classes.
+  /*
+    Which classes have anything past the window. Bounded and ordered, so a first run over a long
+    backlog is a series of short predictable passes rather than one that locks a table for
+    minutes on a database that is also serving live classes.
 
-      This is only the candidate list. Whether a class may actually move is decided below, after
-      *all* of its rows are locked — a class with one row past the window and one inside it appears
-      here and is then held back.
-    */
-    const [fromEvents, fromSamples] = await Promise.all([
-      tx
-        .selectDistinct({ sessionId: sessionProviderEventsTable.sessionId })
-        .from(sessionProviderEventsTable)
-        .where(and(isNotNull(sessionProviderEventsTable.sessionId), lt(sessionProviderEventsTable.receivedAt, cutoff)))
-        .orderBy(asc(sessionProviderEventsTable.sessionId))
-        .limit(limitSessions),
-      tx
-        .selectDistinct({ sessionId: sessionQualitySamplesTable.sessionId })
-        .from(sessionQualitySamplesTable)
-        .where(lt(sessionQualitySamplesTable.receivedAt, cutoff))
-        .orderBy(asc(sessionQualitySamplesTable.sessionId))
-        .limit(limitSessions),
-    ]);
-    const sessionIds = [
-      ...new Set(
-        [...fromEvents, ...fromSamples]
-          .map((r) => r.sessionId)
-          .filter((id): id is number => typeof id === "number"),
-      ),
-    ]
-      .sort((a, b) => a - b)
-      .slice(0, limitSessions);
+    This is only the candidate list. Whether a class may actually move is decided below, after
+    *all* of its rows are locked — a class with one row past the window and one inside it appears
+    here and is then held back.
+  */
+  const [fromEvents, fromSamples] = await Promise.all([
+    db
+      .selectDistinct({ sessionId: sessionProviderEventsTable.sessionId })
+      .from(sessionProviderEventsTable)
+      .where(and(isNotNull(sessionProviderEventsTable.sessionId), lt(sessionProviderEventsTable.receivedAt, cutoff)))
+      .orderBy(asc(sessionProviderEventsTable.sessionId))
+      .limit(limitSessions),
+    db
+      .selectDistinct({ sessionId: sessionQualitySamplesTable.sessionId })
+      .from(sessionQualitySamplesTable)
+      .where(lt(sessionQualitySamplesTable.receivedAt, cutoff))
+      .orderBy(asc(sessionQualitySamplesTable.sessionId))
+      .limit(limitSessions),
+  ]);
+  const sessionIds = [
+    ...new Set(
+      [...fromEvents, ...fromSamples]
+        .map((r) => r.sessionId)
+        .filter((id): id is number => typeof id === "number"),
+    ),
+  ]
+    .sort((a, b) => a - b)
+    .slice(0, limitSessions);
 
-    for (const sessionId of sessionIds) {
+  for (const sessionId of sessionIds) {
+    // One short transaction per class. The previous single transaction retained the first
+    // class's locks while as many as 199 unrelated classes were processed after it.
+    await db.transaction(async (tx) => {
+      // Exclusive counterpart to both ingestion writers' shared lock. Take it before reading:
+      // an in-flight writer either commits first and is included in eligibility, or waits and its
+      // new row remains fine-grained after this transaction completes.
+      await lockSessionProofRetention(tx, sessionId);
       /*
         Every row the class has, locked — not just the expired ones.
 
@@ -206,7 +213,7 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
         .orderBy(asc(sessionQualitySamplesTable.id))
         .for("update");
 
-      if (eventRows.length === 0 && sampleRows.length === 0) continue;
+      if (eventRows.length === 0 && sampleRows.length === 0) return;
 
       /*
         All or nothing.
@@ -221,7 +228,7 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
       );
       if (!eligibility.eligible) {
         result.sessionsHeldBack += 1;
-        continue;
+        return;
       }
 
       const events: ExpiringEvent[] = eventRows.map((row) => ({
@@ -242,7 +249,7 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
       result.providerEventsRemoved += events.length;
       result.qualitySamplesRemoved += samples.length;
 
-      if (dryRun) continue;
+      if (dryRun) return;
 
       /*
         The summary row, locked before it is read.
@@ -316,20 +323,23 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
       if (samples.length > 0) {
         await tx.delete(sessionQualitySamplesTable).where(inArray(sessionQualitySamplesTable.id, samples.map((s) => s.id)));
       }
-    }
+    });
+  }
 
-    /*
-      Events that never correlated to a class expire on their own, row by row.
+  /*
+    Events that never correlated to a class expire on their own, row by row.
 
-      Safe to sweep individually because there is nothing to pair them with: the all-or-nothing
-      rule above exists to keep a meeting's two ends together, and an uncorrelated event belongs to
-      no meeting and no summary. They exist so an operator can see that deliveries were arriving
-      and failing to correlate — a live diagnostic, not an archive.
-    */
+    Safe to sweep individually because there is nothing to pair them with: the all-or-nothing
+    rule above exists to keep a meeting's two ends together, and an uncorrelated event belongs to
+    no meeting and no summary. They exist so an operator can see that deliveries were arriving
+    and failing to correlate — a live diagnostic, not an archive.
+  */
+  await db.transaction(async (tx) => {
     const unattachedRows = await tx
       .select({ id: sessionProviderEventsTable.id, receivedAt: sessionProviderEventsTable.receivedAt })
       .from(sessionProviderEventsTable)
       .where(and(isNull(sessionProviderEventsTable.sessionId), lt(sessionProviderEventsTable.receivedAt, cutoff)))
+      .orderBy(asc(sessionProviderEventsTable.id))
       .limit(1000)
       .for("update");
     const plan = planRetention(
@@ -340,7 +350,7 @@ export async function sweepExpiredSessionProof(options: SweepOptions): Promise<S
     if (!dryRun && plan.expiredIds.length > 0) {
       await tx.delete(sessionProviderEventsTable).where(inArray(sessionProviderEventsTable.id, plan.expiredIds));
     }
-
-    return result;
   });
+
+  return result;
 }

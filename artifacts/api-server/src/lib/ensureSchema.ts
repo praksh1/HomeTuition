@@ -1,6 +1,12 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
+import {
+  markProviderEvidenceSchemaInvalid,
+  markProviderEvidenceSchemaReady,
+  providerDedupeIndexIsValid,
+  type ProviderDedupeIndexDefinition,
+} from "./sessionProof/schemaInvariant";
 
 /**
  * Creates the notification-preferences table if it is not there yet.
@@ -1135,6 +1141,8 @@ export async function ensureAccountOnboardingTables(): Promise<void> {
  * drizzle-kit generates, so a later `db:push` sees no drift and does not offer to recreate them.
  */
 export async function ensureSessionProofTables(): Promise<void> {
+  // Fail closed until every statement and the catalogue verification below have succeeded.
+  markProviderEvidenceSchemaInvalid();
   try {
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS "session_provider_events" (
@@ -1224,9 +1232,9 @@ export async function ensureSessionProofTables(): Promise<void> {
       One trap worth knowing, found by breaking this on purpose: `CREATE UNIQUE INDEX IF NOT
       EXISTS` silently does nothing when a **non-unique** index of the same name already exists.
       It matches on the name alone, so a database that somehow acquired the plain version would
-      keep it forever and this guard would be off with no error anywhere. Nothing has ever deployed
-      the plain version — the index is new on this branch — but if that is ever in doubt, check
-      `pg_indexes.indexdef` for the word UNIQUE rather than trusting that this statement ran.
+      keep it forever. Nothing has ever deployed the plain version — the index is new on this
+      branch — but the catalogue check at the end of this function now fails provider evidence
+      closed if the name masks a definition that is not exactly the required invariant.
     */
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS "session_provider_events_participant_dedupe_idx"
@@ -1319,8 +1327,43 @@ export async function ensureSessionProofTables(): Promise<void> {
         ADD COLUMN IF NOT EXISTS "provider_meetings_unmeasured" integer
     `);
 
+    /*
+      `IF NOT EXISTS` matches an index by name, not by meaning. A plain index with the expected
+      name therefore makes the CREATE UNIQUE statement above a silent no-op. Inspect the actual
+      catalogue definition before provider evidence is allowed to write; do not drop an index or
+      delete duplicate evidence at boot merely to make the check pass.
+    */
+    const invariant = await db.execute(sql<ProviderDedupeIndexDefinition>`
+      SELECT
+        ix.indisunique AS "is_unique",
+        ARRAY(
+          SELECT a.attname
+          FROM unnest(ix.indkey) WITH ORDINALITY AS key(attnum, position)
+          JOIN pg_attribute a ON a.attrelid = table_class.oid AND a.attnum = key.attnum
+          ORDER BY key.position
+        ) AS "columns",
+        pg_get_expr(ix.indpred, ix.indrelid) AS "predicate"
+      FROM pg_index ix
+      JOIN pg_class index_class ON index_class.oid = ix.indexrelid
+      JOIN pg_class table_class ON table_class.oid = ix.indrelid
+      JOIN pg_namespace namespace ON namespace.oid = index_class.relnamespace
+      WHERE namespace.nspname = current_schema()
+        AND table_class.relname = 'session_provider_events'
+        AND index_class.relname = 'session_provider_events_participant_dedupe_idx'
+    `);
+    const row = invariant.rows[0] as unknown as ProviderDedupeIndexDefinition | undefined;
+
+    if (!providerDedupeIndexIsValid(row)) {
+      throw new Error(
+        "The provider participant dedupe index is missing or does not enforce the required unique partial key.",
+      );
+    }
+
+    markProviderEvidenceSchemaReady();
+
     logger.info("session proof tables are present");
   } catch (err) {
+    markProviderEvidenceSchemaInvalid();
     logger.warn(
       { err },
       "could not ensure the session proof tables; run `pnpm run db:push`. " +

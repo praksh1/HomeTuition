@@ -39,7 +39,7 @@ const check = (name, ok, detail = "") => {
 
 const sql = (s) => execFileSync("psql", [PGURL, "-v", "ON_ERROR_STOP=1", "-tAc", s], { encoding: "utf8" }).trim();
 
-async function withServer(port, extraEnv, run) {
+async function withServer(port, extraEnv, run, { waitForSessionProofEnsure = false } = {}) {
   const server = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
     cwd: repoRoot,
     env: {
@@ -50,8 +50,11 @@ async function withServer(port, extraEnv, run) {
       NODE_ENV: "test",
       ...extraEnv,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  let serverOutput = "";
+  server.stdout.on("data", (chunk) => { serverOutput += String(chunk); });
+  server.stderr.on("data", (chunk) => { serverOutput += String(chunk); });
   const stop = () => { try { server.kill("SIGKILL"); } catch { /* gone */ } };
   const base = `http://127.0.0.1:${port}`;
 
@@ -61,6 +64,18 @@ async function withServer(port, extraEnv, run) {
     await new Promise((r) => setTimeout(r, 250));
   }
   if (!up) { stop(); throw new Error(`server on ${port} never came up`); }
+
+  if (waitForSessionProofEnsure) {
+    let ensured = false;
+    for (let i = 0; i < 80; i += 1) {
+      if (/session proof tables are present|could not ensure the session proof tables/i.test(serverOutput)) {
+        ensured = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    if (!ensured) { stop(); throw new Error(`server on ${port} never completed session-proof bootstrap`); }
+  }
 
   const api = async (p, { method = "GET", token, body, headers = {}, rawBody } = {}) => {
     const h = { "Content-Type": "application/json", ...headers };
@@ -175,6 +190,48 @@ async function main() {
     check("and the probe stored nothing",
       sql(`select count(*) from session_provider_events where event_type = 'test'`) === "0");
   });
+
+  /* ---------------------------------------------------- a deceptive database index fails closed */
+
+  console.log("\nA same-name index that does not enforce deduplication\n");
+  sql(`
+    DROP INDEX IF EXISTS session_provider_events_participant_dedupe_idx;
+    CREATE INDEX session_provider_events_participant_dedupe_idx
+      ON session_provider_events (provider, event_type, provider_participant_id)
+      WHERE provider_participant_id IS NOT NULL
+        AND event_type IN ('participant.joined', 'participant.left');
+  `);
+  try {
+    check("the deceptive fixture really is non-unique",
+      sql(`select indisunique::text from pg_index
+           where indexrelid = 'session_provider_events_participant_dedupe_idx'::regclass`) === "false");
+
+    await withServer(8183, { DAILY_WEBHOOK_SECRET: SECRET }, async (api) => {
+      const payload = evt({ id: `evt_${RUN}_invalid_index` });
+      const response = await api("/webhooks/daily", { method: "POST", ...signed(payload) });
+      check("provider ingestion refuses to store evidence when the named index is not UNIQUE",
+        response.status === 503, `status ${response.status} ${JSON.stringify(response.body)}`);
+      check("the refusal is generic and exposes no schema or index detail",
+        !/index|unique|schema|database|participant_dedupe/i.test(JSON.stringify(response.body ?? {})),
+        JSON.stringify(response.body));
+      check("no evidence row is written while the invariant is invalid",
+        sql(`select count(*) from session_provider_events
+             where provider_event_id = 'evt_${RUN}_invalid_index'`) === "0");
+    }, { waitForSessionProofEnsure: true });
+  } finally {
+    // Test database only. Restore the exact invariant even if an assertion or server call fails,
+    // so this destructive fixture cannot contaminate the rest of the suite or its next run.
+    sql(`
+      DROP INDEX IF EXISTS session_provider_events_participant_dedupe_idx;
+      CREATE UNIQUE INDEX session_provider_events_participant_dedupe_idx
+        ON session_provider_events (provider, event_type, provider_participant_id)
+        WHERE provider_participant_id IS NOT NULL
+          AND event_type IN ('participant.joined', 'participant.left');
+    `);
+  }
+  check("the test restored the participant dedupe index as UNIQUE",
+    sql(`select indisunique::text from pg_index
+         where indexrelid = 'session_provider_events_participant_dedupe_idx'::regclass`) === "true");
 
   /* ---------------------------------------------------------------- the endpoint switched on */
 

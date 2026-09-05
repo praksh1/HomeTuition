@@ -28,7 +28,7 @@
  *
  * Usage: PGURL=... node scripts/retention-sweep/run.mjs
  */
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -89,6 +89,87 @@ async function buildHarness() {
   return outfile;
 }
 
+/** A real evidence writer that uses the same shared transaction lock as both HTTP ingest paths. */
+async function buildWriterHarness() {
+  const outfile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "proof-writer-")), "writer.mjs");
+  await esbuild({
+    stdin: {
+      contents: `
+        import { db, sessionProviderEventsTable } from "@workspace/db";
+        import { sql } from "drizzle-orm";
+        import { lockSessionProofWriter } from "./lib/sessionProof/locks";
+        const input = JSON.parse(process.argv[2]);
+        db.transaction(async (tx) => {
+          await lockSessionProofWriter(tx, input.sessionId);
+          await tx.insert(sessionProviderEventsTable).values({
+            provider: "daily",
+            providerEventId: input.eventId,
+            eventType: "participant.joined",
+            eventAt: new Date(input.atMs),
+            eventAtSource: "occurred",
+            sessionId: input.sessionId,
+            providerRoom: "sikshya" + input.sessionId,
+            providerMeetingId: input.meetingId,
+            providerParticipantId: input.participantId,
+            receivedAt: new Date(),
+          });
+          console.log("WRITER_LOCKED_AND_INSERTED");
+          await tx.execute(sql\`SELECT pg_sleep(1)\`);
+        }).then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
+      `,
+      resolveDir: path.join(serverRoot, "src"),
+      loader: "ts",
+      sourcefile: "proof-writer-harness.ts",
+    },
+    platform: "node",
+    bundle: true,
+    format: "esm",
+    outfile,
+    logLevel: "silent",
+    external: ["*.node", "pg-native"],
+    banner: {
+      js: `import { createRequire as __cr } from 'node:module'; globalThis.require = __cr(import.meta.url);`,
+    },
+  });
+  return outfile;
+}
+
+function startWriter(writerHarness, input) {
+  const child = spawn(process.execPath, [writerHarness, JSON.stringify(input)], {
+    env: sweepEnv(), stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let readyResolve;
+  let readyReject;
+  let writerReady = false;
+  const ready = new Promise((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
+  child.stdout.on("data", (chunk) => {
+    stdout += String(chunk);
+    if (!writerReady && stdout.includes("WRITER_LOCKED_AND_INSERTED")) {
+      writerReady = true;
+      readyResolve();
+    }
+  });
+  child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+  const done = new Promise((resolve, reject) => {
+    child.on("error", (error) => {
+      if (!writerReady) readyReject(error);
+      reject(error);
+    });
+    child.on("exit", (code) => {
+      if (code === 0) return resolve();
+      const error = new Error(stderr || `writer exited ${code}`);
+      if (!writerReady) readyReject(error);
+      reject(error);
+    });
+  });
+  return { ready, done };
+}
+
 const sweepEnv = () => ({ ...process.env, DATABASE_URL: PGURL, NODE_ENV: "test", LOG_LEVEL: "silent" });
 const lastJson = (out) => JSON.parse(out.trim().split("\n").filter(Boolean).pop());
 
@@ -120,6 +201,7 @@ const iso = (ms) => new Date(ms).toISOString();
 
 async function main() {
   const harness = await buildHarness();
+  const writerHarness = await buildWriterHarness();
 
   /*
     A teacher and some classes, made directly.
@@ -504,6 +586,50 @@ async function main() {
     check("and every row is gone", eventsFor(raced) === "0" && samplesFor(raced) === "0");
     check("exactly one summary row exists",
       sql(`select count(*) from session_proof_aggregates where session_id = ${raced}`) === "1");
+  }
+
+  console.log("\nEvidence ingestion racing retention\n");
+  const ingestRace = newSession(`Ingest race ${RUN}`);
+  {
+    ev(ingestRace, "ir1", "meeting.started", BASE, BASE, "mtg-ir");
+    ev(ingestRace, "ir2", "meeting.ended", BASE + 30 * MIN, BASE + 30 * MIN, "mtg-ir");
+
+    /*
+      The writer takes the real shared protocol lock, inserts a recent row, then deliberately keeps
+      its transaction open for one second. Retention starts only after that uncommitted insert is
+      present. Without the shared/exclusive protocol it cannot see the row and rolls up the two old
+      rows; with it, retention waits for commit, sees all three, and holds the whole class back.
+    */
+    const writer = startWriter(writerHarness, {
+      sessionId: ingestRace,
+      eventId: `sweep_${RUN}_ingest_race`,
+      meetingId: "mtg-ir",
+      participantId: `participant_${RUN}_ingest_race`,
+      atMs: BASE + MIN,
+    });
+    await writer.ready;
+    const sweeping = runSweepAsync(harness, {
+      nowMs: Date.now(), available: { provider: true, telemetry: true },
+    });
+    await writer.done;
+    const held = await sweeping;
+
+    check("retention waits for an in-flight evidence writer and holds the complete class back",
+      held.sessionsHeldBack >= 1, JSON.stringify(held));
+    check("no partial aggregate is written during the race",
+      sql(`select count(*) from session_proof_aggregates where session_id = ${ingestRace}`) === "0");
+    check("both old rows and the newly committed row remain fully available",
+      eventsFor(ingestRace) === "3", eventsFor(ingestRace));
+
+    runSweep(harness, {
+      nowMs: Date.now() + 31 * DAY, available: { provider: true, telemetry: true },
+    });
+    check("after its full retention window the raced-in row is aggregated as evidence",
+      summaryOf(ingestRace, "provider_participant_join_events") === "1");
+    check("the raced-in row is never reduced to only a late-arrival counter",
+      summaryOf(ingestRace, "late_arrivals") === "0", summaryOf(ingestRace, "late_arrivals"));
+    check("the complete class is removed only after that aggregate exists",
+      eventsFor(ingestRace) === "0");
   }
 
   console.log("\nThe classes themselves are untouched\n");

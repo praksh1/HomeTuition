@@ -158,22 +158,24 @@ every teacher and student that nobody chose and nobody reviews.
 
 ## Retention: written, tested, and not running
 
-> **Activation block (independent review, 2026-09-05):** retention must remain unscheduled. The
-> candidate reads are now limited in SQL, but a webhook or device sample can still be inserted
-> after the sweep locks the rows it saw. PostgreSQL row locks do not lock a row that does not exist
-> yet. Before scheduling, ingestion and retention need one session-scoped advisory-lock protocol
-> and an integration test that races a real insert against a paused sweep. Until then, a late row
-> would survive, but its detail could be reduced to a late-arrival count on the next pass.
+> **Activation block (2026-09-05):** the insert-versus-sweep race is now closed in code and has a
+> real-Postgres race test, but retention remains deliberately unscheduled. It must not run against
+> real evidence until the provider contract has been verified with a real Daily delivery and the
+> complete proof and retention suites pass against the target database.
 
 Fine-grained rows are meant to live **thirty fixed days** — days rather than a calendar month,
 because Bikram Sambat months run 29–32 days and Gregorian 28–31, so calendar arithmetic gives one
 policy two answers.
 
-`lib/sessionProof/retentionSweep.ts` implements it properly: one transaction locks the class's
-rows, writes a durable per-class summary, and only then deletes exactly those rows. Counts and
-spans survive; individual timestamps do not, because after the dispute window "the teacher's
-device reported three bad periods" is a fact about a lesson and "at 19:42:11 this person's
-connection was bad" is surveillance.
+`lib/sessionProof/retentionSweep.ts` implements it with one short transaction per class: it takes
+the class's exclusive transaction-scoped advisory lock before reading, locks every row, writes a
+durable per-class summary, and only then deletes exactly those rows. Both attached provider-event
+inserts and authenticated quality-sample inserts take the shared form of that same two-key lock in
+their insert transaction. A writer that wins commits before retention reads; a writer that loses
+waits and leaves its row fully available after retention commits. Unattached provider events do
+not belong to a class and remain independent. Counts and spans survive; individual timestamps do
+not, because after the dispute window "the teacher's device reported three bad periods" is a fact
+about a lesson and "at 19:42:11 this person's connection was bad" is surveillance.
 
 Three rules in it are worth knowing, because each replaces a way of silently corrupting the
 record:
@@ -248,6 +250,8 @@ run, because a suite that asserts absolute row counts passes once and fails fore
 7. Before enabling provider ingestion, verify in each target database that
    `session_provider_events_participant_dedupe_idx` is a partial **UNIQUE** index with the expected
    columns and predicate. `CREATE UNIQUE INDEX IF NOT EXISTS` does not repair a wrong non-unique
-   index that already has the same name. No target database is known to have that wrong index, but
-   the bootstrap currently documents rather than repairs this edge case.
-8. Before scheduling retention, finish and test the session-scoped ingest-versus-sweep lock above.
+   index that already has the same name. Bootstrap now inspects the actual catalogue definition
+   after its create statements and provider ingestion fails closed with a generic 503 unless the
+   definition is exact. It intentionally does not drop an index or delete/deduplicate data at boot.
+8. Re-run the real-Postgres insert-versus-sweep race in `test:retention` before scheduling it in
+   any environment. The code remains uncalled and unscheduled.
