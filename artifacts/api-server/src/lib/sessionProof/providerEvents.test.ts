@@ -138,7 +138,9 @@ test("malformed bodies are refused with a reason and never throw", () => {
 test("a user id is carried through only when the provider actually supplies a usable one", () => {
   // Today this is always null: lib/daily.ts mints tokens without a user_id claim, so the provider
   // has nothing to echo. The field is read anyway so adding that claim later needs no change here.
-  assert.equal(normalizeDailyEvent(webhook(), NOW).ok && normalizeDailyEvent(webhook(), NOW).event.participantUserId, null);
+  const today = normalizeDailyEvent(webhook(), NOW);
+  assert.ok(today.ok);
+  assert.equal(today.event.participantUserId, null);
 
   const withUser = normalizeDailyEvent(webhook({}, { user_id: 77 }), NOW);
   assert.ok(withUser.ok);

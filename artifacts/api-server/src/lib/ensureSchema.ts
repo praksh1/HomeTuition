@@ -1117,3 +1117,92 @@ export async function ensureAccountOnboardingTables(): Promise<void> {
     );
   }
 }
+
+/**
+ * Creates the two session-proof tables if they are not there yet.
+ *
+ * Same contract as every other function in this file, and the same reason for existing: the API
+ * redeploys itself on push while `db:push` is a command somebody runs by hand, and the two are
+ * never in step. Both statements are `CREATE TABLE IF NOT EXISTS`; nothing here drops, alters or
+ * rewrites anything, and a failure is logged and the server starts anyway.
+ *
+ * What stops working if this fails is the *corroboration*, not the classroom. Classes run, the
+ * socket ledger keeps recording, and the operator view says the provider source is unavailable —
+ * which is the honest answer and exactly what `aggregate.ts` is built to distinguish from zero.
+ *
+ * The column definitions must stay in step with `lib/db/src/schema/sessionProviderEvents.ts` and
+ * `sessionQualitySamples.ts`. Foreign keys and indexes are named explicitly to match what
+ * drizzle-kit generates, so a later `db:push` sees no drift and does not offer to recreate them.
+ */
+export async function ensureSessionProofTables(): Promise<void> {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_provider_events" (
+        "id" serial PRIMARY KEY,
+        "provider" text NOT NULL,
+        "provider_event_id" text NOT NULL,
+        "event_type" text NOT NULL,
+        "event_at" timestamp with time zone NOT NULL,
+        "session_id" integer,
+        "provider_room" text NOT NULL,
+        "provider_meeting_id" text,
+        "provider_participant_id" text,
+        "participant_user_id" integer,
+        "participant_is_owner" boolean,
+        "duration_seconds" integer,
+        "received_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_provider_events_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE SET NULL
+      )
+    `);
+    // The unique index is the idempotency guarantee, and it is enforced by the database rather
+    // than by a read-then-write that two concurrent deliveries of the same event could race.
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS "session_provider_events_provider_event_idx"
+        ON "session_provider_events" ("provider", "provider_event_id")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_provider_events_session_idx"
+        ON "session_provider_events" ("session_id", "event_at")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_provider_events_event_at_idx"
+        ON "session_provider_events" ("event_at")
+    `);
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "session_quality_samples" (
+        "id" serial PRIMARY KEY,
+        "session_id" integer NOT NULL,
+        "user_id" integer NOT NULL,
+        "role" text NOT NULL,
+        "quality" text NOT NULL,
+        "reconnect" boolean NOT NULL DEFAULT false,
+        "observed_at" timestamp with time zone NOT NULL,
+        "received_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "session_quality_samples_session_id_sessions_id_fk"
+          FOREIGN KEY ("session_id") REFERENCES "sessions"("id") ON DELETE CASCADE,
+        CONSTRAINT "session_quality_samples_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_quality_samples_session_idx"
+        ON "session_quality_samples" ("session_id", "user_id", "observed_at")
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "session_quality_samples_observed_at_idx"
+        ON "session_quality_samples" ("observed_at")
+    `);
+
+    logger.info("session proof tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the session proof tables; run `pnpm run db:push`. " +
+        "Classes still run and the attendance ledger still records them — but there is no " +
+        "independent provider corroboration, and the operator evidence view will say so rather " +
+        "than showing an empty timeline as though nothing happened.",
+    );
+  }
+}
