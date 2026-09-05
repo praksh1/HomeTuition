@@ -231,14 +231,27 @@ async function main() {
         method: "POST", token: student.token, body: { samples: [] } });
       check("a class that does not exist is a 404, not a 500", ghost.status === 404, `status ${ghost.status}`);
 
-      // The teacher is in the class and may report.
+      /*
+        The teacher is in the class and may report — and the body deliberately carries a role and a
+        user id it is not entitled to.
+
+        An earlier version of this suite posted a clean body here and put the spoof in a later
+        block, where the rate limit refused it before anything was written. The guard was therefore
+        never exercised: deliberately sourcing the role from the body left the suite green. The
+        spoof belongs on the request that actually stores a row.
+      */
       const mine = await api(`/sessions/${sessionId}/quality`, {
         method: "POST", token: teacher.token,
-        body: { samples: [{ quality: "bad", reconnect: true, observedAt: now }] } });
+        body: {
+          role: "student", userId: 999999,
+          samples: [{ quality: "bad", reconnect: true, observedAt: now, role: "student", userId: 999999 }],
+        } });
       check("the teacher's own device may report", mine.status === 200 && mine.body?.stored === 1,
         `status ${mine.status} ${JSON.stringify(mine.body)}`);
       check("and the role is the server's answer, not the body's",
         sql(`select role from session_quality_samples where session_id = ${sessionId}`) === "teacher");
+      check("and the row belongs to the authenticated caller, not the body's user id",
+        sql(`select user_id from session_quality_samples where session_id = ${sessionId}`) === String(teacher.id));
     }
 
     console.log("\nWhat a client cannot talk its way into\n");

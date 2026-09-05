@@ -23,6 +23,8 @@ import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { recordActivity, readActivity } from "../lib/activityLog";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor } from "../lib/sessionEvidence";
+import { summarizeSessionProof, type SessionProofSummary } from "../lib/sessionProof/aggregate";
+import { providerEventsFor, qualitySamplesFor } from "./sessionProof";
 import { costAt, egressGbAt, monthWindow, usageIn } from "../lib/videoUsage";
 import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
@@ -326,6 +328,13 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
   let attendance: Awaited<ReturnType<typeof attendanceFor>> = { known: false, rows: [] };
   let findings: ReturnType<typeof findingsFor> = [];
   let messages: { senderName: string; senderRole: string; body: string; createdAt: Date }[] = [];
+  /**
+   * The provider-corroborated view, or null when there is no class to summarise.
+   *
+   * Additive: `attendance` and `findings` above are unchanged and remain the primary evidence. This
+   * sits beside them and says which sources agreed — and, more importantly, which were not there.
+   */
+  let proof: SessionProofSummary | null = null;
 
   if (ticket.sessionId !== null) {
     const [row] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, ticket.sessionId));
@@ -347,6 +356,53 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
        * Shown in full rather than summarised: what somebody actually wrote, and when, is the
        * thing being judged.
        */
+      /*
+        Every source is read with its own availability, never inferred from an empty list.
+
+        An empty array is exactly what a failed query and a quiet class both look like, and
+        `summarizeSessionProof` is built so the difference reaches an operator instead of being
+        flattened into a zero. See `lib/sessionProof/aggregate.ts`.
+      */
+      const [providerEvents, quality] = await Promise.all([
+        providerEventsFor(row.id),
+        qualitySamplesFor(row.id),
+      ]);
+      proof = summarizeSessionProof({
+        session: {
+          scheduledStartMs: new Date(row.date).getTime(),
+          durationMinutes: row.duration,
+          startedAtMs: row.startedAt ? new Date(row.startedAt).getTime() : null,
+          endedAtMs: activity.endedAt ? new Date(activity.endedAt).getTime() : null,
+        },
+        ledger: attendance.rows.map((r) => ({
+          userId: r.userId,
+          name: r.name,
+          role: r.role === "teacher" ? "teacher" : "student",
+          firstJoinedAtMs: new Date(r.firstJoinedAt).getTime(),
+          lastSeenAtMs: new Date(r.lastSeenAt).getTime(),
+          presentMs: r.presentMs,
+          joinCount: r.joinCount,
+          drawCount: r.drawCount,
+          messageCount: r.messageCount,
+        })),
+        providerEvents: providerEvents.rows.map((e) => ({
+          eventType: e.eventType as "meeting.started" | "meeting.ended" | "participant.joined" | "participant.left",
+          eventAtMs: new Date(e.eventAt).getTime(),
+          participantUserId: e.participantUserId,
+          participantIsOwner: e.participantIsOwner,
+          durationSeconds: e.durationSeconds,
+        })),
+        quality: quality.rows.map((q) => ({
+          userId: q.userId,
+          observedAtMs: new Date(q.observedAt).getTime(),
+          quality: (["good", "warning", "bad", "unknown"].includes(q.quality) ? q.quality : "unknown") as
+            "good" | "warning" | "bad" | "unknown",
+          reconnect: q.reconnect,
+        })),
+        available: { ledger: attendance.known, provider: providerEvents.known, telemetry: quality.known },
+        expected: paid.map((pp) => ({ userId: pp.userId, name: pp.name, role: "student" as const })),
+      });
+
       messages = await db
         .select({
           senderName: sessionMessagesTable.senderName,
@@ -385,6 +441,7 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
     session,
     attendance,
     findings,
+    proof,
     messages,
     reporterActivity,
   });

@@ -22,6 +22,15 @@ import type { TicketEvent } from "@/utils/tickets";
  * design of this screen is to give that person something to decide with.
  */
 
+/**
+ * A figure that might not exist, mirroring `api-server/src/lib/sessionProof/aggregate.ts`.
+ *
+ * The shape is deliberately awkward to read carelessly: there is no value to reach for until the
+ * `available` branch has been taken, so a screen cannot accidentally render "we were not watching"
+ * as a zero.
+ */
+type Measured<T> = { available: false; because: string } | { available: true; value: T };
+
 interface TicketDetail {
   ticket: {
     id: number; ref: string; reason: string; description: string; evidenceUrl: string | null;
@@ -37,6 +46,25 @@ interface TicketDetail {
   session: { id: number; topic: string; subject: string; date: string; duration: number; status: string; teacherName: string } | null;
   attendance: { known: boolean; rows: { userId: number; name: string; role: string; presentMs: number; joinCount: number }[] };
   findings: { code: string; detail: string }[];
+  /**
+   * The provider-corroborated view, or null when the ticket names no class.
+   *
+   * Optional so an older API answering a newer app renders the rest of the page instead of
+   * failing — and so the absence of this block is never mistaken for "there was nothing to say".
+   */
+  proof?: {
+    timeline: { atMs: number; code: string; source: string; userId?: number; detail: string }[];
+    people: {
+      userId: number; name: string; role: string;
+      presentMs: Measured<number>;
+      providerJoinCount: Measured<number>;
+      reportedReconnects: Measured<number>;
+      confidence: "corroborated" | "single-source" | "self-reported" | "absent";
+    }[];
+    providerSawMeeting: Measured<boolean>;
+    sources: { ledger: boolean; provider: boolean; telemetry: boolean };
+    caveats: string[];
+  } | null;
   messages: { senderName: string; senderRole: string; body: string; createdAt: string }[];
   reporterActivity: { known: boolean; rows: { id: number; action: string; createdAt: string }[] };
 }
@@ -178,7 +206,7 @@ export default function AdminTicket() {
     );
   }
 
-  const { ticket, session, attendance, findings, messages, reporterActivity, history, nextStatuses } = data;
+  const { ticket, session, attendance, findings, proof, messages, reporterActivity, history, nextStatuses } = data;
   const finished = nextStatuses.length === 0;
   const minutes = (ms: number) => Math.round(ms / 60_000);
 
@@ -277,6 +305,75 @@ export default function AdminTicket() {
               ))}
               <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
                 These are facts from the record, not a decision. The decision is yours.
+              </Text>
+            </>
+          )}
+
+          {/*
+            What each source saw, and which ones were not there.
+
+            The section exists for one distinction: "nothing happened" and "we were not watching"
+            must never look the same on the screen an agent decides from. Every figure below either
+            shows a number or says plainly why there is none — see the Measured type above.
+
+            Deliberately compact and deliberately free of raw diagnostics. An agent needs to know
+            that a line was reported bad, not the jitter in milliseconds, and this page is read by
+            people who do not have to be engineers to do their job.
+          */}
+          {proof && (
+            <>
+              <Text style={[styles.subTitle, { color: colors.foreground }]}>What each source saw</Text>
+
+              <Text style={[styles.meta, { color: colors.mutedForeground }]}>
+                {`Attendance ledger: ${proof.sources.ledger ? "available" : "UNAVAILABLE"}`}
+                {` · Video provider: ${proof.sources.provider ? "available" : "UNAVAILABLE"}`}
+                {` · Device reports: ${proof.sources.telemetry ? "available" : "UNAVAILABLE"}`}
+              </Text>
+
+              {proof.people.map((person) => (
+                <Text key={person.userId} style={[styles.meta, { color: colors.mutedForeground }]}>
+                  {`${person.name} (${person.role}) — `}
+                  {person.presentMs.available
+                    ? `${minutes(person.presentMs.value)} min by our own record`
+                    : `time present unknown: ${person.presentMs.because}`}
+                  {person.providerJoinCount.available
+                    ? ` · provider recorded ${person.providerJoinCount.value} join${person.providerJoinCount.value === 1 ? "" : "s"}`
+                    : " · provider could not name them"}
+                  {person.reportedReconnects.available
+                    ? ` · device reported ${person.reportedReconnects.value} reconnection${person.reportedReconnects.value === 1 ? "" : "s"}`
+                    : ""}
+                  {` · ${person.confidence}`}
+                </Text>
+              ))}
+
+              {proof.timeline.length > 0 && (
+                <>
+                  <Text style={[styles.subTitle, { color: colors.foreground }]}>In order</Text>
+                  {/*
+                    Capped. An agent scanning a dispute needs the shape of the hour, and a class
+                    with a bad line can produce hundreds of samples; the count below says what was
+                    left out rather than silently truncating.
+                  */}
+                  {proof.timeline.slice(0, 20).map((entry, i) => (
+                    <Text key={`${entry.code}-${i}`} style={[styles.meta, { color: colors.mutedForeground }]}>
+                      {`${new Date(entry.atMs).toLocaleTimeString()} — ${entry.detail} [${entry.source}]`}
+                    </Text>
+                  ))}
+                  {proof.timeline.length > 20 && (
+                    <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+                      {`${proof.timeline.length - 20} further entries are not shown.`}
+                    </Text>
+                  )}
+                </>
+              )}
+
+              {proof.caveats.map((caveat, i) => (
+                <Text key={`caveat-${i}`} style={[styles.caveat, { color: colors.warn }]}>{caveat}</Text>
+              ))}
+
+              <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
+                Corroboration is not a verdict. Sources can disagree, and a disagreement is a thing
+                to read rather than a thing to resolve automatically.
               </Text>
             </>
           )}
