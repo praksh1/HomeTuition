@@ -5,6 +5,7 @@ import { ActivityIndicator, Linking, Platform, ScrollView, StyleSheet, Text, Tex
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost, attachmentUrl } from "@/utils/api";
 import { confirm, notify } from "@/utils/alerts";
 import { openAttachment as openFile } from "@/utils/openAttachment";
@@ -37,6 +38,12 @@ interface TicketDetail {
   session: { id: number; topic: string; subject: string; date: string; duration: number; status: string; teacherName: string } | null;
   attendance: { known: boolean; rows: { userId: number; name: string; role: string; presentMs: number; joinCount: number }[] };
   findings: { code: string; detail: string }[];
+  caseNarrative: {
+    sessionId: number;
+    summary: { code: string; detail: string }[];
+    timeline: { at: string; code: string; detail: string; source: string }[];
+    unavailable: string[];
+  } | null;
   messages: { senderName: string; senderRole: string; body: string; createdAt: string }[];
   reporterActivity: { known: boolean; rows: { id: number; action: string; createdAt: string }[] };
 }
@@ -44,6 +51,7 @@ interface TicketDetail {
 export default function AdminTicket() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
+  const { t, numeric, gutter, space, radius } = useLayout();
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<TicketDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -178,24 +186,29 @@ export default function AdminTicket() {
     );
   }
 
-  const { ticket, session, attendance, findings, messages, reporterActivity, history, nextStatuses } = data;
+  const { ticket, session, attendance, findings, caseNarrative, messages, reporterActivity, history, nextStatuses } = data;
   const finished = nextStatuses.length === 0;
   const minutes = (ms: number) => Math.round(ms / 60_000);
 
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 60 }]}
+      contentContainerStyle={[styles.container, {
+        paddingHorizontal: gutter,
+        gap: space.md,
+        paddingTop: insets.top + space.md,
+        paddingBottom: insets.bottom + space.xl,
+      }]}
     >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>{ticket.ref}</Text>
+        <Text style={[t.title3, { color: colors.foreground }]}>{ticket.ref}</Text>
         <View style={{ width: 22 }} />
       </View>
 
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}>
         <View style={styles.reasonRow}>
           <Text style={[styles.reason, { color: colors.primary }]}>{ticket.reason}</Text>
           <Text
@@ -243,23 +256,56 @@ export default function AdminTicket() {
       </View>
 
       {session && (
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>The class</Text>
-          <Text style={[styles.body, { color: colors.foreground }]}>{session.topic} · {session.subject}</Text>
-          <Text style={[styles.meta, { color: colors.mutedForeground }]}>
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}>
+          <Text style={[t.title3, { color: colors.foreground }]}>The class</Text>
+          <Text style={[t.body, { color: colors.foreground }]}>{session.topic} · {session.subject}</Text>
+          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
             {new Date(session.date).toLocaleString()} · {session.duration} min · taught by {session.teacherName} · {session.status}
           </Text>
 
-          <Text style={[styles.subTitle, { color: colors.foreground }]}>Who was in the room</Text>
+          {caseNarrative && (
+            <View
+              testID="admin-session-case-summary"
+              style={[styles.summaryPanel, {
+                backgroundColor: colors.surfaceSunk,
+                borderColor: colors.border,
+                borderRadius: radius.sm,
+                padding: space.md,
+                gap: space.sm,
+              }]}
+            >
+              <View style={styles.summaryHeading}>
+                <Feather name="file-text" size={18} color={colors.primary} />
+                <View style={styles.summaryHeadingCopy}>
+                  <Text style={[t.bodyStrong, { color: colors.foreground }]}>Session #{caseNarrative.sessionId} summary</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Readable facts for this case</Text>
+                </View>
+              </View>
+              {caseNarrative.summary.map((line) => (
+                <View key={line.code} style={styles.summaryLine}>
+                  <View style={[styles.summaryDot, { backgroundColor: colors.primary }]} />
+                  <Text style={[t.body, { color: colors.foreground, flex: 1 }]}>{line.detail}</Text>
+                </View>
+              ))}
+              <View style={[styles.limitations, { backgroundColor: colors.warnSoft, borderRadius: radius.sm, padding: space.md, gap: space.xs }]}>
+                <Text style={[t.caption, { color: colors.warn }]}>What this record cannot confirm yet</Text>
+                {caseNarrative.unavailable.map((line) => (
+                  <Text key={line} style={[t.caption, { color: colors.mutedForeground }]}>• {line}</Text>
+                ))}
+              </View>
+            </View>
+          )}
+
+          <Text style={[t.bodyStrong, { color: colors.foreground, marginTop: space.sm }]}>Who was in the room</Text>
           {!attendance.known ? (
-            <Text style={[styles.meta, { color: colors.destructive }]}>
+            <Text style={[t.caption, { color: colors.destructive }]}>
               The attendance record could not be read. That is not the same as nobody attending.
             </Text>
           ) : attendance.rows.length === 0 ? (
-            <Text style={[styles.meta, { color: colors.mutedForeground }]}>Nobody opened this class.</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>Nobody opened this class.</Text>
           ) : (
             attendance.rows.map((row) => (
-              <Text key={row.userId} style={[styles.meta, { color: colors.mutedForeground }]}>
+              <Text key={row.userId} style={[t.caption, numeric, { color: colors.mutedForeground }]}>
                 {row.name} ({row.role}) — {minutes(row.presentMs)} min
                 {row.joinCount > 1 ? `, reconnected ${row.joinCount - 1}×` : ""}
               </Text>
@@ -268,11 +314,11 @@ export default function AdminTicket() {
 
           {findings.length > 0 && (
             <>
-              <Text style={[styles.subTitle, { color: colors.foreground }]}>What the record shows</Text>
+              <Text style={[t.bodyStrong, { color: colors.foreground, marginTop: space.sm }]}>What the record shows</Text>
               {findings.map((finding, i) => (
                 <View key={`${finding.code}-${i}`} style={styles.findingRow}>
                   <Feather name="info" size={13} color={colors.mutedForeground} />
-                  <Text style={[styles.meta, { color: colors.mutedForeground, flex: 1 }]}>{finding.detail}</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground, flex: 1 }]}>{finding.detail}</Text>
                 </View>
               ))}
               <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
@@ -292,6 +338,33 @@ export default function AdminTicket() {
                 {message.senderName} ({message.senderRole}) · {new Date(message.createdAt).toLocaleString()}
               </Text>
               <Text style={[styles.body, { color: colors.mutedForeground }]}>{message.body}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {caseNarrative && caseNarrative.timeline.length > 0 && (
+        <View
+          testID="admin-session-timeline"
+          style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}
+        >
+          <Text style={[t.title3, { color: colors.foreground }]}>Session timeline</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>The technical trail, translated into plain language.</Text>
+          {caseNarrative.timeline.map((entry, index) => (
+            <View key={`${entry.code}-${entry.at}-${index}`} style={styles.timelineRow}>
+              <View style={styles.timelineRail}>
+                <View style={[styles.timelineDot, { backgroundColor: colors.primary }]} />
+                {index < caseNarrative.timeline.length - 1 ? (
+                  <View style={[styles.timelineLine, { backgroundColor: colors.border }]} />
+                ) : null}
+              </View>
+              <View style={[styles.timelineCopy, { paddingBottom: space.md }]}>
+                <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+                  {new Date(entry.at).toLocaleString("en-NP", { timeZone: "Asia/Kathmandu" })} Nepal time
+                </Text>
+                <Text style={[t.body, { color: colors.foreground }]}>{entry.detail}</Text>
+                <Text style={[t.overline, { color: colors.inkFaint }]}>{entry.source.replace("-", " ")}</Text>
+              </View>
             </View>
           ))}
         </View>
@@ -411,7 +484,7 @@ export default function AdminTicket() {
               onPress={() => void decide(next.value)}
               activeOpacity={0.8}
             >
-              <Text style={[styles.actionText, { color: next.value === "resolved" ? "#fff" : colors.foreground }]}>
+              <Text style={[styles.actionText, { color: next.value === "resolved" ? colors.onInverse : colors.foreground }]}>
                 {next.label}
               </Text>
             </TouchableOpacity>
@@ -469,7 +542,7 @@ export default function AdminTicket() {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 14 },
+  container: {},
   centre: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
@@ -493,6 +566,17 @@ const styles = StyleSheet.create({
   caveat: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16, fontStyle: "italic" },
   link: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   findingRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  summaryPanel: { borderWidth: 1 },
+  summaryHeading: { flexDirection: "row", alignItems: "center", gap: 8 },
+  summaryHeadingCopy: { flex: 1 },
+  summaryLine: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  summaryDot: { width: 6, height: 6, borderRadius: 999, marginTop: 8 },
+  limitations: {},
+  timelineRow: { flexDirection: "row", alignItems: "stretch", gap: 12 },
+  timelineRail: { width: 12, alignItems: "center" },
+  timelineDot: { width: 8, height: 8, borderRadius: 999, marginTop: 5 },
+  timelineLine: { width: 1, flex: 1, marginTop: 4 },
+  timelineCopy: { flex: 1 },
   msg: { gap: 2, marginBottom: 6 },
   msgWho: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   input: { borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 90, fontSize: 14, fontFamily: "Inter_400Regular" },

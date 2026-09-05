@@ -20,7 +20,7 @@
     "size": 15
   },
   "app/(admin)/ticket/[id].tsx": {
-    "hex": 1,
+    "hex": 0,
     "size": 15
   },
   "app/(admin)/_layout.tsx": {

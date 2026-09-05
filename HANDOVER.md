@@ -559,6 +559,16 @@ with a reason, issue a password reset code, review teaching credentials.
 `/desk` is a signpost rather than a second login — the same form, their own account, and the
 app routes them by role.
 
+For a ticket tied to a class, the desk now also builds a deterministic **Session #… summary** and
+a chronological, plain-language session timeline from the rows for that unique session. It covers
+only what Sikshya can currently read: creation/current listing, schedule moves, booking and stored
+payment-reference state, persistent messages, start/end timing, socket attendance and reconnect
+gaps, and accepted board/chat counts. The panel explicitly lists what is not collected yet—message
+reads, camera/microphone/screen-share state, exact board tools and first stroke, quality buckets,
+provider-reconciled payment and independent media presence—so missing instrumentation cannot be
+mistaken for an event that never happened. See `.agents/memory/session-case-narrative.md` and the
+next slices in `.agents/backlog/2026-09-05-session-proof-of-delivery.md`.
+
 **A request has a number and a life.** `HT-000123`, and a trail: Request Created → Opened →
 Assigned → Being worked on → Resolved / Denied / Cancelled. Resolving or denying takes a
 **written reason**; an agent may attach a supporting document; agents can write notes to each

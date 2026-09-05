@@ -7,6 +7,7 @@ import {
   disputesTable,
   passwordResetsTable,
   refundsTable,
+  scheduleChangesTable,
   sessionEnrollmentsTable,
   sessionMessagesTable,
   sessionsTable,
@@ -23,6 +24,7 @@ import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { recordActivity, readActivity } from "../lib/activityLog";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor } from "../lib/sessionEvidence";
+import { buildSessionCaseNarrative, type SessionCaseNarrative } from "../lib/sessionCaseNarrative";
 import { costAt, egressGbAt, monthWindow, usageIn } from "../lib/videoUsage";
 import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
@@ -326,6 +328,7 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
   let attendance: Awaited<ReturnType<typeof attendanceFor>> = { known: false, rows: [] };
   let findings: ReturnType<typeof findingsFor> = [];
   let messages: { senderName: string; senderRole: string; body: string; createdAt: Date }[] = [];
+  let caseNarrative: SessionCaseNarrative | null = null;
 
   if (ticket.sessionId !== null) {
     const [row] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, ticket.sessionId));
@@ -358,6 +361,49 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
         .where(eq(sessionMessagesTable.sessionId, row.id))
         .orderBy(asc(sessionMessagesTable.id))
         .limit(500);
+
+      /*
+       * The readable case account and the raw timeline share the same stored rows.
+       *
+       * This is intentionally assembled at read time instead of stored as prose. If a bug in the
+       * wording is corrected later, an old case should immediately describe the same underlying
+       * evidence correctly rather than preserve a misleading sentence forever.
+       */
+      const [bookings, scheduleChanges] = await Promise.all([
+        db
+          .select({
+            userId: sessionEnrollmentsTable.studentId,
+            name: usersTable.name,
+            enrolledAt: sessionEnrollmentsTable.enrolledAt,
+            paymentStatus: sessionEnrollmentsTable.paymentStatus,
+            paymentMethod: sessionEnrollmentsTable.paymentMethod,
+            paymentReference: sessionEnrollmentsTable.paymentReference,
+          })
+          .from(sessionEnrollmentsTable)
+          .innerJoin(usersTable, eq(usersTable.id, sessionEnrollmentsTable.studentId))
+          .where(eq(sessionEnrollmentsTable.sessionId, row.id))
+          .orderBy(asc(sessionEnrollmentsTable.id)),
+        db
+          .select({
+            previousDate: scheduleChangesTable.previousDate,
+            newDate: scheduleChangesTable.newDate,
+            affectedStudents: scheduleChangesTable.affectedStudents,
+            changedAt: scheduleChangesTable.changedAt,
+          })
+          .from(scheduleChangesTable)
+          .where(eq(scheduleChangesTable.sessionId, row.id))
+          .orderBy(asc(scheduleChangesTable.id)),
+      ]);
+
+      caseNarrative = buildSessionCaseNarrative({
+        session: { ...row, endedAt: activity.endedAt },
+        reporterId: ticket.reporterId,
+        attendanceKnown: attendance.known,
+        attendance: attendance.rows,
+        enrollments: bookings,
+        scheduleChanges,
+        messages,
+      });
     }
   }
 
@@ -385,6 +431,7 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
     session,
     attendance,
     findings,
+    caseNarrative,
     messages,
     reporterActivity,
   });

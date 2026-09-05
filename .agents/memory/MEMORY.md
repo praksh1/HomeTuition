@@ -2,6 +2,8 @@
 
 **Open backlog:** [.agents/backlog/](../backlog/) holds work the owner has raised that is not finished. Read the newest file there before planning; a list that lives only in a chat gets half-done, and this project's container has been reset mid-session more than once.
 
+- [Session case narrative](session-case-narrative.md) — every session-linked operator investigation gets a deterministic, human-readable summary plus its chronological evidence trail; missing instrumentation is stated as unavailable and no narrative decides a refund.
+
 - [Cross-agent work logs](cross-agent-work-log.md) — the owner moves between Claude Code and Codex. Every task gets a chronological entry in `.agents/worklog/` covering scope, exact changes, verification, failures, deliberate omissions and the next pickup point; chat history is not the handover.
 - [Isolated staging preview](staging-preview-isolation.md) — real preview Worker/API/NEW Neon project, exact branches, manual deployment without main merge, controlled fixtures, shared spending cap, and upload setup approval. Read the current worklog continuation before resuming.
 - [Owner corrections and Stream proof-of-concept packet](../backlog/2026-09-02-owner-corrections-and-stream-poc.md) — implementation queue covering professional operator notifications, pre-payment tier locks, reset-link security, audited test-teacher access, honest Daily window states, and a separate Stream Video experiment. Slice 5 removes automatic shape conversion from the active board on its isolated branch; Daily remains production.

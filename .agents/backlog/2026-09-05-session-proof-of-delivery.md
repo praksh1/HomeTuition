@@ -119,3 +119,25 @@ Primary references:
   local review before launch.
 - Fine-grained retention should be finalized with the dispute window. Thirty days is the current
   product target, not a legal conclusion.
+
+## Tier 5 — operator case narrative (Codex, first slice built)
+
+The ticket detail now receives a deterministic narrative for its unique session ID and a separately
+inspectable timeline. It translates existing records into sentences about creation, the current
+listing, schedule changes, bookings, persistent pre-class messages, start/end timing, attendance,
+reconnections, whiteboard changes and classroom chat. Payment references are labelled as stored but
+not independently reconciled. Test access is explicitly not a payment.
+
+The operator page also lists what the record cannot yet answer. Follow-up instrumentation should be
+split into reviewed additions, not inferred from existing counters:
+
+1. Message read receipts for private and class threads, with one receipt per user/message.
+2. Coarse Daily/app media state transitions: camera, microphone and screen share on/off, without
+   storing media or raw WebRTC statistics.
+3. Whiteboard semantic events: first accepted change, clear action and tool category, without
+   storing lesson content twice.
+4. Payment-provider reconciliation that verifies a stored reference against the gateway before the
+   operator screen calls it confirmed.
+5. Correct the two blockers in `claude/session-proof-provider` before integrating provider evidence:
+   participant deduplication by event type + provider participant session ID, and retention that
+   waits until a meeting instance can be aggregated whole.
