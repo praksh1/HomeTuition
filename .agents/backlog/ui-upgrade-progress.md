@@ -66,6 +66,9 @@ Found and fixed so far:
 | Operator decisions (server) | "Your teaching credentials have been approved. You can schedule classes now." — announced a *document* outcome for an *account* decision, and an approved teacher still cannot schedule anything without a teaching plan |
 | Operator decisions (server) | "They were not connected, so they will see it when they next open the app." — mine, not inherited. There is no server-side notification store, so an offline teacher receives nothing then *or later*. Written by the same pass that had just documented why that is false; caught by Codex, not by me |
 | Teacher login | Named `ram@example.com`, `sunita@example.com`, and "any email" as demo sign-ins although the accounts do not exist in isolated staging and arbitrary email cannot authenticate |
+| Session proof (worklog) | "Daily cannot tell us which account joined" — mine. True only because token minting omitted `user_id`, which I had scoped out myself and then recorded as a property of Daily. Repeated in four code comments and presented as the finding the whole design followed from |
+| Session proof (worklog) | "Adding a `user_id` claim is a one-line change, deliberately not made, since altering a working token path was not in scope." — mine. It *was* in scope: without it the provider corroboration could say nothing about a person, which is the only thing a refund argument asks |
+| Session proof (server) | The Daily webhook verifier — mine. Not a false sentence but the same defect in code: a confident implementation of a signing scheme nobody had checked, whose tests agreed with it because they were written from it. Four independent departures from Daily's contract, each individually fatal, all green |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

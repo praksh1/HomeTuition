@@ -6,6 +6,13 @@
 - Base commit: `07a1bf5` (`origin/main`)
 - Status: complete for Tiers 3–4 as scoped. **Not merged, not deployed, no `db:push` run anywhere.**
 
+> **Partly superseded.** Review found release-blocking defects in this work — the webhook signing
+> scheme was implemented against a contract Daily does not use, and several ways existed for one
+> class's evidence to describe another. The finding below that "Daily cannot tell us which account
+> joined" was true only because token minting omitted `user_id`; it now carries one. Corrections,
+> and the three claims here that became false, are in
+> `2026-09-05-claude-session-proof-corrections.md`. Read that entry alongside this one.
+
 ## Requested
 
 Owner priority, Tiers 3–4 of session proof-of-delivery. Codex owns Tiers 1–2. Daily stays active;
@@ -16,18 +23,23 @@ no payment or refund outcome altered; no accounts, keys, purchases or recording.
 | Thing | State |
 |---|---|
 | Room ↔ session mapping | `sanitizeRoomName` in `lib/daily.ts` builds `"sikshya" + id`. Reversible for integer ids; **lossy in general**, so the inverse is written strict |
-| Daily meeting token | sets `room_name`, `is_owner`, `user_name`, `exp` — **and no `user_id`** |
+| Daily meeting token | sets `room_name`, `is_owner`, `user_name`, `exp` — **and no `user_id`** *(no longer true: a `user_id` claim was added in the corrections entry)* |
 | `session_participation` | socket-written ledger: presence, join count, board writes, messages |
 | `sessionEvidence.ts` | import-free findings, no verdicts |
 | Boot guard | `ensureSchema.ts`, create-only, failure-isolated, never a migration system |
 | Raw body for HMAC | already captured in `app.ts` as `req.rawBody` for the payment webhook |
 
-**The load-bearing finding: Daily cannot tell us *which account* joined.** Tokens carry no `user_id`,
+**~~The load-bearing finding: Daily cannot tell us *which account* joined.~~ Corrected — see below.** Tokens carry no `user_id`,
 so the provider can distinguish an owner from a non-owner and nothing more. Every downstream design
 choice follows from this, and it is the main reason this is not a refund judge. Adding a `user_id`
 claim is a one-line change to `lib/daily.ts` — **deliberately not made**, since altering a working
 token path was not in scope. The normalizer reads the field anyway, so adding it later needs no
 change here, and a test proves it is carried through when supplied.
+
+> **This scoping decision was wrong and has been reversed.** Without the claim, the entire provider
+> corroboration could say nothing about a *person* — which is the only thing a refund argument
+> actually asks. Tokens now carry the authenticated user id, and any id the provider echoes back is
+> checked against that class's real membership before it is believed.
 
 ## Files
 
