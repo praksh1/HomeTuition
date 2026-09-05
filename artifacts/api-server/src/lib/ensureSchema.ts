@@ -1220,6 +1220,13 @@ export async function ensureSessionProofTables(): Promise<void> {
       Partial on purpose. A delivery with no participant id cannot be deduplicated this way and
       must not collide with every other such delivery, and meeting events describe the room rather
       than a person — a room legitimately holds several meetings.
+
+      One trap worth knowing, found by breaking this on purpose: `CREATE UNIQUE INDEX IF NOT
+      EXISTS` silently does nothing when a **non-unique** index of the same name already exists.
+      It matches on the name alone, so a database that somehow acquired the plain version would
+      keep it forever and this guard would be off with no error anywhere. Nothing has ever deployed
+      the plain version — the index is new on this branch — but if that is ever in doubt, check
+      `pg_indexes.indexdef` for the word UNIQUE rather than trusting that this statement ran.
     */
     await db.execute(sql`
       CREATE UNIQUE INDEX IF NOT EXISTS "session_provider_events_participant_dedupe_idx"

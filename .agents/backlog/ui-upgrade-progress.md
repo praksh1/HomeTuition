@@ -69,6 +69,8 @@ Found and fixed so far:
 | Session proof (worklog) | "Daily cannot tell us which account joined" — mine. True only because token minting omitted `user_id`, which I had scoped out myself and then recorded as a property of Daily. Repeated in four code comments and presented as the finding the whole design followed from |
 | Session proof (worklog) | "Adding a `user_id` claim is a one-line change, deliberately not made, since altering a working token path was not in scope." — mine. It *was* in scope: without it the provider corroboration could say nothing about a person, which is the only thing a refund argument asks |
 | Session proof (server) | The Daily webhook verifier — mine. Not a false sentence but the same defect in code: a confident implementation of a signing scheme nobody had checked, whose tests agreed with it because they were written from it. Four independent departures from Daily's contract, each individually fatal, all green |
+| Session proof (server) | Participant deduplication keyed only on the provider's event id — mine. Daily warns a duplicate arrival can carry a different id, so two rows would record one person joining twice in the evidence for a refund |
+| Session proof (server) | Retention swept row by row, so a meeting's start expired an hour before its end — mine. A real one-hour lesson would have been permanently summarised as two meetings of no length, with the rows deleted and no way to correct it |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

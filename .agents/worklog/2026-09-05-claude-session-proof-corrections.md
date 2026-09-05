@@ -4,6 +4,7 @@
 - Agent: claude
 - Branch: `claude/session-proof-provider`
 - Base commit: `3241264` (my own earlier work on this branch)
+- Updated: 2026-09-05, second review round — two evidence-integrity blockers, commits `5407183` onward
 - Status: complete. **Not merged, not deployed, no `db:push` run anywhere, no dashboard touched,
   nothing purchased.**
 
@@ -218,3 +219,155 @@ Added to `.agents/backlog/ui-upgrade-progress.md`.
    wrong.
 6. **Legacy anonymous events stay anonymous.** Calls joined before tokens carried an id can never
    be attributed. The operator page says so and does not guess from the owner flag.
+
+
+---
+
+# Second round: two evidence-integrity blockers
+
+An independent review after the corrections above found two more, both of which corrupt the record
+silently and the second of which corrupts it permanently.
+
+## Requested
+
+1. Daily participant deduplication is incomplete — duplicates can arrive under different event ids,
+   and Daily recommends deduplicating on event type plus `payload.session_id`.
+2. Retention splits one meeting across sweeps, permanently recording a real lesson as two meetings
+   of no length.
+
+Plus: fix the on-conflict source availability semantics, keep the sweep unscheduled, prove each new
+guard red, run the full gates, and report that activation may stay blocked.
+
+## Changed
+
+- `lib/db/src/schema/sessionProviderEvents.ts` — partial unique index on
+  `(provider, event_type, provider_participant_id)` where the id is present and the type is one of
+  the two participant types; `received_at` index.
+- `lib/db/src/schema/sessionQualitySamples.ts` — `received_at` index.
+- `lib/db/src/schema/sessionProofAggregates.ts` — `provider_meetings_unmeasured`, `late_arrivals`.
+- `lib/ensureSchema.ts` — matching DDL, additively for a database that already has the tables.
+- `routes/sessionProof.ts` — bare `onConflictDoNothing()` so either unique key is caught.
+- `lib/sessionProof/providerEvents.ts` — `payload.meeting_session_id` added to the meeting-instance
+  paths; the participant-connection field documented as the second idempotency key.
+- `lib/sessionProof/retention.ts` — `sessionRollUpEligibility`, `mergeSummary`,
+  `providerMeetingsUnmeasured`; `RetainableRow.atMs` renamed `receivedAtMs`.
+- `lib/sessionProof/retentionSweep.ts` — whole-class atomicity, arrival-based age, aggregate row
+  locked and merged in readable JavaScript rather than an unreadable `ON CONFLICT` expression.
+- Both integration suites extended.
+
+## Decisions and assumptions
+
+**The dedupe index is partial, not total.** A delivery with no participant id must not collide with
+every other such delivery, and meeting events describe the room rather than a person — a room
+legitimately holds several meetings, so a key that caught them would collapse a dropped-and-rejoined
+class into one.
+
+**The insert takes a bare `ON CONFLICT DO NOTHING`.** Naming a target catches only that constraint,
+which is precisely how the duplicate-under-a-new-id case slipped through.
+
+**A class is rolled up all at once or not at all.** Holding a class back costs a few days of
+storage; rolling one up in halves costs the lesson, permanently.
+
+**Age comes from `received_at`.** Thirty days has to mean thirty days of us holding the row, not
+thirty days since a timestamp the provider chose.
+
+**The merge is read-then-write inside the existing lock, not an `ON CONFLICT` expression.** The rule
+has three cases per source and expressing it in SQL made it unreadable — which is how a rule that
+fabricates zeroes hides.
+
+**`unavailable_sources` is derived from the merged figures rather than accumulated.** Otherwise a
+summary can say "provider unknown" directly above a provider meeting count of 1.
+
+**Late arrivals are counted, never merged.** A lone `meeting.ended` delivered a month late would
+otherwise become "a second meeting of no length" — the same corruption by another route.
+
+## Verification
+
+| Gate | Result |
+|---|---|
+| `pnpm run typecheck` (4 packages) | clean |
+| `pnpm --filter @workspace/api-server run test` | **389 passed, 0 failed** (was 378) |
+| `pnpm --filter @workspace/sikshya run test` | **215 passed, 0 failed** |
+| `test:proof` | **107 passed, 0 failed** (was 94) |
+| `test:retention` | **73 passed, 0 failed** (was 28) |
+| `test:video` | 16 passed, 0 failed |
+| `test:attendance` | 72 passed, 0 failed |
+| `test:refunds` | 152 passed, 0 failed |
+| `lint:design` | no new leaks; 205 hex / 418 sizes unchanged |
+| `git diff --check` | clean |
+
+Both integration suites run repeatedly against the same database to prove re-runnability.
+
+### Deliberate breaks — each proven red, then restored
+
+| # | Guard removed | Result |
+|---|---|---|
+| 1 | the participant dedupe index itself | proof 99 / **8 fail** |
+| 2 | conflict handling that catches either key | proof 99 / **8 fail** |
+| 3 | reading the connection id from `payload.session_id` | proof 99 / **8 fail** |
+| 4 | a class moving all at once, or not at all | unit 387 / **2 fail** · retention 53 / **5 fail** |
+| 5 | measuring age from arrival rather than the event's clock | **green at first** — see below; now retention 70 / **3 fail** |
+| 6 | refusing to fabricate figures for an unwatched source | unit 386 / **3 fail** · retention 53 / **5 fail** |
+| 7 | never merging a late arrival into figures already written | unit 385 / **4 fail** · retention 54 / **4 fail** |
+| 8 | deriving the unavailable list from the figures | **green at first** — see below; now retention 66 / **1 fail** |
+| 9 | declaring a meeting unmeasured instead of contributing zero | unit 388 / **1 fail** · retention 57 / **1 fail** |
+| 10 | writing the summary in the same transaction as the delete | retention 56 / **2 fail** |
+
+**Breaks 5 and 8 did not fire on the first attempt, and both were worth more than the eight that
+did.** Neither guard was working; neither was tested.
+
+*Break 5* — swapping the eligibility clock from `received_at` to `event_at` changed nothing,
+because every fixture had the two equal, and the one that did not (a late delivery) was already
+past its sweep by then. The case that separates them is a class with **one row delivered on time
+and one delivered weeks late**: judged by `event_at` the whole class looks ready and the late row is
+deleted after two days of retention while its partner is summarised — the split-meeting corruption
+arriving through the other clock. That fixture now exists.
+
+*Break 8* — replacing the derived unavailable list with `!available.provider` changed nothing,
+because no fixture had a source that was available for one sweep and unavailable for a later one.
+The case that separates them is a class whose provider figures were recorded and which is then
+swept again while ingestion is off: the derived list stays silent, the broken one prints "provider
+unknown" directly above a provider meeting count of 1.
+
+## Problems and surprises
+
+**`CREATE UNIQUE INDEX IF NOT EXISTS` silently does nothing when a non-unique index of that name
+already exists.** Found by breaking the index on purpose: the break created the plain version, and
+the restore's `IF NOT EXISTS` then skipped, leaving the guard off with no error anywhere and the
+proof suite failing eight checks against correct code. Nothing has deployed the plain version — the
+index is new on this branch — but the trap is now written into `ensureSchema.ts`: check
+`pg_indexes.indexdef` for the word UNIQUE rather than trusting the statement ran.
+
+**The container restarted mid-task.** Postgres was gone and the API on 8080 with it; the working
+tree survived. Restarted the cluster from `/var/lib/postgresql/testdata` and the API by hand. Worth
+recording because `test:attendance` and `test:refunds` need a server on 8080 that the suites do not
+start themselves, and their failure looks like a code failure.
+
+**`docs.daily.co` is still blocked by the egress proxy**, along with `www.daily.co`. Tried again
+with the official URL the review supplied; both refused. The deduplication rule and the payload
+field names are implemented from the contract stated in review, not read from the source.
+
+## Fabrications found
+
+None new. The two defects fixed here are not false statements but the same class of error in
+mechanism: a summary that would have described a real lesson as two meetings of no length, and an
+attendance record that would have counted one arrival twice. Both are recorded in the running
+table alongside the earlier three.
+
+## Deliberately not changed
+
+- No Daily dashboard change, no webhook registered, no key created, no card added, no plan changed,
+  nothing purchased.
+- No `db:push` against production or staging.
+- The retention sweep is still not scheduled, not called at boot, not on a route, and imported by no
+  module; `test:retention` asserts all of it.
+- No production collection enabled.
+- Not merged, not deployed.
+
+## Remaining risks / next pickup point
+
+1. **The signing algorithm, the participant field name and the meeting field name are all
+   unverified against Daily.** One real delivery settles all three.
+2. **Activation may need a billing card.** Not checked, nothing bought.
+3. **A no-purchase REST reconciliation alternative is written up and not built.**
+4. **Retention scheduling remains a separate approval**, and must not precede a proven delivery.

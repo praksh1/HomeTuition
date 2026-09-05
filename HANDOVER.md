@@ -843,10 +843,12 @@ harder to argue with. All the code for that is written, tested, and **switched o
 
 Two things stop it being turned on, and one of them is yours to decide:
 
-1. **The way Daily proves a message really came from it could not be checked against Daily's own
-   documentation** — the site is unreachable from the environment this was built in. It is written
-   from a specification given in review, and one real message needs to be received and checked
-   before this is trusted. That is engineering work, not a decision.
+1. **Several details of how Daily talks to us could not be checked against Daily's own
+   documentation** — the site is unreachable from the environment this was built in. How it proves
+   a message came from it, and which field names it uses for a participant and for a meeting, are
+   all written from a specification given in review rather than read from the source. One real
+   message needs to be received and checked before any of it is trusted. That is engineering work,
+   not a decision.
 
 2. **Turning it on may require a payment card on the Daily account.** This could not be checked
    without opening your account, and **nothing was bought, no card was added and no plan was

@@ -339,6 +339,94 @@ async function main() {
     check("the sweep reports it too", r.lateArrivalsRemoved >= 1, JSON.stringify(r));
   }
 
+  console.log("\nA delivery that arrived long after the thing it describes\n");
+  const delayed = newSession(`Delayed ${RUN}`);
+  {
+    /*
+      Thirty days has to mean thirty days of *us holding the row*.
+
+      This meeting happened forty days ago and the webhook for it only reached us two days ago —
+      the ordinary shape of a provider retrying after an outage. An age taken from `event_at` would
+      make it instantly eligible and delete it after two days of retention, which is not a window,
+      it is a coin toss. Age comes from `received_at`, so the clock starts when we got it.
+    */
+    const arrived = Date.now() - 2 * DAY;
+    ev(delayed, "dl1", "meeting.started", BASE, arrived, "mtg-dl");
+    ev(delayed, "dl2", "meeting.ended", BASE + 40 * MIN, arrived, "mtg-dl");
+
+    const early = runSweep(harness, { nowMs: Date.now(), available: { provider: true, telemetry: true } });
+    check("a row we have only held for two days is not swept, however old the event is",
+      eventsFor(delayed) === "2", JSON.stringify(early));
+    check("and no summary was written for it",
+      sql(`select count(*) from session_proof_aggregates where session_id = ${delayed}`) === "0");
+
+    runSweep(harness, { nowMs: Date.now() + 29 * DAY, available: { provider: true, telemetry: true } });
+    check("thirty days after it arrived, it is swept normally", eventsFor(delayed) === "0");
+    check("and the meeting survives at its real length",
+      summaryOf(delayed, "provider_meeting_span_ms") === String(40 * MIN));
+  }
+
+  console.log("\nOne class, one row delivered on time and one delivered weeks late\n");
+  const mixed = newSession(`Mixed ${RUN}`);
+  {
+    /*
+      The shape that decides which clock the eligibility rule reads.
+
+      The start arrived when it happened, forty days ago, so the class *is* a candidate for
+      sweeping. The end describes the same forty-day-old meeting but only reached us two days ago —
+      a provider retrying after an outage. Both rows carry an old `event_at`; only one carries an
+      old `received_at`.
+
+      Judged by `event_at` the whole class looks ready, and the end is deleted after two days of
+      retention while its start is summarised — the split-meeting corruption again, arriving
+      through the other clock. Judged by `received_at`, the class waits.
+    */
+    ev(mixed, "mx1", "meeting.started", BASE, BASE, "mtg-mx");
+    ev(mixed, "mx2", "meeting.ended", BASE + 55 * MIN, Date.now() - 2 * DAY, "mtg-mx");
+
+    const held = runSweep(harness, { nowMs: Date.now(), available: { provider: true, telemetry: true } });
+    check("the class is held back by the row we have only just received",
+      held.sessionsHeldBack >= 1, JSON.stringify(held));
+    check("neither row was removed", eventsFor(mixed) === "2");
+    check("and no partial summary was written",
+      sql(`select count(*) from session_proof_aggregates where session_id = ${mixed}`) === "0");
+
+    runSweep(harness, { nowMs: Date.now() + 31 * DAY, available: { provider: true, telemetry: true } });
+    check("once the late row has been held its full window the class rolls up whole",
+      summaryOf(mixed, "provider_meeting_count") === "1");
+    check("as one meeting of the length it actually ran",
+      summaryOf(mixed, "provider_meeting_span_ms") === String(55 * MIN),
+      summaryOf(mixed, "provider_meeting_span_ms"));
+    check("with nothing counted as a late arrival", summaryOf(mixed, "late_arrivals") === "0");
+  }
+
+  console.log("\nA source that stops being watched after it was recorded\n");
+  const wentDark = newSession(`Dark ${RUN}`);
+  {
+    ev(wentDark, "w1", "meeting.started", BASE, BASE, "mtg-w");
+    ev(wentDark, "w2", "meeting.ended", BASE + 20 * MIN, BASE + 20 * MIN, "mtg-w");
+    runSweep(harness, { nowMs: BASE + WINDOW + DAY, available: { provider: true, telemetry: true } });
+    check("the provider figures are recorded", summaryOf(wentDark, "provider_meeting_count") === "1");
+    check("and nothing is listed as unknown", summaryOf(wentDark, "unavailable_sources") === "null");
+
+    /*
+      Now ingestion is switched off and a late row is swept while it is off.
+
+      The list of unknown sources is derived from the figures rather than from what this particular
+      sweep could see — otherwise the summary would say "provider unknown" directly above a
+      provider meeting count of 1, which is a contradiction a reader has no way to resolve.
+    */
+    ev(wentDark, "w3", "meeting.ended", BASE + 25 * MIN, BASE + 3 * DAY, "mtg-w2");
+    runSweep(harness, { nowMs: BASE + 3 * DAY + WINDOW + DAY, available: { provider: false, telemetry: true } });
+    check("a source that has real figures is not relisted as unknown",
+      summaryOf(wentDark, "unavailable_sources") === "null",
+      summaryOf(wentDark, "unavailable_sources"));
+    check("its figures are untouched by the sweep that could not see it",
+      summaryOf(wentDark, "provider_meeting_count") === "1");
+    check("and the row it could not account for is counted as a late arrival",
+      summaryOf(wentDark, "late_arrivals") === "1");
+  }
+
   console.log("\nAn event that never correlated to a class\n");
   {
     sql(`

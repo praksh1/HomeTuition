@@ -59,7 +59,7 @@ so it was the teacher" — that is a guess wearing corroboration's clothes.
 
 ---
 
-## Two things about the webhook that are not yet proven
+## Three things about the webhook that are not yet proven
 
 ### 1. The signing algorithm was implemented from a written specification, not from Daily's docs
 
@@ -90,6 +90,22 @@ yet.
 **Before ingestion is enabled against real traffic, one genuine delivery must be verified end to
 end** and the accepted payload shapes narrowed to Daily's current schema. Until then, treat a
 rejection count in the logs as expected rather than alarming.
+
+### 3. Two things the code now does that only a real delivery can confirm
+
+**Duplicate participant events are deduplicated on the participant's connection, not the event
+id.** Daily warns that a duplicate `participant.joined` or `participant.left` can arrive under a
+*different* event id, and recommends deduplicating on the event type together with
+`payload.session_id`. A partial unique index enforces that. What has not been confirmed is that
+Daily's payloads carry `session_id` where this code looks for it — a participant event that
+reaches storage without it cannot be deduplicated at all, and the row would land twice.
+
+**Meeting instances are read from `meeting_id`, `mtg_session_id` or `meeting_session_id`,**
+whichever the payload carries. If Daily names it something else, every event falls into one
+unnamed bucket and a dropped-and-rejoined class looks like a single long meeting.
+
+Both are the same class of unknown as the signature: implemented from the contract given in
+review, and correct only if that contract matches what arrives.
 
 ---
 
@@ -146,11 +162,28 @@ Fine-grained rows are meant to live **thirty fixed days** — days rather than a
 because Bikram Sambat months run 29–32 days and Gregorian 28–31, so calendar arithmetic gives one
 policy two answers.
 
-`lib/sessionProof/retentionSweep.ts` implements it properly: one transaction locks the expiring
+`lib/sessionProof/retentionSweep.ts` implements it properly: one transaction locks the class's
 rows, writes a durable per-class summary, and only then deletes exactly those rows. Counts and
 spans survive; individual timestamps do not, because after the dispute window "the teacher's
 device reported three bad periods" is a fact about a lesson and "at 19:42:11 this person's
 connection was bad" is surveillance.
+
+Three rules in it are worth knowing, because each replaces a way of silently corrupting the
+record:
+
+- **A class moves all at once, or not at all.** An earlier version swept row by row, so a meeting
+  that started at 10:00 and ended at 11:00 had its two rows expire an hour apart: one pass took
+  the start and wrote "one meeting, no length", the next took the end and added another. The
+  lesson ended up permanently recorded as two meetings of no length, with the rows gone and no way
+  to correct it. Now every row a class has must be past the window or none of them moves.
+- **Age is counted from when we received a row, not from when the event says it happened.** A
+  webhook delivered a week late carries a timestamp a week old; measuring from that would delete
+  it after twenty-three days of actually holding it.
+- **A source nobody was watching contributes nothing — not a zero.** Its columns stay empty, it is
+  named as unknown, and if evidence turns up later the empty column is filled in honestly. A
+  figure that arrives after a class was already summarised is counted as a late arrival rather
+  than added, because a lone late "meeting ended" would otherwise become a second meeting of no
+  length by another route.
 
 **Nothing calls it.** It is not scheduled, not called at boot, not on any route, and no module
 imports it; `test:retention` asserts all of that. It can only be run by hand.
@@ -183,8 +216,8 @@ they were wrong.
 Both need a Postgres to point at. Neither touches production.
 
 ```
-PGURL=postgres://... pnpm --filter @workspace/api-server run test:proof       # 94 checks
-PGURL=postgres://... pnpm --filter @workspace/api-server run test:retention   # 28 checks
+PGURL=postgres://... pnpm --filter @workspace/api-server run test:proof       # 107 checks
+PGURL=postgres://... pnpm --filter @workspace/api-server run test:retention   #  73 checks
 ```
 
 `test:proof` starts its own servers, so `pnpm --filter @workspace/api-server run build` must have
@@ -200,6 +233,8 @@ run, because a suite that asserts absolute row counts passes once and fails fore
    this** — ask, or read the documentation.
 3. If it does, decide between leaving this off and building the REST reconciliation above.
 4. Register the webhook, capture one real delivery, and confirm it verifies and correlates.
-5. Narrow the accepted payload shapes to what Daily actually sends.
+5. Narrow the accepted payload shapes to what Daily actually sends — in particular confirm that
+   participant events carry `session_id` (used to deduplicate them) and which field names the
+   meeting instance, because both are guessed from the contract given in review.
 6. Only then consider wiring the app to report connection quality, and only after that consider
    scheduling retention.
