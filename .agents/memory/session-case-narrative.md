@@ -19,4 +19,3 @@ coarse connection-quality buckets; independent payment-provider reconciliation; 
 provider presence. The operator screen says each of these plainly.
 
 This narrative is evidence for a person. It never approves or denies a refund.
-

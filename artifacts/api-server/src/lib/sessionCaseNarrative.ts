@@ -366,4 +366,3 @@ export function buildSessionCaseNarrative(input: NarrativeInput): SessionCaseNar
     ],
   };
 }
-
