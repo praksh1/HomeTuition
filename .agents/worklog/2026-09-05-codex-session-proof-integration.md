@@ -687,3 +687,10 @@ owner has the next action.
   read intentionally changes an open ticket to “Opened”; that is normal ticket lifecycle behavior.
 - The exact content still needs owner visual review. An HTTP 200 proves routing, not that the page
   is understandable.
+
+### Owner verification
+
+The owner opened ticket **HT-000001** on the public isolated preview and reported **“Good Job!
+Tested.”** The operator evidence page is therefore manually accepted for this review slice. This
+confirms the staged screen was visible and usable to the owner; it does not expand the claim to a
+real Daily call, real payment, production data, iOS/Android hardware, or poor-network behaviour.
