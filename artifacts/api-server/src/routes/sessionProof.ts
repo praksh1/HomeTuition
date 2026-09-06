@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { and, count, desc, eq, sql } from "drizzle-orm";
-import { db, sessionProviderEventsTable, sessionQualitySamplesTable, sessionsTable } from "@workspace/db";
+import { db, disputesTable, sessionProviderEventsTable, sessionQualitySamplesTable, sessionsTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership, JOIN_WINDOW_MINUTES } from "../lib/membership";
 import { normalizeDailyEvent } from "../lib/sessionProof/providerEvents";
@@ -20,6 +20,28 @@ import { lockSessionProofWriter } from "../lib/sessionProof/locks";
 import { providerEvidenceSchemaReady } from "../lib/sessionProof/schemaInvariant";
 
 const router: IRouter = Router();
+
+/* Temporary staging-only locator; removed immediately after the fixture id is captured. */
+router.get("/staging-review-fixture", async (_req, res): Promise<void> => {
+  if (
+    process.env["PUBLIC_APP_URL"] !== "https://hometuition-preview.praksh-dhakal.workers.dev" ||
+    process.env["VIDEO_PROVIDER"] !== "echo" ||
+    process.env["ALLOW_TEST_TEACHING_ACCESS"] !== "true"
+  ) {
+    res.status(404).end();
+    return;
+  }
+  const [ticket] = await db
+    .select({ id: disputesTable.id })
+    .from(disputesTable)
+    .where(eq(disputesTable.description, "STAGING DEMONSTRATION CASE — no real class, payment, or complaint."))
+    .limit(1);
+  if (!ticket) {
+    res.status(503).json({ ready: false });
+    return;
+  }
+  res.json({ ready: true, ticketId: ticket.id });
+});
 
 /* ------------------------------------------------------------------ the provider's account */
 
