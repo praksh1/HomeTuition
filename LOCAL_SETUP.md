@@ -69,6 +69,34 @@ EXPO_PUBLIC_DAILY_DOMAIN=yourdomain.daily.co
 
 Everything else — whiteboard, uploads, zoom, chat, logins, payments — works without it.
 
+### Trying LiveKit instead
+
+LiveKit is being trialled as a replacement, because Daily charges per person per minute and the
+monthly tier does not survive that. Four more lines in the same `.env`:
+
+```
+VIDEO_PROVIDER=livekit
+LIVEKIT_API_KEY=
+LIVEKIT_API_SECRET=
+LIVEKIT_URL=wss://your-project.livekit.cloud
+```
+
+Then check them before starting anything:
+
+```
+pnpm.cmd --filter @workspace/api-server run livekit:check
+```
+
+It says in plain words whether each value is present, whether the secret can sign a token, and
+whether LiveKit accepts them — and what to do about each failure. Worth the twenty seconds,
+because a wrong secret and a bad connection produce the same message inside the app.
+
+Delete the `VIDEO_PROVIDER` line to go back to Daily. Nothing else changes and there is nothing
+to rebuild. Phones keep Daily either way — the server decides per device, so you cannot break
+them by leaving this switched on.
+
+The full picture, including the two-person test, is in `VIDEO.md`.
+
 ## If something breaks
 
 | Problem | Fix |
