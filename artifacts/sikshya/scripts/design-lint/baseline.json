@@ -39,10 +39,6 @@
     "hex": 3,
     "size": 14
   },
-  "app/(student)/profile.tsx": {
-    "hex": 7,
-    "size": 15
-  },
   "app/(student)/sessions.tsx": {
     "hex": 3,
     "size": 12
@@ -54,10 +50,6 @@
   "app/(teacher)/monthly.tsx": {
     "hex": 4,
     "size": 24
-  },
-  "app/(teacher)/profile.tsx": {
-    "hex": 6,
-    "size": 16
   },
   "app/(teacher)/sessions.tsx": {
     "hex": 7,

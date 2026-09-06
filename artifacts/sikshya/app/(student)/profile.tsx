@@ -1,24 +1,24 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useState } from "react";
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { notify } from "@/utils/alerts";
+import React from "react";
+import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "@react-navigation/native";
-import { useAuth } from "@/context/AuthContext";
-import { apiGet } from "@/utils/api";
+
+import { SocialSignIn } from "@/components/SocialSignIn";
+import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
+import { useAuth, type Student } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import type { Student } from "@/context/AuthContext";
-import { SocialSignIn } from "@/components/SocialSignIn";
 
 export default function StudentProfile() {
   const { user, logout } = useAuth();
   const colors = useColors();
-  const { space } = useLayout();
+  const { t, space, radius, elevation, gutter } = useLayout();
   const insets = useSafeAreaInsets();
   const student = user as Student;
+  const styles = createStyles({ colors, space, radius, elevation, gutter });
+
   const doLogout = async () => {
     await logout();
     router.replace("/welcome");
@@ -27,179 +27,124 @@ export default function StudentProfile() {
   const handleLogout = () => {
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && !window.confirm("Are you sure you want to log out?")) return;
-      doLogout();
+      void doLogout();
       return;
     }
-    Alert.alert("Log Out", "Are you sure?", [
+    Alert.alert("Log Out", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: doLogout },
+      { text: "Log Out", style: "destructive", onPress: () => void doLogout() },
     ]);
   };
 
   if (!student || student.role !== "student") return null;
 
-  const initials = student.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
+  const initials = student.name.split(" ").map((name) => name[0]).slice(0, 2).join("").toUpperCase();
+  const verificationColor = student.emailVerified ? colors.success : colors.warn;
+  const verificationBackground = student.emailVerified ? colors.successSoft : colors.warnSoft;
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 100 }]}
+      style={styles.screen}
+      contentContainerStyle={[styles.container, {
+        paddingTop: insets.top + space.md,
+        paddingBottom: insets.bottom + space.huge + space.huge,
+      }]}
       showsVerticalScrollIndicator={false}
     >
-      <LinearGradient colors={[colors.secondary, "#2D4A7A"]} style={styles.profileHero}>
+      <LinearGradient colors={[colors.secondary, colors.primary]} style={styles.profileHero}>
         <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{initials}</Text>
+          <Text style={[t.title1, styles.avatarText]}>{initials}</Text>
         </View>
-        <Text style={styles.heroName}>{student.name}</Text>
-        <Text style={styles.heroGrade}>{student.grade}</Text>
-        <View style={[styles.studentBadge, { backgroundColor: "rgba(255,255,255,0.2)" }]}>
-          <Feather name="award" size={13} color="#fff" />
-          <Text style={styles.studentBadgeText}>Verified Student</Text>
+        <Text style={[t.title2, styles.inverseText]}>{student.name}</Text>
+        <Text style={[t.callout, styles.inverseMutedText]}>{student.grade || "Grade not added yet"}</Text>
+        <View style={[styles.verificationBadge, {
+          backgroundColor: verificationBackground,
+          borderColor: verificationColor,
+        }]}>
+          <Feather name={student.emailVerified ? "check-circle" : "mail"} size={16} color={verificationColor} />
+          <Text style={[t.caption, { color: verificationColor }]}>
+            {student.emailVerified ? "Email verified" : "Email not verified"}
+          </Text>
         </View>
       </LinearGradient>
 
-      <View style={[styles.infoCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.cardTitle, { color: colors.foreground }]}>Account Info</Text>
+      <View style={styles.card}>
+        <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Account details</Text>
         <View style={styles.infoRow}>
-          <Feather name="mail" size={15} color={colors.mutedForeground} />
-          <Text style={[styles.infoText, { color: colors.mutedForeground }]}>{student.email}</Text>
+          <Feather name="mail" size={16} color={colors.mutedForeground} />
+          <Text style={[t.callout, styles.secondaryText]} numberOfLines={2}>{student.email}</Text>
         </View>
         <View style={styles.infoRow}>
-          <Feather name="book" size={15} color={colors.mutedForeground} />
-          <Text style={[styles.infoText, { color: colors.mutedForeground }]}>{student.grade}</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <Feather name="check-circle" size={15} color={colors.success} />
-          <Text style={[styles.infoText, { color: colors.mutedForeground }]}>
-            {student.enrolledSessions.length} sessions attended
-          </Text>
+          <Feather name="book" size={16} color={colors.mutedForeground} />
+          <Text style={[t.callout, styles.secondaryText]}>{student.grade || "Grade not added yet"}</Text>
         </View>
       </View>
 
-      <View style={[styles.payCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        {/*
-          No "+ Add" button.
-          
-          It was here and it did nothing — reported exactly that way. Two separate reasons, and
-          removing it answers both. `Alert` is not implemented by react-native-web, so the tap
-          genuinely did nothing at all on a browser; and had it worked, it promised "add a new
-          payment method via eSewa or Khalti" when there is no payment provider connected and
-          nothing to add. A control that cannot do its job is worse than no control: it makes
-          somebody think the fault is theirs.
-
-          It comes back with the payment provider — see A1 in ISSUES.md — because that is the
-          change that gives it something to do.
-        */}
-        <View style={styles.payHeader}>
-          <Text style={[styles.cardTitle, { color: colors.foreground }]}>Payment Methods</Text>
-        </View>
-
-        {/* This listed two "verified" eSewa and Khalti accounts with masked numbers, for every
-            student, invented in the code. No payment provider is connected yet, so showing
-            somebody a verified payment method they do not have is the one thing this screen
-            must not do. */}
-        <View style={[styles.pmRow, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-          <View style={[styles.pmIcon, { backgroundColor: colors.mutedForeground + "20" }]}>
-            <Feather name="credit-card" size={16} color={colors.mutedForeground} />
+      <View style={styles.card}>
+        <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Payment methods</Text>
+        <View style={styles.paymentState}>
+          <View style={styles.paymentIcon}>
+            <Feather name="credit-card" size={18} color={colors.mutedForeground} />
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.pmType, { color: colors.foreground }]}>No saved payment method</Text>
-            <Text style={[styles.pmAccount, { color: colors.mutedForeground }]}>
-              Nothing to save yet. Choosing eSewa or Khalti when you book applies to that class
-              only — no account is stored, and nothing has been charged to one.
+          <View style={styles.paymentCopy}>
+            <Text style={[t.bodyStrong, styles.primaryText]}>No saved payment method</Text>
+            <Text style={[t.callout, styles.secondaryText]}>
+              Payment methods are not stored on this profile. Any payment option offered while booking applies only to that booking.
             </Text>
           </View>
         </View>
       </View>
 
-      {/*
-        A "Security" card used to sit here, and every line of it was invented.
-
-        It said two-factor authentication was **Enabled** — there is none, and none has ever
-        been built. It said the password was "Last changed 30 days ago", read from nothing. It
-        said session alerts went by "SMS + Email", and this product cannot send a text message
-        at all: there is no SMS code anywhere in it.
-
-        The first of those is the one that mattered. Somebody who believes they have a second
-        factor makes different decisions about their password, and they would have been wrong.
-        This is the same fault as the Rec button that announced "Recording saved to Sikshya
-        cloud" while saving nothing, and it gets the same treatment: removed, not hidden.
-
-        What replaces it is the one control here that is real. When there is 2FA, or a password
-        changed date worth reading, they can be shown — because they will be true.
-      */}
-
-      <View style={{ marginHorizontal: space.lg }}><SocialSignIn mode="link" /></View>
+      <View style={styles.socialRow}><SocialSignIn mode="link" /></View>
 
       <TouchableOpacity
-        style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
+        accessibilityRole="button"
+        style={styles.navigationRow}
         onPress={() => router.push("/notification-settings")}
         activeOpacity={0.7}
         testID="notification-settings-link"
       >
         <Feather name="bell" size={18} color={colors.foreground} />
-        <Text style={[styles.supportText, { color: colors.foreground }]}>Notifications</Text>
-        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+        <Text style={[t.bodyStrong, styles.navigationText]}>Notifications</Text>
+        <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
       </TouchableOpacity>
 
-      {/*
-        Customer Support used to sit here.
-
-        It is a tab of its own now, for both roles — the owner asked for that, and then asked
-        for this link to go: "Remove the 'Support' link from the Profile section for both
-        teachers and students (it now lives in its own tab)." Two doors to the same screen is
-        one more than anybody needs, and the one buried two taps down was never the one to keep.
-      */}
-
-      {/*
-        "Teachers you follow" used to be here, at the bottom of a settings screen.
-
-        It lives in Discover now, in a sub-tab of its own, because the owner asked for that and
-        because it is the right place: finding a new teacher and going back to one you already
-        like are the same errand. See components/FollowedTeachers.tsx.
-      */}
-
-      <TouchableOpacity
-        style={[styles.logoutBtn, { borderColor: colors.destructive + "40", backgroundColor: colors.destructive + "08" }]}
-        onPress={handleLogout}
-        activeOpacity={0.7}
-      >
+      <TouchableOpacity accessibilityRole="button" style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.7}>
         <Feather name="log-out" size={18} color={colors.destructive} />
-        <Text style={[styles.logoutText, { color: colors.destructive }]}>Log Out</Text>
+        <Text style={[t.bodyStrong, { color: colors.destructive }]}>Log Out</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { gap: 16 },
-  profileHero: { paddingTop: 32, paddingBottom: 24, paddingHorizontal: 20, alignItems: "center", gap: 8, marginHorizontal: 20, borderRadius: 20 },
-  avatarCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: "rgba(255,255,255,0.25)", justifyContent: "center", alignItems: "center", marginBottom: 8 },
-  avatarText: { fontSize: 28, fontFamily: "Inter_700Bold", color: "#fff" },
-  heroName: { fontSize: 22, fontFamily: "Inter_700Bold", color: "#fff" },
-  heroGrade: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#ffffff99" },
-  studentBadge: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 6 },
-  studentBadgeText: { fontSize: 13, fontFamily: "Inter_500Medium", color: "#fff" },
-  infoCard: { marginHorizontal: 20, borderRadius: 18, borderWidth: 1, padding: 18, gap: 12 },
-  cardTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  infoRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-  infoText: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  payCard: { marginHorizontal: 20, borderRadius: 18, borderWidth: 1, padding: 18, gap: 12 },
-  payHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  addBtn: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6 },
-  addBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  paySubtitle: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  pmRow: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 14, borderWidth: 1, padding: 12 },
-  pmIcon: { width: 40, height: 40, borderRadius: 10, justifyContent: "center", alignItems: "center" },
-  pmName: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  pmType: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  pmAccount: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  verifiedBadge: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 20, paddingHorizontal: 8, paddingVertical: 4 },
-  verifiedText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  followBtn: { marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12 },
-  followBtnText: { fontSize: 13.5, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  logoutBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15 },
-  logoutText: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  supportBtn: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15, paddingHorizontal: 16 },
-  supportText: { flex: 1, fontSize: 15, fontFamily: "Inter_500Medium" },
-});
+interface StyleOptions {
+  colors: ReturnType<typeof useColors>;
+  space: ReturnType<typeof useLayout>["space"];
+  radius: ReturnType<typeof useLayout>["radius"];
+  elevation: ReturnType<typeof useLayout>["elevation"];
+  gutter: number;
+}
+
+function createStyles({ colors, space, radius, elevation, gutter }: StyleOptions) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    container: { width: "100%", maxWidth: readingWidth, alignSelf: "center", gap: space.md, paddingHorizontal: gutter },
+    profileHero: { paddingTop: space.xxl, paddingBottom: space.xl, paddingHorizontal: space.lg, alignItems: "center", gap: space.xs, borderRadius: radius.lg, ...elevation.card },
+    avatarCircle: { width: 80, height: 80, borderRadius: radius.pill, backgroundColor: colors.card, justifyContent: "center", alignItems: "center", marginBottom: space.xs },
+    avatarText: { color: colors.secondary, textAlign: "center" },
+    inverseText: { color: colors.onInverse, textAlign: "center" },
+    inverseMutedText: { color: colors.onInverseMuted, textAlign: "center" },
+    verificationBadge: { flexDirection: "row", alignItems: "center", gap: space.xxs, borderRadius: radius.pill, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: space.xxs },
+    card: { borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: space.md, gap: space.sm },
+    primaryText: { color: colors.foreground },
+    secondaryText: { color: colors.mutedForeground },
+    infoRow: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.sm },
+    paymentState: { flexDirection: "row", alignItems: "flex-start", gap: space.sm, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.muted, padding: space.sm },
+    paymentIcon: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.sm, justifyContent: "center", alignItems: "center", backgroundColor: colors.card },
+    paymentCopy: { flex: 1, gap: space.xxs },
+    socialRow: { marginHorizontal: space.xxs },
+    navigationRow: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, paddingVertical: space.sm, paddingHorizontal: space.md },
+    navigationText: { flex: 1, color: colors.foreground },
+    logoutButton: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingVertical: space.sm },
+  });
+}

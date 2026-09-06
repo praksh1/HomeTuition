@@ -4,18 +4,19 @@ import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { notify } from "@/utils/alerts";
+import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth } from "@/context/AuthContext";
+
+import { SocialSignIn } from "@/components/SocialSignIn";
+import StarRating from "@/components/StarRating";
+import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
+import { useAuth, type Teacher } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import StarRating from "@/components/StarRating";
-import type { Teacher } from "@/context/AuthContext";
+import { notify } from "@/utils/alerts";
 import { apiDelete, apiGet, apiPost } from "@/utils/api";
-import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 import { openAttachment } from "@/utils/openAttachment";
-import { SocialSignIn } from "@/components/SocialSignIn";
+import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 const CREDENTIAL_TYPES = [
   { id: "citizenship", label: "National ID / Citizenship" },
@@ -35,22 +36,28 @@ interface StoredCredential {
   createdAt: string;
 }
 
+type CredentialLoadState = "loading" | "ready" | "error";
+
 export default function TeacherProfile() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser } = useAuth();
   const colors = useColors();
-  const { t, space } = useLayout();
+  const { t, numeric, space, radius, elevation, gutter } = useLayout();
   const insets = useSafeAreaInsets();
   const teacher = user as Teacher;
+  const styles = createStyles({ colors, space, radius, elevation, gutter });
   const [uploading, setUploading] = useState(false);
   const [credentials, setCredentials] = useState<StoredCredential[]>([]);
+  const [credentialLoadState, setCredentialLoadState] = useState<CredentialLoadState>("loading");
   const [selected, setSelected] = useState<{ documentType: string; file: UploadableFile } | null>(null);
 
   const loadCredentials = useCallback(async () => {
+    setCredentialLoadState("loading");
     try {
       const result = await apiGet<{ credentials: StoredCredential[] }>("/teachers/me/credentials");
       setCredentials(result.credentials ?? []);
+      setCredentialLoadState("ready");
     } catch {
-      setCredentials([]);
+      setCredentialLoadState("error");
     }
   }, []);
 
@@ -64,23 +71,25 @@ export default function TeacherProfile() {
   const handleLogout = () => {
     if (Platform.OS === "web") {
       if (typeof window !== "undefined" && !window.confirm("Are you sure you want to log out?")) return;
-      doLogout();
+      void doLogout();
       return;
     }
     Alert.alert("Log Out", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: doLogout },
+      { text: "Log Out", style: "destructive", onPress: () => void doLogout() },
     ]);
   };
 
   if (!teacher || teacher.role !== "teacher") return null;
 
-  const statusColor = teacher.approvalStatus === "approved" ? colors.success :
-    teacher.approvalStatus === "rejected" ? colors.destructive : colors.accent;
-  const statusLabel = teacher.approvalStatus === "approved" ? "Verified Teacher" :
-    teacher.approvalStatus === "rejected" ? "Rejected – Resubmit" : "Pending Verification";
-
-  const initials = teacher.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
+  const statusColor = teacher.approvalStatus === "approved" ? colors.success
+    : teacher.approvalStatus === "rejected" ? colors.destructive : colors.warn;
+  const statusBackground = teacher.approvalStatus === "approved" ? colors.successSoft
+    : teacher.approvalStatus === "rejected" ? colors.destructiveSoft : colors.warnSoft;
+  const statusLabel = teacher.approvalStatus === "approved" ? "Teaching profile approved"
+    : teacher.approvalStatus === "rejected" ? "Teaching review needs action" : "Teaching review pending";
+  const hasReviews = teacher.reviewCount > 0;
+  const initials = teacher.name.split(" ").map((name) => name[0]).slice(0, 2).join("").toUpperCase();
 
   const chooseCredential = async (documentType: string) => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -89,15 +98,12 @@ export default function TeacherProfile() {
     });
     if (result.canceled || !result.assets?.[0]) return;
     const asset = result.assets[0];
-    setSelected({
-      documentType,
-      file: {
-        uri: asset.uri,
-        name: asset.name ?? "credential",
-        mimeType: asset.mimeType ?? "application/octet-stream",
-        size: asset.size ?? 0,
-      },
-    });
+    setSelected({ documentType, file: {
+      uri: asset.uri,
+      name: asset.name ?? "credential",
+      mimeType: asset.mimeType ?? "application/octet-stream",
+      size: asset.size ?? 0,
+    } });
   };
 
   const submitCredential = async () => {
@@ -113,6 +119,11 @@ export default function TeacherProfile() {
       });
       setSelected(null);
       await loadCredentials();
+      // Uploading a new document resets a rejected teaching profile to pending on the server.
+      // Refresh the signed-in profile so the status badge reflects that server-owned change.
+      // AuthContext deliberately absorbs refresh failures, so a successful upload is never
+      // misreported as failed just because the follow-up refresh could not reach the server.
+      await refreshUser();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       notify("Submitted", "The document is now waiting for an operator to review it.");
     } catch (error) {
@@ -134,194 +145,173 @@ export default function TeacherProfile() {
 
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 100 }]}
+      style={styles.screen}
+      contentContainerStyle={[styles.container, {
+        paddingTop: insets.top + space.md,
+        paddingBottom: insets.bottom + space.huge + space.huge,
+      }]}
       showsVerticalScrollIndicator={false}
     >
-      <LinearGradient colors={[colors.primary, "#8B0000"]} style={styles.profileHero}>
+      <LinearGradient colors={[colors.secondary, colors.primary]} style={styles.profileHero}>
         <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{initials}</Text>
+          <Text style={[t.title1, styles.avatarText]}>{initials}</Text>
         </View>
-        <Text style={styles.heroName}>{teacher.name}</Text>
-        <Text style={styles.heroSubject}>{teacher.subject}</Text>
-        <View style={[styles.statusBadge, { backgroundColor: statusColor + "25", borderColor: statusColor + "50" }]}>
+        <Text style={[t.title2, styles.inverseText]}>{teacher.name}</Text>
+        <Text style={[t.callout, styles.inverseMutedText]}>{teacher.subject || "Subject not added yet"}</Text>
+        <View style={[styles.statusBadge, { backgroundColor: statusBackground, borderColor: statusColor }]}>
           <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-          <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
+          <Text style={[t.caption, { color: statusColor }]}>{statusLabel}</Text>
         </View>
         {teacher.approvalStatus === "approved" && (
           <View style={styles.ratingRow}>
-            <StarRating rating={teacher.rating} size={16} color="#F5A623" />
-            <Text style={styles.ratingText}>{teacher.rating.toFixed(1)} ({teacher.reviewCount} reviews)</Text>
+            {hasReviews ? <>
+              <StarRating rating={teacher.rating} size={16} color={colors.accent} />
+              <Text style={[t.callout, numeric, styles.inverseMutedText]}>
+                {teacher.rating.toFixed(1)} · {teacher.reviewCount} {teacher.reviewCount === 1 ? "review" : "reviews"}
+              </Text>
+            </> : <Text style={[t.callout, styles.inverseMutedText]}>No student reviews yet</Text>}
           </View>
         )}
       </LinearGradient>
 
-      <View style={[styles.infoCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.cardTitle, { color: colors.foreground }]}>About</Text>
-        <Text style={[styles.bio, { color: colors.mutedForeground }]}>
-          {teacher.bio || "No bio added yet. Update your profile to let students know about your experience."}
+      <View style={styles.card}>
+        <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>About</Text>
+        <Text style={[t.body, styles.secondaryText]}>
+          {teacher.bio || "No bio added yet. Add one during profile setup to help students understand your experience."}
         </Text>
-        <View style={styles.tagRow}>
-          {(teacher.subjects ?? []).map((s) => (
-            <View key={s} style={[styles.tag, { backgroundColor: colors.primary + "12" }]}>
-              <Text style={[styles.tagText, { color: colors.primary }]}>{s}</Text>
-            </View>
-          ))}
-        </View>
+        {(teacher.subjects ?? []).length > 0 && <View style={styles.tagRow}>
+          {teacher.subjects.map((subject) => <View key={subject} style={styles.tag}>
+            <Text style={[t.caption, { color: colors.primary }]}>{subject}</Text>
+          </View>)}
+        </View>}
         <View style={styles.infoRow}>
-          <Feather name="mail" size={15} color={colors.mutedForeground} />
-          <Text style={[styles.infoText, { color: colors.mutedForeground }]}>{teacher.email}</Text>
+          <Feather name="mail" size={16} color={colors.mutedForeground} />
+          <Text style={[t.callout, styles.secondaryText]} numberOfLines={2}>{teacher.email}</Text>
         </View>
       </View>
 
-      <View style={[styles.credCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={styles.credHeader}>
-          <Text style={[styles.cardTitle, { color: colors.foreground }]}>Identity & Credentials</Text>
-          {teacher.approvalStatus === "pending" && (
-            <View style={[styles.pendingBadge, { backgroundColor: colors.accent + "15" }]}>
-              <Text style={[styles.pendingText, { color: colors.accent }]}>Under Review</Text>
-            </View>
-          )}
-        </View>
-        <Text style={[styles.credSubtitle, { color: colors.mutedForeground }]}>
-          Upload valid documents to get verified. All documents are reviewed by the Sikshya team within 24-48 hours.
+      <View style={styles.card}>
+        <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Identity & Credentials</Text>
+        <Text style={[t.callout, styles.secondaryText]}>
+          Sikshya Support reviews each file before it can be approved. You can replace a rejected file; a file already opened for review stays locked.
         </Text>
+        <Text style={[t.bodyStrong, styles.primaryText]}>Documents</Text>
 
-        <Text style={[styles.uploadLabel, { color: colors.foreground }]}>Documents</Text>
-        <View style={styles.credTypeGrid}>
+        {credentialLoadState === "loading" && <View style={styles.loadState} accessibilityRole="progressbar" accessibilityLabel="Loading documents">
+          <ActivityIndicator color={colors.primary} />
+          <Text style={[t.callout, styles.secondaryText]}>Loading your documents…</Text>
+        </View>}
+        {credentialLoadState === "error" && <View style={[styles.loadState, styles.errorState]}>
+          <Feather name="alert-circle" size={20} color={colors.destructive} />
+          <Text style={[t.callout, styles.secondaryText]}>We could not load your documents. Nothing has been removed.</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Try loading documents again" style={styles.retryButton} onPress={() => void loadCredentials()} activeOpacity={0.7}>
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+          </TouchableOpacity>
+        </View>}
+        {credentialLoadState === "ready" && <View style={styles.credentialGrid}>
           {CREDENTIAL_TYPES.map((type) => {
             const uploaded = credentials.find((credential) => credential.documentType === type.id);
             const selectedHere = selected?.documentType === type.id ? selected.file : null;
             const locked = uploaded?.status === "opened" || uploaded?.status === "approved";
             const canReplace = !uploaded || uploaded.status === "rejected";
-            return (
-              <View key={type.id} style={[styles.credentialBlock, { borderColor: uploaded?.status === "rejected" ? colors.destructive : colors.border, backgroundColor: colors.muted }]}>
-                <View style={styles.credentialTitleRow}>
-                  <Feather name={uploaded ? "file-text" : "upload"} size={16} color={uploaded?.status === "rejected" ? colors.destructive : uploaded ? colors.success : colors.mutedForeground} />
-                  <Text style={[styles.credTypeName, { color: colors.foreground }]}>{type.label}</Text>
-                  {uploaded && <Text style={[t.caption, styles.documentStatus, { color: uploaded.status === "rejected" ? colors.destructive : uploaded.status === "approved" ? colors.success : colors.warn }]}>{uploaded.status === "opened" ? "Under review" : uploaded.status}</Text>}
-                </View>
-                {uploaded && (
-                  <TouchableOpacity onPress={() => void openAttachment(uploaded.fileKey)} activeOpacity={0.7}>
-                    <Text style={[t.caption, { color: colors.primary }]} numberOfLines={1}>{uploaded.originalName}</Text>
-                  </TouchableOpacity>
-                )}
-                {uploaded?.rejectionReason && <Text style={[t.caption, { color: colors.destructive }]}>{uploaded.rejectionReason}</Text>}
-                {selectedHere && <Text style={[t.caption, { color: colors.foreground }]} numberOfLines={1}>Selected: {selectedHere.name}</Text>}
-                <View style={styles.documentActions}>
-                  {canReplace && (
-                    <TouchableOpacity style={[styles.documentAction, { borderColor: colors.border }]} onPress={() => void chooseCredential(type.id)} disabled={uploading} activeOpacity={0.7}>
-                      <Text style={[t.caption, { color: colors.primary }]}>{selectedHere ? "Choose another" : "Select file"}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {selectedHere && (
-                    <TouchableOpacity style={[styles.documentAction, { backgroundColor: colors.primary, borderColor: colors.primary }]} onPress={() => void submitCredential()} disabled={uploading} activeOpacity={0.8}>
-                      <Text style={[t.caption, { color: colors.primaryForeground }]}>{uploading ? "Uploading…" : "Upload"}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {uploaded?.status === "submitted" && !locked && (
-                    <TouchableOpacity style={[styles.documentAction, { borderColor: colors.destructive }]} onPress={() => void deleteCredential(uploaded)} activeOpacity={0.7}>
-                      <Text style={[t.caption, { color: colors.destructive }]}>Delete</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-                {locked && <Text style={[t.caption, { color: colors.mutedForeground }]}>An operator has opened this file, so it can no longer be deleted.</Text>}
+            const documentColor = uploaded?.status === "rejected" ? colors.destructive
+              : uploaded?.status === "approved" ? colors.success : uploaded ? colors.warn : colors.mutedForeground;
+            return <View key={type.id} style={[styles.credentialBlock, {
+              borderColor: uploaded?.status === "rejected" ? colors.destructive : colors.border,
+            }]}>
+              <View style={styles.credentialTitleRow}>
+                <Feather name={uploaded ? "file-text" : "upload"} size={16} color={documentColor} />
+                <Text style={[t.bodyStrong, styles.credentialName]}>{type.label}</Text>
+                {uploaded && <Text style={[t.caption, styles.documentStatus, { color: documentColor }]}>
+                  {uploaded.status === "opened" ? "Under review" : uploaded.status}
+                </Text>}
               </View>
-            );
+              {uploaded && <TouchableOpacity accessibilityRole="link" accessibilityLabel={`Open ${uploaded.originalName}`} style={styles.fileLink} onPress={() => void openAttachment(uploaded.fileKey)} activeOpacity={0.7}>
+                <Text style={[t.caption, { color: colors.primary }]} numberOfLines={2}>{uploaded.originalName}</Text>
+              </TouchableOpacity>}
+              {uploaded?.rejectionReason && <Text style={[t.caption, { color: colors.destructive }]}>{uploaded.rejectionReason}</Text>}
+              {selectedHere && <Text style={[t.caption, styles.primaryText]} numberOfLines={2}>Selected: {selectedHere.name}</Text>}
+              <View style={styles.documentActions}>
+                {canReplace && <TouchableOpacity accessibilityRole="button" accessibilityLabel={selectedHere ? `Choose another ${type.label} file` : `Select ${type.label} file`} accessibilityState={{ disabled: uploading }} style={styles.outlineAction} onPress={() => void chooseCredential(type.id)} disabled={uploading} activeOpacity={0.7}>
+                  <Text style={[t.caption, { color: colors.primary }]}>{selectedHere ? "Choose another" : "Select file"}</Text>
+                </TouchableOpacity>}
+                {selectedHere && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Upload selected ${type.label}`} accessibilityState={{ disabled: uploading }} style={styles.primaryAction} onPress={() => void submitCredential()} disabled={uploading} activeOpacity={0.8}>
+                  <Text style={[t.caption, { color: colors.primaryForeground }]}>{uploading ? "Uploading…" : "Upload"}</Text>
+                </TouchableOpacity>}
+                {uploaded?.status === "submitted" && !locked && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Delete submitted ${type.label}`} style={styles.destructiveAction} onPress={() => void deleteCredential(uploaded)} activeOpacity={0.7}>
+                  <Text style={[t.caption, { color: colors.destructive }]}>Delete</Text>
+                </TouchableOpacity>}
+              </View>
+              {locked && <Text style={[t.caption, styles.secondaryText]}>An operator has opened this file, so it can no longer be deleted.</Text>}
+            </View>;
           })}
-        </View>
+        </View>}
       </View>
 
-      {/*
-        Plan lives here now rather than in the tab bar — the owner asked for it: "the 'Plan'
-        tab can be integrated inside the 'Profile' tab". A subscription is set up once and then
-        forgotten; it does not earn a permanent place on every screen.
-      */}
-      <View style={{ marginHorizontal: space.lg }}><SocialSignIn mode="link" /></View>
+      <View style={styles.socialRow}><SocialSignIn mode="link" /></View>
 
-      <TouchableOpacity
-        style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-        onPress={() => router.push("/(teacher)/subscription")}
-        activeOpacity={0.7}
-        testID="subscription-link"
-      >
+      <TouchableOpacity accessibilityRole="button" style={styles.navigationRow} onPress={() => router.push("/(teacher)/subscription")} activeOpacity={0.7} testID="subscription-link">
         <Feather name="credit-card" size={18} color={colors.foreground} />
-        <Text style={[styles.supportText, { color: colors.foreground }]}>My Plan</Text>
-        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+        <Text style={[t.bodyStrong, styles.navigationText]}>My Plan</Text>
+        <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[styles.supportBtn, { borderColor: colors.border, backgroundColor: colors.card }]}
-        onPress={() => router.push("/notification-settings")}
-        activeOpacity={0.7}
-        testID="notification-settings-link"
-      >
+      <TouchableOpacity accessibilityRole="button" style={styles.navigationRow} onPress={() => router.push("/notification-settings")} activeOpacity={0.7} testID="notification-settings-link">
         <Feather name="bell" size={18} color={colors.foreground} />
-        <Text style={[styles.supportText, { color: colors.foreground }]}>Notifications</Text>
-        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+        <Text style={[t.bodyStrong, styles.navigationText]}>Notifications</Text>
+        <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
       </TouchableOpacity>
 
-      {/*
-        Customer Support used to sit here.
-
-        It is a tab of its own now, for both roles — the owner asked for that, and then asked
-        for this link to go: "Remove the 'Support' link from the Profile section for both
-        teachers and students (it now lives in its own tab)." Two doors to the same screen is
-        one more than anybody needs, and the one buried two taps down was never the one to
-        keep.
-      */}
-
-      <TouchableOpacity
-        style={[styles.logoutBtn, { borderColor: colors.destructive + "40", backgroundColor: colors.destructive + "08" }]}
-        onPress={handleLogout}
-        activeOpacity={0.7}
-      >
+      <TouchableOpacity accessibilityRole="button" style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.7}>
         <Feather name="log-out" size={18} color={colors.destructive} />
-        <Text style={[styles.logoutText, { color: colors.destructive }]}>Log Out</Text>
+        <Text style={[t.bodyStrong, { color: colors.destructive }]}>Log Out</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { gap: 16 },
-  profileHero: { paddingTop: 32, paddingBottom: 24, paddingHorizontal: 20, alignItems: "center", gap: 8, marginHorizontal: 20, borderRadius: 20 },
-  avatarCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: "rgba(255,255,255,0.25)", justifyContent: "center", alignItems: "center", marginBottom: 8 },
-  avatarText: { fontSize: 28, fontFamily: "Inter_700Bold", color: "#fff" },
-  heroName: { fontSize: 22, fontFamily: "Inter_700Bold", color: "#fff" },
-  heroSubject: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#ffffff99" },
-  statusBadge: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 6 },
-  statusDot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  ratingRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  ratingText: { fontSize: 14, fontFamily: "Inter_400Regular", color: "#ffffffcc" },
-  infoCard: { marginHorizontal: 20, borderRadius: 18, borderWidth: 1, padding: 18, gap: 12 },
-  cardTitle: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  bio: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 21 },
-  tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  tag: { borderRadius: 20, paddingHorizontal: 12, paddingVertical: 5 },
-  tagText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  infoRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  infoText: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  credCard: { marginHorizontal: 20, borderRadius: 18, borderWidth: 1, padding: 18, gap: 12 },
-  credHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  pendingBadge: { borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4 },
-  pendingText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  credSubtitle: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  uploadedList: { gap: 8 },
-  credItem: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 10, borderWidth: 1, padding: 10 },
-  credName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
-  uploadLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  credTypeGrid: { gap: 10 },
-  credentialBlock: { gap: 8, borderRadius: 12, borderWidth: 1, padding: 13 },
-  credentialTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  documentStatus: { marginLeft: "auto", textTransform: "capitalize" },
-  documentActions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  documentAction: { minHeight: 36, justifyContent: "center", borderRadius: 10, borderWidth: 1, paddingHorizontal: 12 },
-  credTypeBtn: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 12, borderWidth: 1, padding: 13 },
-  credTypeName: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  logoutBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15 },
-  logoutText: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  supportBtn: { flexDirection: "row", alignItems: "center", gap: 10, marginHorizontal: 20, borderRadius: 16, borderWidth: 1, paddingVertical: 15, paddingHorizontal: 16 },
-  supportText: { flex: 1, fontSize: 15, fontFamily: "Inter_500Medium" },
-});
+interface StyleOptions {
+  colors: ReturnType<typeof useColors>;
+  space: ReturnType<typeof useLayout>["space"];
+  radius: ReturnType<typeof useLayout>["radius"];
+  elevation: ReturnType<typeof useLayout>["elevation"];
+  gutter: number;
+}
+
+function createStyles({ colors, space, radius, elevation, gutter }: StyleOptions) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    container: { width: "100%", maxWidth: readingWidth, alignSelf: "center", gap: space.md, paddingHorizontal: gutter },
+    profileHero: { paddingTop: space.xxl, paddingBottom: space.xl, paddingHorizontal: space.lg, alignItems: "center", gap: space.xs, borderRadius: radius.lg, ...elevation.card },
+    avatarCircle: { width: 80, height: 80, borderRadius: radius.pill, backgroundColor: colors.card, justifyContent: "center", alignItems: "center", marginBottom: space.xs },
+    avatarText: { color: colors.secondary, textAlign: "center" },
+    inverseText: { color: colors.onInverse, textAlign: "center" },
+    inverseMutedText: { color: colors.onInverseMuted, textAlign: "center" },
+    statusBadge: { flexDirection: "row", alignItems: "center", gap: space.xxs, borderRadius: radius.pill, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: space.xxs },
+    statusDot: { width: space.xs, height: space.xs, borderRadius: radius.pill },
+    ratingRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: space.xs },
+    card: { borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: space.md, gap: space.sm },
+    primaryText: { color: colors.foreground },
+    secondaryText: { color: colors.mutedForeground },
+    tagRow: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
+    tag: { borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: space.xxs, backgroundColor: colors.actionSoft },
+    infoRow: { flexDirection: "row", alignItems: "center", gap: space.xs, minHeight: HIT_SLOP_MIN },
+    loadState: { alignItems: "center", justifyContent: "center", gap: space.xs, minHeight: space.huge + space.huge, padding: space.md },
+    errorState: { borderRadius: radius.sm, backgroundColor: colors.destructiveSoft },
+    retryButton: { minHeight: HIT_SLOP_MIN, justifyContent: "center", paddingHorizontal: space.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary },
+    credentialGrid: { gap: space.sm },
+    credentialBlock: { gap: space.xs, borderRadius: radius.sm, borderWidth: 1, padding: space.sm, backgroundColor: colors.muted },
+    credentialTitleRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.xs },
+    credentialName: { color: colors.foreground, flexShrink: 1 },
+    documentStatus: { marginLeft: "auto", textTransform: "capitalize" },
+    fileLink: { minHeight: HIT_SLOP_MIN, justifyContent: "center" },
+    documentActions: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
+    outlineAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.lineStrong, backgroundColor: colors.card, paddingHorizontal: space.sm },
+    primaryAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primary, paddingHorizontal: space.sm },
+    destructiveAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingHorizontal: space.sm },
+    socialRow: { marginHorizontal: space.xxs },
+    navigationRow: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, paddingVertical: space.sm, paddingHorizontal: space.md },
+    navigationText: { flex: 1, color: colors.foreground },
+    logoutButton: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingVertical: space.sm },
+  });
+}
