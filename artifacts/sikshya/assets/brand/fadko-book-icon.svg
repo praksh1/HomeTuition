@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<style>:root{--brand:#C41E3A;--mark:#FFFFFF}</style>
+<rect width="512" height="512" rx="112" fill="var(--brand)"/>
+<path d="M 100 286 C 150 262 200 258 246 274 L 246 400 C 200 384 150 388 100 410 Z" fill="var(--mark)"/>
+<path d="M 266 274 C 312 258 362 254 412 230 L 412 356 C 362 380 312 384 266 400 Z" fill="var(--mark)"/>
+</svg>
