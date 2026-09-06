@@ -52,6 +52,17 @@
 
 - Lead acceptance rerun after all independent-review corrections: app typecheck passed, full app tests passed **238/238**, design lint passed, `git diff --check` passed, and the design ratchet was lowered from **183 hex / 373 raw font sizes** to **179 / 349**.
 
+## Commit and preview deployment
+
+- Accepted implementation commit: **`c3376dc`** (`Upgrade teacher monthly classes UI`) on `codex/session-create-ui`, pushed to GitHub.
+- Built with `EXPO_NO_DOTENV=1` against `https://hometuition-api-staging-production.up.railway.app`.
+- The pre-deploy scan found the staging API in two built files and the production API in zero files.
+- Wrangler dry run passed with 242 assets and no bindings.
+- Deployed only the existing `hometuition-preview` Worker. Cloudflare version: **`22815d3f-ef0f-4711-aaf6-5ca993c35990`**.
+- Post-deploy verification passed immediately: served HTML and all three exact JavaScript bundles matched the local staging build.
+- Preview: `https://hometuition-preview.praksh-dhakal.workers.dev`
+- Production was not changed. No database, payment, account, credential, Daily, or third-party configuration was changed.
+
 - Source scan: `rg -n "#[0-9A-Fa-f]{3,8}|fontSize\\s*:" artifacts/sikshya/app/(teacher)/monthly.tsx` returned no matches.
 - `pnpm.cmd --filter @workspace/sikshya run typecheck` passed after one corrected attempt.
 - `pnpm.cmd --filter @workspace/sikshya run test` passed before independent review: **234 tests, 234 passed, 0 failed**, including the first four monthly teacher UI contracts. Final post-review results are recorded below.
