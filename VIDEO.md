@@ -107,10 +107,23 @@ Android namespace `com.oney.WebRTCModule` and register the React Native module u
 `WebRTCModule`. One app build cannot contain both, and neither SDK can be installed without its
 fork — each requires it as a peer dependency.
 
-So while the trial runs, **do not point a phone build at a deployment set to `livekit`.** A phone
-that reaches a LiveKit room lands on `components/LiveKitEmbed.tsx`, which says video is
-unavailable in the app and that the board and chat still work. That is the honest failure, not a
-working call.
+**This is handled by the server, not by remembering.** The app sends an `X-Sikshya-Platform`
+header on every request; the room route reads it and gives a browser whatever `VIDEO_PROVIDER`
+names while a phone gets Daily regardless. So `VIDEO_PROVIDER=livekit` is safe to set on the one
+deployment that also serves phones — which is the only arrangement this project has.
+
+Three details worth knowing, because each was a way to get it wrong:
+
+- **A client that says nothing gets Daily.** An app build older than that header is far more
+  often a phone than a browser, and a phone handed a `wss://` address shows a black rectangle.
+  Silence therefore means the provider that runs everywhere, not a guess at "web".
+- **The header grants nothing.** The worst a client wins by lying is the provider it could have
+  asked for honestly. Rights still come from `lib/membership.ts` and the token is still minted
+  server-side; `scripts/video-tests` asserts a student claiming to be a browser still gets a
+  student's token.
+- **`components/LiveKitEmbed.tsx` is still there** — the native stub that says video is
+  unavailable. It should now be unreachable, and it stays as the honest failure if a future
+  change ever routes a phone to LiveKit anyway.
 
 ### Built for a weak connection
 
@@ -134,6 +147,63 @@ nine. The whiteboard and the audio are untouched; the lesson carries on without 
 screen is deliberately kept, because it is content rather than a face — the same reason the board
 stays.
 
+### Setting it up, step by step
+
+Written for somebody who is not a developer. Every command runs from the project folder, which
+on the owner's machine is `C:\Projects\Paathshala\Paathshala` — the nested one; running from the
+folder above it fails with `ERR_PNPM_NO_PKG_MANIFEST`. Use `pnpm.cmd` and `node`, not `pnpm`.
+
+**1. Get the three values.** In the LiveKit Cloud dashboard, in your project's settings, there is
+a keys area where you create an API key. It gives you a key, a secret shown only once, and the
+project's `wss://…livekit.cloud` address. Copy all three somewhere before leaving that page.
+
+**2. Put them in `.env`** — the one at the top level of the project folder, beside `package.json`.
+Not the one inside `artifacts/sikshya`. Add four lines:
+
+```
+VIDEO_PROVIDER=livekit
+LIVEKIT_API_KEY=<the key>
+LIVEKIT_API_SECRET=<the secret>
+LIVEKIT_URL=wss://<your project>.livekit.cloud
+```
+
+**3. Check them before doing anything else:**
+
+```
+pnpm.cmd --filter @workspace/api-server run livekit:check
+```
+
+It says, in words, whether each value is present, whether the secret can sign a token, and
+whether LiveKit itself accepts them — and after every failure it names the next thing to do. A
+wrong secret and a bad wi-fi connection produce the same message inside the app, so it is worth
+the twenty seconds.
+
+**4. Start the two halves**, each in its own terminal window, both left running:
+
+```
+pnpm.cmd run dev:api      (port 8080)
+pnpm.cmd run dev:app      (port 8081)
+```
+
+### Testing a two-person call
+
+You need two people signed in at once, which means two browser windows.
+
+1. In Chrome, open `http://localhost:8081` and sign in as the teacher: **ram@example.com**,
+   password **password123**.
+2. As the teacher, create a class starting **five minutes from now**. Doors open ten minutes
+   before a class starts, so it will be joinable immediately.
+3. Open an Incognito window — Ctrl+Shift+N — go to the same address, and sign in as the student:
+   **student@sikshya.np**, password **password123**.
+4. As the student, find that class and book it.
+5. Click **Join** in both windows and allow the camera and microphone when asked.
+6. You should see each other. Then try, in order: **Mute**, **Camera off**, **Audio only** —
+   the faces should turn into initials in *both* windows while the whiteboard keeps working —
+   **Share screen**, which only the teacher has, and **Leave**.
+
+If the video area stays dark but the whiteboard works, run the check in step 3 again: that is
+the difference between a credentials problem and a network one.
+
 ### What has actually been checked
 
 | Checked | How |
@@ -145,6 +215,8 @@ stays.
 | The call surface at phone and laptop width | `sikshya` `scripts/livekit-tests` — 74 checks in a real browser |
 | Reconnection, refused camera, microphone in use, blocked sound, a teacher leaving | same suite, each state driven deliberately |
 | Controls are at least 44×44 and do not run off a narrow panel | same suite, measured from the rendered boxes |
+| A phone keeps Daily while the browser is on LiveKit | `scripts/video-tests` — iOS and Android both, plus a client that sends no platform at all |
+| Claiming a platform grants nothing | same suite — a student calling itself a browser still gets a student's token |
 | Daily and the whiteboard still behave | `test:board` 44/44, `test:call-chat` 17/17, `test:call-leave` 9/9 |
 
 ### What has not been checked, and cannot be here
@@ -159,6 +231,37 @@ stays.
 - **`docs.livekit.io` is blocked** by this environment's network egress. Everything is written
   against the installed SDK's own TypeScript definitions and source, which are authoritative for
   the API surface but say nothing about behaviour under a real network.
+- **`livekit:check` has never reached a real LiveKit project.** Its settings checks and its
+  token-signing check were run and behave correctly, including every failure branch; the two
+  branches that need livekit.cloud — "accepted" and "refused" — could not be, for the same
+  egress reason. Running it is the first thing to do with real credentials, and if it is wrong
+  it will be wrong in an obvious way.
+
+### One security finding, deliberately not fixed
+
+**A join token outlives the class it was minted for.** It is valid for eight hours, so somebody
+who joins at 10:00 still holds a usable LiveKit credential at 17:00 — after the class ended,
+after a refund, after being unenrolled. The room route would refuse to mint them a *new* token,
+but it cannot take back the one they have.
+
+This is not a regression: Daily's meeting token has the same eight-hour life and the same
+property. It is written down because LiveKit makes a better answer available — the token's `ttl`
+could be set to expire at the class's own overtime cutoff, which is a value this codebase already
+computes in `lib/sessionStart.ts`. The class's clock would then be enforced by the provider as
+well as by us.
+
+It was not done because it cannot be tested here. The question it turns on — whether LiveKit
+disconnects a participant when their token expires mid-call, or only checks it at join and on
+reconnect — is not answerable from the SDK's type definitions, and `docs.livekit.io` is blocked.
+Guessing wrong drops students in the middle of lessons, which is a great deal worse than the
+exposure it would close. It needs one experiment against a real server, and then it is a
+two-line change.
+
+The rest of the pass found nothing: `LIVEKIT_API_SECRET` appears in no client file and no
+`EXPO_PUBLIC_` variable; exactly one route mints tokens and it does so only after
+`lib/membership.ts` has admitted the caller and the session window has been checked; moderator
+rights and screen sharing come from `isSessionTeacher` and are asserted in the token's decoded
+claims rather than in the UI; and the platform header confers nothing, which is itself tested.
 
 ### Two instructions that collided, and how
 

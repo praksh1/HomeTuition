@@ -68,10 +68,26 @@ async function waitFor(port) {
   return false;
 }
 
-function makeApi(port) {
-  return async function api(p, { method = "GET", token, body } = {}) {
+/**
+ * @param port      the server under test
+ * @param onDevice  what these calls claim to be. "web" by default, because every block in this
+ *                  suite is standing in for a browser; pass `null` per call to send nothing and
+ *                  exercise what an app build older than that header gets.
+ */
+function makeApi(port, onDevice = "web") {
+  return async function api(p, { method = "GET", token, body, platform } = {}) {
     const headers = { "Content-Type": "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
+    /*
+      What the client says it is.
+
+      Only the room route reads it, and only to pick a provider the caller's build can run —
+      a phone cannot open a LiveKit room, because neither phone build contains LiveKit. It
+      grants nothing: the worst a lie wins is the provider that could have been asked for
+      honestly.
+    */
+    const claimed = platform === undefined ? onDevice : platform;
+    if (claimed) headers["X-Sikshya-Platform"] = claimed;
     const res = await fetch(`http://127.0.0.1:${port}/api${p}`, {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -268,6 +284,46 @@ async function run() {
       JSON.stringify(studentClaims?.video?.canPublishSources));
     check("the two people are told apart by identity",
       studentClaims?.sub === String(student.user.id) && studentClaims?.sub !== claims?.sub);
+
+
+    /*
+      A phone must keep Daily even while the trial is on.
+
+      This is what makes the trial usable at all. There is one deployment: if setting
+      `VIDEO_PROVIDER=livekit` served LiveKit rooms to phones, trying it in a browser would take
+      video away from every phone on the platform, because neither phone build contains LiveKit
+      and cannot — both SDKs ship a fork of the same native WebRTC library.
+    */
+    for (const phone of ["ios", "android"]) {
+      const phoneRoom = await lkApi(`/sessions/${made.body.id}/room`, { token: teacher.token, platform: phone });
+      check(`a ${phone} client is given Daily, not LiveKit`, phoneRoom.body?.provider === "daily",
+        `got ${JSON.stringify(phoneRoom.body?.provider)}`);
+      check(`and no LiveKit token is minted for it`,
+        !String(phoneRoom.body?.roomUrl ?? "").startsWith("wss://"),
+        String(phoneRoom.body?.roomUrl));
+    }
+    const webRoom = await lkApi(`/sessions/${made.body.id}/room`, { token: teacher.token, platform: "web" });
+    check("while a browser still gets the trial", webRoom.body?.provider === "livekit");
+
+    /*
+      An app build from before the header existed says nothing, and is more often a phone than
+      not. Silence therefore has to mean Daily rather than a guess at "web" — an old Android
+      build handed a `wss://` address shows a black rectangle and no explanation.
+    */
+    const silentRoom = await lkApi(`/sessions/${made.body.id}/room`, { token: teacher.token, platform: null });
+    check("a client that says nothing is given the provider that runs everywhere",
+      silentRoom.body?.provider === "daily", `got ${JSON.stringify(silentRoom.body?.provider)}`);
+
+    /*
+      And the claim wins nothing beyond compatibility. A student calling themselves a browser
+      gets a student's token on whichever provider answers — never a teacher's.
+    */
+    const liar = await lkApi(`/sessions/${made.body.id}/room`, { token: student.token, platform: "web" });
+    const liarClaims = jwtClaims(liar.body?.token);
+    check("claiming a platform does not grant moderator rights",
+      liarClaims?.video?.roomAdmin !== true, JSON.stringify(liarClaims?.video?.roomAdmin));
+    check("nor screen sharing",
+      !(liarClaims?.video?.canPublishSources ?? []).includes("screen_share"));
 
     try { lkServer.kill("SIGKILL"); } catch { /* gone */ }
   }

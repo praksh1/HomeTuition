@@ -1,10 +1,17 @@
 import { dailyProvider } from "./dailyProvider";
 import { echoProvider } from "./echoProvider";
 import { livekitProvider } from "./livekitProvider";
-import { selectProvider } from "./select";
+import { providerForPlatform, readClientPlatform, selectProvider } from "./select";
 import type { VideoProvider } from "./types";
 
-export type { JoinOptions, RoomGrant, VideoCapabilities, VideoProvider } from "./types";
+export type {
+  ClientPlatform,
+  JoinOptions,
+  RoomGrant,
+  VideoCapabilities,
+  VideoProvider,
+} from "./types";
+export { readClientPlatform } from "./select";
 
 /**
  * Which provider is carrying the video.
@@ -31,10 +38,23 @@ const PROVIDERS: Record<string, VideoProvider> = {
   echo: echoProvider,
 };
 
-export function videoProvider(): VideoProvider {
+/**
+ * The provider for one caller.
+ *
+ * `clientPlatform` is what the client said it is — `web`, `ios`, `android`, or nothing at all.
+ * It decides compatibility and nothing else: a client that claims to be a phone is given Daily,
+ * which it could have asked for anyway. No right, no room and no token depends on it, so there
+ * is nothing here for a lie to win.
+ *
+ * Omit it and you get the configured provider unfiltered, which is what the non-room callers
+ * (diagnostics, the webhook path) want.
+ */
+export function videoProvider(clientPlatform?: string | null): VideoProvider {
   // Read at call time rather than frozen at import, so the provider can be switched without a
   // rebuild — and so it can be switched inside a test at all.
-  return selectProvider(process.env.VIDEO_PROVIDER, PROVIDERS, dailyProvider);
+  const chosen = selectProvider(process.env.VIDEO_PROVIDER, PROVIDERS, dailyProvider);
+  if (clientPlatform === undefined) return chosen;
+  return providerForPlatform(chosen, readClientPlatform(clientPlatform), dailyProvider);
 }
 
 /** Every provider this build knows how to use. For diagnostics, not for choosing. */

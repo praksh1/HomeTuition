@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { selectProvider } from "./select.ts";
+import { providerForPlatform, readClientPlatform, selectProvider } from "./select.ts";
 import { PROVIDER_USER_ID_MAX_LENGTH, providerUserId } from "./participantIdentity.ts";
 import type { VideoProvider } from "./types.ts";
 
@@ -15,6 +15,7 @@ import type { VideoProvider } from "./types.ts";
 
 const daily: VideoProvider = {
   name: "daily",
+  platforms: ["web", "ios", "android"],
   capabilities: { screenShare: true, builtInChat: true },
   configured: () => true,
   ensureRoom: async () => "https://example.daily.co/room",
@@ -57,6 +58,7 @@ test("a second provider is chosen when it is named", () => {
  */
 const pretend: VideoProvider = {
   name: "pretend",
+  platforms: ["web"],
   capabilities: { screenShare: false, builtInChat: false },
   configured: () => true,
   ensureRoom: async (sessionId) => `wss://video.example/room/${sessionId}`,
@@ -128,4 +130,63 @@ test("a provider may say it cannot share a screen, so the app stops offering it"
   assert.equal(pretend.capabilities.screenShare, false);
   assert.equal(daily.capabilities.screenShare, true);
   assert.equal(selectProvider("pretend", { daily, pretend }, daily).capabilities.screenShare, false);
+});
+
+/**
+ * A provider a client cannot run must not be handed to it.
+ *
+ * The concrete case: Daily and LiveKit each ship a fork of the same native WebRTC library and
+ * cannot both be inside one phone build, so the phone apps contain Daily. Before this rule,
+ * setting `VIDEO_PROVIDER=livekit` to try the trial in a browser took video away from every
+ * phone on the platform — and with one deployment, that is the whole platform.
+ */
+
+const webOnly: VideoProvider = { ...daily, name: "livekit", platforms: ["web"] };
+
+test("a browser gets the provider that was configured", () => {
+  assert.equal(providerForPlatform(webOnly, "web", daily).name, "livekit");
+});
+
+test("a phone gets the provider its build can actually run", () => {
+  assert.equal(providerForPlatform(webOnly, "ios", daily).name, "daily");
+  assert.equal(providerForPlatform(webOnly, "android", daily).name, "daily");
+});
+
+test("a client that does not say what it is gets the one that runs everywhere", () => {
+  /*
+    An app build from before the header existed. Far more often a phone than a browser, and a
+    phone handed a LiveKit room shows a black rectangle — so silence must mean Daily, not a
+    guess at "web".
+  */
+  assert.equal(providerForPlatform(webOnly, null, daily).name, "daily");
+});
+
+test("a provider that runs everywhere is never swapped out", () => {
+  for (const platform of ["web", "ios", "android", null] as const) {
+    assert.equal(providerForPlatform(daily, platform, daily).name, "daily");
+  }
+});
+
+test("the platform a client claims is read strictly", () => {
+  assert.equal(readClientPlatform("web"), "web");
+  assert.equal(readClientPlatform("  IOS  "), "ios");
+  assert.equal(readClientPlatform("Android"), "android");
+  // Anything else is "I don't know", which resolves to the provider that runs everywhere.
+  for (const junk of ["", "windows", "web ios", null, undefined, 7, {}, ["web"]]) {
+    assert.equal(readClientPlatform(junk), null, `${JSON.stringify(junk)} should not be a platform`);
+  }
+});
+
+test("the claim confers nothing beyond compatibility", () => {
+  /*
+    The one thing worth checking about a header a client controls: what does lying win?
+
+    Nothing. Claiming to be a phone yields Daily, which any client could be given honestly; and
+    claiming to be a browser cannot yield a provider that is not configured. No room, no token
+    and no right is reachable from this value — those come from `lib/membership.ts` and are
+    minted server-side.
+  */
+  const everywhere = [daily, webOnly].map((p) => providerForPlatform(p, "android", daily).name);
+  assert.deepEqual(everywhere, ["daily", "daily"]);
+  assert.equal(providerForPlatform(daily, "web", daily).name, "daily");
 });

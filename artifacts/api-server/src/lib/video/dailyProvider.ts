@@ -12,6 +12,15 @@ import type { JoinOptions, VideoProvider } from "./types";
 export const dailyProvider: VideoProvider = {
   name: "daily",
 
+  /**
+   * Everywhere, which is why it is the fallback.
+   *
+   * The phone builds contain Daily's native SDK and the browser gets Prebuilt. Any client that
+   * cannot use the configured provider — or that does not say what it is — is given this one,
+   * so there is no combination of settings and app versions that leaves somebody without video.
+   */
+  platforms: ["web", "ios", "android"],
+
   capabilities: {
     /**
      * Web only, in practice.

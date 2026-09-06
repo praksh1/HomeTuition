@@ -648,7 +648,19 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
    * not survive per-participant-minute pricing — and a swap should mean writing one file, not
    * editing every route and classroom screen. See lib/video/types.ts and VIDEO.md.
    */
-  const video = videoProvider();
+  /*
+    Which client is asking, so it is given a provider its build can actually run.
+
+    A browser gets whatever `VIDEO_PROVIDER` names; a phone gets Daily regardless, because the
+    phone builds contain Daily's native SDK and cannot contain a second WebRTC library. Without
+    this, switching the LiveKit trial on for the web would take video away from every phone on
+    the platform — with one deployment, that is the whole platform.
+
+    The header is a compatibility hint and confers nothing: the worst a client can do by lying
+    is ask for the provider it could have asked for honestly. Rights still come from
+    `lib/membership.ts`, and the token is still minted here.
+  */
+  const video = videoProvider(req.get("x-sikshya-platform") ?? null);
   try {
     const roomUrl = await video.ensureRoom(id);
     // Only this session's teacher gets an owner token, and only the server can mint one, so
@@ -1020,11 +1032,19 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     // without hanging up on students already waiting in the room.
     if (status === "live") resetBoardFor(String(id));
 
-    // Make the room the moment the teacher starts the class, so it already exists by the time
-    // either side tries to join it. Through the provider, so this is not a second place that
-    // has to change when Daily is replaced.
+    /*
+      Make the room the moment the teacher starts the class, so it already exists by the time
+      either side tries to join it. Through the provider, so this is not a second place that has
+      to change when Daily is replaced.
+
+      Asked for the *teacher's* platform, so that a teacher starting the class from a phone
+      pre-creates the Daily room they are about to join rather than a LiveKit one they cannot.
+      Only ever an optimisation — the room route creates on demand as well, and both providers'
+      `ensureRoom` are safe to call repeatedly — but pre-creating the wrong provider's room is
+      pre-creating nothing.
+    */
     try {
-      await videoProvider().ensureRoom(id);
+      await videoProvider(req.get("x-sikshya-platform") ?? null).ensureRoom(id);
     } catch (err) {
       req.log.error({ err, sessionId: id }, "could not pre-create the video room on session start");
     }

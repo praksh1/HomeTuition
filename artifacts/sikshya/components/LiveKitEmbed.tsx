@@ -19,11 +19,17 @@ import { useLayout } from "@/hooks/useLayout";
  * its bundle. Metro resolves `.web.tsx` before `.tsx`, so the browser gets the real component
  * and the phone gets this.
  *
- * ## What this means in practice
+ * ## This should now be unreachable
  *
- * A deployment with `VIDEO_PROVIDER=livekit` serves LiveKit rooms to every client, including
- * phones — which would land here and show this message instead of a lesson. Point the phone
- * builds at a deployment left on Daily for the duration of the trial. See VIDEO.md.
+ * It was written when `VIDEO_PROVIDER=livekit` served LiveKit rooms to every client, phones
+ * included — so turning the trial on for the browser took video away from every phone on the
+ * platform. The server now decides per client: the app sends an `X-Sikshya-Platform` header,
+ * a browser gets the configured provider and a phone gets Daily. A phone should therefore never
+ * be handed a LiveKit room and never reach this screen.
+ *
+ * It stays anyway. "Should be unreachable" is a claim about today's routing, and the cost of
+ * being wrong is a black rectangle with no explanation during somebody's lesson. A message that
+ * says what happened and what still works is the right thing to find there instead.
  *
  * Switching a whole deployment back is the one environment variable and no rebuild.
  */

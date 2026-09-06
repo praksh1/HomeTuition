@@ -57,10 +57,29 @@ export interface VideoCapabilities {
   builtInChat: boolean;
 }
 
+/** The three places this app runs. What a client says it is; it confers nothing. */
+export type ClientPlatform = "web" | "ios" | "android";
+
+export const CLIENT_PLATFORMS: readonly ClientPlatform[] = ["web", "ios", "android"];
+
 export interface VideoProvider {
   /** Named in the room payload so the app knows which call UI to mount. */
   readonly name: string;
   readonly capabilities: VideoCapabilities;
+
+  /**
+   * Where this provider can actually run.
+   *
+   * Not a preference — a fact about the build. Daily and LiveKit each ship a fork of the same
+   * native WebRTC library and cannot both be inside one phone app, so the Android and iOS
+   * builds contain Daily and only Daily. A LiveKit room handed to a phone is a black rectangle.
+   *
+   * So the room route asks the client what it is and gives it a provider that works there. It
+   * costs nothing to say and it is what lets the LiveKit trial be switched on for the browser
+   * without taking video away from every phone on the platform — which, with one deployment,
+   * is otherwise the choice.
+   */
+  readonly platforms: readonly ClientPlatform[];
 
   /** True when this provider has the credentials it needs. */
   configured(): boolean;

@@ -1,3 +1,4 @@
+import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export const TOKEN_KEY = "@sikshya_token";
@@ -44,10 +45,38 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+/**
+ * What this client is, told to the server on every request.
+ *
+ * One thing depends on it: which video provider the room route hands back. Daily and LiveKit
+ * each ship a fork of the same native WebRTC library and cannot both be inside one phone build,
+ * so the phone builds contain Daily. The server reads this and gives a browser whatever
+ * `VIDEO_PROVIDER` names while a phone keeps Daily — which is what lets the LiveKit trial be
+ * switched on for the web without taking video away from every phone on one deployment.
+ *
+ * **It grants nothing.** A client that lied about this would be handed the provider it could
+ * have been handed honestly. Every right still comes from the server's own membership check.
+ */
+export const PLATFORM_HEADER = "X-Sikshya-Platform";
+
+/**
+ * The headers every call sends.
+ *
+ * One place, because there were five copies of these two lines and a sixth was about to be
+ * written. A header added here reaches every request rather than the four somebody remembered.
+ */
+async function baseHeaders(contentType = "application/json"): Promise<Record<string, string>> {
   const token = await getToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": contentType,
+    [PLATFORM_HEADER]: Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "web",
+  };
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
+export async function apiGet<T>(path: string): Promise<T> {
+  const headers = await baseHeaders();
   const res = await fetch(`${getApiBase()}${path}`, { headers });
   const data = await res.json();
   if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
@@ -55,9 +84,7 @@ export async function apiGet<T>(path: string): Promise<T> {
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const token = await getToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const headers = await baseHeaders();
   const res = await fetch(`${getApiBase()}${path}`, {
     method: "POST",
     headers,
@@ -69,9 +96,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const token = await getToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const headers = await baseHeaders();
   const res = await fetch(`${getApiBase()}${path}`, {
     method: "PATCH",
     headers,
@@ -83,9 +108,7 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
-  const token = await getToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const headers = await baseHeaders();
   const res = await fetch(`${getApiBase()}${path}`, {
     method: "DELETE",
     headers,
@@ -115,9 +138,7 @@ export async function attachmentUrl(key: string): Promise<string> {
  * bucket. Kept here beside the other callers so the auth header and base URL cannot drift.
  */
 export async function apiPutBinary<T>(path: string, body: Blob, contentType: string): Promise<T> {
-  const token = await getToken();
-  const headers: Record<string, string> = { "Content-Type": contentType };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const headers = await baseHeaders(contentType);
   const res = await fetch(`${getApiBase()}${path}`, { method: "PUT", headers, body });
   const data = await res.json().catch(() => ({}) as { error?: string });
   if (!res.ok) throw new ApiError(res.status, data.error ?? "That file could not be sent.", data);

@@ -18,6 +18,9 @@ import type { JoinOptions, VideoProvider } from "./types";
  */
 export const echoProvider: VideoProvider = {
   name: "echo",
+  // Carries no video anywhere, so it is equally available everywhere: the suites that select it
+  // are testing the rules around the room, not the media.
+  platforms: ["web", "ios", "android"],
   capabilities: { screenShare: false, builtInChat: false },
   configured: () => true,
   ensureRoom: async (sessionId) => `https://video.invalid/echo/${sessionId}`,

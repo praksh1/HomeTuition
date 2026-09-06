@@ -72,6 +72,21 @@ function config(): LiveKitConfig | null {
 export const livekitProvider: VideoProvider = {
   name: "livekit",
 
+  /**
+   * The browser, and only the browser.
+   *
+   * Measured rather than assumed: Daily and LiveKit each ship a fork of the same native WebRTC
+   * library — 33 identical Android classes and 47 identical iOS classes, both declaring the
+   * namespace `com.oney.WebRTCModule` and registering the React Native module as
+   * `WebRTCModule` — and neither SDK can be installed without its fork. One phone build cannot
+   * hold both, so the phone builds hold Daily.
+   *
+   * Declaring it here is what makes the trial usable on one deployment: the room route reads
+   * this, gives a browser LiveKit and a phone Daily, and nobody has to remember not to set the
+   * variable.
+   */
+  platforms: ["web"],
+
   capabilities: {
     /**
      * True on the web, which is the only place this provider runs.

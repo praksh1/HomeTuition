@@ -2,7 +2,7 @@
 
 - Date: 2026-09-06
 - Agent: claude
-- Branch: codex/session-proof-integration
+- Branch: claude/livekit-trial
 - Base commit: 55d1e9f (`Record Daily embed preview deployment`, on `codex/session-create-ui`)
 - Status: complete, committed and pushed at the owner's instruction
 
@@ -259,13 +259,95 @@ This was found by running Codex's suites after rebasing rather than assuming the
 
 Re-rendered at both widths after each visual change and looked at the result.
 
+## Third pass — making the trial switchable, and a security review
+
+The owner said to carry on while they were away from the machine, with the credentials to follow.
+Everything here is work that did not need them.
+
+### The trial could not actually be switched on
+
+The blocker was one I had documented as a warning rather than solved: with a single deployment,
+setting `VIDEO_PROVIDER=livekit` served LiveKit rooms to *every* client, and neither phone build
+contains LiveKit — so trying the trial in a browser took video away from every phone on the
+platform. "Don't point phones at it" is not advice that can be followed when there is one
+deployment.
+
+Now the server decides per client. `VideoProvider` gained a `platforms` field (a fact about the
+build, not a preference), the app sends `X-Sikshya-Platform` on every request, and the room route
+gives a browser whatever is configured while a phone gets Daily. Three rules, each of which was a
+way to get it wrong:
+
+- **Silence means Daily.** An app build older than the header is more often a phone than a
+  browser, and a phone handed a `wss://` address shows a black rectangle. A guess at "web" would
+  break exactly the clients the rule exists to protect.
+- **The header confers nothing.** The worst a lie wins is the provider that could have been asked
+  for honestly. Asserted: a student claiming to be a browser still gets a student's token.
+- **Session-start pre-creation asks for the teacher's platform too**, so a teacher starting from
+  a phone pre-creates the Daily room they are about to join rather than a LiveKit one they
+  cannot. An optimisation either way — the room route creates on demand — but pre-creating the
+  wrong provider's room is pre-creating nothing.
+
+`utils/api.ts` had five copies of the same two header lines and was about to get a sixth; they
+are now one `baseHeaders()`, so a header added there reaches every request rather than the four
+somebody remembered.
+
+### A preflight the owner can run alone
+
+`artifacts/api-server/scripts/livekit-check.mjs`, wired up as `livekit:check`. It answers the one
+question the app cannot: *is it my key, or is it my wi-fi?* — because a wrong secret and a bad
+connection produce the same message inside a lesson. It checks the three variables are present
+and well-formed, that the secret can sign a token, and that LiveKit itself accepts them, naming
+the next action after every failure.
+
+The secret is never printed, not even partially. This is a diagnostic — it gets run when
+something is wrong, which is when people take screenshots.
+
+### Security review
+
+Nothing found on the paths that matter. `LIVEKIT_API_SECRET` appears in no client file and no
+`EXPO_PUBLIC_` variable; exactly one route mints tokens, and only after `lib/membership.ts` has
+admitted the caller and the session window has been checked; moderator rights and screen sharing
+derive from `isSessionTeacher` and are asserted in the token's decoded claims rather than in the
+UI.
+
+**One finding, deliberately not fixed: a join token outlives its class.** Eight hours, so somebody
+who joined at 10:00 still holds a usable credential at 17:00 — after the class, after a refund,
+after being unenrolled. Not a regression (Daily's token behaves identically), but LiveKit makes a
+better answer available: set the token's `ttl` to the class's own overtime cutoff, which
+`lib/sessionStart.ts` already computes.
+
+Not done because it cannot be tested here. Whether LiveKit disconnects a participant when their
+token expires mid-call, or only checks at join and reconnect, is not answerable from the SDK's
+types, and `docs.livekit.io` is blocked. Guessing wrong drops students mid-lesson, which is much
+worse than the exposure it closes. One experiment against a real server settles it; then it is
+two lines. Written up in VIDEO.md.
+
+### Verification after the third pass
+
+| Command | Result |
+|---|---|
+| `pnpm run typecheck` (four packages) | clean |
+| `api-server` `scripts/video-tests` | **42 passed, 0 failed** (was 34; +8 for per-client selection) |
+| `api-server` `src/lib/video/*.test.ts` | **22 passed, 0 failed** (was 16) |
+| `sikshya` `pnpm run test` | **244 passed, 0 failed** |
+| `sikshya` `scripts/livekit-tests` | **82 passed, 0 failed** |
+| `sikshya` `call-leave` / `call-chat` / `board` | **9 / 17 / 44** |
+| `sikshya` `lint:design` | no new leaks |
+| `livekit:check`, every failure branch | run by hand: missing values, a truncated secret, an `https://` URL, and a blocked network each produce the right sentence and the right remedy |
+
+Two defects in my own preflight were found by running it rather than reading it: it carried on to
+ask LiveKit about settings already known to be wrong (two errors, unclear which caused which),
+and it reported a proxy block as a credentials problem — which would have sent somebody to
+regenerate a key that was fine. Both fixed.
+
 ## Remaining risks / next pickup point
 
 1. **No media has ever flowed.** No camera opened, no packet sent, no token presented to a
    LiveKit server. The first real test is a two-person call in preview with credentials — the
    step-by-step instructions are in the report to the owner and in VIDEO.md.
-2. **A phone pointed at a `livekit` deployment gets no video** and is told so. Keep phone builds
-   on a Daily deployment for the duration of the trial.
+2. **`livekit:check` has never reached a real LiveKit project.** Its settings and token-signing
+   checks were run, including every failure branch; the two branches needing livekit.cloud —
+   "accepted" and "refused" — could not be. It is the first thing to run with real credentials.
 3. **Nothing seen on a real handset browser**, which is the market. Everything so far is desktop
    Chromium at a phone's dimensions, which reproduces layout and not a weak radio.
 4. **Pricing is unverified.** The reason for the whole exercise is Daily's per-participant-minute
