@@ -47,10 +47,6 @@
     "hex": 0,
     "size": 1
   },
-  "app/(teacher)/monthly.tsx": {
-    "hex": 4,
-    "size": 24
-  },
   "app/(teacher)/sessions.tsx": {
     "hex": 7,
     "size": 12

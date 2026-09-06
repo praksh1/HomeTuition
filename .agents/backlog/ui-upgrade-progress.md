@@ -71,6 +71,9 @@ Found and fixed so far:
 | Session proof (server) | The Daily webhook verifier — mine. Not a false sentence but the same defect in code: a confident implementation of a signing scheme nobody had checked, whose tests agreed with it because they were written from it. Four independent departures from Daily's contract, each individually fatal, all green |
 | Session proof (server) | Participant deduplication keyed only on the provider's event id — mine. Daily warns a duplicate arrival can carry a different id, so two rows would record one person joining twice in the evidence for a refund |
 | Session proof (server) | Retention swept row by row, so a meeting's start expired an hour before its end — mine. A real one-hour lesson would have been permanently summarised as two meetings of no length, with the rows deleted and no way to correct it |
+| Teacher monthly class | A failed `GET /monthly/plan` fell through `tierPrice ?? 6500`, displayed NPR 6,500 as though the server had answered, and left the purchase sheet available |
+| Teacher monthly class | “Nothing is owed back to your students” was inferred only from the global 25-class floor, ignoring the separate per-student five-sixths delivery test |
+| Teacher monthly class | “Your month starts when you set up your class, not when you pay” omitted the server's unused-plan auto-start rule |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

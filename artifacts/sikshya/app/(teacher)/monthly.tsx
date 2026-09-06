@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import NepaliDatePicker from "@/components/NepaliDatePicker";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
-import { HIT_SLOP_MIN } from "@/constants/layout";
+import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
@@ -30,6 +30,10 @@ import {
   formatStartMinute,
   parseStartMinute,
 } from "@/utils/monthly";
+
+// The API does not publish its delivery floor in the teacher plan response yet. Keep this
+// presentation mirror pinned to MIN_SESSIONS_PER_CYCLE by monthlyTeacherUi.test.ts.
+const DELIVERY_FLOOR = 25;
 
 /**
  * The teacher's monthly class, from buying the plan to seeing where they stand.
@@ -53,17 +57,22 @@ function todayLabel(
   const now = Date.now();
   if (now >= starts - 10 * 60 * 1000) return "Start today's class";
   const when = formatBoth(startsAt, { withTime: true });
-  const sameDay = new Date(starts).toDateString() === new Date(now).toDateString();
-  return sameDay ? `Today's class — ${when.split(", ").pop()}` : `Next class — ${when}`;
+  const sameDay =
+    new Date(starts).toDateString() === new Date(now).toDateString();
+  return sameDay
+    ? `Today's class — ${when.split(", ").pop()}`
+    : `Next class — ${when}`;
 }
 
 export default function MonthlyClassScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { formatBoth } = useDates();
+  const { t, gutter, space, radius } = useLayout();
 
   const [view, setView] = useState<MonthlyPlanView | null>(null);
   const [missed, setMissed] = useState<MissedClassesView | null>(null);
+  const [missedError, setMissedError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,14 +85,24 @@ export default function MonthlyClassScreen() {
       setError(null);
       if (plan.class?.id) {
         try {
-          setMissed(await apiGet<MissedClassesView>(`/monthly/classes/${plan.class.id}/missed`));
+          setMissed(
+            await apiGet<MissedClassesView>(
+              `/monthly/classes/${plan.class.id}/missed`,
+            ),
+          );
+          setMissedError(false);
         } catch {
-          // The missed list is extra detail; the page is still worth showing without it.
           setMissed(null);
+          setMissedError(true);
         }
+      } else {
+        setMissed(null);
+        setMissedError(false);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load your monthly class.");
+      setError(
+        e instanceof Error ? e.message : "Could not load your monthly class.",
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -103,24 +122,62 @@ export default function MonthlyClassScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
+      <View
+        accessibilityLabel="Loading your monthly plan"
+        style={[
+          styles.center,
+          { gap: space.sm, backgroundColor: colors.background },
+        ]}
+      >
         <ActivityIndicator size="large" color={colors.primary} />
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>
+          Loading your monthly plan…
+        </Text>
       </View>
     );
   }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
+      <View
+        style={[
+          styles.header,
+          {
+            paddingTop: insets.top + space.md,
+            paddingHorizontal: gutter,
+            paddingBottom: space.sm,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          onPress={() => router.back()}
+          style={styles.backBtn}
+          activeOpacity={0.7}
+        >
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Monthly class</Text>
+        <Text
+          accessibilityRole="header"
+          style={[t.title3, { color: colors.foreground }]}
+        >
+          Monthly class
+        </Text>
         <View style={styles.backBtn} />
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 120 }]}
+        contentContainerStyle={[
+          styles.scroll,
+          {
+            paddingHorizontal: gutter,
+            paddingTop: space.md,
+            paddingBottom: insets.bottom + space.huge * 2 + space.xl,
+            gap: space.md,
+          },
+        ]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -133,18 +190,53 @@ export default function MonthlyClassScreen() {
         }
         showsVerticalScrollIndicator={false}
       >
-        {error && (
-          <View style={[styles.notice, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "30" }]}>
-            <Feather name="alert-circle" size={16} color={colors.destructive} />
-            <Text style={[styles.noticeText, { color: colors.destructive }]}>{error}</Text>
+        {error && !view ? (
+          <LoadFailure
+            message={error}
+            onRetry={() => {
+              setLoading(true);
+              void load();
+            }}
+          />
+        ) : null}
+
+        {error && view ? (
+          <View
+            style={[
+              styles.notice,
+              {
+                gap: space.xs,
+                padding: space.sm,
+                borderRadius: radius.sm,
+                backgroundColor: colors.destructiveSoft,
+                borderColor: colors.destructive,
+              },
+            ]}
+          >
+            <Feather name="alert-circle" size={18} color={colors.destructive} />
+            <Text
+              style={[
+                t.callout,
+                styles.noticeText,
+                { color: colors.destructive },
+              ]}
+            >
+              {error}
+            </Text>
           </View>
-        )}
+        ) : null}
 
         {view?.plan?.status === "suspended" && (
-          <SuspensionNotice reason={view.plan.suspendedReason} until={view.plan.suspendedUntil} formatBoth={formatBoth} />
+          <SuspensionNotice
+            reason={view.plan.suspendedReason}
+            until={view.plan.suspendedUntil}
+            formatBoth={formatBoth}
+          />
         )}
 
-        {!view?.plan && <NoPlanYet tierPrice={view?.tierPrice ?? 6500} onBuy={() => setBuying(true)} />}
+        {view && !view.plan && (
+          <NoPlanYet tierPrice={view.tierPrice} onBuy={() => setBuying(true)} />
+        )}
 
         {view?.plan && !view.class && <CreateClass onCreated={load} />}
 
@@ -153,19 +245,80 @@ export default function MonthlyClassScreen() {
             view={view}
             klass={view.class}
             missed={missed}
+            missedError={missedError}
             formatBoth={formatBoth}
             onChanged={load}
           />
         )}
       </ScrollView>
 
-      <PaymentSheet
-        visible={buying}
-        amount={view?.tierPrice ?? 6500}
-        label="Monthly teaching plan"
-        onClose={() => setBuying(false)}
-        onSuccess={buy}
-      />
+      {view ? (
+        <PaymentSheet
+          visible={buying}
+          amount={view.tierPrice}
+          label="Monthly teaching plan — per 30-day cycle"
+          onClose={() => setBuying(false)}
+          onSuccess={buy}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function LoadFailure({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  const colors = useColors();
+  const { t, space, radius } = useLayout();
+  return (
+    <View
+      style={[
+        styles.card,
+        {
+          gap: space.sm,
+          padding: space.md,
+          borderRadius: radius.md,
+          backgroundColor: colors.card,
+          borderColor: colors.destructive,
+        },
+      ]}
+    >
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "flex-start",
+          gap: space.sm,
+        }}
+      >
+        <Feather name="wifi-off" size={22} color={colors.destructive} />
+        <View style={{ flex: 1, gap: space.xxs }}>
+          <Text
+            accessibilityRole="header"
+            style={[t.title3, { color: colors.foreground }]}
+          >
+            Could not load your monthly plan
+          </Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            {message}
+          </Text>
+        </View>
+      </View>
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel="Try loading the monthly plan again"
+        onPress={onRetry}
+        activeOpacity={0.8}
+        style={[
+          styles.outlineBtn,
+          { borderColor: colors.primary, borderRadius: radius.sm },
+        ]}
+      >
+        <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -182,16 +335,34 @@ function SuspensionNotice({
   formatBoth: (v: string | number | Date) => string;
 }) {
   const colors = useColors();
+  const { t, space, radius } = useLayout();
   return (
-    <View style={[styles.suspend, { backgroundColor: colors.destructive + "14", borderColor: colors.destructive }]}>
+    <View
+      style={[
+        styles.suspend,
+        {
+          gap: space.sm,
+          padding: space.md,
+          borderRadius: radius.md,
+          marginBottom: space.md,
+          backgroundColor: colors.destructiveSoft,
+          borderColor: colors.destructive,
+        },
+      ]}
+    >
       <Feather name="alert-octagon" size={22} color={colors.destructive} />
-      <View style={{ flex: 1 }}>
-        <Text style={[styles.suspendTitle, { color: colors.destructive }]}>Your class is suspended</Text>
-        <Text style={[styles.suspendBody, { color: colors.foreground }]}>
+      <View style={{ flex: 1, gap: space.xxs }}>
+        <Text
+          accessibilityRole="header"
+          style={[t.title3, { color: colors.destructive }]}
+        >
+          Your class is suspended
+        </Text>
+        <Text style={[t.callout, { color: colors.foreground }]}>
           {reason ?? "Your monthly class has been suspended."}
         </Text>
         {until && (
-          <Text style={[styles.suspendBody, { color: colors.mutedForeground, marginTop: 6 }]}>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
             You can teach again from {formatBoth(until)}.
           </Text>
         )}
@@ -200,53 +371,114 @@ function SuspensionNotice({
   );
 }
 
-function NoPlanYet({ tierPrice, onBuy }: { tierPrice: number; onBuy: () => void }) {
+function NoPlanYet({
+  tierPrice,
+  onBuy,
+}: {
+  tierPrice: number;
+  onBuy: () => void;
+}) {
   const colors = useColors();
+  const { t, numeric, space, radius } = useLayout();
   const points = [
     "One class, at the same time every day",
     "Up to 45 students in it",
     "Up to 90 minutes a day",
     "Your own group chat and homework portal",
-    "Students pay you monthly, and pay less if they join part-way through",
+    "Students pay for each 30-day cycle, and pay less if they join part-way through",
   ];
   return (
-    <View>
-      <Text style={[styles.h1, { color: colors.foreground }]}>Teach the same class every day</Text>
-      <Text style={[styles.lede, { color: colors.mutedForeground }]}>
-        A monthly class runs daily at a time you choose. Students buy the month, not one lesson
-        at a time.
-      </Text>
+    <View style={{ gap: space.md }}>
+      <View style={{ gap: space.xs }}>
+        <Text
+          accessibilityRole="header"
+          style={[t.title1, { color: colors.foreground }]}
+        >
+          Teach the same class every day
+        </Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>
+          A monthly class runs daily at a time you choose. Students buy one
+          30-day cycle, not one lesson at a time.
+        </Text>
+      </View>
 
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.price, { color: colors.foreground }]}>NPR {tierPrice.toLocaleString()}</Text>
-        <Text style={[styles.priceHint, { color: colors.mutedForeground }]}>a month, paid to Sikshya</Text>
-        <View style={{ height: 14 }} />
+      <View
+        style={[
+          styles.card,
+          {
+            gap: space.sm,
+            padding: space.md,
+            borderRadius: radius.md,
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+          },
+        ]}
+      >
+        <View>
+          <Text style={[t.display, numeric, { color: colors.foreground }]}>
+            NPR {tierPrice.toLocaleString("en-IN")}
+          </Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>
+            per 30-day cycle, paid to Sikshya
+          </Text>
+        </View>
         {points.map((point) => (
-          <View key={point} style={styles.point}>
+          <View key={point} style={[styles.point, { gap: space.xs }]}>
             <Feather name="check" size={16} color={colors.primary} />
-            <Text style={[styles.pointText, { color: colors.foreground }]}>{point}</Text>
+            <Text
+              style={[
+                t.callout,
+                styles.pointText,
+                { color: colors.foreground },
+              ]}
+            >
+              {point}
+            </Text>
           </View>
         ))}
       </View>
 
-      <View style={[styles.notice, { backgroundColor: colors.accent + "12", borderColor: colors.accent + "30" }]}>
-        <Feather name="info" size={16} color={colors.accent} />
-        <Text style={[styles.noticeText, { color: colors.foreground }]}>
-          Your month starts when you set up your class, not when you pay. You must teach at
-          least 25 classes a month, or your students get part of their money back.
+      <View
+        style={[
+          styles.notice,
+          {
+            gap: space.xs,
+            padding: space.sm,
+            borderRadius: radius.sm,
+            backgroundColor: colors.warnSoft,
+            borderColor: colors.warn,
+          },
+        ]}
+      >
+        <Feather name="info" size={18} color={colors.warn} />
+        <Text
+          style={[t.callout, styles.noticeText, { color: colors.foreground }]}
+        >
+          This plan covers one daily recurring class in a 30-day cycle. At least
+          25 classes must be held in that cycle; if fewer are held, students may
+          be owed a refund.
         </Text>
       </View>
 
       <TouchableOpacity
         testID="monthly-buy"
-        style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
+        accessibilityRole="button"
+        accessibilityLabel={`Get the monthly plan for NPR ${tierPrice.toLocaleString("en-IN")} per 30-day cycle`}
+        style={[
+          styles.primaryBtn,
+          { borderRadius: radius.sm, backgroundColor: colors.primary },
+        ]}
         onPress={() => {
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(
+            () => {},
+          );
           onBuy();
         }}
         activeOpacity={0.85}
       >
-        <Text style={styles.primaryBtnText}>Get the monthly plan</Text>
+        <Text style={[t.bodyStrong, { color: colors.onInverse }]}>
+          Get the monthly plan
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -256,6 +488,7 @@ function NoPlanYet({ tierPrice, onBuy }: { tierPrice: number; onBuy: () => void 
 
 function CreateClass({ onCreated }: { onCreated: () => Promise<void> }) {
   const colors = useColors();
+  const { t, space, radius } = useLayout();
   const [subject, setSubject] = useState("");
   const [topic, setTopic] = useState("");
   const [time, setTime] = useState("16:00");
@@ -300,21 +533,45 @@ function CreateClass({ onCreated }: { onCreated: () => Promise<void> }) {
       });
       await onCreated();
     } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : "Could not create the class. Please try again.");
+      setProblem(
+        e instanceof ApiError
+          ? e.message
+          : "Could not create the class. Please try again.",
+      );
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <View>
-      <Text style={[styles.h1, { color: colors.foreground }]}>Set up your class</Text>
-      <Text style={[styles.lede, { color: colors.mutedForeground }]}>
-        Your month starts the moment you finish this, so the first class can be today.
-      </Text>
+    <View style={{ gap: space.md }}>
+      <View style={{ gap: space.xs }}>
+        <Text
+          accessibilityRole="header"
+          style={[t.title1, { color: colors.foreground }]}
+        >
+          Set up your class
+        </Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>
+          Saving this form creates the daily schedule. The active 30-day cycle
+          and its end date will appear here after the class is created.
+        </Text>
+      </View>
 
-      <Field label="Subject" value={subject} onChange={setSubject} placeholder="Maths" testID="monthly-subject" />
-      <Field label="What you are teaching" value={topic} onChange={setTopic} placeholder="Algebra for Grade 10" testID="monthly-topic" />
+      <Field
+        label="Subject"
+        value={subject}
+        onChange={setSubject}
+        placeholder="Maths"
+        testID="monthly-subject"
+      />
+      <Field
+        label="What you are teaching"
+        value={topic}
+        onChange={setTopic}
+        placeholder="Algebra for Grade 10"
+        testID="monthly-topic"
+      />
       <Field
         label="Time every day"
         value={time}
@@ -323,33 +580,81 @@ function CreateClass({ onCreated }: { onCreated: () => Promise<void> }) {
         hint="Nepal time, on a 24-hour clock. 16:00 is 4 in the afternoon."
         testID="monthly-time"
       />
-      <Field label="Minutes per class" value={duration} onChange={setDuration} keyboardType="number-pad" hint="90 at most." testID="monthly-duration" />
       <Field
-        label="What a student pays each month (NPR)"
+        label="Minutes per class"
+        value={duration}
+        onChange={setDuration}
+        keyboardType="number-pad"
+        hint="90 at most."
+        testID="monthly-duration"
+      />
+      <Field
+        label="Student fee per 30-day cycle (NPR)"
         value={fee}
         onChange={setFee}
         keyboardType="number-pad"
         placeholder="3000"
-        hint="Somebody joining part-way through pays less, worked out from the classes left."
+        hint="A student joining part-way through pays for the classes left in this cycle."
         testID="monthly-fee"
       />
-      <Field label="Most students at once" value={seats} onChange={setSeats} keyboardType="number-pad" hint="45 at most." testID="monthly-seats" />
+      <Field
+        label="Most students at once"
+        value={seats}
+        onChange={setSeats}
+        keyboardType="number-pad"
+        hint="45 at most."
+        testID="monthly-seats"
+      />
 
       {problem && (
-        <View style={[styles.notice, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "30" }]}>
-          <Feather name="alert-circle" size={16} color={colors.destructive} />
-          <Text style={[styles.noticeText, { color: colors.destructive }]}>{problem}</Text>
+        <View
+          style={[
+            styles.notice,
+            {
+              gap: space.xs,
+              padding: space.sm,
+              borderRadius: radius.sm,
+              backgroundColor: colors.destructiveSoft,
+              borderColor: colors.destructive,
+            },
+          ]}
+        >
+          <Feather name="alert-circle" size={18} color={colors.destructive} />
+          <Text
+            style={[
+              t.callout,
+              styles.noticeText,
+              { color: colors.destructive },
+            ]}
+          >
+            {problem}
+          </Text>
         </View>
       )}
 
       <TouchableOpacity
         testID="monthly-create"
-        style={[styles.primaryBtn, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
+        accessibilityRole="button"
+        accessibilityLabel="Start this monthly class"
+        style={[
+          styles.primaryBtn,
+          {
+            borderRadius: radius.sm,
+            backgroundColor: colors.primary,
+            opacity: saving ? 0.6 : 1,
+          },
+        ]}
         onPress={() => void submit()}
         disabled={saving}
         activeOpacity={0.85}
       >
-        {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryBtnText}>Start my monthly class</Text>}
+        {saving ? (
+          <ActivityIndicator color={colors.onInverse} />
+        ) : (
+          <Text style={[t.bodyStrong, { color: colors.onInverse }]}>
+            Start my monthly class
+          </Text>
+        )}
       </TouchableOpacity>
     </View>
   );
@@ -373,19 +678,37 @@ function Field({
   testID?: string;
 }) {
   const colors = useColors();
+  const { t, space, radius } = useLayout();
   return (
-    <View style={styles.field}>
-      <Text style={[styles.fieldLabel, { color: colors.foreground }]}>{label}</Text>
+    <View style={{ gap: space.xxs }}>
+      <Text style={[t.caption, { color: colors.foreground }]}>{label}</Text>
       <TextInput
         testID={testID}
+        accessibilityLabel={label}
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
         placeholderTextColor={colors.mutedForeground}
         keyboardType={keyboardType ?? "default"}
-        style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
+        style={[
+          t.body,
+          styles.input,
+          {
+            minHeight: HIT_SLOP_MIN,
+            borderRadius: radius.sm,
+            paddingHorizontal: space.sm,
+            paddingVertical: Platform.OS === "ios" ? space.sm : space.xs,
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            color: colors.foreground,
+          },
+        ]}
       />
-      {hint && <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>{hint}</Text>}
+      {hint && (
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>
+          {hint}
+        </Text>
+      )}
     </View>
   );
 }
@@ -396,39 +719,75 @@ function RunningClass({
   view,
   klass,
   missed,
+  missedError,
   formatBoth,
   onChanged,
 }: {
   view: MonthlyPlanView;
   klass: MonthlyClass;
   missed: MissedClassesView | null;
+  missedError: boolean;
   formatBoth: (v: string | number | Date) => string;
   onChanged: () => Promise<void>;
 }) {
   const colors = useColors();
+  const { t, numeric, space, radius } = useLayout();
   const standing = view.standing;
   const held = view.ledger?.held ?? 0;
 
   return (
-    <View>
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <Text style={[styles.classSubject, { color: colors.foreground }]}>{klass.subject}</Text>
-        <Text style={[styles.classTopic, { color: colors.mutedForeground }]}>{klass.topic}</Text>
-
-        <View style={styles.statRow}>
-          <Stat label="Every day at" value={formatStartMinute(klass.startMinute)} />
-          <Stat label="For" value={`${klass.durationMinutes} min`} />
-          <Stat label="Students" value={`${klass.enrolled}/${klass.maxStudents}`} />
+    <View style={{ gap: space.md }}>
+      <View
+        style={[
+          styles.card,
+          {
+            gap: space.sm,
+            padding: space.md,
+            borderRadius: radius.md,
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+          },
+        ]}
+      >
+        <View style={{ gap: space.xxs }}>
+          <Text
+            accessibilityRole="header"
+            style={[t.title2, { color: colors.foreground }]}
+          >
+            {klass.subject}
+          </Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            {klass.topic}
+          </Text>
         </View>
-        <View style={styles.statRow}>
-          <Stat label="Classes held" value={`${held} of ${klass.sessionsPlanned}`} />
+
+        <View style={[styles.statRow, { gap: space.sm }]}>
+          <Stat
+            label="Every day at"
+            value={formatStartMinute(klass.startMinute)}
+          />
+          <Stat
+            label="Class length"
+            value={`${klass.durationMinutes} minutes`}
+          />
+          <Stat
+            label="Students"
+            value={`${klass.enrolled}/${klass.maxStudents}`}
+          />
+          <Stat
+            label="Classes held"
+            value={`${held} of ${klass.sessionsPlanned}`}
+          />
           <Stat label="Still to come" value={String(klass.sessionsRemaining)} />
-          <Stat label="A month costs" value={`NPR ${klass.monthlyPrice}`} />
+          <Stat
+            label="Student fee"
+            value={`NPR ${klass.monthlyPrice.toLocaleString("en-IN")} per 30-day cycle`}
+          />
         </View>
 
         {view.cycle && (
-          <Text style={[styles.cycleLine, { color: colors.mutedForeground }]}>
-            This month runs to {formatBoth(view.cycle.endsAt)}
+          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+            This 30-day cycle runs to {formatBoth(view.cycle.endsAt)}
           </Text>
         )}
       </View>
@@ -449,10 +808,20 @@ function RunningClass({
           testID={`teacher-monthly-today-${klass.id}`}
           activeOpacity={0.85}
           onPress={() => router.push(`/session/${klass.today!.sessionId}`)}
-          style={[styles.todayBtn, { backgroundColor: colors.primary }]}
+          accessibilityRole="button"
+          style={[
+            styles.todayBtn,
+            {
+              gap: space.xs,
+              borderRadius: radius.sm,
+              backgroundColor: colors.primary,
+            },
+          ]}
         >
-          <Feather name="video" size={16} color="#fff" />
-          <Text style={styles.todayBtnText}>{todayLabel(klass.today.startsAt, formatBoth)}</Text>
+          <Feather name="video" size={18} color={colors.onInverse} />
+          <Text style={[t.bodyStrong, numeric, { color: colors.onInverse }]}>
+            {todayLabel(klass.today.startsAt, formatBoth)}
+          </Text>
         </TouchableOpacity>
       ) : null}
 
@@ -468,23 +837,42 @@ function RunningClass({
           style={[
             styles.notice,
             standing.warn || standing.suspended
-              ? { backgroundColor: colors.destructive + "14", borderColor: colors.destructive }
-              : { backgroundColor: colors.accent + "12", borderColor: colors.accent + "30" },
+              ? {
+                  backgroundColor: colors.destructiveSoft,
+                  borderColor: colors.destructive,
+                }
+              : { backgroundColor: colors.warnSoft, borderColor: colors.warn },
+            { gap: space.xs, padding: space.sm, borderRadius: radius.sm },
           ]}
         >
           <Feather
-            name={standing.warn || standing.suspended ? "alert-triangle" : "info"}
+            name={
+              standing.warn || standing.suspended ? "alert-triangle" : "info"
+            }
             size={16}
-            color={standing.warn || standing.suspended ? colors.destructive : colors.accent}
+            color={
+              standing.warn || standing.suspended
+                ? colors.destructive
+                : colors.warn
+            }
           />
-          <Text style={[styles.noticeText, { color: colors.foreground }]}>
+          <Text
+            style={[t.callout, styles.noticeText, { color: colors.foreground }]}
+          >
             {standing.suspended
               ? "Your class is suspended."
               : `${standing.abuses} ${standing.abuses === 1 ? "class was" : "classes were"} missed with no make-up arranged. ` +
-                `${standing.remaining} more and your class is suspended for 30 days.`}
+                `${standing.remaining} more and your class is suspended${view.suspensionDays ? ` for ${view.suspensionDays} days` : " temporarily"}.`}
           </Text>
         </View>
       )}
+
+      {missedError ? (
+        <MonthlyDetailFailure
+          message="Could not load the missed-class and make-up list. Nothing was changed."
+          onRetry={() => void onChanged()}
+        />
+      ) : null}
 
       {missed && missed.missed.length > 0 && view.cycle && (
         <MissedList
@@ -505,17 +893,27 @@ function RunningClass({
       */}
       <LeaveList formatBoth={formatBoth} />
 
-      <View style={styles.linkRow}>
+      <View style={[styles.linkRow, { gap: space.sm }]}>
         <LinkTile
           icon="message-circle"
           label="Class chat"
-          onPress={() => router.push({ pathname: "/monthly-chat", params: { id: String(klass.id) } })}
+          onPress={() =>
+            router.push({
+              pathname: "/monthly-chat",
+              params: { id: String(klass.id) },
+            })
+          }
           testID="monthly-open-chat"
         />
         <LinkTile
           icon="book-open"
           label="Homework"
-          onPress={() => router.push({ pathname: "/monthly-homework", params: { id: String(klass.id) } })}
+          onPress={() =>
+            router.push({
+              pathname: "/monthly-homework",
+              params: { id: String(klass.id) },
+            })
+          }
           testID="monthly-open-homework"
         />
       </View>
@@ -523,28 +921,110 @@ function RunningClass({
   );
 }
 
+function MonthlyDetailFailure({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  const colors = useColors();
+  const { t, space, radius } = useLayout();
+  return (
+    <View
+      style={[
+        styles.notice,
+        {
+          gap: space.xs,
+          padding: space.sm,
+          borderRadius: radius.sm,
+          backgroundColor: colors.destructiveSoft,
+          borderColor: colors.destructive,
+        },
+      ]}
+    >
+      <Feather name="alert-circle" size={18} color={colors.destructive} />
+      <View style={{ flex: 1, gap: space.xs }}>
+        <Text style={[t.callout, { color: colors.destructive }]}>
+          {message}
+        </Text>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Try loading missed classes again"
+          onPress={onRetry}
+          activeOpacity={0.8}
+          style={[
+            styles.outlineBtn,
+            {
+              alignSelf: "flex-start",
+              paddingHorizontal: space.sm,
+              borderRadius: radius.sm,
+              borderColor: colors.destructive,
+            },
+          ]}
+        >
+          <Text style={[t.caption, { color: colors.destructive }]}>
+            Try again
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
 function DeliveryBar({ held, planned }: { held: number; planned: number }) {
   const colors = useColors();
-  const floor = 25;
+  const { t, numeric, space, radius } = useLayout();
+  const floor = DELIVERY_FLOOR;
   const short = Math.max(0, floor - held);
   const pct = Math.min(1, held / floor);
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <Text style={[styles.fieldLabel, { color: colors.foreground }]}>
-        {short === 0 ? "You have taught enough classes this month" : `${short} more ${short === 1 ? "class" : "classes"} to go`}
+    <View
+      style={[
+        styles.card,
+        {
+          gap: space.xs,
+          padding: space.md,
+          borderRadius: radius.md,
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+        },
+      ]}
+    >
+      <Text
+        accessibilityRole="header"
+        style={[t.bodyStrong, numeric, { color: colors.foreground }]}
+      >
+        {short === 0
+          ? "Delivery floor met for this cycle"
+          : `${short} more ${short === 1 ? "class" : "classes"} to reach the delivery floor`}
       </Text>
-      <View style={[styles.barTrack, { backgroundColor: colors.input }]}>
+      <View
+        style={[
+          styles.barTrack,
+          {
+            height: space.xs,
+            borderRadius: radius.pill,
+            backgroundColor: colors.input,
+          },
+        ]}
+      >
         <View
           style={[
             styles.barFill,
-            { width: `${pct * 100}%`, backgroundColor: short === 0 ? colors.primary : colors.accent },
+            {
+              height: space.xs,
+              borderRadius: radius.pill,
+              width: `${pct * 100}%`,
+              backgroundColor: short === 0 ? colors.success : colors.warn,
+            },
           ]}
         />
       </View>
-      <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>
+      <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
         {short === 0
-          ? `${held} held, out of ${planned} planned. Nothing is owed back to your students.`
-          : `Teach at least ${floor} classes a month. Below that, your students get part of their money back.`}
+          ? `${held} held, out of ${planned} planned. Student-level refund checks are assessed separately.`
+          : `At least ${floor} classes must be held in each 30-day cycle. Below that, students may be owed a refund.`}
       </Text>
     </View>
   );
@@ -564,42 +1044,94 @@ function MissedList({
   onChanged: () => Promise<void>;
 }) {
   const colors = useColors();
+  const { t, numeric, space, radius } = useLayout();
   const [editing, setEditing] = useState<number | null>(null);
+  const deadlineCopy = missed.makeupDeadlineHours
+    ? `Arrange a make-up within ${missed.makeupDeadlineHours} hours and the miss does not count against you.`
+    : "Arrange a make-up before the deadline shown for each missed class and the miss does not count against you.";
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Classes you missed</Text>
-      <Text style={[styles.fieldHint, { color: colors.mutedForeground, marginBottom: 10 }]}>
-        Arrange a make-up within 48 hours and it does not count against you. You have{" "}
-        {missed.makeups.left} of {missed.makeups.allowed} make-ups left this month.
+    <View
+      style={[
+        styles.card,
+        {
+          gap: space.xs,
+          padding: space.md,
+          borderRadius: radius.md,
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+        },
+      ]}
+    >
+      <Text
+        accessibilityRole="header"
+        style={[t.bodyStrong, { color: colors.foreground }]}
+      >
+        Classes you missed
+      </Text>
+      <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+        {deadlineCopy} You have {missed.makeups.left} of{" "}
+        {missed.makeups.allowed} make-ups left in this 30-day cycle.
       </Text>
 
       {missed.missed.map((row) => (
         <View key={row.id}>
-          <View style={[styles.missedRow, { borderTopColor: colors.border }]}>
+          <View
+            style={[
+              styles.missedRow,
+              {
+                gap: space.sm,
+                paddingTop: space.sm,
+                marginTop: space.xs,
+                borderTopColor: colors.border,
+              },
+            ]}
+          >
             <View style={{ flex: 1 }}>
-              <Text style={[styles.missedWhen, { color: colors.foreground }]}>{formatBoth(row.wasAt)}</Text>
+              <Text
+                style={[t.bodyStrong, numeric, { color: colors.foreground }]}
+              >
+                {formatBoth(row.wasAt)}
+              </Text>
               <Text
                 style={[
-                  styles.fieldHint,
-                  { color: row.countsAgainstYou ? colors.destructive : colors.mutedForeground },
+                  t.caption,
+                  numeric,
+                  {
+                    color: row.countsAgainstYou
+                      ? colors.destructive
+                      : colors.mutedForeground,
+                  },
                 ]}
               >
                 {row.madeUpAt
                   ? `Make-up on ${formatBoth(row.madeUpAt)}`
                   : row.countsAgainstYou
                     ? "This counts against you"
-                    : `${row.hoursLeft} hours left to arrange a make-up`}
+                    : row.hoursLeft === null
+                      ? "Make-up deadline unavailable"
+                      : `${row.hoursLeft} ${row.hoursLeft === 1 ? "hour" : "hours"} left to arrange a make-up`}
               </Text>
             </View>
             {!row.madeUpAt && missed.makeups.left > 0 && editing !== row.id && (
               <TouchableOpacity
                 testID={`monthly-makeup-${row.id}`}
                 onPress={() => setEditing(row.id)}
-                style={[styles.smallBtn, { borderColor: colors.primary }]}
+                accessibilityRole="button"
+                accessibilityLabel={`Schedule a make-up for the class missed on ${formatBoth(row.wasAt)}`}
+                style={[
+                  styles.smallBtn,
+                  {
+                    borderRadius: radius.sm,
+                    paddingHorizontal: space.sm,
+                    borderColor: colors.primary,
+                  },
+                ]}
                 activeOpacity={0.8}
               >
-                <Text style={[styles.smallBtnText, { color: colors.primary }]}>Schedule</Text>
+                <Text style={[t.caption, { color: colors.primary }]}>
+                  Schedule
+                </Text>
               </TouchableOpacity>
             )}
           </View>
@@ -623,14 +1155,18 @@ function MissedList({
 }
 
 /** A Gregorian day-shaped Date for the class's time zone, independent of the device's zone. */
-function calendarDateInZone(value: string | number | Date, timeZone: string): Date {
+function calendarDateInZone(
+  value: string | number | Date,
+  timeZone: string,
+): Date {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(new Date(value));
-  const read = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  const read = (type: string) =>
+    Number(parts.find((part) => part.type === type)?.value ?? 0);
   return new Date(read("year"), read("month") - 1, read("day"));
 }
 
@@ -641,7 +1177,8 @@ function clockInZone(value: string | number | Date, timeZone: string): string {
     hour: "2-digit",
     minute: "2-digit",
   }).formatToParts(new Date(value));
-  const read = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+  const read = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "00";
   return `${read("hour") === "24" ? "00" : read("hour")}:${read("minute")}`;
 }
 
@@ -671,8 +1208,13 @@ function MakeupScheduler({
   const colors = useColors();
   const { t, numeric, space, radius } = useLayout();
   const lastInstant = new Date(cycle.endsAt).getTime() - 1;
-  const initialInstant = Math.min(Date.now() + 24 * 60 * 60 * 1000, lastInstant);
-  const [date, setDate] = useState(() => calendarDateInZone(initialInstant, klass.timeZone));
+  const initialInstant = Math.min(
+    Date.now() + 24 * 60 * 60 * 1000,
+    lastInstant,
+  );
+  const [date, setDate] = useState(() =>
+    calendarDateInZone(initialInstant, klass.timeZone),
+  );
   const [time, setTime] = useState(() =>
     formatStartMinute((klass.startMinute + klass.durationMinutes) % (24 * 60)),
   );
@@ -696,7 +1238,9 @@ function MakeupScheduler({
       });
       await onSaved();
     } catch (e) {
-      setProblem(e instanceof ApiError ? e.message : "Could not arrange that make-up.");
+      setProblem(
+        e instanceof ApiError ? e.message : "Could not arrange that make-up.",
+      );
     } finally {
       setBusy(false);
     }
@@ -719,9 +1263,14 @@ function MakeupScheduler({
       }}
     >
       <View style={{ gap: space.xxs }}>
-        <Text style={[t.bodyStrong, { color: colors.foreground }]}>Choose the replacement class</Text>
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>
+          Choose the replacement class
+        </Text>
         <Text style={[t.callout, numeric, { color: colors.mutedForeground }]}>
-          Any future day and time is allowed before this cycle ends on {formatBoth(cycleEndDay)} at {cycleEndTime} Nepal time.
+          Choose a future slot before this cycle ends on{" "}
+          {formatBoth(cycleEndDay)} at {cycleEndTime} Nepal time. Sikshya will
+          check the available make-up allowance, declared leave and overlaps
+          with other classes before saving it.
         </Text>
       </View>
 
@@ -729,6 +1278,8 @@ function MakeupScheduler({
         <Text style={[t.caption, { color: colors.foreground }]}>Date</Text>
         <TouchableOpacity
           testID={`monthly-makeup-date-${missedDayId}`}
+          accessibilityRole="button"
+          accessibilityLabel="Choose the make-up date"
           onPress={() => setPickingDate(true)}
           activeOpacity={0.8}
           style={{
@@ -744,7 +1295,9 @@ function MakeupScheduler({
           }}
         >
           <Feather name="calendar" size={20} color={colors.primary} />
-          <Text style={[t.body, { color: colors.foreground }]}>{formatBoth(date)}</Text>
+          <Text style={[t.body, { color: colors.foreground }]}>
+            {formatBoth(date)}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -771,14 +1324,21 @@ function MakeupScheduler({
           ]}
         />
         <Text style={[t.caption, { color: colors.mutedForeground }]}>
-          Use a 24-hour Nepal-time clock. Pick a slot that does not overlap the daily class at {formatStartMinute(klass.startMinute)}.
+          Use a 24-hour Nepal-time clock. Pick a slot that does not overlap the
+          daily class at {formatStartMinute(klass.startMinute)}.
         </Text>
       </View>
 
-      {problem && <Text style={[t.callout, { color: colors.destructive }]}>{problem}</Text>}
+      {problem && (
+        <Text style={[t.callout, { color: colors.destructive }]}>
+          {problem}
+        </Text>
+      )}
 
       <View style={{ flexDirection: "row", gap: space.xs }}>
         <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Cancel scheduling this make-up"
           onPress={onCancel}
           disabled={busy}
           activeOpacity={0.8}
@@ -793,10 +1353,14 @@ function MakeupScheduler({
             backgroundColor: colors.card,
           }}
         >
-          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Cancel</Text>
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>
+            Cancel
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           testID={`monthly-makeup-save-${missedDayId}`}
+          accessibilityRole="button"
+          accessibilityLabel="Schedule this make-up class"
           onPress={() => void save()}
           disabled={busy}
           activeOpacity={0.85}
@@ -805,14 +1369,18 @@ function MakeupScheduler({
             flex: 1,
             alignItems: "center",
             justifyContent: "center",
+            borderWidth: StyleSheet.hairlineWidth,
             borderRadius: radius.sm,
-            backgroundColor: colors.primary,
+            borderColor: colors.primary,
+            backgroundColor: colors.card,
           }}
         >
           {busy ? (
-            <ActivityIndicator size="small" color={colors.onInverse} />
+            <ActivityIndicator size="small" color={colors.primary} />
           ) : (
-            <Text style={[t.bodyStrong, { color: colors.onInverse }]}>Schedule makeup</Text>
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>
+              Schedule make-up
+            </Text>
           )}
         </TouchableOpacity>
       </View>
@@ -855,9 +1423,16 @@ interface LeaveRow {
  * What it does buy is the thing that was actually broken: a make-up can no longer be scheduled
  * onto a day the teacher already knows they will miss — one absence quietly becoming two.
  */
-function LeaveList({ formatBoth }: { formatBoth: (v: string | number | Date) => string }) {
+function LeaveList({
+  formatBoth,
+}: {
+  formatBoth: (v: string | number | Date) => string;
+}) {
   const colors = useColors();
+  const { t, numeric, space, radius } = useLayout();
   const [rows, setRows] = useState<LeaveRow[]>([]);
+  const [leaveLoading, setLeaveLoading] = useState(true);
+  const [leaveError, setLeaveError] = useState(false);
   const [open, setOpen] = useState(false);
   const [from, setFrom] = useState<Date | null>(null);
   const [to, setTo] = useState<Date | null>(null);
@@ -871,12 +1446,17 @@ function LeaveList({ formatBoth }: { formatBoth: (v: string | number | Date) => 
     try {
       const data = await apiGet<{ leave: LeaveRow[] }>("/monthly/leave");
       setRows(data.leave);
+      setLeaveError(false);
     } catch {
-      // The rest of the screen is worth showing without this.
+      setLeaveError(true);
+    } finally {
+      setLeaveLoading(false);
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   const save = async () => {
     if (!from || !to || busy) return;
@@ -892,10 +1472,15 @@ function LeaveList({ formatBoth }: { formatBoth: (v: string | number | Date) => 
       // The server counts the classes inside and says what is still owed. Shown as it came
       // back rather than reworded here, so one sentence about the rule lives in one place.
       setNote(res.note);
-      setFrom(null); setTo(null); setReason(""); setOpen(false);
+      setFrom(null);
+      setTo(null);
+      setReason("");
+      setOpen(false);
       await load();
     } catch (e) {
-      setProblem(e instanceof Error && e.message ? e.message : "Could not save that.");
+      setProblem(
+        e instanceof Error && e.message ? e.message : "Could not save that.",
+      );
     } finally {
       setBusy(false);
     }
@@ -907,76 +1492,215 @@ function LeaveList({ formatBoth }: { formatBoth: (v: string | number | Date) => 
       await apiDelete(`/monthly/leave/${id}`);
       await load();
     } catch (e) {
-      setProblem(e instanceof Error && e.message ? e.message : "Could not remove that.");
+      setProblem(
+        e instanceof Error && e.message ? e.message : "Could not remove that.",
+      );
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <Text style={[styles.fieldLabel, { color: colors.foreground }]}>Days you will be away</Text>
-      <Text style={[styles.fieldHint, { color: colors.mutedForeground, marginBottom: 10 }]}>
-        Tell us in advance and no make-up will be scheduled onto a day you are not here. Your
-        classes on those days are still yours to hold.
+    <View
+      style={[
+        styles.card,
+        {
+          gap: space.xs,
+          padding: space.md,
+          borderRadius: radius.md,
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+        },
+      ]}
+    >
+      <Text
+        accessibilityRole="header"
+        style={[t.bodyStrong, { color: colors.foreground }]}
+      >
+        Days you will be away
+      </Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>
+        Tell us in advance and no make-up will be scheduled onto a day you are
+        not here. Your classes on those days are still yours to hold.
       </Text>
 
-      {problem && <Text style={[styles.noticeText, { color: colors.destructive, marginBottom: 8 }]}>{problem}</Text>}
-      {note && <Text style={[styles.fieldHint, { color: colors.foreground, marginBottom: 8 }]}>{note}</Text>}
+      {problem && (
+        <Text style={[t.callout, { color: colors.destructive }]}>
+          {problem}
+        </Text>
+      )}
+      {note && (
+        <Text style={[t.caption, { color: colors.foreground }]}>{note}</Text>
+      )}
 
-      {rows.map((row) => (
-        <View key={row.id} style={[styles.missedRow, { borderTopColor: colors.border }]}>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.missedWhen, { color: colors.foreground }]}>
-              {formatBoth(row.startsAt)}
-              {row.endsAt.slice(0, 10) !== row.startsAt.slice(0, 10) ? ` — ${formatBoth(row.endsAt)}` : ""}
-            </Text>
-            {!!row.reason && (
-              <Text style={[styles.fieldHint, { color: colors.mutedForeground }]}>{row.reason}</Text>
-            )}
-          </View>
+      {leaveLoading ? (
+        <View
+          accessibilityLabel="Loading days away"
+          style={{
+            minHeight: HIT_SLOP_MIN,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <ActivityIndicator size="small" color={colors.primary} />
+        </View>
+      ) : null}
+
+      {leaveError ? (
+        <View style={{ gap: space.xs }}>
+          <Text style={[t.caption, { color: colors.destructive }]}>
+            Could not load your saved days away. Nothing was removed.
+          </Text>
           <TouchableOpacity
-            testID={`leave-remove-${row.id}`}
-            onPress={() => void remove(row.id)}
-            disabled={busy}
-            style={[styles.smallBtn, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Try loading saved days away again"
+            onPress={() => {
+              setLeaveLoading(true);
+              void load();
+            }}
+            style={[
+              styles.outlineBtn,
+              {
+                alignSelf: "flex-start",
+                paddingHorizontal: space.sm,
+                borderRadius: radius.sm,
+                borderColor: colors.primary,
+              },
+            ]}
             activeOpacity={0.8}
           >
-            <Text style={[styles.smallBtnText, { color: colors.mutedForeground }]}>Remove</Text>
+            <Text style={[t.caption, { color: colors.primary }]}>
+              Try again
+            </Text>
           </TouchableOpacity>
         </View>
-      ))}
+      ) : null}
 
-      {!open ? (
+      {!leaveError &&
+        rows.map((row) => (
+          <View
+            key={row.id}
+            style={[
+              styles.missedRow,
+              {
+                gap: space.sm,
+                paddingTop: space.sm,
+                marginTop: space.xs,
+                borderTopColor: colors.border,
+              },
+            ]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text
+                style={[t.bodyStrong, numeric, { color: colors.foreground }]}
+              >
+                {formatBoth(row.startsAt)}
+                {row.endsAt.slice(0, 10) !== row.startsAt.slice(0, 10)
+                  ? ` — ${formatBoth(row.endsAt)}`
+                  : ""}
+              </Text>
+              {!!row.reason && (
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                  {row.reason}
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity
+              testID={`leave-remove-${row.id}`}
+              onPress={() => void remove(row.id)}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove days away starting ${formatBoth(row.startsAt)}`}
+              style={[
+                styles.smallBtn,
+                {
+                  borderRadius: radius.sm,
+                  paddingHorizontal: space.sm,
+                  borderColor: colors.destructive,
+                },
+              ]}
+              activeOpacity={0.8}
+            >
+              <Text style={[t.caption, { color: colors.destructive }]}>
+                Remove
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
+      {!leaveLoading && !leaveError && !open ? (
         <TouchableOpacity
           testID="leave-add"
           onPress={() => setOpen(true)}
-          style={[styles.smallBtn, { borderColor: colors.primary, alignSelf: "flex-start", marginTop: 10 }]}
+          accessibilityRole="button"
+          style={[
+            styles.smallBtn,
+            {
+              borderRadius: radius.sm,
+              paddingHorizontal: space.sm,
+              borderColor: colors.primary,
+              alignSelf: "flex-start",
+            },
+          ]}
           activeOpacity={0.8}
         >
-          <Text style={[styles.smallBtnText, { color: colors.primary }]}>Add days away</Text>
+          <Text style={[t.caption, { color: colors.primary }]}>
+            Add days away
+          </Text>
         </TouchableOpacity>
-      ) : (
-        <View style={{ marginTop: 10, gap: 8 }}>
+      ) : !leaveLoading && !leaveError ? (
+        <View style={{ gap: space.xs }}>
           <TouchableOpacity
             testID="leave-from"
             onPress={() => setPicking("from")}
-            style={[styles.pickField, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            style={[
+              styles.pickField,
+              {
+                minHeight: HIT_SLOP_MIN,
+                gap: space.xs,
+                borderRadius: radius.sm,
+                paddingHorizontal: space.sm,
+                paddingVertical: space.xs,
+                borderColor: colors.border,
+              },
+            ]}
             activeOpacity={0.8}
           >
             <Feather name="calendar" size={14} color={colors.mutedForeground} />
-            <Text style={[styles.pickFieldText, { color: from ? colors.foreground : colors.mutedForeground }]}>
+            <Text
+              style={[
+                t.callout,
+                { color: from ? colors.foreground : colors.mutedForeground },
+              ]}
+            >
               {from ? formatBoth(from) : "First day away"}
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
             testID="leave-to"
             onPress={() => setPicking("to")}
-            style={[styles.pickField, { borderColor: colors.border }]}
+            accessibilityRole="button"
+            style={[
+              styles.pickField,
+              {
+                minHeight: HIT_SLOP_MIN,
+                gap: space.xs,
+                borderRadius: radius.sm,
+                paddingHorizontal: space.sm,
+                paddingVertical: space.xs,
+                borderColor: colors.border,
+              },
+            ]}
             activeOpacity={0.8}
           >
             <Feather name="calendar" size={14} color={colors.mutedForeground} />
-            <Text style={[styles.pickFieldText, { color: to ? colors.foreground : colors.mutedForeground }]}>
+            <Text
+              style={[
+                t.callout,
+                { color: to ? colors.foreground : colors.mutedForeground },
+              ]}
+            >
               {to ? formatBoth(to) : "Last day away"}
             </Text>
           </TouchableOpacity>
@@ -986,32 +1710,70 @@ function LeaveList({ formatBoth }: { formatBoth: (v: string | number | Date) => 
             onChangeText={setReason}
             placeholder="Why? (optional — shown back to you)"
             placeholderTextColor={colors.mutedForeground}
-            style={[styles.pickField, { borderColor: colors.border, color: colors.foreground }]}
+            style={[
+              t.body,
+              styles.pickField,
+              {
+                minHeight: HIT_SLOP_MIN,
+                borderRadius: radius.sm,
+                paddingHorizontal: space.sm,
+                paddingVertical: space.xs,
+                borderColor: colors.border,
+                color: colors.foreground,
+              },
+            ]}
           />
-          <View style={{ flexDirection: "row", gap: 8 }}>
+          <View style={{ flexDirection: "row", gap: space.xs }}>
             <TouchableOpacity
               testID="leave-save"
               onPress={() => void save()}
               disabled={!from || !to || busy}
-              style={[styles.smallBtn, { borderColor: colors.primary, opacity: !from || !to ? 0.5 : 1 }]}
+              accessibilityRole="button"
+              style={[
+                styles.smallBtn,
+                {
+                  flex: 1,
+                  borderRadius: radius.sm,
+                  paddingHorizontal: space.sm,
+                  borderColor: colors.primary,
+                  opacity: !from || !to ? 0.5 : 1,
+                },
+              ]}
               activeOpacity={0.8}
             >
               {busy ? (
                 <ActivityIndicator size="small" color={colors.primary} />
               ) : (
-                <Text style={[styles.smallBtnText, { color: colors.primary }]}>Save</Text>
+                <Text style={[t.caption, { color: colors.primary }]}>Save</Text>
               )}
             </TouchableOpacity>
             <TouchableOpacity
-              onPress={() => { setOpen(false); setFrom(null); setTo(null); setReason(""); setProblem(null); }}
-              style={[styles.smallBtn, { borderColor: colors.border }]}
+              onPress={() => {
+                setOpen(false);
+                setFrom(null);
+                setTo(null);
+                setReason("");
+                setProblem(null);
+              }}
+              accessibilityRole="button"
+              style={[
+                styles.smallBtn,
+                {
+                  flex: 1,
+                  borderRadius: radius.sm,
+                  paddingHorizontal: space.sm,
+                  borderColor: colors.border,
+                },
+              ]}
               activeOpacity={0.8}
             >
-              <Text style={[styles.smallBtnText, { color: colors.mutedForeground }]}>Cancel</Text>
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                Cancel
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
-      )}
+      ) : null}
 
       <NepaliDatePicker
         visible={picking !== null}
@@ -1037,10 +1799,20 @@ function LeaveList({ formatBoth }: { formatBoth: (v: string | number | Date) => 
 
 function Stat({ label, value }: { label: string; value: string }) {
   const colors = useColors();
+  const { t, numeric, isCompact, space } = useLayout();
   return (
-    <View style={styles.stat}>
-      <Text style={[styles.statValue, { color: colors.foreground }]}>{value}</Text>
-      <Text style={[styles.statLabel, { color: colors.mutedForeground }]}>{label}</Text>
+    <View
+      style={[
+        styles.stat,
+        { minWidth: isCompact ? "44%" : "28%", gap: space.xxs },
+      ]}
+    >
+      <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>
+        {value}
+      </Text>
+      <Text style={[t.overline, { color: colors.mutedForeground }]}>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -1057,15 +1829,28 @@ function LinkTile({
   testID?: string;
 }) {
   const colors = useColors();
+  const { t, space, radius } = useLayout();
   return (
     <TouchableOpacity
       testID={testID}
       onPress={onPress}
-      style={[styles.tile, { backgroundColor: colors.card, borderColor: colors.border }]}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${label}`}
+      style={[
+        styles.tile,
+        {
+          minHeight: HIT_SLOP_MIN,
+          gap: space.xs,
+          paddingVertical: space.lg,
+          borderRadius: radius.md,
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+        },
+      ]}
       activeOpacity={0.85}
     >
       <Feather name={icon} size={22} color={colors.primary} />
-      <Text style={[styles.tileText, { color: colors.foreground }]}>{label}</Text>
+      <Text style={[t.callout, { color: colors.foreground }]}>{label}</Text>
     </TouchableOpacity>
   );
 }
@@ -1077,86 +1862,73 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  headerTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
-  scroll: { padding: 16 },
-  h1: { fontSize: 24, fontFamily: "Inter_700Bold", marginBottom: 6 },
-  lede: { fontSize: 14.5, fontFamily: "Inter_400Regular", lineHeight: 21, marginBottom: 16 },
-  card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, marginBottom: 14 },
-  price: { fontSize: 30, fontFamily: "Inter_700Bold" },
-  priceHint: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
-  point: { flexDirection: "row", alignItems: "flex-start", gap: 10, marginBottom: 10 },
-  pointText: { flex: 1, fontSize: 14.5, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  backBtn: {
+    width: HIT_SLOP_MIN,
+    height: HIT_SLOP_MIN,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scroll: { width: "100%", maxWidth: readingWidth, alignSelf: "center" },
+  card: { borderWidth: StyleSheet.hairlineWidth },
+  point: { flexDirection: "row", alignItems: "flex-start" },
+  pointText: { flex: 1 },
   notice: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
-    padding: 12,
-    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 14,
   },
-  noticeText: { flex: 1, fontSize: 13.5, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  noticeText: { flex: 1 },
   suspend: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 12,
-    padding: 16,
-    borderRadius: 14,
     borderWidth: 2,
-    marginBottom: 16,
   },
-  suspendTitle: { fontSize: 17, fontFamily: "Inter_700Bold", marginBottom: 4 },
-  suspendBody: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
-  primaryBtn: { borderRadius: 14, paddingVertical: 16, alignItems: "center", marginTop: 4 },
-  primaryBtnText: { color: "#FFFFFF", fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  field: { marginBottom: 14 },
-  fieldLabel: { fontSize: 14.5, fontFamily: "Inter_500Medium", marginBottom: 6 },
-  fieldHint: { fontSize: 12.5, fontFamily: "Inter_400Regular", marginTop: 5, lineHeight: 17 },
-  input: {
-    borderRadius: 12,
+  primaryBtn: {
+    minHeight: HIT_SLOP_MIN,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  outlineBtn: {
+    minHeight: HIT_SLOP_MIN,
+    alignItems: "center",
+    justifyContent: "center",
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 14,
-    paddingVertical: Platform.OS === "ios" ? 14 : 10,
-    fontSize: 15.5,
-    fontFamily: "Inter_400Regular",
   },
-  classSubject: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  classTopic: { fontSize: 14.5, fontFamily: "Inter_400Regular", marginTop: 2, marginBottom: 14 },
-  statRow: { flexDirection: "row", justifyContent: "space-between", marginBottom: 12 },
+  input: {
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  statRow: { flexDirection: "row", flexWrap: "wrap" },
   stat: { flex: 1 },
-  statValue: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
-  statLabel: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  cycleLine: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
-  barTrack: { height: 10, borderRadius: 5, overflow: "hidden", marginTop: 10, marginBottom: 8 },
-  barFill: { height: 10, borderRadius: 5 },
-  todayBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 13, marginBottom: 12 },
-  todayBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: "#fff" },
-  pickField: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, fontFamily: "Inter_400Regular" },
-  pickFieldText: { fontSize: 14, fontFamily: "Inter_400Regular" },
+  barTrack: { overflow: "hidden" },
+  barFill: {},
+  todayBtn: {
+    minHeight: HIT_SLOP_MIN,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pickField: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   missedRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    paddingTop: 12,
-    marginTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  missedWhen: { fontSize: 14.5, fontFamily: "Inter_500Medium" },
-  smallBtn: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 },
-  smallBtnText: { fontSize: 13.5, fontFamily: "Inter_600SemiBold" },
-  linkRow: { flexDirection: "row", gap: 12 },
+  smallBtn: {
+    minHeight: HIT_SLOP_MIN,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  linkRow: { flexDirection: "row" },
   tile: {
     flex: 1,
-    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 22,
     alignItems: "center",
-    gap: 10,
   },
-  tileText: { fontSize: 14.5, fontFamily: "Inter_500Medium" },
 });
