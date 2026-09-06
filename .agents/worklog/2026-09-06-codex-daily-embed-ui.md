@@ -82,3 +82,13 @@
 - Independent review accepted the code after corrections to Leave contrast (**6.30:1**), presenter-label contrast (**12.14:1**), native style memoization, provider-behavior guards, and Windows test-harness portability. Its only final finding was the stale harness sentence corrected above.
 - Lead reran app typecheck, the full **244/244** app test suite, design lint, and `git diff --check`; all passed.
 - The design ratchet was lowered from **179 hex / 349 raw font sizes** to **113 / 339**. Both Daily embed files are now **0 / 0**.
+
+## Commit and preview deployment
+
+- Accepted implementation commit: **`8675b0f`** (`Tokenize and harden Daily video embeds`) on `codex/session-create-ui`, pushed to GitHub.
+- Built with `EXPO_NO_DOTENV=1` against `https://hometuition-api-staging-production.up.railway.app`.
+- Pre-deploy scan found the staging API in two built files and the production API in zero files; Wrangler dry run passed with 242 assets and no bindings.
+- Deployed only the existing `hometuition-preview` Worker. Cloudflare version: **`5489ca58-a40c-4884-ad60-9859fc69198f`**.
+- Post-deploy verification passed: served HTML and all three exact JavaScript bundles matched the local staging build.
+- Preview: `https://hometuition-preview.praksh-dhakal.workers.dev`
+- Production was not changed. No real call, provider setting/account, database, payment, or user data was touched.
