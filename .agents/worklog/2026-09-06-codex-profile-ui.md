@@ -102,3 +102,14 @@
 - The layouts were compiled but not rendered because no browser runtime is installed. Manual checks remain necessary at 390 px and 1440 px, especially long names/emails, credential filenames, rejected reasons, wrapping status labels and the SocialSignIn block.
 - Native file picking, upload progress, attachment opening, deletion and logout were preserved by inspection and typechecking, not exercised on an iPhone or cheap Android phone.
 - The app still has dead profile fields (`sessionsThisMonth`, `monthlyEarnings`, and client-only `enrolledSessions`) outside these two screens. Removing them from shared types/application data is broader than this UI-only slice and was not attempted.
+
+## Commit and preview deployment
+
+- Accepted implementation commit: **`bac8bde`** (`Upgrade teacher and student profiles`) on `codex/session-create-ui`, pushed to GitHub.
+- Built the web app with `EXPO_NO_DOTENV=1` and the staging API `https://hometuition-api-staging-production.up.railway.app`.
+- Pre-deploy scan found the staging API in two built files and the production API in zero files.
+- Wrangler dry run passed with 242 assets and no bindings.
+- Deployed only the existing `hometuition-preview` Worker. Cloudflare version: **`f6975b96-e64e-44b0-afde-663aa4e2da0d`**.
+- The first post-deploy verification saw Cloudflare's previous cached entry bundle. No second deployment was attempted. After 20 seconds, verification passed: served HTML and all three exact JavaScript bundles matched the local build and referenced only the staging API.
+- Preview: `https://hometuition-preview.praksh-dhakal.workers.dev`
+- Production was not deployed or changed. No database, payment, credential, account, or third-party configuration was changed.
