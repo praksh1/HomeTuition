@@ -461,3 +461,102 @@ the source because `docs.daily.co` is blocked here.
 No deployment, merge, `db:push`, shared-database command, Daily webhook registration, retention
 schedule, external-service change or purchase. The only writes were synthetic rows in the local
 test database.
+
+---
+
+## Grouping, reading width and touch targets — claude, 2026-09-06
+
+Codex's four decisions after the visual report, implemented as a UI-only refinement. Verified by
+rendering the same synthetic ticket (`HT-000075`, session 733) again at both widths.
+
+### Changed
+
+- **`artifacts/sikshya/utils/sessionSummaryGroups.ts`** (new) — sorts the summary into "Booking and
+  schedule", "What happened in the classroom" and "What the evidence sources recorded" **on the
+  stable `code`, never on the English**. Categorising on the sentence would break the first time
+  somebody rewords a line, and would move a fact into the wrong group rather than failing — which
+  on an evidence page is the worst kind of bug, because the sentence still looks right where it
+  lands. Numbered codes (`provider_meeting_2`, `participant_source_account_1`, `device_quality_3`)
+  match by prefix, so a class with nine meetings does not scatter.
+- **`sessionSummaryGroups.test.ts`** (new, 9 tests) — including the fallback the brief asked for:
+  an unrecognised code lands in "Other recorded facts" and stays visible. An older web build must
+  cost a heading, never a fact. Also asserts every line survives exactly once, the server's order
+  inside a group is untouched, empty groups are dropped rather than shown as a heading over
+  nothing, and no code belongs to two groups.
+- **`constants/layout.ts`** — added a `readingWidth` token (680). It lives in the design system
+  rather than in one screen because "a value in a screen is a *choice from a list* rather than a
+  number somebody typed" is what that file exists for, and the second screen that needs it must get
+  the same answer.
+- **`app/(admin)/ticket/[id].tsx`** — the three groups rendered under `accessibilityRole="header"`
+  headings; `maxWidth: readingWidth` with `width: "100%"` and `alignSelf: "center"` on the scroll
+  content; `minHeight: HIT_SLOP_MIN` plus `justifyContent: "center"` on the shared action style and
+  on the internal-note row. `HIT_SLOP_MIN` already existed at 44 — used rather than a fresh literal.
+
+Nothing server-side was touched: no narrative calculation, no evidence meaning, no ordering, no
+query, no schema.
+
+### Measured, at 390×844 and 1440×900
+
+| Check | phone | laptop |
+|---|---|---|
+| Group headings, each exactly once | pass | pass |
+| Every server fact in the summary panel | **17 present, 0 missing, 0 duplicated** | same |
+| Stray "Other recorded facts" | none | none |
+| Widest column of running text | 324 px | **582 px** (was the full 1408 px) |
+| Horizontal scroll | none | none |
+| Elements overflowing the viewport | none | none |
+| Clipped text | none | none |
+| Text below 11 px | none | none |
+| Console or page errors | none | none |
+| Scrolling reaches the end | 7,591 px over 844 px, 8 captures | 6,381 px over 900 px, 8 captures |
+| `admin-note` ("Save note") | **46×77** (was 44×34) | **89×60** |
+| Every `admin-move-*` status button | 46×77 | 89×60 |
+| "Grant a full refund" | 324×59 | 582×59 |
+| Internal-note toggle | 324×44 (was ~17) | 582×44 |
+| Overlap between adjacent action controls | none | none |
+| Provider meetings separate, Nepal-time labels, cautions distinct | pass | pass |
+| No provider/connection/event id, room name or `user <n>` | pass | pass |
+| No wording deciding fault or promising money | pass | pass |
+
+The amber "What this record cannot confirm yet" / "Source cautions" panel now closes the evidence
+group rather than floating after everything, which is where it belongs and where it stays visually
+distinct.
+
+### Two things worth knowing
+
+**My own retention suite ate the fixture.** `test:retention` runs sweeps with `nowMs` set 31 days
+into the future, and a sweep processes *every* candidate class in the database, not only the ones
+that suite created. Running it deleted session 733's provider events and quality samples, and the
+first re-render silently lost the provider meetings and the whole timeline. Not a product defect —
+the sweep behaved exactly as designed — but a real trap for anyone sharing one test database
+between the suites and a rendering fixture. Re-seeded and re-rendered.
+
+**A "duplicated fact" that was not one.** The first pass flagged `reporter_booking` as appearing
+twice. It appears once in the summary and once in the chronological timeline, which is the
+narrative's own design. The check was measuring the whole page; it now scopes to the summary panel,
+which is what "no line was dropped or duplicated by grouping" actually means.
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| focused `sessionCaseNarrative.test.ts` | **19 passed, 0 failed** |
+| focused `sessionSummaryGroups.test.ts` | **9 passed, 0 failed** |
+| `pnpm --filter @workspace/api-server run test` | **424 passed, 0 failed** |
+| `pnpm --filter @workspace/sikshya run test` | **224 passed, 0 failed** (was 215) |
+| `pnpm run typecheck` (4 packages) | clean |
+| `pnpm --filter @workspace/sikshya run lint:design` | no new leaks; 204 hex / 418 sizes |
+| `git diff --check` | clean |
+
+### Screenshots
+
+`/tmp/claude-0/-home-user-HomeTuition/dfaf26b1-4dec-5cf0-9e29-e2224fdc575f/scratchpad/shots/` —
+`phone-390x844-01.png` … `-08.png`, `laptop-1440x900-01.png` … `-08.png`, plus the rendered text of
+each. Temporary scratch, outside the repository, not committed, and gone when this container is.
+
+### Not verified
+
+Real hardware, again: this is headless Chromium at two window sizes and says nothing about a cheap
+Android phone's paint speed or touch behaviour. No new packages, animations or heavy components
+were added, so the performance profile should be unchanged — but "should be" is not a measurement.
+Daily ingestion remains disabled; nothing was registered, enabled or bought.

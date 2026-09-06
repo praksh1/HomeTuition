@@ -9,6 +9,8 @@ import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost, attachmentUrl } from "@/utils/api";
 import { confirm, notify } from "@/utils/alerts";
 import { openAttachment as openFile } from "@/utils/openAttachment";
+import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
+import { groupSessionSummary } from "@/utils/sessionSummaryGroups";
 import type { TicketEvent } from "@/utils/tickets";
 
 /**
@@ -226,6 +228,17 @@ export default function AdminTicket() {
         gap: space.md,
         paddingTop: insets.top + space.md,
         paddingBottom: insets.bottom + space.xl,
+        /*
+          A column of text, not a window's worth.
+
+          At 1440px these evidence sentences ran to about 180 characters and the eye lost its
+          place coming back to the start of the next line. `maxWidth` with `width: "100%"` caps
+          the wide case and leaves a phone exactly as it was, so nothing here can introduce a
+          horizontal scroll on the screen size that matters most.
+        */
+        width: "100%",
+        maxWidth: readingWidth,
+        alignSelf: "center",
       }]}
     >
       <View style={styles.header}>
@@ -309,10 +322,20 @@ export default function AdminTicket() {
                   <Text style={[t.caption, { color: colors.mutedForeground }]}>Readable facts for this case</Text>
                 </View>
               </View>
-              {caseNarrative.summary.map((line) => (
-                <View key={line.code} style={styles.summaryLine}>
-                  <View style={[styles.summaryDot, { backgroundColor: colors.primary }]} />
-                  <Text style={[t.body, { color: colors.foreground, flex: 1 }]}>{line.detail}</Text>
+              {groupSessionSummary(caseNarrative.summary).map((group) => (
+                <View key={group.id} style={{ gap: space.xs }}>
+                  <Text
+                    accessibilityRole="header"
+                    style={[t.caption, { color: colors.mutedForeground, marginTop: space.xs }]}
+                  >
+                    {group.heading}
+                  </Text>
+                  {group.lines.map((line) => (
+                    <View key={line.code} style={styles.summaryLine}>
+                      <View style={[styles.summaryDot, { backgroundColor: colors.primary }]} />
+                      <Text style={[t.body, { color: colors.foreground, flex: 1 }]}>{line.detail}</Text>
+                    </View>
+                  ))}
                 </View>
               ))}
               <View style={[styles.limitations, { backgroundColor: colors.warnSoft, borderRadius: radius.sm, padding: space.md, gap: space.xs }]}>
@@ -587,7 +610,9 @@ const styles = StyleSheet.create({
   reason: { fontSize: 12, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.4 },
   reasonRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   statusChip: { fontSize: 11, fontFamily: "Inter_600SemiBold", borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, overflow: "hidden" },
-  internalRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  // The row is one control, so the whole row carries the minimum height rather than the 16px
+  // icon inside it.
+  internalRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4, minHeight: HIT_SLOP_MIN },
   internalText: { fontSize: 13, fontFamily: "Inter_400Regular" },
   event: { gap: 2, paddingTop: 10 },
   eventLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
@@ -618,6 +643,13 @@ const styles = StyleSheet.create({
   msgWho: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   input: { borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 90, fontSize: 14, fontFamily: "Inter_400Regular" },
   actions: { flexDirection: "row", gap: 10, marginTop: 4 },
-  action: { flex: 1, alignItems: "center", borderRadius: 12, borderWidth: 1, paddingVertical: 12 },
+  // `paddingVertical` alone left "Save note" at 34px high on a phone, because the padding is
+  // added to a 14px line rather than to a minimum. `minHeight` sets the floor and the padding
+  // still grows it wherever the type scale is larger; `justifyContent` keeps the label centred
+  // when the floor is doing the work.
+  action: {
+    flex: 1, alignItems: "center", justifyContent: "center", borderRadius: 12, borderWidth: 1,
+    paddingVertical: 12, minHeight: HIT_SLOP_MIN,
+  },
   actionText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
 });
