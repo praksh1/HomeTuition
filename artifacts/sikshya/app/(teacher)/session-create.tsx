@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -19,6 +20,9 @@ import { ApiError, apiGet, apiPatch, apiPost } from "@/utils/api";
 import { useDates } from "@/context/DatePreferenceContext";
 import NepaliDatePicker from "@/components/NepaliDatePicker";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN, readingWidth, space as layoutSpace } from "@/constants/layout";
+import { allowancePresentation, limitDetailsFromResponse, type SessionAllowanceSummary, type SessionLimitDetails } from "@/utils/sessionCreateAllowance";
 import { useNotifications } from "@/context/NotificationContext";
 import { scheduleSessionReminder } from "@/utils/notifications";
 import type { Teacher } from "@/context/AuthContext";
@@ -38,6 +42,7 @@ interface InvitableStudent {
 export default function SessionCreate() {
   const { user } = useAuth();
   const colors = useColors();
+  const { t, numeric, gutter, space, radius, elevation, isCompact } = useLayout();
   const insets = useSafeAreaInsets();
   const teacher = user as Teacher;
 
@@ -54,6 +59,10 @@ export default function SessionCreate() {
   const [pickingDate, setPickingDate] = useState(false);
   const [time, setTime] = useState("");
   const [saving, setSaving] = useState(false);
+  const [allowance, setAllowance] = useState<SessionAllowanceSummary | null>(null);
+  const [allowanceLoading, setAllowanceLoading] = useState(true);
+  const [allowanceUnavailable, setAllowanceUnavailable] = useState(false);
+  const [limitDetails, setLimitDetails] = useState<SessionLimitDetails | null>(null);
   /**
    * Students to tell about this class: the teacher's followers and anyone who has taken a
    * paid class with them. Telling them is all this does — they book and pay like anyone else,
@@ -64,7 +73,22 @@ export default function SessionCreate() {
   const [showInvites, setShowInvites] = useState(false);
   const { refresh: refreshNotifs, preferences } = useNotifications();
 
+  const refreshAllowance = React.useCallback(async () => {
+    setAllowanceLoading(true);
+    setAllowanceUnavailable(false);
+    try {
+      setAllowance(await apiGet<SessionAllowanceSummary>("/teachers/me/allowance"));
+    } catch {
+      // Unknown is not zero. The server still enforces the exact allowance when the form is sent.
+      setAllowance(null);
+      setAllowanceUnavailable(true);
+    } finally {
+      setAllowanceLoading(false);
+    }
+  }, []);
+
   React.useEffect(() => {
+    void refreshAllowance();
     (async () => {
       try {
         const res = await apiGet<{ subjects: string[] }>("/sessions/subjects");
@@ -79,7 +103,14 @@ export default function SessionCreate() {
         // No list is the same as an empty one here: the section simply does not appear.
       }
     })();
-  }, []);
+  }, [refreshAllowance]);
+
+  // A refusal applies to the date that was checked. Changing that date gives the server a new
+  // question, so restore the actions and let the server decide again rather than keeping a stale
+  // client-side lock in force.
+  React.useEffect(() => {
+    setLimitDetails(null);
+  }, [date, time]);
 
   const effectiveSubject = isCustomSubject ? customSubject.trim() : subject;
 
@@ -112,6 +143,18 @@ export default function SessionCreate() {
   const reportInvalid = (message: string) => {
     if (Platform.OS === "web") window.alert(`Missing Info\n\n${message}`);
     else Alert.alert("Missing Info", message);
+  };
+
+  /**
+   * A plan refusal belongs on the screen where the teacher can act on it, not in a dismissible
+   * alert. Keep the server's words and refresh the server-owned summary; never calculate a tier
+   * or price from client defaults.
+   */
+  const showPlanLimit = (error: unknown): boolean => {
+    if (!(error instanceof ApiError) || error.status !== 402) return false;
+    setLimitDetails(limitDetailsFromResponse(error.message, error.data));
+    void refreshAllowance();
+    return true;
   };
 
   const handleCreate = async () => {
@@ -156,14 +199,13 @@ export default function SessionCreate() {
        * a later date or an upgrade. Telling them to re-read a correct form sends them round a
        * loop with no way out of it.
        */
-      const overPlan = _e instanceof ApiError && _e.status === 402;
-      const title = overPlan ? "Plan limit reached" : "Error";
+      if (showPlanLimit(_e)) return;
       const message =
         _e instanceof ApiError && _e.message
           ? _e.message
           : "Failed to create session. Please check your inputs and try again.";
-      if (Platform.OS === "web") window.alert(`${title}\n\n${message}`);
-      else Alert.alert(title, message);
+      if (Platform.OS === "web") window.alert(`Error\n\n${message}`);
+      else Alert.alert("Error", message);
     } finally {
       setSaving(false);
     }
@@ -203,14 +245,13 @@ export default function SessionCreate() {
       } else {
         // Nothing was created, so the refusal is about the class itself — most often the plan's
         // allowance. Same reasoning as the scheduled path above: say what the server said.
-        const overPlan = _e instanceof ApiError && _e.status === 402;
-        const title = overPlan ? "Plan limit reached" : "Error";
+        if (showPlanLimit(_e)) return;
         const message =
           _e instanceof ApiError && _e.message
             ? _e.message
             : "Failed to start the live session. Please try again.";
-        if (Platform.OS === "web") window.alert(`${title}\n\n${message}`);
-        else Alert.alert(title, message);
+        if (Platform.OS === "web") window.alert(`Error\n\n${message}`);
+        else Alert.alert("Error", message);
       }
     } finally {
       setSaving(false);
@@ -218,21 +259,77 @@ export default function SessionCreate() {
   };
 
   const dates = useDates();
+  const allowanceView = allowance ? allowancePresentation(allowance) : null;
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
       <ScrollView
         style={{ backgroundColor: colors.background }}
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 120 }]}
+        contentContainerStyle={[
+          styles.container,
+          {
+            alignSelf: "center",
+            maxWidth: readingWidth,
+            paddingHorizontal: gutter,
+            paddingTop: insets.top + space.md,
+            paddingBottom: insets.bottom + space.huge * 2 + space.xl,
+          },
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Close new session" onPress={() => router.back()} style={styles.backBtn}>
             <Feather name="x" size={22} color={colors.foreground} />
           </TouchableOpacity>
-          <Text style={[styles.title, { color: colors.foreground }]}>New Session</Text>
-          <View style={{ width: 38 }} />
+          <Text accessibilityRole="header" style={[t.title1, { color: colors.foreground }]}>New Session</Text>
+          <View style={styles.headerBalance} />
+        </View>
+
+        <View
+          accessibilityLiveRegion="polite"
+          style={[
+            styles.allowanceCard,
+            {
+              backgroundColor: allowanceView?.isFullAtBusiestPoint ? colors.warnSoft : colors.card,
+              borderColor: allowanceView?.isFullAtBusiestPoint ? colors.warn : colors.border,
+              borderRadius: radius.md,
+              padding: space.md,
+              gap: space.sm,
+            },
+            elevation.card,
+          ]}
+        >
+          {allowanceLoading ? (
+            <View style={[styles.allowanceRow, { gap: space.sm }]}>
+              <ActivityIndicator color={colors.primary} accessibilityLabel="Checking teaching plan" />
+              <Text style={[t.callout, { color: colors.mutedForeground }]}>Checking your teaching plan…</Text>
+            </View>
+          ) : allowanceUnavailable ? (
+            <View style={[styles.allowanceRow, { gap: space.sm }]}>
+              <Feather name="alert-circle" size={20} color={colors.warn} />
+              <View style={styles.allowanceText}>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>Plan status unavailable</Text>
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>You can complete the form. Sikshya will check your exact allowance before creating the class.</Text>
+              </View>
+            </View>
+          ) : allowanceView && allowance ? (
+            <View style={[styles.allowanceRow, { gap: space.sm }]}>
+              <Feather
+                name={allowanceView.isFullAtBusiestPoint ? "alert-triangle" : "check-circle"}
+                size={20}
+                color={allowanceView.isFullAtBusiestPoint ? colors.warn : colors.success}
+              />
+              <View style={styles.allowanceText}>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>{allowanceView.heading}</Text>
+                <Text style={[t.callout, numeric, { color: colors.mutedForeground }]}>{allowanceView.usage}</Text>
+                <Text style={[t.caption, numeric, { color: allowance.testAccess ? colors.warn : colors.inkFaint }]}>{allowanceView.billing}</Text>
+                {allowance.testAccess && (
+                  <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>Access ends {dates.format(allowance.testAccess.validUntil, { withTime: true })}.</Text>
+                )}
+              </View>
+            </View>
+          ) : null}
         </View>
 
         <Section title="Subject">
@@ -240,26 +337,30 @@ export default function SessionCreate() {
             {subjects.map((s) => (
               <TouchableOpacity
                 key={s}
-                style={[styles.chip, { borderColor: !isCustomSubject && subject === s ? colors.primary : colors.border, backgroundColor: !isCustomSubject && subject === s ? colors.primary + "12" : colors.muted }]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: !isCustomSubject && subject === s }}
+                style={[styles.chip, { borderColor: !isCustomSubject && subject === s ? colors.primary : colors.border, backgroundColor: !isCustomSubject && subject === s ? colors.actionSoft : colors.muted, borderRadius: radius.lg, paddingHorizontal: space.sm }]}
                 onPress={() => { setIsCustomSubject(false); setSubject(s); }}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.chipText, { color: !isCustomSubject && subject === s ? colors.primary : colors.mutedForeground }]}>{s}</Text>
+                <Text style={[t.caption, { color: !isCustomSubject && subject === s ? colors.primary : colors.mutedForeground }]}>{s}</Text>
               </TouchableOpacity>
             ))}
             <TouchableOpacity
-              style={[styles.chip, { flexDirection: "row", alignItems: "center", borderColor: isCustomSubject ? colors.primary : colors.border, backgroundColor: isCustomSubject ? colors.primary + "12" : colors.muted }]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isCustomSubject }}
+              style={[styles.chip, { borderColor: isCustomSubject ? colors.primary : colors.border, backgroundColor: isCustomSubject ? colors.actionSoft : colors.muted, borderRadius: radius.lg, paddingHorizontal: space.sm }]}
               onPress={() => setIsCustomSubject(true)}
               activeOpacity={0.7}
             >
-              <Feather name="plus" size={12} color={isCustomSubject ? colors.primary : colors.mutedForeground} style={{ marginRight: 4 }} />
-              <Text style={[styles.chipText, { color: isCustomSubject ? colors.primary : colors.mutedForeground }]}>{CUSTOM_SUBJECT_OPTION}</Text>
+              <Feather name="plus" size={12} color={isCustomSubject ? colors.primary : colors.mutedForeground} style={{ marginRight: space.xxs }} />
+              <Text style={[t.caption, { color: isCustomSubject ? colors.primary : colors.mutedForeground }]}>{CUSTOM_SUBJECT_OPTION}</Text>
             </TouchableOpacity>
           </View>
           {isCustomSubject && (
-            <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border, marginTop: 4 }]}>
+            <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm, marginTop: space.xxs }]}>
               <TextInput
-                style={[styles.input, { color: colors.foreground }]}
+                style={[styles.input, t.body, { color: colors.foreground }]}
                 placeholder="e.g. Music Theory"
                 placeholderTextColor={colors.mutedForeground}
                 value={customSubject}
@@ -271,9 +372,9 @@ export default function SessionCreate() {
         </Section>
 
         <Section title="Session Topic *">
-          <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm }]}>
             <TextInput
-              style={[styles.input, { color: colors.foreground }]}
+              style={[styles.input, t.body, { color: colors.foreground }]}
               placeholder="e.g. Calculus: Introduction to Derivatives"
               placeholderTextColor={colors.mutedForeground}
               value={topic}
@@ -283,9 +384,9 @@ export default function SessionCreate() {
         </Section>
 
         <Section title="Description">
-          <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+          <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm }]}>
             <TextInput
-              style={[styles.input, { color: colors.foreground, minHeight: 70 }]}
+              style={[styles.input, styles.descriptionInput, t.body, { color: colors.foreground }]}
               placeholder="What will students learn in this session?"
               placeholderTextColor={colors.mutedForeground}
               value={description}
@@ -296,7 +397,7 @@ export default function SessionCreate() {
           </View>
         </Section>
 
-        <View style={styles.row}>
+        <View style={[styles.row, { flexDirection: isCompact ? "column" : "row", gap: space.sm }]}>
           <View style={{ flex: 1 }}>
             <Section title="Date *">
               {/*
@@ -309,15 +410,18 @@ export default function SessionCreate() {
               */}
               <TouchableOpacity
                 testID="session-date-btn"
+                accessibilityRole="button"
+                accessibilityLabel="Choose session date"
                 onPress={() => setPickingDate(true)}
                 activeOpacity={0.8}
-                style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}
+                style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md }]}
               >
-                <Feather name="calendar" size={16} color={colors.mutedForeground} style={{ marginRight: 8 }} />
+                <Feather name="calendar" size={16} color={colors.mutedForeground} style={{ marginRight: space.xs }} />
                 <Text
                   style={[
                     styles.input,
-                    { color: date ? colors.foreground : colors.mutedForeground, paddingVertical: 12 },
+                    t.body,
+                    { color: date ? colors.foreground : colors.mutedForeground, paddingVertical: space.sm },
                   ]}
                 >
                   {date ? dates.format(`${date}T00:00:00`, { withWeekday: true }) : "Choose a date"}
@@ -327,28 +431,27 @@ export default function SessionCreate() {
           </View>
           <View style={{ flex: 1 }}>
             <Section title="Time *">
-              <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                <Feather name="clock" size={16} color={colors.mutedForeground} style={{ marginRight: 8 }} />
+              <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm }]}>
+                <Feather name="clock" size={16} color={colors.mutedForeground} style={{ marginRight: space.xs }} />
                 {Platform.OS === "web" ? (
                   React.createElement("input", {
                     type: "time",
                     value: time,
                     onChange: (e: any) => setTime(e.target.value),
                     style: {
+                      ...t.body,
                       flex: 1,
                       border: "none",
                       outline: "none",
                       background: "transparent",
-                      fontSize: 15,
-                      fontFamily: "Inter_400Regular",
                       color: colors.foreground,
                       width: "100%",
-                      colorScheme: colors.background === "#0A0A0A" || colors.background === "#000000" ? "dark" : "light",
+                      colorScheme: "light",
                     },
                   })
                 ) : (
                   <TextInput
-                    style={[styles.input, { color: colors.foreground }]}
+                    style={[styles.input, t.body, { color: colors.foreground }]}
                     placeholder="HH:MM"
                     placeholderTextColor={colors.mutedForeground}
                     value={time}
@@ -365,11 +468,13 @@ export default function SessionCreate() {
             {DURATIONS.map((d) => (
               <TouchableOpacity
                 key={d}
-                style={[styles.pillChip, { borderColor: duration === d ? colors.primary : colors.border, backgroundColor: duration === d ? colors.primary : colors.muted }]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: duration === d }}
+                style={[styles.pillChip, { borderColor: duration === d ? colors.primary : colors.border, backgroundColor: duration === d ? colors.primary : colors.muted, borderRadius: radius.lg, paddingHorizontal: space.md }]}
                 onPress={() => setDuration(d)}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.pillText, { color: duration === d ? "#fff" : colors.mutedForeground }]}>{d} min</Text>
+                <Text style={[t.callout, numeric, { color: duration === d ? colors.primaryForeground : colors.mutedForeground }]}>{d} min</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -380,21 +485,23 @@ export default function SessionCreate() {
             {MAX_STUDENTS_OPTIONS.map((n) => (
               <TouchableOpacity
                 key={n}
-                style={[styles.pillChip, { borderColor: maxStudents === n ? colors.primary : colors.border, backgroundColor: maxStudents === n ? colors.primary : colors.muted }]}
+                accessibilityRole="button"
+                accessibilityState={{ selected: maxStudents === n }}
+                style={[styles.pillChip, { borderColor: maxStudents === n ? colors.primary : colors.border, backgroundColor: maxStudents === n ? colors.primary : colors.muted, borderRadius: radius.lg, paddingHorizontal: space.md }]}
                 onPress={() => setMaxStudents(n)}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.pillText, { color: maxStudents === n ? "#fff" : colors.mutedForeground }]}>{n}</Text>
+                <Text style={[t.callout, numeric, { color: maxStudents === n ? colors.primaryForeground : colors.mutedForeground }]}>{n}</Text>
               </TouchableOpacity>
             ))}
           </View>
         </Section>
 
         <Section title="Session Price (NPR)">
-          <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-            <Text style={[styles.currency, { color: colors.mutedForeground }]}>NPR</Text>
+          <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm }]}>
+            <Text style={[t.bodyStrong, { color: colors.mutedForeground, marginRight: space.xs }]}>NPR</Text>
             <TextInput
-              style={[styles.input, { color: colors.foreground }]}
+              style={[styles.input, t.body, numeric, { color: colors.foreground }]}
               placeholder="500"
               placeholderTextColor={colors.mutedForeground}
               value={price}
@@ -410,12 +517,14 @@ export default function SessionCreate() {
         {invitable.length > 0 && (
           <Section title="Tell your students">
             <TouchableOpacity
-              style={[styles.inviteToggle, { backgroundColor: colors.muted, borderColor: colors.border }]}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showInvites }}
+              style={[styles.inviteToggle, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: space.sm, paddingVertical: space.sm, gap: space.xs }]}
               onPress={() => setShowInvites((v) => !v)}
               activeOpacity={0.8}
             >
               <Feather name="users" size={15} color={colors.mutedForeground} />
-              <Text style={[styles.inviteToggleText, { color: colors.foreground }]}>
+              <Text style={[styles.inviteToggleText, t.callout, { color: colors.foreground }]}>
                 {invited.length > 0
                   ? `${invited.length} of ${invitable.length} will be notified`
                   : `Notify students who follow you (${invitable.length})`}
@@ -424,13 +533,13 @@ export default function SessionCreate() {
             </TouchableOpacity>
 
             {showInvites && (
-              <View style={[styles.inviteList, { borderColor: colors.border }]}>
-                <View style={styles.inviteActions}>
-                  <TouchableOpacity onPress={() => setInvited(invitable.map((s) => s.id))} activeOpacity={0.7}>
-                    <Text style={[styles.inviteAction, { color: colors.primary }]}>Select all</Text>
+              <View style={[styles.inviteList, { borderColor: colors.border, borderRadius: radius.md, marginTop: space.xs }]}>
+                <View style={[styles.inviteActions, { paddingHorizontal: space.sm, paddingVertical: space.xs }]}>
+                  <TouchableOpacity accessibilityRole="button" style={styles.smallAction} onPress={() => setInvited(invitable.map((s) => s.id))} activeOpacity={0.7}>
+                    <Text style={[t.caption, { color: colors.primary }]}>Select all</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity onPress={() => setInvited([])} activeOpacity={0.7}>
-                    <Text style={[styles.inviteAction, { color: colors.mutedForeground }]}>Clear</Text>
+                  <TouchableOpacity accessibilityRole="button" style={styles.smallAction} onPress={() => setInvited([])} activeOpacity={0.7}>
+                    <Text style={[t.caption, { color: colors.mutedForeground }]}>Clear</Text>
                   </TouchableOpacity>
                 </View>
 
@@ -439,7 +548,9 @@ export default function SessionCreate() {
                   return (
                     <TouchableOpacity
                       key={student.id}
-                      style={[styles.inviteRow, { borderTopColor: colors.border }]}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: on }}
+                      style={[styles.inviteRow, { borderTopColor: colors.border, gap: space.sm, paddingHorizontal: space.sm, paddingVertical: space.sm }]}
                       onPress={() =>
                         setInvited((prev) =>
                           prev.includes(student.id) ? prev.filter((id) => id !== student.id) : [...prev, student.id],
@@ -447,12 +558,12 @@ export default function SessionCreate() {
                       }
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.inviteCheck, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? colors.primary : "transparent" }]}>
-                        {on && <Feather name="check" size={12} color="#fff" />}
+                      <View style={[styles.inviteCheck, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? colors.primary : "transparent", borderRadius: radius.xs }]}>
+                        {on && <Feather name="check" size={12} color={colors.primaryForeground} />}
                       </View>
                       <View style={styles.inviteWho}>
-                        <Text style={[styles.inviteName, { color: colors.foreground }]}>{student.name}</Text>
-                        <Text style={[styles.inviteWhy, { color: colors.mutedForeground }]}>
+                        <Text style={[t.callout, { color: colors.foreground }]}>{student.name}</Text>
+                        <Text style={[t.caption, { color: colors.mutedForeground, marginTop: space.xxs }]}>
                           {student.pastStudent && student.follower
                             ? "Follows you · has taken a class"
                             : student.pastStudent
@@ -464,7 +575,7 @@ export default function SessionCreate() {
                   );
                 })}
 
-                <Text style={[styles.inviteNote, { color: colors.mutedForeground }]}>
+                <Text style={[t.caption, { color: colors.mutedForeground, paddingHorizontal: space.sm, paddingVertical: space.sm }]}>
                   They will get a notification with a link. They still book and pay for the class
                   in the usual way — this does not reserve a place for them.
                 </Text>
@@ -473,32 +584,88 @@ export default function SessionCreate() {
           </Section>
         )}
 
-        <View style={[styles.summaryBox, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+        <View style={[styles.summaryBox, { backgroundColor: colors.muted, borderColor: colors.border, borderRadius: radius.md, padding: space.sm, gap: space.xs }]}>
           <Feather name="info" size={15} color={colors.mutedForeground} />
-          <Text style={[styles.summaryText, { color: colors.mutedForeground }]}>
-            Sikshya records all sessions. Copyrights belong to the platform. Student payments are processed securely via eSewa/Khalti.
+          <Text style={[styles.summaryText, t.caption, { color: colors.mutedForeground }]}>
+            Students can book after this class is published. Your teaching-plan allowance is checked again when you create it.
           </Text>
         </View>
 
-        <TouchableOpacity
-          style={[styles.goLiveBtn, { backgroundColor: colors.success }, saving && { opacity: 0.7 }]}
-          onPress={handleGoLive}
-          disabled={saving}
-          activeOpacity={0.85}
-        >
-          <Feather name="radio" size={20} color="#fff" />
-          <Text style={styles.createBtnText}>Create & Go Live Now</Text>
-        </TouchableOpacity>
+        {limitDetails ? (
+          <View
+            accessibilityLiveRegion="assertive"
+            style={[
+              styles.limitCard,
+              {
+                backgroundColor: colors.warnSoft,
+                borderColor: colors.warn,
+                borderRadius: radius.md,
+                padding: space.md,
+                gap: space.sm,
+              },
+            ]}
+          >
+            <View style={[styles.allowanceRow, { gap: space.sm }]}>
+              <Feather name="lock" size={20} color={colors.warn} />
+              <View style={styles.allowanceText}>
+                <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>This class does not fit your plan</Text>
+                <Text style={[t.body, { color: colors.foreground }]}>{limitDetails.message}</Text>
+                {limitDetails.freesAt && (
+                  <Text style={[t.callout, numeric, { color: colors.warn }]}>Earliest date this class would fit: {dates.format(limitDetails.freesAt, { withTime: true })}.</Text>
+                )}
+              </View>
+            </View>
 
-        <TouchableOpacity
-          style={[styles.createBtn, { backgroundColor: colors.primary }, saving && { opacity: 0.7 }]}
-          onPress={handleCreate}
-          disabled={saving}
-          activeOpacity={0.85}
-        >
-          <Feather name="calendar" size={20} color="#fff" />
-          <Text style={styles.createBtnText}>{saving ? "Saving..." : "Schedule for Later"}</Text>
-        </TouchableOpacity>
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={[styles.actionButton, { backgroundColor: colors.primary, borderRadius: radius.sm, paddingHorizontal: space.md }]}
+              onPress={() => router.push(limitDetails.upgradeTo ? "/(teacher)/subscription" : "/(teacher)/sessions")}
+              activeOpacity={0.85}
+            >
+              <Feather name={limitDetails.upgradeTo ? "arrow-up-circle" : "calendar"} size={20} color={colors.primaryForeground} />
+              <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>
+                {limitDetails.upgradeTo ? "View teaching-plan options" : "Review scheduled classes"}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={[styles.actionButton, { borderColor: colors.primary, borderRadius: radius.sm, paddingHorizontal: space.md }]}
+              onPress={() => {
+                setLimitDetails(null);
+                setPickingDate(true);
+              }}
+              activeOpacity={0.75}
+            >
+              <Feather name="edit-2" size={18} color={colors.primary} />
+              <Text style={[t.bodyStrong, { color: colors.primary }]}>Choose another date</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={[styles.actionButton, { borderColor: colors.primary, borderRadius: radius.sm, paddingHorizontal: space.md }, saving && styles.disabled]}
+              onPress={handleGoLive}
+              disabled={saving}
+              activeOpacity={0.75}
+            >
+              <Feather name="radio" size={20} color={colors.primary} />
+              <Text style={[t.bodyStrong, { color: colors.primary }]}>Create & Go Live Now</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              accessibilityRole="button"
+              style={[styles.actionButton, { backgroundColor: colors.primary, borderRadius: radius.sm, paddingHorizontal: space.md }, saving && styles.disabled]}
+              onPress={handleCreate}
+              disabled={saving}
+              activeOpacity={0.85}
+            >
+              <Feather name="calendar" size={20} color={colors.primaryForeground} />
+              <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{saving ? "Saving..." : "Schedule for Later"}</Text>
+            </TouchableOpacity>
+          </>
+        )}
         <NepaliDatePicker
         visible={pickingDate}
         value={date ? new Date(`${date}T00:00:00`) : null}
@@ -519,45 +686,52 @@ export default function SessionCreate() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const colors = useColors();
+  const { t, space } = useLayout();
   return (
-    <View style={styles.section}>
-      <Text style={[styles.sectionTitle, { color: colors.foreground }]}>{title}</Text>
+    <View style={[styles.section, { gap: space.xs }]}>
+      <Text style={[t.bodyStrong, { color: colors.foreground }]}>{title}</Text>
       {children}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 20 },
+  container: { width: "100%", gap: layoutSpace.lg },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  backBtn: { width: 38, height: 38, justifyContent: "center" },
-  title: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  section: { gap: 10 },
-  sectionTitle: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  chipGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 7 },
-  chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  inputWrap: { flexDirection: "row", alignItems: "center", borderRadius: 14, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 13 },
-  input: { flex: 1, fontSize: 15, fontFamily: "Inter_400Regular" },
-  currency: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginRight: 8 },
-  row: { flexDirection: "row", gap: 12 },
-  chipRow: { flexDirection: "row", gap: 10 },
-  pillChip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 18, paddingVertical: 9 },
-  pillText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  inviteToggle: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 13 },
-  inviteToggleText: { flex: 1, fontSize: 14, fontFamily: "Inter_500Medium" },
-  inviteList: { marginTop: 10, borderWidth: 1, borderRadius: 14, overflow: "hidden" },
-  inviteActions: { flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 14, paddingVertical: 10 },
-  inviteAction: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  inviteRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth },
-  inviteCheck: { width: 20, height: 20, borderRadius: 6, borderWidth: 1.5, alignItems: "center", justifyContent: "center" },
+  backBtn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, justifyContent: "center" },
+  headerBalance: { width: HIT_SLOP_MIN },
+  allowanceCard: { borderWidth: 1 },
+  allowanceRow: { flexDirection: "row", alignItems: "flex-start" },
+  allowanceText: { flex: 1, gap: layoutSpace.xxs },
+  section: {},
+  chipGrid: { flexDirection: "row", flexWrap: "wrap", gap: layoutSpace.xs },
+  chip: { flexDirection: "row", alignItems: "center", borderWidth: 1, minHeight: HIT_SLOP_MIN, paddingVertical: layoutSpace.xs },
+  inputWrap: { flexDirection: "row", alignItems: "center", borderWidth: 1, minHeight: HIT_SLOP_MIN },
+  input: { flex: 1 },
+  descriptionInput: { minHeight: layoutSpace.huge + layoutSpace.xl },
+  row: {},
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: layoutSpace.xs },
+  pillChip: { borderWidth: 1, minHeight: HIT_SLOP_MIN, justifyContent: "center", paddingVertical: layoutSpace.xs },
+  inviteToggle: { flexDirection: "row", alignItems: "center", borderWidth: 1, minHeight: HIT_SLOP_MIN },
+  inviteToggleText: { flex: 1 },
+  inviteList: { borderWidth: 1, overflow: "hidden" },
+  inviteActions: { flexDirection: "row", justifyContent: "space-between" },
+  smallAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center" },
+  inviteRow: { flexDirection: "row", alignItems: "center", minHeight: HIT_SLOP_MIN, borderTopWidth: StyleSheet.hairlineWidth },
+  inviteCheck: { width: layoutSpace.lg, height: layoutSpace.lg, borderWidth: 1, alignItems: "center", justifyContent: "center" },
   inviteWho: { flex: 1 },
-  inviteName: { fontSize: 14.5, fontFamily: "Inter_500Medium" },
-  inviteWhy: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 1 },
-  inviteNote: { fontSize: 12, fontFamily: "Inter_400Regular", lineHeight: 17, paddingHorizontal: 14, paddingVertical: 12 },
-  summaryBox: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderRadius: 14, borderWidth: 1, padding: 14 },
-  summaryText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  goLiveBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 16, paddingVertical: 17 },
-  createBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 16, paddingVertical: 17 },
-  createBtnText: { fontSize: 16, fontFamily: "Inter_600SemiBold", color: "#fff" },
+  summaryBox: { flexDirection: "row", alignItems: "flex-start", borderWidth: 1 },
+  summaryText: { flex: 1 },
+  limitCard: { borderWidth: 1 },
+  actionButton: {
+    minHeight: HIT_SLOP_MIN,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: layoutSpace.xs,
+    borderWidth: 1,
+    borderColor: "transparent",
+    paddingVertical: layoutSpace.sm,
+  },
+  disabled: { opacity: 0.7 },
 });

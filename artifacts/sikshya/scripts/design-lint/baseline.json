@@ -59,10 +59,6 @@
     "hex": 6,
     "size": 16
   },
-  "app/(teacher)/session-create.tsx": {
-    "hex": 8,
-    "size": 14
-  },
   "app/(teacher)/sessions.tsx": {
     "hex": 7,
     "size": 12
