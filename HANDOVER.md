@@ -876,6 +876,34 @@ Two things stop it being turned on, and one of them is yours to decide:
 None of the three is urgent. The point of writing it down is that "we have independent proof of
 attendance" is currently **not true**, and nobody should plan a refund policy as though it were.
 
+### 8.6 What would LiveKit actually cost?
+
+LiveKit Cloud is now built beside Daily and switchable with one environment variable — see the
+LiveKit trial section of `VIDEO.md`. What has **not** been established is the only thing the
+exercise was for.
+
+The monthly tier is roughly **108,000 participant-minutes per teacher per month** (46 people ×
+90 minutes × ~26 sessions) against a NPR 6,500 subscription. Daily bills per participant-minute,
+which is why that tier can lose money on every teacher and lose more the more it sells.
+
+Nobody has checked what those 108,000 minutes cost on LiveKit Cloud, or where its free
+allowance ends. **Until somebody does, "we moved to LiveKit to save money" is a hope, not a
+finding** — and the technical work is finished either way, so this is now the deciding question
+rather than a detail.
+
+Two things worth pricing at the same time, because they change the answer:
+
+- **Audio-only mode is built and works both ways** — it stops sending *and* receiving video. If
+  LiveKit bills by bandwidth rather than by participant-minute, a class that spends most of its
+  time on the whiteboard with the cameras off is dramatically cheaper, and that changes which
+  provider wins.
+- **Self-hosting LiveKit is possible** and Daily's equivalent is not. That is a different cost
+  shape entirely — a server bill instead of a per-minute one — and it is the reason LiveKit was
+  worth trying rather than simply the cheapest quote.
+
+This needs the owner's LiveKit Cloud dashboard, which shows the plan and its included usage.
+Nobody but the owner can look at it.
+
 ---
 
 ## 9. Before this goes to a store or a real launch

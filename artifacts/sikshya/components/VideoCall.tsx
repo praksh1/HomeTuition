@@ -1,6 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import DailyEmbed from "@/components/DailyEmbed";
+import LiveKitEmbed from "@/components/LiveKitEmbed";
 
 /**
  * The call, whoever is carrying it.
@@ -46,6 +47,33 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
     case "daily":
       return (
         <DailyEmbed
+          roomUrl={props.roomUrl}
+          meetingToken={props.token}
+          displayName={props.displayName}
+          style={props.style}
+          onLeft={props.onLeft}
+          watchUserName={props.watchUserName}
+          onWatchedParticipantLeft={props.onWatchedParticipantLeft}
+          canScreenShare={props.canScreenShare}
+          chatMessages={props.chatMessages}
+          onSendChat={props.onSendChat}
+        />
+      );
+
+    /**
+     * Under trial, and browser-only.
+     *
+     * The two providers stay separate components rather than being merged behind one imperative
+     * module, because merging would mean rewriting Daily — and Daily is what the class runs on
+     * today. `lib/video` gives LiveKit the provider-agnostic verbs; this switch is what keeps
+     * every screen from knowing either name. See VIDEO.md.
+     *
+     * On Android and iOS `LiveKitEmbed` resolves to a stub that says video is unavailable,
+     * because both SDKs ship the same native WebRTC library and cannot share a build.
+     */
+    case "livekit":
+      return (
+        <LiveKitEmbed
           roomUrl={props.roomUrl}
           meetingToken={props.token}
           displayName={props.displayName}

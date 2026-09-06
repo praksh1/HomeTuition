@@ -30,7 +30,7 @@ function check(name, ok, detail = "") {
 }
 const sql = (s) => execFileSync("psql", [PGURL, "-tAc", s], { encoding: "utf8" }).trim();
 
-function startServer(port, provider) {
+function startServer(port, provider, extraEnv = {}) {
   const proc = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
     cwd: repoRoot,
     env: {
@@ -39,10 +39,25 @@ function startServer(port, provider) {
       DATABASE_URL: PGURL,
       SESSION_SECRET: process.env.SESSION_SECRET ?? "video-test-secret",
       VIDEO_PROVIDER: provider,
+      ...extraEnv,
     },
     stdio: "ignore",
   });
   return proc;
+}
+
+/**
+ * The claims inside a LiveKit token, read without a network call.
+ *
+ * A JWT is three base64url segments; the middle one is the grant. Decoding it here is how this
+ * suite checks what the *server* actually authorised, rather than trusting a UI that could be
+ * hiding a button while the token underneath allows everything.
+ */
+function jwtClaims(token) {
+  const [, payload] = String(token).split(".");
+  if (!payload) return null;
+  const padded = payload.replace(/-/g, "+").replace(/_/g, "/");
+  return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
 }
 
 async function waitFor(port) {
@@ -179,6 +194,114 @@ async function run() {
         room.status === 502, `status=${room.status} ${JSON.stringify(room.body)}`);
     }
     try { dailyServer.kill("SIGKILL"); } catch { /* gone */ }
+  }
+
+  console.log("\nAnd the same server on LiveKit mints its own tokens\n");
+
+  {
+    /*
+      Synthetic credentials. Nothing here reaches LiveKit.
+
+      The whole point of a signed token is that its claims can be read back without asking anybody,
+      so this suite mints one with a throwaway key and inspects it. A real key would add network
+      dependence and a secret in a test file, and would prove nothing extra.
+    */
+    const LK_SECRET = "video-test-secret-not-a-real-livekit-key-000000";
+    const lkPort = PORT + 2;
+    const lkServer = startServer(lkPort, "livekit", {
+      LIVEKIT_API_KEY: "APItestkey",
+      LIVEKIT_API_SECRET: LK_SECRET,
+      LIVEKIT_URL: "wss://example-test.livekit.cloud",
+    });
+    process.on("exit", () => { try { lkServer.kill("SIGKILL"); } catch { /* gone */ } });
+    if (!(await waitFor(lkPort))) throw new Error("the LiveKit server never came up");
+    const lkApi = makeApi(lkPort);
+
+    const teacher = await register(lkApi, "teacher", "LiveKit Teacher");
+    const made = await lkApi("/sessions", { method: "POST", token: teacher.token, body: {
+      topic: "On LiveKit", subject: "Maths", description: "d",
+      date: new Date(Date.now() + 60_000).toISOString(),
+      duration: 60, price: 500, maxStudents: 10 } });
+    await lkApi(`/sessions/${made.body.id}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+
+    const room = await lkApi(`/sessions/${made.body.id}/room`, { token: teacher.token });
+    check("the room says livekit", room.status === 200 && room.body?.provider === "livekit",
+      `status=${room.status} ${JSON.stringify(room.body?.provider)}`);
+    check("and hands back the wss address, not a Daily URL",
+      String(room.body?.roomUrl).startsWith("wss://"), String(room.body?.roomUrl));
+
+    /*
+      The single most important assertion in this file.
+
+      A client holding LIVEKIT_API_SECRET could mint itself a token for any room in the project,
+      including a class it never paid for. The secret signs the token and must never travel with it.
+    */
+    const body = JSON.stringify(room.body ?? {});
+    check("the API secret appears nowhere in the response", !body.includes(LK_SECRET));
+    check("nor does the API key", !body.includes("APItestkey"));
+
+    const claims = jwtClaims(room.body?.token);
+    check("the token is a readable JWT", claims !== null && typeof claims === "object");
+    check("it names the class's own room, so provider evidence can still correlate",
+      claims?.video?.room === `sikshya${made.body.id}`, JSON.stringify(claims?.video?.room));
+    check("the participant is identified by account, not by display name",
+      claims?.sub === String(teacher.user.id), `${claims?.sub} vs ${teacher.user.id}`);
+    check("the teacher gets moderator rights", claims?.video?.roomAdmin === true);
+    check("and may publish a screen", (claims?.video?.canPublishSources ?? []).includes("screen_share"));
+
+    /* A student in the same class must get a strictly weaker token. */
+    const student = await register(lkApi, "student", "LiveKit Student");
+    const booked = await lkApi(`/sessions/${made.body.id}/book`, { method: "POST", token: student.token });
+    check("the student could book the class", booked.status === 200 || booked.status === 201,
+      `status=${booked.status} ${JSON.stringify(booked.body)}`);
+    const studentRoom = await lkApi(`/sessions/${made.body.id}/room`, { token: student.token });
+    const studentClaims = jwtClaims(studentRoom.body?.token);
+    check("the student joins the same room", studentClaims?.video?.room === `sikshya${made.body.id}`);
+    check("but gets no moderator rights", studentClaims?.video?.roomAdmin !== true,
+      JSON.stringify(studentClaims?.video?.roomAdmin));
+    check("and may not publish a screen",
+      !(studentClaims?.video?.canPublishSources ?? []).includes("screen_share"),
+      JSON.stringify(studentClaims?.video?.canPublishSources));
+    check("while still being able to publish camera and microphone",
+      (studentClaims?.video?.canPublishSources ?? []).includes("camera") &&
+      (studentClaims?.video?.canPublishSources ?? []).includes("microphone"),
+      JSON.stringify(studentClaims?.video?.canPublishSources));
+    check("the two people are told apart by identity",
+      studentClaims?.sub === String(student.user.id) && studentClaims?.sub !== claims?.sub);
+
+    try { lkServer.kill("SIGKILL"); } catch { /* gone */ }
+  }
+
+  console.log("\nLiveKit with no credentials fails honestly\n");
+
+  {
+    // Half-configured is the dangerous state: it looks like a network fault to everybody.
+    const barePort = PORT + 3;
+    const bareServer = startServer(barePort, "livekit", {
+      LIVEKIT_API_KEY: "", LIVEKIT_API_SECRET: "", LIVEKIT_URL: "",
+    });
+    process.on("exit", () => { try { bareServer.kill("SIGKILL"); } catch { /* gone */ } });
+    if (!(await waitFor(barePort))) throw new Error("the bare LiveKit server never came up");
+    const bareApi = makeApi(barePort);
+
+    const teacher = await register(bareApi, "teacher", "Unconfigured Teacher");
+    const made = await bareApi("/sessions", { method: "POST", token: teacher.token, body: {
+      topic: "No credentials", subject: "Maths", description: "d",
+      date: new Date(Date.now() + 60_000).toISOString(),
+      duration: 60, price: 500, maxStudents: 10 } });
+    await bareApi(`/sessions/${made.body.id}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+    const room = await bareApi(`/sessions/${made.body.id}/room`, { token: teacher.token });
+
+    check("it does not quietly fall back to another provider",
+      room.status !== 200 || room.body?.provider === "livekit",
+      `status=${room.status} provider=${JSON.stringify(room.body?.provider)}`);
+    check("and it mints no token it cannot sign",
+      room.status !== 200 || room.body?.token === null || room.body?.token === undefined,
+      JSON.stringify(room.body?.token));
+    check("no configuration variable name is leaked to the caller",
+      !/LIVEKIT_API_SECRET|LIVEKIT_API_KEY/.test(JSON.stringify(room.body ?? {})));
+
+    try { bareServer.kill("SIGKILL"); } catch { /* gone */ }
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

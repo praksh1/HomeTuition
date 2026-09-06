@@ -1,5 +1,6 @@
 import { dailyProvider } from "./dailyProvider";
 import { echoProvider } from "./echoProvider";
+import { livekitProvider } from "./livekitProvider";
 import { selectProvider } from "./select";
 import type { VideoProvider } from "./types";
 
@@ -17,6 +18,14 @@ export type { JoinOptions, RoomGrant, VideoCapabilities, VideoProvider } from ".
  */
 const PROVIDERS: Record<string, VideoProvider> = {
   daily: dailyProvider,
+  /**
+   * Under trial, web only.
+   *
+   * Daily and LiveKit each ship a fork of the same native WebRTC library and cannot both be in one
+   * phone build, so the Android and iOS apps stay on Daily. Set `VIDEO_PROVIDER=livekit` on a
+   * browser-facing deployment to try it; set it back to `daily` to undo, with no rebuild.
+   */
+  livekit: livekitProvider,
   // Carries no video. Present so the seam can be proved against the real server rather than
   // asserted — see scripts/video-tests. Nothing selects it unless the environment names it.
   echo: echoProvider,
