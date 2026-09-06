@@ -155,3 +155,41 @@ commit, push, deploy, buy anything, run `db:push`, or touch any database.
 - After visual acceptance, rerun the focused test, typecheck, full app test, `lint:design`, and
   `git diff --check`; then run `lint:design:update` to lock the file's 0/0 baseline. Commit/push or
   deploy only under the lead/owner's release instructions.
+
+## Lead review, commit, and preview — later 2026-09-06
+
+Codex independently inspected the exact application diff and commissioned a separate read-only
+review. That review found no application/business-logic regression, but found the two test-harness
+weaknesses recorded above. The implementation agent corrected only the harness and this worklog.
+Codex then reran the decisive gates: Sikshya typecheck passed, all **228** app unit tests passed,
+`git diff --check` passed, and design lint passed.
+
+The accepted design reduction was locked with `lint:design:update`: the repository baseline moved
+from **204 hex / 418 raw font sizes** to **196 / 404**, and the target file is now **0 / 0**.
+
+Two commits were pushed on `codex/session-create-ui`:
+
+- `a44a587` — production-release documentation only;
+- `dd25593` — reviewed teacher session-creation/paywall UI, fail-closed browser harness, helper
+  tests, and lowered design baseline.
+
+The first attempt to use GitHub's manual preview workflow stopped safely before checkout because
+the repository has `CLOUDFLARE_API_TOKEN` but no `CLOUDFLARE_ACCOUNT_ID` secret (run
+`34019410440`). Nothing was built or deployed by that failed run. Codex did not weaken the guard or
+create/change credentials.
+
+Using the already-authenticated local Wrangler path, Codex rebuilt the bundle with only
+`https://hometuition-api-staging-production.up.railway.app`, confirmed the production API hostname
+appeared in **0** built files, completed a Wrangler dry-run over 242 assets, and deployed only the
+separate `hometuition-preview` Worker. Cloudflare version:
+**`a7f2d108-5df7-420e-bb8e-c79523c9b7aa`**.
+
+Post-deploy verification matched the served HTML and all three initial JavaScript bundles exactly
+to the local staging build. Preview URL:
+`https://hometuition-preview.praksh-dhakal.workers.dev`.
+
+Production was not changed by this UI slice. No API, database, account, session, payment, Daily,
+email, R2, credential, or purchase action occurred. The remaining owner check is visual: sign into
+the preview as an approved/test-enabled teacher, open New Session, confirm the plan card/form at
+phone and laptop widths, and—using staging only—confirm a real 402 refusal becomes the in-screen
+locked state rather than an alert.
