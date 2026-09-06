@@ -639,3 +639,51 @@ Daily ingestion remains disabled; nothing was registered, enabled or bought.
 This deployment is suitable for reviewing the operator evidence layout and the existing synthetic
 teacher/student journeys. Provider corroboration will honestly appear unavailable because Daily
 ingestion is disabled. It does not prove a real two-device Daily call or cheap-Android behaviour.
+
+---
+
+## Making the operator preview testable — Codex, 2026-09-05
+
+The owner opened the correctly deployed preview and found an empty queue. That was a release
+process failure: a technically correct deployment with no review fixture gave the owner nothing
+meaningful to evaluate. Codex initially described fixture creation as a “next task” and ended the
+turn instead of doing it, leaving the non-technical owner unclear about who was acting. The owner
+correctly objected. From this point, status messages explicitly name whether Codex, Claude or the
+owner has the next action.
+
+### What was created
+
+- Exactly one staging-only ticket: **HT-000001**, database id `1`.
+- Direct review URL: <https://hometuition-preview.praksh-dhakal.workers.dev/ticket/1>
+- A clearly labelled synthetic completed Mathematics class, two synthetic enrolled students, a
+  simulated-only payment marker that explicitly says it is not a receipt, one absent student, a
+  schedule change, teacher/student socket-ledger rows, reconnect counts, whiteboard activity,
+  persistent class messages, coarse self-reported teacher connection samples and a linked refund
+  request.
+- No provider events were fabricated. Staging uses Echo and Daily ingestion remains off, so the
+  operator view must honestly show that the readable provider source supplied no meeting record.
+
+### How it was done safely
+
+- A temporary boot hook was guarded simultaneously by the exact preview origin,
+  `VIDEO_PROVIDER=echo`, and `ALLOW_TEST_TEACHING_ACCESS=true`.
+- It took a PostgreSQL advisory lock and used an exact description marker, making creation
+  idempotent. It inserted only synthetic `*.invalid` identities and one case.
+- A temporary staging-only locator returned only `{ ready, ticketId }`, allowing Codex to prove the
+  transaction committed and capture the direct URL without handling the owner's saved browser
+  session or any credential.
+- Temporary commit `a6c11d7` deployed, returned `{"ready":true,"ticketId":1}`, and was immediately
+  followed by cleanup commit `0d3c1c2`, which removed both the seeder and locator.
+- The clean redeployment was proven when the locator changed back to HTTP 404. The ticket page
+  continued to return HTTP 200. Only the synthetic database rows remain.
+
+### Verification and limits
+
+- API typecheck passed before both the temporary and cleanup deployments.
+- `git diff --check` passed.
+- No `db:push`, bulk seed, destructive test suite, production database, real account, real payment,
+  Daily event, email or purchase was used.
+- Opening ticket 1 while signed in as the synthetic operator is the owner's next action. The first
+  read intentionally changes an open ticket to “Opened”; that is normal ticket lifecycle behavior.
+- The exact content still needs owner visual review. An HTTP 200 proves routing, not that the page
+  is understandable.
