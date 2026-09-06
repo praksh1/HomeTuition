@@ -574,3 +574,68 @@ Real hardware, again: this is headless Chromium at two window sizes and says not
 Android phone's paint speed or touch behaviour. No new packages, animations or heavy components
 were added, so the performance profile should be unchanged — but "should be" is not a measurement.
 Daily ingestion remains disabled; nothing was registered, enabled or bought.
+
+---
+
+## Isolated staging preview deployment — Codex, 2026-09-05
+
+### Result
+
+- Merged reviewed `codex/session-proof-integration` through `446feb7` into
+  `codex/staging-preview-integration` as merge commit `ec1453d`.
+- Pushed `ec1453d` to the integration branch. Railway did not deploy it because the isolated
+  staging service still watches `claude/excalidraw-whiteboard-sync-gjoqaz`, as the existing preview
+  documentation records.
+- Proved the watched branch was an ancestor and fast-forwarded only that branch from `bc0aa17` to
+  `ec1453d`. `main` and the production Worker were untouched.
+- Railway staging finished deploying when `POST /api/sessions/1/quality` changed from HTTP 404 to
+  HTTP 401. The latter is the expected unauthenticated response from the new protected route.
+- Built the Expo web export with `EXPO_NO_DOTENV=1` and the explicit isolated API
+  `https://hometuition-api-staging-production.up.railway.app`.
+- Scanned the generated files: one or more startup files contain the staging host; zero contain
+  the known production API host.
+- Wrangler 4.124.0 dry-run accepted 242 assets with no bindings.
+- Deployed only Worker `hometuition-preview`, version
+  `d353d6b1-6c2d-48a2-89b7-8e6337c9c59b`.
+- Live URL: <https://hometuition-preview.praksh-dhakal.workers.dev>
+- Post-deploy verifier matched the served HTML and all three initial bundles byte-for-byte against
+  the tested local build, confirmed the staging API and rejected the production API. `/welcome`
+  returned HTTP 200.
+
+### Verification
+
+- API unit tests: 424 passed, 0 failed.
+- Sikshya unit tests: 224 passed, 0 failed.
+- API, Sikshya and scripts typechecks: passed.
+- Design ratchet: 204 hex / 418 raw font sizes, unchanged; no new leaks.
+- Preview verifier unit tests: 7 passed, 0 failed.
+- `git diff --check`: clean before deployment.
+
+### What went wrong, and why it was not hidden
+
+1. The first named typecheck/test run inside the restricted filesystem sandbox reported `jose`
+   and Expo social-auth modules missing even though the lockfile and package junctions existed.
+   `pnpm install --frozen-lockfile` correctly reported no dependency change. Rerunning outside the
+   restricted sandbox allowed Node to follow the existing pnpm junctions; every typecheck passed
+   and API tests passed 424/424. No package or lockfile was changed.
+2. Pushing only `codex/staging-preview-integration` produced no Railway deployment. Eight probes
+   stayed HTTP 404. The service's documented watched branch was then fast-forwarded; the twelfth
+   subsequent probe returned the expected HTTP 401. This is branch routing, not an application
+   defect.
+3. Expo rebuilt a cold Metro cache and emitted its existing unsupported-local-CSS warning for
+   Excalidraw. The export completed successfully and the remote verifier matched it exactly.
+
+### Deliberately not done
+
+- No production deploy, `main` merge, payment, card, purchase, Daily webhook registration,
+  `DAILY_WEBHOOK_SECRET`, retention schedule, real recording or real provider call.
+- No `db:push`. The API's existing create-only, failure-isolated bootstrap created additive proof
+  tables on staging when needed.
+- No claim of real Daily behaviour: staging remains `VIDEO_PROVIDER=echo` by design.
+- No real-user data was copied into staging and no production credential was added.
+
+### Owner review boundary
+
+This deployment is suitable for reviewing the operator evidence layout and the existing synthetic
+teacher/student journeys. Provider corroboration will honestly appear unavailable because Daily
+ingestion is disabled. It does not prove a real two-device Daily call or cheap-Android behaviour.
