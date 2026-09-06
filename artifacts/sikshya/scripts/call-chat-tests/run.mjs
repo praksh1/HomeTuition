@@ -80,22 +80,28 @@ createRoot(document.getElementById("root")).render(React.createElement(Harness))
 );
 
 const bundle = path.join(work, "bundle.js");
-const esbuild = path.join(appRoot, "..", "api-server", "node_modules", ".bin", "esbuild");
+const esbuild = path.join(appRoot, "..", "api-server", "node_modules", "esbuild", "bin", "esbuild");
 
 const built = spawn(
-  esbuild,
+  process.execPath,
   [
+    esbuild,
     entry,
     "--bundle",
     `--outfile=${bundle}`,
     "--loader:.tsx=tsx",
     "--loader:.ts=ts",
     "--jsx=automatic",
+    "--alias:react-native=react-native-web",
     "--define:process.env.NODE_ENV=\"production\"",
     "--format=iife",
     "--log-level=error",
   ],
-  { cwd: appRoot, stdio: "inherit" },
+  {
+    cwd: appRoot,
+    stdio: "inherit",
+    env: { ...process.env, NODE_PATH: path.join(appRoot, "node_modules") },
+  },
 );
 
 // `exit` never fires if the binary cannot be spawned at all, so without the `error` handler a

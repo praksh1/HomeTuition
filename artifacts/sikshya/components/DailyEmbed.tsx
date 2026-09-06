@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   PermissionsAndroid,
@@ -17,6 +17,21 @@ import Daily, {
   type DailyCall,
   type DailyParticipant,
 } from "@daily-co/react-native-daily-js";
+
+import { HIT_SLOP_MIN } from "@/constants/layout";
+import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import {
+  cameraActionLabel,
+  chatActionLabel,
+  firstRemoteParticipant,
+  microphoneActionLabel,
+  sharingPresenter,
+  screenShareActionLabel,
+  unseenChatCount,
+  watchedParticipantLeft,
+  type ScreenShareState,
+} from "@/utils/dailyEmbedUi";
 
 interface Props {
   roomUrl: string;
@@ -54,16 +69,10 @@ interface Props {
  * interface disappears and every control below has to be provided by us.
  */
 
-type ScreenShareState = "idle" | "starting" | "sharing";
-
 /** Pulls the playable track off a participant, tolerating the not-yet-playable case. */
 function trackOf(p: DailyParticipant | undefined, kind: "video" | "audio" | "screenVideo") {
   const state = p?.tracks?.[kind];
   return state?.persistentTrack ?? null;
-}
-
-function isSharingScreen(p: DailyParticipant): boolean {
-  return p.tracks?.screenVideo?.state === "playable" || !!p.tracks?.screenVideo?.persistentTrack;
 }
 
 /**
@@ -103,6 +112,29 @@ export default function DailyEmbed({
   chatMessages,
   onSendChat,
 }: Props) {
+  const colors = useColors();
+  const { t, space, radius } = useLayout();
+  const s = useMemo(
+    () => createStyles(colors, t, space, radius),
+    [
+      colors.foreground,
+      colors.onInverseMuted,
+      colors.onInverse,
+      colors.secondary,
+      colors.secondaryForeground,
+      colors.brand,
+      colors.brandForeground,
+      colors.lineStrong,
+      colors.primary,
+      colors.primaryForeground,
+      colors.destructive,
+      colors.destructiveSoft,
+      colors.success,
+      t,
+      space,
+      radius,
+    ],
+  );
   const [participants, setParticipants] = useState<DailyParticipant[]>([]);
   const [joining, setJoining] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -114,6 +146,7 @@ export default function DailyEmbed({
   /** Unread badge on the chat button: messages that arrived while the panel was closed. */
   const [unseen, setUnseen] = useState(0);
   const lastSeenCount = useRef(0);
+  const leftAnnounced = useRef(false);
 
   const callRef = useRef<DailyCall | null>(null);
 
@@ -124,6 +157,7 @@ export default function DailyEmbed({
 
   useEffect(() => {
     if (!roomUrl) return;
+    leftAnnounced.current = false;
     let cancelled = false;
     let call: DailyCall | null = null;
 
@@ -155,10 +189,11 @@ export default function DailyEmbed({
         call.on("participant-left", (ev) => {
           sync();
           const { watchUserName: watched, onWatchedParticipantLeft: cb } = cbRef.current;
-          if (watched && ev?.participant?.user_name === watched) cb?.();
+          if (watchedParticipantLeft(watched, ev?.participant?.user_name)) cb?.();
         });
         call.on("left-meeting", () => {
-          if (cancelled) return;
+          if (cancelled || leftAnnounced.current) return;
+          leftAnnounced.current = true;
           cbRef.current.onLeft?.();
         });
         call.on("local-screen-share-started", () => !cancelled && setScreenShare("sharing"));
@@ -246,7 +281,7 @@ export default function DailyEmbed({
       lastSeenCount.current = total;
       setUnseen(0);
     } else {
-      setUnseen(Math.max(0, total - lastSeenCount.current));
+      setUnseen(unseenChatCount(total, lastSeenCount.current, false));
     }
   }, [chatMessages, chatOpen]);
 
@@ -260,22 +295,34 @@ export default function DailyEmbed({
   const leave = useCallback(() => {
     const c = callRef.current;
     if (!c) {
-      cbRef.current.onLeft?.();
+      if (!leftAnnounced.current) {
+        leftAnnounced.current = true;
+        cbRef.current.onLeft?.();
+      }
       return;
     }
-    c.leave().catch(() => cbRef.current.onLeft?.());
+    c.leave().catch(() => {
+      if (leftAnnounced.current) return;
+      leftAnnounced.current = true;
+      cbRef.current.onLeft?.();
+    });
   }, []);
 
   const local = participants.find((p) => p.local);
   const remotes = participants.filter((p) => !p.local);
-  const presenter = participants.find(isSharingScreen);
+  const stageRemote = firstRemoteParticipant(participants);
+  const presenter = sharingPresenter(participants);
 
   if (!roomUrl) return null;
 
   if (error) {
     return (
-      <View style={[style, s.container, s.centre]}>
-        <Feather name="video-off" size={28} color="#EF4444" />
+      <View
+        style={[style, s.container, s.centre]}
+        accessibilityRole="alert"
+        accessibilityLiveRegion="assertive"
+      >
+        <Feather name="video-off" size={28} color={colors.destructive} />
         <Text style={s.errorText}>{error}</Text>
       </View>
     );
@@ -284,8 +331,12 @@ export default function DailyEmbed({
   return (
     <View style={[style, s.container]}>
       {joining ? (
-        <View style={[StyleSheet.absoluteFill, s.centre]}>
-          <ActivityIndicator color="#fff" />
+        <View
+          style={[StyleSheet.absoluteFill, s.centre]}
+          accessibilityRole="progressbar"
+          accessibilityLabel="Joining the video class"
+        >
+          <ActivityIndicator color={colors.onInverse} />
           <Text style={s.hint}>Joining the class…</Text>
         </View>
       ) : (
@@ -300,7 +351,7 @@ export default function DailyEmbed({
                 style={s.stageVideo}
               />
               <View style={s.presenterTag}>
-                <Feather name="monitor" size={11} color="#fff" />
+                <Feather name="monitor" size={11} color={colors.onInverse} />
                 <Text style={s.presenterTagText}>
                   {presenter.local ? "You are sharing" : `${presenter.user_name || "Teacher"} is sharing`}
                 </Text>
@@ -308,16 +359,16 @@ export default function DailyEmbed({
             </View>
           ) : (
             <View style={s.stage}>
-              {remotes.length > 0 ? (
+              {stageRemote ? (
                 <DailyMediaView
-                  videoTrack={trackOf(remotes[0], "video")}
-                  audioTrack={trackOf(remotes[0], "audio")}
+                  videoTrack={trackOf(stageRemote, "video")}
+                  audioTrack={trackOf(stageRemote, "audio")}
                   objectFit="cover"
                   style={s.stageVideo}
                 />
               ) : (
                 <View style={[StyleSheet.absoluteFill, s.centre]}>
-                  <Feather name="users" size={26} color="#555" />
+                  <Feather name="users" size={26} color={colors.onInverseMuted} />
                   <Text style={s.hint}>Waiting for others to join…</Text>
                 </View>
               )}
@@ -367,6 +418,8 @@ export default function DailyEmbed({
               style={s.chatBackdrop}
               activeOpacity={1}
               onPress={() => setChatOpen(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Close class chat"
             />
           )}
 
@@ -378,11 +431,13 @@ export default function DailyEmbed({
                 <TouchableOpacity
                   testID="call-chat-close"
                   onPress={() => setChatOpen(false)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close class chat"
                   hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
                   style={s.chatCloseBtn}
                   activeOpacity={0.7}
                 >
-                  <Feather name="x" size={20} color="#fff" />
+                  <Feather name="x" size={20} color={colors.onInverse} />
                 </TouchableOpacity>
               </View>
               <ScrollView style={s.chatScroll} contentContainerStyle={s.chatScrollInner}>
@@ -403,12 +458,19 @@ export default function DailyEmbed({
                   value={chatDraft}
                   onChangeText={setChatDraft}
                   placeholder="Message the class…"
-                  placeholderTextColor="#777"
+                  placeholderTextColor={colors.onInverseMuted}
+                  accessibilityLabel="Class chat message"
                   onSubmitEditing={submitChat}
                   returnKeyType="send"
                 />
-                <TouchableOpacity style={s.chatSend} onPress={submitChat} activeOpacity={0.8}>
-                  <Feather name="send" size={16} color="#fff" />
+                <TouchableOpacity
+                  style={s.chatSend}
+                  onPress={submitChat}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send class chat message"
+                >
+                  <Feather name="send" size={16} color={colors.primaryForeground} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -416,15 +478,34 @@ export default function DailyEmbed({
 
           {/* Controls — every one of these came free with Daily Prebuilt on web. */}
           <View style={s.bar}>
-            <TouchableOpacity style={[s.btn, !micOn && s.btnOff]} onPress={toggleMic} activeOpacity={0.8}>
-              <Feather name={micOn ? "mic" : "mic-off"} size={18} color="#fff" />
+            <TouchableOpacity
+              style={[s.btn, !micOn && s.btnOff]}
+              onPress={toggleMic}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={microphoneActionLabel(micOn)}
+            >
+              <Feather name={micOn ? "mic" : "mic-off"} size={18} color={colors.onInverse} />
             </TouchableOpacity>
-            <TouchableOpacity style={[s.btn, !camOn && s.btnOff]} onPress={toggleCam} activeOpacity={0.8}>
-              <Feather name={camOn ? "video" : "video-off"} size={18} color="#fff" />
+            <TouchableOpacity
+              style={[s.btn, !camOn && s.btnOff]}
+              onPress={toggleCam}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={cameraActionLabel(camOn)}
+            >
+              <Feather name={camOn ? "video" : "video-off"} size={18} color={colors.onInverse} />
             </TouchableOpacity>
             {onSendChat && (
-              <TouchableOpacity style={[s.btn, chatOpen && s.btnActive]} onPress={() => setChatOpen((v) => !v)} activeOpacity={0.8}>
-                <Feather name="message-circle" size={18} color="#fff" />
+              <TouchableOpacity
+                style={[s.btn, chatOpen && s.btnActive]}
+                onPress={() => setChatOpen((v) => !v)}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={chatActionLabel(chatOpen, unseen)}
+                accessibilityState={{ expanded: chatOpen }}
+              >
+                <Feather name="message-circle" size={18} color={colors.onInverse} />
                 {unseen > 0 && !chatOpen && (
                   <View style={s.unreadDot}>
                     <Text style={s.unreadDotText}>{unseen > 9 ? "9+" : unseen}</Text>
@@ -438,16 +519,25 @@ export default function DailyEmbed({
                 onPress={toggleScreenShare}
                 activeOpacity={0.8}
                 disabled={screenShare === "starting"}
+                accessibilityRole="button"
+                accessibilityLabel={screenShareActionLabel(screenShare)}
+                accessibilityState={{ disabled: screenShare === "starting", selected: screenShare === "sharing" }}
               >
                 {screenShare === "starting" ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.onInverse} />
                 ) : (
-                  <Feather name="monitor" size={18} color="#fff" />
+                  <Feather name="monitor" size={18} color={colors.onInverse} />
                 )}
               </TouchableOpacity>
             )}
-            <TouchableOpacity style={[s.btn, s.btnLeave]} onPress={leave} activeOpacity={0.8}>
-              <Feather name="phone-off" size={18} color="#fff" />
+            <TouchableOpacity
+              style={[s.btn, s.btnLeave]}
+              onPress={leave}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Leave video call"
+            >
+              <Feather name="phone-off" size={18} color={colors.destructive} />
             </TouchableOpacity>
           </View>
         </>
@@ -456,57 +546,56 @@ export default function DailyEmbed({
   );
 }
 
-const s = StyleSheet.create({
-  container: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: "#111" },
-  centre: { alignItems: "center", justifyContent: "center", gap: 10, paddingHorizontal: 24 },
-  hint: { color: "#999", fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
-  errorText: { color: "#ccc", fontSize: 13, fontFamily: "Inter_400Regular", textAlign: "center" },
-  stage: { flex: 1, backgroundColor: "#000", position: "relative" },
-  stageVideo: { flex: 1, backgroundColor: "#000" },
-  presenterTag: {
-    position: "absolute", top: 8, left: 8, flexDirection: "row", alignItems: "center", gap: 5,
-    backgroundColor: "rgba(0,0,0,0.65)", borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4,
-  },
-  presenterTagText: { color: "#fff", fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  strip: { maxHeight: 78, flexGrow: 0 },
-  stripInner: { gap: 6, paddingHorizontal: 8, paddingVertical: 6, alignItems: "center" },
-  tile: { width: 92, height: 66, borderRadius: 8, overflow: "hidden", backgroundColor: "#1A1A1A" },
-  tileVideo: { width: "100%", height: "100%" },
-  tileName: {
-    position: "absolute", bottom: 2, left: 4, right: 4, color: "#fff", fontSize: 9,
-    fontFamily: "Inter_500Medium", textShadowColor: "#000", textShadowRadius: 3,
-  },
-  bar: {
-    flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 12,
-    paddingVertical: 10, backgroundColor: "#0A0A0A", borderTopWidth: 1, borderTopColor: "#1E1E1E",
-  },
-  btn: { width: 42, height: 42, borderRadius: 21, backgroundColor: "#2A2A2A", alignItems: "center", justifyContent: "center" },
-  unreadDot: { position: "absolute", top: 2, right: 2, minWidth: 16, height: 16, borderRadius: 8, backgroundColor: "#C41E3A", alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
-  unreadDotText: { color: "#fff", fontSize: 9, fontFamily: "Inter_700Bold" },
-  /**
-   * Covers the video, not the controls.
-   *
-   * Positioned above the bar rather than in the layout flow, so the buttons that mute, hang up
-   * and stop a screen share stay reachable while the chat is open — which was half the
-   * complaint: an overlay you cannot get out of is much worse when it is also sitting on the
-   * button that would end the thing you are stuck in.
-   */
-  chatBackdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 },
-  chatPanel: { maxHeight: 260, backgroundColor: "#111", borderTopWidth: 1, borderTopColor: "#222", zIndex: 21 },
-  chatHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: 14, paddingRight: 6, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: "#222" },
-  chatTitle: { color: "#fff", fontSize: 13, fontFamily: "Inter_600SemiBold" },
-  chatCloseBtn: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
-  chatScroll: { maxHeight: 190 },
-  chatScrollInner: { padding: 10, gap: 6 },
-  chatEmpty: { color: "#777", fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", paddingVertical: 16 },
-  chatMsg: { alignSelf: "flex-start", maxWidth: "85%", backgroundColor: "#1E1E1E", borderRadius: 12, paddingHorizontal: 10, paddingVertical: 7 },
-  chatMsgMine: { alignSelf: "flex-end", backgroundColor: "#C41E3A" },
-  chatSender: { color: "#9AA0A6", fontSize: 10, fontFamily: "Inter_600SemiBold", marginBottom: 2 },
-  chatText: { color: "#fff", fontSize: 13, fontFamily: "Inter_400Regular" },
-  chatInputRow: { flexDirection: "row", alignItems: "center", gap: 8, padding: 8, borderTopWidth: 1, borderTopColor: "#222" },
-  chatInput: { flex: 1, backgroundColor: "#1A1A1A", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, color: "#fff", fontSize: 13, fontFamily: "Inter_400Regular" },
-  chatSend: { width: 36, height: 36, borderRadius: 18, backgroundColor: "#C41E3A", alignItems: "center", justifyContent: "center" },
-  btnOff: { backgroundColor: "#5A1F1F" },
-  btnActive: { backgroundColor: "#16A34A" },
-  btnLeave: { backgroundColor: "#C41E3A" },
-});
+function createStyles(
+  colors: ReturnType<typeof useColors>,
+  t: ReturnType<typeof useLayout>["t"],
+  space: ReturnType<typeof useLayout>["space"],
+  radius: ReturnType<typeof useLayout>["radius"],
+) {
+  return StyleSheet.create({
+    container: { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", backgroundColor: colors.foreground },
+    centre: { alignItems: "center", justifyContent: "center", gap: space.sm, paddingHorizontal: space.xl },
+    hint: { ...t.caption, color: colors.onInverseMuted, textAlign: "center" },
+    errorText: { ...t.caption, color: colors.onInverseMuted, textAlign: "center" },
+    stage: { flex: 1, backgroundColor: colors.foreground, position: "relative" },
+    stageVideo: { flex: 1, backgroundColor: colors.foreground },
+    presenterTag: {
+      position: "absolute", top: space.xs, left: space.xs, flexDirection: "row", alignItems: "center", gap: space.xxs,
+      backgroundColor: colors.secondary, borderRadius: radius.pill, paddingHorizontal: space.xs, paddingVertical: space.xxs,
+    },
+    presenterTagText: { ...t.overline, color: colors.secondaryForeground },
+    strip: { maxHeight: 78, flexGrow: 0 },
+    stripInner: { gap: space.xs, paddingHorizontal: space.xs, paddingVertical: space.xs, alignItems: "center" },
+    tile: { width: 92, height: 66, borderRadius: radius.xs, overflow: "hidden", backgroundColor: colors.secondary },
+    tileVideo: { width: "100%", height: "100%" },
+    tileName: {
+      ...t.overline, position: "absolute", bottom: space.xxs, left: space.xxs, right: space.xxs, color: colors.onInverse,
+      textShadowColor: colors.foreground, textShadowRadius: space.xxs,
+    },
+    bar: {
+      flexDirection: "row", justifyContent: "center", alignItems: "center", gap: space.sm,
+      paddingVertical: space.sm, backgroundColor: colors.foreground, borderTopWidth: 1, borderTopColor: colors.secondary,
+    },
+    btn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.pill, backgroundColor: colors.secondary, alignItems: "center", justifyContent: "center" },
+    unreadDot: { position: "absolute", top: space.xxs, right: space.xxs, minWidth: space.md, height: space.md, borderRadius: radius.pill, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center", paddingHorizontal: space.xxs },
+    unreadDotText: { ...t.overline, color: colors.brandForeground },
+    chatBackdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, zIndex: 20 },
+    chatPanel: { maxHeight: 260, backgroundColor: colors.foreground, borderTopWidth: 1, borderTopColor: colors.secondary, zIndex: 21 },
+    chatHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingLeft: space.md, paddingRight: space.xs, paddingVertical: space.xs, borderBottomWidth: 1, borderBottomColor: colors.secondary },
+    chatTitle: { ...t.caption, color: colors.onInverse },
+    chatCloseBtn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" },
+    chatScroll: { maxHeight: 190 },
+    chatScrollInner: { padding: space.sm, gap: space.xs },
+    chatEmpty: { ...t.caption, color: colors.onInverseMuted, textAlign: "center", paddingVertical: space.md },
+    chatMsg: { alignSelf: "flex-start", maxWidth: "85%", backgroundColor: colors.secondary, borderRadius: radius.sm, paddingHorizontal: space.sm, paddingVertical: space.xs },
+    chatMsgMine: { alignSelf: "flex-end", backgroundColor: colors.primary },
+    chatSender: { ...t.overline, color: colors.onInverseMuted, marginBottom: space.xxs },
+    chatText: { ...t.caption, color: colors.onInverse },
+    chatInputRow: { flexDirection: "row", alignItems: "center", gap: space.xs, padding: space.xs, borderTopWidth: 1, borderTopColor: colors.secondary },
+    chatInput: { ...t.caption, flex: 1, backgroundColor: colors.secondary, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: space.xs, color: colors.onInverse },
+    chatSend: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.pill, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" },
+    btnOff: { backgroundColor: colors.destructive },
+    btnActive: { backgroundColor: colors.success },
+    btnLeave: { backgroundColor: colors.destructiveSoft, borderWidth: 1, borderColor: colors.destructive },
+  });
+}

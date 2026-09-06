@@ -131,14 +131,6 @@
     "hex": 4,
     "size": 8
   },
-  "components/DailyEmbed.tsx": {
-    "hex": 43,
-    "size": 10
-  },
-  "components/DailyEmbed.web.tsx": {
-    "hex": 23,
-    "size": 0
-  },
   "components/DateSystemSetting.tsx": {
     "hex": 0,
     "size": 4

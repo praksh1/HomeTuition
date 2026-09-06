@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import { HIT_SLOP_MIN } from "@/constants/layout";
+import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { unseenChatCount, watchedParticipantLeft } from "@/utils/dailyEmbedUi";
+
 interface ChatMessage {
   id: string;
   senderName: string;
@@ -53,9 +58,6 @@ interface Props {
  * off early would be its own kind of wrong.
  */
 const JOIN_TIMEOUT_MS = 20000;
-
-/** Height of the strip above the call that holds our own chat control. */
-const CHAT_STRIP_PX = 38;
 
 /**
  * Whether the app draws its own chat over the call.
@@ -177,6 +179,8 @@ export default function DailyEmbed({
   onSendChat,
   enableInCallChat = IN_CALL_CHAT_ENABLED,
 }: Props) {
+  const colors = useColors();
+  const { t, space, radius } = useLayout();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
@@ -209,7 +213,7 @@ export default function DailyEmbed({
       lastSeenCount.current = total;
       setUnseen(0);
     } else {
-      setUnseen(Math.max(0, total - lastSeenCount.current));
+      setUnseen(unseenChatCount(total, lastSeenCount.current, false));
     }
   }, [chatMessages, chatOpen]);
 
@@ -276,7 +280,7 @@ export default function DailyEmbed({
           const leftName = event?.participant?.user_name;
           const { watchUserName: watched, onWatchedParticipantLeft: cb } =
             cbRef.current;
-          if (watched && leftName === watched) cb?.();
+          if (watchedParticipantLeft(watched, leftName)) cb?.();
         });
 
         callFrame.on("left-meeting", () => {
@@ -355,9 +359,9 @@ export default function DailyEmbed({
         width: "min(320px, 80%)",
         display: "flex",
         flexDirection: "column",
-        background: "rgba(17,17,17,0.96)",
-        borderLeft: "1px solid #262626",
-        fontFamily: "sans-serif",
+        background: colors.foreground,
+        borderLeft: `1px solid ${colors.lineStrong}`,
+        fontFamily: t.body.fontFamily,
         zIndex: 3,
       },
     },
@@ -369,11 +373,10 @@ export default function DailyEmbed({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "12px 14px",
-          borderBottom: "1px solid #262626",
-          color: "#fff",
-          fontSize: "14px",
-          fontWeight: 600,
+          padding: `${space.sm}px ${space.md}px`,
+          borderBottom: `1px solid ${colors.lineStrong}`,
+          color: colors.onInverse,
+          ...t.callout,
         },
       },
       h("span", { key: "t" }, "Class chat"),
@@ -386,11 +389,13 @@ export default function DailyEmbed({
           style: {
             background: "transparent",
             border: 0,
-            color: "#9ca3af",
-            fontSize: "20px",
+            color: colors.onInverseMuted,
+            ...t.title2,
             lineHeight: 1,
             cursor: "pointer",
-            padding: "0 4px",
+            padding: 0,
+            minWidth: `${HIT_SLOP_MIN}px`,
+            minHeight: `${HIT_SLOP_MIN}px`,
           },
         },
         "\u00d7",
@@ -401,10 +406,10 @@ export default function DailyEmbed({
       {
         key: "list",
         ref: scrollRef,
-        style: { flex: 1, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" },
+        style: { flex: 1, overflowY: "auto", padding: `${space.sm}px`, display: "flex", flexDirection: "column", gap: `${space.xs}px` },
       },
       (chatMessages ?? []).length === 0
-        ? h("p", { key: "empty", style: { color: "#6b7280", fontSize: "13px", margin: 0 } }, "No messages yet.")
+        ? h("p", { key: "empty", style: { ...t.caption, color: colors.onInverseMuted, margin: 0 } }, "No messages yet.")
         : (chatMessages ?? []).map((m) =>
             h(
               "div",
@@ -413,20 +418,20 @@ export default function DailyEmbed({
                 style: {
                   alignSelf: m.isMe ? "flex-end" : "flex-start",
                   maxWidth: "85%",
-                  background: m.isMe ? "#C41E3A" : "#1f2937",
-                  color: "#fff",
-                  borderRadius: "12px",
-                  padding: "8px 10px",
+                  background: m.isMe ? colors.primary : colors.secondary,
+                  color: colors.onInverse,
+                  borderRadius: `${radius.sm}px`,
+                  padding: `${space.xs}px ${space.sm}px`,
                 },
               },
-              m.isMe ? null : h("div", { key: "s", style: { fontSize: "11px", color: "#cbd5e1", marginBottom: "2px" } }, m.senderName),
-              h("div", { key: "b", style: { fontSize: "13.5px", whiteSpace: "pre-wrap", wordBreak: "break-word" } }, m.text),
+              m.isMe ? null : h("div", { key: "s", style: { ...t.overline, color: colors.onInverseMuted, marginBottom: `${space.xxs}px` } }, m.senderName),
+              h("div", { key: "b", style: { ...t.caption, whiteSpace: "pre-wrap", wordBreak: "break-word" } }, m.text),
             ),
           ),
     ),
     h(
       "div",
-      { key: "input", style: { display: "flex", gap: "8px", padding: "10px", borderTop: "1px solid #262626" } },
+      { key: "input", style: { display: "flex", gap: `${space.xs}px`, padding: `${space.sm}px`, borderTop: `1px solid ${colors.lineStrong}` } },
       h("input", {
         key: "field",
         value: draft,
@@ -440,14 +445,15 @@ export default function DailyEmbed({
         placeholder: "Message the class\u2026",
         style: {
           flex: 1,
-          background: "#1f2937",
-          border: "1px solid #374151",
-          borderRadius: "10px",
-          color: "#fff",
-          padding: "9px 11px",
-          fontSize: "13.5px",
+          background: colors.secondary,
+          border: `1px solid ${colors.lineStrong}`,
+          borderRadius: `${radius.sm}px`,
+          color: colors.onInverse,
+          padding: `${space.xs}px ${space.sm}px`,
+          ...t.caption,
           outline: "none",
           minWidth: 0,
+          minHeight: `${HIT_SLOP_MIN}px`,
         },
       }),
       h(
@@ -456,14 +462,14 @@ export default function DailyEmbed({
           key: "send",
           onClick: submitChat,
           style: {
-            background: "#C41E3A",
+            background: colors.primary,
             border: 0,
-            borderRadius: "10px",
-            color: "#fff",
-            padding: "0 14px",
-            fontSize: "13.5px",
-            fontWeight: 600,
+            borderRadius: `${radius.sm}px`,
+            color: colors.primaryForeground,
+            padding: `0 ${space.md}px`,
+            ...t.bodyStrong,
             cursor: "pointer",
+            minHeight: `${HIT_SLOP_MIN}px`,
           },
         },
         "Send",
@@ -492,20 +498,20 @@ export default function DailyEmbed({
       "aria-label": unseen > 0 ? `Open chat, ${unseen} unread` : "Open chat",
       style: {
         position: "absolute",
-        top: "6px",
-        right: "10px",
+        top: `${space.xs}px`,
+        right: `${space.sm}px`,
         zIndex: 3,
         display: "flex",
         alignItems: "center",
-        gap: "6px",
-        background: "rgba(17,17,17,0.85)",
-        border: "1px solid #374151",
-        borderRadius: "999px",
-        color: "#fff",
-        padding: "7px 13px",
-        fontSize: "13px",
-        fontFamily: "sans-serif",
+        gap: `${space.xs}px`,
+        background: colors.foreground,
+        border: `1px solid ${colors.lineStrong}`,
+        borderRadius: `${radius.pill}px`,
+        color: colors.onInverse,
+        padding: `${space.xs}px ${space.md}px`,
+        ...t.caption,
         cursor: "pointer",
+        minHeight: `${HIT_SLOP_MIN}px`,
       },
     },
     "Chat",
@@ -515,12 +521,11 @@ export default function DailyEmbed({
           {
             key: "n",
             style: {
-              background: "#C41E3A",
-              borderRadius: "999px",
-              minWidth: "18px",
-              padding: "1px 5px",
-              fontSize: "11px",
-              fontWeight: 700,
+              background: colors.brand,
+              borderRadius: `${radius.pill}px`,
+              minWidth: `${space.lg}px`,
+              padding: `${space.xxs}px ${space.xs}px`,
+              ...t.overline,
               textAlign: "center",
             },
           },
@@ -540,6 +545,7 @@ export default function DailyEmbed({
     "div",
     {
       key: "err",
+      role: "alert",
       style: {
         position: "absolute",
         inset: 0,
@@ -547,19 +553,19 @@ export default function DailyEmbed({
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#111",
-        color: "#fff",
-        fontFamily: "sans-serif",
-        padding: "24px",
-        gap: "12px",
+        backgroundColor: colors.foreground,
+        color: colors.onInverse,
+        fontFamily: t.body.fontFamily,
+        padding: `${space.xl}px`,
+        gap: `${space.sm}px`,
         textAlign: "center",
         zIndex: 2,
       },
     },
-    h("span", { key: "i", style: { fontSize: "32px" } }, "\ud83d\udce1"),
+    h("span", { key: "i", "aria-hidden": true, style: { ...t.display } }, "\ud83d\udce1"),
     h(
       "p",
-      { key: "m", style: { fontSize: "14px", color: "#ccc", maxWidth: "340px", lineHeight: 1.5 } },
+      { key: "m", style: { ...t.callout, color: colors.onInverseMuted, maxWidth: "340px" } },
       joinError === SLOW_JOIN
         ? "The video call is taking longer than usual to connect. It is still trying \u2014 you can use the board and chat in the meantime."
         : "Unable to start the video call. Check your connection, then leave and rejoin. You can still use the board and chat.",
@@ -568,7 +574,7 @@ export default function DailyEmbed({
       ? null
       : h(
           "p",
-          { key: "d", style: { fontSize: "11px", color: "#555", maxWidth: "320px", wordBreak: "break-all" } },
+          { key: "d", style: { ...t.overline, color: colors.onInverseMuted, maxWidth: "320px", wordBreak: "break-all" } },
           joinError,
         ),
   );
@@ -579,14 +585,14 @@ export default function DailyEmbed({
       style: {
         position: "absolute",
         inset: 0,
-        backgroundColor: "#111111",
+        backgroundColor: colors.foreground,
         overflow: "hidden",
       },
     },
     h("div", {
       key: "frame",
       ref: containerRef,
-      style: { position: "absolute", top: showChat ? CHAT_STRIP_PX : 0, right: 0, bottom: 0, left: 0 },
+      style: { position: "absolute", top: showChat ? HIT_SLOP_MIN : 0, right: 0, bottom: 0, left: 0 },
     }),
     joinError ? errorOverlay : null,
     showChat ? (chatOpen ? chatPanel : chatButton) : null,

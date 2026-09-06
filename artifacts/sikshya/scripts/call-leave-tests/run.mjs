@@ -94,18 +94,23 @@ root.render(React.createElement(Harness));
 );
 
 const bundle = path.join(work, "bundle.js");
-const esbuild = path.join(appRoot, "..", "api-server", "node_modules", ".bin", "esbuild");
+const esbuild = path.join(appRoot, "..", "api-server", "node_modules", "esbuild", "bin", "esbuild");
 const built = spawn(
-  esbuild,
+  process.execPath,
   [
-    entry, "--bundle", `--outfile=${bundle}`,
+    esbuild, entry, "--bundle", `--outfile=${bundle}`,
     "--loader:.tsx=tsx", "--loader:.ts=ts", "--jsx=automatic",
     // The whole point: DailyEmbed's `import("@daily-co/daily-js")` resolves to the fake above.
     `--alias:@daily-co/daily-js=${fakeDaily}`,
+    "--alias:react-native=react-native-web",
     '--define:process.env.NODE_ENV="production"',
     "--format=iife", "--log-level=error",
   ],
-  { cwd: appRoot, stdio: "inherit" },
+  {
+    cwd: appRoot,
+    stdio: "inherit",
+    env: { ...process.env, NODE_PATH: path.join(appRoot, "node_modules") },
+  },
 );
 const buildOk = await new Promise((resolve) => {
   built.on("error", (err) => { console.error(`Could not run esbuild at ${esbuild}: ${err.message}`); resolve(false); });
