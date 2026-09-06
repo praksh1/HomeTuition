@@ -121,6 +121,20 @@ export const breakpoint = {
   expanded: 1024,
 } as const;
 
+/**
+ * How wide a column of running text may get before it stops being readable.
+ *
+ * A line the full width of a 1440px window runs to about 180 characters, and the eye loses its
+ * place returning to the start of the next one. Sixty to seventy-five characters is the range
+ * typography has settled on; 680 measures at about 77 characters on the operator ticket, which
+ * is the widest page of prose the app has.
+ *
+ * For **prose that is read**, not for layout in general: a screen showing a board, a grid or a
+ * row of cards wants the whole window and should not use this. It exists as a token rather than
+ * a number in one screen because the second screen that needs it must get the same answer.
+ */
+export const readingWidth = 680;
+
 export type Tier = "compact" | "medium" | "expanded";
 
 export function tierFor(width: number): Tier {

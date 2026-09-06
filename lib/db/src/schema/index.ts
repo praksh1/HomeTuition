@@ -28,3 +28,7 @@ export * from "./homework";
 export * from "./accountSecurity";
 export * from "./onboarding";
 export * from "./testTeachingGrants";
+export * from "./testStudentAccess";
+export * from "./sessionProofAggregates";
+export * from "./sessionProviderEvents";
+export * from "./sessionQualitySamples";

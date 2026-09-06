@@ -22,6 +22,7 @@ import Skeleton from "@/components/Skeleton";
 import FollowedTeachers from "@/components/FollowedTeachers";
 import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
+import { loadTeacherDirectory } from "@/utils/teacherDirectory";
 import { matches as matchesSearch, score as searchScore } from "@/utils/search";
 import TeacherCard from "@/components/TeacherCard";
 import type { Teacher } from "@/context/AuthContext";
@@ -80,8 +81,8 @@ export default function Discover() {
   /**
    * How many approved teachers there are, as opposed to how many arrived in this page.
    *
-   * The header said `teachers.length`, which is capped by the request's own `limit=200`. The
-   * endpoint has always returned the real total beside the rows; nothing read it.
+   * The API caps pages at 100; loadTeacherDirectory follows its pagination so local search
+   * covers the same directory as this total, including new unrated teachers on later pages.
    */
   const [teacherTotal, setTeacherTotal] = useState<number | null>(null);
   /**
@@ -92,6 +93,7 @@ export default function Discover() {
    * for a search that has not run yet.
    */
   const [loadingTeachers, setLoadingTeachers] = useState(true);
+  const [teacherLoadFailed, setTeacherLoadFailed] = useState(false);
   /**
    * The monthly classes running right now.
    *
@@ -117,11 +119,14 @@ export default function Discover() {
   );
 
   const loadTeachers = async () => {
+    setLoadingTeachers(true);
+    setTeacherLoadFailed(false);
     try {
-      const res = await apiGet<{ teachers: Teacher[]; total: number }>("/teachers?limit=200");
+      const res = await loadTeacherDirectory<Teacher>(apiGet);
       setTeachers(res.teachers.map((t: Teacher) => ({ ...t, credentials: [] })));
       setTeacherTotal(res.total ?? res.teachers.length);
     } catch (_e) {
+      setTeacherLoadFailed(true);
       setTeachers([]);
       setTeacherTotal(null);
     } finally {
@@ -166,6 +171,7 @@ export default function Discover() {
          */
         const fields = [
           teacher.name,
+          teacher.email ?? "",
           teacher.subject,
           teacher.bio,
           teacher.location ?? "",
@@ -560,20 +566,20 @@ export default function Discover() {
                   <View style={[styles.emptyIcon, { backgroundColor: colors.muted, borderRadius: radius.pill }]}>
                     <Feather name="search" size={28} color={colors.inkFaint} />
                   </View>
-                  <Text style={[t.title3, { color: colors.foreground }]}>No teachers found</Text>
+                  <Text style={[t.title3, { color: colors.foreground }]}>{teacherLoadFailed ? "Could not load teachers" : "No teachers found"}</Text>
                   <Text style={[t.callout, { color: colors.mutedForeground, textAlign: "center" }]}>
-                    {isSearching
+                    {teacherLoadFailed ? "Check your connection and try again." : isSearching
                       ? "Try a different keyword, subject, or widen your filters."
                       : "No teachers have been approved yet. Please check back soon."}
                   </Text>
-                  {(activeFilterCount > 0 || subject !== "All" || !!search) && (
+                  {(teacherLoadFailed || activeFilterCount > 0 || subject !== "All" || !!search) && (
                     <TouchableOpacity
                       style={[styles.clearBtn, { backgroundColor: colors.primary, borderRadius: radius.sm, paddingHorizontal: space.lg }]}
-                      onPress={() => { setFilters(DEFAULT_FILTERS); setSubject("All"); setSearch(""); }}
+                      onPress={() => { if (teacherLoadFailed) { void loadTeachers(); return; } setFilters(DEFAULT_FILTERS); setSubject("All"); setSearch(""); }}
                       activeOpacity={0.8}
                       accessibilityRole="button"
                     >
-                      <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Clear all filters</Text>
+                      <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{teacherLoadFailed ? "Try again" : "Clear all filters"}</Text>
                     </TouchableOpacity>
                   )}
                 </View>

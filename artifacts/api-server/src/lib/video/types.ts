@@ -29,6 +29,19 @@ export interface JoinOptions {
   isOwner: boolean;
   /** The name other people in the call see. */
   userName: string;
+  /**
+   * The authenticated Sikshya user id, so a provider can say *who* joined and not merely that
+   * somebody did.
+   *
+   * The provider echoes it back on the events it sends about the call, which is the difference
+   * between "an account we can name was in the room" and "somebody with moderator rights was" —
+   * and the second is not evidence a refund argument can rest on.
+   *
+   * **It grants nothing.** Rights come from `isOwner`, which comes from this server's own
+   * membership check in `lib/membership.ts`. This is taken from the authenticated request and
+   * never from a request body: an identity a client could choose is not an identity.
+   */
+  userId: number;
 }
 
 /**

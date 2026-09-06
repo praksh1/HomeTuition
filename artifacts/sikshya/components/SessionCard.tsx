@@ -2,8 +2,10 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { numeric } from "@/constants/typography";
+import { TEST_BOOKING_LABEL, TEST_CLASS_LABEL } from "@/utils/testAccess";
 
 interface Session {
   id: string;
@@ -16,16 +18,46 @@ interface Session {
   enrolledStudents: string[];
   price: number;
   status: "upcoming" | "live" | "completed" | "cancelled";
+  /**
+   * This viewer's own place in the class, as the server reports it. `test` means an operator
+   * granted the place and no money was taken **for them**.
+   */
+  enrolment?: string | null;
+  /**
+   * The class was created under a teacher's test grant — the server's fact, from `test_classes`.
+   *
+   * **Eligibility, not a payment claim.** A test class is merely *open* to approved test
+   * bookings; anybody without a grant pays the price on this card in full. Shown only to the
+   * teacher who owns the class (see `showTestClass`), because to a student browsing it the class
+   * is an ordinary paid one and the marker would invite exactly the misreading it is trying to
+   * prevent.
+   */
+  testClass?: boolean;
+  /** The server's own wording for the class-level fact. */
+  testClassLabel?: string;
 }
 
 interface SessionCardProps {
   session: Session;
   onPress?: () => void;
   showTeacher?: boolean;
+  /**
+   * Show the class-level "test-enabled" marker.
+   *
+   * Off by default, and on only where the audience is the teacher who owns the class. An
+   * ordinary student pays full price for a test class, so telling them the class is test-enabled
+   * answers a question they did not ask with a word that sounds like "free". They get normal
+   * price and payment language; the marker on their own card is about *their* booking, and comes
+   * from `enrolment` instead.
+   */
+  showTestClass?: boolean;
 }
 
-export default function SessionCard({ session, onPress, showTeacher = false }: SessionCardProps) {
+export default function SessionCard({
+  session, onPress, showTeacher = false, showTestClass = false,
+}: SessionCardProps) {
   const colors = useColors();
+  const { t } = useLayout();
   const date = new Date(session.date);
   const isLive = session.status === "live";
   const isCompleted = session.status === "completed";
@@ -83,6 +115,40 @@ export default function SessionCard({ session, onPress, showTeacher = false }: S
           NPR {session.price.toLocaleString()} per class
         </Text>
       </View>
+
+      {/*
+        Two different sentences, next to the price, and never both at once.
+
+        A card showing "NPR 500 per class" above a seat nobody paid for is the fabrication this
+        project keeps finding — but the fix for it produced a second one, in the other direction:
+        the same "no payment was processed" label went to every viewer of a test class, so a
+        student about to be charged full price for it read that they would not be.
+
+        So: this viewer's own place being a granted one is the only thing that may say no payment
+        was taken. The class merely being open to such bookings is a different sentence, and is
+        shown only to the teacher who owns it.
+      */}
+      {session.enrolment === "test" ? (
+        <View
+          testID={`session-test-booking-${session.id}`}
+          accessibilityRole="text"
+          style={[styles.testLabel, { backgroundColor: colors.warnSoft, borderColor: colors.warn }]}
+        >
+          <Feather name="alert-triangle" size={12} color={colors.warn} />
+          <Text style={[t.overline, { color: colors.warn }]}>{TEST_BOOKING_LABEL}</Text>
+        </View>
+      ) : showTestClass && session.testClass ? (
+        <View
+          testID={`session-test-class-${session.id}`}
+          accessibilityRole="text"
+          style={[styles.testLabel, { backgroundColor: colors.warnSoft, borderColor: colors.warn }]}
+        >
+          <Feather name="alert-triangle" size={12} color={colors.warn} />
+          <Text style={[t.overline, { color: colors.warn }]}>
+            {session.testClassLabel ?? TEST_CLASS_LABEL}
+          </Text>
+        </View>
+      ) : null}
     </TouchableOpacity>
   );
 }
@@ -115,4 +181,15 @@ const styles = StyleSheet.create({
   metaItem: { flexDirection: "row", alignItems: "center", gap: 4 },
   metaText: { fontSize: 12, fontFamily: "Inter_400Regular" },
   price: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginLeft: "auto" },
+  testLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    marginTop: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
 });

@@ -77,7 +77,19 @@ export function wrapUpWarningAt(session: SessionWindowInput): number | null {
   return end === null ? null : end - WRAP_UP_WARNING_MINUTES * 60_000;
 }
 
-export type OpenCheck = { ok: true } | { ok: false; title: string; message: string };
+/**
+ * Why a class cannot be opened, and whether that will change.
+ *
+ * `code` mirrors `StartRefusal` on the server. Without it, this mirror had the same fault the
+ * server had: "Not open yet" and "Session expired" were the same shape, so the teacher's
+ * classroom put both into its expired state and offered to **create a new session** for a class
+ * that had not started yet.
+ */
+export type OpenRefusal = "too_early" | "finished" | "cancelled";
+
+export type OpenCheck =
+  | { ok: true }
+  | { ok: false; title: string; message: string; code: OpenRefusal };
 
 /** How long until a time, in words a person would use. */
 function inWords(msUntil: number): string {
@@ -101,6 +113,7 @@ export function canOpenSession(session: SessionWindowInput, now: number = Date.n
     return {
       ok: false,
       title: "Session cancelled",
+      code: "cancelled",
       message: "This class was cancelled. Please create a new one.",
     };
   }
@@ -123,6 +136,7 @@ export function canOpenSession(session: SessionWindowInput, now: number = Date.n
     return {
       ok: false,
       title: "Session held and ended",
+      code: "finished",
       message: "This class was opened and ended early. Please create a new one.",
     };
   }
@@ -131,6 +145,7 @@ export function canOpenSession(session: SessionWindowInput, now: number = Date.n
     return {
       ok: false,
       title: "Not open yet",
+      code: "too_early",
       message:
         `This class opens ${DOORS_OPEN_MINUTES} minutes before it starts — ` +
         `that is in ${inWords(opensAt - now)}.`,
@@ -142,6 +157,7 @@ export function canOpenSession(session: SessionWindowInput, now: number = Date.n
     return {
       ok: false,
       title: "Session expired",
+      code: "finished",
       message: "This class is over and can no longer be opened. Please create a new one.",
     };
   }
@@ -160,7 +176,7 @@ export function canOpenSession(session: SessionWindowInput, now: number = Date.n
  */
 export function canJoinSession(session: SessionWindowInput, now: number = Date.now()): OpenCheck {
   if (session.status === "cancelled") {
-    return { ok: false, title: "Session cancelled", message: "This class was cancelled." };
+    return { ok: false, title: "Session cancelled", code: "cancelled", message: "This class was cancelled." };
   }
 
   const opensAt = doorsOpenAt(session);
@@ -170,6 +186,7 @@ export function canJoinSession(session: SessionWindowInput, now: number = Date.n
     return {
       ok: false,
       title: "Not open yet",
+      code: "too_early",
       message:
         `This class opens ${DOORS_OPEN_MINUTES} minutes before it starts — ` +
         `that is in ${inWords(opensAt - now)}.`,
@@ -181,6 +198,7 @@ export function canJoinSession(session: SessionWindowInput, now: number = Date.n
     return {
       ok: false,
       title: "Session expired",
+      code: "finished",
       message: "This class is over. If something went wrong, you can report it from Support.",
     };
   }

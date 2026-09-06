@@ -22,6 +22,7 @@ import { apiGet, apiPost, apiDelete } from "@/utils/api";
 import StarRating from "@/components/StarRating";
 import SessionCard from "@/components/SessionCard";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
+import { TEST_BOOKING_LABEL } from "@/utils/testAccess";
 import type { Teacher, Student } from "@/context/AuthContext";
 
 interface Session {
@@ -47,6 +48,18 @@ interface SessionAccess {
   status?: string;
   /** Paid and inside the early-join window, but the teacher has not started yet. */
   awaitingTeacher?: boolean;
+  /**
+   * The server says this signed-in person may take a place in this class without paying.
+   *
+   * All three gates, checked server-side against the authenticated user: the kill switch is on,
+   * they hold a live operator grant, and this class was marked a test class when it was created.
+   * Never derived here — a client that decided this for itself would be a client that could
+   * decide to skip payment.
+   *
+   * It only controls whether a payment sheet is opened. `POST /sessions/:id/book` re-derives all
+   * three inside its own transaction and is the only thing that actually decides.
+   */
+  canBookAsTest?: boolean;
   joinOpensAt?: string | null;
   /**
    * Whether the server actually answered.
@@ -145,9 +158,21 @@ export default function TeacherDetail() {
    */
   const [access, setAccess] = useState<Record<string, SessionAccess>>({});
 
+  /**
+   * Re-read when the signed-in student becomes known, not only when the route changes.
+   *
+   * `loadData` skips the whole per-session access block unless `studentId` is set, and on a cold
+   * open — a refresh, a shared link — `useAuth` has not restored the session by the time this
+   * first runs. It depended on `[id]` alone, so it never ran again: `access` stayed empty for the
+   * life of the screen, every upcoming class showed "Book & pay" whatever the server thought, and
+   * a student who had already booked was invited to buy it a second time.
+   *
+   * It surfaced here because a Book button that must not open a payment sheet cannot decide that
+   * from a verdict the screen never asked for.
+   */
   useEffect(() => {
     loadData();
-  }, [id]);
+  }, [id, studentId]);
 
   /**
    * Look again when the student comes back to this screen, and while a class is live.
@@ -165,7 +190,8 @@ export default function TeacherDetail() {
   useFocusEffect(
     useCallback(() => {
       loadData();
-    }, [id]),
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id, studentId]),
   );
 
   useEffect(() => {
@@ -292,6 +318,21 @@ export default function TeacherDetail() {
 
   const bookSession = (session: Session) => {
     if (bookingSessionId) return;
+    /**
+     * A payment sheet is opened only when there is a payment.
+     *
+     * The server had been bypassing the gateway *behind* the sheet: the student chose eSewa or
+     * Khalti, typed a phone number and a PIN, watched a confirmation — and no payment was ever
+     * attempted. A ritual for a transaction that does not happen is not a smaller lie than the
+     * banner was, and the walkthrough handed to the owner said no payment screen would appear.
+     *
+     * The verdict is the server's, taken from `/access`. If it is stale or wrong the booking
+     * endpoint refuses independently, so the worst case is a refusal rather than a free class.
+     */
+    if (access[session.id]?.canBookAsTest) {
+      void confirmBooking(session, null);
+      return;
+    }
     setPaySession(session);
   };
 
@@ -322,7 +363,12 @@ export default function TeacherDetail() {
    */
   const confirmBooking = async (
     session: Session,
-    paymentMethod: PaymentMethod,
+    /**
+     * `null` when no payment sheet was opened, because the server said this booking bypasses the
+     * gateway. Nothing is sent in that case — no method, no phone number, no PIN — so there are
+     * no payment credentials to leak into a request that will never reach a provider.
+     */
+    paymentMethod: PaymentMethod | null,
   ) => {
     if (bookingSessionId === session.id) return;
     setBookingSessionId(session.id);
@@ -330,9 +376,15 @@ export default function TeacherDetail() {
       // One call. It either comes back booked and paid, or nothing was created and we say so.
       // The old flow enrolled first and paid second, which is why students ended up holding
       // classes marked "payment pending" that they could never get into.
-      const res = await apiPost<{ paid?: boolean; alreadyBooked?: boolean }>(
+      const res = await apiPost<{
+        paid?: boolean;
+        alreadyBooked?: boolean;
+        /** The server's own word for it: *this booking* took no payment. utils/testAccess.ts. */
+        testBooking?: boolean;
+        testBookingLabel?: string;
+      }>(
         `/sessions/${session.id}/book`,
-        { paymentMethod },
+        paymentMethod ? { paymentMethod } : {},
       );
       await refreshAccess(session.id);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -341,8 +393,32 @@ export default function TeacherDetail() {
       if (res?.alreadyBooked) {
         notify(
           "Already booked",
-          "You have already paid for this session. Check your Sessions tab to join.",
+          res.testBooking
+            // Saying "you have already paid" about a place nobody was charged for is the same
+            // untruth the label exists to prevent, said at the one moment somebody is thinking
+            // about money.
+            ? `You already have a place in this class. ${res.testBookingLabel ?? TEST_BOOKING_LABEL}. ` +
+              "Check your Sessions tab to join."
+            : "You have already paid for this session. Check your Sessions tab to join.",
         );
+        return;
+      }
+
+      if (res?.testBooking) {
+        // No payment sheet was involved and no method was charged, so the confirmation must not
+        // name one. "Paid with eSewa. You're in." after a booking that charged nobody is exactly
+        // the sentence a teacher or student would later quote back as evidence they had paid.
+        if (
+          await confirm(
+            "You're in — no payment was taken",
+            `${res.testBookingLabel ?? TEST_BOOKING_LABEL}.\n\n` +
+              "This is a test class, so nothing was charged. You can join from your Sessions " +
+              "tab — the class opens a few minutes before it starts.",
+            "View My Sessions",
+          )
+        ) {
+          router.push("/(student)/sessions");
+        }
         return;
       }
       if (
@@ -365,6 +441,12 @@ You can join from your Sessions tab — the class opens a few minutes before it 
         e instanceof Error
           ? e.message
           : "That did not go through. Please try again.";
+      // "Nothing has been charged" is reassurance about a charge that was going to happen. Where
+      // none was, it implies one was attempted and raises a question rather than settling it.
+      if (!paymentMethod) {
+        notify("That did not go through", msg);
+        return;
+      }
       throw new Error(`${msg} Nothing has been charged.`);
     } finally {
       setBookingSessionId(null);
@@ -1059,10 +1141,18 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                         disabled={bookingSessionId === s.id}
                         activeOpacity={0.85}
                         accessibilityRole="button"
-                        accessibilityLabel={`Book ${s.topic} for NPR ${s.price.toLocaleString()}, one class`}
+                        testID={`book-btn-${s.id}`}
+                        accessibilityLabel={
+                          // The button must not promise a payment that will not be taken, nor a
+                          // free place to somebody who will be charged. The verdict is the
+                          // server's; only the wording is decided here.
+                          a?.canBookAsTest
+                            ? `Take a test place in ${s.topic}. No payment will be processed.`
+                            : `Book ${s.topic} for NPR ${s.price.toLocaleString()}, one class`
+                        }
                       >
                         <Feather
-                          name="credit-card"
+                          name={a?.canBookAsTest ? "check-circle" : "credit-card"}
                           size={14}
                           color={colors.primary}
                         />
@@ -1075,7 +1165,9 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                         >
                           {bookingSessionId === s.id
                             ? "Booking…"
-                            : `Book & pay NPR ${s.price.toLocaleString()} for this class`}
+                            : a?.canBookAsTest
+                              ? "Take a test place — no payment"
+                              : `Book & pay NPR ${s.price.toLocaleString()} for this class`}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -1203,10 +1295,17 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                           activeOpacity={0.85}
                           disabled={bookingSessionId === s.id}
                           accessibilityRole="button"
-                          accessibilityLabel={`Book ${s.topic} for NPR ${s.price.toLocaleString()}, one live class`}
+                          testID={`book-btn-${s.id}`}
+                          // The same rule as the upcoming tab: never promise a payment that will
+                          // not be taken, nor a free place to somebody who will be charged.
+                          accessibilityLabel={
+                            a?.canBookAsTest
+                              ? `Take a test place in ${s.topic}. No payment will be processed.`
+                              : `Book ${s.topic} for NPR ${s.price.toLocaleString()}, one live class`
+                          }
                         >
                           <Feather
-                            name="credit-card"
+                            name={a?.canBookAsTest ? "check-circle" : "credit-card"}
                             size={14}
                             color={colors.primary}
                           />
@@ -1217,7 +1316,9 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                               { color: colors.primary, textAlign: "center" },
                             ]}
                           >
-                            {`Book & pay NPR ${s.price.toLocaleString()} for this live class`}
+                            {a?.canBookAsTest
+                              ? "Take a test place — no payment"
+                              : `Book & pay NPR ${s.price.toLocaleString()} for this live class`}
                           </Text>
                         </TouchableOpacity>
                       )}

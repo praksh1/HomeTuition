@@ -1,13 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, {
-  useRef,
-  useState,
-  useEffect,
-  useCallback,
-  useMemo,
-} from "react";
+import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -31,6 +25,16 @@ import type { Teacher } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
 import VideoCall from "@/components/VideoCall";
+import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
+import { TEST_BOOKING_LABEL, TEST_CLASS_LABEL } from "@/utils/testAccess";
+import {
+  callWindowControls,
+  callWindowReducer,
+  dragBounds,
+  initialCallWindow,
+  windowRect,
+  type Viewport,
+} from "@/utils/callWindow";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import PdfViewer from "@/components/PdfViewer";
@@ -241,9 +245,23 @@ export default function Classroom() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const teacher = user as Teacher;
-  if (!teacher || teacher.role !== "teacher") return null;
+  /**
+   * The guard is remembered here and applied at the bottom, after every hook has run.
+   *
+   * It used to `return null` on this line, which is above roughly forty hooks. On a cold open of
+   * a classroom link — a refresh, a bookmark, a link somebody was sent — `useAuth` has not
+   * restored the session yet, so the first render took the early exit and ran three hooks and the
+   * next ran forty. React calls that error 310, and the person got **"Something went wrong. Please
+   * reload the app."** on a class that was perfectly fine.
+   *
+   * Found by rendering rather than by reading: every API test passed while this was true. It is
+   * the hazard `.agents/memory/authguard-role-cast-crash.md` already describes, in the one screen
+   * where a refresh is most likely — nobody reloads a dashboard mid-lesson, but they certainly
+   * reload a classroom.
+   */
+  const wrongRole = !teacher || teacher.role !== "teacher";
 
-  const teacherName = teacher.name ?? "Teacher";
+  const teacherName = teacher?.name ?? "Teacher";
 
   const {
     connected,
@@ -271,9 +289,18 @@ export default function Classroom() {
   const [mode, setMode] = useState<Mode>("whiteboard");
   const [elapsed, setElapsed] = useState(0);
   const [chatMsg, setChatMsg] = useState("");
-  /** The call never unmounts while its app-owned shell is hidden or resized. */
-  const [videoWindowSize, setVideoWindowSize] =
-    useState<VideoWindowSize>("small");
+  /**
+   * The call never unmounts while its app-owned shell is hidden, moved or resized.
+   *
+   * The window itself lives in `utils/callWindow.ts`, shared with the student's classroom and
+   * tested on its own. Both screens had their own copy of this and they had already drifted:
+   * minus toggled two sizes a finger apart and left the window wherever it had been dragged,
+   * which the owner reasonably read as a button that did nothing.
+   */
+  const [callWindow, dispatchWindow] = useReducer(callWindowReducer, undefined, initialCallWindow);
+  /** The names the rest of this screen has always used. One map, so nothing else had to change. */
+  const videoWindowSize: VideoWindowSize =
+    callWindow.state === "compact" ? "small" : callWindow.state === "normal" ? "medium" : callWindow.state;
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   /** Upload options stay folded away until asked for — they are occasional actions, and as
    * two permanent full-width buttons they were consuming screen the video should have. */
@@ -296,6 +323,19 @@ export default function Classroom() {
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
+  /**
+   * What, if anything, this room has to say about payment — and to *this* person.
+   *
+   * Two facts arrive from the server and they are not the same. `booking` means this viewer's own
+   * place was granted and took no money. `class` means only that the class is open to such
+   * bookings; everybody else in it paid the full price. Painting the first sentence at everybody,
+   * which is what a single flag did, told a paying student their money had not been taken.
+   *
+   * The server decides — it is the only side that knows what the enrolment says — and the banner
+   * repeats what it was told.
+   */
+  const [testNotice, setTestNotice] =
+    useState<{ kind: "booking" | "class"; text: string } | null>(null);
   const [roomError, setRoomError] = useState(false);
   /**
    * Set when this class is too old to open. Nothing about the call is set up while it is —
@@ -307,13 +347,19 @@ export default function Classroom() {
     title: string;
     message: string;
   } | null>(null);
+  /**
+   * The doors have not opened yet — which is not the same as the class being over.
+   *
+   * Kept apart from `expired` on purpose. Every timing refusal used to arrive as one 409 and land
+   * in `expired`, so a teacher who opened their own class fifteen minutes early was shown
+   * "Session already expired" and a button to **create a new session** — advice that would have
+   * had them abandon a class their students had already booked.
+   */
+  const [waiting, setWaiting] = useState<RoomRefusal | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const chatScrollRef = useRef<ScrollView>(null);
   const chatProgress = useRef(new Animated.Value(0)).current;
   const pipDrag = useRef(new Animated.ValueXY()).current;
-  const pipOffset = useRef({ x: 0, y: 0 });
-  const lastVisibleVideoSizeRef = useRef<VisibleVideoWindowSize>("small");
-  const lastWindowedVideoSizeRef = useRef<WindowedVideoSize>("small");
   const lastSeenIncomingRef = useRef(0);
   const previousIncomingRef = useRef(0);
 
@@ -332,48 +378,49 @@ export default function Classroom() {
   const videoHidden = videoWindowSize === "hidden";
   const videoFull = videoWindowSize === "full";
   const videoSmall = videoWindowSize === "small";
+  const windowControls = callWindowControls(callWindow);
 
-  // Small is a true thumbnail. Medium is the first size intended for Daily's own controls.
-  const smallVideoWidth = Math.min(
-    width - space.xxl,
-    space.huge * (isCompact ? 4 : 6),
+  /**
+   * Everything about where the window goes, in one shared place.
+   *
+   * `reservedTop` and `reservedBottom` are the bands Excalidraw owns — its hamburger and tools at
+   * the top, its zoom controls at the bottom. The helper clamps the window between them, so
+   * floating chrome can cover canvas but never the controls that make the canvas usable.
+   */
+  const viewport: Viewport = useMemo(
+    () => ({
+      width,
+      height,
+      insets,
+      reservedTop: boardToolbarBottom - insets.top + HIT_SLOP_MIN + (isLandscapeLayout ? space.xs : space.lg),
+      reservedBottom: pipBottomClearance - insets.bottom,
+      hitSlopMin: HIT_SLOP_MIN,
+    }),
+    [width, height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
   );
-  const mediumVideoWidth = Math.min(
-    width - space.xxl,
-    space.huge * (isCompact ? 7 : 10),
-  );
-  const pipTop =
-    boardToolbarBottom +
-    HIT_SLOP_MIN +
-    (isLandscapeLayout ? space.xs : space.lg);
-  const availableVideoHeight = Math.max(
-    space.huge * 2,
-    height - pipTop - pipBottomClearance,
-  );
-  const smallVideoHeight = Math.min(space.huge * 3, availableVideoHeight);
-  const mediumVideoHeight = Math.min(
-    space.huge * (isLandscapeLayout ? 5 : 6),
-    availableVideoHeight,
-  );
-  const windowedVideoWidth = videoSmall ? smallVideoWidth : mediumVideoWidth;
-  const windowedVideoHeight = videoSmall ? smallVideoHeight : mediumVideoHeight;
-  const windowedVideoBaseLeft = Math.max(
-    space.md,
-    width - windowedVideoWidth - space.md,
-  );
-  const expandedVideoWidth = width - space.xxl;
-  const expandedVideoHeight = Math.max(
-    space.huge * 3,
-    height - pipTop - hudBottom - HIT_SLOP_MIN - space.lg,
-  );
-  const videoWidth = videoFull ? expandedVideoWidth : windowedVideoWidth;
-  const videoHeight = videoFull ? expandedVideoHeight : windowedVideoHeight;
-  const videoLeft = videoFull ? space.md : windowedVideoBaseLeft;
+
+  const rect = windowRect(callWindow.state, viewport, callWindow.offset);
+  const pipTop = rect.top;
+  const videoWidth = rect.width;
+  const videoHeight = rect.height;
+  const videoLeft = rect.left;
+  const windowedVideoWidth = rect.width;
+  const windowedVideoHeight = rect.height;
+  const windowedVideoBaseLeft = rect.left;
   const noticeTop = videoHidden
-    ? pipTop
+    ? rect.top
     : videoFull
-      ? pipTop + space.sm
-      : pipTop + windowedVideoHeight + space.sm;
+      ? rect.top + space.sm
+      : rect.top + rect.height + space.sm;
+
+  /**
+   * A rotation or a resized browser re-clamps the window; it does not throw it back to the
+   * corner. Somebody who moved their window keeps it where they put it, as far as it still fits.
+   */
+  useEffect(() => {
+    dispatchWindow({ type: "viewport", bounds: dragBounds(callWindow.state, viewport) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [width, height, insets.top, insets.bottom, insets.left, insets.right]);
   const incomingMessageCount = useMemo(
     () =>
       messages.reduce((total, message) => total + (message.isMe ? 0 : 1), 0),
@@ -387,7 +434,7 @@ export default function Classroom() {
         onMoveShouldSetPanResponder: (_, gesture) =>
           Math.abs(gesture.dx) > space.xxs || Math.abs(gesture.dy) > space.xxs,
         onPanResponderGrant: () => {
-          pipDrag.setOffset(pipOffset.current);
+          pipDrag.setOffset({ x: 0, y: 0 });
           pipDrag.setValue({ x: 0, y: 0 });
         },
         onPanResponderMove: Animated.event(
@@ -397,129 +444,51 @@ export default function Classroom() {
           },
         ),
         onPanResponderRelease: (_, gesture) => {
-          const next = {
-            x: Math.max(
-              space.md - windowedVideoBaseLeft,
-              Math.min(
-                pipOffset.current.x + gesture.dx,
-                width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
-              ),
-            ),
-            y: Math.max(
-              0,
-              Math.min(
-                pipOffset.current.y + gesture.dy,
-                height - pipTop - windowedVideoHeight - pipBottomClearance,
-              ),
-            ),
-          };
+          /**
+           * The drag is recorded in the shared model, which clamps it.
+           *
+           * The clamping used to be written out here, twice, in terms of six local variables —
+           * and the student's classroom had its own copy. `dragBounds` is the one rule now, and
+           * it is what a rotation re-applies.
+           */
           pipDrag.flattenOffset();
-          pipDrag.setValue(next);
-          pipOffset.current = next;
+          dispatchWindow({ type: "drag", dx: gesture.dx, dy: gesture.dy });
+          // The model has absorbed the movement and the rectangle already includes it, so the
+          // animated value goes back to zero. Leaving it would double the offset on every drag.
+          pipDrag.setValue({ x: 0, y: 0 });
         },
         onPanResponderTerminate: (_, gesture) => {
           pipDrag.flattenOffset();
-          const next = {
-            x: Math.max(
-              space.md - windowedVideoBaseLeft,
-              Math.min(
-                pipOffset.current.x + gesture.dx,
-                width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
-              ),
-            ),
-            y: Math.max(
-              0,
-              Math.min(
-                pipOffset.current.y + gesture.dy,
-                height - pipTop - windowedVideoHeight - pipBottomClearance,
-              ),
-            ),
-          };
-          pipDrag.setValue(next);
-          pipOffset.current = next;
+          dispatchWindow({ type: "drag", dx: gesture.dx, dy: gesture.dy });
+          pipDrag.setValue({ x: 0, y: 0 });
         },
       }),
-    [
-      height,
-      windowedVideoBaseLeft,
-      pipDrag,
-      pipTop,
-      pipBottomClearance,
-      space.md,
-      space.xxs,
-      windowedVideoHeight,
-      windowedVideoWidth,
-      width,
-    ],
+    // The geometry moved into the shared model, so the responder no longer depends on it.
+    [pipDrag, space.xxs],
   );
 
-  useEffect(() => {
-    const next = {
-      x: Math.max(
-        space.md - windowedVideoBaseLeft,
-        Math.min(
-          pipOffset.current.x,
-          width - windowedVideoWidth - space.md - windowedVideoBaseLeft,
-        ),
-      ),
-      y: Math.max(
-        0,
-        Math.min(
-          pipOffset.current.y,
-          height - pipTop - windowedVideoHeight - pipBottomClearance,
-        ),
-      ),
-    };
-    pipOffset.current = next;
-    pipDrag.setOffset({ x: 0, y: 0 });
-    pipDrag.setValue(next);
-  }, [
-    height,
-    windowedVideoBaseLeft,
-    pipDrag,
-    pipTop,
-    pipBottomClearance,
-    space.md,
-    windowedVideoHeight,
-    windowedVideoWidth,
-    width,
-  ]);
+  /**
+   * The old clamp lived here, written out in six local variables, once per classroom.
+   *
+   * `dragBounds` in `utils/callWindow.ts` is the one rule now, applied on every viewport change
+   * by the effect above — which is also what makes a rotation re-clamp the window instead of
+   * losing it off the edge.
+   */
 
-  const hideVideoWindow = useCallback(() => {
-    if (videoWindowSize === "hidden") return;
-    lastVisibleVideoSizeRef.current = videoWindowSize;
-    if (videoWindowSize !== "full") {
-      lastWindowedVideoSizeRef.current = videoWindowSize;
-    }
-    setVideoWindowSize("hidden");
-  }, [videoWindowSize]);
-
-  const showVideoWindow = useCallback(() => {
-    setVideoWindowSize(lastVisibleVideoSizeRef.current);
-  }, []);
-
-  const toggleWindowedVideoSize = useCallback(() => {
-    const next: WindowedVideoSize =
-      videoWindowSize === "small" ? "medium" : "small";
-    lastVisibleVideoSizeRef.current = next;
-    lastWindowedVideoSizeRef.current = next;
-    setVideoWindowSize(next);
-  }, [videoWindowSize]);
+  const hideVideoWindow = useCallback(() => dispatchWindow({ type: "hide" }), []);
+  const showVideoWindow = useCallback(() => dispatchWindow({ type: "show" }), []);
+  /**
+   * Minus. One meaning, everywhere: make it small and put it back in the corner.
+   *
+   * It used to swap between two docked sizes and leave the window wherever it had been dragged.
+   */
+  const minimizeVideoWindow = useCallback(() => dispatchWindow({ type: "minimize" }), []);
 
   const toggleFullVideoWindow = useCallback(() => {
-    if (videoWindowSize === "full") {
-      const next = lastWindowedVideoSizeRef.current;
-      lastVisibleVideoSizeRef.current = next;
-      setVideoWindowSize(next);
-      return;
-    }
-
-    if (videoWindowSize !== "hidden") {
-      lastWindowedVideoSizeRef.current = videoWindowSize;
-    }
-    lastVisibleVideoSizeRef.current = "full";
-    setVideoWindowSize("full");
-  }, [videoWindowSize]);
+    dispatchWindow({ type: "toggle-full" });
+  }, []);
+  /** Compact's one control: back to the working size. */
+  const restoreVideoWindow = useCallback(() => dispatchWindow({ type: "restore" }), []);
 
   useEffect(() => {
     Animated.timing(chatProgress, {
@@ -557,6 +526,13 @@ export default function Classroom() {
       if (!current) return;
       const check = canOpenSession(current);
       if (!check.ok) {
+        if (check.code === "too_early") {
+          // The app's own mirror of the clock reaches this before the server does. A class that
+          // has not opened yet is a lobby, not an ending — the same distinction the room route
+          // now makes, so the two cannot disagree about what a teacher is looking at.
+          setWaiting({ kind: "waiting", message: check.message });
+          return;
+        }
         setExpired({ title: check.title, message: check.message });
         return;
       }
@@ -599,7 +575,12 @@ export default function Classroom() {
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setExpired({ title: "Cannot rejoin this class", message: err.message });
+        const refusal = readRoomRefusal(err.status, err.data, err.message);
+        if (refusal.kind === "waiting") {
+          setWaiting(refusal);
+          return false;
+        }
+        setExpired({ title: "Cannot rejoin this class", message: refusal.message });
         return false;
       }
       // Anything else is a connection problem rather than a decision, and the video area
@@ -632,12 +613,43 @@ export default function Classroom() {
         roomUrl: url,
         token,
         provider,
+        testClass,
+        testClassLabel,
+        testBooking,
+        testBookingLabel,
       } = await apiGet<{
         roomUrl: string;
         token?: string | null;
         provider?: string;
+        /** The class is open to test bookings. Says nothing about whether *you* paid. */
+        testClass?: boolean;
+        testClassLabel?: string;
+        /** *Your own* place here was granted and took no money. */
+        testBooking?: boolean;
+        testBookingLabel?: string;
       }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
+      /**
+       * The narrower, personal fact wins; the class-level one is the fallback.
+       *
+       * Both used to arrive as one flag, so an ordinary student who had genuinely paid for a seat
+       * in a test class sat under a banner telling them no payment had been processed. Now the
+       * only person shown that sentence is the person it is true of.
+       */
+      /**
+       * The teacher is told what is true of the class they are running.
+       *
+       * They hold no enrolment, so `testBooking` is never set for them; the branch stays because
+       * the shape is shared with the student's classroom and a silent divergence between the two
+       * is how these screens drifted apart before.
+       */
+      setTestNotice(
+        testBooking
+          ? { kind: "booking" as const, text: testBookingLabel || TEST_BOOKING_LABEL }
+          : testClass
+            ? { kind: "class" as const, text: testClassLabel || TEST_CLASS_LABEL }
+            : null,
+      );
       setRoomUrl(url);
       setMeetingToken(token ?? null);
       setRoomError(false);
@@ -645,10 +657,17 @@ export default function Classroom() {
       // The server applies the same window on this endpoint, and it is the one that counts.
       // If it refuses, say so rather than showing a broken video area.
       if (err instanceof ApiError && err.status === 409) {
+        const refusal = readRoomRefusal(err.status, err.data, err.message);
+        if (refusal.kind === "waiting") {
+          // Nothing is wrong and nothing is over. The lobby below says when it opens and comes
+          // back on its own, so nobody has to sit pressing a button at a class they own.
+          setWaiting(refusal);
+          return;
+        }
         setExpired({
           title: "Session already expired",
           message:
-            err.message ||
+            refusal.message ||
             "This class ended more than 3 hours ago. Please create a new one.",
         });
         return;
@@ -1009,6 +1028,25 @@ export default function Classroom() {
     onCutoff: endBecauseTimeIsUp,
   });
 
+  /**
+   * Come back when the door opens, once.
+   *
+   * `retryDelayMs` clamps this to at most five minutes, because a single timer set for "in 26
+   * hours" is a promise a throttled browser tab or a dozing Android will not keep. Waking
+   * occasionally and asking again is cheap and always correct.
+   */
+  useEffect(() => {
+    if (!waiting) return;
+    const delay = retryDelayMs(waiting, Date.now());
+    if (delay === null) return;
+    const timer = setTimeout(() => {
+      setWaiting(null);
+      void loadRoom();
+    }, delay);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waiting]);
+
   const endSession = async () => {
     const doEnd = async () => {
       setRoomUrl(null);
@@ -1053,6 +1091,56 @@ export default function Classroom() {
    * used for teaching and nothing on this screen suggests a lesson is running. Someone can
    * still arrive here from a stale link or a back-stack entry; this is what they get.
    */
+  /**
+   * The lobby, and the one screen this classroom was missing.
+   *
+   * A teacher who is early sees when their class opens and waits here; the effect below asks
+   * again at that moment. There is deliberately no "create a new session" — the class is fine.
+   */
+  // Every hook above has run. Now it is safe to render nothing for the wrong role.
+  if (wrongRole) return null;
+
+  if (waiting) {
+    return (
+      <View
+        style={[
+          s.container,
+          s.expiredScreen,
+          {
+            gap: space.md,
+            paddingTop: insets.top,
+            paddingHorizontal: space.xxl,
+            backgroundColor: colors.background,
+          },
+        ]}
+        testID="classroom-lobby"
+      >
+        <Feather name="clock" size={44} color={colors.primary} />
+        <Text style={[t.title2, { color: colors.foreground, textAlign: "center" }]}>
+          This class has not opened yet
+        </Text>
+        <Text
+          style={[t.body, { color: colors.mutedForeground, textAlign: "center" }]}
+          testID="classroom-lobby-message"
+        >
+          {waiting.message}
+        </Text>
+        <Text style={[t.callout, { color: colors.inkFaint, textAlign: "center" }]}>
+          This page opens the class by itself when the doors do. You can wait here or come back.
+        </Text>
+        <TouchableOpacity
+          style={[s.expiredBackButton, { minHeight: HIT_SLOP_MIN }]}
+          onPress={leaveScreen}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+          testID="classroom-lobby-back"
+        >
+          <Text style={[t.body, { color: colors.primary }]}>Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   if (expired) {
     return (
       <View
@@ -1174,6 +1262,36 @@ export default function Classroom() {
               </View>
             ) : null}
           </View>
+          {/*
+            A class nobody paid for says so, to everybody in it.
+
+            In the always-visible pill rather than a dismissible notice: the point is that it
+            cannot be mistaken for an ordinary class at any moment during the lesson, by either
+            person in the room. The sentence is the server's — this side never decides that a
+            class was free.
+          */}
+          {testNotice ? (
+            <View
+              testID={testNotice.kind === "booking" ? "classroom-test-booking" : "classroom-test-class"}
+              accessibilityRole="alert"
+              style={[
+                s.testBanner,
+                {
+                  marginTop: space.xs,
+                  paddingHorizontal: space.sm,
+                  paddingVertical: space.xxs,
+                  borderRadius: radius.pill,
+                  backgroundColor: colors.warnSoft,
+                  borderColor: colors.warn,
+                },
+              ]}
+            >
+              <Feather name="alert-triangle" size={12} color={colors.warn} />
+              <Text style={[t.overline, { color: colors.warn }]} numberOfLines={2}>
+                {testNotice.text}
+              </Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Presence — do not render avatar bubbles or an "active" count at all when
@@ -1474,6 +1592,8 @@ export default function Classroom() {
               onPress={showVideoWindow}
               activeOpacity={0.75}
               accessibilityLabel="Show call window"
+              accessibilityRole="button"
+              testID="video-show-call-btn"
             >
               <Feather name="video" size={18} color={colors.primary} />
               <Text style={[t.caption, { color: colors.primary }]}>
@@ -1486,6 +1606,7 @@ export default function Classroom() {
         {/* Daily stays mounted through hide and every size change; only its shell moves. */}
         <View style={s.contentArea}>
           <Animated.View
+            testID="video-window"
             pointerEvents={mode === "chat" || videoHidden ? "none" : "auto"}
             style={[
               s.videoArea,
@@ -1498,7 +1619,8 @@ export default function Classroom() {
                 borderRadius: videoFull ? radius.lg : radius.md,
                 backgroundColor: colors.secondary,
                 borderColor: colors.lineStrong,
-                transform: videoFull ? [] : pipDrag.getTranslateTransform(),
+                // Position comes from the shared model; the animated value only tracks a live drag.
+                transform: windowControls.canDrag ? pipDrag.getTranslateTransform() : [],
               },
               (mode === "chat" || videoHidden) && s.videoAreaHidden,
             ]}
@@ -1531,6 +1653,31 @@ export default function Classroom() {
                 <View style={s.callDragZone} />
               )}
 
+              {/*
+                Compact is a preview, so it gets one control rather than three.
+
+                Three 44-point buttons do not fit across a 132-point window; they render as a row
+                of half-buttons nobody can hit, which is the "unusable provider control row" this
+                is meant to avoid. Restore is the one thing somebody wants from a thumbnail, and
+                Hide stays reachable from the classroom's own HUD.
+              */}
+              {videoSmall ? (
+                <View style={s.callFrameActions}>
+                  <TouchableOpacity
+                    style={[
+                      s.callFrameButton,
+                      { width: HIT_SLOP_MIN + space.lg, height: HIT_SLOP_MIN, gap: space.xxs },
+                    ]}
+                    onPress={restoreVideoWindow}
+                    accessibilityRole="button"
+                    accessibilityLabel="Restore the call window"
+                    testID="video-restore-btn"
+                  >
+                    <Feather name="maximize-2" size={18} color={colors.onInverse} />
+                    <Text style={[t.caption, { color: colors.onInverse }]}>Restore</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
               <View style={s.callFrameActions}>
                 <TouchableOpacity
                   style={[
@@ -1554,18 +1701,16 @@ export default function Classroom() {
                     s.callFrameButton,
                     { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN },
                   ]}
-                  onPress={toggleWindowedVideoSize}
-                  accessibilityLabel={
-                    videoSmall
-                      ? "Make call window medium"
-                      : "Make call window small"
-                  }
+                  onPress={minimizeVideoWindow}
+                  disabled={!windowControls.canMinimize}
+                  accessibilityLabel="Make the call window small and put it back in the corner"
+                  accessibilityState={{ disabled: !windowControls.canMinimize }}
                   testID="video-window-size-btn"
                 >
                   <Feather
-                    name={videoSmall ? "maximize" : "minimize"}
+                    name="minimize"
                     size={18}
-                    color={colors.onInverse}
+                    color={windowControls.canMinimize ? colors.onInverse : colors.onInverseMuted}
                   />
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1592,6 +1737,7 @@ export default function Classroom() {
                   />
                 </TouchableOpacity>
               </View>
+              )}
             </View>
 
             <View style={s.callFrameBody}>
@@ -2217,6 +2363,13 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   sessionInfo: { flex: 1 },
+  testBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    borderWidth: 1,
+  },
   liveTag: { flexDirection: "row", alignItems: "center" },
   liveDot: { width: 8, height: 8, borderRadius: 4 },
   presence: {
@@ -2275,6 +2428,8 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     borderBottomWidth: 1,
+    // Above the call itself, so nothing the provider paints can end up on top of these controls.
+    zIndex: 1,
   },
   callDragZone: {
     flex: 1,
@@ -2293,7 +2448,15 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  callFrameBody: { flex: 1, position: "relative" },
+  /**
+   * The call is clipped to its own half of the window.
+   *
+   * Without this the call's contents paint outside the body. A provider message too tall for a
+   * 132-point preview rendered 140 points high in a 72-point box, centred, so it overflowed
+   * *upwards* across the header — and swallowed every tap meant for Hide, minus and maximise.
+   * The buttons were there, drawn, and dead, which is exactly what the owner reported.
+   */
+  callFrameBody: { flex: 1, position: "relative", overflow: "hidden" },
   permissionGate: { alignItems: "center", justifyContent: "center" },
   boardArea: { flex: 1, overflow: "hidden" },
   whiteboardArea: { flex: 1 },

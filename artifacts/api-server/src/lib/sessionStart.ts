@@ -132,7 +132,29 @@ export function wrapUpWarningAt(session: StartableSession): number | null {
   return end === null ? null : end - WRAP_UP_WARNING_MINUTES * 60_000;
 }
 
-export type StartCheck = { ok: true } | { ok: false; reason: string };
+/**
+ * Why a class cannot be opened — and, crucially, whether that is going to change.
+ *
+ * `reason` alone was not enough, and the gap had teeth. Every refusal came back as one 409 with
+ * `expired: true`, so both classrooms treated "you are twenty minutes early" and "this finished
+ * on Tuesday" identically: the student's screen set `roomExpired` and the teacher's offered
+ * "Session already expired — create a new session." A teacher opening their own class ten
+ * minutes before the doors was told to throw it away and make another one.
+ *
+ * So the check says which kind it is. `too_early` is a door that has not opened yet and **will**;
+ * `finished` and `cancelled` are terminal. Callers that only want a sentence are unaffected.
+ */
+export type StartRefusal = "too_early" | "finished" | "cancelled";
+
+export type StartCheck =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: string;
+      code: StartRefusal;
+      /** Unix ms the door opens. Only on `too_early`, so a screen can wait for it exactly. */
+      opensAt?: number;
+    };
 
 /** How long until a time, in words a person would use. */
 function inWords(msUntil: number): string {
@@ -154,7 +176,11 @@ function inWords(msUntil: number): string {
  */
 export function canStart(session: StartableSession, now: number = Date.now()): StartCheck {
   if (session.status === "cancelled") {
-    return { ok: false, reason: "This class was cancelled. Create a new one to teach it again." };
+    return {
+      ok: false,
+      reason: "This class was cancelled. Create a new one to teach it again.",
+      code: "cancelled",
+    };
   }
 
   const opensAt = doorsOpenAt(session);
@@ -172,6 +198,7 @@ export function canStart(session: StartableSession, now: number = Date.now()): S
     return {
       ok: false,
       reason: "This class was opened and ended early. Create a new session for it instead.",
+      code: "finished",
     };
   }
 
@@ -181,6 +208,8 @@ export function canStart(session: StartableSession, now: number = Date.now()): S
       reason:
         `This class opens ${DOORS_OPEN_MINUTES} minutes before it starts — ` +
         `that is in ${inWords(opensAt - now)}.`,
+      code: "too_early",
+      opensAt,
     };
   }
 
@@ -191,6 +220,7 @@ export function canStart(session: StartableSession, now: number = Date.now()): S
       reason:
         `This class finished ${inWords(now - cutoff)} ago and can no longer be opened. ` +
         `Create a new session for it instead.`,
+      code: "finished",
     };
   }
 
@@ -209,7 +239,7 @@ export function canStart(session: StartableSession, now: number = Date.now()): S
  */
 export function canJoin(session: StartableSession, now: number = Date.now()): StartCheck {
   if (session.status === "cancelled") {
-    return { ok: false, reason: "This class was cancelled." };
+    return { ok: false, reason: "This class was cancelled.", code: "cancelled" };
   }
 
   const opensAt = doorsOpenAt(session);
@@ -221,12 +251,14 @@ export function canJoin(session: StartableSession, now: number = Date.now()): St
       reason:
         `This class opens ${DOORS_OPEN_MINUTES} minutes before it starts — ` +
         `that is in ${inWords(opensAt - now)}.`,
+      code: "too_early",
+      opensAt,
     };
   }
 
   const closesAt = studentDoorClosesAt(session);
   if (closesAt !== null && now > closesAt) {
-    return { ok: false, reason: "Session expired." };
+    return { ok: false, reason: "Session expired.", code: "finished" };
   }
 
   return { ok: true };

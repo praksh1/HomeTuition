@@ -5,10 +5,39 @@ import { ActivityIndicator, Linking, Platform, ScrollView, StyleSheet, Text, Tex
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost, attachmentUrl } from "@/utils/api";
 import { confirm, notify } from "@/utils/alerts";
 import { openAttachment as openFile } from "@/utils/openAttachment";
+import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
+import { groupSessionSummary } from "@/utils/sessionSummaryGroups";
 import type { TicketEvent } from "@/utils/tickets";
+
+/**
+ * One clock for the whole page.
+ *
+ * Every stored instant on this screen used to be rendered with a bare `toLocaleString()`, which
+ * takes the *viewer's* timezone and says nothing about it — while the case narrative beside it
+ * renders in Nepal time and says so. On a container running UTC that put "9/5/2026, 4:15:00 AM"
+ * for the class directly above "Sep 5, 2026, 10:00 AM Nepal time" for the same lesson. An agent
+ * deciding a refund would see one class at two times and have no way to tell which was real, and
+ * an agent working from a laptop set to another timezone would see it silently.
+ *
+ * So the timezone is pinned and labelled everywhere, not only where somebody remembered. Teachers
+ * and students are in Nepal; the operator desk reasons about their day, not the desk's own.
+ */
+function nepalTime(value: string | number | Date): string {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return "an unreadable time";
+  // The same options the server's own narrative formatter uses, so one card cannot show
+  // "9/5/2026, 10:00:00 AM" beside "Sep 5, 2026, 10:00 AM" for the same instant and read as two
+  // systems. Seconds go with it: nothing an agent decides turns on them.
+  return `${parsed.toLocaleString("en-NP", {
+    timeZone: "Asia/Kathmandu",
+    dateStyle: "medium",
+    timeStyle: "short",
+  })} Nepal time`;
+}
 
 /**
  * One ticket, with everything behind it on the same screen.
@@ -37,6 +66,14 @@ interface TicketDetail {
   session: { id: number; topic: string; subject: string; date: string; duration: number; status: string; teacherName: string } | null;
   attendance: { known: boolean; rows: { userId: number; name: string; role: string; presentMs: number; joinCount: number }[] };
   findings: { code: string; detail: string }[];
+  caseNarrative: {
+    sessionId: number;
+    summary: { code: string; detail: string }[];
+    timeline: { at: string; code: string; detail: string; source: string }[];
+    unavailable: string[];
+    /** Optional while the web app and API can briefly be on adjacent deploys. */
+    sourceNotes?: string[];
+  } | null;
   messages: { senderName: string; senderRole: string; body: string; createdAt: string }[];
   reporterActivity: { known: boolean; rows: { id: number; action: string; createdAt: string }[] };
 }
@@ -44,6 +81,7 @@ interface TicketDetail {
 export default function AdminTicket() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
+  const { t, numeric, gutter, space, radius } = useLayout();
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<TicketDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -178,24 +216,40 @@ export default function AdminTicket() {
     );
   }
 
-  const { ticket, session, attendance, findings, messages, reporterActivity, history, nextStatuses } = data;
+  const { ticket, session, attendance, findings, caseNarrative, messages, reporterActivity, history, nextStatuses } = data;
   const finished = nextStatuses.length === 0;
   const minutes = (ms: number) => Math.round(ms / 60_000);
 
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 60 }]}
+      contentContainerStyle={[styles.container, {
+        paddingHorizontal: gutter,
+        gap: space.md,
+        paddingTop: insets.top + space.md,
+        paddingBottom: insets.bottom + space.xl,
+        /*
+          A column of text, not a window's worth.
+
+          At 1440px these evidence sentences ran to about 180 characters and the eye lost its
+          place coming back to the start of the next line. `maxWidth` with `width: "100%"` caps
+          the wide case and leaves a phone exactly as it was, so nothing here can introduce a
+          horizontal scroll on the screen size that matters most.
+        */
+        width: "100%",
+        maxWidth: readingWidth,
+        alignSelf: "center",
+      }]}
     >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>{ticket.ref}</Text>
+        <Text style={[t.title3, { color: colors.foreground }]}>{ticket.ref}</Text>
         <View style={{ width: 22 }} />
       </View>
 
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}>
         <View style={styles.reasonRow}>
           <Text style={[styles.reason, { color: colors.primary }]}>{ticket.reason}</Text>
           <Text
@@ -210,7 +264,7 @@ export default function AdminTicket() {
         </View>
         <Text style={[styles.body, { color: colors.foreground }]}>{ticket.description}</Text>
         <Text style={[styles.meta, { color: colors.mutedForeground }]}>
-          {ticket.reporterName ?? "Unknown"} ({ticket.reporterRole}) · {new Date(ticket.createdAt).toLocaleString()}
+          {ticket.reporterName ?? "Unknown"} ({ticket.reporterRole}) · {nepalTime(ticket.createdAt)}
         </Text>
         {ticket.reporterSuspendedAt && (
           <Text style={[styles.meta, { color: colors.destructive }]}>This account is currently suspended.</Text>
@@ -243,23 +297,74 @@ export default function AdminTicket() {
       </View>
 
       {session && (
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <Text style={[styles.sectionTitle, { color: colors.foreground }]}>The class</Text>
-          <Text style={[styles.body, { color: colors.foreground }]}>{session.topic} · {session.subject}</Text>
-          <Text style={[styles.meta, { color: colors.mutedForeground }]}>
-            {new Date(session.date).toLocaleString()} · {session.duration} min · taught by {session.teacherName} · {session.status}
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}>
+          <Text style={[t.title3, { color: colors.foreground }]}>The class</Text>
+          <Text style={[t.body, { color: colors.foreground }]}>{session.topic} · {session.subject}</Text>
+          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+            {nepalTime(session.date)} · {session.duration} min · taught by {session.teacherName} · {session.status}
           </Text>
 
-          <Text style={[styles.subTitle, { color: colors.foreground }]}>Who was in the room</Text>
+          {caseNarrative && (
+            <View
+              testID="admin-session-case-summary"
+              style={[styles.summaryPanel, {
+                backgroundColor: colors.surfaceSunk,
+                borderColor: colors.border,
+                borderRadius: radius.sm,
+                padding: space.md,
+                gap: space.sm,
+              }]}
+            >
+              <View style={styles.summaryHeading}>
+                <Feather name="file-text" size={18} color={colors.primary} />
+                <View style={styles.summaryHeadingCopy}>
+                  <Text style={[t.bodyStrong, { color: colors.foreground }]}>Session #{caseNarrative.sessionId} summary</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Readable facts for this case</Text>
+                </View>
+              </View>
+              {groupSessionSummary(caseNarrative.summary).map((group) => (
+                <View key={group.id} style={{ gap: space.xs }}>
+                  <Text
+                    accessibilityRole="header"
+                    style={[t.caption, { color: colors.mutedForeground, marginTop: space.xs }]}
+                  >
+                    {group.heading}
+                  </Text>
+                  {group.lines.map((line) => (
+                    <View key={line.code} style={styles.summaryLine}>
+                      <View style={[styles.summaryDot, { backgroundColor: colors.primary }]} />
+                      <Text style={[t.body, { color: colors.foreground, flex: 1 }]}>{line.detail}</Text>
+                    </View>
+                  ))}
+                </View>
+              ))}
+              <View style={[styles.limitations, { backgroundColor: colors.warnSoft, borderRadius: radius.sm, padding: space.md, gap: space.xs }]}>
+                <Text style={[t.caption, { color: colors.warn }]}>What this record cannot confirm yet</Text>
+                {caseNarrative.unavailable.map((line) => (
+                  <Text key={line} style={[t.caption, { color: colors.mutedForeground }]}>• {line}</Text>
+                ))}
+                {(caseNarrative.sourceNotes?.length ?? 0) > 0 && (
+                  <>
+                    <Text style={[t.caption, { color: colors.warn, marginTop: space.xs }]}>Source cautions</Text>
+                    {caseNarrative.sourceNotes?.map((line) => (
+                      <Text key={line} style={[t.caption, { color: colors.mutedForeground }]}>• {line}</Text>
+                    ))}
+                  </>
+                )}
+              </View>
+            </View>
+          )}
+
+          <Text style={[t.bodyStrong, { color: colors.foreground, marginTop: space.sm }]}>Who was in the room</Text>
           {!attendance.known ? (
-            <Text style={[styles.meta, { color: colors.destructive }]}>
+            <Text style={[t.caption, { color: colors.destructive }]}>
               The attendance record could not be read. That is not the same as nobody attending.
             </Text>
           ) : attendance.rows.length === 0 ? (
-            <Text style={[styles.meta, { color: colors.mutedForeground }]}>Nobody opened this class.</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>Nobody opened this class.</Text>
           ) : (
             attendance.rows.map((row) => (
-              <Text key={row.userId} style={[styles.meta, { color: colors.mutedForeground }]}>
+              <Text key={row.userId} style={[t.caption, numeric, { color: colors.mutedForeground }]}>
                 {row.name} ({row.role}) — {minutes(row.presentMs)} min
                 {row.joinCount > 1 ? `, reconnected ${row.joinCount - 1}×` : ""}
               </Text>
@@ -268,11 +373,11 @@ export default function AdminTicket() {
 
           {findings.length > 0 && (
             <>
-              <Text style={[styles.subTitle, { color: colors.foreground }]}>What the record shows</Text>
+              <Text style={[t.bodyStrong, { color: colors.foreground, marginTop: space.sm }]}>What the record shows</Text>
               {findings.map((finding, i) => (
                 <View key={`${finding.code}-${i}`} style={styles.findingRow}>
                   <Feather name="info" size={13} color={colors.mutedForeground} />
-                  <Text style={[styles.meta, { color: colors.mutedForeground, flex: 1 }]}>{finding.detail}</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground, flex: 1 }]}>{finding.detail}</Text>
                 </View>
               ))}
               <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
@@ -280,6 +385,7 @@ export default function AdminTicket() {
               </Text>
             </>
           )}
+
         </View>
       )}
 
@@ -289,9 +395,36 @@ export default function AdminTicket() {
           {messages.map((message, i) => (
             <View key={i} style={styles.msg}>
               <Text style={[styles.msgWho, { color: colors.foreground }]}>
-                {message.senderName} ({message.senderRole}) · {new Date(message.createdAt).toLocaleString()}
+                {message.senderName} ({message.senderRole}) · {nepalTime(message.createdAt)}
               </Text>
               <Text style={[styles.body, { color: colors.mutedForeground }]}>{message.body}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {caseNarrative && caseNarrative.timeline.length > 0 && (
+        <View
+          testID="admin-session-timeline"
+          style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}
+        >
+          <Text style={[t.title3, { color: colors.foreground }]}>Session timeline</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>The technical trail, translated into plain language.</Text>
+          {caseNarrative.timeline.map((entry, index) => (
+            <View key={`${entry.code}-${entry.at}-${index}`} style={styles.timelineRow}>
+              <View style={styles.timelineRail}>
+                <View style={[styles.timelineDot, { backgroundColor: colors.primary }]} />
+                {index < caseNarrative.timeline.length - 1 ? (
+                  <View style={[styles.timelineLine, { backgroundColor: colors.border }]} />
+                ) : null}
+              </View>
+              <View style={[styles.timelineCopy, { paddingBottom: space.md }]}>
+                <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+                  {nepalTime(entry.at)}
+                </Text>
+                <Text style={[t.body, { color: colors.foreground }]}>{entry.detail}</Text>
+                <Text style={[t.overline, { color: colors.inkFaint }]}>{entry.source.replace("-", " ")}</Text>
+              </View>
             </View>
           ))}
         </View>
@@ -302,7 +435,7 @@ export default function AdminTicket() {
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>What the reporter has been doing</Text>
           {reporterActivity.rows.slice(0, 12).map((row) => (
             <Text key={row.id} style={[styles.meta, { color: colors.mutedForeground }]}>
-              {new Date(row.createdAt).toLocaleString()} — {row.action}
+              {nepalTime(row.createdAt)} — {row.action}
             </Text>
           ))}
         </View>
@@ -411,7 +544,7 @@ export default function AdminTicket() {
               onPress={() => void decide(next.value)}
               activeOpacity={0.8}
             >
-              <Text style={[styles.actionText, { color: next.value === "resolved" ? "#fff" : colors.foreground }]}>
+              <Text style={[styles.actionText, { color: next.value === "resolved" ? colors.onInverse : colors.foreground }]}>
                 {next.label}
               </Text>
             </TouchableOpacity>
@@ -446,7 +579,7 @@ export default function AdminTicket() {
               {event.by ? <Text style={{ color: colors.mutedForeground }}>{`  ${event.by}`}</Text> : null}
             </Text>
             <Text style={[styles.meta, { color: colors.mutedForeground }]}>
-              {new Date(event.at).toLocaleString()}
+              {nepalTime(event.at)}
             </Text>
             {event.note ? (
               <Text style={[styles.body, { color: colors.foreground }]}>{event.note}</Text>
@@ -469,7 +602,7 @@ export default function AdminTicket() {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 14 },
+  container: {},
   centre: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
@@ -477,7 +610,9 @@ const styles = StyleSheet.create({
   reason: { fontSize: 12, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.4 },
   reasonRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   statusChip: { fontSize: 11, fontFamily: "Inter_600SemiBold", borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, overflow: "hidden" },
-  internalRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4 },
+  // The row is one control, so the whole row carries the minimum height rather than the 16px
+  // icon inside it.
+  internalRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 4, minHeight: HIT_SLOP_MIN },
   internalText: { fontSize: 13, fontFamily: "Inter_400Regular" },
   event: { gap: 2, paddingTop: 10 },
   eventLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
@@ -493,10 +628,28 @@ const styles = StyleSheet.create({
   caveat: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16, fontStyle: "italic" },
   link: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   findingRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  summaryPanel: { borderWidth: 1 },
+  summaryHeading: { flexDirection: "row", alignItems: "center", gap: 8 },
+  summaryHeadingCopy: { flex: 1 },
+  summaryLine: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  summaryDot: { width: 6, height: 6, borderRadius: 999, marginTop: 8 },
+  limitations: {},
+  timelineRow: { flexDirection: "row", alignItems: "stretch", gap: 12 },
+  timelineRail: { width: 12, alignItems: "center" },
+  timelineDot: { width: 8, height: 8, borderRadius: 999, marginTop: 5 },
+  timelineLine: { width: 1, flex: 1, marginTop: 4 },
+  timelineCopy: { flex: 1 },
   msg: { gap: 2, marginBottom: 6 },
   msgWho: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   input: { borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 90, fontSize: 14, fontFamily: "Inter_400Regular" },
   actions: { flexDirection: "row", gap: 10, marginTop: 4 },
-  action: { flex: 1, alignItems: "center", borderRadius: 12, borderWidth: 1, paddingVertical: 12 },
+  // `paddingVertical` alone left "Save note" at 34px high on a phone, because the padding is
+  // added to a 14px line rather than to a minimum. `minHeight` sets the floor and the padding
+  // still grows it wherever the type scale is larger; `justifyContent` keeps the label centred
+  // when the floor is doing the work.
+  action: {
+    flex: 1, alignItems: "center", justifyContent: "center", borderRadius: 12, borderWidth: 1,
+    paddingVertical: 12, minHeight: HIT_SLOP_MIN,
+  },
   actionText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
 });

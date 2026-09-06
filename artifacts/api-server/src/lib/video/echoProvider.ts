@@ -21,6 +21,8 @@ export const echoProvider: VideoProvider = {
   capabilities: { screenShare: false, builtInChat: false },
   configured: () => true,
   ensureRoom: async (sessionId) => `https://video.invalid/echo/${sessionId}`,
+  // The identity is carried here too, so the provider-contract suite exercises the same shape on
+  // both providers and a future provider cannot quietly drop it.
   joinToken: async (sessionId: string | number, options: JoinOptions) =>
-    `echo.${sessionId}.${options.isOwner ? "owner" : "guest"}`,
+    `echo.${sessionId}.${options.isOwner ? "owner" : "guest"}.${options.userId}`,
 };

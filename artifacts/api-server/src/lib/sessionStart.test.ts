@@ -187,3 +187,86 @@ test("a completed class inside its reopen window can still be reopened", () => {
   const ended = session({ status: "completed", startedAt: new Date(START), endedAt: new Date(END - 10 * MIN) });
   assert.equal(canStart(ended, END + 5 * MIN).ok, true);
 });
+
+/** A fixed clock for the refusal-code tests below. The class times are relative to it. */
+const NOW = START - 3 * HOUR;
+
+/* ---------------------------------------------------------------------------
+ * Which kind of refusal it is.
+ *
+ * `reason` alone was not enough. Every timing refusal reached the app as one 409 with
+ * `expired: true`, so both classrooms treated "you are twenty minutes early" like "this finished
+ * on Tuesday" — the teacher's screen offered to create a new session for a class their students
+ * had already booked. The code is what lets a screen tell a door that has not opened from one
+ * that has closed.
+ * ------------------------------------------------------------------------- */
+
+test("a teacher who is early is told to wait, not that the class is over", () => {
+  const soon: StartableSession = { date: new Date(NOW + 60 * 60_000), duration: 60, startedAt: null, endedAt: null, status: "upcoming" };
+  const check = canStart(soon, NOW);
+  assert.equal(check.ok, false);
+  if (check.ok) return;
+  assert.equal(check.code, "too_early");
+  // And exactly when, so a screen can come back at that moment instead of asking somebody to poll.
+  assert.equal(check.opensAt, new Date(soon.date).getTime() - DOORS_OPEN_MINUTES * 60_000);
+});
+
+test("a student who is early gets the same answer", () => {
+  const soon: StartableSession = { date: new Date(NOW + 26 * 60 * 60_000), duration: 60, startedAt: null, endedAt: null, status: "upcoming" };
+  const check = canJoin(soon, NOW);
+  assert.equal(check.ok, false);
+  if (check.ok) return;
+  assert.equal(check.code, "too_early");
+  assert.ok(typeof check.opensAt === "number" && check.opensAt > NOW);
+});
+
+test("a class that has run out of time is terminal for both", () => {
+  const over: StartableSession = { date: new Date(NOW - 5 * 60 * 60_000), duration: 60, startedAt: null, endedAt: null, status: "upcoming" };
+  const teacher = canStart(over, NOW);
+  const student = canJoin(over, NOW);
+  assert.equal(teacher.ok, false);
+  assert.equal(student.ok, false);
+  if (teacher.ok || student.ok) return;
+  assert.equal(teacher.code, "finished");
+  assert.equal(student.code, "finished");
+  // Nothing to come back for, so nothing to schedule.
+  assert.equal(teacher.opensAt, undefined);
+  assert.equal(student.opensAt, undefined);
+});
+
+test("a cancelled class is terminal, and says so as itself", () => {
+  const cancelled: StartableSession = { date: new Date(NOW + 60_000), duration: 60, startedAt: null, endedAt: null, status: "cancelled" };
+  const teacher = canStart(cancelled, NOW);
+  const student = canJoin(cancelled, NOW);
+  assert.equal(teacher.ok, false);
+  assert.equal(student.ok, false);
+  if (teacher.ok || student.ok) return;
+  assert.equal(teacher.code, "cancelled");
+  assert.equal(student.code, "cancelled");
+});
+
+test("a class opened and ended before its own slot is finished, not early", () => {
+  // The narrow case canStart already handled: it is ahead of its doors, but it has been taught.
+  const held: StartableSession = {
+    date: new Date(NOW + 60 * 60_000), duration: 60,
+    startedAt: new Date(NOW - 60_000), endedAt: null, status: "completed",
+  };
+  const check = canStart(held, NOW);
+  assert.equal(check.ok, false);
+  if (check.ok) return;
+  assert.equal(check.code, "finished", "a taught class must not offer a lobby");
+});
+
+test("every refusal carries a code, so no caller has to guess", () => {
+  const cases: ReturnType<typeof canStart>[] = [
+    canStart({ date: new Date(NOW + 60 * 60_000), duration: 60, startedAt: null, endedAt: null, status: "upcoming" }, NOW),
+    canStart({ date: new Date(NOW - 99 * 60 * 60_000), duration: 60, startedAt: null, endedAt: null, status: "upcoming" }, NOW),
+    canJoin({ date: new Date(NOW + 60 * 60_000), duration: 60, startedAt: null, endedAt: null, status: "upcoming" }, NOW),
+    canJoin({ date: new Date(NOW - 99 * 60 * 60_000), duration: 60, startedAt: null, endedAt: null, status: "upcoming" }, NOW),
+  ];
+  for (const check of cases) {
+    assert.equal(check.ok, false);
+    if (check.ok) continue;
+    assert.ok(["too_early", "finished", "cancelled"].includes(check.code), check.code);
+  }
+});

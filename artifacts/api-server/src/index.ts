@@ -24,6 +24,7 @@ import {
   ensureSessionMessageExtras,
   ensureTicketLifecycle,
   ensureAccountOnboardingTables,
+  ensureSessionProofTables,
 } from "./lib/ensureSchema";
 
 const rawPort = process.env["PORT"];
@@ -64,6 +65,9 @@ server.listen(port, () => {
   void ensureMessageExtras();
   void ensureSessionMessageExtras();
   void ensureAccountOnboardingTables();
+  // Additive and failure-isolated: if this cannot run, classes are unaffected and the
+  // operator view reports the provider source as unavailable rather than as empty.
+  void ensureSessionProofTables();
   // Says once whether uploads can work, and whether a setting had to be interpreted.
   noteStorageConfig();
   // Whether real money can move is too important to have to go and look up.

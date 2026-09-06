@@ -10,6 +10,27 @@ before starting. Work one risk-contained slice at a time, test it, record it, co
 to the Claude branch, deploy a branch preview, and give the non-technical owner the exact
 clickable preview URL. Do not merge or deploy to production until the owner approves that slice.
 
+## Where each item stands — reconciled 2026-09-04
+
+Checked on `claude/production-test-release-candidate` at `33de42d`, against a running API
+(Postgres 16, `VIDEO_PROVIDER=echo`, `NODE_ENV=test`). Nothing below was rebuilt; each line is
+the evidence that the branch already carries the item.
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 1 | Operator decision language and delivery truth | **done** | `api-server/src/lib/accountNotices.ts` holds a banned-phrase list ("citizenship was approved", "identity approved") and builds every notice through it; the person screen says `Teacher access approved.` / `Document review saved.`; a failed send reports `The decision was saved. The email could not be delivered…`. `test:admin` 58/58, `test:operators` 50/50. |
+| 2 | Plan lock before operator approval | **done** | `subscription.tsx` reads `GET /teachers/me/plan-eligibility`, which returns `mayBuyTeacherPlan()`'s own verdict — no client-side rule. Locked rows carry `accessibilityState.disabled` and **no** `onPress` at all, so a tap cannot open payment. The server 403 is unchanged. `test:tiers` 31/31. |
+| 3 | Password-reset UX and security | **done** | `PASSWORD_RESET_MINUTES = 30`; issuing marks every older unused token used; a used token cannot be replayed; the new password is compared with `verifyPassword`, never hash-to-hash. `forgot-password.tsx` replaces the form with `forgot-sent-confirmation` and gates `forgot-resend` behind a visible cooldown; `reset-password.tsx` has per-field show/hide whose label changes between `Show password` and `Hide password`. `test:reset` 25/25, including the concurrent double-submit and "the token never reaches a log". |
+| 4 | Expiring operator-granted teacher test access | **done** | `api-server/src/lib/testTeachingAccess.ts`; `ALLOW_TEST_TEACHING_ACCESS` read per request, default **false** (anything but `true`/`1` is off), so switching it off closes every outstanding grant without finding them. Liveness is decided by the database clock inside the query, not by comparing timestamps in Node. `test:test-access` 26/26, including expiry with nobody revoking, refusal of a grant with no reason or no end date, and both actions in the activity log. |
+| 5 | Automatic shape conversion disabled | **done** | `SmartBoard.activation.test.ts` asserts the active board neither imports `./recognition/` nor calls `recognizeShape`, `tidyFreehand`, `squareUp` or `convertToExcalidrawElements`; the isolated recogniser and its 27 tests remain for research. This covers **both** platforms: the native board is a WebView onto `SmartBoard.web.tsx` and holds no board logic of its own. |
+| 6 | Honest call-window controls | **done — completed in this branch** | `sikshya/utils/callWindow.ts`, one pure module shared by both classrooms, 24 unit tests. Minus now snaps from any visible size to a bottom-right compact preview. Two faults were behind the owner's report; the second was that `callFrameBody` did not clip, so a message taller than the body painted **over** the header and swallowed the taps — the controls were drawn and inert. `test:lobby` 90/90 renders and presses every control unforced, for teacher and student, at 1280×800 and 360×740. |
+| 7 | Stream Video proof of concept | **isolated, not merged** | Held at `8550631` on `claude/stream-video-poc`. Not referenced from this branch. Daily remains the production provider. |
+
+**A browser is not a phone.** None of the above is evidence about iOS or Android hardware, a real
+Daily call, a real payment gateway, or two devices in one class.
+
+---
+
 ## Priority and suggested slices
 
 1. Operator decision language and notification/email truthfulness.

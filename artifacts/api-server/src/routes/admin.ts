@@ -7,6 +7,7 @@ import {
   disputesTable,
   passwordResetsTable,
   refundsTable,
+  scheduleChangesTable,
   sessionEnrollmentsTable,
   sessionMessagesTable,
   sessionsTable,
@@ -15,6 +16,7 @@ import {
   accountSecurityTable,
   moderationFlagsTable,
   testTeachingGrantsTable,
+  testStudentGrantsTable,
   userOnboardingTable,
   usersTable,
 } from "@workspace/db";
@@ -22,6 +24,9 @@ import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { recordActivity, readActivity } from "../lib/activityLog";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor } from "../lib/sessionEvidence";
+import { buildSessionCaseNarrative, type SessionCaseNarrative } from "../lib/sessionCaseNarrative";
+import { summarizeSessionProof, type SessionProofSummary } from "../lib/sessionProof/aggregate";
+import { providerEventsFor, qualitySamplesFor } from "./sessionProof";
 import { costAt, egressGbAt, monthWindow, usageIn } from "../lib/videoUsage";
 import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
@@ -42,6 +47,12 @@ import {
 import { emailVerifiedFor } from "../lib/accountSecurity";
 import { isTierKey } from "../lib/tierLimits";
 import { DEFAULT_GRANT_DAYS, MAX_GRANT_DAYS, liveTestGrant, testTeachingAllowed } from "../lib/testTeachingAccess";
+import {
+  DEFAULT_STUDENT_GRANT_DAYS,
+  MAX_STUDENT_GRANT_DAYS,
+  liveTestStudentGrant,
+  testStudentAllowed,
+} from "../lib/testStudentAccess";
 
 /**
  * The support desk.
@@ -319,6 +330,14 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
   let attendance: Awaited<ReturnType<typeof attendanceFor>> = { known: false, rows: [] };
   let findings: ReturnType<typeof findingsFor> = [];
   let messages: { senderName: string; senderRole: string; body: string; createdAt: Date }[] = [];
+  let caseNarrative: SessionCaseNarrative | null = null;
+  /**
+   * The provider-corroborated view, or null when there is no class to summarise.
+   *
+   * Additive: `attendance` and `findings` above are unchanged and remain the primary evidence. This
+   * sits beside them and says which sources agreed — and, more importantly, which were not there.
+  */
+  let proof: SessionProofSummary | null = null;
 
   if (ticket.sessionId !== null) {
     const [row] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, ticket.sessionId));
@@ -327,6 +346,17 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
       session = { ...row, endedAt: activity.endedAt };
       attendance = await attendanceFor(row.id);
       const paid = await enrolledStudents(row.id);
+      /*
+        The teacher, by name, from the session's own row rather than from who happened to turn up.
+
+        A teacher who never joined leaves no trace in any of the sources below, so without this
+        they simply would not appear — and "the teacher is absent from the evidence" is the single
+        most consequential thing this page can say.
+      */
+      const [teacher] = await db
+        .select({ userId: usersTable.id, name: usersTable.name })
+        .from(usersTable)
+        .where(eq(usersTable.id, row.teacherId));
       if (attendance.known) {
         findings = findingsFor(
           { date: row.date, duration: row.duration, startedAt: row.startedAt, endedAt: activity.endedAt },
@@ -340,6 +370,71 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
        * Shown in full rather than summarised: what somebody actually wrote, and when, is the
        * thing being judged.
        */
+      /*
+        Every source is read with its own availability, never inferred from an empty list.
+
+        An empty array is exactly what a failed query and a quiet class both look like, and
+        `summarizeSessionProof` is built so the difference reaches an operator instead of being
+        flattened into a zero. See `lib/sessionProof/aggregate.ts`.
+      */
+      const [providerEvents, quality] = await Promise.all([
+        providerEventsFor(row.id),
+        qualitySamplesFor(row.id),
+      ]);
+      proof = summarizeSessionProof({
+        session: {
+          scheduledStartMs: new Date(row.date).getTime(),
+          durationMinutes: row.duration,
+          startedAtMs: row.startedAt ? new Date(row.startedAt).getTime() : null,
+          endedAtMs: activity.endedAt ? new Date(activity.endedAt).getTime() : null,
+        },
+        ledger: attendance.rows.map((r) => ({
+          userId: r.userId,
+          name: r.name,
+          role: r.role === "teacher" ? "teacher" : "student",
+          firstJoinedAtMs: new Date(r.firstJoinedAt).getTime(),
+          lastSeenAtMs: new Date(r.lastSeenAt).getTime(),
+          presentMs: r.presentMs,
+          joinCount: r.joinCount,
+          drawCount: r.drawCount,
+          messageCount: r.messageCount,
+        })),
+        providerEvents: providerEvents.rows.map((e) => ({
+          eventType: e.eventType as "meeting.started" | "meeting.ended" | "participant.joined" | "participant.left",
+          eventAtMs: new Date(e.eventAt).getTime(),
+          eventAtSource: e.eventAtSource === "occurred" ? ("occurred" as const) : ("delivery" as const),
+          providerMeetingId: e.providerMeetingId,
+          participantUserId: e.participantUserId,
+          identityRejected: e.identityRejected,
+          participantIsOwner: e.participantIsOwner,
+          durationSeconds: e.durationSeconds,
+        })),
+        quality: quality.rows.map((q) => ({
+          userId: q.userId,
+          observedAtMs: new Date(q.observedAt).getTime(),
+          quality: (["good", "warning", "bad", "unknown"].includes(q.quality) ? q.quality : "unknown") as
+            "good" | "warning" | "bad" | "unknown",
+          reconnect: q.reconnect,
+        })),
+        available: { ledger: attendance.known, provider: providerEvents.known, telemetry: quality.known },
+        /*
+          Everybody who was supposed to be here — and the teacher is the point.
+
+          This listed only paid students, which meant the one person a dispute is usually about
+          vanished from the summary in exactly the case that matters: a teacher who never joined
+          has no ledger row, no provider event and no telemetry, so nothing else in this object
+          would have produced them. The page then showed a class with three students and no
+          teacher at all, which reads as a data problem rather than as the finding it is.
+
+          Seeded first, so `summarizeSessionProof` sorts them to the top even when every source is
+          silent about them.
+        */
+        expected: [
+          ...(teacher ? [{ userId: teacher.userId, name: teacher.name, role: "teacher" as const }] : []),
+          ...paid.map((pp) => ({ userId: pp.userId, name: pp.name, role: "student" as const })),
+        ],
+      });
+
       messages = await db
         .select({
           senderName: sessionMessagesTable.senderName,
@@ -351,6 +446,52 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
         .where(eq(sessionMessagesTable.sessionId, row.id))
         .orderBy(asc(sessionMessagesTable.id))
         .limit(500);
+
+      /*
+       * The readable case account and the raw timeline share the same stored rows.
+       *
+       * This is intentionally assembled at read time instead of stored as prose. If a bug in the
+       * wording is corrected later, an old case should immediately describe the same underlying
+       * evidence correctly rather than preserve a misleading sentence forever.
+       */
+      const [bookings, scheduleChanges] = await Promise.all([
+        db
+          .select({
+            userId: sessionEnrollmentsTable.studentId,
+            name: usersTable.name,
+            enrolledAt: sessionEnrollmentsTable.enrolledAt,
+            paymentStatus: sessionEnrollmentsTable.paymentStatus,
+            paymentMethod: sessionEnrollmentsTable.paymentMethod,
+            paymentReference: sessionEnrollmentsTable.paymentReference,
+          })
+          .from(sessionEnrollmentsTable)
+          .innerJoin(usersTable, eq(usersTable.id, sessionEnrollmentsTable.studentId))
+          .where(eq(sessionEnrollmentsTable.sessionId, row.id))
+          .orderBy(asc(sessionEnrollmentsTable.id)),
+        db
+          .select({
+            previousDate: scheduleChangesTable.previousDate,
+            newDate: scheduleChangesTable.newDate,
+            affectedStudents: scheduleChangesTable.affectedStudents,
+            changedAt: scheduleChangesTable.changedAt,
+          })
+          .from(scheduleChangesTable)
+          .where(eq(scheduleChangesTable.sessionId, row.id))
+          .orderBy(asc(scheduleChangesTable.id)),
+      ]);
+
+      caseNarrative = buildSessionCaseNarrative({
+        session: { ...row, endedAt: activity.endedAt },
+        reporterId: ticket.reporterId,
+        attendanceKnown: attendance.known,
+        attendance: attendance.rows,
+        enrollments: bookings,
+        scheduleChanges,
+        messages,
+        // Already computed above from the same source reads. The narrative never requeries or
+        // reconstructs provider evidence, so these two operator views cannot drift.
+        proof,
+      });
     }
   }
 
@@ -378,6 +519,8 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
     session,
     attendance,
     findings,
+    caseNarrative,
+    proof,
     messages,
     reporterActivity,
   });
@@ -723,6 +866,17 @@ router.get("/admin/users/:id", async (req, res): Promise<void> => {
       enabled: testTeachingAllowed(),
       grant: profile ? await liveTestGrant(id) : null,
     },
+    /*
+      Test *booking* access, the student-side companion. Same shape, separate switch.
+
+      Two switches rather than one because they close different doors: the teaching one stops new
+      test classes being created, this one stops test bookings — including on classes that are
+      already marked. An operator sees whichever applies to the account they are looking at.
+    */
+    testStudentAccess: {
+      enabled: testStudentAllowed(),
+      grant: user.role === "student" ? await liveTestStudentGrant(id) : null,
+    },
   });
 });
 
@@ -830,6 +984,133 @@ router.post("/admin/teachers/:userId/test-access/revoke", async (req, res): Prom
   recordActivity({
     userId: req.user!.userId,
     action: "admin.test_teaching.revoked",
+    subjectType: "user",
+    subjectId: userId,
+    detail: { grants: revoked.length },
+    ip: callerIp(req),
+  });
+
+  res.json({ revoked: revoked.length });
+});
+
+/**
+ * Grant a student temporary permission to book a **test class** without paying.
+ *
+ * The companion to the teacher route above, and deliberately its mirror rather than a second
+ * security model. Read `lib/testStudentAccess.ts` and the table's own comment first.
+ *
+ * The eligibility rules are re-checked here rather than trusted from the screen, for the same
+ * reason as the teacher route: an operator can see an unverified or suspended account on the same
+ * page as this button, and the request is only a POST.
+ */
+router.post("/admin/students/:userId/test-access", async (req, res): Promise<void> => {
+  const userId = parseInt(String(req.params.userId), 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+
+  if (!testStudentAllowed()) {
+    res.status(409).json({
+      error: "Test student access is switched off on this server. Set ALLOW_TEST_STUDENT_ACCESS to enable it.",
+      code: "TEST_STUDENT_ACCESS_DISABLED",
+    });
+    return;
+  }
+
+  const { reason, days } = req.body as { reason?: string; days?: number };
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (!text) {
+    res.status(400).json({ error: "Say why this account needs test access. An unexplained grant cannot be audited." });
+    return;
+  }
+  const length = Number.isFinite(days) ? Math.trunc(Number(days)) : DEFAULT_STUDENT_GRANT_DAYS;
+  if (length < 1 || length > MAX_STUDENT_GRANT_DAYS) {
+    res.status(400).json({ error: `A grant lasts between 1 and ${MAX_STUDENT_GRANT_DAYS} days.` });
+    return;
+  }
+
+  /*
+    Payment is the only door this opens, so every other one must already be open.
+
+    Verified, onboarded and in good standing — the same three things Sikshya asks of any student
+    before they book anything. A grant is not a way around an account that is not ready; it is a
+    way around the gateway for an account that is.
+  */
+  const [verified, [account], [onboarding]] = await Promise.all([
+    emailVerifiedFor(userId),
+    db
+      .select({ role: usersTable.role, suspendedAt: usersTable.suspendedAt })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId))
+      .limit(1),
+    db
+      .select({ completedAt: userOnboardingTable.completedAt })
+      .from(userOnboardingTable)
+      .where(eq(userOnboardingTable.userId, userId))
+      .limit(1),
+  ]);
+  if (!account) { res.status(404).json({ error: "Account not found" }); return; }
+  if (account.role !== "student") {
+    res.status(409).json({ error: "Test booking access is for student accounts. Use test teaching access for a teacher." });
+    return;
+  }
+  if (!verified) {
+    res.status(409).json({ error: "This student has not verified their email. Test access does not skip that." });
+    return;
+  }
+  if (!onboarding?.completedAt) {
+    res.status(409).json({ error: "This student has not finished onboarding. Test access does not skip that." });
+    return;
+  }
+  if (account.suspendedAt) {
+    res.status(409).json({ error: "This account is suspended. Lift the suspension before granting test access." });
+    return;
+  }
+
+  const validUntil = new Date(Date.now() + length * 24 * 60 * 60_000);
+  // Any grant still running is closed first, so a student never holds two and "revoke" always
+  // means one row rather than however many happen to exist.
+  await db
+    .update(testStudentGrantsTable)
+    .set({ revokedAt: new Date(), revokedBy: req.user!.userId })
+    .where(and(eq(testStudentGrantsTable.studentId, userId), isNull(testStudentGrantsTable.revokedAt)));
+
+  const [grant] = await db
+    .insert(testStudentGrantsTable)
+    .values({ studentId: userId, reason: text, grantedBy: req.user!.userId, validUntil })
+    .returning();
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.test_student.granted",
+    subjectType: "user",
+    subjectId: userId,
+    detail: { reason: text, validUntil: validUntil.toISOString(), days: length },
+    ip: callerIp(req),
+  });
+
+  notifyInApp(userId, {
+    kind: "message",
+    fromName: "Sikshya Support",
+    preview: "Test booking access was added to your account. No payment will be processed for test classes.",
+    at: new Date().toISOString(),
+  });
+
+  res.status(201).json({ grant });
+});
+
+/** End a student grant now. Expiry needs nobody; this is for ending one early. */
+router.post("/admin/students/:userId/test-access/revoke", async (req, res): Promise<void> => {
+  const userId = parseInt(String(req.params.userId), 10);
+  if (isNaN(userId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+
+  const revoked = await db
+    .update(testStudentGrantsTable)
+    .set({ revokedAt: new Date(), revokedBy: req.user!.userId })
+    .where(and(eq(testStudentGrantsTable.studentId, userId), isNull(testStudentGrantsTable.revokedAt)))
+    .returning({ id: testStudentGrantsTable.id });
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.test_student.revoked",
     subjectType: "user",
     subjectId: userId,
     detail: { grants: revoked.length },

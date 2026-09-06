@@ -525,7 +525,6 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
       switch (msg.type) {
         case "chat": {
-          ledger.messages += 1;
           const text = typeof msg.text === "string" ? msg.text.trim() : "";
           broadcast(sessionId, {
             type: "chat",
@@ -551,6 +550,10 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
            * must not stop a teacher answering a question mid-lesson.
            */
           if (text) {
+            // The evidence ledger counts messages that could actually be kept and read, not
+            // empty or malformed frames. The count is supporting context in a dispute; a
+            // client must not be able to inflate it by sending blanks.
+            ledger.messages += 1;
             void (async () => {
               try {
                 const target = await threadTargetFor(Number(sessionId));
@@ -587,11 +590,6 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           if (!isSessionTeacher) break;
           const incoming = Array.isArray(msg.elements) ? (msg.elements as SceneElement[]) : [];
           if (incoming.length === 0 || incoming.length > MAX_SCENE_ELEMENTS) break;
-
-          // One per board-changing message, not per element: Excalidraw re-sends an element on
-          // every frame of a drag, so counting elements would say a teacher who drew one line
-          // and moved it about had drawn four hundred things.
-          ledger.draws += 1;
 
           const board = getBoard(sessionId);
           const accepted: SceneElement[] = [];
@@ -656,6 +654,10 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
           pruneScene(board);
           if (deliverable.length > 0) {
+            // One per accepted board-changing message, not per element: Excalidraw re-sends an
+            // element on every frame of a drag. Stale/replayed versions are not teaching
+            // activity and must not inflate the evidence ledger.
+            ledger.draws += 1;
             broadcast(sessionId, { type: "scene_update", elements: deliverable, files: acceptedFiles }, ws);
             // Written down shortly, so a restart mid-lesson does not erase the board.
             rememberBoard(sessionId);
