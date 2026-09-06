@@ -27,7 +27,7 @@ export interface SupportingEvidence {
 }
 
 export interface SessionEvidenceSources {
-  /** Sikshya's authenticated classroom WebSocket ledger. */
+  /** Fadko's authenticated classroom WebSocket ledger. */
   classroomSocket: PresenceEvidence;
   /** A provider-authenticated meeting/participant event stream, such as Daily webhooks. */
   mediaProvider: PresenceEvidence;
@@ -69,7 +69,7 @@ function presenceSeen(source: PresenceEvidence): boolean {
 /**
  * Classifies evidence coverage without turning evidence into a verdict.
  *
- * Provider and socket presence are deliberately independent: the socket proves the Sikshya
+ * Provider and socket presence are deliberately independent: the socket proves the Fadko
  * classroom was open; a signed provider event proves the media room saw that identity. Client
  * network quality, board activity and chat can add context but cannot make either proof exist.
  */

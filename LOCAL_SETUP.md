@@ -1,4 +1,4 @@
-# Running Sikshya on your own computer
+# Running Fadko on your own computer
 
 No Replit needed. You need [Node.js](https://nodejs.org) 22+ and pnpm (`npm install -g pnpm`).
 

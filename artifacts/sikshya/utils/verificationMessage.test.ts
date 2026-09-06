@@ -115,7 +115,7 @@ test("a failed resend shows the server's own explanation when there is one", () 
   assert.equal(rateLimited.tone, "failed");
   assert.match(rateLimited.text, /wait a minute/i);
 
-  const unconfigured = noticeFromResendError(new Error("Email delivery is not configured yet. Please contact Sikshya support."));
+  const unconfigured = noticeFromResendError(new Error("Email delivery is not configured yet. Please contact Fadko support."));
   assert.match(unconfigured.text, /not configured yet/i);
 });
 

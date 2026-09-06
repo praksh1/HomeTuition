@@ -117,13 +117,13 @@ router.post("/auth/social", async (req, res): Promise<void> => {
       // Never attach a provider to an account merely because an email string matches. The
       // account owner must first sign in with their existing method and explicitly link it.
       res.status(409).json({
-        error: "No Sikshya account is linked to this sign-in yet. Create your account first, then link this provider from Profile.",
+        error: "No Fadko account is linked to this sign-in yet. Create your account first, then link this provider from Profile.",
         code: "SOCIAL_LINK_REQUIRED",
       });
       return;
     }
     const [user] = await db.select(AUTH_COLUMNS).from(usersTable).where(eq(usersTable.id, identity.userId));
-    if (!user) { res.status(401).json({ error: "The linked Sikshya account no longer exists." }); return; }
+    if (!user) { res.status(401).json({ error: "The linked Fadko account no longer exists." }); return; }
     if (user.suspendedAt) { res.status(403).json({ error: "This account has been suspended." }); return; }
     const token = signToken({ userId: user.id, email: user.email, role: user.role });
     res.json({ token, user: await buildUserProfile(user) });
@@ -149,10 +149,10 @@ router.post("/auth/social/link", requireAuth, async (req, res): Promise<void> =>
         .where(and(eq(externalIdentitiesTable.userId, req.user!.userId), eq(externalIdentitiesTable.provider, provider))).limit(1),
     ]);
     if (taken && taken.userId !== req.user!.userId) {
-      res.status(409).json({ error: "That provider account is already linked to another Sikshya account." }); return;
+      res.status(409).json({ error: "That provider account is already linked to another Fadko account." }); return;
     }
     if (current && current.providerSubject !== verified.subject) {
-      res.status(409).json({ error: `This Sikshya account already has a different ${provider} sign-in linked.` }); return;
+      res.status(409).json({ error: `This Fadko account already has a different ${provider} sign-in linked.` }); return;
     }
     if (!taken) {
       await db.insert(externalIdentitiesTable).values({
@@ -295,7 +295,7 @@ router.post("/auth/verification/resend", requireAuth, async (req, res): Promise<
           ? // Configured, and the provider still would not take it. Saying "not configured" here
             // sends the operator to check an environment variable that is already correct.
             "The email could not be sent just now. Please try again in a few minutes."
-          : "Email delivery is not configured yet. Please contact Sikshya support.",
+          : "Email delivery is not configured yet. Please contact Fadko support.",
   });
 });
 

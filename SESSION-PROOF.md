@@ -46,7 +46,7 @@ operator page says the provider source is unavailable — which is the honest an
 **It can say a meeting happened in a room, when it started and ended, and when participants came
 and went.** Room names map one-to-one to classes: `sikshya42` is session 42.
 
-**It can now name an account.** Meeting tokens carry the authenticated Sikshya user id, so
+**It can now name an account.** Meeting tokens carry the authenticated Fadko user id, so
 `participant.joined` can say *which* person rather than only "somebody with moderator rights".
 This is identity, never permission — rights come from `getSessionMembership` and nothing else, and
 a user id arriving back from Daily is checked against that class's real membership before it is

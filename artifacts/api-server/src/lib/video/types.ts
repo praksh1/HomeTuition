@@ -30,7 +30,7 @@ export interface JoinOptions {
   /** The name other people in the call see. */
   userName: string;
   /**
-   * The authenticated Sikshya user id, so a provider can say *who* joined and not merely that
+   * The authenticated Fadko user id, so a provider can say *who* joined and not merely that
    * somebody did.
    *
    * The provider echoes it back on the events it sends about the call, which is the difference
@@ -61,6 +61,17 @@ export interface VideoCapabilities {
 export type ClientPlatform = "web" | "ios" | "android";
 
 export const CLIENT_PLATFORMS: readonly ClientPlatform[] = ["web", "ios", "android"];
+
+/**
+ * The header a client uses to say which of those it is. Lowercase, as Express normalises it.
+ *
+ * A constant rather than a string typed at each call site, because it was two magic strings and
+ * the Fadko rename moved one of them: the app began sending `X-Fadko-Platform` while the server
+ * still read `x-sikshya-platform`, so every client fell through to the fallback and the LiveKit
+ * trial would never have switched on for anybody. Nothing failed loudly — it just quietly did
+ * the safe thing forever. One constant, and the mismatch cannot happen again.
+ */
+export const PLATFORM_HEADER = "x-fadko-platform";
 
 export interface VideoProvider {
   /** Named in the room payload so the app knows which call UI to mount. */

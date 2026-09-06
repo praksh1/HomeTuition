@@ -2,6 +2,8 @@
 
 **Open backlog:** [.agents/backlog/](../backlog/) holds work the owner has raised that is not finished. Read the newest file there before planning; a list that lives only in a chat gets half-done, and this project's container has been reset mid-session more than once.
 
+- [The name is Fadko, and the rename is finished](the-name-is-fadko.md) — owner decision, 6 Sep 2026: the product is **Fadko**, "Tuition from Home", replacing Sikshya and before it Guru. The predicted fourth rename is off the table. Lists what deliberately still says `sikshya` and why — the workspace folder, the `sikshya<id>` room name that attendance evidence correlates on, the login storage key, the demo logins — plus the 38 real Nepali school names a careless find-and-replace would have renamed.
+
 - [Session case narrative](session-case-narrative.md) — every session-linked operator investigation gets a deterministic, human-readable summary plus its chronological evidence trail; missing instrumentation is stated as unavailable and no narrative decides a refund.
 
 - [Cross-agent work logs](cross-agent-work-log.md) — the owner moves between Claude Code and Codex. Every task gets a chronological entry in `.agents/worklog/` covering scope, exact changes, verification, failures, deliberate omissions and the next pickup point; chat history is not the handover.

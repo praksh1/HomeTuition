@@ -1,5 +1,5 @@
 /**
- * The Sikshya palette.
+ * The Fadko palette.
  *
  * Every colour in the app comes from here. There is a check that enforces it —
  * `pnpm --filter @workspace/sikshya run lint:design` — because this file existed before and was
@@ -8,7 +8,7 @@
  *
  * ## The idea in one paragraph
  *
- * **Crimson is who Sikshya is. Blue is what you do.** Crimson `#C41E3A` is the brand and it
+ * **Crimson is who Fadko is. Blue is what you do.** Crimson `#C41E3A` is the brand and it
  * marks a class that is live right now — nothing else. Every action a person takes (Join, Book
  * & Pay, Start, Save) is royal blue. The two are the colours of the Nepali flag, used as ink
  * and action rather than decoration.
@@ -113,7 +113,7 @@ const colors = {
      * Every primary button and every link. 10.24:1 with white on it — AAA.
      *
      * This was crimson until 27 Aug 2026. If you are looking at a screen where blue feels wrong
-     * because the thing is *about* Sikshya rather than *doing* something, you want `brand`.
+     * because the thing is *about* Fadko rather than *doing* something, you want `brand`.
      */
     primary: "#123C8C",
     /** Alias of `primary`, for code that reads better saying "action". */
@@ -135,7 +135,7 @@ const colors = {
     secondaryForeground: "#FFFFFF",
 
     /* ---------------------------------------------------------------
-     * BRAND — Sikshya itself, and a class that is happening now
+     * BRAND — Fadko itself, and a class that is happening now
      * ------------------------------------------------------------- */
 
     /**

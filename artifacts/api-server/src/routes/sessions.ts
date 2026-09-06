@@ -13,7 +13,7 @@ import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/
 import { ordinaryTeachingAccess } from "../lib/teachingAccess";
 import { flagContent } from "../lib/moderation";
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
-import { videoProvider } from "../lib/video";
+import { PLATFORM_HEADER, videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
@@ -395,7 +395,7 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
   }
 
   /**
-   * The subscription tier is what Sikshya earns on ordinary classes — there is no commission on
+   * The subscription tier is what Fadko earns on ordinary classes — there is no commission on
    * a booking — so the allowance has to mean something. Until now it did not: the tier was
    * stored, displayed and never once compared to anything, and a teacher on the ten-class plan
    * could create five hundred.
@@ -660,7 +660,7 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
     is ask for the provider it could have asked for honestly. Rights still come from
     `lib/membership.ts`, and the token is still minted here.
   */
-  const video = videoProvider(req.get("x-sikshya-platform") ?? null);
+  const video = videoProvider(req.get(PLATFORM_HEADER) ?? null);
   try {
     const roomUrl = await video.ensureRoom(id);
     // Only this session's teacher gets an owner token, and only the server can mint one, so
@@ -1044,7 +1044,7 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       pre-creating nothing.
     */
     try {
-      await videoProvider(req.get("x-sikshya-platform") ?? null).ensureRoom(id);
+      await videoProvider(req.get(PLATFORM_HEADER) ?? null).ensureRoom(id);
     } catch (err) {
       req.log.error({ err, sessionId: id }, "could not pre-create the video room on session start");
     }

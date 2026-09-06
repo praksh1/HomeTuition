@@ -149,14 +149,14 @@ export async function sendVerificationEmail(user: { id: number; email: string; n
   const url = `${appOrigin()}/verify-email?token=${encodeURIComponent(token)}`;
   const sent = await sendEmail({
     to: safeEmail(user.email),
-    subject: "Verify your Sikshya email",
+    subject: "Verify your Fadko email",
     text:
-      `Hello ${user.name},\n\nOpen this link to verify your Sikshya email address:\n${url}\n\n` +
+      `Hello ${user.name},\n\nOpen this link to verify your Fadko email address:\n${url}\n\n` +
       `The link expires in ${EMAIL_VERIFY_HOURS} hours. If you did not create this account, ignore this message.`,
     html: buttonHtml(
       "Verify email",
       url,
-      `Hello ${user.name}. Verify your email before your Sikshya account can teach or book classes.`,
+      `Hello ${user.name}. Verify your email before your Fadko account can teach or book classes.`,
     ),
   });
   return { sent, rateLimited: false, configured: true };
@@ -223,15 +223,15 @@ export async function requestPasswordReset(email: string): Promise<void> {
 
   await sendEmail({
     to: user.email,
-    subject: `Reset your Sikshya password — ${stamp(issuedAt)}`,
+    subject: `Reset your Fadko password — ${stamp(issuedAt)}`,
     text:
-      `Hello ${user.name},\n\nOpen this link to choose a new Sikshya password:\n${url}\n\n` +
+      `Hello ${user.name},\n\nOpen this link to choose a new Fadko password:\n${url}\n\n` +
       `${timing}\n\nIf you ask for another reset, only the newest link will work. ` +
       `If you did not request this, ignore this message.`,
     html: buttonHtml(
       "Choose a new password",
       url,
-      `Hello ${user.name}. A password reset was requested for your Sikshya account. ${timing} ` +
+      `Hello ${user.name}. A password reset was requested for your Fadko account. ${timing} ` +
         `If you ask for another reset, only the newest link will work.`,
     ),
   });

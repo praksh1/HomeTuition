@@ -103,7 +103,7 @@ bootstrap state; consult the staging worklog for deployment IDs and actual smoke
 | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Present and working — deploy run `33500697922` succeeded 1 Sep, which it cannot do without them                                  |
 | `hometuition-preview` Worker                    | Defined in `wrangler.jsonc`; created on first deploy                                                                             |
 | Staging Railway service                         | **Healthy.** `hometuition-api-staging`, pinned to the PR #10 branch; four service variables and zero production shared variables |
-| Staging Neon database                           | **Created.** Separate `Sikshya Staging` project; empty before schema creation and never copied from production                   |
+| Staging Neon database                           | **Created.** Separate `Fadko Staging` project; empty before schema creation and never copied from production                   |
 | `STAGING_API_URL` repository variable           | **Set** to the staging Railway domain                                                                                            |
 | Railway / Neon credentials in GitHub CI         | **Absent, and to stay absent** unless separately authorized — a token that can deploy the API can deploy production              |
 

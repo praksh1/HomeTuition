@@ -1,4 +1,4 @@
-# The Sikshya design system
+# The Fadko design system
 
 Agreed with the owner on 27 August 2026. Read this before styling any screen.
 

@@ -124,7 +124,7 @@ test("unattributable provider events say so instead of implying nobody joined", 
   }), NOW);
   const asha = s.people.find((p) => p.userId === 1)!;
   assert.equal(asha.providerJoinCount.available, false, "a null user_id must not become a zero join count");
-  assert.match(s.caveats.join(" "), /cannot be tied to a Sikshya account/i);
+  assert.match(s.caveats.join(" "), /cannot be tied to a Fadko account/i);
   assert.match(s.timeline.map((e) => e.detail).join(" "), /an owner \(moderator\) joining/i);
 });
 

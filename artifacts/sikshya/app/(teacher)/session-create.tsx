@@ -310,7 +310,7 @@ export default function SessionCreate() {
               <Feather name="alert-circle" size={20} color={colors.warn} />
               <View style={styles.allowanceText}>
                 <Text style={[t.bodyStrong, { color: colors.foreground }]}>Plan status unavailable</Text>
-                <Text style={[t.callout, { color: colors.mutedForeground }]}>You can complete the form. Sikshya will check your exact allowance before creating the class.</Text>
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>You can complete the form. Fadko will check your exact allowance before creating the class.</Text>
               </View>
             </View>
           ) : allowanceView && allowance ? (

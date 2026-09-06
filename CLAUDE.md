@@ -193,10 +193,16 @@ and native, unread message counts, and the whiteboard on Excalidraw with object 
 an infinite canvas, shared images and PDFs as real board objects, and a scene that stays in
 step with every student — including erasures and the teacher's viewport.
 
-The app is called **Sikshya** — one name, in the interface and in `app.json`. It used to answer
-to "Guru" wherever the machine looked rather than the user: the browser tab, and the label under
-the icon when a student adds the site to an Android home screen. `HomeTuition` stays as the name
-of the repository and the Cloudflare Worker, which is plumbing nobody reads.
+The app is called **Fadko**, under the line **"Tuition from Home"** — one name, in the
+interface, in `app.json`, and in every email the server sends. The owner settled it on
+6 September 2026; it replaced "Sikshya", which replaced "Guru", the name the project was
+generated under and which lingered wherever the machine looked rather than the user — the
+browser tab, and the label under the icon on an Android home screen.
+
+`HomeTuition` stays as the name of the repository and the Cloudflare Worker, and
+`artifacts/sikshya/` stays as the folder, which is plumbing nobody reads. The provider room
+name `sikshya<id>` also stays, because attendance evidence correlates on it. See
+`.agents/memory/the-name-is-fadko.md` before renaming anything else.
 
 **The clock a class runs on is one timeline, in one file.** Doors open ten minutes before the
 booked start; a student's Join greys out five minutes after the booked finish; the call stops,
@@ -242,7 +248,7 @@ with nothing behind it is what the owner was looking at when they said "a user c
 several hundred requests without knowing the status of their requests". The rules live in
 `api-server/src/lib/tickets.ts` — forward-only, and the desk draws its buttons from them, so a
 button that would be refused is never shown. Three requests per person per rolling 24 hours;
-a refused one writes nothing at all. To the reporter an agent is "Sikshya Support": the team
+a refused one writes nothing at all. To the reporter an agent is "Fadko Support": the team
 is small and a full name is enough to find somebody.
 
 Everything anybody does that changes something is written to an activity log, by a middleware

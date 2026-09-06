@@ -107,7 +107,7 @@ Android namespace `com.oney.WebRTCModule` and register the React Native module u
 `WebRTCModule`. One app build cannot contain both, and neither SDK can be installed without its
 fork — each requires it as a peer dependency.
 
-**This is handled by the server, not by remembering.** The app sends an `X-Sikshya-Platform`
+**This is handled by the server, not by remembering.** The app sends an `X-Fadko-Platform`
 header on every request; the room route reads it and gives a browser whatever `VIDEO_PROVIDER`
 names while a phone gets Daily regardless. So `VIDEO_PROVIDER=livekit` is safe to set on the one
 deployment that also serves phones — which is the only arrangement this project has.

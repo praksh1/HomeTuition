@@ -13,7 +13,7 @@ export interface MeetingTokenOptions {
   isOwner: boolean;
   userName: string;
   /**
-   * The authenticated Sikshya user id, echoed back to us on every webhook Daily sends.
+   * The authenticated Fadko user id, echoed back to us on every webhook Daily sends.
    *
    * Without it Daily can report that *an owner* joined and never *which account*, which is the
    * single limitation that stops provider events corroborating attendance for a named person.

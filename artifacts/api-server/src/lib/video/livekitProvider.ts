@@ -148,7 +148,7 @@ export const livekitProvider: VideoProvider = {
     if (!settings) return null;
 
     /*
-      Identity is the Sikshya user id, not a name.
+      Identity is the Fadko user id, not a name.
 
       LiveKit reports `identity` on participants and in webhooks, and two students called Sita
       would otherwise be indistinguishable in the record of who was in the room. The display name

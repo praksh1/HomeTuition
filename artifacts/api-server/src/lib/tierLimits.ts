@@ -1,7 +1,7 @@
 /**
  * What a teacher's subscription entitles them to, and whether a new class would exceed it.
  *
- * This is the revenue model for ordinary pay-per-class teaching. Sikshya takes **no commission
+ * This is the revenue model for ordinary pay-per-class teaching. Fadko takes **no commission
  * on a booking** — deliberately, and there is a note saying so where the booking transaction
  * lives, because the absence looks like an oversight and is not. What is sold instead is
  * capacity: a teacher buys a tier, and the tier says how many classes they may run.

@@ -267,7 +267,7 @@ async function planTests() {
     JSON.stringify(pendingEligibility.body));
   /*
     The refusal must talk about the *account* decision. It used to say "Your documents must be
-    approved by a Sikshya operator", which reads this gate wrong — it reads `approval_status` on
+    approved by a Fadko operator", which reads this gate wrong — it reads `approval_status` on
     the profile — and sends teachers off to re-upload documents that were already accepted.
   */
   check("the refusal names the account decision, not the documents",
@@ -376,7 +376,7 @@ async function joinTests() {
                    from recurring_enrollments where id = ${idFrom(joined, "enrolment.id", "the student's place")}`).split("|");
   const [paid, platform, teacherShare, paidFor, planned] = row.map(Number);
   check("the two shares add back to what was paid", platform + teacherShare === paid, `${platform} + ${teacherShare} ≠ ${paid}`);
-  check("Sikshya's share is thirty per cent", platform === Math.round(paid * 0.3), `${platform} of ${paid}`);
+  check("Fadko's share is thirty per cent", platform === Math.round(paid * 0.3), `${platform} of ${paid}`);
   check("the price is the fee times classes left over classes planned",
     paid === Math.floor((3000 * paidFor) / planned), `${paid} ≠ floor(3000 × ${paidFor} / ${planned})`);
 

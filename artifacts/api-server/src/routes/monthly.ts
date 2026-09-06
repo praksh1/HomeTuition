@@ -295,7 +295,7 @@ router.post("/monthly/plan", requireAuth, async (req: Request, res: Response) =>
         .values({
           teacherId: user.userId,
           price,
-          // The whole of the tier fee is Sikshya's — it is what the teacher pays to run a
+          // The whole of the tier fee is Fadko's — it is what the teacher pays to run a
           // monthly class, not a share of anything. The students' fees are what get split.
           platformShare: price,
           status: "active",

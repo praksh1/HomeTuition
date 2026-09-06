@@ -419,7 +419,7 @@ function NoPlanYet({
             NPR {tierPrice.toLocaleString("en-IN")}
           </Text>
           <Text style={[t.caption, { color: colors.mutedForeground }]}>
-            per 30-day cycle, paid to Sikshya
+            per 30-day cycle, paid to Fadko
           </Text>
         </View>
         {points.map((point) => (
@@ -1268,7 +1268,7 @@ function MakeupScheduler({
         </Text>
         <Text style={[t.callout, numeric, { color: colors.mutedForeground }]}>
           Choose a future slot before this cycle ends on{" "}
-          {formatBoth(cycleEndDay)} at {cycleEndTime} Nepal time. Sikshya will
+          {formatBoth(cycleEndDay)} at {cycleEndTime} Nepal time. Fadko will
           check the available make-up allowance, declared leave and overlaps
           with other classes before saving it.
         </Text>

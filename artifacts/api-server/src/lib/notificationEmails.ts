@@ -1,5 +1,5 @@
 /**
- * The words Sikshya sends when it tells somebody something happened.
+ * The words Fadko sends when it tells somebody something happened.
  *
  * Pure, and in its own file for the reason `accountNotices.ts` is: wording that talks about money
  * has to be testable without a database behind it. `notify.ts` decides *whether* to send and to
@@ -61,7 +61,7 @@ function appUrl(path: string): string {
 
 export function emailFor(event: NotificationEvent, recipientName: string): { subject: string; text: string } | null {
   const hello = `Hi ${recipientName.split(" ")[0] || "there"},`;
-  const signoff = "\n\nYou can turn these emails off in the app under Profile → Notifications.\n— Sikshya";
+  const signoff = "\n\nYou can turn these emails off in the app under Profile → Notifications.\n— Fadko";
 
   switch (event.kind) {
     case "message": {
@@ -79,7 +79,7 @@ export function emailFor(event: NotificationEvent, recipientName: string): { sub
       return {
         subject: `${event.fromName ?? "A student"} is now following you`,
         text:
-          `${hello}\n\n${event.fromName ?? "A student"} has started following you on Sikshya. ` +
+          `${hello}\n\n${event.fromName ?? "A student"} has started following you on Fadko. ` +
           `They will be told when you schedule a class.` +
           signoff,
       };

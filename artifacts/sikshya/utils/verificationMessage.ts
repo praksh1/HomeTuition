@@ -1,5 +1,5 @@
 /**
- * What Sikshya may truthfully say about a verification email.
+ * What Fadko may truthfully say about a verification email.
  *
  * The check-email screen defaulted to **"We sent a verification link."** whenever it lacked
  * parameters, and it arrives without parameters more often than with them: `AuthGuard` redirects an
@@ -65,7 +65,7 @@ export function noticeFromParams(sent: RouteParam, configured: RouteParam): Veri
       tone: "unconfigured",
       text:
         "Email delivery is not set up on this server yet, so no link could be sent. Your account " +
-        "is saved. Sikshya support has to finish email setup before a link can reach you.",
+        "is saved. Fadko support has to finish email setup before a link can reach you.",
     };
   }
 
@@ -86,7 +86,7 @@ export function noticeFromParams(sent: RouteParam, configured: RouteParam): Veri
       tone: "failed",
       text:
         "Your account is saved, but the verification email could not be sent just now. Try Send " +
-        "another link. If it keeps failing, contact Sikshya support.",
+        "another link. If it keeps failing, contact Fadko support.",
     };
   }
 
@@ -101,7 +101,7 @@ export function noticeFromParams(sent: RouteParam, configured: RouteParam): Veri
   return {
     tone: "unknown",
     text:
-      "Your account is saved. Sikshya cannot confirm that a verification email went out to this " +
+      "Your account is saved. Fadko cannot confirm that a verification email went out to this " +
       "address. Use Send another link to request one now.",
   };
 }
@@ -141,7 +141,7 @@ export function noticeFromResend(body: unknown): VerificationNotice {
     tone: "failed",
     text:
       "The server accepted the request but did not confirm that an email was sent. Try again, and " +
-      "contact Sikshya support if this continues.",
+      "contact Fadko support if this continues.",
   };
 }
 

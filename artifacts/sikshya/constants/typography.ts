@@ -1,7 +1,7 @@
 import { Platform, type TextStyle } from "react-native";
 
 /**
- * The Sikshya type scale.
+ * The Fadko type scale.
  *
  * Nine named steps, replacing the eighteen distinct font sizes the app had grown — 9, 10, 11,
  * 12, 13, 14, 15, 16, 17, 18, 20, 22, 24, 26, 28, 30, 32, 38. That was not a scale, it was a

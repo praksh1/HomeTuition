@@ -143,7 +143,7 @@ export async function chargeForMonthly(args: {
     ok: false,
     message:
       args.purpose === "teacher-plan"
-        ? "Online payment isn't available yet, so the monthly plan can't be bought here. Please contact Sikshya to arrange it."
+        ? "Online payment isn't available yet, so the monthly plan can't be bought here. Please contact Fadko to arrange it."
         : "Online payment isn't available yet. Please contact your teacher to arrange payment for this class.",
   };
 }

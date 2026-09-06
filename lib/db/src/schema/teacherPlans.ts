@@ -30,7 +30,7 @@ export const teacherPlansTable = pgTable(
     /** What they were charged, in rupees. Stored rather than read from a constant, so that
      *  changing the tier price never rewrites what somebody already paid. */
     price: integer("price").notNull(),
-    /** Sikshya's cut of that, held back at purchase. The teacher's share is the remainder. */
+    /** Fadko's cut of that, held back at purchase. The teacher's share is the remainder. */
     platformShare: integer("platform_share").notNull().default(0),
     purchasedAt: timestamp("purchased_at", { withTimezone: true }).notNull().defaultNow(),
     /**

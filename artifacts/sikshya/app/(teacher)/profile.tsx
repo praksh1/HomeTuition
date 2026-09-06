@@ -193,7 +193,7 @@ export default function TeacherProfile() {
       <View style={styles.card}>
         <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Identity & Credentials</Text>
         <Text style={[t.callout, styles.secondaryText]}>
-          Sikshya Support reviews each file before it can be approved. You can replace a rejected file; a file already opened for review stays locked.
+          Fadko Support reviews each file before it can be approved. You can replace a rejected file; a file already opened for review stays locked.
         </Text>
         <Text style={[t.bodyStrong, styles.primaryText]}>Documents</Text>
 

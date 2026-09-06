@@ -119,7 +119,7 @@ test("a provider user id is dropped rather than truncated when it could not fit"
   assert.equal(providerUserId(Number.NaN), null);
 });
 
-test("no real Sikshya id can exceed the provider's length cap", () => {
+test("no real Fadko id can exceed the provider's length cap", () => {
   // Sixteen digits is already past Number.MAX_SAFE_INTEGER; the cap is 36.
   assert.ok(String(Number.MAX_SAFE_INTEGER).length < PROVIDER_USER_ID_MAX_LENGTH);
 });

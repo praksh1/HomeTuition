@@ -23,7 +23,7 @@ import { useLayout } from "@/hooks/useLayout";
  *
  * It was written when `VIDEO_PROVIDER=livekit` served LiveKit rooms to every client, phones
  * included — so turning the trial on for the browser took video away from every phone on the
- * platform. The server now decides per client: the app sends an `X-Sikshya-Platform` header,
+ * platform. The server now decides per client: the app sends an `X-Fadko-Platform` header,
  * a browser gets the configured provider and a phone gets Daily. A phone should therefore never
  * be handed a LiveKit room and never reach this screen.
  *

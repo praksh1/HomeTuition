@@ -1,4 +1,4 @@
-# Sikshya — the whole project, in one document
+# Fadko — the whole project, in one document
 
 **Written for somebody arriving cold.** A human joining the project, or a second AI being asked
 to help alongside the first. It assumes no prior conversation and nothing carried over from a
@@ -63,16 +63,27 @@ unusable on a phone.
 
 ### The name
 
-The app is called **Sikshya**, everywhere a user can see — the interface and `app.json`. It
-used to answer to "Guru" wherever the machine looked rather than the user (the browser tab,
-the label under the icon when a student adds the site to an Android home screen). That is
-fixed.
+The app is called **Fadko**, and the line under it is **"Tuition from Home"**. Both appear
+everywhere a user can see — the interface, `app.json`, every email and notice the server
+sends, and the support signature.
+
+**This is the owner's final choice, settled on 6 September 2026.** It replaces "Sikshya", which
+replaced "Guru" — the name the project was generated under, which lingered wherever the machine
+looked rather than the user (the browser tab, the label under the icon on an Android home
+screen). Earlier drafts of this document predicted one more rename to "GharTuition" or
+"TuitionGhar"; that question is now closed. Do not reopen it.
 
 `HomeTuition` remains the name of the **repository** and the **Cloudflare Worker**. That is
 plumbing nobody reads. Don't "fix" it.
 
-The owner expects to rename once more before launch — *"probably GharTuition or TuitionGhar or
-something similar"*. See section 9 for why the order of that matters.
+Four other things kept the old word on purpose, and each would cost more than it is worth to
+change — see `.agents/memory/the-name-is-fadko.md` for the reasoning:
+
+- the workspace folder `artifacts/sikshya/` and its package name;
+- the provider room name `sikshya<id>`, which is how attendance evidence finds its way back to
+  a class;
+- the login storage key and the seeded demo emails;
+- every worklog and memory note, which are a record of what was true when written.
 
 ---
 
@@ -257,7 +268,7 @@ not written. Do not set them until it is.
 
 ### Package A — the monthly tier (the main product)
 
-A teacher pays Sikshya **NPR 6,500 a month** and gets **one recurring class**: same time every
+A teacher pays Fadko **NPR 6,500 a month** and gets **one recurring class**: same time every
 day, up to **45 students**, up to **90 minutes**. Students pay the teacher a monthly fee,
 pro-rated if they join part-way through.
 
@@ -265,15 +276,15 @@ Constants, all in `artifacts/api-server/src/lib/monthly.ts`:
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `TEACHER_TIER_PRICE` | 6500 | What the teacher pays Sikshya, in rupees |
-| `PLATFORM_SHARE` | 0.3 | Sikshya's cut of a **student's** fee |
+| `TEACHER_TIER_PRICE` | 6500 | What the teacher pays Fadko, in rupees |
+| `PLATFORM_SHARE` | 0.3 | Fadko's cut of a **student's** fee |
 | `MIN_SESSIONS_PER_CYCLE` | 25 | The delivery floor |
 | `MAX_SESSIONS_PER_CYCLE` | 40 | Ceiling on a cycle |
 | `MAX_MAKEUPS_PER_CYCLE` | 5 | Make-up classes allowed |
 | `MAX_ABUSES_PER_CYCLE` | 5 | Black marks before suspension |
 | `PLAN_AUTOSTART_DAYS` | 7 | Clock starts anyway if the class is never created |
 
-**The teacher's 6,500 is entirely Sikshya's.** It is what they pay to run a class, not a share
+**The teacher's 6,500 is entirely Fadko's.** It is what they pay to run a class, not a share
 of anything.
 
 #### The one rule everything else follows
@@ -332,7 +343,7 @@ is untouched for the case it was written about.
 held exactly 25 — the floor — but their students have days left that will now never happen, so
 they are owed for them.
 
-**Money comes out of the teacher's share first, then Sikshya's fee, never the student's.** That
+**Money comes out of the teacher's share first, then Fadko's fee, never the student's.** That
 ordering only means anything because the money is **held**: a student's fee is not paid out
 when they join, it sits until the month has been delivered.
 
@@ -358,7 +369,7 @@ Held or missed is read from `sessions.startedAt`, **never from anything the teac
 A teacher creates a one-off class and sets its price (`sessions.price`, whole rupees). A
 student books and pays for that class alone.
 
-**Sikshya's revenue here is the teacher's subscription, not a cut of the booking.** A teacher
+**Fadko's revenue here is the teacher's subscription, not a cut of the booking.** A teacher
 buys a monthly plan that entitles them to a number of sessions. `SUBSCRIPTION_TIERS` in
 `artifacts/api-server/src/routes/teachers.ts`:
 
@@ -561,7 +572,7 @@ app routes them by role.
 
 For a ticket tied to a class, the desk now also builds a deterministic **Session #… summary** and
 a chronological, plain-language session timeline from the rows for that unique session. It covers
-only what Sikshya can currently read: creation/current listing, schedule moves, booking and stored
+only what Fadko can currently read: creation/current listing, schedule moves, booking and stored
 payment-reference state, persistent messages, start/end timing, socket attendance and reconnect
 gaps, and accepted board/chat counts. The panel explicitly lists what is not collected yet—message
 reads, camera/microphone/screen-share state, exact board tools and first stroke, quality buckets,
@@ -579,7 +590,7 @@ without knowing the status of their requests"*.
 
 Rules live in `api-server/src/lib/tickets.ts` — **forward-only**, and the desk draws its buttons
 from them, so a button that would be refused is never shown. **Three requests per person per
-rolling 24 hours**; a refused one writes nothing at all. To the reporter an agent is "Sikshya
+rolling 24 hours**; a refused one writes nothing at all. To the reporter an agent is "Fadko
 Support".
 
 ### Everything else
@@ -809,7 +820,7 @@ only ever received by somebody who is looking at the app at that exact moment. E
 gets nothing — the notification does not queue and does not arrive later.
 
 Today email covers the gap for anything important, which is why this has not bitten yet. But it
-means Sikshya **cannot honestly say "we notified them in the app"** about anything, and on a
+means Fadko **cannot honestly say "we notified them in the app"** about anything, and on a
 server with no mail provider configured a teacher can be approved, rejected, or have a document
 turned down without ever finding out.
 
@@ -819,12 +830,12 @@ is only whether it comes before launch — for a market where a cheap phone may 
 open, the honest answer is probably yes.
 
 A smaller related bug, same discovery: the "new message" email links to `/conversation/undefined`
-whenever the sender is Sikshya itself rather than a person, because those notices carry no
+whenever the sender is Fadko itself rather than a person, because those notices carry no
 `fromUserId`.
 
 ### 8.9 Changing a password does not sign other devices out
 
-Sikshya's sessions are stateless JWTs. There is no server-side session record and no version
+Fadko's sessions are stateless JWTs. There is no server-side session record and no version
 column to bump, so **a device that was already signed in stays signed in after a password reset**,
 until its token expires on its own.
 

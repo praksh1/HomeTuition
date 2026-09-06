@@ -27,7 +27,7 @@ function everyNotice() {
   ];
 }
 
-test("no notice claims Sikshya approved somebody's citizenship or identity", () => {
+test("no notice claims Fadko approved somebody's citizenship or identity", () => {
   // This is the defect that started the slice. A teacher was emailed "Your citizenship was
   // approved." by a tutoring company, which has no standing to say it.
   for (const notice of everyNotice()) {
@@ -47,11 +47,11 @@ test("accepting a document does not claim teacher access is active", () => {
     decision: "approved",
     recipientName: "Asha Gurung",
   });
-  assert.match(notice.body, /accepted for Sikshya's teacher verification/);
+  assert.match(notice.body, /accepted for Fadko's teacher verification/);
   // The limit has to travel with the good news, or it is not read at all.
   assert.match(notice.body, /does not by itself activate\s+teacher access/);
   assert.match(notice.body, /notify you separately when the account review is complete/);
-  assert.equal(notice.subject, "Sikshya document review update");
+  assert.equal(notice.subject, "Fadko document review update");
 });
 
 test("a rejected document names the document, the reason, and the way back", () => {

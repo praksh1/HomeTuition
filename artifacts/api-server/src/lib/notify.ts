@@ -56,7 +56,7 @@ export function notify(userId: number, event: NotificationEvent): void {
  * Operator decisions need this for two reasons.
  *
  * **They were sending two emails.** The credential decision route called `notify()` *and*
- * `sendEmail()`. `notify()` maps `kind: "message"` to a real email — "New message from Sikshya
+ * `sendEmail()`. `notify()` maps `kind: "message"` to a real email — "New message from Fadko
  * Support", with a link to `/conversation/undefined` because these support notices carry no
  * `fromUserId` — so a teacher whose document was reviewed received that plus the purpose-written
  * one. Routing the in-app half here leaves exactly one email per decision.

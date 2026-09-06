@@ -12,6 +12,7 @@ export type {
   VideoProvider,
 } from "./types";
 export { readClientPlatform } from "./select";
+export { PLATFORM_HEADER } from "./types";
 
 /**
  * Which provider is carrying the video.

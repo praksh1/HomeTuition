@@ -457,7 +457,7 @@ router.delete("/teachers/me/credentials/:id", requireAuth, async (req, res): Pro
 
 // Free "Subscribe" (follow): adds a teacher to a student's dashboard with no charge.
 // Payment only happens at session enrollment. Distinct from the teacher's own paid
-// Sikshya Pro subscription above.
+// Fadko Pro subscription above.
 router.post("/teachers/:id/follow", requireAuth, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);

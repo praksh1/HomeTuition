@@ -339,7 +339,7 @@ async function main() {
   /**
    * The Rec button is gone, and must stay gone.
    *
-   * It recorded nothing and then said "Recording saved to Sikshya cloud." A teacher could have
+   * It recorded nothing and then said "Recording saved to Fadko cloud." A teacher could have
    * relied on that in a dispute and found there was never anything to produce. Checked here
    * because a control that lies about evidence is the kind of thing that gets restored by
    * accident, and nothing else would notice.

@@ -409,7 +409,7 @@ service. Until two settings exist on Railway, the email switches appear greyed o
 line "Email is not switched on for this server yet", rather than pretending to work:
 
 - `RESEND_API_KEY` — from a free account at resend.com
-- `EMAIL_FROM` — the address mail comes from, e.g. `Sikshya <hello@yourdomain.com>`
+- `EMAIL_FROM` — the address mail comes from, e.g. `Fadko <hello@yourdomain.com>`
 - `APP_URL` (optional) — so the links inside emails open the app
 
 This follows the same rule as payments: what the server can do follows from what is configured,
@@ -709,7 +709,7 @@ screen cannot forget.
 
 ---
 
-## Reported 2026-08-21 (fourth run) — after the Sikshya rename and PDF-on-phone deploy
+## Reported 2026-08-21 (fourth run) — after the Fadko rename and PDF-on-phone deploy
 
 Three recordings: an Android student watching a shared PDF, and an iPhone teacher trying to
 get back into a call they had ended. Five reports, four of them reproduced here before being
@@ -1222,7 +1222,7 @@ every invitation ever sent led to a "not found". The class's own page now lives 
 ### F5. The Rec button recorded nothing and said it had — **removed**
 
 In the teacher's classroom, next to End, sat a "Rec" button. It turned red, and on a second tap
-it announced "Recording saved to Sikshya cloud." Nothing was captured, nothing was stored, and
+it announced "Recording saved to Fadko cloud." Nothing was captured, nothing was stored, and
 there was nowhere for it to go.
 
 That is worse than a missing feature. A teacher could have relied on it in exactly the dispute
@@ -1448,7 +1448,7 @@ Found while checking which notification channels exist. It claimed:
 
 The first is the one that matters. Somebody who believes they have a second factor makes
 different decisions about their password, and they would have been wrong. Same fault as the Rec
-button that announced "Recording saved to Sikshya cloud" while saving nothing, and the same
+button that announced "Recording saved to Fadko cloud" while saving nothing, and the same
 treatment: removed, not hidden.
 
 ### The warnings before a drop or a schedule change are now in-app panels

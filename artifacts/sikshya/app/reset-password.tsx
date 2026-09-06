@@ -140,7 +140,7 @@ export default function ResetPassword() {
         )}
 
         {done && (
-          // Stated because it is true and because people assume the opposite. Sikshya's sessions
+          // Stated because it is true and because people assume the opposite. Fadko's sessions
           // are stateless tokens with nothing to revoke, so a device already signed in stays
           // signed in. See HANDOVER section 8.
           <Text style={[t.caption, { color: colors.mutedForeground }]}>

@@ -35,11 +35,11 @@
 export const CYCLE_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** What a teacher pays Sikshya each cycle for the tier. */
+/** What a teacher pays Fadko each cycle for the tier. */
 export const TEACHER_TIER_PRICE = 6500;
 
 /**
- * Sikshya's cut of what students pay, as a fraction.
+ * Fadko's cut of what students pay, as a fraction.
  *
  * Set by the owner at 30% and explicitly changeable. It lives here as one number so a decision
  * to change it is one edit rather than a search, and so the split can never disagree with
@@ -165,7 +165,7 @@ export interface JoinQuote {
   sessionsPlanned: number;
   /** What the student pays now. */
   amount: number;
-  /** Sikshya's cut of that. */
+  /** Fadko's cut of that. */
   platformShare: number;
   /** The teacher's cut, held until the cycle's delivery is known. */
   teacherShare: number;
@@ -358,20 +358,20 @@ export interface Clawback {
   refunded: number;
   /** Taken out of what the teacher had coming. */
   fromTeacher: number;
-  /** Taken out of Sikshya's fee, once the teacher's share is exhausted. */
+  /** Taken out of Fadko's fee, once the teacher's share is exhausted. */
   fromPlatform: number;
   /** What the teacher still keeps. */
   teacherKeeps: number;
-  /** What Sikshya still keeps. */
+  /** What Fadko still keeps. */
   platformKeeps: number;
 }
 
 /**
  * Where a monthly refund's money comes from.
  *
- * The owner was specific: it comes out of the teacher's share, which Sikshya is holding, and
- * then out of Sikshya's own fee. In that order — the teacher did not deliver, so the teacher
- * carries it first, and Sikshya carries the rest rather than the student carrying any of it.
+ * The owner was specific: it comes out of the teacher's share, which Fadko is holding, and
+ * then out of Fadko's own fee. In that order — the teacher did not deliver, so the teacher
+ * carries it first, and Fadko carries the rest rather than the student carrying any of it.
  *
  * That ordering only means anything because the money is **held**. A student's fee is not paid
  * out at the moment they join; it sits until the month has been delivered, which is what makes

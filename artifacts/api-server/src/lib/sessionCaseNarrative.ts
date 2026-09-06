@@ -150,7 +150,7 @@ function addProofAccount(
   summary.push({
     code: "evidence_sources",
     detail:
-      `Sikshya's classroom attendance record is ${proof.sources.ledger ? "available" : "unavailable"}. ` +
+      `Fadko's classroom attendance record is ${proof.sources.ledger ? "available" : "unavailable"}. ` +
       `The independent video-provider record is ${proof.sources.provider ? "available" : "unavailable"}. ` +
       `Participants' coarse device connection reports are ${proof.sources.telemetry ? "available" : "unavailable"}.`,
   });
@@ -174,7 +174,7 @@ function addProofAccount(
         `${proof.providerMeetings.length === 1 ? "instance" : "instances"} for this session. ` +
         (proof.providerMeetings.length > 1
           ? "They are listed separately because time between them is not measured meeting time."
-          : "It is kept separate from Sikshya's classroom-socket attendance."),
+          : "It is kept separate from Fadko's classroom-socket attendance."),
     });
     proof.providerMeetings.forEach((meeting, index) => {
       const start = meeting.startedAtMs === null
@@ -208,26 +208,26 @@ function addProofAccount(
     let detail: string;
     if (inSocket && namedJoins !== null && namedJoins > 0) {
       detail =
-        `Two sources recorded ${person.name}: Sikshya's authenticated classroom socket was open for about ` +
+        `Two sources recorded ${person.name}: Fadko's authenticated classroom socket was open for about ` +
         `${minutes(person.presentMs.value)} minutes, and the video provider named the account in ` +
         `${namedJoins} join ${namedJoins === 1 ? "event" : "events"}. This is source agreement about presence only.`;
     } else if (inSocket && namedJoins === 0) {
       detail =
-        `The sources do not agree about ${person.name}: Sikshya's authenticated classroom socket was open for about ` +
+        `The sources do not agree about ${person.name}: Fadko's authenticated classroom socket was open for about ` +
         `${minutes(person.presentMs.value)} minutes, while the readable video-provider record contains no named join ` +
         "for this account. The record does not identify why they differ.";
     } else if (!inSocket && ledgerReadable && namedJoins !== null && namedJoins > 0) {
       detail =
         `The sources do not agree about ${person.name}: the video provider named the account in ${namedJoins} join ` +
-        `${namedJoins === 1 ? "event" : "events"}, while Sikshya's readable classroom-socket ledger has no row for ` +
+        `${namedJoins === 1 ? "event" : "events"}, while Fadko's readable classroom-socket ledger has no row for ` +
         "this account. The record does not identify why they differ.";
     } else if (!ledgerReadable && namedJoins !== null && namedJoins > 0) {
       detail =
         `The video provider named ${person.name} in ${namedJoins} join ${namedJoins === 1 ? "event" : "events"}. ` +
-        "Sikshya's classroom-socket ledger was unavailable, so the two sources cannot be compared.";
+        "Fadko's classroom-socket ledger was unavailable, so the two sources cannot be compared.";
     } else if (inSocket) {
       detail =
-        `Sikshya's authenticated classroom socket recorded ${person.name} for about ` +
+        `Fadko's authenticated classroom socket recorded ${person.name} for about ` +
         `${minutes(person.presentMs.value)} minutes. The provider could not tie its participant events to this account, ` +
         "so independent participant corroboration is unavailable.";
     } else if (ledgerReadable && namedJoins !== null && namedJoins === 0) {
@@ -236,7 +236,7 @@ function addProofAccount(
         "sources stored; it does not establish the reason.";
     } else if (!ledgerReadable && namedJoins !== null && namedJoins === 0) {
       detail =
-        `The readable video-provider record contains no named join for ${person.name}. Sikshya's classroom-socket ` +
+        `The readable video-provider record contains no named join for ${person.name}. Fadko's classroom-socket ` +
         "ledger was unavailable, so the sources cannot be compared.";
     } else {
       detail =
@@ -285,12 +285,12 @@ function addProofAccount(
       case "provider_participant_joined":
         detail = name
           ? `The video provider recorded ${name} joining the meeting.`
-          : "The video provider recorded a participant joining but could not tie the event to a Sikshya account.";
+          : "The video provider recorded a participant joining but could not tie the event to a Fadko account.";
         break;
       case "provider_participant_left":
         detail = name
           ? `The video provider recorded ${name} leaving the meeting.`
-          : "The video provider recorded a participant leaving but could not tie the event to a Sikshya account.";
+          : "The video provider recorded a participant leaving but could not tie the event to a Fadko account.";
         break;
       case "reconnected":
         detail = name ? `${name}'s device reported reconnecting.` : "A participant's device reported reconnecting.";
@@ -335,13 +335,13 @@ function paymentSentence(
     const method = enrollment.paymentMethod ? ` through ${enrollment.paymentMethod}` : "";
     if (enrollment.paymentReference) {
       return (
-        `Sikshya's booking record marks NPR ${amount} from ${who} as paid on ${when}${method} ` +
+        `Fadko's booking record marks NPR ${amount} from ${who} as paid on ${when}${method} ` +
         `and stores provider reference ${enrollment.paymentReference}. This page has not ` +
         "independently reconciled that reference with the payment provider."
       );
     }
     return (
-      `Sikshya's booking record marks NPR ${amount} from ${who} as paid on ${when}${method}, ` +
+      `Fadko's booking record marks NPR ${amount} from ${who} as paid on ${when}${method}, ` +
       "but no provider receipt reference is stored, so payment settlement is not independently confirmed here."
     );
   }
@@ -360,7 +360,7 @@ export function buildSessionCaseNarrative(input: NarrativeInput): SessionCaseNar
   const summary: CaseNarrativeLine[] = [];
   const timeline: CaseTimelineEntry[] = [];
   const unavailableFacts: string[] = [
-    "Camera, microphone, reactions, hand-raise and screen-share state are not recorded by Sikshya.",
+    "Camera, microphone, reactions, hand-raise and screen-share state are not recorded by Fadko.",
     "Message read/seen receipts are not stored, so this record cannot say who read a message.",
     "The first whiteboard stroke, clear actions and per-tool use are not stored; only accepted change counts are available.",
     "A stored payment status or reference is not independent confirmation that the payment provider settled the money.",
@@ -484,7 +484,7 @@ export function buildSessionCaseNarrative(input: NarrativeInput): SessionCaseNar
     timeline.push({
       at: new Date(session.startedAt!).toISOString(),
       code: "class_started",
-      detail: "The teacher took the Sikshya classroom live.",
+      detail: "The teacher took the Fadko classroom live.",
       source: "session",
     });
   } else {
@@ -551,7 +551,7 @@ export function buildSessionCaseNarrative(input: NarrativeInput): SessionCaseNar
     timeline.push({
       at: new Date(session.endedAt!).toISOString(),
       code: "class_ended",
-      detail: "Sikshya marked the classroom ended.",
+      detail: "Fadko marked the classroom ended.",
       source: "session",
     });
   } else {

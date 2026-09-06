@@ -46,7 +46,7 @@ async function finish(mode: "login" | "link", provider: Provider, credential: st
     await auth.refreshUser();
   }
   else await auth.socialLogin(provider, credential);
-  notify(mode === "link" ? "Sign-in linked" : "Signed in", mode === "link" ? `You can now use ${provider} to sign in.` : "Welcome back to Sikshya.");
+  notify(mode === "link" ? "Sign-in linked" : "Signed in", mode === "link" ? `You can now use ${provider} to sign in.` : "Welcome back to Fadko.");
   onDone?.();
 }
 

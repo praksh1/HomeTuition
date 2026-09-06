@@ -36,7 +36,7 @@ export async function ordinaryTeachingAccess(teacherId: number): Promise<Teachin
       code: "OPERATOR_REVIEW",
       message: profile?.approvalStatus === "rejected"
         ? "Your teacher verification was rejected. Correct the requested documents before creating a class."
-        : "A Sikshya operator must verify your teacher account before you can create a class.",
+        : "A Fadko operator must verify your teacher account before you can create a class.",
     };
   }
   if (!profile.subscriptionActive) {
@@ -85,7 +85,7 @@ export async function mayBuyTeacherPlan(teacherId: number): Promise<TeachingAcce
       // operator emails had, and it sends teachers to re-upload documents that were fine.
       message: profile?.approvalStatus === "rejected"
         ? "Your teacher account was not approved. Check Profile for what to correct before choosing a plan."
-        : "A Sikshya operator must approve your teacher account before you can choose a teaching plan.",
+        : "A Fadko operator must approve your teacher account before you can choose a teaching plan.",
     };
   }
   return { allowed: true };

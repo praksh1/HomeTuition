@@ -54,7 +54,7 @@ export default function ForgotPassword() {
       setMessage(
         result.emailConfigured
           ? result.message
-          : "Your request was accepted, but email delivery is not configured yet. Please contact Sikshya support.",
+          : "Your request was accepted, but email delivery is not configured yet. Please contact Fadko support.",
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The request could not be sent.");
@@ -83,7 +83,7 @@ export default function ForgotPassword() {
                 "does this address have an account?" for anybody who typed one in.
               */
               message
-            : "Enter the email used for Sikshya. We will send a private link if it belongs to a password account."}
+            : "Enter the email used for Fadko. We will send a private link if it belongs to a password account."}
         </Text>
       </View>
 

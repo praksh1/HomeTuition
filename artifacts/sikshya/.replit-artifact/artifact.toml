@@ -1,6 +1,6 @@
 kind = "mobile"
 previewPath = "/"
-title = "Sikshya — Nepal Teacher Platform"
+title = "Fadko — Tuition from Home"
 version = "1.0.0"
 id = "artifacts/sikshya"
 router = "expo-domain"

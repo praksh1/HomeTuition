@@ -409,7 +409,7 @@ export function summarizeSessionProof(input: AggregateInput, _now: number = Date
     );
     if (unnamed.length > 0) {
       caveats.push(
-        "Some of the video provider's participant events cannot be tied to a Sikshya account — " +
+        "Some of the video provider's participant events cannot be tied to a Fadko account — " +
           "usually because the class was joined with a meeting token minted before this app " +
           "started identifying participants to the provider. For those, the provider can only " +
           "distinguish an owner from a non-owner. Treat them as evidence that somebody was in the " +

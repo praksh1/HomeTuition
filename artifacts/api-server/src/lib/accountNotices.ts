@@ -1,9 +1,9 @@
 /**
- * The words Sikshya uses when an operator decides something about a person's account.
+ * The words Fadko uses when an operator decides something about a person's account.
  *
  * These were written inline in `routes/admin.ts` as string templates, and one of them said
- * **"Your citizenship was approved."** Sikshya does not approve anybody's citizenship. A
- * government issued that document; Sikshya accepted a copy of it for its own teacher check. The
+ * **"Your citizenship was approved."** Fadko does not approve anybody's citizenship. A
+ * government issued that document; Fadko accepted a copy of it for its own teacher check. The
  * difference is not pedantry — a teacher who reads "your citizenship was approved" from a company
  * has been told something untrue about their legal status by an organisation that has no standing
  * to say it.
@@ -35,10 +35,10 @@ export interface AccountNotice {
  * phrase added here is then automatically checked against every notice the module can produce.
  */
 export const FORBIDDEN_PHRASES: readonly { phrase: string; because: string }[] = [
-  { phrase: "citizenship was approved", because: "Sikshya does not approve citizenship" },
-  { phrase: "citizenship approved", because: "Sikshya does not approve citizenship" },
-  { phrase: "identity approved", because: "Sikshya does not verify legal identity" },
-  { phrase: "identity was approved", because: "Sikshya does not verify legal identity" },
+  { phrase: "citizenship was approved", because: "Fadko does not approve citizenship" },
+  { phrase: "citizenship approved", because: "Fadko does not approve citizenship" },
+  { phrase: "identity approved", because: "Fadko does not verify legal identity" },
+  { phrase: "identity was approved", because: "Fadko does not verify legal identity" },
   {
     phrase: "verified your identity",
     because: "accepting a document copy is not identity verification",
@@ -61,7 +61,7 @@ function greeting(recipientName: string): string {
   return `Hello ${first || "there"},`;
 }
 
-const SIGN_OFF = "\n\n— Sikshya";
+const SIGN_OFF = "\n\n— Fadko";
 
 /**
  * A decision about one uploaded document.
@@ -82,11 +82,11 @@ export function documentDecisionNotice(input: {
 
   if (input.decision === "approved") {
     return {
-      preview: `Your ${label} has been accepted for Sikshya's teacher verification.`,
-      subject: "Sikshya document review update",
+      preview: `Your ${label} has been accepted for Fadko's teacher verification.`,
+      subject: "Fadko document review update",
       body:
         `${greeting(input.recipientName)}\n\n` +
-        `The ${label} you submitted has been accepted for Sikshya's teacher verification. ` +
+        `The ${label} you submitted has been accepted for Fadko's teacher verification. ` +
         `This document decision is one part of the review; it does not by itself activate ` +
         `teacher access. We will notify you separately when the account review is complete.` +
         SIGN_OFF,
@@ -98,10 +98,10 @@ export function documentDecisionNotice(input: {
   const reason = (input.reason ?? "").trim();
   return {
     preview: `Your ${label} was not accepted. You can upload a replacement.`,
-    subject: "Sikshya document review update — action needed",
+    subject: "Fadko document review update — action needed",
     body:
       `${greeting(input.recipientName)}\n\n` +
-      `The ${label} you submitted was not accepted for Sikshya's teacher verification.\n\n` +
+      `The ${label} you submitted was not accepted for Fadko's teacher verification.\n\n` +
       `Reason given by the reviewer: ${reason}\n\n` +
       `You can upload a replacement document in the app now. Your account review continues ` +
       `once a replacement has been reviewed.` +
@@ -123,11 +123,11 @@ export function teacherAccessDecisionNotice(input: {
 }): AccountNotice {
   if (input.decision === "approved") {
     return {
-      preview: "Your Sikshya teacher account has been approved. You may now choose a teaching plan.",
-      subject: "Your Sikshya teacher account has been approved",
+      preview: "Your Fadko teacher account has been approved. You may now choose a teaching plan.",
+      subject: "Your Fadko teacher account has been approved",
       body:
         `${greeting(input.recipientName)}\n\n` +
-        `Your Sikshya teacher account has been approved. You may now choose a teaching plan, ` +
+        `Your Fadko teacher account has been approved. You may now choose a teaching plan, ` +
         `after which you can schedule classes.` +
         SIGN_OFF,
     };
@@ -135,11 +135,11 @@ export function teacherAccessDecisionNotice(input: {
 
   const note = (input.note ?? "").trim();
   return {
-    preview: "Your Sikshya teacher account was not approved. See the reason in the app.",
-    subject: "Sikshya teacher account review — action needed",
+    preview: "Your Fadko teacher account was not approved. See the reason in the app.",
+    subject: "Fadko teacher account review — action needed",
     body:
       `${greeting(input.recipientName)}\n\n` +
-      `Your Sikshya teacher account has not been approved at this stage.\n\n` +
+      `Your Fadko teacher account has not been approved at this stage.\n\n` +
       `Reason given by the reviewer: ${note}\n\n` +
       `You can update your profile and documents in the app and the review will continue.` +
       SIGN_OFF,
@@ -160,7 +160,7 @@ export type EmailOutcome = "sent" | "failed" | "not_configured";
  * The sentence the operator reads under a saved decision.
  *
  * `inAppDelivered` is whether the notification reached a live app connection, and that is the
- * *only* thing it can mean. Sikshya has no server-side notification store: `notifyUser()` writes
+ * *only* thing it can mean. Fadko has no server-side notification store: `notifyUser()` writes
  * to whatever sockets are open at that instant and the app keeps its own list in device storage.
  * A teacher whose app was closed receives nothing in-app, then or later — the notification is not
  * queued and does not arrive on next open.

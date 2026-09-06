@@ -41,7 +41,7 @@ eSewa and Khalti what they offer for marketplaces before designing around holdin
 
 ### The Recording button is not recording anything
 
-`toggleRecording` in the teacher's classroom shows "Recording saved to Sikshya cloud" and saves
+`toggleRecording` in the teacher's classroom shows "Recording saved to Fadko cloud" and saves
 nothing. There is no recording, no cloud, and no file. That is bad on its own and much worse
 inside a refund system that would cite recordings as evidence.
 

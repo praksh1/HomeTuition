@@ -60,7 +60,7 @@ Neon already hosts it. Copy the connection string from the Neon dashboard; it is
    without buying a domain. Brevo warns that a free-mail domain is not recommended: it is an
    acceptable launch test, but a domain the owner controls is still the deliverability target.
 
-   - **A domain you own:** `hello@yourdomain.com`, or `Sikshya <hello@yourdomain.com>` if you
+   - **A domain you own:** `hello@yourdomain.com`, or `Fadko <hello@yourdomain.com>` if you
      want a name beside it. Add the DNS authentication records Brevo supplies. A .com is
      roughly $10-15 a year; Nepal's `.np` is free to Nepali citizens
      and businesses through Mercantile, but it is a paperwork process rather than a purchase.

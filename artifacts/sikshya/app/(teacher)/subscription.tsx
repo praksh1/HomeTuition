@@ -229,12 +229,12 @@ export default function Subscription() {
 
     await addInAppNotification({
       title: "Subscription Payment Confirmed",
-      body: `NPR ${tierInfo.price.toLocaleString()} paid via ${method === "esewa" ? "eSewa" : "Khalti"}. Your Sikshya Pro (${tierInfo.label}) plan is active.`,
+      body: `NPR ${tierInfo.price.toLocaleString()} paid via ${method === "esewa" ? "eSewa" : "Khalti"}. Your Fadko Pro (${tierInfo.label}) plan is active.`,
       type: "payment",
     });
     await refreshNotifs();
-    if (Platform.OS === "web") window.alert(`Payment Successful!\n\nYour Sikshya Pro ${tierInfo.label} plan (${tierInfo.sessions} sessions/month) is now active. Happy teaching!`);
-    else Alert.alert("Payment Successful!", `Your Sikshya Pro ${tierInfo.label} plan (${tierInfo.sessions} sessions/month) is now active. Happy teaching!`);
+    if (Platform.OS === "web") window.alert(`Payment Successful!\n\nYour Fadko Pro ${tierInfo.label} plan (${tierInfo.sessions} sessions/month) is now active. Happy teaching!`);
+    else Alert.alert("Payment Successful!", `Your Fadko Pro ${tierInfo.label} plan (${tierInfo.sessions} sessions/month) is now active. Happy teaching!`);
 
     router.replace("/(teacher)");
   };
@@ -291,7 +291,7 @@ export default function Subscription() {
       >
         <View style={styles.planHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={[t.caption, onNavyMuted]}>Sikshya Pro — {tierInfo.label}</Text>
+            <Text style={[t.caption, onNavyMuted]}>Fadko Pro — {tierInfo.label}</Text>
             <Text style={[t.display, numeric, onNavy, { marginTop: 2 }]}>
               NPR {tierInfo.price.toLocaleString()}
               <Text style={[t.body, onNavyMuted]}> /month</Text>
@@ -354,7 +354,7 @@ export default function Subscription() {
       {/*
         A plan nobody paid for must never look like one somebody bought.
 
-        The gradient card above says "Sikshya Pro — Base, NPR 2,000/month", which is the truth for
+        The gradient card above says "Fadko Pro — Base, NPR 2,000/month", which is the truth for
         a paying teacher and a fabrication for a granted one. This sits directly under it and says
         so, for as long as the grant lasts.
       */}
@@ -370,7 +370,7 @@ export default function Subscription() {
           <View style={{ flex: 1, gap: space.xxs }}>
             <Text style={[t.bodyStrong, { color: colors.warn }]}>TEST ACCESS — no payment was processed</Text>
             <Text style={[t.caption, { color: colors.warn }]}>
-              A Sikshya operator gave you temporary access to teach. It ends on{" "}
+              A Fadko operator gave you temporary access to teach. It ends on{" "}
               {new Date(allowance.testAccess.validUntil).toLocaleString()}, after which you will need
               a paid plan to create classes.
             </Text>
@@ -754,7 +754,7 @@ export default function Subscription() {
       <PaymentSheet
         visible={payVisible && !planLocked}
         amount={tierInfo.price}
-        label={`Sikshya Pro · ${tierInfo.label}`}
+        label={`Fadko Pro · ${tierInfo.label}`}
         initialMethod={selectedMethod}
         onClose={() => setPayVisible(false)}
         onSuccess={handlePaymentSuccess}

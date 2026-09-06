@@ -268,7 +268,7 @@ export async function notifyCredentialStatus(status: "approved" | "rejected", re
   const isApproved = status === "approved";
   const title = isApproved ? "Verification Approved!" : "Verification Needs Attention";
   const body = isApproved
-    ? "Your credentials have been verified. You can now start teaching on Sikshya!"
+    ? "Your credentials have been verified. You can now start teaching on Fadko!"
     : `Your credentials were not accepted. ${reason ?? "Please re-upload valid documents."}`;
 
   if (Platform.OS !== "web") {

@@ -216,7 +216,7 @@ export default function AdminPerson() {
       });
       setNote("");
       await load();
-      // "Document review saved", never "approved": accepting a document for Sikshya's check is
+      // "Document review saved", never "approved": accepting a document for Fadko's check is
       // not approval of the teacher's account, and the operator screen is where that distinction
       // has to be visible first.
       notify("Document review saved.", res.notified?.message ?? "The decision was saved.");

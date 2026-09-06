@@ -5,7 +5,7 @@ import { usersTable } from "./users";
 /**
  * A file sent in a class conversation.
  *
- * The owner's requirement: *"The Sikshya's chat features everywhere in the app must have
+ * The owner's requirement: *"The Fadko's chat features everywhere in the app must have
  * similar features — the chat within the Monthly Sessions/Regular Session should also have the
  * same features as in the Messages Tab."* They are right, and the reason is not consistency for
  * its own sake: a student photographing their working and sending it to their teacher is the

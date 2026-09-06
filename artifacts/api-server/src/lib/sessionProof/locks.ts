@@ -4,7 +4,7 @@ import { sql, type SQL } from "drizzle-orm";
  * One lock namespace for every writer and the retention reader of session-proof rows.
  *
  * PostgreSQL's two-integer advisory locks share a database-wide namespace, so the first integer
- * is a deliberately fixed application key and the second is the Sikshya session id. Writers take
+ * is a deliberately fixed application key and the second is the Fadko session id. Writers take
  * a shared transaction lock: several participants can report at once. Retention takes the
  * exclusive form before reading any row for the class, so it sees either the writer's committed
  * row or completes before that writer may insert. Transaction locks release on commit/rollback.

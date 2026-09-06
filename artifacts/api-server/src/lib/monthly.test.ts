@@ -99,7 +99,7 @@ test("and the denominator is what the cycle actually holds, not thirty by assump
   assert.equal(quote.amount, Math.floor((3000 * 9) / 26));
 });
 
-test("the split is thirty per cent to Sikshya and always adds back", () => {
+test("the split is thirty per cent to Fadko and always adds back", () => {
   for (const price of [1, 2, 3, 999, 3000, 6500, 12345]) {
     for (const remaining of [1, 7, 13, 30]) {
       const quote = quoteJoin(price, remaining, 30);
@@ -398,7 +398,7 @@ test("scenario: nobody is charged twice for the same class", () => {
 });
 
 
-test("a refund comes out of the teacher's share first, then Sikshya's fee", () => {
+test("a refund comes out of the teacher's share first, then Fadko's fee", () => {
   // 3000 paid, split 2100/900. A 1000 refund is entirely the teacher's to carry.
   const small = refundClawback(1000, 2100, 900);
   assert.equal(small.fromTeacher, 1000);
@@ -406,7 +406,7 @@ test("a refund comes out of the teacher's share first, then Sikshya's fee", () =
   assert.equal(small.teacherKeeps, 1100);
   assert.equal(small.platformKeeps, 900);
 
-  // A refund larger than the teacher's share spills into Sikshya's fee, and no further.
+  // A refund larger than the teacher's share spills into Fadko's fee, and no further.
   const big = refundClawback(2500, 2100, 900);
   assert.equal(big.fromTeacher, 2100);
   assert.equal(big.fromPlatform, 400);

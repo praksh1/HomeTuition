@@ -57,7 +57,7 @@ export class ApiError extends Error {
  * **It grants nothing.** A client that lied about this would be handed the provider it could
  * have been handed honestly. Every right still comes from the server's own membership check.
  */
-export const PLATFORM_HEADER = "X-Sikshya-Platform";
+export const PLATFORM_HEADER = "X-Fadko-Platform";
 
 /**
  * The headers every call sends.

@@ -97,7 +97,7 @@ export interface VideoMediaHandle {
 /** Somebody in the call. */
 export interface VideoParticipant {
   /**
-   * The Sikshya account id, as minted into the token.
+   * The Fadko account id, as minted into the token.
    *
    * Not the display name: two students called Sita would otherwise be one row. The server sets
    * this — see `providerUserId` — so it can be trusted here.

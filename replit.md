@@ -1,4 +1,4 @@
-# Sikshya — Nepal Teacher Platform
+# Fadko — Nepal Teacher Platform
 
 A mobile app (iOS/Android via Expo) connecting Nepali teachers and students with live classrooms, session booking, NPR subscriptions, and advanced teacher discovery.
 

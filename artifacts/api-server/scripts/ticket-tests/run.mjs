@@ -179,7 +179,7 @@ async function run() {
    * about money. The desk below still sees the real name.
    */
   check("but is not told which agent, by name",
-    reporterSees.body?.history?.find((h) => h.status === "opened")?.by === "Sikshya Support",
+    reporterSees.body?.history?.find((h) => h.status === "opened")?.by === "Fadko Support",
     reporterSees.body?.history?.find((h) => h.status === "opened")?.by);
   const deskSees = await api(`/admin/tickets/${first.body.id}`, { token: agent.token });
   check("while the desk sees exactly who",

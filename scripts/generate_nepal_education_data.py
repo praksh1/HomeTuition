@@ -1,4 +1,4 @@
-"""Generate Sikshya's compact Nepal location/facility catalogue from the owner's workbook.
+"""Generate Fadko's compact Nepal location/facility catalogue from the owner's workbook.
 
 The workbook is source data only. This script intentionally drops `(unnamed)` facilities and
 the `Unassigned` sheet; the product supplies one separate "Not specified" manual-entry choice.

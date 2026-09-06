@@ -1,7 +1,7 @@
 /**
  * The class chat, working like the Messages tab.
  *
- * The owner's requirement: *"The Sikshya's chat features everywhere in the app must have similar
+ * The owner's requirement: *"The Fadko's chat features everywhere in the app must have similar
  * features — the chat within the Monthly Sessions/Regular Session should also have the same
  * features as in the Messages Tab."* A student photographing their working and sending it to
  * their teacher is the most useful thing a chat can do in a tuition app, and it worked in one of

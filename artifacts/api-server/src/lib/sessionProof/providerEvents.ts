@@ -99,7 +99,7 @@ export interface NormalizedProviderEvent {
   eventAtMs: number;
   /** Whether `eventAtMs` is the provider's timestamp for the event or for the callback. */
   eventAtSource: EventTimeSource;
-  /** The Sikshya session this room belongs to, or null when the room is not ours. */
+  /** The Fadko session this room belongs to, or null when the room is not ours. */
   sessionId: number | null;
   /** The provider's room name, kept so an unmapped event is still diagnosable. */
   providerRoom: string;
@@ -108,7 +108,7 @@ export interface NormalizedProviderEvent {
   /** The provider's id for one participant's connection, where it supplies one. */
   providerParticipantId: string | null;
   /**
-   * The Sikshya user id, **only when the provider echoes one back from a token we minted.**
+   * The Fadko user id, **only when the provider echoes one back from a token we minted.**
    *
    * `lib/daily.ts` now puts a `user_id` claim on every token it mints, so events for calls joined
    * after that change can name an account. Events from before it cannot, and neither can an event
@@ -376,7 +376,7 @@ export function normalizeDailyEvent(raw: unknown, now: number = Date.now()): Nor
       ]),
       /*
         The participant's *connection*, which Daily calls `session_id` in a participant payload —
-        confusingly, since it has nothing to do with a Sikshya session.
+        confusingly, since it has nothing to do with a Fadko session.
 
         Load-bearing: it is the second idempotency key. Daily warns that a duplicate
         `participant.joined` or `participant.left` can arrive under a different event id, and this

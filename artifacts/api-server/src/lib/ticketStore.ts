@@ -203,7 +203,7 @@ export async function historyFor(
       at: row.at.toISOString(),
       status: row.toStatus,
       label: statusLabel(row.toStatus),
-      by: includeInternal || row.actorRole !== "agent" ? row.actorName : "Sikshya Support",
+      by: includeInternal || row.actorRole !== "agent" ? row.actorName : "Fadko Support",
       byRole: row.actorRole,
       note: row.note,
       fileKey: row.fileKey,

@@ -128,7 +128,7 @@ export default function Onboarding() {
       </View>
 
       <Field label="Phone number *" value={phone} onChange={setPhone} placeholder="+977…" colors={colors} t={t} radius={radius} space={space} keyboardType="phone-pad" />
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>Sikshya may use this for login, class, and other important SMS notifications.</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>Fadko may use this for login, class, and other important SMS notifications.</Text>
 
       <Choice label="Province *" value={province} options={[...provinces.map((item) => item.name), NOT_SPECIFIED]} onChoose={(value: string) => { setProvince(value); setDistrict(""); setLocalLevel(""); }} colors={colors} t={t} radius={radius} space={space} />
       {province === NOT_SPECIFIED ? (

@@ -189,7 +189,7 @@ router.get("/sessions/:id/drop-info", requireAuth, async (req, res): Promise<voi
         `within ${REFUND_WAIT_PHRASE}.`
       : `NPR ${quote.studentRefund} of the NPR ${session.price} you paid will be requested for ` +
         `you. The rest is a cancellation fee: NPR ${quote.teacherShare} to your teacher, who ` +
-        `held the place for you, and NPR ${quote.platformShare} to Sikshya. Refunds are ` +
+        `held the place for you, and NPR ${quote.platformShare} to Fadko. Refunds are ` +
         `processed within ${REFUND_WAIT_PHRASE}.`,
   });
 });

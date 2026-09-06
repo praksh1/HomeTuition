@@ -1,7 +1,7 @@
 /**
  * The teacher's session tier, enforced.
  *
- * Sikshya takes no commission on a pay-per-class booking. What it sells instead is capacity: a
+ * Fadko takes no commission on a pay-per-class booking. What it sells instead is capacity: a
  * teacher buys a tier — NPR 2,000 for ten classes a month up to NPR 4,700 for thirty — and the
  * tier says how much they may teach. Until this work the allowance was stored, displayed and
  * never once compared to anything, so every teacher had every tier for the price of the

@@ -71,8 +71,8 @@ function assertBundleTargets(expected) {
 /**
  * What the app calls itself, read from the one file that decides it.
  *
- * Kept as a lookup rather than a hardcoded "Sikshya" so that this check keeps working through
- * the next rename instead of quietly becoming a check that the app is still called Sikshya.
+ * Kept as a lookup rather than a hardcoded "Fadko" so that this check keeps working through
+ * the next rename instead of quietly becoming a check that the app is still called Fadko.
  */
 function readIdentity() {
   const expo = JSON.parse(fs.readFileSync(path.join(projectRoot, "app.json"), "utf8")).expo;
@@ -88,7 +88,7 @@ function readIdentity() {
  *
  * The title is the first thing a student sees — it is the browser tab, and it is the label
  * under the icon when the site is added to an Android home screen. It shipped as "Guru", the
- * name the project was generated under, long after every screen in the app said Sikshya.
+ * name the project was generated under, long after every screen in the app said Fadko.
  *
  * The stamp above prevents the stale-cache cause; this catches the symptom whatever the cause.
  */

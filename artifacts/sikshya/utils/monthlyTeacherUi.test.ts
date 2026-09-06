@@ -101,7 +101,7 @@ test("write success transitions and navigation destinations remain pinned", () =
 });
 
 test("teacher and student prices name the 30-day unit", () => {
-  assert.match(screen, /per 30-day cycle, paid to Sikshya/);
+  assert.match(screen, /per 30-day cycle, paid to Fadko/);
   assert.match(screen, /Student fee per 30-day cycle \(NPR\)/);
   assert.match(
     screen,
@@ -115,7 +115,7 @@ test("cycle and make-up copy does not promise behavior the current server contra
     /cycle normally starts|unused-plan clock|Any future day and time is allowed/,
   );
   assert.match(compactScreen, /Saving this form creates the daily schedule/);
-  assert.match(compactScreen, /Sikshya will check the available make-up allowance/);
+  assert.match(compactScreen, /Fadko will check the available make-up allowance/);
   assert.match(compactScreen, /declared leave and overlaps with other classes/);
 });
 

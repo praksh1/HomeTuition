@@ -1,6 +1,6 @@
 # The monthly tier
 
-A teacher pays Sikshya **NPR 6,500 a month** and gets one recurring class: same time every day,
+A teacher pays Fadko **NPR 6,500 a month** and gets one recurring class: same time every day,
 up to 45 students, up to 90 minutes. Students pay the teacher a monthly fee, pro-rated if they
 join part-way through. This file is the design and the current state.
 
@@ -66,8 +66,8 @@ nothing, so after seven days the clock starts anyway.
 - **The denominator is frozen when they join.** What they are owed later is worked out against
   what they actually bought.
 - **Part-rupees round down**, in the student's favour.
-- **Sikshya takes 30%** of a student's fee. Configurable — `PLATFORM_SHARE` in `monthly.ts`.
-- **The teacher's 6,500 is entirely Sikshya's.** It is what they pay to run a monthly class,
+- **Fadko takes 30%** of a student's fee. Configurable — `PLATFORM_SHARE` in `monthly.ts`.
+- **The teacher's 6,500 is entirely Fadko's.** It is what they pay to run a monthly class,
   not a share of anything.
 
 ### Refunds
@@ -175,7 +175,7 @@ written where one is owed, and their place is closed. Refunds go into **the same
 already works** — nothing here moves money, it writes down a debt and a person pays it, exactly
 as `refunds` has always worked.
 
-Money comes out of the teacher's share first, then Sikshya's fee, never the student's. That
+Money comes out of the teacher's share first, then Fadko's fee, never the student's. That
 ordering only means anything because the money is **held**: a student's fee is not paid out when
 they join, it sits until the month has been delivered. If it were paid straight through there
 would be nothing to take back, and this would be a bill to send a teacher rather than a refund

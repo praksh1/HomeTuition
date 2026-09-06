@@ -117,7 +117,7 @@ export default function Register() {
         </Text>
         <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
           {isTeacher
-            ? "Create your account to start teaching on Sikshya"
+            ? "Create your account to start teaching on Fadko"
             : "Join thousands of students learning with Nepal's best teachers"}
         </Text>
 

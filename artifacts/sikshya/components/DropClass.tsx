@@ -193,7 +193,7 @@ export default function DropClass({ sessionId, onDropped }: Props) {
           <Row label="You paid" value={info.pricePaid} colors={colors} />
           <Row label="Back to you" value={info.studentRefund} colors={colors} strong />
           <Row label="Cancellation fee — your teacher" value={info.teacherShare} colors={colors} />
-          <Row label="Cancellation fee — Sikshya" value={info.platformShare} colors={colors} />
+          <Row label="Cancellation fee — Fadko" value={info.platformShare} colors={colors} />
         </View>
       )}
 

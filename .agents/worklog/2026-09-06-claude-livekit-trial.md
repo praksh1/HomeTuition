@@ -273,7 +273,7 @@ platform. "Don't point phones at it" is not advice that can be followed when the
 deployment.
 
 Now the server decides per client. `VideoProvider` gained a `platforms` field (a fact about the
-build, not a preference), the app sends `X-Sikshya-Platform` on every request, and the room route
+build, not a preference), the app sends `X-Fadko-Platform` on every request (named `X-Sikshya-Platform` when written; renamed with the product later the same day), and the room route
 gives a browser whatever is configured while a phone gets Daily. Three rules, each of which was a
 way to get it wrong:
 

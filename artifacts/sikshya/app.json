@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Sikshya",
-    "slug": "sikshya",
+    "name": "Fadko",
+    "slug": "fadko",
     "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
-    "scheme": "sikshya",
+    "scheme": "fadko",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -16,15 +16,15 @@
     "ios": {
       "supportsTablet": false,
       "usesAppleSignIn": true,
-      "bundleIdentifier": "com.sikshya.app",
+      "bundleIdentifier": "com.fadko.app",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Sikshya needs microphone access for live classroom audio.",
-        "NSCameraUsageDescription": "Sikshya needs camera access for live classroom video.",
+        "NSMicrophoneUsageDescription": "Fadko needs microphone access for live classroom audio.",
+        "NSCameraUsageDescription": "Fadko needs camera access for live classroom video.",
         "UIBackgroundModes": ["voip"]
       }
     },
     "android": {
-      "package": "com.sikshya.app",
+      "package": "com.fadko.app",
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#1A365D"
@@ -46,8 +46,8 @@
       "favicon": "./assets/images/icon.png",
       "bundler": "metro",
       "output": "single",
-      "name": "Sikshya",
-      "shortName": "Sikshya"
+      "name": "Fadko",
+      "shortName": "Fadko"
     },
     "plugins": [
       "expo-router",
@@ -58,14 +58,14 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Sikshya needs access to your photos to upload credential documents.",
-          "cameraPermission": "Sikshya needs access to your camera to capture credential documents."
+          "photosPermission": "Fadko needs access to your photos to upload credential documents.",
+          "cameraPermission": "Fadko needs access to your camera to capture credential documents."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "Sikshya needs camera access for live classroom video."
+          "cameraPermission": "Fadko needs camera access for live classroom video."
         }
       ],
       [

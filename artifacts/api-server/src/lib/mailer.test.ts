@@ -24,13 +24,13 @@ async function withMailEnvironment(
 }
 
 test("mail stays honestly unavailable when no complete provider is configured", async () => {
-  await withMailEnvironment({ EMAIL_FROM: "Sikshya <accounts@example.com>" }, () => {
+  await withMailEnvironment({ EMAIL_FROM: "Fadko <accounts@example.com>" }, () => {
     assert.equal(isEmailConfigured(), false);
   });
 });
 
 test("the free Brevo path uses its API shape and keeps its key in the header", async () => {
-  await withMailEnvironment({ BREVO_API_KEY: "brevo-secret", EMAIL_FROM: "Sikshya <accounts@example.com>" }, async () => {
+  await withMailEnvironment({ BREVO_API_KEY: "brevo-secret", EMAIL_FROM: "Fadko <accounts@example.com>" }, async () => {
     const originalFetch = globalThis.fetch;
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = async (url, init) => {
@@ -44,7 +44,7 @@ test("the free Brevo path uses its API shape and keeps its key in the header", a
       assert.equal(request?.url, "https://api.brevo.com/v3/smtp/email");
       assert.equal((request?.init?.headers as Record<string, string>)["api-key"], "brevo-secret");
       const body = JSON.parse(String(request?.init?.body));
-      assert.deepEqual(body.sender, { email: "accounts@example.com", name: "Sikshya" });
+      assert.deepEqual(body.sender, { email: "accounts@example.com", name: "Fadko" });
       assert.deepEqual(body.to, [{ email: "student@example.net" }]);
       assert.equal(JSON.stringify(body).includes("brevo-secret"), false);
     } finally {

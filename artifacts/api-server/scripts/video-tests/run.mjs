@@ -28,6 +28,8 @@ function check(name, ok, detail = "") {
   if (ok) { passed += 1; console.log(`  ok   ${name}`); }
   else { failed += 1; failures.push(`${name}${detail ? ` — ${detail}` : ""}`); console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ""}`); }
 }
+const PLATFORM_HEADER = "x-fadko-platform";
+
 const sql = (s) => execFileSync("psql", [PGURL, "-tAc", s], { encoding: "utf8" }).trim();
 
 function startServer(port, provider, extraEnv = {}) {
@@ -87,7 +89,7 @@ function makeApi(port, onDevice = "web") {
       honestly.
     */
     const claimed = platform === undefined ? onDevice : platform;
-    if (claimed) headers["X-Sikshya-Platform"] = claimed;
+    if (claimed) headers[PLATFORM_HEADER] = claimed;
     const res = await fetch(`http://127.0.0.1:${port}/api${p}`, {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body),
     });

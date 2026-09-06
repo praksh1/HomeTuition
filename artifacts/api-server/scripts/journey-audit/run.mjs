@@ -172,7 +172,7 @@ async function run() {
         // Deliberately not a real key. Nothing here may reach a mail provider; what is being
         // checked is that the server *tries*, rather than refusing on a spent cooldown.
         BREVO_API_KEY: "journey-audit-not-a-real-key",
-        EMAIL_FROM: "Sikshya Audit <audit@example.invalid>",
+        EMAIL_FROM: "Fadko Audit <audit@example.invalid>",
       },
       stdio: "ignore",
     });

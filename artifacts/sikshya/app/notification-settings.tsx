@@ -106,7 +106,7 @@ export default function NotificationSettingsScreen() {
           <View style={[styles.notice, { backgroundColor: colors.accent + "12", borderColor: colors.accent + "30" }]}>
             <Feather name="bell-off" size={16} color={colors.accent} />
             <Text style={[styles.noticeText, { color: colors.foreground }]}>
-              Your phone is blocking notifications for Sikshya. Turn them on in your phone&apos;s
+              Your phone is blocking notifications for Fadko. Turn them on in your phone&apos;s
               Settings to get alerts when the app is closed. In-app alerts still work.
             </Text>
           </View>

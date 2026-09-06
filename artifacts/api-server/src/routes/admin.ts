@@ -669,7 +669,7 @@ router.patch("/admin/tickets/:id", async (req, res): Promise<void> => {
   if (updated.userId && !(internal === true)) {
     notify(updated.userId, {
       kind: "message",
-      fromName: "Sikshya Support",
+      fromName: "Fadko Support",
       preview: text
         ? `${ticketRef(id)} — ${statusLabel(now)}: ${text.slice(0, 100)}`
         : `${ticketRef(id)} — ${statusLabel(now)}`,
@@ -962,7 +962,7 @@ router.post("/admin/teachers/:userId/test-access", async (req, res): Promise<voi
 
   notifyInApp(userId, {
     kind: "message",
-    fromName: "Sikshya Support",
+    fromName: "Fadko Support",
     preview: "Test access was added to your account. No payment was processed.",
     at: new Date().toISOString(),
   });
@@ -1030,7 +1030,7 @@ router.post("/admin/students/:userId/test-access", async (req, res): Promise<voi
   /*
     Payment is the only door this opens, so every other one must already be open.
 
-    Verified, onboarded and in good standing — the same three things Sikshya asks of any student
+    Verified, onboarded and in good standing — the same three things Fadko asks of any student
     before they book anything. A grant is not a way around an account that is not ready; it is a
     way around the gateway for an account that is.
   */
@@ -1089,7 +1089,7 @@ router.post("/admin/students/:userId/test-access", async (req, res): Promise<voi
 
   notifyInApp(userId, {
     kind: "message",
-    fromName: "Sikshya Support",
+    fromName: "Fadko Support",
     preview: "Test booking access was added to your account. No payment will be processed for test classes.",
     at: new Date().toISOString(),
   });
@@ -1271,7 +1271,7 @@ async function deliverDecision(
   const inApp = isUserConnected(userId);
   notifyInApp(userId, {
     kind: "message",
-    fromName: "Sikshya Support",
+    fromName: "Fadko Support",
     preview: notice.preview,
     at: new Date().toISOString(),
   });
@@ -1339,7 +1339,7 @@ router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> 
   /*
     This route sent no purpose-written email at all. The only mail a teacher received about their
     account decision came out of `notify()` dressed as a chat message — subject "New message from
-    Sikshya Support", body quoting the decision as if somebody had typed it in a conversation, and
+    Fadko Support", body quoting the decision as if somebody had typed it in a conversation, and
     a footer offering to turn these emails off. It was also gated on the teacher's *message* email
     preference, so a teacher who had turned chat emails off was never told the outcome of their
     own application.
@@ -1413,7 +1413,7 @@ router.post("/admin/teacher-credentials/:id/decision", async (req, res): Promise
   }
   /*
     `Your ${label} was approved.` — with `label` being "citizenship" — is the sentence this whole
-    slice exists to delete. Sikshya accepted a copy of a document for its own teacher check; it did
+    slice exists to delete. Fadko accepted a copy of a document for its own teacher check; it did
     not approve anybody's citizenship, and it is not in a position to.
 
     It also sent two emails: this one, and a second from `notify()` announcing a "new message".
@@ -1576,7 +1576,7 @@ router.post("/admin/refunds/:id/paid", async (req, res): Promise<void> => {
   notify(updated.studentId, {
     kind: "message",
     fromUserId: req.user!.userId,
-    fromName: "Sikshya Support",
+    fromName: "Fadko Support",
     preview: `Your refund of NPR ${updated.amount} has been paid. Reference: ${text}`,
     at: new Date().toISOString(),
   });
@@ -1695,7 +1695,7 @@ router.post("/admin/sessions/:sessionId/refund", async (req, res): Promise<void>
   notify(student, {
     kind: "message",
     fromUserId: req.user!.userId,
-    fromName: "Sikshya Support",
+    fromName: "Fadko Support",
     preview:
       `A full refund of NPR ${refund.amount} has been requested for "${session.topic}". ` +
       `It will be processed within 5-7 business days.`,

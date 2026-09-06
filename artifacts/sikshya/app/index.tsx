@@ -11,7 +11,7 @@ export default function Index() {
     return (
       <View style={[styles.loading, { backgroundColor: "#C41E3A" }]}>
         <ActivityIndicator color="#fff" size="large" />
-        <Text style={styles.loadingText}>Sikshya</Text>
+        <Text style={styles.loadingText}>Fadko</Text>
       </View>
     );
   }

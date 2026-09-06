@@ -54,7 +54,7 @@ export default function DeskEntry() {
     <View style={[styles.centre, { backgroundColor: colors.background }]}>
       <Text style={[styles.title, { color: colors.foreground }]}>Support desk</Text>
       <Text style={[styles.body, { color: colors.mutedForeground }]}>
-        This is for Sikshya's customer-care agents. You are signed in as a{" "}
+        This is for Fadko's customer-care agents. You are signed in as a{" "}
         {user.role === "teacher" ? "teacher" : "student"}, so there is nothing for you here.
       </Text>
       <Text style={[styles.body, { color: colors.mutedForeground }]}>

@@ -1,5 +1,5 @@
 /**
- * Turning a Sikshya account into an identifier a video provider will carry.
+ * Turning a Fadko account into an identifier a video provider will carry.
  *
  * ## Why this is its own file
  *
@@ -18,7 +18,7 @@
 /**
  * Daily caps a token's `user_id` at 36 characters.
  *
- * A Sikshya user id is an integer, so the cap is academic — but a silently truncated identifier
+ * A Fadko user id is an integer, so the cap is academic — but a silently truncated identifier
  * would correlate a provider event to the *wrong* account, and a confidently wrong attribution in
  * a refund argument is worse than an honest blank. So anything that would not fit is dropped.
  */

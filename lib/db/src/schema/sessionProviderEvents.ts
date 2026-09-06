@@ -73,7 +73,7 @@ export const sessionProviderEventsTable = pgTable(
     /** The provider's id for one participant's connection, where it supplies one. */
     providerParticipantId: text("provider_participant_id"),
     /**
-     * The Sikshya user, only when the provider echoed one back from a token this server minted
+     * The Fadko user, only when the provider echoed one back from a token this server minted
      * **and** that user really is part of this class.
      *
      * A foreign key, which it could not have been while the value came straight off the wire — an

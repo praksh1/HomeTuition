@@ -27,8 +27,16 @@ export default function Welcome() {
           style={[styles.logo, { borderRadius: radius.lg, marginBottom: space.sm }]}
           contentFit="contain"
         />
-        <Text style={[t.display, { color: colors.onInverse }]}>Sikshya</Text>
-        <Text style={[t.body, styles.centerText, { color: colors.onInverse }]}>Live teaching, built around a shared whiteboard</Text>
+        <Text style={[t.display, { color: colors.onInverse }]}>Fadko</Text>
+        {/*
+          The tagline, directly under the name where a tagline belongs.
+
+          It replaces "Live teaching, built around a shared whiteboard" — which said the same
+          thing the hero image below already says, in more words. The whiteboard is still the
+          selling point and the hero is where it is sold; the header's job is to say what this
+          is in four words to somebody who has just been sent a link.
+        */}
+        <Text style={[t.body, styles.centerText, { color: colors.onInverse }]}>Tuition from Home</Text>
         <Text style={[t.caption, { color: colors.onInverseMuted, marginTop: space.xxs }]}>शिक्षा • ज्ञान • समृद्धि</Text>
       </View>
 
