@@ -326,17 +326,31 @@ the whiteboard, presence or the call changed. `test:attendance` covers both and 
 
 ### What remains unverified
 
-1. **Daily's actual contract.** `docs.daily.co` and `www.daily.co` are both blocked by this
-   environment's egress proxy. The signing scheme, the participant-connection field name and the
-   meeting-instance field names are still implemented from a written specification, not read from
-   the source. One real delivery settles all three.
-2. **No real webhook has ever been received.** Every test posts a locally-signed body.
-3. **Whether registering a webhook needs a billing card.** Not checked; nothing bought.
-4. **No browser or device rendering.** The operator ticket has not been seen at phone or laptop
+1. **No real webhook has ever been received.** Every test posts a locally-signed body.
+2. **Whether the current account can register a webhook without paid activation.** Daily's REST
+   reference labels webhook management Pay-as-you-go but does not explicitly answer the card
+   question. Nothing was bought.
+3. **No browser or device rendering.** The operator ticket has not been seen at phone or laptop
    width since roughly 150 lines of duplicate proof UI were removed. Automated checks pass;
    scannability is not claimed.
-5. **Retention has still never run anywhere but a test database**, and remains imported by no
+4. **Retention has still never run anywhere but a test database**, and remains imported by no
    production module.
+
+### Codex follow-up: official Daily contract verified — 2026-09-05
+
+Codex reached Daily's current official REST documentation from a separate environment and checked
+the contract without signing in, registering a webhook, adding a card or changing the account.
+
+- <https://docs.daily.co/reference/rest-api/webhooks> confirms the Base64-decoded secret,
+  timestamp-dot-JSON HMAC-SHA256 input, Base64 signature, named headers, activation probe, possible
+  duplicate/out-of-order delivery, and top-level event id as the idempotency key.
+- The published `participant.joined`/`participant.left` schemas confirm `session_id`, `user_id`,
+  `room`, timestamps and the left-event duration.
+- The published `meeting.started`/`meeting.ended` schemas confirm `meeting_id`, with `start_ts` and
+  `end_ts` on the ended event.
+
+Result: the static signing and field-name contract is no longer an unknown. Real deployed delivery,
+account eligibility and end-to-end correlation remain unverified, so ingestion stays disabled.
 
 ### Confirmation
 

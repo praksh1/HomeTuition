@@ -59,13 +59,13 @@ so it was the teacher" — that is a guess wearing corroboration's clothes.
 
 ---
 
-## Three things about the webhook that are not yet proven
+## Daily contract verification (official documentation checked 2026-09-05)
 
-### 1. The signing algorithm was implemented from a written specification, not from Daily's docs
+### 1. The signing algorithm is confirmed
 
-`docs.daily.co` is blocked by the network egress proxy in the environment this was built in, so
-the agent that wrote `lib/sessionProof/webhookSignature.ts` **could not check the algorithm
-against Daily's own documentation.** It is implemented from the contract stated in review:
+The original build environment could not reach `docs.daily.co`. Codex subsequently checked the
+current official documentation at <https://docs.daily.co/reference/rest-api/webhooks>. It confirms
+this contract:
 
 ```
 key       = base64-decode(DAILY_WEBHOOK_SECRET)
@@ -78,8 +78,8 @@ five minutes.
 
 An earlier version of this file got that wrong in four independent ways at once and its own tests
 passed, because they signed with the same helper the verifier used. The tests now spell the scheme
-out longhand, so removing any one of the four turns them red — but **that only proves the code
-matches the specification, not that the specification matches Daily.**
+out longhand, and the scheme matches Daily's published contract. Daily also documents the
+`X-Webhook-Signature` and `X-Webhook-Timestamp` headers and its `{"test":"test"}` activation probe.
 
 ### 2. No real webhook has ever been received
 
@@ -91,29 +91,29 @@ yet.
 end** and the accepted payload shapes narrowed to Daily's current schema. Until then, treat a
 rejection count in the logs as expected rather than alarming.
 
-### 3. Two things the code now does that only a real delivery can confirm
+### 3. Published event fields are confirmed; a real delivery is still required operationally
 
-**Duplicate participant events are deduplicated on the participant's connection, not the event
-id.** Daily warns that a duplicate `participant.joined` or `participant.left` can arrive under a
-*different* event id, and recommends deduplicating on the event type together with
-`payload.session_id`. A partial unique index enforces that. What has not been confirmed is that
-Daily's payloads carry `session_id` where this code looks for it — a participant event that
-reaches storage without it cannot be deduplicated at all, and the row would land twice.
+Daily's published `participant.joined` and `participant.left` payloads include `session_id`,
+`user_id`, `room`, and their relevant timestamps; `participant.left` also includes `duration`.
+Daily recommends using the top-level webhook event `id` as an idempotency key because delivery can
+be duplicated or arrive out of order. This implementation does that and additionally applies a
+participant-connection uniqueness guard using event type plus `payload.session_id`.
 
-**Meeting instances are read from `meeting_id`, `mtg_session_id` or `meeting_session_id`,**
-whichever the payload carries. If Daily names it something else, every event falls into one
-unnamed bucket and a dropped-and-rejoined class looks like a single long meeting.
+Daily's published `meeting.started` and `meeting.ended` payloads use `meeting_id`; the ended event
+also publishes `start_ts` and `end_ts`. The parser's other accepted meeting-id aliases are
+compatibility fallbacks, not claims about Daily's current schema.
 
-Both are the same class of unknown as the signature: implemented from the contract given in
-review, and correct only if that contract matches what arrives.
+Official documentation settles the static contract. One genuine callback is still required to
+prove the account configuration, endpoint reachability, signature verification, correlation and
+storage work together in the deployed environment.
 
 ---
 
 ## Activation may be blocked, and no purchase was made
 
-Registering a webhook with Daily **may require a billing card on the account.** This could not be
-checked — the documentation is unreachable from the build environment, and checking it in the
-Daily dashboard would mean operating the owner's account.
+Daily's official REST reference labels the webhook management endpoints **Pay-as-you-go**. The
+documentation checked does not explicitly say whether merely registering one requires a billing
+card, so we must not assume it is available on the current account.
 
 **Nothing was bought, no card was added, no plan was changed, and no webhook was created.** The
 owner has said purchases are not authorised, and that stands.
@@ -133,7 +133,7 @@ The trade-offs, honestly:
   the API key the platform already has.
 - **Against it:** it is a poll, so it costs an API call per class; it can only be run after the
   fact, so nothing is corroborated live; and whether the necessary endpoint is available on a free
-  account is exactly the same unknown as the webhook question.
+  account has not been verified.
 
 **This has not been built and is not recommended yet.** It is written down so the decision is a
 choice between two known options rather than a dead end.
@@ -237,14 +237,13 @@ run, because a suite that asserts absolute row counts passes once and fails fore
 
 ## Before any of this is switched on
 
-1. Confirm Daily's signing algorithm against its current documentation.
-2. Find out whether registering a webhook requires a paid plan. **Do not add a card to answer
-   this** — ask, or read the documentation.
+1. ~~Confirm Daily's signing algorithm and published event fields.~~ Confirmed from Daily's
+   official documentation on 2026-09-05.
+2. Find out whether the account can register a webhook without a paid plan. **Do not add a card
+   to answer this** — ask, or read the documentation.
 3. If it does, decide between leaving this off and building the REST reconciliation above.
 4. Register the webhook, capture one real delivery, and confirm it verifies and correlates.
-5. Narrow the accepted payload shapes to what Daily actually sends — in particular confirm that
-   participant events carry `session_id` (used to deduplicate them) and which field names the
-   meeting instance, because both are guessed from the contract given in review.
+5. Compare that genuine delivery with the published shapes before narrowing the parser further.
 6. Only then consider wiring the app to report connection quality, and only after that consider
    scheduling retention.
 7. Before enabling provider ingestion, verify in each target database that
