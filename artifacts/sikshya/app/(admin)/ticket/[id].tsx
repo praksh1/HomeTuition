@@ -12,6 +12,32 @@ import { openAttachment as openFile } from "@/utils/openAttachment";
 import type { TicketEvent } from "@/utils/tickets";
 
 /**
+ * One clock for the whole page.
+ *
+ * Every stored instant on this screen used to be rendered with a bare `toLocaleString()`, which
+ * takes the *viewer's* timezone and says nothing about it — while the case narrative beside it
+ * renders in Nepal time and says so. On a container running UTC that put "9/5/2026, 4:15:00 AM"
+ * for the class directly above "Sep 5, 2026, 10:00 AM Nepal time" for the same lesson. An agent
+ * deciding a refund would see one class at two times and have no way to tell which was real, and
+ * an agent working from a laptop set to another timezone would see it silently.
+ *
+ * So the timezone is pinned and labelled everywhere, not only where somebody remembered. Teachers
+ * and students are in Nepal; the operator desk reasons about their day, not the desk's own.
+ */
+function nepalTime(value: string | number | Date): string {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return "an unreadable time";
+  // The same options the server's own narrative formatter uses, so one card cannot show
+  // "9/5/2026, 10:00:00 AM" beside "Sep 5, 2026, 10:00 AM" for the same instant and read as two
+  // systems. Seconds go with it: nothing an agent decides turns on them.
+  return `${parsed.toLocaleString("en-NP", {
+    timeZone: "Asia/Kathmandu",
+    dateStyle: "medium",
+    timeStyle: "short",
+  })} Nepal time`;
+}
+
+/**
  * One ticket, with everything behind it on the same screen.
  *
  * The point of the support desk: an agent should not have to go and find the class, the
@@ -225,7 +251,7 @@ export default function AdminTicket() {
         </View>
         <Text style={[styles.body, { color: colors.foreground }]}>{ticket.description}</Text>
         <Text style={[styles.meta, { color: colors.mutedForeground }]}>
-          {ticket.reporterName ?? "Unknown"} ({ticket.reporterRole}) · {new Date(ticket.createdAt).toLocaleString()}
+          {ticket.reporterName ?? "Unknown"} ({ticket.reporterRole}) · {nepalTime(ticket.createdAt)}
         </Text>
         {ticket.reporterSuspendedAt && (
           <Text style={[styles.meta, { color: colors.destructive }]}>This account is currently suspended.</Text>
@@ -262,7 +288,7 @@ export default function AdminTicket() {
           <Text style={[t.title3, { color: colors.foreground }]}>The class</Text>
           <Text style={[t.body, { color: colors.foreground }]}>{session.topic} · {session.subject}</Text>
           <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
-            {new Date(session.date).toLocaleString()} · {session.duration} min · taught by {session.teacherName} · {session.status}
+            {nepalTime(session.date)} · {session.duration} min · taught by {session.teacherName} · {session.status}
           </Text>
 
           {caseNarrative && (
@@ -346,7 +372,7 @@ export default function AdminTicket() {
           {messages.map((message, i) => (
             <View key={i} style={styles.msg}>
               <Text style={[styles.msgWho, { color: colors.foreground }]}>
-                {message.senderName} ({message.senderRole}) · {new Date(message.createdAt).toLocaleString()}
+                {message.senderName} ({message.senderRole}) · {nepalTime(message.createdAt)}
               </Text>
               <Text style={[styles.body, { color: colors.mutedForeground }]}>{message.body}</Text>
             </View>
@@ -371,7 +397,7 @@ export default function AdminTicket() {
               </View>
               <View style={[styles.timelineCopy, { paddingBottom: space.md }]}>
                 <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
-                  {new Date(entry.at).toLocaleString("en-NP", { timeZone: "Asia/Kathmandu" })} Nepal time
+                  {nepalTime(entry.at)}
                 </Text>
                 <Text style={[t.body, { color: colors.foreground }]}>{entry.detail}</Text>
                 <Text style={[t.overline, { color: colors.inkFaint }]}>{entry.source.replace("-", " ")}</Text>
@@ -386,7 +412,7 @@ export default function AdminTicket() {
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>What the reporter has been doing</Text>
           {reporterActivity.rows.slice(0, 12).map((row) => (
             <Text key={row.id} style={[styles.meta, { color: colors.mutedForeground }]}>
-              {new Date(row.createdAt).toLocaleString()} — {row.action}
+              {nepalTime(row.createdAt)} — {row.action}
             </Text>
           ))}
         </View>
@@ -530,7 +556,7 @@ export default function AdminTicket() {
               {event.by ? <Text style={{ color: colors.mutedForeground }}>{`  ${event.by}`}</Text> : null}
             </Text>
             <Text style={[styles.meta, { color: colors.mutedForeground }]}>
-              {new Date(event.at).toLocaleString()}
+              {nepalTime(event.at)}
             </Text>
             {event.note ? (
               <Text style={[styles.body, { color: colors.foreground }]}>{event.note}</Text>

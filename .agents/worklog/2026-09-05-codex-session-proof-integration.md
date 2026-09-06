@@ -345,3 +345,119 @@ dashboard action, webhook registration, secret, key, account, card or purchase. 
 schedule or production collection enabled. No change to payments, refunds, membership, classroom
 sockets, whiteboards or Daily call behaviour. The only database touched was the local container
 cluster on port 55432.
+
+---
+
+## Rendered verification of the operator ticket — claude, 2026-09-06
+
+The one claim in this work that no test could back. Codex's own note said so: "No browser or device
+rendering was run… visual scannability is not claimed until an operator ticket with proof data is
+rendered." This is that rendering.
+
+- Branch `codex/session-proof-integration` at `0e6da21`, clean tree at start.
+- Local container PostgreSQL only (`127.0.0.1:55432/sikshya`), local API on 8080, the static web
+  build served on 8090. No shared database, no `db:push`, no external service.
+- Headless Chromium at two viewport sizes. **A browser is not a phone** — this is evidence about
+  layout, and none of it is evidence about iOS or Android hardware.
+
+### The fixture
+
+Ticket `HT-000075` on session 733, built to be worth looking at rather than merely to load: a
+completed class, a teacher, a paying student who attended, a second student who paid and never
+appeared, an attendance ledger that disagrees with the provider about the reporter, four thread
+messages, a schedule change, **two separate provider meetings** (the second with no recorded end),
+named and anonymous participant events, four coarse device reports for the teacher and **none for
+the student** — so "unavailable, not zero" had something real to render. The result is 17 summary
+lines, 21 timeline entries, 4 unavailable statements and 3 source cautions: 7,518 px of content on
+a phone.
+
+### What was found
+
+**One genuine defect, and it was material.** Every timestamp outside the case narrative — the
+reporter line, "The class", every message, the reporter's activity and the ticket history — was
+rendered with a bare `toLocaleString()`: the *viewer's* timezone, with no label. The narrative
+beside them renders Nepal time and says so. On this container the class therefore appeared as
+"9/5/2026, 4:15:00 AM" directly above "Sep 5, 2026, 10:00 AM Nepal time" **for the same lesson**.
+An agent deciding a refund would have seen one class at two times with no way to tell which was
+real — and an agent working from a laptop set to any other timezone would have seen it silently,
+with no clue anything was wrong.
+
+Fixed with one `nepalTime()` helper in that screen, used for all six timestamps, matching the
+options the server's own narrative formatter uses so the page reads as one document rather than
+two systems. UI only: no evidence calculation, query, schema, payment, refund, membership, socket,
+Daily or classroom behaviour touched.
+
+### Everything else, measured rather than eyeballed
+
+| Check | phone 390×844 | laptop 1440×900 |
+|---|---|---|
+| One "Session summary", no competing block | pass | pass |
+| Horizontal scroll | none | none |
+| Elements overflowing the viewport | none | none |
+| Text clipped by a fixed-height box | none | none |
+| Text below 11 px | none | none |
+| Console or page errors | none | none |
+| Scrolling reaches the end | 7,518 px over an 844 px window, 8 captures | 5,007 px over 900 px, 6 captures |
+| Provider meetings separate | pass — "Provider meeting 1" and "Provider meeting 2", the second's length unavailable | pass |
+| Nepal-time labels | 42 labelled instants, one format | same |
+| Unavailable evidence and cautions visually distinct | pass — amber panel, amber headings, separated from the neutral summary | pass |
+| Attendance, findings, messages, timeline reachable | pass | pass |
+| No provider meeting id, connection id, event id or room name | pass | pass |
+| No internal numeric user reference | pass | pass |
+| No wording deciding fault or promising a refund | pass | pass |
+
+The touch-target scan reported entries at both widths, but every one is an inner `<Text>` inheriting
+`cursor: pointer` from a larger pressable — "Save note" at 67×17 sits inside a 215×43 button. The
+real controls meet size on the laptop. On the phone the "Save note" button measures **44×34**,
+which is under the 44 px height guideline; it is reachable and works, and is recorded here as a
+follow-up rather than changed, because it belongs to the ticket action bar rather than to this
+evidence work.
+
+### Not fixed, deliberately, and why
+
+- **The summary is 17 similar-weight bullets with no grouping.** It is readable; it is not
+  especially *scannable*. Grouping it (booking / what happened in the room / what each source saw)
+  is a design decision about the narrative's own `code` values, not a defect, so it is Codex's or
+  the owner's call rather than mine.
+- **At 1440 px the summary lines run the full card width**, about 180 characters — well past a
+  comfortable measure. Capping it needs a reading-width convention that does not exist in this app
+  yet, and inventing one on a single screen would make it the odd page out.
+- **"0 students had a paid or operator-granted test place before the scheduled start"** is correct
+  for this fixture and reads oddly: both students booked *after* the class date was backdated, so
+  the sentence is literally true. Worth knowing when reading these screenshots; not a product bug.
+
+### Screenshots
+
+`/tmp/claude-0/-home-user-HomeTuition/dfaf26b1-4dec-5cf0-9e29-e2224fdc575f/scratchpad/shots/`
+
+- `phone-390x844-01.png` … `-08.png` — the whole page at 390×844, scrolled
+- `laptop-1440x900-01.png` … `-06.png` — the whole page at 1440×900, scrolled
+- `phone-390x844.txt`, `laptop-1440x900.txt` — the rendered text of each
+
+Temporary scratch, outside the repository and not committed. They do not survive this container.
+
+### Gates
+
+| Gate | Result |
+|---|---|
+| `pnpm run typecheck` (4 packages) | clean |
+| `pnpm --filter @workspace/api-server run test` | **424 passed, 0 failed** |
+| `pnpm --filter @workspace/sikshya run test` | **215 passed, 0 failed** |
+| focused `sessionCaseNarrative.test.ts` | **19 passed, 0 failed** |
+| `pnpm --filter @workspace/api-server run test:proof` | 125 passed, 0 failed |
+| `pnpm --filter @workspace/api-server run test:retention` | 79 passed, 0 failed |
+| `pnpm --filter @workspace/sikshya run lint:design` | no new leaks; 204 hex / 418 sizes |
+| `git diff --check` | clean |
+
+### Not verified
+
+Real hardware. This is Chromium at two window sizes: it says nothing about a cheap Android phone's
+paint speed, touch behaviour, or how this page feels on a poor connection — which is the audience
+this project is built for. It also says nothing about the Daily contract, which remains unread from
+the source because `docs.daily.co` is blocked here.
+
+### Confirmation
+
+No deployment, merge, `db:push`, shared-database command, Daily webhook registration, retention
+schedule, external-service change or purchase. The only writes were synthetic rows in the local
+test database.
