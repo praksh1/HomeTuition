@@ -111,6 +111,8 @@ async function buildWriterHarness() {
             providerRoom: "sikshya" + input.sessionId,
             providerMeetingId: input.meetingId,
             providerParticipantId: input.participantId,
+            // A *named* arrival. See the note above startWriter for why that matters.
+            participantUserId: input.participantUserId ?? null,
             receivedAt: new Date(),
           });
           console.log("WRITER_LOCKED_AND_INSERTED");
@@ -134,6 +136,19 @@ async function buildWriterHarness() {
   return outfile;
 }
 
+/**
+ * Start an evidence writer that holds the shared lock open, and resolve once its row is in.
+ *
+ * The writer inserts a **named** arrival — one carrying `participantUserId` — because
+ * `summariseExpiring` counts a `participant.joined` toward `provider_participant_join_events` only
+ * when the provider could say *which account* arrived. An anonymous join is evidence that somebody
+ * was there and no evidence at all about who, and turning it into a named count is precisely the
+ * fabrication that rule exists to prevent (it has its own pure test, and removing it goes red).
+ *
+ * So the racing writer supplies the identity a real ingest would have resolved against membership,
+ * and the race below is then proven on the stronger fact: the raced-in row survives as *named*
+ * evidence rather than merely as a row that was not lost.
+ */
 function startWriter(writerHarness, input) {
   const child = spawn(process.execPath, [writerHarness, JSON.stringify(input)], {
     env: sweepEnv(), stdio: ["ignore", "pipe", "pipe"],
@@ -605,6 +620,7 @@ async function main() {
       eventId: `sweep_${RUN}_ingest_race`,
       meetingId: "mtg-ir",
       participantId: `participant_${RUN}_ingest_race`,
+      participantUserId: teacherId,
       atMs: BASE + MIN,
     });
     await writer.ready;

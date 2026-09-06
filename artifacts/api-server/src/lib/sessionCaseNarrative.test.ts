@@ -286,3 +286,31 @@ test("the combined account contains no decision language", () => {
     assert.ok(!words.includes(forbidden), `"${forbidden}" must not appear in a session account`);
   }
 });
+
+test("Nepal time is Nepal time, not the server's", () => {
+  /*
+    The offset, pinned, rather than only the wording.
+
+    Every existing determinism test compares the narrative with itself, which proves it is
+    repeatable and says nothing about whether it is *right*. A formatter that quietly rendered UTC
+    would misdate every piece of evidence in a dispute by five hours and forty-five minutes, and
+    read as perfectly consistent while doing it.
+
+    04:15 UTC is 10:00 in Kathmandu. Asserted on the digits rather than on the surrounding words,
+    because the wording comes from ICU and can change between Node builds; the offset cannot.
+  */
+  const utc = Date.UTC(2026, 8, 5, 4, 15, 0);
+  const started = buildSessionCaseNarrative(input({
+    proof: proof({
+      providerMeetings: [
+        { meetingId: "m", startedAtMs: utc, endedAtMs: utc + 20 * 60_000, spanMs: { available: true, value: 20 * 60_000 } },
+      ],
+    }),
+    formatTime: undefined,
+  }));
+  const line = detail(started, "provider_meeting_1");
+  assert.match(line, /10:00/, `expected 10:00 Kathmandu for 04:15 UTC, got: ${line}`);
+  assert.match(line, /10:20/, `expected the end at 10:20 Kathmandu, got: ${line}`);
+  assert.doesNotMatch(line, /04:15|4:15/, "the raw UTC time must not appear");
+  assert.match(line, /Nepal time/);
+});

@@ -1333,11 +1333,25 @@ export async function ensureSessionProofTables(): Promise<void> {
       catalogue definition before provider evidence is allowed to write; do not drop an index or
       delete duplicate evidence at boot merely to make the check pass.
     */
+    /*
+      The `::text` cast on `attname` below is load-bearing rather than tidiness.
+
+      `pg_attribute.attname` has Postgres type `name`, and node-postgres registers no array parser
+      for `name[]` — it hands back the raw literal "{provider,event_type,provider_participant_id}"
+      as a *string*. `Array.isArray` on that is false, so the invariant judged a perfectly correct
+      index invalid and provider ingestion failed closed with a 503 against a healthy database.
+      Casting each element to `text` makes the column `text[]`, which the driver does parse.
+
+      Failing closed on a shape it does not recognise is the right instinct and it stays. This was
+      the query being wrong about how to ask, not the guard being wrong about what to accept — and
+      it is exactly the kind of defect only a real database shows, which is why the catalogue read
+      is exercised end to end by `test:proof` rather than by a fixture alone.
+    */
     const invariant = await db.execute(sql<ProviderDedupeIndexDefinition>`
       SELECT
         ix.indisunique AS "is_unique",
         ARRAY(
-          SELECT a.attname
+          SELECT a.attname::text
           FROM unnest(ix.indkey) WITH ORDINALITY AS key(attnum, position)
           JOIN pg_attribute a ON a.attrelid = table_class.oid AND a.attnum = key.attnum
           ORDER BY key.position

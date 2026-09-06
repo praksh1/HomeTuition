@@ -200,3 +200,148 @@ Reduce the duplicate operator presentation. Leave all evidence collection and li
 Review the uncommitted diff and render a session-linked operator ticket at phone and laptop widths.
 The underlying provider/telemetry sources remain disabled; a real Daily callback still has to be
 verified before activation.
+
+---
+
+## Independent verification on real PostgreSQL — claude, 2026-09-06
+
+- Branch: `codex/session-proof-integration`, checked out at `d1bb737` with a clean working tree.
+- Database: a **local container PostgreSQL only** — `postgres://postgres@127.0.0.1:55432/sikshya`,
+  started by hand from `/var/lib/postgresql/testdata`. No Railway, no Neon, no staging, no saved
+  production URL, and **no `db:push` anywhere**. The repository `.env` points at that same local
+  cluster and nothing else.
+
+### The two suites Codex could not run, run
+
+Both had been authored but never executed; both found a real defect on first contact with a
+database. That is the whole value of the exercise, so the failures are recorded before the passes.
+
+**`test:proof` failed wholesale — 26 checks red, every provider write refused with
+`503 Evidence storage is temporarily unavailable`.** The new fail-closed catalogue invariant was
+rejecting a database whose index was perfectly correct.
+
+Root cause, confirmed by probing the driver rather than by reading: `pg_attribute.attname` has
+PostgreSQL type `name`, and node-postgres registers no array parser for `name[]`. The catalogue
+query's `ARRAY(SELECT a.attname ...)` therefore came back as the **raw literal string**
+`"{provider,event_type,provider_participant_id}"`, not a JS array. `Array.isArray` on that is
+false, so `providerDedupeIndexIsValid` judged a healthy index invalid and ingestion failed closed
+forever. Fixed by casting each element to `text` in the query — one cast — so the column is
+`text[]`, which the driver does parse. The guard itself was not touched: failing closed on a shape
+it does not recognise is the right instinct and it stays.
+
+**`test:retention` then failed one check** — "after its full retention window the raced-in row is
+aggregated as evidence". A fixture bug, not a code bug: the race harness inserted an *anonymous*
+`participant.joined`, while `summariseExpiring` deliberately counts a join toward
+`provider_participant_join_events` only when the provider could name the account. Counting
+anonymous joins would be the fabrication that rule exists to prevent, and it has its own pure test.
+Fixed by giving the racing writer the identity a real ingest would have resolved against
+membership, which makes the race prove the *stronger* fact: the raced-in row survives as named
+evidence. The assertion was not weakened.
+
+### Results
+
+| Gate | Result |
+|---|---|
+| `pnpm run typecheck` (4 packages) | **clean** |
+| `pnpm --filter @workspace/api-server run test` | **424 passed, 0 failed** |
+| `pnpm --filter @workspace/sikshya run test` | **215 passed, 0 failed** |
+| `pnpm --filter @workspace/api-server run test:proof` | **125 passed, 0 failed** |
+| `pnpm --filter @workspace/api-server run test:retention` | **79 passed, 0 failed** |
+| `pnpm --filter @workspace/api-server run test:attendance` | 74 passed, 0 failed |
+| `pnpm --filter @workspace/api-server run test:refunds` | 152 passed, 0 failed |
+| `pnpm --filter @workspace/api-server run test:video` | 16 passed, 0 failed |
+| `pnpm --filter @workspace/sikshya run lint:design` | no new leaks; 204 hex / 418 sizes |
+| `git diff --check` | clean |
+
+Both database suites were run repeatedly against the same database to prove they are re-runnable.
+
+### The dependency question, answered
+
+`jose`, `expo-apple-authentication` and `expo-auth-session` are **declared in `package.json` and
+present in `node_modules`** here, and all four packages typecheck cleanly with no changes. The
+Windows failures were an incomplete install, not a package or lockfile problem. **Nothing was
+changed**, so no hidden social-login UI is exposed and no sign-in provider was activated. The fix
+on that machine is `pnpm install`, not a dependency edit.
+
+### Deliberate breaks — each proven red, then restored
+
+| # | Guarantee | Guard removed | Result |
+|---|---|---|---|
+| 1a | deceptive same-name index fails ingestion closed | the invariant requiring the index to be UNIQUE | proof 111 / **3 fail** |
+| 1b | …without repairing evidence automatically | boot's refusal to drop and recreate the index | proof 110 / **4 fail** |
+| 1c | the catalogue read survives the driver boundary | the `::text` cast on `attname` | proof 63 / **51 fail** |
+| 2a | ingest racing retention is never partly summarised | the writer's shared advisory lock | retention 74 / **5 fail** |
+| 2b | ingest racing retention is never partly summarised | retention's exclusive advisory lock | retention 74 / **5 fail** |
+
+All five went red; every file was restored immediately and the suites returned to green.
+
+### Assertions added, because two guarantees were only half covered
+
+- **The deceptive-index fixture proved the 503 but not the "without repairing" half.** It now
+  captures the row count and the index's uniqueness before the server boots and asserts both are
+  unchanged afterwards — a bootstrap that recreated the index as UNIQUE would have to delete the
+  duplicate rows accumulated under the plain one, which is a destructive repair of evidence decided
+  by a process nobody watched. Break 1b exists to prove this assertion works.
+- **Every Nepal-time test compared the narrative with itself**, which proves repeatability and says
+  nothing about correctness. A formatter quietly rendering UTC would misdate every piece of
+  evidence by 5h45m and look perfectly consistent. Added a test pinning 04:15 UTC to 10:00
+  Kathmandu, asserted on the digits so it does not depend on ICU wording.
+- **The narrative audit ran only against unit fixtures.** The operator screen no longer renders the
+  technical proof block at all, so the narrative *is* what a person reads. `test:proof` now audits
+  the real `caseNarrative` returned by `GET /admin/tickets/:id` for a class that has genuine stored
+  provider rows: no meeting id, no participant connection id, no provider event id, no room name,
+  no `user <n>` reference, no decision phrase, at least one "unavailable", and Nepal-time rendering.
+
+### Narrative audit — findings
+
+| Requirement | Verdict |
+|---|---|
+| Uses the already-computed proof object, no second query | **Pass.** One import, type-only; zero database references in the file; `admin.ts` passes the `proof` built from the same reads |
+| Provider meetings stay separate | **Pass.** One `provider_meeting_N` line each, own start/end/span; multi-meeting text says time between them is not measured meeting time |
+| Missing sources say "unavailable", never zero | **Pass.** Every branch, including "not evidence of a good connection" and "not proof that the class did not occur" |
+| No provider ids, diagnostics, secrets, tokens or internal numeric ids in prose | **Pass.** The timeline is rewritten from the entry *code*, never copying provider text; people are named, never numbered; verified end to end against real rows |
+| Never decides fault, recommends a refund, or claims settlement | **Pass.** Verified end to end. Settlement is mentioned only in denials, which the new check enforces sentence by sentence rather than by banning the word |
+| Nepal-time wording deterministic | **Pass, with a caveat.** Timezone and offset are pinned and now tested. The *wording* comes from `Intl` with locale `en-NP`, so an ICU upgrade could change "Sep" to "Sept". Cosmetic, not an evidence risk; not changed, because the format is a presentation decision |
+
+One deliberate judgement: the narrative header shows `Session #<id>`. That is the class's own
+business reference — the key an operator navigates by, like the ticket number beside it — not a
+provider identifier or a user id, so it stays.
+
+### Classroom changes reviewed
+
+`classroomHub.ts` moves `ledger.messages += 1` inside the `if (text)` guard and `ledger.draws += 1`
+inside the `if (deliverable.length > 0)` guard. Both counters feed only `session_participation`;
+neither is read by any behavioural path, and the broadcast conditions are unchanged. So blank chat
+frames and stale scene replays stop inflating the evidence ledger, and nothing about the classroom,
+the whiteboard, presence or the call changed. `test:attendance` covers both and passes.
+
+### Environmental notes
+
+- The container restarted mid-session; PostgreSQL and the API on 8080 were lost and restarted by
+  hand. The working tree survived. `test:attendance` and `test:refunds` need a server on 8080 that
+  they do not start themselves, and their failure without one looks like a code failure.
+- I twice put backticks inside a JavaScript template literal while writing a comment, which
+  terminated the string and broke the build and then the retention harness. Both were caught by the
+  build and the suite; recorded because the error message points nowhere near the cause.
+
+### What remains unverified
+
+1. **Daily's actual contract.** `docs.daily.co` and `www.daily.co` are both blocked by this
+   environment's egress proxy. The signing scheme, the participant-connection field name and the
+   meeting-instance field names are still implemented from a written specification, not read from
+   the source. One real delivery settles all three.
+2. **No real webhook has ever been received.** Every test posts a locally-signed body.
+3. **Whether registering a webhook needs a billing card.** Not checked; nothing bought.
+4. **No browser or device rendering.** The operator ticket has not been seen at phone or laptop
+   width since roughly 150 lines of duplicate proof UI were removed. Automated checks pass;
+   scannability is not claimed.
+5. **Retention has still never run anywhere but a test database**, and remains imported by no
+   production module.
+
+### Confirmation
+
+No deployment. No merge. No production or staging database contact. No `db:push`. No Daily
+dashboard action, webhook registration, secret, key, account, card or purchase. No retention
+schedule or production collection enabled. No change to payments, refunds, membership, classroom
+sockets, whiteboards or Daily call behaviour. The only database touched was the local container
+cluster on port 55432.

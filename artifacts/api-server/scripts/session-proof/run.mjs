@@ -206,6 +206,9 @@ async function main() {
       sql(`select indisunique::text from pg_index
            where indexrelid = 'session_provider_events_participant_dedupe_idx'::regclass`) === "false");
 
+    // Captured before the server boots, so "boot changed nothing" is compared against a real value.
+    const evidenceBeforeBoot = sql(`select count(*) from session_provider_events`);
+
     await withServer(8183, { DAILY_WEBHOOK_SECRET: SECRET }, async (api) => {
       const payload = evt({ id: `evt_${RUN}_invalid_index` });
       const response = await api("/webhooks/daily", { method: "POST", ...signed(payload) });
@@ -217,6 +220,23 @@ async function main() {
       check("no evidence row is written while the invariant is invalid",
         sql(`select count(*) from session_provider_events
              where provider_event_id = 'evt_${RUN}_invalid_index'`) === "0");
+
+      /*
+        Failing closed is only half the guarantee. The other half is that boot does **not** try to
+        put it right on its own.
+
+        A bootstrap that dropped the deceptive index and recreated it as UNIQUE would have to
+        delete whatever duplicate rows had already accumulated under it, or the CREATE would fail.
+        That is a destructive repair of evidence, decided by a process nobody watched, in the one
+        table whose whole purpose is to be trustworthy in a money argument. The right behaviour is
+        to stop and say nothing can be written until a person looks.
+      */
+      check("boot did not quietly repair the index",
+        sql(`select indisunique::text from pg_index
+             where indexrelid = 'session_provider_events_participant_dedupe_idx'::regclass`) === "false");
+      check("and deleted no evidence in order to make the check pass",
+        sql(`select count(*) from session_provider_events`) === evidenceBeforeBoot,
+        `was ${evidenceBeforeBoot}`);
     }, { waitForSessionProofEnsure: true });
   } finally {
     // Test database only. Restore the exact invariant even if an assertion or server call fails,
@@ -787,6 +807,56 @@ async function main() {
         people[0]?.role === "teacher");
       check("no verdict, recommendation or fault appears anywhere in it",
         !/\b(refund|recommend|verdict|at fault|entitled)\b/i.test(JSON.stringify(proof ?? {})));
+
+      /*
+        The readable account, checked against real stored evidence rather than a fixture.
+
+        This is now the thing an operator actually reads — the parallel technical block was removed
+        from the screen — so the rules about it have to hold against data that came out of the
+        database, not only against a hand-built object in a unit test. The class above has real
+        provider rows from the earlier blocks: meeting ids, participant connection ids, a room
+        name, event ids and a named participant user id.
+      */
+      const narrative = ticket.body?.caseNarrative;
+      check("the evidence page also carries the readable case narrative",
+        narrative !== null && narrative !== undefined);
+      const prose = [
+        ...(narrative?.summary ?? []).map((line) => line.detail),
+        ...(narrative?.timeline ?? []).map((line) => line.detail),
+        ...(narrative?.unavailable ?? []),
+        ...(narrative?.sourceNotes ?? []),
+      ].join("\n");
+      check("the narrative actually said something about this class", prose.length > 0);
+
+      check("it decides no fault and promises no money",
+        !/\b(refund(ed|s)?|recommend\w*|verdict|at fault|entitled|should be|we will pay|has been paid back)\b/i.test(prose),
+        prose.match(/\b(refund\w*|recommend\w*|verdict|at fault|entitled|should be)\b/i)?.[0] ?? "");
+      /*
+        Settlement may be *discussed* — an operator needs to know the platform cannot confirm it —
+        but never asserted. So every sentence that mentions settling has to be a denial, which is a
+        stricter test than banning the word and a truer one than looking for a fixed phrase.
+      */
+      const settlementClaims = prose
+        .split(/(?<=\.)\s+/)
+        .filter((sentence) => /settle/i.test(sentence) && !/\bnot\b/i.test(sentence));
+      check("every mention of payment settlement is a denial, never a claim",
+        settlementClaims.length === 0, settlementClaims.join(" | "));
+
+      // Identifiers that exist in this class's stored rows and must not reach operator prose.
+      for (const [what, needle] of [
+        ["a provider meeting id", `mtg_${RUN}`],
+        ["a participant connection id", `p_${RUN}`],
+        ["a provider event id", `evt_${RUN}`],
+        ["the provider room name", room],
+      ]) {
+        check(`${what} never reaches the narrative`, !prose.includes(needle),
+          prose.split("\n").find((l) => l.includes(needle)) ?? "");
+      }
+      check("no internal numeric user reference survives from the provider timeline",
+        !/\buser \d+\b/i.test(prose), prose.match(/\buser \d+\b/i)?.[0] ?? "");
+      check("a missing source is called unavailable rather than shown as a zero",
+        /unavailable/i.test(prose));
+      check("times are rendered in Nepal time", /Nepal time/.test(prose));
     }
 
     console.log("\nTwo meetings in one room\n");
