@@ -15,12 +15,12 @@
  *   join fails            → left-meeting with no join before it → the class must survive
  *   teacher hangs up      → joined-meeting then left-meeting    → the class must end
  */
-import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { bundleForBrowser } from "../bundle-for-browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
@@ -94,30 +94,21 @@ root.render(React.createElement(Harness));
 );
 
 const bundle = path.join(work, "bundle.js");
-const esbuild = path.join(appRoot, "..", "api-server", "node_modules", "esbuild", "bin", "esbuild");
-const built = spawn(
-  process.execPath,
-  [
-    esbuild, entry, "--bundle", `--outfile=${bundle}`,
-    "--loader:.tsx=tsx", "--loader:.ts=ts", "--jsx=automatic",
-    // The whole point: DailyEmbed's `import("@daily-co/daily-js")` resolves to the fake above.
-    `--alias:@daily-co/daily-js=${fakeDaily}`,
-    "--alias:react-native=react-native-web",
-    '--define:process.env.NODE_ENV="production"',
-    "--format=iife", "--log-level=error",
-  ],
-  {
-    cwd: appRoot,
-    stdio: "inherit",
-    env: { ...process.env, NODE_PATH: path.join(appRoot, "node_modules") },
-  },
-);
-const buildOk = await new Promise((resolve) => {
-  built.on("error", (err) => { console.error(`Could not run esbuild at ${esbuild}: ${err.message}`); resolve(false); });
-  built.on("exit", (code) => resolve(code === 0));
+
+/*
+  One bundler for every browser suite — see scripts/bundle-for-browser.mjs.
+
+  There is no esbuild CLI path that works on both platforms: `bin/esbuild` is a JavaScript
+  launcher on Windows and the native binary itself on Linux, so running it through Node fixes
+  one and breaks the other. The JavaScript API is the same module everywhere.
+*/
+const { ok: buildOk, error: buildError } = await bundleForBrowser({
+  entry,
+  outfile: bundle,
+  alias: { "@daily-co/daily-js": fakeDaily },
 });
 if (!buildOk) {
-  console.error("Could not bundle the component for testing. Has `pnpm install` been run?");
+  console.error(buildError);
   rmSync(work, { recursive: true, force: true });
   process.exit(1);
 }

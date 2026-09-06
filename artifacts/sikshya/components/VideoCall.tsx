@@ -2,6 +2,8 @@ import React from "react";
 import { StyleSheet, Text, View, type StyleProp, type ViewStyle } from "react-native";
 import DailyEmbed from "@/components/DailyEmbed";
 import LiveKitEmbed from "@/components/LiveKitEmbed";
+import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 
 /**
  * The call, whoever is carrying it.
@@ -96,17 +98,30 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
        * rendering a blank rectangle, because "the video area is black" is the least
        * diagnosable bug report there is.
        */
-      return (
-        <View style={[styles.unknown, props.style]} testID="video-provider-unknown">
-          <Text style={styles.unknownText}>
-            This version of the app cannot open “{provider}” video calls. Please update the app.
-          </Text>
-        </View>
-      );
+      return <UnknownProvider name={provider} style={props.style} />;
   }
 }
 
+/**
+ * The last file in the video path still writing its own colours, now that both embeds are
+ * tokenized. Its own component because the tokens come from hooks, and a `switch` arm is not
+ * a place a hook may be called.
+ */
+function UnknownProvider({ name, style }: { name: string; style?: StyleProp<ViewStyle> }) {
+  const colors = useColors();
+  const { t, space } = useLayout();
+  return (
+    <View
+      style={[styles.unknown, { backgroundColor: colors.ink, padding: space.xl }, style]}
+      testID="video-provider-unknown"
+    >
+      <Text style={[t.callout, { color: colors.onInverse, textAlign: "center" }]}>
+        This version of the app cannot open “{name}” video calls. Please update the app.
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  unknown: { alignItems: "center", justifyContent: "center", backgroundColor: "#111", padding: 24 },
-  unknownText: { color: "#fff", fontSize: 14, textAlign: "center", lineHeight: 20 },
+  unknown: { alignItems: "center", justifyContent: "center" },
 });

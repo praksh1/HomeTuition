@@ -11,6 +11,24 @@ import {
   type VideoParticipant,
   type VideoSession,
 } from "@/lib/video";
+/*
+  Shared with the Daily embed on purpose.
+
+  These helpers are pure and provider-independent — Codex wrote them that way when the Daily
+  embeds were tokenized, and a control that says "Mute microphone" on one provider and something
+  else on the other is a difference a screen-reader user would hear and nobody else would ever
+  notice. One wording, both providers.
+
+  The file is still called `dailyEmbedUi` because that is where it was born. Worth renaming to
+  `videoEmbedUi` once the Daily branch has landed — doing it here would collide with work that
+  is still in flight.
+*/
+import {
+  cameraActionLabel,
+  microphoneActionLabel,
+  screenShareActionLabel,
+  watchedParticipantLeft,
+} from "@/utils/dailyEmbedUi";
 
 /**
  * The LiveKit call surface, on the web.
@@ -284,7 +302,14 @@ function Tile({ participant, inset }: { participant: VideoParticipant; inset?: b
           : { width: "100%", height: "100%", minWidth: 0, minHeight: 0 }),
         borderRadius: `${radius.sm}px`,
         overflow: "hidden",
-        background: colors.secondary,
+        /*
+          The same ground as a video, so the name band always has an edge.
+
+          It was `secondary` — the same colour as the name band that sits on it — which read
+          correctly over a camera but merged into a single navy rectangle the moment somebody
+          turned their camera off. The text stayed legible; the band stopped looking like one.
+        */
+        background: colors.ink,
         // A speaking person is outlined rather than enlarged: re-laying out the grid every time
         // somebody says "yes" is unusable on a small panel.
         outline: participant.isSpeaking ? `2px solid ${colors.online}` : "none",
@@ -322,8 +347,17 @@ function Tile({ participant, inset }: { participant: VideoParticipant; inset?: b
           alignItems: "center",
           gap: `${space.xxs}px`,
           padding: `${space.xxs}px ${space.xs}px`,
-          background: colors.scrim,
-          color: colors.onInverse,
+          /*
+            Opaque, not a scrim.
+
+            A translucent black over video is not a contrast pair — it is a different pair on
+            every frame, and a name over a bright whiteboard or a window behind somebody's head
+            fails while the same code passes over a dark room. `secondary` with
+            `secondaryForeground` is 12.14:1 whatever is underneath. The same correction Codex
+            made to the Daily embed's presenter tag on review, for the same reason.
+          */
+          background: colors.secondary,
+          color: colors.secondaryForeground,
           fontFamily: t.caption.fontFamily,
           fontSize: `${t.caption.fontSize}px`,
         }}
@@ -358,23 +392,42 @@ function Tile({ participant, inset }: { participant: VideoParticipant; inset?: b
  */
 function Control({
   label,
+  accessibilityLabel,
   onPress,
   active,
   danger,
   testID,
 }: {
+  /** What the button says. Short, because the panel is narrow. */
   label: string;
+  /**
+   * What the button *does*, for somebody who cannot see it.
+   *
+   * "Mute" alone does not say whether it mutes or is currently muted. The spoken name describes
+   * the action a press will take — the same wording the Daily embed uses, from the same helpers.
+   */
+  accessibilityLabel?: string;
   onPress: () => void;
   active?: boolean;
   danger?: boolean;
   testID: string;
 }) {
-  const background = danger ? colors.destructive : active ? colors.primary : colors.secondary;
+  /*
+    Leave is an outline, not a second filled red button.
+
+    The design rule: crimson is identity, blue is action, and destructive is a state rather than
+    a colour to fill a button with. A solid red Leave sitting beside a solid blue Mute reads as
+    two equal actions, and the one that ends a class should not compete for the thumb. Destructive
+    ink and border on `destructiveSoft` is 6.30:1 — the pairing Codex settled on for the Daily
+    embed's Leave, kept identical here so the two providers do not disagree about what red means.
+  */
+  const background = danger ? colors.destructiveSoft : active ? colors.primary : colors.secondary;
+  const ink = danger ? colors.destructive : colors.onInverse;
   return (
     <button
       type="button"
       onClick={onPress}
-      aria-label={label}
+      aria-label={accessibilityLabel ?? label}
       aria-pressed={active}
       data-testid={testID}
       style={{
@@ -382,9 +435,9 @@ function Control({
         minHeight: `${HIT_SLOP_MIN}px`,
         padding: `0 ${space.sm}px`,
         borderRadius: `${radius.pill}px`,
-        border: "none",
+        border: danger ? `1px solid ${colors.destructive}` : "none",
         background,
-        color: colors.onInverse,
+        color: ink,
         fontFamily: t.caption.fontFamily,
         fontSize: `${t.caption.fontSize}px`,
         cursor: "pointer",
@@ -432,6 +485,30 @@ export default function LiveKitEmbed({
   const watchedSeen = useRef(false);
   const watchedReported = useRef(false);
 
+  /**
+   * One departure, announced once.
+   *
+   * Pressing Leave disconnects, and disconnecting raises a state change that also means "this
+   * person left" — so the same departure arrived twice, and the classroom acts on `onLeft` by
+   * tearing the room down and navigating away. Codex found and fixed exactly this on the Daily
+   * embed; it was here too.
+   *
+   * A ref rather than state because it is read inside a subscription callback that was created
+   * once, and because a re-render must not un-announce something that already happened.
+   */
+  const leftAnnounced = useRef(false);
+  const announceOnce = useCallback(() => {
+    if (leftAnnounced.current) return;
+    leftAnnounced.current = true;
+    onLeftRef.current?.();
+  }, []);
+
+  /** The Leave button: go, then say so. */
+  const announceLeave = useCallback(() => {
+    void leaveRoom();
+    announceOnce();
+  }, [announceOnce]);
+
   useEffect(() => {
     if (!roomUrl || !meetingToken) return;
     let cancelled = false;
@@ -457,7 +534,7 @@ export default function LiveKitEmbed({
         cleanups.push(
           live.onConnectionStateChange((state) => {
             setConnection(state);
-            if (state === "disconnected") onLeftRef.current?.();
+            if (state === "disconnected") announceOnce();
           }),
         );
         cleanups.push(
@@ -468,7 +545,11 @@ export default function LiveKitEmbed({
 
             const watched = watchNameRef.current;
             if (!watched) return;
-            const present = roster.some((p) => !p.isLocal && p.name === watched);
+            // The same predicate the Daily embed uses, from the shared helper, so a teacher's
+            // name matches identically on both providers rather than nearly identically.
+            const present = roster.some(
+              (p) => !p.isLocal && watchedParticipantLeft(watched, p.name),
+            );
             if (present) {
               watchedSeen.current = true;
               // Rearmed on their return: a teacher whose connection dropped and came back can
@@ -730,24 +811,28 @@ export default function LiveKitEmbed({
         <Control
           testID="livekit-mic"
           label={local?.micEnabled ? "Mute" : "Unmute"}
+          accessibilityLabel={microphoneActionLabel(local?.micEnabled === true)}
           active={local?.micEnabled === true}
           onPress={act((live) => live.toggleMic())}
         />
         <Control
           testID="livekit-camera"
           label={local?.cameraEnabled ? "Camera off" : "Camera on"}
+          accessibilityLabel={cameraActionLabel(local?.cameraEnabled === true)}
           active={local?.cameraEnabled === true}
           onPress={act((live) => live.toggleCamera())}
         />
         <Control
           testID="livekit-flip"
           label="Flip"
+          accessibilityLabel="Switch to the other camera"
           onPress={act((live) => live.switchCamera())}
         />
         {canScreenShare ? (
           <Control
             testID="livekit-share"
             label={sharing ? "Stop sharing" : "Share screen"}
+            accessibilityLabel={screenShareActionLabel(sharing ? "sharing" : "idle")}
             active={sharing}
             onPress={toggleShare}
           />
@@ -755,17 +840,18 @@ export default function LiveKitEmbed({
         <Control
           testID="livekit-audio-only"
           label={audioOnly ? "Video on" : "Audio only"}
+          accessibilityLabel={
+            audioOnly ? "Turn video back on for everyone" : "Switch to audio only, keeping the board"
+          }
           active={audioOnly}
           onPress={act((live) => live.setAudioOnly(!live.audioOnly))}
         />
         <Control
           testID="livekit-leave"
           label="Leave"
+          accessibilityLabel="Leave the class"
           danger
-          onPress={() => {
-            void leaveRoom();
-            onLeftRef.current?.();
-          }}
+          onPress={announceLeave}
         />
       </div>
     </div>

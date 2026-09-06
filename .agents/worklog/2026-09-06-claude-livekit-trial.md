@@ -3,8 +3,8 @@
 - Date: 2026-09-06
 - Agent: claude
 - Branch: codex/session-proof-integration
-- Base commit: 3f24074
-- Status: complete (uncommitted — the owner asked to review in preview before anything is committed)
+- Base commit: 55d1e9f (`Record Daily embed preview deployment`, on `codex/session-create-ui`)
+- Status: complete, committed and pushed at the owner's instruction
 
 ## Requested
 
@@ -194,6 +194,71 @@ off has no device to read back, and it is never displayed.
   given no new variables behaves exactly as it does today.
 - **Nothing committed, pushed or deployed**, as instructed.
 
+## Second pass — bringing this into line with Codex's work
+
+The owner asked, before pushing, that this be brought in sync with what Codex had done in
+parallel. Codex had three branches; `codex/session-create-ui` is the one that matters here,
+because `8675b0f "Tokenize and harden Daily video embeds"` rewrote both Daily embeds.
+`codex/staging-preview-integration` turned out to be documentation only and touches no code.
+
+Rebased `a375e68` → `2709c59` onto `origin/codex/session-create-ui` (main `446feb7` plus nine
+Codex commits). No conflicts. Codex's 244-test unit suite passes unchanged on top of it.
+
+Four of Codex's decisions applied to `LiveKitEmbed.web.tsx`, which had independently made the
+same mistakes Codex had just corrected on Daily:
+
+- **The name band was `colors.scrim` over video.** That is not a contrast pair — it is a
+  different pair on every frame, and a name over a bright whiteboard fails while the same code
+  passes over a dark room. Now opaque `secondary` on `secondaryForeground`, 12.14:1, exactly the
+  correction Codex made to Daily's presenter tag on review. The tile ground moved to `ink` at the
+  same time, because a `secondary` band on a `secondary` tile merged into one navy rectangle the
+  moment somebody turned their camera off — found by looking at the render, not by a test.
+- **Leave was a filled red button.** Now destructive ink and border on `destructiveSoft`
+  (6.30:1), the outline treatment Codex settled on, so the two providers do not disagree about
+  what red means.
+- **Controls named their state, not their action.** Now using Codex's own
+  `microphoneActionLabel` / `cameraActionLabel` / `screenShareActionLabel` from
+  `utils/dailyEmbedUi.ts` — pure and provider-independent by Codex's design — so a screen reader
+  hears identical wording on both providers. `watchedParticipantLeft` likewise.
+- **`onLeft` could fire twice.** Pressing Leave disconnects, and disconnecting is itself a
+  departure, so the classroom's teardown-and-navigate ran twice. Codex found this on Daily; it
+  was here too. Guarded by `leftAnnounced`, and pinned by a new browser assertion.
+
+`components/VideoCall.tsx` tokenized while I was in it — the last file in the video path still
+writing its own colours. Baseline **113 → 111 hex, 339 → 338 sizes**.
+
+### A regression found in Codex's change, and fixed
+
+**Codex's Windows fix for the browser suites breaks them on Linux, which is where CI runs.**
+`node_modules/esbuild/bin/esbuild` is a JavaScript launcher on Windows and *the native binary
+itself* on Linux, so `node <that path>` reads `ELF` as a syntax error. Both `test:call-leave` and
+`test:call-chat` failed to bundle at all on this machine; they passed before the rebase.
+
+There is no CLI path that is right on both platforms. New `scripts/bundle-for-browser.mjs` uses
+esbuild's JavaScript API instead, which is the same module everywhere and locates its own binary;
+all three video suites now share it. It resolves esbuild through `createRequire` from
+`api-server/package.json` rather than by guessing a path into pnpm's store, and passes
+`nodePaths` so a harness can keep its scratch entry file out of the repository and still resolve
+React.
+
+This was found by running Codex's suites after rebasing rather than assuming they still passed.
+
+### Verification after the second pass
+
+| Command | Result |
+|---|---|
+| `pnpm run typecheck` (four packages) | clean |
+| `sikshya` `pnpm run test` | **244 passed, 0 failed** (includes Codex's new contract tests) |
+| `api-server` `scripts/video-tests` | **34 passed, 0 failed** |
+| `api-server` `src/lib/video/*.test.ts` | **16 passed, 0 failed** |
+| `sikshya` `scripts/livekit-tests` | **82 passed, 0 failed** (was 74; +8 for the new properties) |
+| `sikshya` `scripts/call-leave-tests` | **9 passed, 0 failed** — restored on Linux |
+| `sikshya` `scripts/call-chat-tests` | **17 passed, 0 failed** — restored on Linux |
+| `sikshya` `scripts/board-tests` | **44/44** |
+| `sikshya` `lint:design` | 111 hex / 338 sizes, baseline lowered and locked |
+
+Re-rendered at both widths after each visual change and looked at the result.
+
 ## Remaining risks / next pickup point
 
 1. **No media has ever flowed.** No camera opened, no packet sent, no token presented to a
@@ -206,6 +271,12 @@ off has no device to read back, and it is never displayed.
 4. **Pricing is unverified.** The reason for the whole exercise is Daily's per-participant-minute
    cost against the monthly tier; nobody has yet checked what 108,000 participant-minutes costs
    on LiveKit Cloud. That belongs in `HANDOVER.md` §8 for the owner, not here.
-5. **Room pre-creation is not done.** LiveKit creates rooms on join, so per-room limits (a
+5. **`utils/dailyEmbedUi.ts` is now imported by a LiveKit component**, which makes its name
+   wrong. Worth renaming to `videoEmbedUi.ts` once `codex/session-create-ui` has landed —
+   doing it here would have collided with work still in flight.
+6. **Codex's two other branches are still unmerged.** `codex/session-create-ui` is the base of
+   this commit; `codex/staging-preview-integration` is documentation only and does not conflict.
+   Neither is on `main`.
+7. **Room pre-creation is not done.** LiveKit creates rooms on join, so per-room limits (a
    maximum participant count, an empty-room timeout) are not set. The token already constrains
    who may enter; a cap would need an API call per join.

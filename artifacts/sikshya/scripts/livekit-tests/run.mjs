@@ -23,12 +23,12 @@
  *
  * Usage, from artifacts/sikshya:  node scripts/livekit-tests/run.mjs
  */
-import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getChromium } from "../board-tests/harness.mjs";
+import { bundleForBrowser } from "../bundle-for-browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
@@ -196,37 +196,15 @@ createRoot(document.getElementById("root")).render(React.createElement(Harness))
 );
 
 const bundle = path.join(work, "bundle.js");
-const esbuild = path.join(appRoot, "..", "api-server", "node_modules", ".bin", "esbuild");
 
-const built = spawn(
-  esbuild,
-  [
-    entry,
-    "--bundle",
-    `--outfile=${bundle}`,
-    "--loader:.tsx=tsx",
-    "--loader:.ts=ts",
-    "--jsx=automatic",
-    '--define:process.env.NODE_ENV="production"',
-    "--format=iife",
-    // The one substitution: the real component, the fake provider underneath it.
-    `--alias:@/lib/video=${fakeProvider}`,
-    // `constants/layout.ts` asks react-native for `Platform`; in a browser that is the web build.
-    "--alias:react-native=react-native-web",
-    "--log-level=error",
-  ],
-  { cwd: appRoot, stdio: "inherit" },
-);
-
-const buildOk = await new Promise((resolve) => {
-  built.on("error", (err) => {
-    console.error(`Could not run esbuild at ${esbuild}: ${err.message}`);
-    resolve(false);
-  });
-  built.on("exit", (code) => resolve(code === 0));
+// The one substitution: the real component, with the fake provider underneath it.
+const { ok: buildOk, error: buildError } = await bundleForBrowser({
+  entry,
+  outfile: bundle,
+  alias: { "@/lib/video": fakeProvider },
 });
 if (!buildOk) {
-  console.error("Could not bundle the call surface for testing. Has `pnpm install` been run?");
+  console.error(buildError);
   rmSync(work, { recursive: true, force: true });
   process.exit(1);
 }
@@ -418,6 +396,38 @@ async function run(chromium, viewport, label) {
   await p.waitForTimeout(300);
   check(`${label}: pressing it clears the prompt`, (await p.locator('[data-testid="livekit-unblock-audio"]').count()) === 0);
 
+  console.log(`\n[${label}] The controls say what they will do, not what they are`);
+  /*
+    The same wording the Daily embed uses, from the same shared helpers.
+
+    "Mute" alone does not tell somebody using a screen reader whether pressing it mutes them or
+    reports that they already are. And a control that speaks one way on Daily and another on
+    LiveKit is a difference only that person would ever encounter.
+  */
+  /*
+    Checked against the control's own visible state rather than a fixed string.
+
+    An earlier version pinned the exact words, and went red the moment a test above it turned the
+    camera off — the assertion was really about the order of this file, not about the component.
+    What matters is that the spoken name says what a press will *do* and agrees with what the
+    button shows, whichever way round the control currently is.
+  */
+  const spoken = {
+    "livekit-mic": { Mute: "Mute microphone", Unmute: "Unmute microphone" },
+    "livekit-camera": { "Camera off": "Turn camera off", "Camera on": "Turn camera on" },
+    "livekit-share": { "Share screen": "Share screen", "Stop sharing": "Stop sharing screen" },
+  };
+  for (const [id, wording] of Object.entries(spoken)) {
+    const control = p.locator(`[data-testid="${id}"]`);
+    const seen = (await control.textContent()) ?? "";
+    const heard = await control.getAttribute("aria-label");
+    check(
+      `${label}: ${id} names its action, not its state`,
+      heard === wording[seen],
+      `shows "${seen}", says "${heard}"`,
+    );
+  }
+
   console.log(`\n[${label}] A teacher leaving is reported to the student`);
   await p.evaluate(() => window.__lk.remove("u2"));
   await p.waitForTimeout(300);
@@ -426,6 +436,20 @@ async function run(chromium, viewport, label) {
     (await p.evaluate(() => window.__events.watchedLeft)) === 1,
   );
   check(`${label}: and their tile is gone`, (await p.locator('[data-testid="livekit-tile-u2"]').count()) === 0);
+
+  console.log(`\n[${label}] Leaving is announced once, not twice`);
+  /*
+    Pressing Leave disconnects, and disconnecting is itself "this person left" — so the same
+    departure arrived down two paths. The classroom acts on `onLeft` by tearing the room down
+    and navigating away, so announcing it twice is not a cosmetic duplicate.
+  */
+  await p.locator('[data-testid="livekit-leave"]').click();
+  await p.waitForTimeout(500);
+  check(
+    `${label}: one press of Leave means one departure`,
+    (await p.evaluate(() => window.__events.left)) === 1,
+    `fired ${await p.evaluate(() => window.__events.left)} times`,
+  );
 
   console.log(`\n[${label}] Nothing threw along the way`);
   check(`${label}: no page error during the run`, errors.length === 0, errors[0] ?? "");
