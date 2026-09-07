@@ -2,19 +2,19 @@ uploads = []
 outputs = []
 
 [[generated]]
-id = "38HCj_gbcSv79ZBcoUyC3"
+id = "fadko-threshold-app-icon"
 uri = "file://artifacts/sikshya/assets/images/icon.png"
 type = "image"
-title = "sikshya app icon"
+title = "Fadko threshold app icon"
 
 [[generated]]
-id = "ONPCuNKRlamSlSTSDsn1P"
-uri = "file://artifacts/sikshya/assets/images/hero_classroom.png"
+id = "fadko-live-learning-hero"
+uri = "file://artifacts/sikshya/assets/images/hero_fadko_live_learning.jpg"
 type = "image"
-title = "nepal classroom hero"
+title = "Fadko live learning welcome hero"
 
 [[generated]]
-id = "cCyKHwLN_GG-D14lzgNIp"
-uri = "file://artifacts/sikshya/assets/images/hero_whiteboard.png"
+id = "fadko-threshold-vector-master"
+uri = "file://artifacts/sikshya/assets/brand/fadko-threshold-icon.svg"
 type = "image"
-title = "digital whiteboard hero"
+title = "Fadko threshold vector master"

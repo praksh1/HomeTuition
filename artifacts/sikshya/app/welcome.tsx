@@ -1,104 +1,117 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { FadkoLogo } from "@/components/FadkoLogo";
+import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 
 export default function Welcome() {
   const insets = useSafeAreaInsets();
   const colors = useColors();
-  const { t, gutter, space, radius } = useLayout();
+  const { t, gutter, space, radius, width, isWide } = useLayout();
+  const heroHeight = isWide
+    ? readingWidth / 2
+    : Math.min(width - gutter * 2, readingWidth) * 0.72;
 
   return (
-    <LinearGradient
-      colors={[colors.secondary, colors.brand]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 0.6, y: 1 }}
-      style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.background }}
+      contentContainerStyle={{
+        paddingTop: insets.top + space.xl,
+        paddingBottom: insets.bottom + space.xxl,
+        paddingHorizontal: gutter,
+      }}
+      showsVerticalScrollIndicator={false}
     >
-      <View style={[styles.header, { paddingTop: space.xxl, paddingBottom: space.md, paddingHorizontal: gutter }]}>
-        <Image
-          source={require("../assets/images/icon.png")}
-          style={[styles.logo, { borderRadius: radius.lg, marginBottom: space.sm }]}
-          contentFit="contain"
-        />
-        <Text style={[t.display, { color: colors.onInverse }]}>Fadko</Text>
-        {/*
-          The tagline, directly under the name where a tagline belongs.
+      <View style={[styles.content, { maxWidth: readingWidth, gap: space.xl }]}>
+        <FadkoLogo />
 
-          It replaces "Live teaching, built around a shared whiteboard" — which said the same
-          thing the hero image below already says, in more words. The whiteboard is still the
-          selling point and the hero is where it is sold; the header's job is to say what this
-          is in four words to somebody who has just been sent a link.
-        */}
-        <Text style={[t.body, styles.centerText, { color: colors.onInverse }]}>Tuition from Home</Text>
-        <Text style={[t.caption, { color: colors.onInverseMuted, marginTop: space.xxs }]}>शिक्षा • ज्ञान • समृद्धि</Text>
-      </View>
-
-      <View style={[styles.heroContainer, { marginHorizontal: gutter, borderRadius: radius.lg }]}>
         <Image
-          source={require("../assets/images/hero_classroom.jpg")}
-          style={styles.heroImage}
+          source={require("../assets/images/hero_fadko_live_learning.jpg")}
+          style={{ width: "100%", height: heroHeight, borderRadius: radius.lg }}
           contentFit="cover"
+          accessibilityLabel="A teacher and student working together on a live mathematics whiteboard"
         />
-        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.scrim }]} />
-        <View style={[styles.heroMessage, { left: space.md, right: space.md, bottom: space.md, gap: space.xxs }]}>
-          <Text style={[t.title2, { color: colors.onInverse }]}>Teach live. Learn together.</Text>
-          <Text style={[t.callout, { color: colors.onInverse }]}>Video, class chat and an interactive whiteboard in one classroom.</Text>
+
+        <View style={{ gap: space.sm }}>
+          <Text accessibilityRole="header" style={[t.display, { color: colors.foreground }]}>Live learning, built around you.</Text>
+          <Text style={[t.body, { color: colors.mutedForeground }]}>Teach, learn and work together on one shared board.</Text>
+        </View>
+
+        <View style={{ gap: space.md }}>
+          <RoleButton
+            title="I’m a teacher"
+            description="Create and run live classes"
+            icon="monitor"
+            primary
+            onPress={() => router.push("/(auth)/login?role=teacher")}
+          />
+          <RoleButton
+            title="I’m a student"
+            description="Find teachers and join classes"
+            icon="book-open"
+            onPress={() => router.push("/(auth)/login?role=student")}
+          />
         </View>
       </View>
+    </ScrollView>
+  );
+}
 
-      <View style={{ paddingHorizontal: gutter, paddingTop: space.lg, paddingBottom: space.md, gap: space.sm }}>
-        <Text style={[t.callout, styles.centerText, { color: colors.onInverseMuted, marginBottom: space.xxs }]}>Choose your role to get started</Text>
+interface RoleButtonProps {
+  title: string;
+  description: string;
+  icon: React.ComponentProps<typeof Feather>["name"];
+  primary?: boolean;
+  onPress: () => void;
+}
 
-        <TouchableOpacity
-          style={[styles.roleButton, { gap: space.sm, backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.sm, padding: space.md }]}
-          onPress={() => router.push("/(auth)/login?role=teacher")}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.btnIcon, { borderRadius: radius.sm, backgroundColor: colors.actionSoft }]}>
-            <Feather name="book-open" size={20} color={colors.primary} />
-          </View>
-          <View style={styles.btnTextBlock}>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>I am a Teacher</Text>
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>Share your knowledge and run live classes</Text>
-          </View>
-          <Feather name="chevron-right" size={20} color={colors.primary} />
-        </TouchableOpacity>
+function RoleButton({ title, description, icon, primary = false, onPress }: RoleButtonProps) {
+  const colors = useColors();
+  const { t, space, radius, elevation } = useLayout();
+  const foreground = primary ? colors.primaryForeground : colors.foreground;
+  const secondary = primary ? colors.onInverseMuted : colors.mutedForeground;
 
-        <TouchableOpacity
-          style={[styles.roleButton, { gap: space.sm, backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.sm, padding: space.md }]}
-          onPress={() => router.push("/(auth)/login?role=student")}
-          activeOpacity={0.85}
-        >
-          <View style={[styles.btnIcon, { borderRadius: radius.sm, backgroundColor: colors.actionSoft }]}>
-            <Feather name="users" size={20} color={colors.primary} />
-          </View>
-          <View style={styles.btnTextBlock}>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>I am a Student</Text>
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>Find a teacher and learn on the shared board</Text>
-          </View>
-          <Feather name="chevron-right" size={20} color={colors.primary} />
-        </TouchableOpacity>
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${description}`}
+      accessibilityHint="Opens sign in and sign up"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.roleButton,
+        elevation.card,
+        {
+          minHeight: HIT_SLOP_MIN,
+          gap: space.md,
+          padding: space.md,
+          borderRadius: radius.md,
+          borderColor: primary ? colors.primary : colors.border,
+          backgroundColor: primary ? colors.primary : colors.card,
+          opacity: pressed ? 0.86 : 1,
+        },
+      ]}
+    >
+      <View style={[styles.roleIcon, { width: space.huge, height: space.huge, borderRadius: radius.sm, backgroundColor: primary ? colors.card : colors.actionSoft }]}>
+        <Feather name={icon} size={space.xl} color={colors.primary} />
       </View>
-    </LinearGradient>
+      <View style={styles.roleCopy}>
+        <Text style={[t.title3, { color: foreground }]}>{title}</Text>
+        <Text style={[t.callout, { color: secondary }]}>{description}</Text>
+      </View>
+      <Feather name="chevron-right" size={space.xl} color={primary ? colors.primaryForeground : colors.primary} />
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: { alignItems: "center" },
-  centerText: { textAlign: "center" },
-  logo: { width: 80, height: 80 },
-  heroContainer: { flex: 1, overflow: "hidden" },
-  heroImage: { width: "100%", height: "100%" },
-  heroMessage: { position: "absolute" },
+  content: { width: "100%", alignSelf: "center" },
   roleButton: { flexDirection: "row", alignItems: "center", borderWidth: 1 },
-  btnIcon: { width: 44, height: 44, justifyContent: "center", alignItems: "center" },
-  btnTextBlock: { flex: 1 },
+  roleIcon: { justifyContent: "center", alignItems: "center" },
+  roleCopy: { flex: 1 },
 });

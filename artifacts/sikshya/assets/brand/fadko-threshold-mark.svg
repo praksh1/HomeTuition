@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 96" width="192" height="96">
+  <style>:root{--action:#123C8C;--brand:#C41E3A}</style>
+  <path d="M18 78h28c8 0 13-4 17-11l32-55c4-7 9-10 17-10h47" fill="none" stroke="var(--action)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M80 42h62M102 78h57" fill="none" stroke="var(--action)" stroke-width="16" stroke-linecap="round"/>
+  <rect x="122" y="51" width="16" height="16" rx="3" fill="var(--brand)"/>
+</svg>

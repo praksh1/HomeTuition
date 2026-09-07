@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
  * Bundles a component for a browser test, on whatever machine is running it.
@@ -44,7 +44,9 @@ export async function bundleForBrowser({ entry, outfile, alias = {} }) {
   let esbuild;
   try {
     const require = createRequire(apiServerPackage);
-    esbuild = await import(require.resolve("esbuild"));
+    // Dynamic import expects a URL on Windows; a bare `C:\\...` path is parsed as a
+    // forbidden `c:` protocol. Linux absolute paths happen to work, which hid this in CI.
+    esbuild = await import(pathToFileURL(require.resolve("esbuild")).href);
   } catch (err) {
     return {
       ok: false,
