@@ -398,7 +398,8 @@ function NoPlanYet({
         </Text>
         <Text style={[t.callout, { color: colors.mutedForeground }]}>
           A monthly class runs daily at a time you choose. Students buy one
-          30-day cycle, not one lesson at a time.
+          30-day cycle, not one lesson at a time. The cycle starts when you set
+          up the class.
         </Text>
       </View>
 

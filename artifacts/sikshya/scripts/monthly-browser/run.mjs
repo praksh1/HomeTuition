@@ -317,7 +317,7 @@ async function main() {
     check("the homework is set", rows === 1, `${rows} rows`);
     const shown = await text(page);
     check("and shown back to the teacher", /Algebra sheet 3/.test(shown), shown.slice(0, 300).replace(/\n/g, " | "));
-    check("with how many have handed in", /0 in/.test(shown), shown.slice(0, 400).replace(/\n/g, " | "));
+    check("with how many have handed in", /0 handed in/.test(shown), shown.slice(0, 400).replace(/\n/g, " | "));
     await ctx.close();
 
     const { ctx: sctx, page: spage } = await open(browser, student.token, `/monthly-homework?id=${classId}`);
