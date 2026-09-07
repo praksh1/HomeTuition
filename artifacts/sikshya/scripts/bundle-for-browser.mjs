@@ -61,8 +61,43 @@ export async function bundleForBrowser({ entry, outfile, alias = {} }) {
       bundle: true,
       format: "iife",
       jsx: "automatic",
-      loader: { ".tsx": "tsx", ".ts": "ts" },
-      define: { "process.env.NODE_ENV": '"production"' },
+      loader: {
+        ".tsx": "tsx",
+        ".ts": "ts",
+        /*
+          Icon fonts, inlined.
+
+          Any component using `@expo/vector-icons` pulls in a dozen `.ttf` files, and esbuild
+          stops with "No loader is configured for .ttf" rather than skipping them. `dataurl`
+          rather than `empty` because on the web the package injects an `@font-face` from that
+          URL and the glyphs are the icons — dropped, every icon in a screenshot is a blank box,
+          and a suite that takes screenshots to check a design would be checking the wrong thing.
+
+          Costs nothing for a suite whose component has no icons: esbuild only applies a loader to
+          files something actually imports.
+        */
+        ".ttf": "dataurl",
+        /*
+          And `.js` files that contain JSX, which `@expo/vector-icons` ships several of.
+
+          Metro parses every file with Babel and does not care about the extension; esbuild picks
+          a parser from it and refuses JSX inside `.js`. Widening the loader is what the package
+          expects and is otherwise a no-op — plain JavaScript is valid JSX-mode input.
+        */
+        ".js": "jsx",
+      },
+      define: {
+        "process.env.NODE_ENV": '"production"',
+        /*
+          Metro defines this for every React Native bundle; esbuild does not, and several
+          packages in the tree read it at render time — `@expo/vector-icons` among them. Without
+          it a component throws `ReferenceError: __DEV__ is not defined` the first time it draws
+          an icon, React unmounts the whole tree, and every assertion after that point fails
+          against an empty page while `pageerror` stays quiet because React reported it through
+          its own error channel. Half an hour, once. It is defined here so it is defined once.
+        */
+        __DEV__: "false",
+      },
       alias: {
         // These components are React Native files being run in a browser; every suite needs it.
         "react-native": "react-native-web",

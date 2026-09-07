@@ -22,6 +22,7 @@ import { useAuth } from "@/context/AuthContext";
 import type { Student } from "@/context/AuthContext";
 import { ApiError, apiGet } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
+import ClassroomFloor from "@/components/ClassroomFloor";
 import VideoCall from "@/components/VideoCall";
 import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
 import { TEST_BOOKING_LABEL, TEST_CLASS_LABEL } from "@/utils/testAccess";
@@ -38,7 +39,7 @@ import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
 import { useAloneInCall } from "@/hooks/useAloneInCall";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import { HIT_SLOP_MIN } from "@/constants/layout";
+import { HIT_SLOP_MIN, space as spaceScale } from "@/constants/layout";
 import { aloneMessage } from "@/utils/aloneInCall";
 
 type Mode = "board" | "chat";
@@ -190,6 +191,10 @@ export default function StudentClassroom() {
     consumeSceneUpdates,
     boardClearedAt,
     boardView,
+    floor,
+    floorRefusal,
+    clearFloorRefusal,
+    floorActions,
   } = useClassroomSocket({
     sessionId: id ?? "",
     name: studentName,
@@ -213,6 +218,15 @@ export default function StudentClassroom() {
     callWindow.state === "compact" ? "small" : callWindow.state === "normal" ? "medium" : callWindow.state;
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
+  /**
+   * Whether this class's video can enforce a permission, and when its discussion opens.
+   *
+   * Both from the room payload, both decided by the server. `canModerate` is false on Daily —
+   * where every participant can unmute themselves, so a raised hand would be asking for something
+   * the student already has — and the whole floor is hidden rather than drawn and refused.
+   */
+  const [canModerate, setCanModerate] = useState(false);
+  const [discussionOpensAt, setDiscussionOpensAt] = useState<number | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
@@ -434,6 +448,8 @@ export default function StudentClassroom() {
         roomUrl: url,
         token,
         provider,
+        capabilities,
+        discussionOpensAt: opensAt,
         testClass,
         testClassLabel,
         testBooking,
@@ -442,6 +458,8 @@ export default function StudentClassroom() {
         roomUrl: string;
         token?: string | null;
         provider?: string;
+        capabilities?: { moderatesPublishing?: boolean };
+        discussionOpensAt?: number | null;
         /** The class is open to test bookings. Says nothing about whether *you* paid. */
         testClass?: boolean;
         testClassLabel?: string;
@@ -450,6 +468,8 @@ export default function StudentClassroom() {
         testBookingLabel?: string;
       }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
+      setCanModerate(capabilities?.moderatesPublishing === true);
+      setDiscussionOpensAt(typeof opensAt === "number" ? opensAt : null);
       /**
        * The narrower, personal fact wins; the class-level one is the fallback.
        *
@@ -1209,6 +1229,25 @@ export default function StudentClassroom() {
               </View>
             )}
 
+            {/*
+              Where this student stands, pinned along the bottom.
+
+              Above the board rather than over the call, because the board is what a student looks
+              at for most of a lesson and an invitation they cannot see is an invitation nobody
+              answers. Inert when the floor is null — before the first state arrives, once the
+              class ends, and on a provider that cannot enforce a permission.
+            */}
+            <View pointerEvents="box-none" style={s.floorLayer}>
+              <ClassroomFloor
+                floor={floor}
+                refusal={floorRefusal}
+                onDismissRefusal={clearFloorRefusal}
+                actions={floorActions}
+                discussionOpensAt={discussionOpensAt}
+                canModerate={canModerate}
+              />
+            </View>
+
             {/* This carrier is inert while closed; only the scrim and sheet capture touches. */}
             <View
               pointerEvents={mode === "chat" ? "auto" : "none"}
@@ -1477,6 +1516,21 @@ const s = StyleSheet.create({
   },
   presenceDot: { width: 8, height: 8, borderRadius: 4 },
   noticeLayer: { position: "absolute", alignItems: "center", zIndex: 120 },
+  /*
+    Under the chat sheet and over the board.
+
+    zIndex 110 rather than 130: the chat cover slides up over everything and must land on top of
+    this, while the class's own notices — the wrap-up warning, an access refusal — sit above it,
+    because those are about whether the lesson can continue at all.
+  */
+  floorLayer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: spaceScale.sm,
+    zIndex: 110,
+  },
   hudLayer: {
     position: "absolute",
     left: 0,

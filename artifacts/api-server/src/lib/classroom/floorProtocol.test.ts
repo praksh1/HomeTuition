@@ -206,7 +206,7 @@ test("granting a microphone pushes a permission and silences nobody", () => {
 test("accepting changes what everyone sees and nothing the provider is told", () => {
   const f = room();
   did(f, { action: "allow", userId: STUDENT, scope: "mic", replace: false }, asTeacher());
-  const out = did(f, { action: "accept", scope: "mic" }, ctx());
+  const out = did(f, { action: "accept", want: { mic: true } }, ctx());
   assert.deepEqual(out.touched, [STUDENT]);
   assert.deepEqual(out.push, [], "the permission was already pushed when it was granted");
 });
@@ -214,7 +214,7 @@ test("accepting changes what everyone sees and nothing the provider is told", ()
 test("a mute both revokes and cuts off, because revoking does not close an open microphone", () => {
   const f = room();
   did(f, { action: "allow", userId: STUDENT, scope: "mic", replace: false }, asTeacher());
-  did(f, { action: "accept", scope: "mic" }, ctx());
+  did(f, { action: "accept", want: { mic: true } }, ctx());
   const out = did(f, { action: "mute", userId: STUDENT }, asTeacher());
   assert.deepEqual(out.push, [STUDENT], "the right to speak again is withdrawn");
   assert.deepEqual(out.silence, [STUDENT], "and the track that is open right now is stopped");
@@ -223,7 +223,7 @@ test("a mute both revokes and cuts off, because revoking does not close an open 
 test("a student stepping back to listening is cut off too, not merely believed", () => {
   const f = room();
   did(f, { action: "allow", userId: STUDENT, scope: "mic", replace: false }, asTeacher());
-  did(f, { action: "accept", scope: "mic" }, ctx());
+  did(f, { action: "accept", want: { mic: true } }, ctx());
   const out = did(f, { action: "listen_only" }, ctx());
   assert.deepEqual(out.silence, [STUDENT],
     "a client that says it stopped and did not would otherwise be heard while the teacher's screen said it was not");
@@ -232,7 +232,7 @@ test("a student stepping back to listening is cut off too, not merely believed",
 test("stopping a camera does not stop a microphone", () => {
   const f = room();
   did(f, { action: "allow", userId: STUDENT, scope: "mic+camera", replace: false }, asTeacher());
-  did(f, { action: "accept", scope: "mic+camera" }, ctx());
+  did(f, { action: "accept", want: { mic: true, camera: true } }, ctx());
   const out = did(f, { action: "stop_camera", userId: STUDENT }, asTeacher());
   assert.deepEqual(out.push, [STUDENT]);
   assert.deepEqual(out.silence, [STUDENT]);
@@ -242,7 +242,7 @@ test("stopping a camera does not stop a microphone", () => {
 test("replacing the camera student reports both of them", () => {
   const f = room();
   did(f, { action: "allow", userId: STUDENT, scope: "mic+camera", replace: false }, asTeacher());
-  did(f, { action: "accept", scope: "mic+camera" }, ctx());
+  did(f, { action: "accept", want: { mic: true, camera: true } }, ctx());
   const out = did(f, { action: "allow", userId: OTHER, scope: "mic+camera", replace: true }, asTeacher());
   assert.deepEqual(out.push.sort(), [STUDENT, OTHER].sort());
   assert.deepEqual(out.silence, [STUDENT], "the student who lost it is cut off, the new one is not");
@@ -261,7 +261,7 @@ test("taking the camera without saying replace is refused, and changes nothing",
 test("mute all reaches everybody who could speak and nobody who could not", () => {
   const f = room();
   did(f, { action: "allow", userId: STUDENT, scope: "mic", replace: false }, asTeacher());
-  did(f, { action: "accept", scope: "mic" }, ctx());
+  did(f, { action: "accept", want: { mic: true } }, ctx());
   did(f, { action: "ask" }, ctx({ actorId: OTHER }));
   const out = did(f, { action: "mute_all" }, asTeacher());
   assert.deepEqual(out.push, [STUDENT]);
@@ -319,7 +319,7 @@ test("closing the discussion revokes and cuts off everybody it widened", () => {
   const f = room(true);
   did(f, { action: "start_discussion" }, asTeacher());
   did(f, { action: "join_discussion", scope: "mic+camera" }, ctx());
-  did(f, { action: "accept", scope: "mic+camera" }, ctx());
+  did(f, { action: "accept", want: { mic: true, camera: true } }, ctx());
   did(f, { action: "join_discussion", scope: "mic" }, ctx({ actorId: OTHER }));
 
   const out = did(f, { action: "end_discussion" }, asTeacher());
@@ -333,7 +333,7 @@ test("a student leaving a discussion gives up the permission, not just the track
   const f = room(true);
   did(f, { action: "start_discussion" }, asTeacher());
   did(f, { action: "join_discussion", scope: "mic" }, ctx());
-  did(f, { action: "accept", scope: "mic" }, ctx());
+  did(f, { action: "accept", want: { mic: true } }, ctx());
   const out = did(f, { action: "leave_discussion" }, ctx());
   assert.deepEqual(out.push, [STUDENT]);
   assert.deepEqual(out.silence, [STUDENT]);
@@ -387,4 +387,43 @@ test("a student the room has no name for is still listed, rather than dropped", 
   const view = teacherView(f, new Map());
   assert.equal(view.students.length, 1);
   assert.equal(view.students[0]!.name, "Student");
+});
+
+/* --- consent, as two switches -------------------------------------------- */
+
+test("a scope on accept still means what it always did", () => {
+  const both = readFloorMessage({ type: "floor_accept", scope: "mic+camera" });
+  assert.deepEqual(both.kind === "request" ? both.request : null, {
+    action: "accept", want: { mic: true, camera: true },
+  });
+  const mic = readFloorMessage({ type: "floor_accept", scope: "mic" });
+  assert.deepEqual(mic.kind === "request" ? mic.request : null, {
+    action: "accept", want: { mic: true, camera: false },
+  });
+});
+
+test("a student may turn their camera off without giving up the microphone", () => {
+  const f = room();
+  did(f, { action: "allow", userId: STUDENT, scope: "mic+camera", replace: false }, asTeacher());
+  did(f, { action: "accept", want: { mic: true, camera: true } }, ctx());
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "camera-active");
+
+  const out = did(f, { action: "accept", want: { camera: false } }, ctx());
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "speaking",
+    "the teacher's list must not keep showing a camera nobody is sending");
+  assert.deepEqual(out.push, [], "their permission did not change, only what they switched on");
+  assert.deepEqual(out.silence, [STUDENT], "and the track they had open is stopped");
+});
+
+test("an accept that asks for nothing is a client bug, and is refused as one", () => {
+  const p = readFloorMessage({ type: "floor_accept" });
+  assert.equal(p.kind, "malformed");
+  assert.equal(p.kind === "malformed" && p.code, "bad-scope");
+  assert.equal(readFloorMessage({ type: "floor_accept", mic: "yes" }).kind, "malformed");
+});
+
+test("turning the camera back on is still checked against the permission", () => {
+  const f = room();
+  did(f, { action: "allow", userId: STUDENT, scope: "mic", replace: false }, asTeacher());
+  assert.equal(refused(f, { action: "accept", want: { camera: true } }, ctx()), "not-allowed");
 });

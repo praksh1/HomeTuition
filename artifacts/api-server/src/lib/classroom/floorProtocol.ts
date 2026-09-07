@@ -82,7 +82,19 @@ export const FLOOR_PREFIX = "floor_";
 export type StudentAction =
   | { action: "ask" }
   | { action: "cancel_ask" }
-  | { action: "accept"; scope: InvitationScope }
+  /**
+   * Consent, as two independent switches rather than a scope.
+   *
+   * The brief listed "accept mic" and "accept camera+mic", and a scope would carry both. It has to
+   * be finer than that because of a case a scope cannot express: a student who is answering a
+   * question and turns their *camera* off to save bandwidth on a weak line. That is a real thing
+   * a student on a cheap Android phone does, and the call panel already has the button for it.
+   *
+   * Without this the two halves disagree — the camera stops, the floor still says `camera-active`,
+   * and the teacher's list shows a camera nobody is sending. Sending the same fact to both places
+   * is what keeps one truth.
+   */
+  | { action: "accept"; want: { mic?: boolean; camera?: boolean } }
   | { action: "decline" }
   | { action: "listen_only" }
   | { action: "join_discussion"; scope: InvitationScope }
@@ -189,8 +201,24 @@ export function readFloorMessage(msg: Record<string, unknown>): Parsed {
     case "end_discussion": return took({ action: "end_discussion" });
 
     case "accept": {
+      /*
+        Either switch, or both, but not neither.
+
+        A `scope` is still accepted and means what it always did, because that is how a client
+        answers an invitation and it is the shorter thing to send. An empty message is refused
+        rather than treated as "change nothing": a frame that asks for nothing is a client bug,
+        and silently succeeding at it is how that bug reaches a classroom.
+      */
       const scope = scopeOf(msg.scope);
-      return scope === null ? noScope : took({ action: "accept", scope });
+      if (scope !== null) {
+        return took({ action: "accept", want: { mic: true, camera: scope === "mic+camera" } });
+      }
+      const want: { mic?: boolean; camera?: boolean } = {};
+      if (typeof msg.mic === "boolean") want.mic = msg.mic;
+      if (typeof msg.camera === "boolean") want.camera = msg.camera;
+      return want.mic === undefined && want.camera === undefined
+        ? noScope
+        : took({ action: "accept", want });
     }
     case "join_discussion": {
       const scope = scopeOf(msg.scope);
@@ -442,11 +470,7 @@ function run(floor: Floor, request: FloorRequest, ctx: FloorContext): { ok: true
     case "cancel_ask":
       return cancelRequest(floor, me);
     case "accept":
-      return acceptSpeaking(
-        floor,
-        me,
-        request.scope === "mic+camera" ? { mic: true, camera: true } : { mic: true },
-      );
+      return acceptSpeaking(floor, me, request.want);
     case "decline":
       return declineInvitation(floor, me);
     case "listen_only":
