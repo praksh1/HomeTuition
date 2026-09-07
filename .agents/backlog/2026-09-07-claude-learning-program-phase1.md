@@ -1,7 +1,11 @@
 # Claude task — Learning Program schema and read API
 
-Start only after the isolated LiveKit pilot is committed and idle. Work on a new branch from the
-reviewed integration base; do not merge, deploy, purchase or enable anything.
+Status: **queued, not active**. The LiveKit pilot review at
+`.agents/worklog/2026-09-07-codex-livekit-pilot-review.md` has blocking corrections. Finish those
+and receive Codex's re-review before beginning this task.
+
+After that review closes, work on a new branch from the reviewed integration base; do not merge,
+deploy, purchase or enable anything.
 
 Read in order: `CLAUDE.md`, `.agents/memory/MEMORY.md`, `HANDOVER.md`, `DESIGN.md`,
 `.agents/backlog/2026-09-07-learning-program-managed-marketplace.md`, and
