@@ -14,6 +14,14 @@ participant-minute. Check your own rate before doing anything else, but the shap
 does not depend on the exact number: **at that volume the tier can lose money on every teacher,
 and lose more the more it sells.**
 
+**Priced, 7 September 2026 — and the answer is not the one this document expected.** LiveKit is
+roughly ten times cheaper than Daily for the same class ($86.65 against $430.56 per teacher per
+month) and *still* loses money against $48.87 of revenue. Its connection fee alone is $43.06 —
+88% of the income — before a single byte of video. The monthly tier prices a participant-minute
+below LiveKit's own wholesale rate, so no managed provider can be bought at it. Switching
+provider was worth doing and does not fix the tier. `HANDOVER.md` §8.6 has the table, the
+assumptions, and the four ways out.
+
 So the provider is behind a seam. Swapping it is one new file and one environment variable, not
 a rewrite of every classroom screen.
 
@@ -250,9 +258,9 @@ The suite skips itself, loudly, when `livekit-server` is not installed.
 ### What still has not been checked
 
 - **LiveKit Cloud itself.** The local SFU is the same software, so the code is proven; the
-  internet is not. No latency, no packet loss, no TURN relay, no cloud region, and no answer on
-  what this costs at 108,000 participant-minutes a month. The owner's own two-browser test
-  through LiveKit Cloud is still the thing to do.
+  internet is not. No latency, no packet loss, no TURN relay, no cloud region. The owner's own
+  two-browser test through LiveKit Cloud is still the thing to do. (Cost is no longer unknown —
+  it is priced in `HANDOVER.md` §8.6, and the answer is uncomfortable.)
 - **A real phone browser**, which is the market this is for. Chromium on a laptop is not a
   budget Android handset on a 3G line.
 - **`docs.livekit.io` is blocked** by this environment's network egress. Everything is written

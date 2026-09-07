@@ -887,32 +887,77 @@ Two things stop it being turned on, and one of them is yours to decide:
 None of the three is urgent. The point of writing it down is that "we have independent proof of
 attendance" is currently **not true**, and nobody should plan a refund policy as though it were.
 
-### 8.6 What would LiveKit actually cost?
+### 8.6 LiveKit's cost, priced — and the tier it says cannot work
 
-LiveKit Cloud is now built beside Daily and switchable with one environment variable — see the
-LiveKit trial section of `VIDEO.md`. What has **not** been established is the only thing the
-exercise was for.
+**Priced 7 September 2026. The rates below are from secondary sources, not LiveKit's own page,
+which this environment's network blocks. Two numbers need confirming before anything is decided
+on them** — see the end of this section.
 
-The monthly tier is roughly **108,000 participant-minutes per teacher per month** (46 people ×
-90 minutes × ~26 sessions) against a NPR 6,500 subscription. Daily bills per participant-minute,
-which is why that tier can lose money on every teacher and lose more the more it sells.
+LiveKit Cloud meters **two** things, and the second is the one that gets missed:
 
-Nobody has checked what those 108,000 minutes cost on LiveKit Cloud, or where its free
-allowance ends. **Until somebody does, "we moved to LiveKit to save money" is a hope, not a
-finding** — and the technical work is finished either way, so this is now the deciding question
-rather than a detail.
+1. **Connection minutes** — time a participant is connected, whatever they send or receive.
+   About **$0.0005/min** (Ship, $50/mo) falling to **$0.0004/min** (Scale, $500/mo).
+2. **Downstream bandwidth** — what the server sends *out* to participants. About
+   **$0.10–0.12/GB**. Upstream is free.
 
-Two things worth pricing at the same time, because they change the answer:
+#### The monthly tier does not work, on any per-minute provider
 
-- **Audio-only mode is built and works both ways** — it stops sending *and* receiving video. If
-  LiveKit bills by bandwidth rather than by participant-minute, a class that spends most of its
-  time on the whiteboard with the cameras off is dramatically cheaper, and that changes which
-  provider wins.
-- **Self-hosting LiveKit is possible** and Daily's equivalent is not. That is a different cost
-  shape entirely — a server bill instead of a per-minute one — and it is the reason LiveKit was
-  worth trying rather than simply the cheapest quote.
+One monthly class is 46 people × 90 minutes × ~26 sessions = **107,640 participant-minutes**.
+Fadko's income from it is the teacher's NPR 6,500 ≈ **$48.87** — students pay the teacher, not
+Fadko, so that subscription is the whole revenue.
 
-This needs the owner's LiveKit Cloud dashboard, which shows the plan and its included usage.
+| What each person receives | Bandwidth | Connection | Total | Margin on $48.87 |
+|---|---|---|---|---|
+| Audio only, cameras off | 32 GB → $3.23 | $43.06 | **$46.29** | **+$2.59** |
+| The teacher's video only | 436 GB → $43.59 | $43.06 | **$86.65** | **−$37.78** |
+| A 3×3 grid of faces at 360p | 2,180 GB → $217.97 | $43.06 | **$261.03** | **−$212.15** |
+
+*(Marginal cost of one more such teacher on the Scale plan, once its allowances are spent.
+Bandwidth uses this repo's own `lib/videoCost.ts` formula.)*
+
+**The connection fee alone is $43.06 of the $48.87 available — 88% of the revenue, before a
+single byte of video.** Only a class that keeps every camera off all month makes money, and it
+makes $2.59.
+
+This is not really a verdict on LiveKit. **It is a verdict on the tier's arithmetic**: 108,000
+participant-minutes for $48.87 is $0.00045 per participant-minute, which is *below LiveKit's own
+wholesale rate*. No managed provider can be bought at that price, so the answer is not a cheaper
+vendor.
+
+#### LiveKit is still the right move
+
+The same class on Daily, at ~$0.004/participant-minute, is **$430.56/month against $48.87** — a
+loss of $382 per teacher. LiveKit takes that to $37.78 in the realistic camera case. **It is
+roughly a tenfold improvement and it does not close the gap.**
+
+#### The four ways out, for the owner to choose between
+
+1. **Raise the monthly tier.** Roughly NPR 12,000 covers the realistic case with margin. Simple
+   arithmetic, unwelcome commercially.
+2. **Make audio-first the default for large classes** and treat cameras as the exception. The
+   app already has this: audio-only stops sending *and* receiving video, and the whiteboard is
+   the actual teaching surface. This is the only option that makes the current price work, and
+   it is a product decision rather than an engineering one.
+3. **Cap the class size**, or the number of visible cameras. Cost scales with people × minutes;
+   45 is what makes it large.
+4. **Self-host LiveKit.** A fixed server bill instead of a per-minute one, and the reason
+   LiveKit was worth trying rather than simply the cheapest quote. It trades money for
+   operational work, and only pays off at volume. Daily has no equivalent option.
+
+Pay-per-class bookings are unaffected — a one-hour class with a handful of students is cents.
+**This whole section is about the monthly recurring tier only.**
+
+#### Two numbers to confirm from the dashboard
+
+The pricing page cannot be read from the build environment. From
+[livekit.com/pricing](https://livekit.com/pricing), or the billing page of the account:
+
+- the **per-minute connection rate** and what each plan includes;
+- the **per-GB downstream bandwidth rate** and the free allowance.
+
+If both land where the table above assumes, nothing here changes. If bandwidth is included
+rather than billed, options 2 and 3 get much easier and the answer may become "raise the tier a
+little" instead.
 Nobody but the owner can look at it.
 
 ---
