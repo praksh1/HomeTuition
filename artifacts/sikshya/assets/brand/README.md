@@ -1,29 +1,31 @@
-# Fadko brand candidates
+# Fadko brand assets
 
-**None of these is installed.** The app still uses `../images/icon.png`, the book-and-mountain
-mark drawn for Sikshya. These are three proposals for the owner to choose between; see the
-identity page linked from the worklog entry for how they read at every size.
+The owner selected the blue **threshold** mark with its small crimson milestone on 6 September
+2026. `fadko-threshold-icon.svg` is the vector master and `fadko-threshold-1024.png` is installed
+as `../images/icon.png`. The earlier ascent, board and book concepts remain here as design
+history; they are not runtime assets.
 
 | File | What it is |
 |---|---|
-| `fadko-<name>-icon.svg` | The full icon — crimson field, white mark. This is the one that becomes `icon.png`. |
-| `fadko-<name>-mark.svg` | The mark alone, crimson on transparent, for light surfaces inside the app. |
-| `fadko-<name>-1024.png` | The icon rasterised at 1024×1024, the size `app.json` expects. |
+| `fadko-threshold-icon.svg` | Selected full icon master — warm ground, royal-blue mark, crimson milestone. |
+| `fadko-threshold-mark.svg` | Selected mark alone for use on light surfaces inside the app. |
+| `fadko-threshold-1024.png` | Selected 1024px icon raster installed as `../images/icon.png`. |
+| `fadko-<older-name>-*` | Rejected design candidates retained only as design history. |
 
-## Why each carries its own crimson ground
+The welcome screen uses `../images/hero_fadko_live_learning.jpg`, a text-free responsive hero.
+All wording and controls remain native UI so they scale, translate and remain accessible.
 
-One file serves four jobs: the iOS app icon, the splash image, the Android adaptive-icon
-foreground, and the browser favicon. The Android adaptive icon is composited over
-`#1A365D` navy (set in `app.json`), while the favicon sits on white. A bare crimson mark
-fails the first — `#C41E3A` on `#1A365D` is roughly 2:1 and unreadable. Giving the mark its
-own field makes the same file correct on both, which is what the current icon does too.
+## Runtime treatment
 
-## To install one
+One raster serves four jobs: iOS icon, splash image, Android adaptive foreground and favicon.
+The selected file has a warm-paper ground; splash and adaptive backgrounds use the same ground
+in `app.json`, so there is no visible square around it while it loads.
 
-Replace `artifacts/sikshya/assets/images/icon.png` with the chosen `-1024.png`, then
-`pnpm --filter @workspace/sikshya run build`. Nothing in `app.json` changes — it already
-points at that path for every platform.
+## To regenerate the installed raster
 
-The three candidates are 22–30 KB against the current icon's 394 KB, because they are flat
-vector shapes rather than a rendered illustration. On the connections this app is designed
-for, that difference is worth having.
+Rasterise `fadko-threshold-icon.svg` to `fadko-threshold-1024.png`, copy it to
+`artifacts/sikshya/assets/images/icon.png`, then run the app build. `app.json` already points at
+that path for every platform.
+
+The installed PNG is about 6 KB because it is flat geometry. On the connections this app is
+designed for, that difference is worth having.
