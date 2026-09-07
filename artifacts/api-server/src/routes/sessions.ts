@@ -18,6 +18,8 @@ import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLife
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
 import { canJoin, canStart, cutoffAt, isCreatableAt, isPastCutoff, studentDoorClosesAt } from "../lib/sessionStart";
+import { discussionOpensAt } from "../lib/classroom/discussionWindow.ts";
+import { discussionModeEligible as eligibleForDiscussion } from "../lib/classroom/discussionEligibility.ts";
 import type { StartCheck, StartRefusal } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
@@ -725,12 +727,29 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
      * not been taken.
      */
     const testClass = await isTestClass(id);
+    /*
+      Whether this class carries the Monthly discussion benefit, and when it opens.
+
+      Both derived on the server. The app is told the answer, never asked for its opinion: a
+      client that claims to be Monthly gets whatever the billing records say, which for a
+      pay-as-you-go class is `false` and no window at all.
+
+      `discussionOpensAt` is sent as an instant rather than "in 18 minutes" because the app owns
+      both calendars and does its own formatting; a server phrasing a time would be a third
+      place that has to know how Fadko writes one. It is null when the class is not eligible,
+      so there is nothing for a pay-as-you-go screen to render even by mistake.
+    */
+    const discussionModeEligible = await eligibleForDiscussion(id);
     res.json({
       roomUrl,
       token,
       isOwner: membership!.isSessionTeacher,
       provider: video.name,
       capabilities: video.capabilities,
+      discussionModeEligible,
+      discussionOpensAt: discussionModeEligible
+        ? discussionOpensAt({ ...session, endedAt: null })
+        : null,
       ...(testClass ? { testClass: true, testClassLabel: TEST_CLASS_LABEL } : null),
       ...(membership!.viaTestAccess ? { testBooking: true, testBookingLabel: TEST_BOOKING_LABEL } : null),
     });
