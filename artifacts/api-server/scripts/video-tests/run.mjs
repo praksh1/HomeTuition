@@ -280,10 +280,23 @@ async function run() {
     check("and may not publish a screen",
       !(studentClaims?.video?.canPublishSources ?? []).includes("screen_share"),
       JSON.stringify(studentClaims?.video?.canPublishSources));
-    check("while still being able to publish camera and microphone",
-      (studentClaims?.video?.canPublishSources ?? []).includes("camera") &&
-      (studentClaims?.video?.canPublishSources ?? []).includes("microphone"),
-      JSON.stringify(studentClaims?.video?.canPublishSources));
+    /*
+      And may not publish anything at all until a teacher grants it.
+
+      This assertion used to say the opposite — that a student could publish a camera and a
+      microphone — and it passed, because every token said so. The classroom relied on the app
+      not drawing the controls, which protects against a student who behaves and nobody else.
+      A student is now given the floor by the server, in response to a teacher's decision,
+      through `livekitProvider.setPublishing`.
+    */
+    check("and may not publish anything at all until a teacher grants it",
+      studentClaims?.video?.canPublish === false &&
+      (studentClaims?.video?.canPublishSources ?? []).length === 0,
+      JSON.stringify({ canPublish: studentClaims?.video?.canPublish, sources: studentClaims?.video?.canPublishSources }));
+    check("while the teacher's own token still carries camera, microphone and screen",
+      claims?.video?.canPublish === true &&
+      (claims?.video?.canPublishSources ?? []).includes("screen_share"),
+      JSON.stringify(claims?.video?.canPublishSources));
     check("the two people are told apart by identity",
       studentClaims?.sub === String(student.user.id) && studentClaims?.sub !== claims?.sub);
 

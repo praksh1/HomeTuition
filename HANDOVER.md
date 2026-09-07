@@ -1006,6 +1006,32 @@ nothing, uses a mechanism that already exists and works, and fixes the economics
 already proven. Do that first. Cloudflare becomes the right answer when volume is real, audio-first
 is not enough, and somebody is prepared to own the stack.
 
+#### SUPERSEDED — these figures used 45 students a class, not 10
+
+**Read this before the two sections below. 7 September 2026.**
+
+Everything in §8.6 was modelled on **45 students per monthly class**, because that is what
+`MAX_STUDENTS` in `lib/monthly.ts` says today. The owner has since put a different provisional
+figure into the tier redesign: **up to 10 enrolled students per class**. That changes every
+number here by roughly a factor of four, and it changes the conclusion.
+
+**The NPR 150–200 student-fee estimate is therefore not approved pricing and must not be quoted
+as one.** It answered a question about a 46-person room. At eleven people the video bill is a
+quarter of the size and the fee needed to cover it is far smaller — quite possibly none at all.
+
+What survives the change, because it is about the shape of the billing rather than the size of
+the class:
+
+- LiveKit charges per participant-minute *and* per gigabyte; Cloudflare's raw SFU charges per
+  gigabyte only. That is why one scales badly with class size and the other does not.
+- The whiteboard costs the video provider nothing. It runs on Fadko's own socket.
+- Teacher-controlled webcam is much cheaper than an open gallery, and better teaching.
+- Pay-as-you-go was never the problem at any class size.
+
+The calculator built alongside this takes class size as an input, so the smaller number can be
+put straight into it. **Nothing below should be used for a pricing decision until it has been
+re-run at the size the tier actually ships with.**
+
 #### The lever nobody had costed: a platform fee charged to students
 
 Asked again on 7 September 2026, while the owner was redesigning the tiers. Two things in that

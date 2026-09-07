@@ -463,15 +463,22 @@ const first = { t: await inboundVideo(t.page), s: await inboundVideo(s.page) };
 await new Promise((r) => setTimeout(r, 4000));
 const second = { t: await inboundVideo(t.page), s: await inboundVideo(s.page) };
 
-check("the teacher is decoding video frames from the student",
-  second.t.framesDecoded > first.t.framesDecoded && second.t.framesDecoded > 0,
-  `${first.t.framesDecoded} → ${second.t.framesDecoded}`);
-check("the student is decoding video frames from the teacher",
+/*
+  The direction that matters, and the direction that must NOT work.
+
+  A student's token now permits nothing to be published, so the teacher decodes nothing from
+  them until a teacher grants the floor. An earlier version of this suite asserted frames
+  flowing both ways and passed — against a build where every token said canPublish: true. Its
+  failure when the token was tightened is the clearest evidence the change took effect.
+*/
+check("the teacher's video reaches the student",
   second.s.framesDecoded > first.s.framesDecoded && second.s.framesDecoded > 0,
-  `${first.s.framesDecoded} → ${second.s.framesDecoded}`);
-check("and bytes are arriving on both sides",
-  second.t.bytesReceived > 0 && second.s.bytesReceived > 0,
-  `teacher=${second.t.bytesReceived} student=${second.s.bytesReceived}`);
+  `${first.s.framesDecoded} -> ${second.s.framesDecoded}`);
+check("and bytes are arriving to prove it",
+  second.s.bytesReceived > 0, `student received ${second.s.bytesReceived} bytes`);
+check("a student publishes nothing without being granted the floor",
+  second.t.framesDecoded === 0 && second.t.bytesReceived === 0,
+  `teacher decoded ${second.t.framesDecoded} frames / ${second.t.bytesReceived} bytes from the student`);
 
 /**
  * Would a person actually see a picture?
@@ -533,7 +540,7 @@ async function settledPicture(page, attempts = 20, gap = 500) {
   let last = [];
   for (let i = 0; i < attempts; i++) {
     last = await paintedPicture(page);
-    const ready = last.length >= 2 && last.every((v) => v.playing && v.nonBlackPct > 50);
+    const ready = last.length >= 1 && last.every((v) => v.playing && v.nonBlackPct > 50);
     if (ready) return last;
     await new Promise((r) => setTimeout(r, gap));
   }
@@ -541,13 +548,17 @@ async function settledPicture(page, attempts = 20, gap = 500) {
 }
 
 const painted = { t: await settledPicture(t.page), s: await settledPicture(s.page) };
-check("both browsers are playing video, not just receiving it",
-  painted.t.length >= 2 && painted.s.length >= 2
-  && painted.t.every((v) => v.playing) && painted.s.every((v) => v.playing),
-  JSON.stringify(painted));
-check("and the tiles show a picture rather than black",
-  painted.t.every((v) => v.nonBlackPct > 50) && painted.s.every((v) => v.nonBlackPct > 50),
-  JSON.stringify(painted));
+/*
+  The student is the one who should see a picture: the teacher's. The teacher sees only their
+  own self-view until they grant somebody the floor, so the two sides are asserted separately
+  rather than with one symmetrical rule that would hide which direction had failed.
+*/
+check("the student sees the teacher, and it is a picture rather than black",
+  painted.s.length >= 1 && painted.s.every((v) => v.playing && v.nonBlackPct > 50),
+  JSON.stringify(painted.s));
+check("the teacher's own self-view is live",
+  painted.t.length >= 1 && painted.t.every((v) => v.playing),
+  JSON.stringify(painted.t));
 /*
   The 480p cap, measured at the receiving end.
 
@@ -617,7 +628,15 @@ check("identified by account, not by display name",
  * An empty list means LiveKit imposes no restriction at all, which is a yes.
  */
 const canScreen = (p) => {
-  const sources = p.permission?.canPublishSources ?? [];
+  const perm = p.permission;
+  /*
+    `canPublish: false` settles it before the source list is worth reading. An empty
+    `canPublishSources` means "unrestricted" in LiveKit's own semantics — but only for somebody
+    who may publish at all. A student now has both false and empty, and reading only the second
+    would report them as unrestricted, which is exactly backwards.
+  */
+  if (!perm?.canPublish) return false;
+  const sources = perm.canPublishSources ?? [];
   if (sources.length === 0) return true;
   return sources.some((src) => src === TrackSource.SCREEN_SHARE || String(src) === "SCREEN_SHARE");
 };
@@ -632,8 +651,70 @@ check("both people were matched by account id", Boolean(teacherParticipant && st
 
 check("the teacher's token permits a screen share", teacherParticipant ? canScreen(teacherParticipant) : false,
   JSON.stringify(teacherParticipant?.permission ?? null));
-check("the student's does not", studentParticipant ? !canScreen(studentParticipant) : false,
+check("a student may not share a screen, nor publish at all", studentParticipant ? !canScreen(studentParticipant) : false,
   JSON.stringify(studentParticipant?.permission ?? null));
+
+// ---------------------------------------------------------------------------
+// 7b. Granting the floor, and taking it back
+// ---------------------------------------------------------------------------
+
+console.log("\nThe floor: granted by the server, revoked by the server");
+
+/*
+  What this proves, and what it does not.
+
+  `lib/classroom/speakingFloor.ts` decides *whether* a student may speak, and its 35 unit tests
+  cover that. What no unit test can cover is whether LiveKit actually honours the grant — that
+  `updateParticipant` lets a previously-silenced student publish, and that taking it away stops
+  them. That is this section, and it applies exactly the permission shape
+  `livekitProvider.setPublishing` builds.
+
+  It calls the SDK directly rather than the API route because the route's own authorisation is
+  unit-tested and would only be re-proved here; what is genuinely unknown is the SFU's
+  behaviour, and that is what a real server is for.
+*/
+const room = open_[0].name;
+const studentIdentity = studentParticipant?.identity;
+check("the student was found in the room to grant", Boolean(studentIdentity), String(studentIdentity));
+
+await rooms.updateParticipant(room, studentIdentity, undefined, {
+  canSubscribe: true,
+  canPublish: true,
+  canPublishData: false,
+  canPublishSources: [TrackSource.MICROPHONE, TrackSource.CAMERA],
+});
+
+const granted = await waitFor(async () => {
+  const who = (await rooms.listParticipants(room)).find((p) => p.identity === studentIdentity);
+  return who?.permission?.canPublish === true;
+}, 40, 250);
+check("the server can grant a student the floor mid-call", granted);
+
+/*
+  And the grant is real, not merely recorded: the student's browser now publishes a camera the
+  teacher decodes. Frames rising is the only evidence that distinguishes a permission that took
+  effect from one that was written down.
+*/
+await s.page.locator('[data-testid="livekit-camera"]').click().catch(() => {});
+await new Promise((r) => setTimeout(r, 2500));
+const beforeGrantFrames = await inboundVideo(t.page);
+await new Promise((r) => setTimeout(r, 4500));
+const afterGrantFrames = await inboundVideo(t.page);
+check("and the teacher then decodes the student's camera",
+  afterGrantFrames.framesDecoded > beforeGrantFrames.framesDecoded,
+  `${beforeGrantFrames.framesDecoded} -> ${afterGrantFrames.framesDecoded}`);
+
+await rooms.updateParticipant(room, studentIdentity, undefined, {
+  canSubscribe: true,
+  canPublish: false,
+  canPublishData: false,
+  canPublishSources: [],
+});
+const revoked = await waitFor(async () => {
+  const who = (await rooms.listParticipants(room)).find((p) => p.identity === studentIdentity);
+  return who?.permission?.canPublish === false;
+}, 40, 250);
+check("and take it back again", revoked);
 
 // ---------------------------------------------------------------------------
 // 8. The controls, against a real connection
