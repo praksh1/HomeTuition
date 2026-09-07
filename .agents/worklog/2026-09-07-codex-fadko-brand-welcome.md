@@ -82,8 +82,18 @@ existing dependency checkout, and do not deploy production before preview verifi
 
 ## Remaining before release
 
-The built `/welcome` route was inspected in Chromium: selected logo, hero, copy and both role
-cards render correctly, with no redundant sign-in line. The LiveKit harness now gets past its
-Windows module-path defect but cannot start Chromium because Playwright is not installed on this
-laptop; no heavy global browser package was installed merely for this branding task. Complete
-the remaining gates and deploy only the preview for owner approval.
+The built and deployed `/welcome` route was inspected in Chromium: selected logo, hero, copy and
+both role cards render correctly, with no redundant sign-in line. Preview workflow run
+`34101294405` passed every job and deployed commit `e7ee9a0` to
+`https://hometuition-preview.praksh-dhakal.workers.dev/welcome`. It uses the allowlisted staging
+API; production was not deployed or modified.
+
+The LiveKit harness now gets past its Windows module-path defect but cannot start its own browser
+because Playwright is not installed on this laptop; no heavy global browser package was installed
+merely for this branding task. GitHub emitted a non-blocking warning that the current v4 setup
+actions internally target deprecated Node 20 while the runner forces Node 24. That should be
+handled in a future CI-maintenance pass when upstream action versions are available, not by
+weakening this verified deployment.
+
+Next owner action: inspect the preview welcome page. After explicit approval, merge/release through
+the normal production workflow; do not hand-deploy the preview artifact to production.
