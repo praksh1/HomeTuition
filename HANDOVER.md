@@ -1006,6 +1006,62 @@ nothing, uses a mechanism that already exists and works, and fixes the economics
 already proven. Do that first. Cloudflare becomes the right answer when volume is real, audio-first
 is not enough, and somebody is prepared to own the stack.
 
+#### The lever nobody had costed: a platform fee charged to students
+
+Asked again on 7 September 2026, while the owner was redesigning the tiers. Two things in that
+redesign change the arithmetic more than any provider choice does.
+
+**1. A platform fee scales with the thing that drives the cost.** The teacher's NPR 6,500 is
+fixed whether the class has 5 students or 45; the video bill is almost entirely a function of how
+many people receive media. A few rupees per student per month tracks cost in a way the teacher's
+tier structurally cannot.
+
+**2. Teacher-controlled webcam is the right design, and it is not a compromise.** The owner's own
+proposal — the teacher is always on, a student's camera opens only while they are asking
+something — is both cheaper *and* better teaching than an open 45-way gallery, which nobody can
+follow anyway. **Audio-only was the wrong recommendation and is withdrawn.**
+
+Note what is *not* in these numbers: the whiteboard. It runs on Fadko's own WebSocket and costs
+the video provider nothing, so the video layer only ever carries faces. That is why the figures
+are as small as they are.
+
+**What video costs per student per month**, at 45 students × 90 minutes × 26 sessions:
+
+| Camera policy | Cloudflare | LiveKit | Daily |
+|---|---|---|---|
+| Board only, no cameras | NPR 5 | NPR 137 | NPR 1,273 |
+| Teacher always on | NPR 64 | NPR 256 | NPR 1,273 |
+| **Teacher + a student 20% of the time** | **NPR 76** | **NPR 280** | NPR 1,273 |
+| Teacher + a student the whole time | NPR 124 | NPR 375 | NPR 1,273 |
+| Open gallery, 9 cameras always | NPR 542 | NPR 1,211 | NPR 1,273 |
+
+**The headline: a platform fee of about NPR 150 per student per month makes LiveKit work with
+full interactive video.** At NPR 0 it loses NPR 6,098 a month; at NPR 150 it clears NPR 652; at
+NPR 200, NPR 2,902. Cloudflare is already profitable on the teacher's fee alone, with NPR 3,064
+to spare.
+
+NPR 150/month is about NPR 5 a day for a student in daily 90-minute tuition. That is the whole
+problem, solved without building anything.
+
+#### So: do not build the call system yet
+
+Cloudflare's raw SFU saves roughly **NPR 204 per student per month** against LiveKit. What that
+is worth:
+
+| Monthly-tier teachers | Students | Saved per year |
+|---|---|---|
+| 5 | 225 | ~$4,100 |
+| 10 | 450 | ~$8,300 |
+| 50 | 2,250 | ~$41,400 |
+| 100 | 4,500 | ~$82,800 |
+
+Below roughly **50 monthly-tier teachers the saving does not pay for the work or the permanent
+on-call burden** — and LiveKit is already built, tested against a real server, and reversible by
+one environment variable. Above that it clearly does. Revisit at that point, not before.
+
+Pay-as-you-go is unaffected either way: a 15-student one-hour class costs NPR 31 on Cloudflare,
+NPR 112 on LiveKit, NPR 511 on Daily — pennies per student at any size.
+
 #### Two numbers to confirm from the dashboard
 
 The pricing page cannot be read from the build environment. From
