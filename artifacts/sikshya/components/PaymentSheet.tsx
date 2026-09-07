@@ -1,18 +1,12 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import React, { useEffect, useRef, useState } from "react";
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 
 export type PaymentMethod = "esewa" | "khalti";
 
@@ -22,27 +16,24 @@ interface PaymentSheetProps {
   label?: string;
   initialMethod?: PaymentMethod;
   onClose: () => void;
-  /**
-   * Actually take the booking. Resolve for success, **throw for failure**.
-   *
-   * This sheet used to claim the payment had gone through after a fixed delay and call this
-   * afterwards, so a booking that failed — a class already started, a class now full, a server
-   * that was down — landed on a student who had just been told "Payment Successful, NPR 500
-   * paid via eSewa". Nothing had been paid and nothing had been booked.
-   *
-   * So the order is reversed: this runs first, and the success screen is only reached if it
-   * resolves. A rejection is shown here, on the sheet, with the sheet still open.
-   */
+  /** Ask the server to continue. This component never collects a wallet credential. */
   onSuccess: (method: PaymentMethod) => void | Promise<void>;
 }
 
-const METHOD_META: Record<PaymentMethod, { name: string; color: string; hint: string; idLabel: string }> = {
-  esewa: { name: "eSewa", color: "#60B246", hint: "98XXXXXXXX", idLabel: "eSewa ID / Mobile" },
-  khalti: { name: "Khalti", color: "#5C2D91", hint: "98XXXXXXXX", idLabel: "Khalti Mobile" },
+const METHOD_META: Record<PaymentMethod, { name: string; monogram: string }> = {
+  esewa: { name: "eSewa", monogram: "e" },
+  khalti: { name: "Khalti", monogram: "K" },
 };
 
-type Stage = "form" | "processing" | "done";
+type Stage = "ready" | "processing" | "done";
 
+/**
+ * A provider-selection boundary, not a pretend wallet form.
+ *
+ * Wallet secrets belong only on the provider's hosted page or SDK. Until that integration
+ * exists, this sheet can select a method and ask the server to continue, but cannot invent a
+ * receipt or claim that money moved.
+ */
 export default function PaymentSheet({
   visible,
   amount,
@@ -53,231 +44,264 @@ export default function PaymentSheet({
 }: PaymentSheetProps) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { t, numeric, space, radius, elevation } = useLayout();
   const [method, setMethod] = useState<PaymentMethod>(initialMethod);
-  const [mobile, setMobile] = useState("");
-  const [pin, setPin] = useState("");
-  const [stage, setStage] = useState<Stage>("form");
+  const [stage, setStage] = useState<Stage>("ready");
   const [error, setError] = useState("");
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
-
-  const clearTimers = () => {
-    timers.current.forEach(clearTimeout);
-    timers.current = [];
-  };
 
   useEffect(() => {
-    if (visible) {
-      setMethod(initialMethod);
-      setMobile("");
-      setPin("");
-      setStage("form");
-      setError("");
-    } else {
-      clearTimers();
-    }
-    return clearTimers;
+    if (!visible) return;
+    setMethod(initialMethod);
+    setStage("ready");
+    setError("");
   }, [visible, initialMethod]);
 
   const meta = METHOD_META[method];
 
-  const handlePay = async () => {
-    if (mobile.trim().replace(/\D/g, "").length < 10) {
-      setError("Enter a valid 10-digit mobile number");
-      return;
-    }
-    if (pin.trim().length < 4) {
-      setError(`Enter your ${meta.name} MPIN`);
-      return;
-    }
+  const handleContinue = async () => {
     setError("");
     setStage("processing");
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-    /**
-     * The booking is attempted **now**, and the success screen only appears if it worked.
-     *
-     * The old order was: pause, announce "Payment Successful", pause again, then try. Which
-     * meant every possible failure arrived after the student had been told their money was
-     * taken. On a product where no money moves yet, that was the app inventing a receipt.
-     */
     try {
       await onSuccess(method);
       setStage("done");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    } catch (e) {
-      // Back to the form with the reason, rather than closing over it. Whatever went wrong,
-      // they are not booked and nothing was taken — which the message says.
-      setStage("form");
+    } catch (reason) {
+      setStage("ready");
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-      setError(e instanceof Error ? e.message : "That did not go through. Nothing has been charged.");
+      const detail = reason instanceof Error ? reason.message : "Please try again.";
+      setError(`Fadko did not confirm this booking. ${detail}`);
     }
   };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-          style={styles.kav}
+      <View style={[styles.overlay, { backgroundColor: colors.scrim }]}>
+        <View
+          style={[
+            styles.sheet,
+            elevation.modal,
+            {
+              backgroundColor: colors.background,
+              borderColor: colors.border,
+              borderTopLeftRadius: radius.lg,
+              borderTopRightRadius: radius.lg,
+              paddingHorizontal: space.lg,
+              paddingTop: space.sm,
+              paddingBottom: insets.bottom + space.lg,
+              gap: space.md,
+            },
+          ]}
         >
-          <View style={[styles.sheet, { backgroundColor: colors.background, paddingBottom: insets.bottom + 20 }]}>
-            <View style={[styles.grabber, { backgroundColor: colors.border }]} />
+          <View
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[styles.grabber, { backgroundColor: colors.lineStrong, borderRadius: radius.pill }]}
+          />
 
-            {stage === "done" ? (
-              <View style={styles.center} testID="payment-done">
-                <View style={[styles.successCircle, { backgroundColor: colors.success + "20" }]}>
-                  <Feather name="check" size={40} color={colors.success} />
-                </View>
-                <Text style={[styles.successTitle, { color: colors.foreground }]}>You're booked</Text>
-                <Text style={[styles.successSub, { color: colors.mutedForeground }]}>
-                  NPR {amount.toLocaleString()} via {meta.name}
-                </Text>
+          {stage === "done" ? (
+            <View style={[styles.center, { gap: space.sm, paddingVertical: space.xxl }]} testID="payment-done">
+              <View
+                style={[
+                  styles.successCircle,
+                  { backgroundColor: colors.successSoft, borderRadius: radius.pill },
+                ]}
+              >
+                <Feather name="check" size={32} color={colors.success} />
               </View>
-            ) : (
-              <>
-                <View style={styles.header}>
-                  <Text style={[styles.headerTitle, { color: colors.foreground }]}>{label}</Text>
-                  {stage === "form" && (
-                    <TouchableOpacity onPress={onClose} style={styles.closeBtn} accessibilityLabel="Close payment">
-                      <Feather name="x" size={22} color={colors.mutedForeground} />
-                    </TouchableOpacity>
-                  )}
+              <Text style={[t.title2, { color: colors.foreground }]}>Booking confirmed</Text>
+              <Text style={[t.callout, numeric, styles.centerText, { color: colors.mutedForeground }]}>
+                NPR {amount.toLocaleString()} · {meta.name} selected
+              </Text>
+              <Text style={[t.caption, styles.centerText, { color: colors.inkFaint }]}>
+                This is a booking confirmation, not a wallet receipt. Check your provider before
+                treating a payment as complete.
+              </Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                style={[
+                  styles.primaryButton,
+                  { backgroundColor: colors.primary, borderRadius: radius.sm, paddingHorizontal: space.xl },
+                ]}
+                onPress={onClose}
+                activeOpacity={0.85}
+              >
+                <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Done</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <>
+              <View style={styles.header}>
+                <View style={[styles.headerCopy, { gap: space.xxs }]}>
+                  <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>
+                    {label}
+                  </Text>
+                  <Text style={[t.caption, { color: colors.inkFaint }]}>Choose how you want to continue</Text>
                 </View>
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  accessibilityLabel="Close payment"
+                  disabled={stage === "processing"}
+                  onPress={onClose}
+                  style={styles.closeButton}
+                >
+                  <Feather name="x" size={22} color={colors.mutedForeground} />
+                </TouchableOpacity>
+              </View>
 
-                <View style={[styles.amountBox, { backgroundColor: colors.muted }]}>
-                  <Text style={[styles.amountLabel, { color: colors.mutedForeground }]}>Amount to pay</Text>
-                  <Text style={[styles.amount, { color: colors.foreground }]}>NPR {amount.toLocaleString()}</Text>
-                </View>
+              <View
+                style={[
+                  styles.amountBox,
+                  { backgroundColor: colors.surfaceSunk, borderRadius: radius.md, gap: space.xxs, padding: space.md },
+                ]}
+              >
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>Amount</Text>
+                <Text style={[t.title1, numeric, { color: colors.foreground }]}>NPR {amount.toLocaleString()}</Text>
+              </View>
 
-                <View style={styles.methodRow}>
-                  {(["esewa", "khalti"] as PaymentMethod[]).map((m) => {
-                    const mm = METHOD_META[m];
-                    const active = method === m;
-                    return (
-                      <TouchableOpacity
-                        key={m}
-                        disabled={stage !== "form"}
+              <View accessibilityRole="radiogroup" style={[styles.methodRow, { gap: space.sm }]}>
+                {(Object.keys(METHOD_META) as PaymentMethod[]).map((candidate) => {
+                  const option = METHOD_META[candidate];
+                  const active = method === candidate;
+                  return (
+                    <TouchableOpacity
+                      accessibilityRole="radio"
+                      accessibilityState={{ checked: active, disabled: stage === "processing" }}
+                      key={candidate}
+                      disabled={stage === "processing"}
+                      style={[
+                        styles.methodButton,
+                        {
+                          backgroundColor: active ? colors.actionSoft : colors.card,
+                          borderColor: active ? colors.primary : colors.border,
+                          borderRadius: radius.md,
+                          gap: space.xs,
+                          paddingHorizontal: space.sm,
+                        },
+                      ]}
+                      onPress={() => setMethod(candidate)}
+                      activeOpacity={0.75}
+                      testID={`pay-method-${candidate}`}
+                    >
+                      <View
                         style={[
-                          styles.methodBtn,
+                          styles.methodBadge,
                           {
-                            borderColor: active ? mm.color : colors.border,
-                            backgroundColor: active ? mm.color + "12" : colors.muted,
+                            backgroundColor: active ? colors.primary : colors.surfaceSunk,
+                            borderRadius: radius.xs,
                           },
                         ]}
-                        onPress={() => setMethod(m)}
-                        activeOpacity={0.7}
-                        testID={`pay-method-${m}`}
                       >
-                        <View style={[styles.methodBadge, { backgroundColor: mm.color }]}>
-                          <Text style={styles.methodBadgeText}>{m === "esewa" ? "e" : "K"}</Text>
-                        </View>
-                        <Text style={[styles.methodName, { color: active ? mm.color : colors.mutedForeground }]}>
-                          {mm.name}
+                        <Text style={[t.bodyStrong, { color: active ? colors.primaryForeground : colors.foreground }]}>
+                          {option.monogram}
                         </Text>
-                        {active && <Feather name="check-circle" size={16} color={mm.color} />}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                      </View>
+                      <Text style={[t.bodyStrong, { color: active ? colors.primary : colors.foreground }]}>
+                        {option.name}
+                      </Text>
+                      {active ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-                <View style={styles.field}>
-                  <Text style={[styles.fieldLabel, { color: colors.foreground }]}>{meta.idLabel}</Text>
-                  <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                    <Feather name="smartphone" size={16} color={colors.mutedForeground} />
-                    <TextInput
-                      style={[styles.input, { color: colors.foreground }]}
-                      placeholder={meta.hint}
-                      placeholderTextColor={colors.mutedForeground}
-                      value={mobile}
-                      onChangeText={setMobile}
-                      keyboardType="phone-pad"
-                      editable={stage === "form"}
-                      maxLength={14}
-                      testID="pay-mobile"
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.field}>
-                  <Text style={[styles.fieldLabel, { color: colors.foreground }]}>{meta.name} MPIN</Text>
-                  <View style={[styles.inputWrap, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                    <Feather name="lock" size={16} color={colors.mutedForeground} />
-                    <TextInput
-                      style={[styles.input, { color: colors.foreground }]}
-                      placeholder="••••"
-                      placeholderTextColor={colors.mutedForeground}
-                      value={pin}
-                      onChangeText={setPin}
-                      keyboardType="number-pad"
-                      secureTextEntry
-                      editable={stage === "form"}
-                      maxLength={6}
-                      testID="pay-pin"
-                    />
-                  </View>
-                </View>
-
-                {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
-
-                <TouchableOpacity
-                  style={[styles.payBtn, { backgroundColor: meta.color }, stage === "processing" && { opacity: 0.7 }]}
-                  onPress={handlePay}
-                  disabled={stage === "processing"}
-                  activeOpacity={0.85}
-                  testID="pay-confirm"
-                >
-                  {stage === "processing" ? (
-                    <Text style={styles.payBtnText}>Processing…</Text>
-                  ) : (
-                    <>
-                      <Feather name="lock" size={16} color="#fff" />
-                      <Text style={styles.payBtnText}>Pay NPR {amount.toLocaleString()}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-
-                <View style={styles.secureNote}>
-                  <Feather name="shield" size={12} color={colors.mutedForeground} />
-                  <Text style={[styles.secureText, { color: colors.mutedForeground }]}>
-                    Secured in-app · 256-bit SSL · No redirect
+              <View
+                style={[
+                  styles.safetyNote,
+                  {
+                    backgroundColor: colors.actionSoft,
+                    borderColor: colors.primary,
+                    borderRadius: radius.md,
+                    gap: space.sm,
+                    padding: space.md,
+                  },
+                ]}
+              >
+                <Feather name="shield" size={20} color={colors.primary} />
+                <View style={[styles.safetyCopy, { gap: space.xxs }]}>
+                  <Text style={[t.bodyStrong, { color: colors.foreground }]}>Keep your wallet PIN private</Text>
+                  <Text style={[t.callout, { color: colors.mutedForeground }]}>
+                    Fadko will never ask for your eSewa or Khalti MPIN. When live payments are
+                    enabled, checkout must open securely with the selected provider.
                   </Text>
                 </View>
-              </>
-            )}
-          </View>
-        </KeyboardAvoidingView>
+              </View>
+
+              {error ? (
+                <View
+                  accessibilityRole="alert"
+                  style={[
+                    styles.errorBox,
+                    { backgroundColor: colors.destructiveSoft, borderRadius: radius.sm, padding: space.sm },
+                  ]}
+                >
+                  <Feather name="alert-circle" size={18} color={colors.destructive} />
+                  <Text style={[t.callout, styles.errorText, { color: colors.destructive }]}>{error}</Text>
+                </View>
+              ) : null}
+
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={`Continue with ${meta.name}`}
+                style={[
+                  styles.primaryButton,
+                  { backgroundColor: colors.primary, borderRadius: radius.sm, gap: space.xs },
+                  stage === "processing" ? styles.processing : null,
+                ]}
+                onPress={handleContinue}
+                disabled={stage === "processing"}
+                activeOpacity={0.85}
+                testID="pay-confirm"
+              >
+                <Feather name="arrow-right" size={18} color={colors.primaryForeground} />
+                <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>
+                  {stage === "processing" ? "Confirming…" : `Continue with ${meta.name}`}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  kav: { width: "100%" },
-  sheet: { borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 20, paddingTop: 10, gap: 14 },
-  grabber: { width: 40, height: 4, borderRadius: 2, alignSelf: "center", marginBottom: 6 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  headerTitle: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  closeBtn: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
-  amountBox: { borderRadius: 14, padding: 16, alignItems: "center", gap: 4 },
-  amountLabel: { fontSize: 13, fontFamily: "Inter_400Regular" },
-  amount: { fontSize: 28, fontFamily: "Inter_700Bold" },
-  methodRow: { flexDirection: "row", gap: 12 },
-  methodBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, borderWidth: 1.5, paddingVertical: 12 },
-  methodBadge: { width: 24, height: 24, borderRadius: 6, alignItems: "center", justifyContent: "center" },
-  methodBadgeText: { fontSize: 14, fontFamily: "Inter_700Bold", color: "#fff" },
-  methodName: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  field: { gap: 8 },
-  fieldLabel: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  inputWrap: { flexDirection: "row", alignItems: "center", gap: 10, borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 13 },
-  input: { flex: 1, fontSize: 15, fontFamily: "Inter_400Regular" },
-  error: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  payBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, borderRadius: 14, paddingVertical: 16, marginTop: 2 },
-  payBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  secureNote: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
-  secureText: { fontSize: 12, fontFamily: "Inter_400Regular" },
-  center: { alignItems: "center", justifyContent: "center", paddingVertical: 30, gap: 12 },
-  successCircle: { width: 88, height: 88, borderRadius: 44, alignItems: "center", justifyContent: "center" },
-  successTitle: { fontSize: 20, fontFamily: "Inter_700Bold" },
-  successSub: { fontSize: 14, fontFamily: "Inter_400Regular" },
+  overlay: { flex: 1, justifyContent: "flex-end" },
+  sheet: { width: "100%", borderTopWidth: StyleSheet.hairlineWidth },
+  grabber: { width: 40, height: 4, alignSelf: "center" },
+  header: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between" },
+  headerCopy: { flex: 1 },
+  closeButton: {
+    width: HIT_SLOP_MIN,
+    height: HIT_SLOP_MIN,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  amountBox: { alignItems: "center" },
+  methodRow: { flexDirection: "row" },
+  methodButton: {
+    minHeight: HIT_SLOP_MIN,
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  methodBadge: { width: 28, height: 28, alignItems: "center", justifyContent: "center" },
+  safetyNote: { flexDirection: "row", alignItems: "flex-start", borderWidth: StyleSheet.hairlineWidth },
+  safetyCopy: { flex: 1 },
+  errorBox: { flexDirection: "row", alignItems: "flex-start" },
+  errorText: { flex: 1 },
+  primaryButton: {
+    minHeight: HIT_SLOP_MIN,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  processing: { opacity: 0.7 },
+  center: { alignItems: "center", justifyContent: "center" },
+  centerText: { textAlign: "center" },
+  successCircle: { width: 72, height: 72, alignItems: "center", justifyContent: "center" },
 });

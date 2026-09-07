@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Learning Programs and managed-marketplace direction](learning-program-managed-marketplace.md) — owner decision, 7 Sep 2026: Single Class or flexible structured Learning Program for school, skills, language, exam prep or custom teaching; teachers supply content; desired licensed-provider collection, lesson allocation and weekly payout; commercial/legal numbers remain deliberately undecided.
+
 **Open backlog:** [.agents/backlog/](../backlog/) holds work the owner has raised that is not finished. Read the newest file there before planning; a list that lives only in a chat gets half-done, and this project's container has been reset mid-session more than once.
 
 - [The name is Fadko, and the rename is finished](the-name-is-fadko.md) — owner decision, 6 Sep 2026: the product is **Fadko**, "Tuition from Home", replacing Sikshya and before it Guru. The predicted fourth rename is off the table. Lists what deliberately still says `sikshya` and why — the workspace folder, the `sikshya<id>` room name that attendance evidence correlates on, the login storage key, the demo logins — plus the 38 real Nepali school names a careless find-and-replace would have renamed.

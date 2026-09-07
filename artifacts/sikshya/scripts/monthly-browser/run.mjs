@@ -84,15 +84,13 @@ async function open(browser, token, route) {
 }
 
 /**
- * Pays, the way a person does: a number, a PIN, and the button.
+ * Continues from Fadko's provider choice to the server-owned payment boundary.
  *
- * The same sheet every other purchase in the app uses. Driving it rather than calling the API
- * is the point — a screen that opens the wrong sheet, or whose button does nothing, passes
- * every test that skips this.
+ * Wallet credentials must only ever be collected by the provider's hosted checkout or SDK.
+ * Fadko has no live provider handoff yet, so this proves the current server response without
+ * typing or inventing an MPIN.
  */
 async function payThrough(page, expectedPath) {
-  await page.locator('[data-testid="pay-mobile"]').fill("9800000000");
-  await page.locator('[data-testid="pay-pin"]').fill("1234");
   await page.waitForTimeout(300);
   const [response] = await Promise.all([
     page.waitForResponse((candidate) => {

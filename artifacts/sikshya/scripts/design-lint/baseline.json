@@ -143,10 +143,6 @@
     "hex": 2,
     "size": 6
   },
-  "components/PaymentSheet.tsx": {
-    "hex": 5,
-    "size": 12
-  },
   "components/RescheduleClass.tsx": {
     "hex": 3,
     "size": 6

@@ -468,9 +468,6 @@ async function main() {
     await bookBtn.click({ timeout: 15000 });
     await page.waitForTimeout(1500);
 
-    const inputs = page.locator('input');
-    await inputs.first().fill("9812345678");
-    if ((await inputs.count()) > 1) await inputs.nth(1).fill("1234");
     await page.locator('[data-testid="pay-confirm"]').click({ timeout: 15000 });
     await page.waitForTimeout(4500);
 
@@ -483,8 +480,8 @@ async function main() {
       !/Payment Successful/i.test(after), after.slice(-700).replace(/\n/g, " | "));
     check("nor claims they are booked",
       !/You're booked/i.test(after), after.slice(-700).replace(/\n/g, " | "));
-    check("the sheet says plainly that nothing was charged",
-      /nothing has been charged/i.test(after), after.slice(-700).replace(/\n/g, " | "));
+    check("the sheet says plainly that Fadko did not confirm the booking",
+      /Fadko did not confirm this booking/i.test(after), after.slice(-700).replace(/\n/g, " | "));
     check("and no enrolment was written for them",
       sql(`select count(*) from session_enrollments where session_id = ${full.body.id} and student_id = ${student.user.id}`) === "0");
 
