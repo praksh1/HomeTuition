@@ -135,9 +135,6 @@ async function main() {
   const booked = await api(`/sessions/${sessionId}/book`, { method: "POST", token: student.token, body: {} });
   check("the student can book the class", booked.status <= 201, `${booked.status} ${JSON.stringify(booked.body)}`);
 
-  const started = await api(`/sessions/${sessionId}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
-  check("the teacher can start it", started.status === 200, `${started.status} ${JSON.stringify(started.body)}`);
-
   /*
     The one precondition worth asserting out loud.
 
@@ -172,10 +169,25 @@ async function main() {
   const t = await open(teacher.token, { width: 1440, height: 900 }, `/(teacher)/classroom/${sessionId}`);
   const s = await open(student.token, { width: 390, height: 844 }, `/(student)/classroom/${sessionId}`);
 
-  console.log("[1] Both classrooms open, and both draw a floor");
+  console.log("[1] Both classrooms open before the class starts, and both draw a floor");
+  /*
+    Opened *before* the teacher presses start, which is the ordinary case: doors are open ten
+    minutes early and students gather. It is also the case a first version of this suite skipped,
+    and skipping it hid a real bug — starting a class broadcast `floor_ended`, so everybody already
+    in the lobby lost their controls for the rest of the lesson with nothing to bring them back.
+  */
   check("the teacher's strip is there", await waitFor(t.page, "teacher-floor"));
   check("the student's strip is there", await waitFor(s.page, "student-floor"));
   check("the student is offered a way to ask", (await s.page.locator('[data-testid="student-floor-ask"]').count()) === 1);
+
+  console.log("\n[1b] The teacher starts the class, and nobody's controls vanish");
+  const started = await api(`/sessions/${sessionId}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+  check("the teacher can start it", started.status === 200, `${started.status} ${JSON.stringify(started.body)}`);
+  await s.page.waitForTimeout(1500);
+  check("the student waiting in the lobby still has a floor",
+    (await s.page.locator('[data-testid="student-floor-ask"]').count()) === 1,
+    "starting the class took the controls away from everybody already in the room");
+  check("and so does the teacher", (await t.page.locator('[data-testid="teacher-floor"]').count()) === 1);
 
   console.log("\n[2] The student raises a hand, and the teacher sees it");
   await s.page.locator('[data-testid="student-floor-ask"]').click();

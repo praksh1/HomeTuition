@@ -437,6 +437,17 @@ accepts, the teacher mutes, and every step is checked on both screens and in `ac
   The precondition is asserted out loud for exactly that reason: without it, eight later failures
   would have looked like broken code.
 
+**And it caught a real bug the moment it was made faithful.** The first version started the class
+before opening either browser, which is not what happens: doors open ten minutes early and students
+gather in the lobby. Opening the classrooms first and *then* pressing start showed that
+`resetBoardFor` broadcast `floor_ended` — so everybody already in the room lost their controls for
+the rest of the lesson, with nothing to bring them back. Starting a class now re-tells everyone the
+new, empty floor instead. Confirmed by reverting the fix and watching the check fail.
+
+Two smaller things while reviewing the same path: the floor is now skipped entirely on a provider
+that cannot enforce it, which saves two database lookups on every join of every class on Daily —
+and Daily is production.
+
 **What it does not prove** is that media flows. Neither browser joins the LiveKit room. The API is
 pointed at a real `livekit-server` so `moderatesPublishing` is true and the permission push goes
 somewhere real, but the participants are not in that room, so the push finds nobody — a truthful
@@ -446,12 +457,12 @@ outcome the server tolerates by design. The exact shape of what it sends is asse
 
 ## Tests after stage three
 
-typecheck clean (4 packages) · api-server units 550 · floor rules 47 · protocol and disclosure 41 ·
+typecheck clean (4 packages) · api-server units 554 · floor rules 47 · protocol and disclosure 41 ·
 floor against a real database and a recording LiveKit 70 · video contract 43 · sessions 56 ·
 one-chat 8 · teacher-leave 17 · late-joiner 13 · attendance 74 · class-chat 36 · thread 25 ·
 board-persistence 7 · app units 303 · floor offers 29 · discussion layout 16 · floor UI rendered
-at four widths 168 · livekit component 92 · **floor end to end in two browsers 22** · classroom
-screens 47 · call-chat 17 · call-leave 9 · video-check 17 · gates 10 · lobby 90 · **livekit-live
+at four widths 168 · livekit component 92 · **floor end to end in two browsers 24** · classroom
+screens 47 · whiteboard 44 · call-chat 17 · call-leave 9 · video-check 17 · gates 10 · lobby 90 · **livekit-live
 against a real SFU with real cameras 41** · design ratchet unchanged at 99 hex / 294 sizes.
 
 A repeat of a mistake the worklog already records: `livekit-live` failed six checks until I noticed

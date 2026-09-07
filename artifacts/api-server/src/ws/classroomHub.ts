@@ -16,9 +16,11 @@ import {
   floorJoin,
   floorLeave,
   forgetFloor,
+  floorAvailable,
   handleFloorFrame,
   isFloorFrame,
   resetFloorFor,
+  tellEveryone,
   type FloorClient,
   type RoomPort,
 } from "./classroomFloor.ts";
@@ -385,12 +387,18 @@ export function resetBoardFor(sessionId: string): void {
     A teacher beginning their next lesson inheriting the previous one's raised hands would be the
     same bug as inheriting its scribbles, and worse: an inherited *permission* is a student from
     an hour ago whose microphone still works.
+
+    Everybody is then told the *new* floor rather than told the floor is gone. Students are allowed
+    into the room ten minutes before the start, so this fires with a lobby full of people — and
+    sending `floor_ended` to them, as an earlier version did, blanked their controls for the rest
+    of the lesson with nothing to bring them back. Starting a class must leave every student able
+    to put their hand up.
   */
   resetFloorFor(id);
 
   broadcast(id, { type: "board_clear" });
   broadcast(id, { type: "material_clear" });
-  broadcast(id, { type: "floor_ended" });
+  tellEveryone(id, roomPort(id));
 }
 
 export function attachClassroomHub(server: http.Server): void {
@@ -578,6 +586,10 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
      * student should be seeing the board long before either comes back. Their permissions are
      * whatever the server still says they are — a revoked one stays revoked across a reconnect,
      * because the floor is the record and their browser's memory is not.
+     *
+     * Skipped entirely on a provider that cannot decide who publishes. On Daily that is two
+     * database lookups saved on every join of every class, for a floor nobody could use — and
+     * Daily is what production runs on.
      */
     const port = roomPort(sessionId);
     const floorClient: FloorClient = {
@@ -585,9 +597,11 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
       isSessionTeacher,
       send: (msg: object) => sendTo(ws, msg),
     };
-    void floorJoin(sessionId, port, floorClient, name).catch((err: unknown) =>
-      logger.warn({ err, sessionId, userId }, "could not put this person on the classroom floor"),
-    );
+    if (floorAvailable()) {
+      void floorJoin(sessionId, port, floorClient, name).catch((err: unknown) =>
+        logger.warn({ err, sessionId, userId }, "could not put this person on the classroom floor"),
+      );
+    }
 
     // Read the stored board back before telling this person what is on it. Without this a
     // joiner arriving after a restart is told the board is empty, and that answer is then the

@@ -154,8 +154,14 @@ export async function ensureFloor(sessionId: string): Promise<RoomFloor> {
   return work;
 }
 
-/** Whether the configured provider can actually enforce a permission. See the file header. */
-function providerEnforces(): boolean {
+/**
+ * Whether the configured provider can actually enforce a permission. See the file header.
+ *
+ * Exported because the hub asks it *before* putting somebody on the floor. On Daily that saves two
+ * database lookups on every single join — the entitlement and the class's clock — for a floor
+ * nobody could use, and Daily is the production provider.
+ */
+export function floorAvailable(): boolean {
   return videoProvider().capabilities.moderatesPublishing;
 }
 
@@ -468,7 +474,7 @@ export async function handleFloorFrame(
     return;
   }
 
-  if (!providerEnforces()) {
+  if (!floorAvailable()) {
     /*
       Said plainly rather than accepted and quietly ignored.
 
