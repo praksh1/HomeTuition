@@ -14,9 +14,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN, radius as layoutRadius, space as layoutSpace } from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet, apiPost, ApiError } from "@/utils/api";
 import { formatStartMinute, money, paidAndGuaranteed, type MonthlyClass } from "@/utils/monthly";
+import { studentMonthlyEmptyCopy } from "@/utils/monthlyJourneyState";
 
 /**
  * Monthly classes, from a student's side.
@@ -45,6 +48,7 @@ function todayLabel(startsAt: string, dates: { format: (v: string, o?: { withTim
 
 export default function StudentMonthlyScreen() {
   const colors = useColors();
+  const { t, gutter, space, radius } = useLayout();
   const insets = useSafeAreaInsets();
   const { formatBoth } = useDates();
 
@@ -98,12 +102,12 @@ export default function StudentMonthlyScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Monthly classes</Text>
+      <View style={[styles.header, { paddingTop: insets.top + space.md, paddingHorizontal: gutter, borderBottomColor: colors.border }]}>
+        <Text style={[t.title1, { color: colors.foreground }]}>Monthly classes</Text>
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 120 }]}
+        contentContainerStyle={[styles.scroll, { paddingHorizontal: gutter, paddingBottom: insets.bottom + space.huge }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -117,52 +121,58 @@ export default function StudentMonthlyScreen() {
         showsVerticalScrollIndicator={false}
       >
         {error && (
-          <View style={[styles.notice, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "30" }]}>
+          <View style={[styles.notice, { backgroundColor: colors.destructiveSoft, borderColor: colors.destructive, borderRadius: radius.md }]}>
             <Feather name="alert-circle" size={16} color={colors.destructive} />
-            <Text style={[styles.noticeText, { color: colors.destructive }]}>{error}</Text>
+            <View style={styles.noticeCopy}>
+              <Text style={[t.bodyStrong, { color: colors.destructive }]}>Monthly classes did not load</Text>
+              <Text style={[t.callout, { color: colors.foreground }]}>{error}</Text>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel="Try loading monthly classes again" onPress={() => void load()} style={styles.retryBtn}>
+                <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
         {problem && (
-          <View style={[styles.notice, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "30" }]}>
+          <View style={[styles.notice, { backgroundColor: colors.destructiveSoft, borderColor: colors.destructive, borderRadius: radius.md }]}>
             <Feather name="alert-circle" size={16} color={colors.destructive} />
-            <Text style={[styles.noticeText, { color: colors.destructive }]}>{problem}</Text>
+            <Text style={[t.callout, styles.noticeText, { color: colors.destructive }]}>{problem}</Text>
           </View>
         )}
 
-        {mine.length > 0 && (
+        {!error && mine.length > 0 && (
           <>
-            <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your monthly class</Text>
+            <Text style={[t.bodyStrong, styles.sectionTitle, { color: colors.foreground }]}>Your monthly class</Text>
             {mine.map((klass) => (
               <ClassCard key={klass.id} klass={klass} formatBoth={formatBoth} onJoin={() => setJoining(klass)} />
             ))}
           </>
         )}
 
-        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
+        {!error && <Text style={[t.bodyStrong, styles.sectionTitle, { color: colors.foreground }]}>
           {mine.length > 0 ? "Other monthly classes" : "Classes you can join"}
-        </Text>
+        </Text>}
 
-        {others.length === 0 && (
-          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              No monthly classes are running yet. A monthly class runs every day at the same time,
-              and you pay once a month.
+        {!error && others.length === 0 && (
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md }]}>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>
+              {studentMonthlyEmptyCopy(mine.length > 0)} A monthly class runs every day at the same
+              time, and you pay once per monthly cycle.
             </Text>
           </View>
         )}
 
-        {others.map((klass) => (
+        {!error && others.map((klass) => (
           <ClassCard key={klass.id} klass={klass} formatBoth={formatBoth} onJoin={() => setJoining(klass)} />
         ))}
       </ScrollView>
 
-      <PaymentSheet
-        visible={joining !== null}
-        amount={joining?.quote?.amount ?? 0}
-        label={joining ? `${joining.subject} — the rest of this month` : undefined}
+      {joining?.quote ? <PaymentSheet
+        visible
+        amount={joining.quote.amount}
+        label={`${joining.subject} — ${joining.quote.sessionsRemaining} classes left in this monthly cycle`}
         onClose={() => setJoining(null)}
-        onSuccess={(method) => (joining ? join(joining, method) : Promise.resolve())}
-      />
+        onSuccess={(method) => join(joining, method)}
+      /> : null}
     </View>
   );
 }
@@ -177,16 +187,17 @@ function ClassCard({
   onJoin: () => void;
 }) {
   const colors = useColors();
+  const { t, numeric, space, radius } = useLayout();
   const dates = useDates();
   const quote = klass.quote;
   const full = klass.seatsLeft <= 0;
   const nothingLeft = quote?.startsNextCycle === true;
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <Text style={[styles.subject, { color: colors.foreground }]}>{klass.subject}</Text>
-      <Text style={[styles.topic, { color: colors.mutedForeground }]}>{klass.topic}</Text>
-      <Text style={[styles.teacher, { color: colors.mutedForeground }]}>with {klass.teacherName}</Text>
+    <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md }]}>
+      <Text style={[t.title2, { color: colors.foreground }]}>{klass.subject}</Text>
+      <Text style={[t.callout, { color: colors.mutedForeground, marginTop: space.xxs }]}>{klass.topic}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground, marginTop: space.xxs }]}>with {klass.teacherName}</Text>
 
       <View style={[styles.factRow, { borderTopColor: colors.border }]}>
         <Fact icon="clock" text={`Every day at ${formatStartMinute(klass.startMinute)}`} />
@@ -208,16 +219,18 @@ function ClassCard({
           activeOpacity={0.85}
           onPress={() => router.push(`/session/${klass.today!.sessionId}`)}
           style={[styles.todayBtn, { backgroundColor: colors.primary }]}
+          accessibilityRole="button"
+          accessibilityLabel={todayLabel(klass.today.startsAt, dates)}
         >
-          <Feather name="video" size={16} color="#fff" />
-          <Text style={styles.todayBtnText}>
+          <Feather name="video" size={16} color={colors.primaryForeground} />
+          <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>
             {todayLabel(klass.today.startsAt, dates)}
           </Text>
         </TouchableOpacity>
       ) : null}
 
       {klass.enrolment ? (
-        <View style={[styles.joined, { backgroundColor: colors.primary + "12", borderColor: colors.primary + "30" }]}>
+        <View style={[styles.joined, { backgroundColor: colors.actionSoft, borderColor: colors.primary }]}>
           <Feather name="check-circle" size={16} color={colors.primary} />
           {/*
             What was paid for, and what is guaranteed.
@@ -227,7 +240,7 @@ function ClassCard({
             two numbers for one arrangement, and the gap is where a refund argument starts.
             See paidAndGuaranteed() in utils/monthly.ts.
           */}
-          <Text style={[styles.joinedText, { color: colors.foreground }]} testID="monthly-paid-line">
+          <Text style={[t.callout, styles.joinedText, { color: colors.foreground }]} testID="monthly-paid-line">
             You are in this class. {paidAndGuaranteed(klass.enrolment)}
           </Text>
         </View>
@@ -242,36 +255,43 @@ function ClassCard({
           */}
           {quote && !nothingLeft && (
             <View style={styles.priceBlock}>
-              <Text style={[styles.priceNow, { color: colors.foreground }]}>{money(quote.amount)}</Text>
-              <Text style={[styles.priceWhy, { color: colors.mutedForeground }]}>
+              <Text style={[t.title1, numeric, { color: colors.foreground }]}>{money(quote.amount)}</Text>
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>
                 for the {quote.sessionsRemaining} classes left this month
                 {quote.sessionsRemaining < quote.sessionsPlanned
-                  ? ` — a full month is ${money(klass.monthlyPrice)}`
+                  ? ` — a full monthly cycle is ${money(klass.monthlyPrice)}`
                   : ""}
               </Text>
             </View>
           )}
 
           {nothingLeft ? (
-            <View style={[styles.notice, { backgroundColor: colors.accent + "12", borderColor: colors.accent + "30", marginTop: 12, marginBottom: 0 }]}>
-              <Feather name="clock" size={16} color={colors.accent} />
-              <Text style={[styles.noticeText, { color: colors.foreground }]}>
+            <View style={[styles.notice, { backgroundColor: colors.warnSoft, borderColor: colors.warn, marginTop: space.sm, marginBottom: 0 }]}>
+              <Feather name="clock" size={16} color={colors.warn} />
+              <Text style={[t.callout, styles.noticeText, { color: colors.foreground }]}>
                 This month has no classes left, so there is nothing to pay for yet. It starts again
                 {klass.cycle ? ` on ${formatBoth(klass.cycle.endsAt)}` : " next month"}.
               </Text>
             </View>
-          ) : (
+          ) : quote ? (
             <TouchableOpacity
               testID={`monthly-join-${klass.id}`}
               onPress={onJoin}
               disabled={full}
               style={[styles.joinBtn, { backgroundColor: full ? colors.input : colors.primary }]}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: full }}
             >
-              <Text style={[styles.joinBtnText, { color: full ? colors.mutedForeground : "#FFFFFF" }]}>
-                {full ? "This class is full" : `Join for ${money(quote?.amount ?? 0)}`}
+              <Text style={[t.bodyStrong, numeric, { color: full ? colors.mutedForeground : colors.primaryForeground }]}>
+                {full ? "This class is full" : `Join for ${money(quote.amount)} for this monthly cycle`}
               </Text>
             </TouchableOpacity>
+          ) : (
+            <View style={[styles.notice, { backgroundColor: colors.warnSoft, borderColor: colors.warn, marginTop: space.sm, marginBottom: 0 }]}>
+              <Feather name="alert-circle" size={16} color={colors.warn} />
+              <Text style={[t.callout, styles.noticeText, { color: colors.foreground }]}>The price is unavailable right now. Refresh before trying to join.</Text>
+            </View>
           )}
         </>
       )}
@@ -283,18 +303,22 @@ function ClassCard({
             onPress={() => router.push({ pathname: "/monthly-chat", params: { id: String(klass.id) } })}
             style={[styles.linkBtn, { borderColor: colors.border }]}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${klass.subject} class chat`}
           >
             <Feather name="message-circle" size={16} color={colors.primary} />
-            <Text style={[styles.linkBtnText, { color: colors.foreground }]}>Class chat</Text>
+            <Text style={[t.callout, { color: colors.foreground }]}>Class chat</Text>
           </TouchableOpacity>
           <TouchableOpacity
             testID={`monthly-homework-${klass.id}`}
             onPress={() => router.push({ pathname: "/monthly-homework", params: { id: String(klass.id) } })}
             style={[styles.linkBtn, { borderColor: colors.border }]}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${klass.subject} homework`}
           >
             <Feather name="book-open" size={16} color={colors.primary} />
-            <Text style={[styles.linkBtnText, { color: colors.foreground }]}>Homework</Text>
+            <Text style={[t.callout, { color: colors.foreground }]}>Homework</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -304,10 +328,11 @@ function ClassCard({
 
 function Fact({ icon, text }: { icon: React.ComponentProps<typeof Feather>["name"]; text: string }) {
   const colors = useColors();
+  const { t } = useLayout();
   return (
     <View style={styles.fact}>
       <Feather name={icon} size={14} color={colors.mutedForeground} />
-      <Text style={[styles.factText, { color: colors.mutedForeground }]}>{text}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>{text}</Text>
     </View>
   );
 }
@@ -315,55 +340,47 @@ function Fact({ icon, text }: { icon: React.ComponentProps<typeof Feather>["name
 const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  header: { paddingHorizontal: 16, paddingBottom: 14, borderBottomWidth: StyleSheet.hairlineWidth },
-  headerTitle: { fontSize: 22, fontFamily: "Inter_700Bold" },
-  scroll: { padding: 16 },
-  sectionTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginTop: 8, marginBottom: 10 },
-  card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, marginBottom: 14 },
-  subject: { fontSize: 19, fontFamily: "Inter_700Bold" },
-  topic: { fontSize: 14.5, fontFamily: "Inter_400Regular", marginTop: 2 },
-  teacher: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 4 },
-  factRow: { flexDirection: "row", flexWrap: "wrap", gap: 16, marginTop: 12, paddingTop: 12, borderTopWidth: 0 },
-  fact: { flexDirection: "row", alignItems: "center", gap: 6 },
-  factText: { fontSize: 13, fontFamily: "Inter_400Regular" },
-  priceBlock: { marginTop: 14 },
-  priceNow: { fontSize: 26, fontFamily: "Inter_700Bold" },
-  priceWhy: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2, lineHeight: 18 },
-  joinBtn: { borderRadius: 14, paddingVertical: 15, alignItems: "center", marginTop: 14 },
-  joinBtnText: { fontSize: 15.5, fontFamily: "Inter_600SemiBold" },
+  header: { paddingBottom: layoutSpace.md, borderBottomWidth: StyleSheet.hairlineWidth },
+  scroll: { paddingTop: layoutSpace.md },
+  sectionTitle: { marginTop: layoutSpace.xs, marginBottom: layoutSpace.sm },
+  card: { borderWidth: StyleSheet.hairlineWidth, padding: layoutSpace.md, marginBottom: layoutSpace.md },
+  factRow: { flexDirection: "row", flexWrap: "wrap", gap: layoutSpace.md, marginTop: layoutSpace.sm, paddingTop: layoutSpace.sm, borderTopWidth: 0 },
+  fact: { flexDirection: "row", alignItems: "center", gap: layoutSpace.xxs },
+  priceBlock: { marginTop: layoutSpace.md, gap: layoutSpace.xxs },
+  joinBtn: { borderRadius: layoutRadius.md, minHeight: HIT_SLOP_MIN, paddingHorizontal: layoutSpace.md, alignItems: "center", justifyContent: "center", marginTop: layoutSpace.md },
   joined: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
-    padding: 12,
-    borderRadius: 12,
+    gap: layoutSpace.xs,
+    padding: layoutSpace.sm,
+    borderRadius: layoutRadius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    marginTop: 14,
+    marginTop: layoutSpace.md,
   },
-  todayBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 13, marginBottom: 12 },
-  todayBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 15, color: "#fff" },
-  joinedText: { flex: 1, fontSize: 13.5, fontFamily: "Inter_400Regular", lineHeight: 19 },
+  todayBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: layoutSpace.xs, borderRadius: layoutRadius.sm, minHeight: HIT_SLOP_MIN, paddingHorizontal: layoutSpace.md, marginBottom: layoutSpace.sm },
+  joinedText: { flex: 1 },
   notice: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
-    padding: 12,
-    borderRadius: 12,
+    gap: layoutSpace.xs,
+    padding: layoutSpace.sm,
+    borderRadius: layoutRadius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 14,
+    marginBottom: layoutSpace.md,
   },
-  noticeText: { flex: 1, fontSize: 13.5, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
-  linkRow: { flexDirection: "row", gap: 10, marginTop: 14 },
+  noticeCopy: { flex: 1, gap: layoutSpace.xxs },
+  noticeText: { flex: 1 },
+  retryBtn: { minHeight: HIT_SLOP_MIN, justifyContent: "center", alignSelf: "flex-start" },
+  linkRow: { flexDirection: "row", gap: layoutSpace.xs, marginTop: layoutSpace.md },
   linkBtn: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
+    gap: layoutSpace.xs,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-    paddingVertical: 12,
+    borderRadius: layoutRadius.sm,
+    minHeight: HIT_SLOP_MIN,
+    paddingHorizontal: layoutSpace.sm,
   },
-  linkBtnText: { fontSize: 13.5, fontFamily: "Inter_500Medium" },
 });

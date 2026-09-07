@@ -35,10 +35,6 @@
     "hex": 2,
     "size": 9
   },
-  "app/(student)/monthly.tsx": {
-    "hex": 3,
-    "size": 14
-  },
   "app/(student)/sessions.tsx": {
     "hex": 3,
     "size": 12
@@ -78,14 +74,6 @@
   "app/index.tsx": {
     "hex": 3,
     "size": 1
-  },
-  "app/monthly-chat.tsx": {
-    "hex": 5,
-    "size": 13
-  },
-  "app/monthly-homework.tsx": {
-    "hex": 4,
-    "size": 17
   },
   "app/new-message.tsx": {
     "hex": 0,

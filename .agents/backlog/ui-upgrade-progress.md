@@ -74,6 +74,9 @@ Found and fixed so far:
 | Teacher monthly class | A failed `GET /monthly/plan` fell through `tierPrice ?? 6500`, displayed NPR 6,500 as though the server had answered, and left the purchase sheet available |
 | Teacher monthly class | “Nothing is owed back to your students” was inferred only from the global 25-class floor, ignoring the separate per-student five-sixths delivery test |
 | Teacher monthly class | “Your month starts when you set up your class, not when you pay” omitted the server's unused-plan auto-start rule |
+| Student monthly classes | A missing server quote became `Join for NPR 0`, presenting an invented price and leaving a payment action visible |
+| Monthly classes / homework / chat | A failed first load could fall through to “no classes”, “no homework”, or an empty writable conversation instead of saying the data was unavailable |
+| Monthly homework | Optional submission totals used `?? 0`; missing totals now say they are unavailable rather than inventing “0 handed in / 0 marked” |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.
@@ -96,6 +99,9 @@ it the worst placeholder available.
 | `app/(teacher)/classroom/[id].tsx` | 108 hex, 31 sizes | **0 / 0** | Yes — owner verified whiteboard touch propagation and PIP dragging |
 | `app/(student)/classroom/[id].tsx` | 62 hex, 21 sizes | **0 / 0** | No — awaiting student-side touch verification |
 | `app/welcome.tsx` | 18 hex, 10 sizes | **0 / 0** | Not yet — implementation and automated checks passed; bundle rebuild deliberately batched with the next reviewed slice |
+| `app/(student)/monthly.tsx` | 3 hex, 14 sizes | **0 / 0** | No — automated contract and design checks only |
+| `app/monthly-homework.tsx` | 4 hex, 17 sizes | **0 / 0** | No — automated contract and design checks only |
+| `app/monthly-chat.tsx` | 5 hex, 13 sizes | **0 / 0** | No — automated contract and design checks only |
 
 Baseline has fallen from **468 hex / 595 sizes** to **205 / 419**.
 
