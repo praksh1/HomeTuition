@@ -4,7 +4,7 @@
 - Agent: claude
 - Branch: `claude/livekit-classroom-pilot`
 - Starting commit: `a58f23f` (origin/main)
-- Final commit: `f443451`
+- Final commit: `7a164ef` (stage two in progress)
 - Status: **partial — the server-side authority layer is built and tested; the classroom UI and
   the socket wiring are not.** Read "What was deliberately excluded" before reviewing.
 
@@ -225,3 +225,97 @@ Phones still receive Daily. Nothing was deployed, merged, purchased or enabled.
 4. **`one-chat` and `teacher-leave` are broken on main** and want fixing by whoever owns the
    recent monthly work.
 5. §8.6 of `HANDOVER.md` needs re-running at ten students a class before any pricing decision.
+
+---
+
+# Stage two — entitlement, and a correction
+
+- Date: 2026-09-07 (same day, second brief)
+- Commits: `92369fb`, `7a164ef`
+- Status: **two of the five requested pieces done. The socket integration, the premium classroom
+  UI and the evidence wiring are NOT built.** Nothing is connected end to end yet.
+
+## Verification asked for before building
+
+- **Can the permission API grant moderator rights?** No. `roomAdmin` appears in exactly two
+  places in the server source: the token grant, set from `options.isOwner`, and a comment saying
+  it cannot be set through a permission update. `ParticipantPermission` has no such field.
+- **Does every permission-changing action check membership and teacher authority?** Vacuously
+  yes: `setPublishing` and `silence` are called from **nowhere** in production code. Confirmed by
+  grep across the server and app sources. They will need those checks when the socket calls them,
+  and that is the next task.
+- The diff from `origin/main` through `4a0d1a4` was re-read in full; no newer main UI or branding
+  is touched by it.
+
+## `92369fb` — the fixture repair that was not needed
+
+**I was wrong in the previous stage and this corrects it.** `one-chat` and `teacher-leave` are
+not broken and never were: 8/8 and 17/17. They drive an externally-started API and need it run
+with `NODE_ENV=test`, which is how `deploy-web.yml` has always started it. I had not.
+
+`lib/payments.ts` then correctly refused the teacher-plan purchase — no provider is configured,
+so a non-test server must not activate a plan it took no money for — the suites discarded that
+response, and the run died four steps later on `recurring_days` with `recurring_id = undefined`.
+I "confirmed" it against untouched main in a worktree and made the same mistake there, which I
+read as proof. **A comparison run proves nothing when the variable you did not think about
+changes in both arms.**
+
+So there was no stale fixture and no production logic to change. What was real: a
+misconfiguration surfacing four steps downstream as a SQL syntax error. `test-support/apiMode.mjs`
+now explains it at the point it happens; both suites check the response they were discarding.
+Verified by pointing `one-chat` at a non-test API and reading the output.
+
+## `7a164ef` — entitlement judged at the class's own time
+
+Eligibility now uses the **session's own scheduled time**, not "now", so a class inside a cycle
+the teacher paid for keeps its benefit even if the plan changes afterwards. Rescheduling across a
+cycle boundary is handled by construction rather than by a second rule.
+
+`GET /sessions/:id/room` now returns `discussionModeEligible` and `discussionOpensAt`, both
+server-derived. Pay-as-you-go gets `false` and `null`.
+
+**Three of the four commercial rules cannot be implemented against this schema**, and the file
+documents precisely why rather than approximating:
+
+1. No payment record of any kind — `chargeForMonthly` returns a reference and nothing stores it.
+2. No renewal concept — a plan is bought once and cycles roll forward by arithmetic, so
+   "renewal turned off" is not a state this system can be in.
+3. No teacher-subscription reversal — `refunds` is about students.
+4. No `lapsed_at`, so even when a plan stopped being active is unknown.
+
+A lapsed plan therefore still denies, which is safe and is not fair to a teacher who cancelled
+inside a paid cycle. Fixing it is a schema change plus a commercial decision.
+
+**A finding from a test I had written backwards:** nothing reads `suspended_until` to decide a
+suspension has lapsed, and nothing sets `status` back to `active`. A plan suspended for thirty
+days stays suspended until an operator intervenes. My first version treated an expired date as
+ending the suspension, which would have made this the only file in the codebase that believed
+that. Removed.
+
+14 boundary tests in `scripts/entitlement-tests`. The classifier is bundled with esbuild for the
+test because the room route refuses a class that is not joinable yet, and every boundary here is
+a class at some distance from now.
+
+## Tests after stage two
+
+typecheck clean (4 packages) · api-server units 497/497 · video contract 43/43 · sessions 56/56 ·
+entitlement 14/14 · one-chat 8/8 · teacher-leave 17/17 · session-proof 125/125 · retention 79/79
+
+Two self-inflicted environment problems worth recording so the next run does not repeat them: a
+server I had left on port 8099 is the port `video-tests` uses for its LiveKit instance, and made
+that suite report the wrong provider; and Postgres must be started via
+`scratchpad/pg.sh` because the harness periodically resets permissions under `/tmp/claude-0`.
+
+## NOT built, and not started
+
+The socket integration, the LiveKit permission wiring behind it, the premium classroom UI, the
+discussion layout and selective subscription, the evidence events, and all visual verification.
+**No button in the app does any of this yet.** The authority layer and the entitlement rule are
+ready for the socket to call them; nothing calls them.
+
+## Next for Codex
+
+1. Review `speakingFloor.ts` and the entitlement rule before any UI is built on them.
+2. Decide the lapsed-plan commercial question, and whether the schema should gain a
+   paid-through/renewal record. Everything about "cancelled but paid" waits on that.
+3. Then the socket, in the order the brief lists it.
