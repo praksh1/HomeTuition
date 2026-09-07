@@ -170,7 +170,7 @@ LIVEKIT_URL=wss://<your project>.livekit.cloud
 **3. Check them before doing anything else:**
 
 ```
-pnpm.cmd --filter @workspace/api-server run livekit:check
+pnpm.cmd run livekit:check
 ```
 
 It says, in words, whether each value is present, whether the secret can sign a token, and

@@ -84,7 +84,7 @@ LIVEKIT_URL=wss://your-project.livekit.cloud
 Then check them before starting anything:
 
 ```
-pnpm.cmd --filter @workspace/api-server run livekit:check
+pnpm.cmd run livekit:check
 ```
 
 It says in plain words whether each value is present, whether the secret can sign a token, and

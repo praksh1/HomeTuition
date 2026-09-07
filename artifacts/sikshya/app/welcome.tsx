@@ -42,7 +42,7 @@ export default function Welcome() {
 
       <View style={[styles.heroContainer, { marginHorizontal: gutter, borderRadius: radius.lg }]}>
         <Image
-          source={require("../assets/images/hero_classroom.png")}
+          source={require("../assets/images/hero_classroom.jpg")}
           style={styles.heroImage}
           contentFit="cover"
         />

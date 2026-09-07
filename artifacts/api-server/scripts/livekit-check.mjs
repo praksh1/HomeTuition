@@ -30,10 +30,50 @@
  * On Windows, from C:\\Projects\\Paathshala\\Paathshala:
  *   node artifacts\\api-server\\scripts\\livekit-check.mjs
  */
-import { AccessToken, RoomServiceClient } from "livekit-server-sdk";
+import path from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/*
+  `fileURLToPath`, not `new URL(...).pathname`.
+
+  On Windows the second gives `/C:/Projects/...` — with a leading slash — and every filesystem
+  call on it fails. This is a diagnostic whose whole job is to run on the owner's Windows
+  machine, so it was broken in exactly the place it was written for.
+*/
+const ENV_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", ".env");
 
 /** Reads the same root .env the API server reads, so this cannot disagree with it. */
-process.loadEnvFile?.(new URL("../../../.env", import.meta.url).pathname);
+if (existsSync(ENV_FILE)) {
+  try {
+    process.loadEnvFile?.(ENV_FILE);
+  } catch (err) {
+    console.log(`\n  WRONG Could not read ${ENV_FILE}: ${err.message}`);
+    console.log("        → Check the file is not open in another program, then try again.\n");
+    process.exit(1);
+  }
+} else {
+  console.log(`\n  WRONG There is no .env file at ${ENV_FILE}`);
+  console.log("        → That is the file the four LiveKit lines go in. Create it there.\n");
+  process.exit(1);
+}
+
+/*
+  Loaded after the environment, and dynamically.
+
+  A static import would crash with a module-not-found stack trace before printing anything at
+  all if `pnpm install` had not been run since this branch was checked out — which is the most
+  likely reason somebody is running this for the first time.
+*/
+let AccessToken, RoomServiceClient;
+try {
+  ({ AccessToken, RoomServiceClient } = await import("livekit-server-sdk"));
+} catch {
+  console.log("\n  WRONG The LiveKit library is not installed yet.");
+  console.log("        → Run this first, from C:\\Projects\\Paathshala\\Paathshala:");
+  console.log("            pnpm.cmd install\n");
+  process.exit(1);
+}
 
 const KEY = process.env.LIVEKIT_API_KEY?.trim();
 const SECRET = process.env.LIVEKIT_API_SECRET?.trim();
