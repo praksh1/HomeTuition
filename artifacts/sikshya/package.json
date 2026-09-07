@@ -33,6 +33,8 @@
     "test:tickets": "node scripts/ticket-browser/run.mjs",
     "test:filters": "node scripts/sessions-filters/run.mjs",
     "test:storage-check": "node scripts/storage-check/run.mjs",
+    "test:video-check": "node scripts/video-check/run.mjs",
+    "test:livekit-live": "node scripts/livekit-live/run.mjs",
     "lint:design": "node scripts/design-lint/run.mjs",
     "lint:design:update": "node scripts/design-lint/run.mjs --update",
     "test:lobby": "node scripts/lobby-tests/run.mjs",

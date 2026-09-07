@@ -46,8 +46,48 @@ import type { JoinOptions, VideoProvider } from "./types";
  * behaviour that only a live server can confirm is listed in VIDEO.md under the LiveKit trial.
  */
 
-/** Eight hours, matching the Daily token, so a long class cannot expire underneath somebody. */
-const TOKEN_TTL_SECONDS = 60 * 60 * 8;
+/**
+ * Eight hours — the ceiling, and what a token gets when nothing says otherwise.
+ *
+ * Matches the Daily token. It is a ceiling rather than the value because a token good for eight
+ * hours is a credential somebody still holds long after the class it was minted for.
+ */
+const TOKEN_TTL_CEILING_SECONDS = 60 * 60 * 8;
+
+/**
+ * The shortest token this will ever mint.
+ *
+ * A floor is needed because expiry is checked against the *server's* clock with roughly a
+ * minute of leeway, and a token minted seconds before the cutoff would otherwise be dead on
+ * arrival. Five minutes past a cutoff costs nothing: the room route refuses to mint a token at
+ * all once a class is past it, so this only ever covers somebody who was already let in.
+ */
+const TOKEN_TTL_FLOOR_SECONDS = 60 * 5;
+
+/**
+ * How long this credential should live, from when the class stops being enterable.
+ *
+ * ## Why this is safe, and how that was established
+ *
+ * The obvious worry about a short-lived token is that it expires while a lesson is running and
+ * hangs up on a class. It does not. Run against a real `livekit-server`
+ * (`sikshya/scripts/livekit-live`, and the experiment recorded in VIDEO.md): a participant
+ * connected on a twenty-second token stayed connected for **two hundred seconds past expiry**
+ * with no `Disconnected` and no `Reconnecting` event. Expiry is checked when the signal
+ * connection is established and not afterwards — joining and rejoining with an expired token
+ * are both refused with `token has invalid claims: token is expired`.
+ *
+ * So the token is a *door key, not a heartbeat*. Shortening it cannot interrupt anybody already
+ * inside; it only stops the key opening the door again once the class is over.
+ *
+ * That measurement is the whole reason this changed. It was left at eight hours precisely
+ * because the answer was unknown and guessing wrong would drop students mid-lesson.
+ */
+function ttlSecondsFor(expiresAt: number | undefined, now: number): number {
+  if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return TOKEN_TTL_CEILING_SECONDS;
+  const seconds = Math.ceil((expiresAt - now) / 1000);
+  return Math.min(TOKEN_TTL_CEILING_SECONDS, Math.max(TOKEN_TTL_FLOOR_SECONDS, seconds));
+}
 
 interface LiveKitConfig {
   apiKey: string;
@@ -164,7 +204,8 @@ export const livekitProvider: VideoProvider = {
       const token = new AccessToken(settings.apiKey, settings.apiSecret, {
         identity,
         name: options.userName,
-        ttl: TOKEN_TTL_SECONDS,
+        // The class's own cutoff when the caller knows it, the eight-hour ceiling when it does not.
+        ttl: ttlSecondsFor(options.expiresAt, Date.now()),
       });
 
       token.addGrant({

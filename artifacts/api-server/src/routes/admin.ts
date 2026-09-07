@@ -33,6 +33,7 @@ import { hashPassword } from "../lib/auth";
 import { notify, notifyInApp } from "../lib/notify";
 import { refundSplit } from "../lib/sessionChanges";
 import { checkStorage, storageSettingsPresent } from "../lib/fileStore";
+import { diagnoseVideo } from "../lib/video/diagnose";
 import { TICKET_STATUSES, displayStatus, nextStatuses, statusLabel, ticketRef } from "../lib/tickets";
 import { historyFor, moveTicket, nameOf } from "../lib/ticketStore";
 import { isEmailConfigured, sendEmail } from "../lib/mailer";
@@ -742,6 +743,37 @@ router.get("/admin/video-usage", async (req, res): Promise<void> => {
      */
     note: "Counts time on the classroom socket, so this is an upper bound on real video minutes.",
   });
+});
+
+/**
+ * Are the video credentials right? Asked from a browser, because a terminal keeps failing.
+ *
+ * There is already a script that answers this. The owner could not run it: first they were on
+ * a branch that did not have it, then they pasted a `cmd.exe` line into PowerShell, where `&&`
+ * is not a statement separator. Two failures, neither about LiveKit, both costing an evening.
+ * So the same question is answerable from a screen they are already signed in to, on the
+ * server that actually serves video — which is also the only place the answer is true, since
+ * the variables that matter live on the deployment and not on anybody's laptop.
+ *
+ * All the judgement is in `lib/video/diagnose.ts`, shared with the script, so the page and the
+ * terminal cannot come to different conclusions.
+ *
+ * **Nothing here returns a secret.** `LIVEKIT_API_SECRET` is reported as a length and never as
+ * a value: this is read when something is wrong, which is exactly when people screenshot a
+ * screen and paste it into a chat.
+ */
+router.get("/admin/video/check", async (req, res): Promise<void> => {
+  const result = await diagnoseVideo(process.env);
+
+  recordActivity({
+    userId: req.user!.userId,
+    action: "admin.video.checked",
+    // The verdicts, not the values — an audit log is not a place to accumulate credentials.
+    detail: { provider: result.provider, healthy: result.healthy, failed: result.findings.filter((f) => f.verdict !== "ok").map((f) => f.id) },
+    ip: callerIp(req),
+  });
+
+  res.json(result);
 });
 
 router.get("/admin/storage/check", async (req, res): Promise<void> => {

@@ -342,9 +342,10 @@ regenerate a key that was fine. Both fixed.
 
 ## Remaining risks / next pickup point
 
-1. **No media has ever flowed.** No camera opened, no packet sent, no token presented to a
-   LiveKit server. The first real test is a two-person call in preview with credentials — the
-   step-by-step instructions are in the report to the owner and in VIDEO.md.
+1. ~~**No media has ever flowed.**~~ **Closed 2026-09-07** — `livekit-server` was built from
+   source here and `sikshya/scripts/livekit-live` now runs a genuine two-person call against it:
+   real tokens from the real route, two browsers, frames decoded on both sides. See
+   `2026-09-07-claude-real-livekit-call.md`. LiveKit *Cloud* is still untested.
 2. **`livekit:check` has never reached a real LiveKit project.** Its settings and token-signing
    checks were run, including every failure branch; the two branches needing livekit.cloud —
    "accepted" and "refused" — could not be. It is the first thing to run with real credentials.
