@@ -42,6 +42,16 @@ export interface VideoCallProps {
    */
   chatMessages?: { id: string; senderName: string; text: string; time: string; isMe: boolean }[];
   onSendChat?: (text: string) => void;
+  /**
+   * The class's teacher, by account id, so their tile is never dropped for a talkative student.
+   *
+   * Only a provider that lays out its own tiles can use it. Daily brings its own interface and
+   * ignores it, which is why it is optional rather than required — a prop no provider needs is a
+   * prop that should not be in this contract at all.
+   */
+  teacherUserId?: string | null;
+  /** Whoever the teacher has featured, from the classroom floor. */
+  spotlightUserId?: string | null;
 }
 
 export default function VideoCall({ provider = "daily", ...props }: VideoCallProps) {
@@ -86,6 +96,8 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
           canScreenShare={props.canScreenShare}
           chatMessages={props.chatMessages}
           onSendChat={props.onSendChat}
+          teacherUserId={props.teacherUserId}
+          spotlightUserId={props.spotlightUserId}
         />
       );
 

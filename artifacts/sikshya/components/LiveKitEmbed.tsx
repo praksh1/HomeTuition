@@ -46,6 +46,15 @@ export interface LiveKitEmbedProps {
   chatMessages?: { id: string; senderName: string; text: string; time: string; isMe: boolean }[];
   onSendChat?: (text: string) => void;
   enableInCallChat?: boolean;
+  /**
+   * Accepted and unused, exactly like the chat props above.
+   *
+   * The web build lays out its own tiles and uses these to decide who keeps one; this build lays
+   * out nothing at all. They stay in the contract so `VideoCall.tsx` passes the same props to
+   * both and needs no special case for a platform.
+   */
+  teacherUserId?: string | null;
+  spotlightUserId?: string | null;
 }
 
 export default function LiveKitEmbed({ style }: LiveKitEmbedProps) {

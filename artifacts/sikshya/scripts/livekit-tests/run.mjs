@@ -64,6 +64,7 @@ const fakeProvider = path.join(work, "fake-video.js");
 writeFileSync(
   fakeProvider,
   `
+window.__plans = [];
 const connectionListeners = new Set();
 const rosterListeners = new Set();
 const problemListeners = new Set();
@@ -124,6 +125,14 @@ const session = {
     roster();
   },
   async unblockAudio() { state.audioBlocked = false; roster(); },
+  /*
+    Recorded rather than performed.
+
+    The real one unsubscribes and asks for a simulcast layer; what is worth asserting here is the
+    *decision* — who the component thought was worth paying for — and that is the argument, not
+    the effect. Whether unsubscribing actually saves bytes is LiveKit's business.
+  */
+  setCameraPlan(plan) { window.__plans.push(plan); },
   onConnectionStateChange(fn) { connectionListeners.add(fn); fn(state.connection); return () => connectionListeners.delete(fn); },
   onParticipantsChange(fn) { rosterListeners.add(fn); fn(session.getParticipants()); return () => rosterListeners.delete(fn); },
   onMediaProblem(fn) { problemListeners.add(fn); return () => problemListeners.delete(fn); },
@@ -185,6 +194,7 @@ function Harness() {
       meetingToken: "test-token",
       displayName: "Sita Sharma",
       canScreenShare: true,
+      teacherUserId: "2",
       watchUserName: "Ram Bahadur",
       onLeft: () => { window.__events.left += 1; },
       onWatchedParticipantLeft: () => { window.__events.watchedLeft += 1; },
@@ -452,6 +462,38 @@ async function run(chromium, viewport, label) {
   );
 
   console.log(`\n[${label}] Nothing threw along the way`);
+  console.log(`\n[${label}] A discussion bigger than the screen`);
+  /*
+    Twelve people, which is a real monthly class. The point is not the layout — it is that a phone
+    does not download eleven cameras to draw four tiles, because that is the number the whole
+    Monthly price rests on. See utils/discussionLayout.ts.
+  */
+  await p.evaluate(() => {
+    window.__plans = [];
+    window.__lk.connect([
+      { id: "1", name: "Sita Sharma", isLocal: true },
+      { id: "2", name: "Teacher Sir" },
+      ...Array.from({ length: 10 }, (_, i) => ({ id: String(100 + i), name: `Student ${i + 1}` })),
+    ]);
+  });
+  await p.waitForTimeout(400);
+
+  const drawn = await p.locator('[data-testid^="livekit-tile-"]').count();
+  const budget = label.startsWith("phone") ? 4 : 9;
+  // The local self-view is a tile too, and it is inside the budget.
+  check(`${label}: only ${budget} tiles are drawn for twelve people`, drawn === budget, `tiles=${drawn}`);
+  check(`${label}: and the rest are said, not silently hidden`,
+    (await p.locator('[data-testid="livekit-overflow"]').count()) === 1);
+
+  const lastPlan = await p.evaluate(() => window.__plans[window.__plans.length - 1] ?? null);
+  check(`${label}: the provider is told which cameras to drop`,
+    Boolean(lastPlan) && lastPlan.unsubscribe.length === 12 - budget,
+    JSON.stringify(lastPlan));
+  check(`${label}: the teacher is never among them`,
+    Boolean(lastPlan) && !lastPlan.unsubscribe.includes("2"), JSON.stringify(lastPlan?.unsubscribe));
+  check(`${label}: nobody is asked to subscribe and unsubscribe at once`,
+    Boolean(lastPlan) && lastPlan.subscribe.every((id) => !lastPlan.unsubscribe.includes(id)));
+
   check(`${label}: no page error during the run`, errors.length === 0, errors[0] ?? "");
 
   await browser.close();

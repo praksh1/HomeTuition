@@ -227,6 +227,8 @@ export default function StudentClassroom() {
    */
   const [canModerate, setCanModerate] = useState(false);
   const [discussionOpensAt, setDiscussionOpensAt] = useState<number | null>(null);
+  /** The teacher's participant identity, from the room payload. Used only for the tile budget. */
+  const [teacherParticipantId, setTeacherParticipantId] = useState<string | null>(null);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
@@ -433,6 +435,17 @@ export default function StudentClassroom() {
     };
   }, [id]);
 
+  /**
+   * Whoever the teacher has featured, as a participant identity rather than an account id.
+   *
+   * The floor speaks in account ids because that is what the server authorises against; the call
+   * roster speaks in participant identities. `providerUserId` on the server is just the id as a
+   * string, so the conversion is a `String(...)` — written out here rather than assumed, so that
+   * the day the identity format gains a prefix there is one place to change.
+   */
+  const spotlightParticipantId =
+    floor && floor.spotlight !== null ? String(floor.spotlight) : null;
+
   const loadSession = async () => {
     try {
       setSession(await apiGet<SessionData>(`/sessions/${id}`));
@@ -450,6 +463,7 @@ export default function StudentClassroom() {
         provider,
         capabilities,
         discussionOpensAt: opensAt,
+        teacherUserId: teacherIdentity,
         testClass,
         testClassLabel,
         testBooking,
@@ -460,6 +474,8 @@ export default function StudentClassroom() {
         provider?: string;
         capabilities?: { moderatesPublishing?: boolean };
         discussionOpensAt?: number | null;
+        /** The teacher's participant identity, so their tile is never dropped for a busy grid. */
+        teacherUserId?: string | null;
         /** The class is open to test bookings. Says nothing about whether *you* paid. */
         testClass?: boolean;
         testClassLabel?: string;
@@ -470,6 +486,7 @@ export default function StudentClassroom() {
       if (provider) setVideoProvider(provider);
       setCanModerate(capabilities?.moderatesPublishing === true);
       setDiscussionOpensAt(typeof opensAt === "number" ? opensAt : null);
+      setTeacherParticipantId(typeof teacherIdentity === "string" ? teacherIdentity : null);
       /**
        * The narrower, personal fact wins; the class-level one is the fallback.
        *
@@ -1145,6 +1162,8 @@ export default function StudentClassroom() {
                   onLeft={handleDailyLeft}
                   watchUserName={session?.teacherName}
                   onWatchedParticipantLeft={notifyTeacherLeft}
+                  teacherUserId={teacherParticipantId}
+                  spotlightUserId={spotlightParticipantId}
                 />
               ) : (
                 <View

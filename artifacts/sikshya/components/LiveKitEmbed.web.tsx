@@ -24,6 +24,12 @@ import {
   is still in flight.
 */
 import {
+  planDiscussionLayout,
+  rememberSpeakers,
+  tileCapacity,
+  type SpeakerMemory,
+} from "@/utils/discussionLayout";
+import {
   cameraActionLabel,
   microphoneActionLabel,
   screenShareActionLabel,
@@ -82,6 +88,16 @@ interface ChatMessage {
 interface Props {
   /** The LiveKit project's `wss://` address, from the server. */
   roomUrl: string;
+  /**
+   * The class's teacher, by account id, so their tile is never dropped for a talkative student.
+   *
+   * The id rather than the name: `providerUserId` puts the account id in the participant identity
+   * precisely so two students called Sita are two people, and matching on a display name here
+   * would reintroduce the ambiguity one layer up.
+   */
+  teacherUserId?: string | null;
+  /** Whoever the teacher has featured, from the classroom floor. Null for the ordinary grid. */
+  spotlightUserId?: string | null;
   /**
    * The signed join token, minted by the API.
    *
@@ -456,6 +472,8 @@ export default function LiveKitEmbed({
   watchUserName,
   onWatchedParticipantLeft,
   canScreenShare,
+  teacherUserId = null,
+  spotlightUserId = null,
 }: Props) {
   const [session, setSession] = useState<VideoSession | null>(null);
   const [connection, setConnection] = useState<VideoConnectionState>("connecting");
@@ -589,7 +607,56 @@ export default function LiveKitEmbed({
   const screen = useMemo(() => participants.find((p) => p.screen !== null) ?? null, [participants]);
 
   const [gridRef, gridBox] = useBoxSize();
-  const columns = bestColumns(remotes.length, gridBox.width, gridBox.height);
+
+  /**
+   * Who gets a tile, and whose camera is worth paying for.
+   *
+   * Recomputed whenever the roster moves, which is also when somebody starts or stops talking —
+   * the provider reports both through the same subscription. The plan itself is
+   * `utils/discussionLayout.ts` and is tested there; this is the wiring.
+   *
+   * The memory lives in a ref rather than in state on purpose. It changes on every frame in which
+   * anybody is speaking, and putting that in state would re-render the whole call several times a
+   * second to move a number nobody looks at directly.
+   */
+  const speakerMemory = useRef<SpeakerMemory>({});
+  const capacity = tileCapacity(gridBox.width || 0);
+  const plan = useMemo(() => {
+    const people = participants.map((p) => ({
+      id: p.id,
+      isLocal: p.isLocal,
+      hasCamera: p.camera !== null,
+      isSpeaking: p.isSpeaking,
+    }));
+    const now = Date.now();
+    speakerMemory.current = rememberSpeakers(speakerMemory.current, people, now);
+    return planDiscussionLayout({
+      people,
+      teacherId: teacherUserId,
+      spotlightId: spotlightUserId,
+      memory: speakerMemory.current,
+      now,
+      // Before the grid has been measured there is no honest capacity, so nothing is dropped:
+      // a first frame that unsubscribed from everybody would blank the class for a moment.
+      capacity: gridBox.width > 0 ? capacity : Number.MAX_SAFE_INTEGER,
+    });
+  }, [participants, teacherUserId, spotlightUserId, capacity, gridBox.width]);
+
+  /*
+    Hand the plan to the provider.
+
+    In its own effect rather than inside the render above, because subscribing is a side effect on
+    a live connection and React may run a render twice. `setCameraPlan` is optional on the
+    contract: a provider that cannot express it simply does not get asked, rather than being made
+    to look as though it had.
+  */
+  useEffect(() => {
+    session?.setCameraPlan?.(plan);
+  }, [session, plan]);
+
+  const visible = useMemo(() => new Set(plan.visible), [plan]);
+  const shown = useMemo(() => remotes.filter((p) => visible.has(p.id)), [remotes, visible]);
+  const columns = bestColumns(shown.length, gridBox.width, gridBox.height);
 
   const act = useCallback(
     (fn: (live: VideoSession) => Promise<unknown>) => () => {
@@ -744,6 +811,31 @@ export default function LiveKitEmbed({
           </div>
         ) : null}
 
+        {/*
+          Somebody is here and off screen, said rather than hidden.
+
+          The tile budget drops the quietest people first, which is right — and a class where
+          three students simply vanished with no explanation is not. The count is deliberately not
+          a list of names: on a phone that is another row of text over the board, and the person
+          reading it can open the class list if they want to know who.
+        */}
+        {plan.overflow > 0 ? (
+          <div
+            data-testid="livekit-overflow"
+            style={{
+              alignSelf: "center",
+              padding: `${space.xxs}px ${space.xs}px`,
+              borderRadius: `${radius.pill}px`,
+              background: colors.secondary,
+              color: colors.secondaryForeground,
+              fontFamily: t.caption.fontFamily,
+              fontSize: `${t.caption.fontSize}px`,
+            }}
+          >
+            {plan.overflow === 1 ? "1 more person is here" : `${plan.overflow} more people are here`}
+          </div>
+        ) : null}
+
         {remotes.length === 0 ? (
           <div
             data-testid="livekit-waiting"
@@ -787,7 +879,7 @@ export default function LiveKitEmbed({
                   }),
             }}
           >
-            {remotes.map((participant) => (
+            {shown.map((participant) => (
               <Tile key={participant.id} participant={participant} />
             ))}
           </div>

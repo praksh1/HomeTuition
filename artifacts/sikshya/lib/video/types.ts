@@ -192,6 +192,29 @@ export interface VideoSession {
   readonly audioBlocked: boolean;
   unblockAudio(): Promise<void>;
 
+  /**
+   * Carry only these cameras, at these sizes.
+   *
+   * The one lever that decides what a discussion costs. Sending a camera is one stream; *receiving*
+   * one in a class of ten is ten, so the bill is set on this side — and the only saving that
+   * actually saves anything is not subscribing at all. `adaptiveStream` asks for the smallest
+   * simulcast layer a tile needs and `dynacast` stops encoding a layer nobody wants, but both of
+   * those still carry a stream.
+   *
+   * The plan comes from `utils/discussionLayout.ts`, which decides who has a tile. Optional on the
+   * contract because a provider that cannot express it must not be made to look as though it had —
+   * the same rule `setPublishing` follows on the server.
+   *
+   * Ignored while audio-only is on: that mode has already dropped every camera, and a plan that
+   * re-subscribed to four of them would silently undo the thing a student turned on to keep the
+   * lesson running.
+   */
+  setCameraPlan?(plan: {
+    subscribe: string[];
+    unsubscribe: string[];
+    quality: Record<string, "low" | "medium" | "high">;
+  }): void;
+
   onConnectionStateChange(fn: (state: VideoConnectionState) => void): Unsubscribe;
   /** Fires on any change to the roster: joins, leaves, mutes, track publications, quality. */
   onParticipantsChange(fn: (participants: VideoParticipant[]) => void): Unsubscribe;

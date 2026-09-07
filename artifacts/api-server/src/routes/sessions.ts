@@ -19,6 +19,7 @@ import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
 import { canJoin, canStart, cutoffAt, isCreatableAt, isPastCutoff, studentDoorClosesAt } from "../lib/sessionStart";
 import { discussionOpensAt } from "../lib/classroom/discussionWindow.ts";
+import { providerUserId } from "../lib/video/participantIdentity";
 import { discussionModeEligible as eligibleForDiscussion } from "../lib/classroom/discussionEligibility.ts";
 import type { StartCheck, StartRefusal } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
@@ -750,6 +751,19 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       discussionOpensAt: discussionModeEligible
         ? discussionOpensAt({ ...session, endedAt: null })
         : null,
+      /*
+        Who the teacher is, in the provider's own vocabulary.
+
+        The app uses it for one thing: never dropping the teacher's tile when the discussion is
+        busier than the screen. Sent as the *participant identity* rather than the raw id so the
+        client compares like with like — matching on a display name instead would put two students
+        called Sita back into one person, which `providerUserId` exists to prevent.
+
+        It discloses nothing a student cannot already see: every participant's identity is in the
+        room roster the moment they join, and which of them is the teacher is not a secret from a
+        class they are sitting in.
+      */
+      teacherUserId: providerUserId(session.teacherId),
       ...(testClass ? { testClass: true, testClassLabel: TEST_CLASS_LABEL } : null),
       ...(membership!.viaTestAccess ? { testBooking: true, testBookingLabel: TEST_BOOKING_LABEL } : null),
     });
