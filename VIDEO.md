@@ -167,16 +167,24 @@ LIVEKIT_API_SECRET=<the secret>
 LIVEKIT_URL=wss://<your project>.livekit.cloud
 ```
 
-**3. Check them before doing anything else:**
+**3. Check them before doing anything else — in a browser, no terminal.**
 
-```
-pnpm.cmd run livekit:check
-```
+Sign in to the support desk with an agent account and press **Check video calls**, the second
+card at the top of the queue. It says in words whether each value is present, whether the secret
+can sign a token, and whether LiveKit itself accepts them — and after every failure it names the
+next thing to do *and where to do it*. A wrong secret and a bad wi-fi connection produce the
+same message inside the app, so it is worth the twenty seconds.
 
-It says, in words, whether each value is present, whether the secret can sign a token, and
-whether LiveKit itself accepts them — and after every failure it names the next thing to do. A
-wrong secret and a bad wi-fi connection produce the same message inside the app, so it is worth
-the twenty seconds.
+Three things it will not do: show the secret, guess, or blame the credentials for a network it
+simply could not reach. That last one is amber rather than red, deliberately — being unable to
+see `livekit.cloud` from a machine is not a verdict on the key.
+
+There is also a terminal version, `pnpm.cmd run livekit:check`, which reads the `.env` on the
+machine it runs on rather than the deployed server's variables. Both call the same code in
+`api-server/src/lib/video/diagnose.ts`, so they cannot come to different conclusions. Prefer the
+button: the settings that decide whether a real class works live on the deployment, not in
+anybody's checkout, and this project has twice lost an evening to a handed-over command failing
+for reasons that had nothing to do with video.
 
 **4. Start the two halves**, each in its own terminal window, both left running:
 
@@ -231,11 +239,13 @@ the difference between a credentials problem and a network one.
 - **`docs.livekit.io` is blocked** by this environment's network egress. Everything is written
   against the installed SDK's own TypeScript definitions and source, which are authoritative for
   the API surface but say nothing about behaviour under a real network.
-- **`livekit:check` has never reached a real LiveKit project.** Its settings checks and its
-  token-signing check were run and behave correctly, including every failure branch; the two
-  branches that need livekit.cloud — "accepted" and "refused" — could not be, for the same
-  egress reason. Running it is the first thing to do with real credentials, and if it is wrong
-  it will be wrong in an obvious way.
+- **The credentials check has never reached a real LiveKit project.** Its settings checks, its
+  token-signing check and its unreachable-network branch were all run and behave correctly —
+  the browser suite drives the whole card against a server pointed at a closed port, so
+  "cannot reach" is proven amber rather than red. The two branches that need livekit.cloud
+  itself — "accepted" and "refused" — could not be, for the same egress reason. Pressing
+  **Check video calls** is the first thing to do with real credentials, and if it is wrong it
+  will be wrong in an obvious way.
 
 ### One security finding, deliberately not fixed
 

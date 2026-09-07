@@ -24,7 +24,7 @@
     "test:round": "node scripts/round-tests/run.mjs",
     "test:alerts": "node scripts/alert-tests/run.mjs",
     "test:uploads": "node scripts/upload-tests/run.mjs",
-    "livekit:check": "node scripts/livekit-check.mjs",
+    "livekit:check": "node --experimental-strip-types --disable-warning=ExperimentalWarning scripts/livekit-check.mjs",
     "test:video": "node scripts/video-tests/run.mjs",
     "test:monthly": "node scripts/monthly-tests/run.mjs",
     "test:portal": "node scripts/portal-tests/run.mjs",

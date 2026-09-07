@@ -526,6 +526,13 @@ jobs:
           # have said, since this API takes a Bearer token the app holds and a browser tab
           # has none. A diagnostic nobody can run is not a diagnostic.
           pnpm --filter @workspace/sikshya run test:storage-check
+          # The same lesson, one release later, about video. There is a script that says
+          # whether the LiveKit credentials are right and the owner could not run it twice —
+          # once on a checkout that did not have it, once because a `cmd.exe` line went into
+          # PowerShell, where && is not a statement separator. So the check is a button, and
+          # this presses it: a cut-off secret must read as cut off, and a server that cannot
+          # reach LiveKit must not be reported as a wrong key.
+          pnpm --filter @workspace/sikshya run test:video-check
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local
