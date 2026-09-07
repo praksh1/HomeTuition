@@ -17,7 +17,7 @@ import { PLATFORM_HEADER, videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
-import { canJoin, canStart, isCreatableAt, isPastCutoff, studentDoorClosesAt } from "../lib/sessionStart";
+import { canJoin, canStart, cutoffAt, isCreatableAt, isPastCutoff, studentDoorClosesAt } from "../lib/sessionStart";
 import type { StartCheck, StartRefusal } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
@@ -675,6 +675,29 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       // From the authenticated request, never from the body. It identifies the participant in the
       // provider's own records so a dispute can be corroborated per person; it confers nothing.
       userId: req.user!.userId,
+      /**
+       * The credential dies with the class, not eight hours later.
+       *
+       * `cutoffAt` is the same hard stop the rest of this file runs on — ten minutes past the
+       * booked finish, after which no teacher may reopen the call — so the key stops working at
+       * exactly the moment there is nothing left to unlock. Before this, a student who joined at
+       * 10:00 still held a usable LiveKit credential at 17:00: after the lesson, after a refund,
+       * after being unenrolled. This route would refuse them a *new* token and could not take
+       * back the one they had.
+       *
+       * Safe because a token is a door key rather than a heartbeat — measured against a real
+       * server, a live call runs on well past its own token's expiry without noticing. That
+       * measurement is why this is no longer eight hours; see `livekitProvider.ttlSecondsFor`.
+       *
+       * `?? undefined` because a session with no usable time gets the provider's own ceiling
+       * rather than a token that is already dead.
+       *
+       * `endedAt: null` is honest rather than a stub: `cutoffAt` is a function of the *booked*
+       * slot alone — date plus duration plus the overtime allowance — and never of when a
+       * teacher happened to press stop. That is deliberate across this whole timeline, so that
+       * a teacher who starts twenty minutes late does not get twenty extra minutes.
+       */
+      expiresAt: cutoffAt({ ...session, endedAt: null }) ?? undefined,
     });
     /**
      * `roomUrl`, `token` and `isOwner` keep their names.

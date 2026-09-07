@@ -42,6 +42,18 @@ export interface JoinOptions {
    * never from a request body: an identity a client could choose is not an identity.
    */
   userId: number;
+  /**
+   * When this credential should stop working, as epoch milliseconds. Optional.
+   *
+   * The class's hard cutoff — `cutoffAt` in `lib/sessionStart.ts`, ten minutes past the booked
+   * finish, after which no teacher may reopen the call. A provider that can express expiry
+   * should use it; one that cannot may ignore it, which is why this is optional rather than
+   * required. Daily's token lifetime is set by Daily and is untouched by this.
+   *
+   * It exists because a join token outliving its class is a credential somebody still holds
+   * after a refund, after being unenrolled, and after the lesson they paid for ended.
+   */
+  expiresAt?: number;
 }
 
 /**

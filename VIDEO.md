@@ -69,7 +69,8 @@ Point the suite at your new provider by adding it to `PROVIDERS` and running wit
 
 ## The LiveKit trial
 
-**Status: written and checked, never run against a live LiveKit server. Not deployed.**
+**Status: proved against a real LiveKit server — two browsers, real media, 37 assertions.
+Never run against LiveKit Cloud. Not deployed.**
 
 LiveKit Cloud is built and sits beside Daily rather than replacing it. Daily is untouched and
 remains the default; the whole trial is reversible by one environment variable.
@@ -227,45 +228,75 @@ the difference between a credentials problem and a network one.
 | Claiming a platform grants nothing | same suite — a student calling itself a browser still gets a student's token |
 | Daily and the whiteboard still behave | `test:board` 44/44, `test:call-chat` 17/17, `test:call-leave` 9/9 |
 
-### What has not been checked, and cannot be here
+### Proved against a real LiveKit server
 
-- **No media has ever flowed.** No camera has been opened, no packet sent, no token presented to
-  a LiveKit server. `scripts/livekit-tests` bundles the real component over a fake provider,
-  precisely so the failure states can be produced on demand — it proves the interface, not the
-  call.
-- **A genuine two-person call.** That needs the credentials and two browsers. It is the first
-  thing to do.
-- **Behaviour on a real phone browser**, which is the market this is for.
+`sikshya/scripts/livekit-live` runs `livekit-server` — LiveKit's own open-source SFU, the same
+binary LiveKit Cloud runs — on the machine doing the testing, has the real API mint real join
+tokens against it, and opens two Chromium browsers with synthetic cameras. 37 assertions.
+
+| Claim | How |
+|---|---|
+| Media flows between two people | `framesDecoded` on the inbound RTP stream rises on both sides |
+| The tiles show a picture, not black | the live `<video>` is drawn into a canvas and the pixels read back — 100% non-black |
+| Every camera is capped at 480 lines | the decoder reports 640×480 at the *receiving* end |
+| One room per class, named `sikshya<id>` | asked of the server, so attendance still correlates |
+| Only the teacher may share a screen | read out of the server's own participant permissions |
+| Audio-only stops *incoming* video too | frame counts stop rising while the call stays up |
+| Muting and leaving reach the other side | the other browser's DOM, and the server's roster |
+| The API secret is in no response and no token | including the decoded JWT payload |
+
+The suite skips itself, loudly, when `livekit-server` is not installed.
+
+### What still has not been checked
+
+- **LiveKit Cloud itself.** The local SFU is the same software, so the code is proven; the
+  internet is not. No latency, no packet loss, no TURN relay, no cloud region, and no answer on
+  what this costs at 108,000 participant-minutes a month. The owner's own two-browser test
+  through LiveKit Cloud is still the thing to do.
+- **A real phone browser**, which is the market this is for. Chromium on a laptop is not a
+  budget Android handset on a 3G line.
 - **`docs.livekit.io` is blocked** by this environment's network egress. Everything is written
-  against the installed SDK's own TypeScript definitions and source, which are authoritative for
-  the API surface but say nothing about behaviour under a real network.
+  against the installed SDK's own TypeScript definitions and source — authoritative for the API
+  surface — plus, now, direct experiment against the server.
 - **The credentials check has never reached a real LiveKit project.** Its settings checks, its
-  token-signing check and its unreachable-network branch were all run and behave correctly —
-  the browser suite drives the whole card against a server pointed at a closed port, so
-  "cannot reach" is proven amber rather than red. The two branches that need livekit.cloud
-  itself — "accepted" and "refused" — could not be, for the same egress reason. Pressing
-  **Check video calls** is the first thing to do with real credentials, and if it is wrong it
-  will be wrong in an obvious way.
+  token-signing check and its unreachable-network branch were all run and behave correctly.
+  The two branches that need livekit.cloud itself — "accepted" and "refused" — could not be.
+  Pressing **Check video calls** is the first thing to do with real credentials.
 
-### One security finding, deliberately not fixed
+### The one security finding, now fixed
 
-**A join token outlives the class it was minted for.** It is valid for eight hours, so somebody
-who joins at 10:00 still holds a usable LiveKit credential at 17:00 — after the class ended,
-after a refund, after being unenrolled. The room route would refuse to mint them a *new* token,
-but it cannot take back the one they have.
+**A join token outlived the class it was minted for.** It was valid for eight hours, so somebody
+who joined at 10:00 still held a usable LiveKit credential at 17:00 — after the class ended,
+after a refund, after being unenrolled. The room route would refuse them a *new* token and could
+not take back the one they had.
 
-This is not a regression: Daily's meeting token has the same eight-hour life and the same
-property. It is written down because LiveKit makes a better answer available — the token's `ttl`
-could be set to expire at the class's own overtime cutoff, which is a value this codebase already
-computes in `lib/sessionStart.ts`. The class's clock would then be enforced by the provider as
-well as by us.
+It now expires at the class's own overtime cutoff — `cutoffAt` in `lib/sessionStart.ts`, ten
+minutes past the booked finish, the same hard stop everything else about the class clock runs on.
+A sixty-minute lesson mints a seventy-minute token instead of a four-hundred-and-eighty-minute
+one. Floored at five minutes so somebody admitted seconds before the cutoff is not handed a dead
+key, and still capped at eight hours.
 
-It was not done because it cannot be tested here. The question it turns on — whether LiveKit
-disconnects a participant when their token expires mid-call, or only checks it at join and on
-reconnect — is not answerable from the SDK's type definitions, and `docs.livekit.io` is blocked.
-Guessing wrong drops students in the middle of lessons, which is a great deal worse than the
-exposure it would close. It needs one experiment against a real server, and then it is a
-two-line change.
+**Why it was safe to change, and how that was settled.** The whole reason this sat unfixed is
+that nobody knew whether LiveKit hangs up on a participant when their token expires mid-call.
+If it did, a shorter token would drop students in the middle of lessons — much worse than the
+exposure it closes. The SDK's types do not say and the documentation is blocked, so the question
+was put to a real server:
+
+| Experiment | Result |
+|---|---|
+| Join with a token expired past the leeway | **Refused** — `token has invalid claims: token is expired` |
+| Stay connected on a 20-second token | **Survived 200 seconds past expiry**, no `Disconnected`, no `Reconnecting` |
+| Rejoin afterwards with the same token | **Refused** |
+
+So expiry is checked when the signal connection is established and never again: **a join token
+is a door key, not a heartbeat.** Shortening it cannot interrupt anyone already inside.
+
+One detail worth writing down, because it briefly produced the opposite conclusion: the join
+check allows roughly **sixty seconds of clock-skew leeway**. A first run tested a token expired
+by 2.5 seconds, saw it accepted in both dev and production mode, and looked like evidence that
+LiveKit ignores expiry entirely. It does not — a token 75 seconds past expiry is refused with a
+clean 401, and garbage is refused immediately. The five-minute floor exists because of that
+leeway.
 
 The rest of the pass found nothing: `LIVEKIT_API_SECRET` appears in no client file and no
 `EXPO_PUBLIC_` variable; exactly one route mints tokens and it does so only after

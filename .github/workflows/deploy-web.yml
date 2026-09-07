@@ -469,6 +469,23 @@ jobs:
           npm i -g playwright
           npx playwright install --with-deps chromium
 
+      # The SFU the two-person call test needs. Downloaded rather than built: the Go build takes
+      # about ten minutes and this is a released binary.
+      #
+      # `|| true` on purpose. If GitHub's release host is unreachable, the suite below finds no
+      # binary, prints how to get one and exits 0 — a skipped call test must never block a
+      # deploy, and a red step nobody can fix is a step people learn to ignore.
+      - name: Install livekit-server for the real-call test
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL "https://github.com/livekit/livekit/releases/download/v1.13.6/livekit_1.13.6_linux_amd64.tar.gz" \
+            | tar -xz -C "$HOME/bin" livekit-server || true
+          chmod +x "$HOME/bin/livekit-server" 2>/dev/null || true
+          echo "LIVEKIT_SERVER_BIN=$HOME/bin/livekit-server" >> "$GITHUB_ENV"
+          "$HOME/bin/livekit-server" --version || echo "livekit-server unavailable; the call test will skip itself"
+
       # Both of these drive the real app against the local API, so they share one build of it.
       # That build is deliberately thrown away and the deploy build made fresh below.
       - name: The app against a real server
@@ -533,6 +550,11 @@ jobs:
           # this presses it: a cut-off secret must read as cut off, and a server that cannot
           # reach LiveKit must not be reported as a wrong key.
           pnpm --filter @workspace/sikshya run test:video-check
+          # A genuine two-person call, against the real LiveKit SFU installed above.
+          # Everything else about LiveKit is tested over a fake provider or with tokens nobody
+          # sends anywhere; this is the only thing in the repository that proves media flows.
+          # It skips itself, loudly, when the binary is absent rather than failing.
+          pnpm --filter @workspace/sikshya run test:livekit-live
           # Starting a conversation, which for a long time only one side could do. It belongs
           # in *this* step and not after the deploy build: down there EXPO_PUBLIC_API_URL is the
           # production URL, so the built app talks to Railway, never signs in with the local
