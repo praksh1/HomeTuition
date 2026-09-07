@@ -1,6 +1,6 @@
 // `TrackSource` is re-exported by the server SDK, so this needs no second dependency — importing
 // it from `@livekit/protocol` directly would mean depending on a transitive package by name.
-import { AccessToken, TrackSource } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 import { logger } from "../logger";
 import { providerUserId } from "./participantIdentity";
 import { roomNameForSession } from "./roomName";
@@ -87,6 +87,17 @@ function ttlSecondsFor(expiresAt: number | undefined, now: number): number {
   if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return TOKEN_TTL_CEILING_SECONDS;
   const seconds = Math.ceil((expiresAt - now) / 1000);
   return Math.min(TOKEN_TTL_CEILING_SECONDS, Math.max(TOKEN_TTL_FLOOR_SECONDS, seconds));
+}
+
+/**
+ * The REST address, from the `wss://` one the app is given.
+ *
+ * LiveKit's HTTP API lives on the same host as the signalling socket; the scheme is the only
+ * difference. Converted in one place so a second caller cannot invent a slightly different
+ * rule — `lib/video/diagnose.ts` does the same conversion for the credentials check.
+ */
+function httpsFrom(url: string): string {
+  return url.trim().replace(/^wss:/, "https:").replace(/^ws:/, "http:");
 }
 
 interface LiveKitConfig {
@@ -211,8 +222,22 @@ export const livekitProvider: VideoProvider = {
       token.addGrant({
         roomJoin: true,
         room: roomNameForSession(sessionId),
-        canPublish: true,
         canSubscribe: true,
+        /**
+         * **A student's token permits nothing to be published.**
+         *
+         * This is the security boundary of the whole classroom, and it is a signed claim rather
+         * than a hidden button. Before this, every token said `canPublish: true` and the class
+         * relied on the app not offering a microphone control — which protects against a student
+         * who behaves, and against nobody else. A browser console was enough to publish into a
+         * lesson.
+         *
+         * A student is granted the floor by the *server*, in response to a teacher's decision,
+         * through `RoomServiceClient.updateParticipant`. That path is in `grantPublishing`
+         * below, it consults `lib/classroom/speakingFloor.ts`, and it is the only way a
+         * microphone or camera is ever permitted.
+         */
+        canPublish: options.isOwner,
         // The app's own signalling runs over its own WebSocket; nothing needs LiveKit's data
         // channel, and a capability nobody uses is a capability nobody is watching.
         canPublishData: false,
@@ -225,14 +250,15 @@ export const livekitProvider: VideoProvider = {
          */
         roomAdmin: options.isOwner,
         /**
-         * Screen sharing is the teacher's, enforced in the token rather than by hiding a control.
+         * The teacher publishes; a student starts with an empty list.
          *
-         * Everyone may send camera and microphone. Only an owner may send a screen — the same
-         * split the classroom already draws, now true even for a client that ignores the UI.
+         * An empty `canPublishSources` alongside `canPublish: false` is belt and braces on
+         * purpose: the two are separate fields in the protocol and a future SDK that reads one
+         * without the other must still refuse.
          */
         canPublishSources: options.isOwner
           ? [TrackSource.CAMERA, TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
-          : [TrackSource.CAMERA, TrackSource.MICROPHONE],
+          : [],
       });
 
       // Async in livekit-server-sdk v2. Returning the promise unawaited would hand the app a
@@ -241,6 +267,87 @@ export const livekitProvider: VideoProvider = {
     } catch (err) {
       logger.error({ err, sessionId }, "could not mint a LiveKit access token");
       return null;
+    }
+  },
+
+  /**
+   * Tell LiveKit what one participant may now publish.
+   *
+   * The other half of the boundary the token opened above. A student joins able to publish
+   * nothing; this is the single path by which that ever changes, and it runs on the server in
+   * response to a teacher's decision that `lib/membership.ts` has already authorised.
+   *
+   * **`updateParticipant`, not a new token.** Re-minting would mean handing the client a fresh
+   * credential and asking it to reconnect with it — a reconnection mid-lesson, and a moment
+   * where the old token is still valid. Updating the live participant applies immediately, to
+   * the participant the server names, and leaves nothing reusable behind.
+   *
+   * Returns whether it took effect rather than throwing: a student who dropped off a second
+   * before the teacher pressed the button is an ordinary event in a Nepali classroom, not an
+   * error worth failing a request over. The caller records the outcome either way.
+   */
+  async setPublishing(
+    sessionId: string | number,
+    userId: number,
+    rights: { canPublish: boolean; mic: boolean; camera: boolean },
+  ): Promise<boolean> {
+    const settings = config();
+    if (!settings) return false;
+    const identity = providerUserId(userId);
+    if (identity === null) return false;
+
+    const sources: TrackSource[] = [];
+    if (rights.mic) sources.push(TrackSource.MICROPHONE);
+    if (rights.camera) sources.push(TrackSource.CAMERA);
+
+    try {
+      const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
+      await rooms.updateParticipant(roomNameForSession(sessionId), identity, undefined, {
+        canSubscribe: true,
+        canPublish: rights.canPublish,
+        canPublishData: false,
+        canPublishSources: sources,
+      });
+      /*
+        Note what cannot be set from here: `roomAdmin` is not part of `ParticipantPermission`
+        at all. Moderator rights exist only as a claim in the signed token, and the token gets
+        them only from `isOwner`. So a permission update is structurally incapable of making
+        somebody a moderator — it is not a rule this code enforces, it is one the protocol does,
+        which is the better kind. The compiler rejected an earlier version of this that tried.
+      */
+      return true;
+    } catch (err) {
+      logger.warn({ err, sessionId, userId }, "could not update LiveKit publishing permission");
+      return false;
+    }
+  },
+
+  /**
+   * Stop a track that is already live.
+   *
+   * Revoking permission stops somebody publishing *again*; it does not by itself silence a
+   * microphone already open. A teacher pressing mute expects silence now, so the live track is
+   * muted as well — which is why `endDiscussion` and `muteAllStudents` call both halves.
+   */
+  async silence(sessionId: string | number, userId: number): Promise<boolean> {
+    const settings = config();
+    if (!settings) return false;
+    const identity = providerUserId(userId);
+    if (identity === null) return false;
+
+    try {
+      const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
+      const people = await rooms.listParticipants(roomNameForSession(sessionId));
+      const who = people.find((p) => p.identity === identity);
+      if (!who) return false;
+      for (const track of who.tracks ?? []) {
+        if (track.muted) continue;
+        await rooms.mutePublishedTrack(roomNameForSession(sessionId), identity, track.sid, true);
+      }
+      return true;
+    } catch (err) {
+      logger.warn({ err, sessionId, userId }, "could not stop a LiveKit track");
+      return false;
     }
   },
 };

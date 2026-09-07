@@ -56,6 +56,13 @@ export interface JoinOptions {
   expiresAt?: number;
 }
 
+/** What the classroom has decided one person may publish. Never assembled by a client. */
+export interface PublishRights {
+  canPublish: boolean;
+  mic: boolean;
+  camera: boolean;
+}
+
 /**
  * What a provider can do, so the app stops guessing.
  *
@@ -122,6 +129,27 @@ export interface VideoProvider {
    * about itself — `isOwner` comes from the server's own membership check.
    */
   joinToken(sessionId: string | number, options: JoinOptions): Promise<string | null>;
+
+  /**
+   * Change what one participant may publish, mid-call, on the server's authority.
+   *
+   * Optional because it is a real capability rather than a universal one: Daily's classroom is
+   * its own prebuilt interface and does not expose per-participant publish permissions to us,
+   * so `dailyProvider` does not implement this and the classroom refuses the teacher's control
+   * rather than pretending it worked. A provider that cannot enforce a permission must not be
+   * asked to look as though it did.
+   *
+   * @returns whether the provider actually applied it.
+   */
+  setPublishing?(sessionId: string | number, userId: number, rights: PublishRights): Promise<boolean>;
+
+  /**
+   * Stop whatever this participant currently has open.
+   *
+   * Separate from `setPublishing` because they answer different questions: one is "may they
+   * speak again", the other is "are they speaking now". A teacher pressing mute means both.
+   */
+  silence?(sessionId: string | number, userId: number): Promise<boolean>;
 }
 
 /** What the room route hands back. Named for what it is, not for whoever is providing it. */
