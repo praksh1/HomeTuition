@@ -119,12 +119,31 @@ teacher then decodes their camera, and the permission is taken back again.
 Also: `pnpm run typecheck` clean across four packages; `lint:design` unchanged at 111 hex /
 338 sizes; `git diff --check` clean.
 
-### Two pre-existing failures, verified not mine
+### CORRECTION: those two suites were never broken — I ran them wrongly
 
-`scripts/one-chat` and `scripts/teacher-leave` both fail on `recurring_days` fixtures. I ran both
-against **untouched `origin/main` in a throwaway worktree** and they fail identically there. Not
-caused by this work, and not fixed by it — they belong with whoever owns the recent monthly
-changes. Reported rather than silently skipped.
+**Recorded 7 September 2026, second stage. The claim below this line was wrong and is retained
+so the mistake is legible.**
+
+~~`scripts/one-chat` and `scripts/teacher-leave` both fail on `recurring_days` fixtures... not
+caused by this work.~~
+
+Both suites **pass**. They drive an externally-started API and need it running with
+`NODE_ENV=test`, which is how `.github/workflows/deploy-web.yml` has always started it. I started
+mine without it. `lib/payments.ts` then correctly refused the teacher-plan purchase — no provider
+is configured, so a non-test server must not activate a plan it took no money for — the suites
+discarded that response, and the run died four steps later on a `recurring_days` query reading
+`recurring_id = undefined`.
+
+Running them against untouched `main` reproduced it because I made the same mistake there, so the
+worktree check confirmed my error rather than the code's. **A comparison run only proves
+something when the one variable you did not think about is held constant too.**
+
+No fixture was stale and no production logic needed changing. What was real: a misconfiguration
+that surfaced four steps downstream as a SQL syntax error. `scripts/test-support/apiMode.mjs` now
+makes it announce itself at the point it happens, and both suites check the response they were
+throwing away. Verified by pointing `one-chat` at a non-test API and reading the explanation.
+
+Results with the API started correctly: `one-chat` 8/8, `teacher-leave` 17/17.
 
 ## Failures and corrections during the work
 
