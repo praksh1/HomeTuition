@@ -232,8 +232,11 @@ Phones still receive Daily. Nothing was deployed, merged, purchased or enabled.
 
 - Date: 2026-09-07 (same day, second brief)
 - Commits: `92369fb`, `7a164ef`
-- Status: **two of the five requested pieces done. The socket integration, the premium classroom
-  UI and the evidence wiring are NOT built.** Nothing is connected end to end yet.
+- Status at the time: **two of the five requested pieces done. The socket integration, the premium
+  classroom UI and the evidence wiring were NOT built.** Nothing was connected end to end.
+  *(Superseded by stage three below, which built all of them and proved the path in two real
+  browsers. Left standing rather than edited, because a worklog that rewrites what it said is a
+  worklog nobody can use to reconstruct a decision.)*
 
 ## Verification asked for before building
 
@@ -306,16 +309,173 @@ server I had left on port 8099 is the port `video-tests` uses for its LiveKit in
 that suite report the wrong provider; and Postgres must be started via
 `scratchpad/pg.sh` because the harness periodically resets permissions under `/tmp/claude-0`.
 
-## NOT built, and not started
+---
 
-The socket integration, the LiveKit permission wiring behind it, the premium classroom UI, the
-discussion layout and selective subscription, the evidence events, and all visual verification.
-**No button in the app does any of this yet.** The authority layer and the entitlement rule are
-ready for the socket to call them; nothing calls them.
+# Stage three — the socket, the screen, and the cost
+
+- Date: 2026-09-07 (same day, third brief)
+- Commits: `29d5cbe`, `0326abb`, `fa22970`, and this entry
+- Status: **built and proved end to end.** A student taps a button in the built app; the teacher's
+  other browser shows it; the record has it. The one thing still unproven is LiveKit Cloud itself
+  and a real phone, which VIDEO.md already names.
+
+## `29d5cbe` — the socket, the provider and the record
+
+`lib/classroom/floorProtocol.ts` reads a `floor_`-prefixed frame, authorises it, runs it and
+reports what changed. `lib/classroom/floorView.ts` decides what each side is told.
+`ws/classroomFloor.ts` holds the per-room state, loads the entitlement and the class's clock from
+the server, pushes decisions to LiveKit and writes the record. `classroomHub.ts` routes to it.
+
+Three rules hold for every one of the twenty-three actions: identity comes from the authenticated
+socket and never from the payload; a subject must be somebody the room already knows, so a teacher
+cannot invent a participant by naming a number; nothing works past the class's own cutoff.
+
+**Effects are derived, not declared.** Whose rights changed, whose live track must stop, whose row
+a viewer would now see differently — all worked out by comparing the floor before and after. A
+table would drift the first time somebody changed what an action does.
+
+### The security bug this exercise existed to find
+
+`publishRightsFor` returned `canPublish` from the *permission*, ignoring the mute. A muted student
+came out `{ canPublish: true, mic: false, camera: false }`, and `setPublishing` turned that into
+`canPublish: true` with an empty source list. From LiveKit's own `protocol/auth/grants.go`:
+
+```go
+func (v *VideoGrant) GetCanPublishSource(source livekit.TrackSource) bool {
+    if !v.GetCanPublish() { return false }
+    if len(v.CanPublishSources) == 0 { return true }
+```
+
+**An empty source list means *everything*, not nothing.** So pressing Mute granted that student a
+camera and a screen share. The flag is now derived from the two fields it summarises, and
+`setPublishing` refuses the combination independently. Read out of the vendored Go source rather
+than assumed; the `livekit-live` suite had already measured the other half — that a real server
+reads the fields the SDK omits from its JSON as false.
+
+### The record
+
+Grants, dismissals, mutes and discussion start/end go to `activity_log` as
+`classroom.floor.<action>`, plus a student's *first* raised hand and each speaking stint's length.
+Deliberately not a `spoke_ms` column on `session_participation`: this project pushes schema by
+hand while the API redeploys on every push, so an INSERT naming a column the database does not
+have yet would silently stop the whole attendance ledger for however long that gap lasted. The
+log needs no migration.
+
+### Where the floor is hidden entirely
+
+`capabilities.moderatesPublishing` is a new field on the provider contract — true for LiveKit,
+false for Daily and echo. On Daily every participant can unmute themselves, so a raised hand asks
+for something the student already has and a teacher's mute would be a button that does nothing
+while looking as though it had. The server refuses every floor action there; the app draws none.
+
+## `0326abb` — the screen
+
+`utils/classroomFloorUi.ts` decides what each person is *offered*, apart from how it is drawn:
+nine media states, two modes, an invitation that may or may not be outstanding and a camera limit
+that applies in one mode and not the other. It offers and never decides — every button carries an
+intent the server checks again from scratch.
+
+Two decisions worth keeping:
+
+- An invitation reads as `allowed-not-accepted`, because the invitation carries the permission and
+  the permission is inert until answered. Switching on the state alone would show "you can speak"
+  to a child who has no idea their teacher just asked them a question, so the offer reads
+  `invitedAt` and interrupts.
+- **Nothing is optimistic.** Press "Ask to speak" and the button does not move; the server answers
+  and the screen follows. A screen showing a permission before the SFU agreed sends a student to
+  press unmute and be refused with no explanation.
+
+One addition to the wire the brief did not list: `floor_accept` carries `mic` and `camera`
+independently, so a student answering a question can turn their camera off to save bandwidth
+without giving up their turn. The call panel already had that button; without this the teacher's
+list went on showing a camera nobody was sending.
+
+**Two things the rendered suite caught that the assertions had not.** Every control carried
+`flexBasis: 0`, making a row of three the same width whatever it said — on a 390-point phone the
+teacher's list read "Let them …", "Take t…", "Came…". And the harness drew every icon as an empty
+box, because `expo-font` was stubbed to nothing. Both fixed; clipping is now measured
+(`scrollWidth > clientWidth`) rather than looked at.
+
+`bundle-for-browser.mjs` gained three things every future component suite needs: a `.ttf` loader,
+`.js` treated as JSX, and `__DEV__` defined. The last one cost half an hour — without it
+`@expo/vector-icons` throws on first render, React unmounts the whole tree, and every assertion
+after that point fails against an empty page while `pageerror` stays quiet.
+
+## `fa22970` — what a discussion costs
+
+Sending a camera is one stream; receiving it in a class of ten is ten. `utils/discussionLayout.ts`
+caps tiles at four on a phone, six on a tablet, nine on a laptop, and hands
+`lib/video.setCameraPlan` the list of cameras to drop. Twelve people on a phone now cost three
+downloaded cameras instead of eleven, and the people off screen are *said* — "6 more people are
+here" — rather than silently vanishing.
+
+The hysteresis is measured in age from `now`, bucketed to four seconds. An earlier version floored
+the timestamp itself, which made the hold depend on where the clock fell inside its window — two
+people a second apart landed in one bucket or two according to the time of day. A tile must not
+change hands over a cough while somebody is reaching for it.
+
+**"Focus board / Focus discussion" was not built, deliberately.** That is the existing call window
+— compact, normal, full — which both classrooms already expose and which lives in one shared
+tested file precisely because the two screens had drifted apart over it once. A second control
+beside it would be that drift again.
+
+## `?` — proved end to end, in two browsers
+
+`sikshya/scripts/floor-live-tests` is the suite that answers the brief's own question. A real
+teacher and a real student, in two browser contexts, in one live class against a real API and a
+real database: the student taps **Ask to speak** in the built app, the frame crosses a real
+WebSocket, and the *teacher's other browser* shows the badge. Then the teacher grants, the student
+accepts, the teacher mutes, and every step is checked on both screens and in `activity_log`.
+
+22 checks, all passing. Two things it caught while being written, both worth keeping:
+
+- `PATCH /sessions/:id/status` does not exist; the status change is `PATCH /sessions/:id`. The
+  wrong path returned an HTML 404 and the suite's JSON parse blew up.
+- **A caller that sends no `X-Fadko-Platform` header is treated as a phone and served Daily.** That
+  is correct — an app build from before the header existed is a phone far more often than not —
+  and it means the precondition check reported `provider=daily` until the suite sent the header.
+  The precondition is asserted out loud for exactly that reason: without it, eight later failures
+  would have looked like broken code.
+
+**What it does not prove** is that media flows. Neither browser joins the LiveKit room. The API is
+pointed at a real `livekit-server` so `moderatesPublishing` is true and the permission push goes
+somewhere real, but the participants are not in that room, so the push finds nobody — a truthful
+outcome the server tolerates by design. The exact shape of what it sends is asserted separately by
+`api-server/scripts/floor-tests` against a recording stub, and that media flows at all is
+`scripts/livekit-live`.
+
+## Tests after stage three
+
+typecheck clean (4 packages) · api-server units 550 · floor rules 47 · protocol and disclosure 41 ·
+floor against a real database and a recording LiveKit 70 · video contract 43 · sessions 56 ·
+one-chat 8 · teacher-leave 17 · late-joiner 13 · attendance 74 · class-chat 36 · thread 25 ·
+board-persistence 7 · app units 303 · floor offers 29 · discussion layout 16 · floor UI rendered
+at four widths 168 · livekit component 92 · **floor end to end in two browsers 22** · classroom
+screens 47 · call-chat 17 · call-leave 9 · video-check 17 · gates 10 · lobby 90 · **livekit-live
+against a real SFU with real cameras 41** · design ratchet unchanged at 99 hex / 294 sizes.
+
+A repeat of a mistake the worklog already records: `livekit-live` failed six checks until I noticed
+I had left my own `livekit-server` on port 7880, which is the port that suite starts its own on.
+Its tokens were signed with a key the squatting server did not have. Kill stray servers before
+running it — the same lesson as the port 8099 note above, learned twice.
+
+Screenshots of fifteen states at 390, 412, 768 and 1440 in `/tmp/floor-shots`.
+
+## Still not done
+
+- **No real LiveKit Cloud account, and no real phone.** Everything here is measured against a
+  local `livekit-server` and a recording stub. The remaining gap is the same one VIDEO.md already
+  names.
+- **The discussion is uncapped on the sending side.** Ten students may all switch cameras on; the
+  receiving cap keeps each phone's download bounded, but the upload and the per-participant
+  minutes are not limited. Whether to cap it is a commercial decision, not a technical one.
+- The four missing schema facts under `7a164ef` still block the commercial half of entitlement.
 
 ## Next for Codex
 
-1. Review `speakingFloor.ts` and the entitlement rule before any UI is built on them.
-2. Decide the lapsed-plan commercial question, and whether the schema should gain a
-   paid-through/renewal record. Everything about "cancelled but paid" waits on that.
-3. Then the socket, in the order the brief lists it.
+1. Review the authority path end to end: `floorProtocol.ts` first, then `classroomFloor.ts`.
+2. The `publishRightsFor` fix is the one to look at hardest — it is a security change and the
+   reasoning is quoted from LiveKit's source in the file.
+3. Decide the lapsed-plan commercial question, and whether the schema should gain a
+   paid-through/renewal record.
+4. Decide whether a discussion should cap how many students may hold a camera at once.

@@ -271,7 +271,7 @@ The suite skips itself, loudly, when `livekit-server` is not installed.
   The two branches that need livekit.cloud itself — "accepted" and "refused" — could not be.
   Pressing **Check video calls** is the first thing to do with real credentials.
 
-### The one security finding, now fixed
+### The first security finding: a token that outlived its class
 
 **A join token outlived the class it was minted for.** It was valid for eight hours, so somebody
 who joined at 10:00 still held a usable LiveKit credential at 17:00 — after the class ended,
@@ -311,6 +311,74 @@ The rest of the pass found nothing: `LIVEKIT_API_SECRET` appears in no client fi
 `lib/membership.ts` has admitted the caller and the session window has been checked; moderator
 rights and screen sharing come from `isSessionTeacher` and are asserted in the token's decoded
 claims rather than in the UI; and the platform header confers nothing, which is itself tested.
+
+### The classroom floor
+
+The trial's second half, and the reason LiveKit is worth the price at all: a class where the
+teacher decides who speaks. Daily cannot do this — everybody in a Prebuilt room may unmute
+themselves — so it is a new capability on the provider contract, `moderatesPublishing`, and the
+whole feature hides itself where that is false rather than drawing buttons the provider would
+ignore.
+
+How it is put together, and why in four files rather than one:
+
+| File | Job |
+|---|---|
+| `api-server/src/lib/classroom/speakingFloor.ts` | What the rules *are*. Pure — no clock, no database. |
+| `api-server/src/lib/classroom/floorProtocol.ts` | Who may ask for them, and what a frame may mean. |
+| `api-server/src/lib/classroom/floorView.ts` | What each side is told. A student's payload has no way to express another student. |
+| `api-server/src/ws/classroomFloor.ts` | The state, the provider calls, the record. |
+
+Three rules hold for all twenty-three actions: **identity is the socket's, never the payload's**;
+a subject must be somebody the room already knows, so a teacher cannot invent a participant by
+naming a number; and nothing at all works past the class's own cutoff.
+
+The app's half is `utils/classroomFloorUi.ts` (what each person is offered) and
+`components/ClassroomFloor.tsx` (how it is drawn). Nothing there is optimistic: a button does not
+move until the server has answered, because a screen that showed a permission before the SFU
+agreed would send a student to press unmute and be refused with no explanation.
+
+### The second: muting a student granted them a screen share
+
+**Muting a student granted them a camera and a screen share.**
+
+`publishRightsFor` derived `canPublish` from the permission and ignored the mute, so a muted
+student came out `{ canPublish: true, mic: false, camera: false }`, and `setPublishing` sent that
+to LiveKit as `canPublish: true` with an empty source list. From LiveKit's own
+`protocol/auth/grants.go`, which is what the SFU runs:
+
+```go
+func (v *VideoGrant) GetCanPublishSource(source livekit.TrackSource) bool {
+    if !v.GetCanPublish() { return false }
+    // don't differentiate between nil and unset, since that distinction doesn't survive serialization
+    if len(v.CanPublishSources) == 0 { return true }
+```
+
+**An empty source list means *unrestricted*, not *nothing*.** The one thing standing between that
+and a child publishing a screen share into a class was `canPublish`, which was true.
+
+`canPublish` is now derived from the two fields it summarises, so the three cannot disagree, and
+`setPublishing` refuses the same combination independently — a rule this sharp is worth holding in
+two places. Regression tests are exhaustive over the flags rather than over the actions, because
+the danger is a *combination* some future action reaches.
+
+### What a discussion costs, and the lever that changes it
+
+Sending a camera is one stream. Receiving it in a class of ten is ten. So the bill is settled on
+the receiving side, and the only saving that saves anything is **not subscribing**:
+`adaptiveStream` asks for the smallest simulcast layer a tile needs and `dynacast` stops encoding
+a layer nobody wants, but both still carry a stream.
+
+`utils/discussionLayout.ts` caps visible tiles — four on a phone, six on a tablet, nine on a
+laptop — and hands `lib/video.setCameraPlan` the cameras to drop. Twelve people on a phone cost
+three downloaded cameras instead of eleven. The teacher and the featured student never lose a
+tile; everybody else is ordered by how recently they spoke, with four seconds of hysteresis so a
+tile does not change hands while a thumb is reaching for it. People off screen are *said* — "6
+more people are here" — rather than silently vanishing.
+
+**Not capped: how many students may switch a camera *on*.** The receiving cap bounds each phone's
+download; the upload and the per-participant minutes are not limited. Whether a discussion should
+have a sending cap is a commercial decision for the owner, not a technical one.
 
 ### Two instructions that collided, and how
 
