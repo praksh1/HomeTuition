@@ -5,7 +5,6 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -16,11 +15,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { KeyboardAwareScrollViewCompat } from "@/components/KeyboardAwareScrollViewCompat";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN, radius as layoutRadius, readingWidth, space as layoutSpace } from "@/constants/layout";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 
 import MessageAttachment from "@/components/MessageAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
-import { applyReaction, attachmentLabel, REACTIONS, type Attachment, type Reaction } from "@/utils/reactions";
+import { applyReaction, REACTIONS, type Attachment, type Reaction } from "@/utils/reactions";
+import { mergeMonthlyChatCatchUp, monthlyChatCatchUpPath } from "@/utils/monthlyJourneyState";
 
 interface ChatMessage {
   id: number;
@@ -56,6 +58,7 @@ interface ChatView {
  */
 export default function MonthlyChatScreen() {
   const colors = useColors();
+  const { t, gutter, space } = useLayout();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const classId = Number(id);
@@ -72,7 +75,11 @@ export default function MonthlyChatScreen() {
   const listRef = useRef<FlatList<ChatMessage>>(null);
 
   const load = useCallback(async () => {
-    if (!Number.isInteger(classId)) return;
+    if (!Number.isInteger(classId)) {
+      setProblem("This class link is not valid.");
+      setLoading(false);
+      return;
+    }
     try {
       setView(await apiGet<ChatView>(`/monthly/classes/${classId}/messages`));
       setProblem(null);
@@ -98,16 +105,9 @@ export default function MonthlyChatScreen() {
     const timer = setInterval(() => {
       void (async () => {
         const newest = view?.messages[view.messages.length - 1]?.id;
-        if (newest === undefined) return;
         try {
-          const update = await apiGet<ChatView>(`/monthly/classes/${classId}/messages?after=${newest}`);
-          if (update.messages.length > 0) {
-            setView((prev) =>
-              prev ? { ...prev, messages: [...prev.messages, ...update.messages], pinned: update.pinned } : prev,
-            );
-          } else if (update.pinned.length !== (view?.pinned.length ?? 0)) {
-            setView((prev) => (prev ? { ...prev, pinned: update.pinned } : prev));
-          }
+          const update = await apiGet<ChatView>(monthlyChatCatchUpPath(classId, newest));
+          setView((prev) => (prev ? mergeMonthlyChatCatchUp(prev, update) : prev));
         } catch {
           // A failed catch-up is not worth an error on screen; the next one will do.
         }
@@ -208,29 +208,53 @@ export default function MonthlyChatScreen() {
     );
   }
 
+  if (!view) {
+    return (
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { paddingTop: insets.top + space.sm, paddingHorizontal: gutter, borderBottomColor: colors.border }]}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
+            <Feather name="arrow-left" size={22} color={colors.foreground} />
+          </TouchableOpacity>
+          <Text style={[t.title3, { color: colors.foreground }]}>Class chat</Text>
+          <View style={styles.backBtn} />
+        </View>
+        <View style={[styles.loadError, { paddingHorizontal: gutter }]}>
+          <Feather name="alert-circle" size={24} color={colors.destructive} />
+          <Text style={[t.title3, { color: colors.foreground }]}>Conversation unavailable</Text>
+          <Text style={[t.callout, styles.loadErrorText, { color: colors.mutedForeground }]}>{problem ?? "Could not load the conversation."}</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Try loading the conversation again" onPress={() => { setLoading(true); void load(); }} style={[styles.retryBtn, { borderColor: colors.primary }]}>
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
+      <View style={[styles.header, { paddingTop: insets.top + space.sm, paddingHorizontal: gutter, borderBottomColor: colors.border }]}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Class chat</Text>
+        <Text style={[t.title3, { color: colors.foreground }]}>Class chat</Text>
         <View style={styles.backBtn} />
       </View>
 
       {(view?.pinned.length ?? 0) > 0 && (
-        <View style={[styles.pinnedBar, { backgroundColor: colors.accent + "10", borderBottomColor: colors.border }]}>
+        <View style={[styles.pinnedBar, { backgroundColor: colors.warnSoft, borderBottomColor: colors.border, paddingHorizontal: gutter }]}>
           {view!.pinned.map((message) => (
             <View key={message.id} style={styles.pinnedRow}>
-              <Feather name="bookmark" size={15} color={colors.accent} />
-              <Text style={[styles.pinnedText, { color: colors.foreground }]} numberOfLines={3}>
+              <Feather name="bookmark" size={15} color={colors.warn} />
+              <Text style={[t.callout, styles.pinnedText, { color: colors.foreground }]} numberOfLines={3}>
                 {message.body}
               </Text>
               {view!.canPin && (
                 <TouchableOpacity
                   testID={`unpin-${message.id}`}
                   onPress={() => void togglePin(message)}
-                  hitSlop={10}
+                  style={styles.iconBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remove pinned message"
                 >
                   <Feather name="x" size={16} color={colors.mutedForeground} />
                 </TouchableOpacity>
@@ -242,26 +266,26 @@ export default function MonthlyChatScreen() {
 
       <FlatList
         ref={listRef}
-        data={view?.messages ?? []}
+        data={view.messages}
         keyExtractor={(m) => String(m.id)}
-        contentContainerStyle={[styles.list, { paddingBottom: 16 }]}
+        contentContainerStyle={[styles.list, { paddingHorizontal: gutter, paddingBottom: space.md }]}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         ListHeaderComponent={
-          (view?.earlier ?? 0) > 0 ? (
-            <Text style={[styles.earlier, { color: colors.mutedForeground }]}>
-              {view!.earlier} earlier {view!.earlier === 1 ? "message" : "messages"}
+          view.earlier > 0 ? (
+            <Text style={[t.caption, styles.earlier, { color: colors.mutedForeground }]}>
+              {view.earlier} earlier {view.earlier === 1 ? "message" : "messages"}
             </Text>
           ) : null
         }
         ListEmptyComponent={
-          <Text style={[styles.earlier, { color: colors.mutedForeground }]}>
+          <Text style={[t.callout, styles.earlier, { color: colors.mutedForeground }]}>
             Nothing has been said yet.
           </Text>
         }
         renderItem={({ item }) => (
           <Bubble
             message={item}
-            canPin={view?.canPin === true}
+            canPin={view.canPin === true}
             onPin={() => { setPicking(null); void togglePin(item); }}
             open={picking === item.id}
             onLongPress={() => setPicking(picking === item.id ? null : item.id)}
@@ -272,13 +296,13 @@ export default function MonthlyChatScreen() {
       />
 
       {problem && (
-        <Text style={[styles.problem, { color: colors.destructive, borderTopColor: colors.border }]}>{problem}</Text>
+        <Text style={[t.caption, styles.problem, { color: colors.destructive, borderTopColor: colors.border }]}>{problem}</Text>
       )}
 
-      {view?.readOnly ? (
-        <View style={[styles.readOnly, { borderTopColor: colors.border, paddingBottom: insets.bottom + 12 }]}>
+      {view.readOnly ? (
+        <View style={[styles.readOnly, { borderTopColor: colors.border, paddingBottom: insets.bottom + layoutSpace.sm }]}>
           <Feather name="lock" size={15} color={colors.mutedForeground} />
-          <Text style={[styles.readOnlyText, { color: colors.mutedForeground }]}>
+          <Text style={[t.caption, styles.readOnlyText, { color: colors.mutedForeground }]}>
             Your month has ended. You can read this, but not post.
           </Text>
         </View>
@@ -292,20 +316,23 @@ export default function MonthlyChatScreen() {
                 size={14}
                 color={colors.primary}
               />
-              <Text style={[styles.fileName, { color: colors.foreground }]} numberOfLines={1}>{pending.name}</Text>
-              <TouchableOpacity onPress={() => setPending(null)} activeOpacity={0.7} testID="class-remove-attachment">
+              <Text style={[t.caption, styles.fileName, { color: colors.foreground }]} numberOfLines={1}>{pending.name}</Text>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Remove attachment ${pending.name}`} style={styles.iconBtn} onPress={() => setPending(null)} activeOpacity={0.7} testID="class-remove-attachment">
                 <Feather name="x" size={14} color={colors.mutedForeground} />
               </TouchableOpacity>
             </View>
           )}
 
-          <View style={[styles.composer, { borderTopColor: colors.border, paddingBottom: insets.bottom + 10 }]}>
+          <View style={[styles.composer, { borderTopColor: colors.border, paddingBottom: insets.bottom + layoutSpace.sm }]}>
             <TouchableOpacity
               testID="monthly-chat-attach"
               onPress={() => void pickFile()}
               disabled={sending}
               style={[styles.sendBtn, { backgroundColor: colors.input }]}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Attach an image or PDF"
+              accessibilityState={{ disabled: sending }}
             >
               <Feather name="paperclip" size={18} color={colors.mutedForeground} />
             </TouchableOpacity>
@@ -316,7 +343,8 @@ export default function MonthlyChatScreen() {
               placeholder="Message the class"
               placeholderTextColor={colors.mutedForeground}
               multiline
-              style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
+              accessibilityLabel="Message the class"
+              style={[t.body, styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.foreground }]}
             />
             <TouchableOpacity
               testID="monthly-chat-send"
@@ -327,14 +355,17 @@ export default function MonthlyChatScreen() {
                 { backgroundColor: draft.trim().length === 0 && !pending ? colors.input : colors.primary },
               ]}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              accessibilityState={{ disabled: sending || (draft.trim().length === 0 && !pending) }}
             >
               {sending ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
+                <ActivityIndicator size="small" color={colors.primaryForeground} />
               ) : (
                 <Feather
                   name="send"
                   size={18}
-                  color={draft.trim().length === 0 && !pending ? colors.mutedForeground : "#FFFFFF"}
+                  color={draft.trim().length === 0 && !pending ? colors.mutedForeground : colors.primaryForeground}
                 />
               )}
             </TouchableOpacity>
@@ -366,6 +397,7 @@ function Bubble({
   onProblem: (reason: string) => void;
 }) {
   const colors = useColors();
+  const { t } = useLayout();
   const mine = message.mine;
   const files = message.attachments ?? [];
   const reactions = message.reactions ?? [];
@@ -382,6 +414,8 @@ function Bubble({
           activeOpacity={0.85}
           onLongPress={onLongPress}
           delayLongPress={250}
+          accessibilityRole="button"
+          accessibilityLabel={`Message from ${mine ? "you" : message.senderName}. Long press for reactions${canPin ? " or pinning" : ""}.`}
           style={[
             styles.bubble,
             mine
@@ -390,25 +424,25 @@ function Bubble({
           ]}
         >
           {!mine && (
-            <Text style={[styles.sender, { color: message.senderRole === "teacher" ? colors.primary : colors.mutedForeground }]}>
+            <Text style={[t.caption, styles.sender, { color: message.senderRole === "teacher" ? colors.primary : colors.mutedForeground }]}>
               {message.senderName}
               {message.senderRole === "teacher" ? " · teacher" : ""}
             </Text>
           )}
           {!!message.body && (
-            <Text style={[styles.body, { color: mine ? "#FFFFFF" : colors.foreground }]}>{message.body}</Text>
+            <Text style={[t.body, { color: mine ? colors.primaryForeground : colors.foreground }]}>{message.body}</Text>
           )}
 
           {files.map((f) => (
-            <View key={f.fileKey} style={{ marginTop: message.body ? 8 : 0 }}>
+            <View key={f.fileKey} style={{ marginTop: message.body ? layoutSpace.xs : 0 }}>
               <MessageAttachment file={f} mine={mine} onProblem={onProblem} />
             </View>
           ))}
 
           {message.pinnedAt && (
             <View style={styles.pinTag}>
-              <Feather name="bookmark" size={11} color={mine ? "#FFFFFFCC" : colors.accent} />
-              <Text style={[styles.pinTagText, { color: mine ? "#FFFFFFCC" : colors.accent }]}>Pinned</Text>
+              <Feather name="bookmark" size={11} color={mine ? colors.onInverseMuted : colors.warn} />
+              <Text style={[t.overline, { color: mine ? colors.onInverseMuted : colors.warn }]}>Pinned</Text>
             </View>
           )}
         </TouchableOpacity>
@@ -422,17 +456,19 @@ function Bubble({
               onPress={() => onReact(r.emoji)}
               activeOpacity={0.75}
               testID={`class-reaction-${message.id}-${r.emoji}`}
+              accessibilityRole="button"
+              accessibilityLabel={`${r.mine ? "Remove your" : "Add"} ${r.emoji} reaction. ${r.count} total.`}
               style={[
                 styles.reactionChip,
                 {
-                  backgroundColor: r.mine ? colors.primary + "1F" : colors.muted,
+                  backgroundColor: r.mine ? colors.actionSoft : colors.muted,
                   borderColor: r.mine ? colors.primary : colors.border,
                 },
               ]}
             >
-              <Text style={styles.reactionEmoji}>{r.emoji}</Text>
+              <Text style={t.caption}>{r.emoji}</Text>
               {r.count > 1 && (
-                <Text style={[styles.reactionCount, { color: colors.mutedForeground }]}>{r.count}</Text>
+                <Text style={[t.overline, { color: colors.mutedForeground }]}>{r.count}</Text>
               )}
             </TouchableOpacity>
           ))}
@@ -453,8 +489,10 @@ function Bubble({
                 activeOpacity={0.7}
                 testID={`class-pick-${message.id}-${emoji}`}
                 style={styles.pickerItem}
+                accessibilityRole="button"
+                accessibilityLabel={`React ${emoji}`}
               >
-                <Text style={styles.pickerEmoji}>{emoji}</Text>
+                <Text style={t.title2}>{emoji}</Text>
               </TouchableOpacity>
             ))}
             {canPin && (
@@ -462,10 +500,12 @@ function Bubble({
                 onPress={onPin}
                 activeOpacity={0.7}
                 testID={`class-pin-${message.id}`}
-                style={[styles.pickerItem, { flexDirection: "row", alignItems: "center", gap: 4 }]}
+                style={[styles.pickerItem, { flexDirection: "row", alignItems: "center", gap: layoutSpace.xxs }]}
+                accessibilityRole="button"
+                accessibilityLabel={message.pinnedAt ? "Unpin message" : "Pin message"}
               >
-                <Feather name="bookmark" size={14} color={colors.accent} />
-                <Text style={[styles.pinTagText, { color: colors.accent }]}>
+                <Feather name="bookmark" size={14} color={colors.warn} />
+                <Text style={[t.overline, { color: colors.warn }]}>
                   {message.pinnedAt ? "Unpin" : "Pin"}
                 </Text>
               </TouchableOpacity>
@@ -479,68 +519,63 @@ function Bubble({
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  messageBlock: { gap: 4 },
-  fileChip: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
-  fileName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
-  reactionRow: { flexDirection: "row", gap: 4, flexWrap: "wrap" },
-  reactionChip: { flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 12, borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2 },
-  reactionEmoji: { fontSize: 13 },
-  reactionCount: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  picker: { flexDirection: "row", alignItems: "center", gap: 2, borderRadius: 20, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 4 },
-  pickerItem: { paddingHorizontal: 5, paddingVertical: 3 },
-  pickerEmoji: { fontSize: 19 },
-  pendingRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 9, borderTopWidth: 1 },
+  messageBlock: { gap: layoutSpace.xxs },
+  fileName: { flex: 1 },
+  reactionRow: { flexDirection: "row", gap: layoutSpace.xxs, flexWrap: "wrap" },
+  reactionChip: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: layoutSpace.xxs, borderRadius: layoutRadius.sm, borderWidth: 1, minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, paddingHorizontal: layoutSpace.xs },
+  picker: { flexDirection: "row", alignItems: "center", gap: layoutSpace.xxs, borderRadius: layoutRadius.lg, borderWidth: 1, paddingHorizontal: layoutSpace.xs, paddingVertical: layoutSpace.xxs },
+  pickerItem: { minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, paddingHorizontal: layoutSpace.xxs, alignItems: "center", justifyContent: "center" },
+  pendingRow: { flexDirection: "row", alignItems: "center", gap: layoutSpace.xs, paddingHorizontal: layoutSpace.md, paddingVertical: layoutSpace.xs, borderTopWidth: 1 },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingBottom: 12,
+    paddingBottom: layoutSpace.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  headerTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
-  pinnedBar: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, gap: 8 },
-  pinnedRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
-  pinnedText: { flex: 1, fontSize: 13.5, fontFamily: "Inter_500Medium", lineHeight: 19 },
-  list: { padding: 14, gap: 8 },
-  earlier: { fontSize: 12.5, fontFamily: "Inter_400Regular", textAlign: "center", paddingVertical: 12 },
+  backBtn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" },
+  iconBtn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" },
+  pinnedBar: { paddingVertical: layoutSpace.xs, borderBottomWidth: StyleSheet.hairlineWidth, gap: layoutSpace.xs },
+  pinnedRow: { flexDirection: "row", alignItems: "flex-start", gap: layoutSpace.xs },
+  pinnedText: { flex: 1 },
+  list: { gap: layoutSpace.xs, width: "100%", maxWidth: readingWidth, alignSelf: "center" },
+  earlier: { textAlign: "center", paddingVertical: layoutSpace.sm },
   bubbleRow: { flexDirection: "row" },
   bubbleLeft: { justifyContent: "flex-start" },
   bubbleRight: { justifyContent: "flex-end" },
-  bubble: { maxWidth: "82%", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
-  sender: { fontSize: 12, fontFamily: "Inter_600SemiBold", marginBottom: 3 },
-  body: { fontSize: 15, fontFamily: "Inter_400Regular", lineHeight: 21 },
-  pinTag: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 5 },
-  pinTagText: { fontSize: 11, fontFamily: "Inter_500Medium" },
-  problem: { fontSize: 13, fontFamily: "Inter_400Regular", padding: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  bubble: { maxWidth: "82%", minHeight: HIT_SLOP_MIN, borderRadius: layoutRadius.md, paddingHorizontal: layoutSpace.sm, paddingVertical: layoutSpace.xs, justifyContent: "center" },
+  sender: { marginBottom: layoutSpace.xxs },
+  pinTag: { flexDirection: "row", alignItems: "center", gap: layoutSpace.xxs, marginTop: layoutSpace.xxs },
+  problem: { padding: layoutSpace.sm, borderTopWidth: StyleSheet.hairlineWidth },
   composer: {
     flexDirection: "row",
     alignItems: "flex-end",
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingTop: 10,
+    gap: layoutSpace.xs,
+    paddingHorizontal: layoutSpace.sm,
+    paddingTop: layoutSpace.xs,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   input: {
     flex: 1,
-    maxHeight: 120,
-    borderRadius: 20,
+    minHeight: HIT_SLOP_MIN,
+    maxHeight: layoutSpace.huge + layoutSpace.huge + layoutSpace.xl,
+    borderRadius: layoutRadius.lg,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 16,
-    paddingVertical: Platform.OS === "ios" ? 12 : 8,
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
+    paddingHorizontal: layoutSpace.md,
+    paddingVertical: layoutSpace.sm,
   },
-  sendBtn: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  sendBtn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: layoutRadius.pill, alignItems: "center", justifyContent: "center" },
   readOnly: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingTop: 14,
+    gap: layoutSpace.xs,
+    paddingTop: layoutSpace.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
-  readOnlyText: { fontSize: 13, fontFamily: "Inter_400Regular" },
+  readOnlyText: { flexShrink: 1 },
+  loadError: { flex: 1, alignItems: "center", justifyContent: "center", gap: layoutSpace.sm, width: "100%", maxWidth: readingWidth, alignSelf: "center" },
+  loadErrorText: { textAlign: "center" },
+  retryBtn: { minHeight: HIT_SLOP_MIN, borderWidth: 1, borderRadius: layoutRadius.sm, paddingHorizontal: layoutSpace.md, alignItems: "center", justifyContent: "center" },
 });

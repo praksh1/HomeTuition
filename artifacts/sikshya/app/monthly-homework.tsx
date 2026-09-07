@@ -1,11 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useReducer, useState } from "react";
 import {
   ActivityIndicator,
-  Linking,
-  Platform,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -17,10 +15,13 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN, radius as layoutRadius, readingWidth, space as layoutSpace } from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet, apiPost, ApiError } from "@/utils/api";
 import { openAttachment } from "@/utils/openAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
+import { submissionsLoadReducer } from "@/utils/monthlyJourneyState";
 
 interface Submission {
   id: number;
@@ -66,6 +67,7 @@ interface HomeworkView {
  */
 export default function MonthlyHomeworkScreen() {
   const colors = useColors();
+  const { t, gutter, space } = useLayout();
   const insets = useSafeAreaInsets();
   const { formatBoth } = useDates();
   const { id } = useLocalSearchParams<{ id?: string }>();
@@ -78,7 +80,12 @@ export default function MonthlyHomeworkScreen() {
   const [setting, setSetting] = useState(false);
 
   const load = useCallback(async () => {
-    if (!Number.isInteger(classId)) return;
+    if (!Number.isInteger(classId)) {
+      setProblem("This class link is not valid.");
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     try {
       setView(await apiGet<HomeworkView>(`/monthly/classes/${classId}/homework`));
       setProblem(null);
@@ -104,13 +111,13 @@ export default function MonthlyHomeworkScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
+      <View style={[styles.header, { paddingTop: insets.top + space.sm, paddingHorizontal: gutter, borderBottomColor: colors.border }]}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Homework</Text>
+        <Text style={[t.title3, { color: colors.foreground }]}>Homework</Text>
         {view?.asTeacher ? (
-          <TouchableOpacity testID="homework-new" onPress={() => setSetting((v) => !v)} style={styles.backBtn} hitSlop={8}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={setting ? "Close new homework form" : "Set new homework"} testID="homework-new" onPress={() => setSetting((v) => !v)} style={styles.backBtn}>
             <Feather name={setting ? "x" : "plus"} size={22} color={colors.primary} />
           </TouchableOpacity>
         ) : (
@@ -119,7 +126,7 @@ export default function MonthlyHomeworkScreen() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]}
+        contentContainerStyle={[styles.scroll, { paddingHorizontal: gutter, paddingBottom: insets.bottom + space.xxxl }]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -133,9 +140,15 @@ export default function MonthlyHomeworkScreen() {
         showsVerticalScrollIndicator={false}
       >
         {problem && (
-          <View style={[styles.notice, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "30" }]}>
+          <View style={[styles.notice, { backgroundColor: colors.destructiveSoft, borderColor: colors.destructive }]}>
             <Feather name="alert-circle" size={16} color={colors.destructive} />
-            <Text style={[styles.noticeText, { color: colors.destructive }]}>{problem}</Text>
+            <View style={styles.noticeCopy}>
+              <Text style={[t.bodyStrong, { color: colors.destructive }]}>Homework did not load</Text>
+              <Text style={[t.callout, { color: colors.foreground }]}>{problem}</Text>
+              {!view && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Try loading homework again" onPress={() => void load()} style={styles.retryBtn}>
+                <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+              </TouchableOpacity>}
+            </View>
           </View>
         )}
 
@@ -149,9 +162,9 @@ export default function MonthlyHomeworkScreen() {
           />
         )}
 
-        {(view?.homework.length ?? 0) === 0 && !setting && (
+        {view && view.homework.length === 0 && !setting && (
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.empty, { color: colors.mutedForeground }]}>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>
               {view?.asTeacher
                 ? "You have not set any homework yet. Tap + to set some."
                 : "Your teacher has not set any homework yet."}
@@ -178,6 +191,7 @@ export default function MonthlyHomeworkScreen() {
 
 function SetHomework({ classId, onDone }: { classId: number; onDone: () => Promise<void> }) {
   const colors = useColors();
+  const { t } = useLayout();
   const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
   const [file, setFile] = useState<UploadableFile | null>(null);
@@ -217,7 +231,7 @@ function SetHomework({ classId, onDone }: { classId: number; onDone: () => Promi
 
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <Text style={[styles.cardTitle, { color: colors.foreground }]}>Set homework</Text>
+      <Text style={[t.title3, { color: colors.foreground }]}>Set homework</Text>
 
       <TextInput
         testID="homework-title"
@@ -225,7 +239,7 @@ function SetHomework({ classId, onDone }: { classId: number; onDone: () => Promi
         onChangeText={setTitle}
         placeholder="Algebra sheet 3"
         placeholderTextColor={colors.mutedForeground}
-        style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
+        style={[t.body, styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground }]}
       />
       <TextInput
         testID="homework-instructions"
@@ -237,6 +251,7 @@ function SetHomework({ classId, onDone }: { classId: number; onDone: () => Promi
         style={[
           styles.input,
           styles.multiline,
+          t.body,
           { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
         ]}
       />
@@ -244,16 +259,19 @@ function SetHomework({ classId, onDone }: { classId: number; onDone: () => Promi
       {/* The sheet is optional on purpose: a teacher working from a textbook has nothing to attach. */}
       <FilePickerRow file={file} onPick={setFile} label="Attach a question sheet (optional)" testID="homework-file" />
 
-      {problem && <Text style={[styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
+      {problem && <Text style={[t.caption, styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
 
       <TouchableOpacity
         testID="homework-set"
         onPress={() => void submit()}
         disabled={busy}
-        style={[styles.primaryBtn, { backgroundColor: colors.primary, opacity: busy ? 0.6 : 1 }]}
+        accessibilityRole="button"
+        accessibilityLabel="Set homework"
+        accessibilityState={{ disabled: busy }}
+        style={[styles.primaryBtn, { backgroundColor: busy ? colors.muted : colors.primary }]}
         activeOpacity={0.85}
       >
-        {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryBtnText}>Set homework</Text>}
+        {busy ? <ActivityIndicator color={colors.mutedForeground} /> : <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Set homework</Text>}
       </TouchableOpacity>
     </View>
   );
@@ -275,29 +293,32 @@ function HomeworkCard({
   onChanged: () => Promise<void>;
 }) {
   const colors = useColors();
+  const { t, numeric } = useLayout();
   const [open, setOpen] = useState(false);
 
   return (
     <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
       <View style={styles.cardHead}>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.cardTitle, { color: colors.foreground }]}>{homework.title}</Text>
-          <Text style={[styles.cardWhen, { color: colors.mutedForeground }]}>
+          <Text style={[t.title3, { color: colors.foreground }]}>{homework.title}</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>
             Set {formatBoth(homework.createdAt)}
             {homework.status === "closed" ? " · closed" : ""}
           </Text>
         </View>
         {asTeacher && (
-          <View style={[styles.countPill, { backgroundColor: colors.primary + "14" }]}>
-            <Text style={[styles.countText, { color: colors.primary }]}>
-              {homework.handedIn ?? 0} in · {homework.marked ?? 0} marked
+          <View style={[styles.countPill, { backgroundColor: colors.actionSoft }]}>
+            <Text style={[t.caption, numeric, { color: colors.primary }]}>
+              {homework.handedIn === undefined || homework.marked === undefined
+                ? "Submission totals unavailable"
+                : `${homework.handedIn} handed in · ${homework.marked} marked`}
             </Text>
           </View>
         )}
       </View>
 
       {homework.instructions && (
-        <Text style={[styles.instructions, { color: colors.foreground }]}>{homework.instructions}</Text>
+        <Text style={[t.body, styles.instructions, { color: colors.foreground }]}>{homework.instructions}</Text>
       )}
 
       {homework.fileKey && <OpenFileButton fileKey={homework.fileKey} label="Open the question sheet" />}
@@ -309,8 +330,11 @@ function HomeworkCard({
             onPress={() => setOpen((v) => !v)}
             style={[styles.secondaryBtn, { borderColor: colors.border }]}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={open ? `Hide submissions for ${homework.title}` : `Show submissions for ${homework.title}`}
+            accessibilityState={{ expanded: open }}
           >
-            <Text style={[styles.secondaryBtnText, { color: colors.foreground }]}>
+            <Text style={[t.callout, { color: colors.foreground }]}>
               {open ? "Hide what came in" : "See what came in"}
             </Text>
           </TouchableOpacity>
@@ -337,6 +361,7 @@ function StudentSide({
   onChanged: () => Promise<void>;
 }) {
   const colors = useColors();
+  const { t } = useLayout();
   const [file, setFile] = useState<UploadableFile | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -362,29 +387,29 @@ function StudentSide({
     <View>
       {submission && (
         <View style={[styles.subBox, { borderColor: colors.border }]}>
-          <Text style={[styles.subLine, { color: colors.foreground }]}>
+          <Text style={[t.callout, styles.subLine, { color: colors.foreground }]}>
             You handed this in on {formatBoth(submission.submittedAt)}.
           </Text>
           <OpenFileButton fileKey={submission.fileKey} label="Open what you handed in" />
 
           {submission.status === "returned" ? (
-            <View style={[styles.marked, { backgroundColor: colors.primary + "10", borderColor: colors.primary + "30" }]}>
-              <Text style={[styles.markedTitle, { color: colors.primary }]}>Marked</Text>
+            <View style={[styles.marked, { backgroundColor: colors.actionSoft, borderColor: colors.primary }]}>
+              <Text style={[t.caption, styles.markedTitle, { color: colors.primary }]}>Marked</Text>
               {submission.feedback && (
-                <Text style={[styles.subLine, { color: colors.foreground }]}>{submission.feedback}</Text>
+                <Text style={[t.callout, styles.subLine, { color: colors.foreground }]}>{submission.feedback}</Text>
               )}
               {submission.annotatedKey && (
                 <OpenFileButton fileKey={submission.annotatedKey} label="Open your marked copy" />
               )}
             </View>
           ) : (
-            <Text style={[styles.subHint, { color: colors.mutedForeground }]}>Waiting to be marked.</Text>
+            <Text style={[t.caption, styles.subHint, { color: colors.mutedForeground }]}>Waiting to be marked.</Text>
           )}
         </View>
       )}
 
       {homework.status === "closed" ? (
-        <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
+        <Text style={[t.caption, styles.subHint, { color: colors.mutedForeground }]}>
           This homework is closed, so it can no longer be handed in.
         </Text>
       ) : canSubmit ? (
@@ -403,26 +428,29 @@ function StudentSide({
             do it, not afterwards.
           */}
           {submission && (
-            <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
+            <Text style={[t.caption, styles.subHint, { color: colors.mutedForeground }]}>
               This replaces what you handed in before
               {submission.status === "returned" ? ", and your marking will be cleared" : ""}.
             </Text>
           )}
-          {problem && <Text style={[styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
+          {problem && <Text style={[t.caption, styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
           {file && (
             <TouchableOpacity
               testID={`homework-submit-${homework.id}`}
               onPress={() => void hand()}
               disabled={busy}
-              style={[styles.primaryBtn, { backgroundColor: colors.primary, opacity: busy ? 0.6 : 1 }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Hand in ${homework.title}`}
+              accessibilityState={{ disabled: busy }}
+              style={[styles.primaryBtn, { backgroundColor: busy ? colors.muted : colors.primary }]}
               activeOpacity={0.85}
             >
-              {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryBtnText}>Hand it in</Text>}
+              {busy ? <ActivityIndicator color={colors.mutedForeground} /> : <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Hand it in</Text>}
             </TouchableOpacity>
           )}
         </>
       ) : (
-        <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
+        <Text style={[t.caption, styles.subHint, { color: colors.mutedForeground }]}>
           Your month has ended, so you can read this but not hand work in.
         </Text>
       )}
@@ -442,15 +470,18 @@ function Submissions({
   onChanged: () => Promise<void>;
 }) {
   const colors = useColors();
-  const [rows, setRows] = useState<Submission[] | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const { t, space } = useLayout();
+  const [{ rows, problem }, dispatch] = useReducer(submissionsLoadReducer<Submission>, {
+    rows: null,
+    problem: null,
+  });
 
   const load = useCallback(async () => {
     try {
       const found = await apiGet<{ submissions: Submission[] }>(`/monthly/homework/${homeworkId}/submissions`);
-      setRows(found.submissions ?? []);
+      dispatch({ type: "loaded", rows: found.submissions ?? [] });
     } catch (e) {
-      setProblem(e instanceof Error ? e.message : "Could not load what came in.");
+      dispatch({ type: "failed", problem: e instanceof Error ? e.message : "Could not load what came in." });
     }
   }, [homeworkId]);
 
@@ -458,10 +489,10 @@ function Submissions({
     void load();
   }, [load]);
 
-  if (problem) return <Text style={[styles.problemText, { color: colors.destructive }]}>{problem}</Text>;
-  if (!rows) return <ActivityIndicator color={colors.primary} style={{ marginTop: 12 }} />;
+  if (problem) return <View style={styles.inlineProblem}><Text style={[t.caption, styles.problemText, { color: colors.destructive }]}>{problem}</Text><TouchableOpacity accessibilityRole="button" accessibilityLabel="Try loading submissions again" onPress={() => void load()} style={styles.retryBtn}><Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text></TouchableOpacity></View>;
+  if (!rows) return <ActivityIndicator color={colors.primary} style={{ marginTop: space.sm }} />;
   if (rows.length === 0) {
-    return <Text style={[styles.subHint, { color: colors.mutedForeground }]}>Nobody has handed anything in yet.</Text>;
+    return <Text style={[t.caption, styles.subHint, { color: colors.mutedForeground }]}>Nobody has handed anything in yet.</Text>;
   }
 
   return (
@@ -491,6 +522,7 @@ function MarkOne({
   onMarked: () => Promise<void>;
 }) {
   const colors = useColors();
+  const { t } = useLayout();
   const [feedback, setFeedback] = useState(submission.feedback ?? "");
   const [file, setFile] = useState<UploadableFile | null>(null);
   const [busy, setBusy] = useState(false);
@@ -522,12 +554,12 @@ function MarkOne({
 
   return (
     <View style={[styles.subBox, { borderColor: colors.border }]}>
-      <Text style={[styles.subName, { color: colors.foreground }]}>{submission.studentName || "A student"}</Text>
-      <Text style={[styles.subHint, { color: colors.mutedForeground }]}>
+      <Text style={[t.bodyStrong, { color: colors.foreground }]}>{submission.studentName || "A student"}</Text>
+      <Text style={[t.caption, styles.subHint, { color: colors.mutedForeground }]}>
         Handed in {formatBoth(submission.submittedAt)}
         {submission.status === "returned" ? " · marked" : ""}
       </Text>
-      {submission.note && <Text style={[styles.subLine, { color: colors.foreground }]}>“{submission.note}”</Text>}
+      {submission.note && <Text style={[t.callout, styles.subLine, { color: colors.foreground }]}>“{submission.note}”</Text>}
 
       <OpenFileButton fileKey={submission.fileKey} label="Open their work" />
 
@@ -541,21 +573,25 @@ function MarkOne({
         style={[
           styles.input,
           styles.multiline,
+          t.body,
           { backgroundColor: colors.background, borderColor: colors.border, color: colors.foreground },
         ]}
       />
       <FilePickerRow file={file} onPick={setFile} label="Attach a marked-up copy (optional)" testID={`mark-file-${submission.id}`} />
 
-      {problem && <Text style={[styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
+      {problem && <Text style={[t.caption, styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
 
       <TouchableOpacity
         testID={`mark-return-${submission.id}`}
         onPress={() => void send()}
         disabled={busy}
-        style={[styles.primaryBtn, { backgroundColor: colors.primary, opacity: busy ? 0.6 : 1 }]}
+        accessibilityRole="button"
+        accessibilityLabel={`Return marked work to ${submission.studentName || "student"}`}
+        accessibilityState={{ disabled: busy }}
+        style={[styles.primaryBtn, { backgroundColor: busy ? colors.muted : colors.primary }]}
         activeOpacity={0.85}
       >
-        {busy ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.primaryBtnText}>Hand it back</Text>}
+        {busy ? <ActivityIndicator color={colors.mutedForeground} /> : <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Hand it back</Text>}
       </TouchableOpacity>
     </View>
   );
@@ -575,6 +611,7 @@ function FilePickerRow({
   testID?: string;
 }) {
   const colors = useColors();
+  const { t } = useLayout();
 
   const choose = async () => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -597,9 +634,11 @@ function FilePickerRow({
       onPress={() => void choose()}
       style={[styles.pickRow, { borderColor: colors.border }]}
       activeOpacity={0.8}
+      accessibilityRole="button"
+      accessibilityLabel={file ? `Choose a different file. Selected ${file.name}` : label}
     >
       <Feather name={file ? "check-circle" : "paperclip"} size={16} color={file ? colors.primary : colors.mutedForeground} />
-      <Text style={[styles.pickText, { color: file ? colors.foreground : colors.mutedForeground }]} numberOfLines={1}>
+      <Text style={[t.callout, styles.pickText, { color: file ? colors.foreground : colors.mutedForeground }]} numberOfLines={1}>
         {file ? file.name : label}
       </Text>
     </TouchableOpacity>
@@ -614,6 +653,7 @@ function FilePickerRow({
  */
 function OpenFileButton({ fileKey, label }: { fileKey: string; label: string }) {
   const colors = useColors();
+  const { t } = useLayout();
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -632,17 +672,19 @@ function OpenFileButton({ fileKey, label }: { fileKey: string; label: string }) 
       <TouchableOpacity
         onPress={() => void open()}
         disabled={busy}
-        style={[styles.fileBtn, { borderColor: colors.primary + "50" }]}
+        style={[styles.fileBtn, { borderColor: colors.primary }]}
         activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityLabel={label}
       >
         {busy ? (
           <ActivityIndicator size="small" color={colors.primary} />
         ) : (
           <Feather name="download" size={15} color={colors.primary} />
         )}
-        <Text style={[styles.fileBtnText, { color: colors.primary }]}>{label}</Text>
+        <Text style={[t.callout, { color: colors.primary }]}>{label}</Text>
       </TouchableOpacity>
-      {problem && <Text style={[styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
+      {problem && <Text style={[t.caption, styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
     </View>
   );
 }
@@ -654,80 +696,74 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingBottom: 12,
+    paddingBottom: layoutSpace.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  headerTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
-  scroll: { padding: 16 },
-  card: { borderRadius: 16, borderWidth: StyleSheet.hairlineWidth, padding: 16, marginBottom: 14 },
-  cardHead: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  cardTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
-  cardWhen: { fontSize: 12.5, fontFamily: "Inter_400Regular", marginTop: 2 },
-  countPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
-  countText: { fontSize: 12, fontFamily: "Inter_500Medium" },
-  instructions: { fontSize: 14.5, fontFamily: "Inter_400Regular", lineHeight: 21, marginTop: 10 },
+  backBtn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" },
+  scroll: { paddingTop: layoutSpace.md, width: "100%", maxWidth: readingWidth, alignSelf: "center" },
+  card: { borderRadius: layoutRadius.md, borderWidth: StyleSheet.hairlineWidth, padding: layoutSpace.md, marginBottom: layoutSpace.md },
+  cardHead: { flexDirection: "row", alignItems: "flex-start", gap: layoutSpace.xs },
+  cardWhen: { marginTop: layoutSpace.xxs },
+  countPill: { borderRadius: layoutRadius.pill, paddingHorizontal: layoutSpace.sm, paddingVertical: layoutSpace.xxs },
+  instructions: { marginTop: layoutSpace.sm },
   input: {
-    borderRadius: 12,
+    borderRadius: layoutRadius.xs,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 14,
-    paddingVertical: Platform.OS === "ios" ? 13 : 9,
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
-    marginTop: 10,
+    paddingHorizontal: layoutSpace.sm,
+    paddingVertical: layoutSpace.sm,
+    marginTop: layoutSpace.xs,
+    minHeight: HIT_SLOP_MIN,
   },
-  multiline: { minHeight: 76, textAlignVertical: "top" },
+  multiline: { minHeight: layoutSpace.huge + layoutSpace.xxl, textAlignVertical: "top" },
   pickRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: layoutSpace.xs,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
+    borderRadius: layoutRadius.xs,
     borderStyle: "dashed",
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    marginTop: 10,
+    paddingHorizontal: layoutSpace.sm,
+    paddingVertical: layoutSpace.sm,
+    marginTop: layoutSpace.xs,
+    minHeight: HIT_SLOP_MIN,
   },
-  pickText: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular" },
-  primaryBtn: { borderRadius: 12, paddingVertical: 14, alignItems: "center", marginTop: 12 },
-  primaryBtnText: { color: "#FFFFFF", fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  pickText: { flex: 1 },
+  primaryBtn: { borderRadius: layoutRadius.sm, minHeight: HIT_SLOP_MIN, paddingHorizontal: layoutSpace.md, justifyContent: "center", alignItems: "center", marginTop: layoutSpace.sm },
   secondaryBtn: {
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-    paddingVertical: 12,
+    borderRadius: layoutRadius.sm,
+    minHeight: HIT_SLOP_MIN,
+    justifyContent: "center",
     alignItems: "center",
-    marginTop: 12,
+    marginTop: layoutSpace.sm,
   },
-  secondaryBtnText: { fontSize: 14, fontFamily: "Inter_500Medium" },
-  subBox: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 14, marginTop: 14 },
-  subName: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  subLine: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20, marginTop: 4 },
-  subHint: { fontSize: 12.5, fontFamily: "Inter_400Regular", marginTop: 8, lineHeight: 18 },
-  marked: { borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, padding: 12, marginTop: 10 },
-  markedTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", marginBottom: 4 },
+  subBox: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: layoutSpace.md, marginTop: layoutSpace.md },
+  subLine: { marginTop: layoutSpace.xxs },
+  subHint: { marginTop: layoutSpace.xs },
+  marked: { borderRadius: layoutRadius.sm, borderWidth: StyleSheet.hairlineWidth, padding: layoutSpace.sm, marginTop: layoutSpace.xs },
+  markedTitle: { marginBottom: layoutSpace.xxs },
   fileBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: layoutSpace.xs,
     borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginTop: 10,
+    borderRadius: layoutRadius.sm,
+    paddingHorizontal: layoutSpace.sm,
+    minHeight: HIT_SLOP_MIN,
+    marginTop: layoutSpace.xs,
     alignSelf: "flex-start",
   },
-  fileBtnText: { fontSize: 13.5, fontFamily: "Inter_500Medium" },
   notice: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
-    padding: 12,
-    borderRadius: 12,
+    gap: layoutSpace.xs,
+    padding: layoutSpace.sm,
+    borderRadius: layoutRadius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 14,
+    marginBottom: layoutSpace.md,
   },
-  noticeText: { flex: 1, fontSize: 13.5, fontFamily: "Inter_400Regular", lineHeight: 19 },
-  problemText: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 8, lineHeight: 18 },
-  empty: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
+  noticeCopy: { flex: 1, gap: layoutSpace.xxs },
+  retryBtn: { minHeight: HIT_SLOP_MIN, justifyContent: "center", alignSelf: "flex-start" },
+  inlineProblem: { marginTop: layoutSpace.xs },
+  problemText: { marginTop: layoutSpace.xs },
 });
