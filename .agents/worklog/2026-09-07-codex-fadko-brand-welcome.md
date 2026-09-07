@@ -56,6 +56,13 @@ existing dependency checkout, and do not deploy production before preview verifi
   so `test:livekit` initially failed before its assertions with `ERR_UNSUPPORTED_ESM_URL_SCHEME`.
   The helper now converts the resolved module path with `pathToFileURL`, which preserves Linux
   behavior and makes the same harness runnable on Windows. No provider code changed.
+- The first preview dispatch stopped safely because GitHub had a Cloudflare API token but no
+  `CLOUDFLARE_ACCOUNT_ID`. Added the known account ID as an Actions secret; no credential was
+  written to Git.
+- The next dispatch stopped in `pnpm/action-setup`: the workflow requested generic pnpm 11 while
+  root `package.json` pins `pnpm@11.11.0`, and the current action rejects two version sources.
+  Removed the redundant workflow version so CI follows the repository's exact package-manager
+  pin. This changes deployment tooling only.
 
 ## Verification to date
 
