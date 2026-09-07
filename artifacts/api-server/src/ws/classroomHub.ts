@@ -12,6 +12,16 @@ import { markTeacherPresent } from "../lib/sessionLifecycle";
 import { recordParticipation } from "../lib/participation";
 import { forgetBoard, loadBoard, saveBoardNow, saveBoardSoon } from "../lib/boardStore";
 import { startHeartbeat, watchHeartbeat } from "./heartbeat";
+import {
+  floorJoin,
+  floorLeave,
+  forgetFloor,
+  handleFloorFrame,
+  isFloorFrame,
+  resetFloorFor,
+  type FloorClient,
+  type RoomPort,
+} from "./classroomFloor.ts";
 
 interface RoomClient {
   ws: WebSocket;
@@ -298,8 +308,47 @@ function broadcast(sessionId: string, msg: object, excludeWs?: WebSocket): void 
   }
 }
 
+/**
+ * How the floor reaches the room it belongs to, without `classroomFloor.ts` knowing what a
+ * WebSocket is.
+ *
+ * Rebuilt on each call rather than cached, because the set of connected people is the thing that
+ * changes most often here and a stale copy would send a grant to somebody who has gone. A user
+ * with two tabs open legitimately appears twice: both are their sockets and both should be told.
+ */
+function roomPort(sessionId: string): RoomPort {
+  return {
+    clients(): FloorClient[] {
+      const out: FloorClient[] = [];
+      for (const c of rooms.get(sessionId) ?? []) {
+        if (c.ws.readyState !== WebSocket.OPEN) continue;
+        out.push({
+          userId: c.userId,
+          isSessionTeacher: c.isSessionTeacher,
+          send: (msg: object) => sendTo(c.ws, msg),
+        });
+      }
+      return out;
+    },
+  };
+}
+
 export function broadcastSessionStatus(sessionId: string, status: string): void {
-  broadcast(String(sessionId), { type: "session_status", status });
+  const id = String(sessionId);
+  broadcast(id, { type: "session_status", status });
+  /*
+    A class that is no longer live has no floor.
+
+    Hooked here rather than at each place a class can end — the teacher pressing stop, the
+    abandonment sweep, a cancellation — because this is the one line all of them already go
+    through. Every request, invitation and permission goes with the class, which is
+    `endSession`'s whole job; a microphone granted in a lesson that is over is exactly what the
+    cutoff check exists to prevent, and this is the same rule arriving by the other door.
+  */
+  if (status !== "live") {
+    resetFloorFor(id);
+    broadcast(id, { type: "floor_ended" });
+  }
 }
 
 
@@ -330,8 +379,18 @@ export function resetBoardFor(sessionId: string): void {
   const numericId = Number(id);
   if (Number.isFinite(numericId)) void forgetBoard(numericId);
 
+  /*
+    The floor starts again with the class, for the same reason the board does.
+
+    A teacher beginning their next lesson inheriting the previous one's raised hands would be the
+    same bug as inheriting its scribbles, and worse: an inherited *permission* is a student from
+    an hour ago whose microphone still works.
+  */
+  resetFloorFor(id);
+
   broadcast(id, { type: "board_clear" });
   broadcast(id, { type: "material_clear" });
+  broadcast(id, { type: "floor_ended" });
 }
 
 export function attachClassroomHub(server: http.Server): void {
@@ -512,6 +571,24 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
     const count = rooms.get(sessionId)!.size;
     broadcast(sessionId, { type: "presence", count });
 
+    /**
+     * Where this person stands on the floor, told to them and to nobody else.
+     *
+     * Awaited by nothing: the class's entitlement and its clock are two database lookups, and a
+     * student should be seeing the board long before either comes back. Their permissions are
+     * whatever the server still says they are — a revoked one stays revoked across a reconnect,
+     * because the floor is the record and their browser's memory is not.
+     */
+    const port = roomPort(sessionId);
+    const floorClient: FloorClient = {
+      userId,
+      isSessionTeacher,
+      send: (msg: object) => sendTo(ws, msg),
+    };
+    void floorJoin(sessionId, port, floorClient, name).catch((err: unknown) =>
+      logger.warn({ err, sessionId, userId }, "could not put this person on the classroom floor"),
+    );
+
     // Read the stored board back before telling this person what is on it. Without this a
     // joiner arriving after a restart is told the board is empty, and that answer is then the
     // one everybody keeps.
@@ -522,6 +599,22 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
     ws.on("message", (raw: Buffer) => {
       let msg: Record<string, unknown>;
       try { msg = JSON.parse(raw.toString()) as Record<string, unknown>; } catch { return; }
+
+      /*
+        Anything in the `floor_` namespace goes to the classroom floor, before the board's own
+        switch sees it.
+
+        Its own module rather than twenty more cases here: every one of those cases carries an
+        authority rule, and rules buried in a socket handler are rules that can only be exercised
+        by opening a socket. Identity is handed over from this closure — the membership check at
+        upgrade time — and never read from the message.
+      */
+      if (isFloorFrame(msg)) {
+        void handleFloorFrame(sessionId, port, floorClient, msg).catch((err: unknown) =>
+          logger.warn({ err, sessionId, userId, type: msg.type }, "floor action failed"),
+        );
+        return;
+      }
 
       switch (msg.type) {
         case "chat": {
@@ -734,9 +827,24 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
       rooms.get(sessionId)?.delete(client);
       const remaining = rooms.get(sessionId);
+
+      /*
+        Gone from the floor only when their *last* socket went.
+
+        A student with the class open in two tabs who closes one has not left, and marking them
+        disconnected would show their teacher a student who is looking right at them. Checked
+        after the removal above, so this connection is not counted as its own company.
+      */
+      const stillHere = [...(remaining ?? [])].some(
+        (c) => c.userId === userId && c.ws.readyState === WebSocket.OPEN,
+      );
+      if (!stillHere) floorLeave(sessionId, port, userId, isSessionTeacher);
+
       if (!remaining?.size) {
         rooms.delete(sessionId);
         boards.delete(sessionId);
+        // The floor is live state and nothing else keeps it; an empty room has none.
+        forgetFloor(sessionId);
       }
       const newCount = rooms.get(sessionId)?.size ?? 0;
       broadcast(sessionId, { type: "presence", count: newCount });

@@ -5,6 +5,7 @@ import {
   allowStudent,
   askToSpeak,
   cameraHolders,
+  cancelInvitation,
   cancelInvitations,
   cancelRequest,
   declineInvitation,
@@ -21,8 +22,10 @@ import {
   muteAllStudents,
   muteStudent,
   publishRightsFor,
+  removeStudent,
   requestQueue,
   returnToAudience,
+  setSpotlight,
   startDiscussion,
   stopStudentCamera,
   type Floor,
@@ -434,4 +437,168 @@ test("a teacher's mute reaches the provider, not just the screen", () => {
   ok(allowStudent(f, STUDENT, "mic", T));
   ok(muteStudent(f, STUDENT));
   assert.equal(publishRightsFor(f.students.get(STUDENT)!).mic, false);
+});
+
+/* --- the spotlight, which is a layout and not a permission ---------------- */
+
+test("spotlighting a student changes nobody's media", () => {
+  const f = floorWith([STUDENT]);
+  ok(setSpotlight(f, STUDENT));
+  assert.equal(f.spotlight, STUDENT);
+  const s = f.students.get(STUDENT)!;
+  assert.deepEqual(s.allowed, { mic: false, camera: false });
+  assert.equal(mediaStateOf(s), "audience", "a featured tile is still a listening student");
+});
+
+test("spotlighting the same person again puts the grid back", () => {
+  const f = floorWith([STUDENT]);
+  ok(setSpotlight(f, STUDENT));
+  ok(setSpotlight(f, STUDENT));
+  assert.equal(f.spotlight, null);
+});
+
+test("the spotlight may name the teacher, who is not in the student map at all", () => {
+  const f = floorWith([STUDENT]);
+  const TEACHER = 99;
+  ok(setSpotlight(f, TEACHER));
+  assert.equal(f.spotlight, TEACHER);
+  assert.equal(f.students.has(TEACHER), false);
+});
+
+test("a spotlit student who leaves takes the spotlight with them", () => {
+  const f = floorWith([STUDENT, OTHER]);
+  ok(setSpotlight(f, STUDENT));
+  removeStudent(f, STUDENT);
+  assert.equal(f.spotlight, null, "otherwise every client enlarges an empty rectangle");
+});
+
+test("a spotlit student who merely drops keeps it, because they are usually back at once", () => {
+  const f = floorWith([STUDENT]);
+  ok(setSpotlight(f, STUDENT));
+  markDisconnected(f, STUDENT);
+  assert.equal(f.spotlight, STUDENT);
+  markReconnected(f, STUDENT);
+  assert.equal(f.spotlight, STUDENT);
+});
+
+test("ending the discussion returns the layout to the teacher", () => {
+  const f = floorWith([STUDENT], true);
+  ok(startDiscussion(f, T, true));
+  ok(joinDiscussion(f, STUDENT, "mic+camera"));
+  ok(setSpotlight(f, STUDENT));
+  ok(endDiscussion(f));
+  assert.equal(f.spotlight, null, "the student has no camera left to enlarge");
+});
+
+test("ending the discussion leaves a spotlight on the teacher alone", () => {
+  const f = floorWith([STUDENT], true);
+  const TEACHER = 99;
+  ok(startDiscussion(f, T, true));
+  ok(setSpotlight(f, TEACHER));
+  ok(endDiscussion(f));
+  assert.equal(f.spotlight, TEACHER, "the teacher is still publishing; nothing about them changed");
+});
+
+test("a class that ends forgets who was featured", () => {
+  const f = floorWith([STUDENT]);
+  ok(setSpotlight(f, STUDENT));
+  endSession(f);
+  assert.equal(f.spotlight, null);
+});
+
+/* --- withdrawing one invitation rather than everybody's ------------------- */
+
+test("a mis-tapped invitation can be withdrawn from one person alone", () => {
+  const f = floorWith([STUDENT, OTHER]);
+  ok(allowStudent(f, STUDENT, "mic", T));
+  ok(allowStudent(f, OTHER, "mic", T + 1));
+  ok(cancelInvitation(f, STUDENT));
+
+  const wrong = f.students.get(STUDENT)!;
+  assert.equal(mediaStateOf(wrong), "audience");
+  assert.equal(publishRightsFor(wrong).canPublish, false, "the permission goes with the invitation");
+  assert.equal(mediaStateOf(f.students.get(OTHER)!), "allowed-not-accepted", "everybody else is untouched");
+});
+
+test("withdrawing an invitation somebody already accepted does not silence them", () => {
+  const f = floorWith([STUDENT]);
+  ok(allowStudent(f, STUDENT, "mic", T));
+  ok(acceptSpeaking(f, STUDENT, { mic: true }));
+  ok(cancelInvitation(f, STUDENT));
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "speaking",
+    "stopping a speaking student is muteStudent or returnToAudience, which say what they do");
+});
+
+test("withdrawing a camera invitation takes the camera permission too", () => {
+  const f = floorWith([STUDENT]);
+  ok(allowStudent(f, STUDENT, "mic+camera", T));
+  ok(cancelInvitation(f, STUDENT));
+  assert.deepEqual(f.students.get(STUDENT)!.allowed, { mic: false, camera: false });
+  assert.deepEqual(cameraHolders(f), [], "and frees the one camera slot for somebody else");
+});
+
+test("withdrawing an invitation nobody has is safe", () => {
+  const f = floorWith([STUDENT]);
+  ok(cancelInvitation(f, STUDENT));
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "audience");
+});
+
+/* --- the empty source list, which LiveKit reads as "everything" ----------- */
+
+/**
+ * The bug this guards against, in one sentence: a teacher's Mute used to grant a screen share.
+ *
+ * `publishRightsFor` returned `canPublish` from the *permission*, ignoring the mute, so a muted
+ * student came out `{ canPublish: true, mic: false, camera: false }` — and LiveKit's own
+ * `GetCanPublishSource` treats `canPublish: true` with an empty source list as unrestricted.
+ * Every assertion below is "canPublish is false whenever there is nothing to publish".
+ */
+test("a muted student may publish nothing, not everything", () => {
+  const f = emptyFloor();
+  ok(allowStudent(f, STUDENT, "mic", T));
+  ok(acceptSpeaking(f, STUDENT, { mic: true }));
+  ok(muteStudent(f, STUDENT));
+  const rights = publishRightsFor(f.students.get(STUDENT)!);
+  assert.deepEqual(rights, { canPublish: false, mic: false, camera: false },
+    "canPublish:true with no sources is LiveKit's spelling of 'unrestricted'");
+});
+
+test("muting a student who also holds a camera leaves them the camera and nothing else", () => {
+  const f = emptyFloor();
+  ok(allowStudent(f, STUDENT, "mic+camera", T));
+  ok(muteStudent(f, STUDENT));
+  const rights = publishRightsFor(f.students.get(STUDENT)!);
+  assert.deepEqual(rights, { canPublish: true, mic: false, camera: true });
+});
+
+test("mute all leaves nobody able to publish anything", () => {
+  const f = emptyFloor();
+  ok(allowStudent(f, STUDENT, "mic", T));
+  ok(allowStudent(f, OTHER, "mic", T));
+  ok(muteAllStudents(f));
+  for (const id of [STUDENT, OTHER]) {
+    assert.equal(publishRightsFor(f.students.get(id)!).canPublish, false, String(id));
+  }
+});
+
+test("canPublish never disagrees with the sources it summarises, in any reachable state", () => {
+  /*
+    Exhaustive over the flags rather than over the actions, because the danger is a *combination*
+    reachable by some future action nobody has written yet. Any state where canPublish is true and
+    both sources are false is the unrestricted grant.
+  */
+  for (const allowMic of [false, true]) {
+    for (const allowCam of [false, true]) {
+      for (const muted of [false, true]) {
+        const rights = publishRightsFor({
+          requestedAt: null, invitedAt: null, invitationScope: null,
+          allowed: { mic: allowMic, camera: allowCam },
+          accepted: { mic: false, camera: false },
+          mutedByTeacher: muted, connected: true,
+        });
+        assert.equal(rights.canPublish, rights.mic || rights.camera,
+          `allowMic=${allowMic} allowCam=${allowCam} muted=${muted}`);
+      }
+    }
+  }
 });

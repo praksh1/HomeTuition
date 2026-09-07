@@ -155,6 +155,14 @@ export const livekitProvider: VideoProvider = {
      * who have not joined yet, and does not split a class in two.
      */
     builtInChat: false,
+    /**
+     * True, and the reason this provider is worth the trial at all.
+     *
+     * A student's token permits publishing nothing; `setPublishing` below is the only way that
+     * ever changes, and it runs on the server in response to a teacher's decision. That is a
+     * classroom with a floor in it rather than a conference call where the loudest person wins.
+     */
+    moderatesPublishing: true,
   },
 
   configured() {
@@ -300,11 +308,30 @@ export const livekitProvider: VideoProvider = {
     if (rights.mic) sources.push(TrackSource.MICROPHONE);
     if (rights.camera) sources.push(TrackSource.CAMERA);
 
+    /**
+     * An empty source list is not "nothing" — to LiveKit it is "everything".
+     *
+     * From its own `protocol/auth/grants.go`, which is what the SFU actually runs:
+     *
+     * ```go
+     * func (v *VideoGrant) GetCanPublishSource(source livekit.TrackSource) bool {
+     *     if !v.GetCanPublish() { return false }
+     *     if len(v.CanPublishSources) == 0 { return true }
+     * ```
+     *
+     * So `canPublish: true` with no sources permits camera, microphone *and screen share*. The
+     * only thing standing between a caller's mistake and that outcome is `canPublish`, so it is
+     * forced false whenever there is nothing to permit. `publishRightsFor` already derives it
+     * correctly; this is here because the consequence is severe enough to be worth refusing twice,
+     * and because this file is the one that knows the rule.
+     */
+    const canPublish = rights.canPublish && sources.length > 0;
+
     try {
       const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
       await rooms.updateParticipant(roomNameForSession(sessionId), identity, undefined, {
         canSubscribe: true,
-        canPublish: rights.canPublish,
+        canPublish,
         canPublishData: false,
         canPublishSources: sources,
       });

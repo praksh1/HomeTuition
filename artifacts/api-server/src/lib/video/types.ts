@@ -74,6 +74,19 @@ export interface VideoCapabilities {
   screenShare: boolean;
   /** The provider brings its own chat panel. When false, the app's own chat is the only one. */
   builtInChat: boolean;
+  /**
+   * The server can decide, mid-call, who is allowed to publish a microphone or a camera.
+   *
+   * The whole raise-your-hand classroom rests on this one bit. Where it is false the feature is
+   * not merely unstyled, it is *meaningless*: Daily Prebuilt lets every participant unmute
+   * themselves, so a student asking permission would be asking for something they already have,
+   * and a teacher's "mute" would be a button that does nothing while looking as though it had.
+   *
+   * So it is answered here rather than inferred from the provider's name, the hub refuses floor
+   * actions when it is false, and the app hides the controls. All three, because a control the
+   * server refuses is still a control that should never have been drawn.
+   */
+  moderatesPublishing: boolean;
 }
 
 /** The three places this app runs. What a client says it is; it confers nothing. */

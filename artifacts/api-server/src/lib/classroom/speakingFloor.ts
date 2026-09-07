@@ -76,6 +76,19 @@ export interface Floor {
   discussionEligible: boolean;
   /** When discussion mode started, for the record. */
   discussionStartedAt: number | null;
+  /**
+   * Whose tile every layout should enlarge, or null for the ordinary grid.
+   *
+   * **A view decision, not a permission**, and kept deliberately separate from `allowed` and
+   * `accepted` above — spotlighting somebody does not let them speak, and un-spotlighting them
+   * does not silence them. Collapsing the two would mean a teacher wanting a student's work on
+   * the big tile had to grant them a microphone to get it.
+   *
+   * May name the teacher, who is not in `students` at all, so it is never validated against that
+   * map. The caller checks the person is actually in the room; this file only remembers who was
+   * chosen.
+   */
+  spotlight: number | null;
   students: Map<number, StudentFloor>;
 }
 
@@ -116,6 +129,7 @@ export function emptyFloor(discussionEligible = false): Floor {
     mode: "classroom",
     discussionEligible,
     discussionStartedAt: null,
+    spotlight: null,
     students: new Map(),
   };
 }
@@ -337,9 +351,14 @@ export function muteAllStudents(floor: Floor): Result<{ affected: number[] }> {
 /**
  * Invite every connected student to speak — an offer, not an unmuting.
  *
- * Deliberately does not touch `allowed`: an invitation the student never answers must leave
- * them exactly where they were. Only `acceptSpeaking` opens anything, and it checks `allowed`
- * again at that moment.
+ * The invitation *carries* the permission and the permission is inert: `allowed.mic` goes true so
+ * that `acceptSpeaking` has something to check against, and `accepted.mic` stays false, so not one
+ * microphone opens until its owner presses something. Withdrawing an unanswered invitation takes
+ * the permission back with it — see `cancelInvitations` below.
+ *
+ * (An earlier version of this comment claimed `allowed` was left alone. It was wrong about its own
+ * code, and wrong in a way that mattered: with `allowed.mic` false, every student accepting this
+ * invitation would have been refused `not-allowed`, and the feature could not have worked at all.)
  *
  * Re-inviting somebody who is already holding an invitation does not renotify them; a teacher
  * pressing the button twice must not make forty phones buzz twice.
@@ -357,6 +376,40 @@ export function inviteAllToSpeak(floor: Floor, at: number): Result<{ invited: nu
     invited.push(id);
   }
   return yes({ invited });
+}
+
+/**
+ * Feature one person's tile, or go back to the grid.
+ *
+ * Pressing it twice on the same person clears it, because that is what a toggle in the
+ * participant list is: the teacher taps a name to bring them forward and taps it again to put
+ * them back. Handled here rather than in the app so both a phone and a laptop agree — two clients
+ * each deciding what a second tap means is two answers.
+ *
+ * Nothing about media changes. See the note on `Floor.spotlight`.
+ */
+export function setSpotlight(floor: Floor, userId: number | null): Result<{ spotlight: number | null }> {
+  floor.spotlight = userId === null || floor.spotlight === userId ? null : userId;
+  return yes({ spotlight: floor.spotlight });
+}
+
+/**
+ * Withdraw one person's unanswered invitation.
+ *
+ * Separate from the group withdrawal below because a teacher who mis-tapped a name needs to undo
+ * that name, and cancelling everybody's invitation to correct one of them is a worse action than
+ * the mistake. Takes back the permission the invitation carried, and only if it is still
+ * unanswered: a student who already accepted is speaking, and stopping them is `muteStudent` or
+ * `returnToAudience` — deliberate actions with their own names.
+ */
+export function cancelInvitation(floor: Floor, userId: number): Result<StudentFloor> {
+  const s = studentOf(floor, userId);
+  if (s.invitedAt === null) return yes(s);
+  s.invitedAt = null;
+  s.invitationScope = null;
+  if (!s.accepted.mic) s.allowed.mic = false;
+  if (!s.accepted.camera) s.allowed.camera = false;
+  return yes(s);
 }
 
 /** Withdraw outstanding invitations nobody has answered. */
@@ -422,6 +475,9 @@ export function endDiscussion(floor: Floor): Result<{ revoked: number[] }> {
   }
   floor.mode = "classroom";
   floor.discussionStartedAt = null;
+  // A student featured during the discussion has no camera once it closes, so the layout goes
+  // back to the teacher rather than enlarging a tile that is now a set of initials.
+  if (floor.spotlight !== null && floor.students.has(floor.spotlight)) floor.spotlight = null;
   return yes({ revoked });
 }
 
@@ -477,6 +533,10 @@ export function markReconnected(floor: Floor, userId: number): StudentFloor {
 /** The student left for good. */
 export function removeStudent(floor: Floor, userId: number): void {
   floor.students.delete(userId);
+  // A spotlight on somebody who has gone leaves every client enlarging an empty rectangle.
+  // Not cleared on a mere disconnect: a phone that changes cell is back within a second, and
+  // losing the teacher's chosen layout to that would be worse than a tile that flickers.
+  if (floor.spotlight === userId) floor.spotlight = null;
 }
 
 /** The class ended. Every request, invitation and temporary permission goes with it. */
@@ -484,6 +544,7 @@ export function endSession(floor: Floor): void {
   floor.students.clear();
   floor.mode = "classroom";
   floor.discussionStartedAt = null;
+  floor.spotlight = null;
 }
 
 /**
@@ -505,13 +566,32 @@ export function requestQueue(floor: Floor): Array<{ userId: number; requestedAt:
  * What the provider should be told this student may publish.
  *
  * The single translation from "what the classroom has decided" to "what LiveKit is told", so a
- * caller cannot invent a permission the floor never granted. Camera implies microphone;
- * there is no state in this file where a camera is allowed and a microphone is not.
+ * caller cannot invent a permission the floor never granted. Camera implies microphone; there is
+ * no state in this file where a camera is allowed and a microphone is not.
+ *
+ * ## `canPublish` is derived from the two below it, and that is a security fix
+ *
+ * It used to read `s.allowed.mic || s.allowed.camera` — the *permission*, ignoring the mute. So a
+ * student the teacher had muted came out as `{ canPublish: true, mic: false, camera: false }`, and
+ * `livekitProvider.setPublishing` turned that into `canPublish: true` with an empty source list.
+ *
+ * **In LiveKit an empty source list does not mean "nothing". It means "everything".** From its own
+ * `protocol/auth/grants.go`:
+ *
+ * ```go
+ * func (v *VideoGrant) GetCanPublishSource(source livekit.TrackSource) bool {
+ *     if !v.GetCanPublish() { return false }
+ *     if len(v.CanPublishSources) == 0 { return true }
+ *     ...
+ * ```
+ *
+ * So pressing Mute would have handed that student permission to publish a camera and share their
+ * screen into a class of children — the exact inverse of what the button says. Deriving the flag
+ * from the two fields it summarises means the three can no longer disagree; `setPublishing` refuses
+ * the same combination again on its own, because a rule this sharp is worth holding in both places.
  */
 export function publishRightsFor(s: StudentFloor): { canPublish: boolean; camera: boolean; mic: boolean } {
-  return {
-    canPublish: s.allowed.mic || s.allowed.camera,
-    mic: s.allowed.mic && !s.mutedByTeacher,
-    camera: s.allowed.camera,
-  };
+  const mic = s.allowed.mic && !s.mutedByTeacher;
+  const camera = s.allowed.camera;
+  return { canPublish: mic || camera, mic, camera };
 }

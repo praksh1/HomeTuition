@@ -21,7 +21,8 @@ export const echoProvider: VideoProvider = {
   // Carries no video anywhere, so it is equally available everywhere: the suites that select it
   // are testing the rules around the room, not the media.
   platforms: ["web", "ios", "android"],
-  capabilities: { screenShare: false, builtInChat: false },
+  // Carries nothing, so it enforces nothing. A suite that wants the floor selects LiveKit.
+  capabilities: { screenShare: false, builtInChat: false, moderatesPublishing: false },
   configured: () => true,
   ensureRoom: async (sessionId) => `https://video.invalid/echo/${sessionId}`,
   // The identity is carried here too, so the provider-contract suite exercises the same shape on
