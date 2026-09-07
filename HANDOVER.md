@@ -947,6 +947,65 @@ roughly a tenfold improvement and it does not close the gap.**
 Pay-per-class bookings are unaffected — a one-hour class with a handful of students is cents.
 **This whole section is about the monthly recurring tier only.**
 
+#### Cloudflare's raw SFU changes the answer, and costs a different thing instead
+
+Asked on 7 September 2026: if Cloudflare is so much cheaper, what does it restrict?
+
+**It meters one thing — $0.05 per GB of egress — and nothing else.** No per-participant-minute
+charge at all, which is the meter that ate 88% of the revenue on LiveKit. Ingress is free, the
+first 1 TB a month is free (shared with TURN), and TURN itself is free when used with the SFU —
+which matters here, because TURN is what rescues a student behind a mobile carrier's NAT.
+
+The same class, the same 107,640 participant-minutes, everyone watching the teacher and the
+whiteboard:
+
+| | Cost | Margin on $48.87 |
+|---|---|---|
+| Daily | $430.56 | −$381.69 |
+| LiveKit Cloud | $86.65 | −$37.78 |
+| **Cloudflare raw SFU** | **$21.80** | **+$27.08** |
+
+**It is the only option that makes the monthly tier profitable at its current price.** Break-even
+is 1,211 kbps received per person; the realistic case is 540, so there is real headroom — a
+student could watch two or three faces alongside the board and it still pays. Audio-only classes
+cost $1.61 and the free tier alone covers about 30 of them.
+
+**What it restricts is not the media. It is that you build the call.** Cloudflare Realtime is
+deliberately unopinionated: there is **no concept of a room**. You get Sessions and Tracks in a
+pub/sub model and you supply everything else — presence, roster, who pulls whose tracks, and
+renegotiation every time somebody joins or leaves. Simulcast exists and the SFU will pick a layer
+per subscriber, so quality adaptation is not lost. The documented limits are not the problem:
+50 API calls a second per session, 64 tracks per call, tracks garbage-collected after 30 seconds
+of inactivity, and operations that block up to 5 seconds waiting for the peer connection.
+
+Three consequences worth being clear about before choosing it:
+
+1. **Half of it already exists here.** `ws/classroomHub.ts` is 747 lines already carrying
+   presence, chat and the whiteboard for exactly the right set of people, and `lib/membership.ts`
+   already answers who may be in a class. That is the signalling channel a raw SFU needs. The
+   call UI — grid, tiles, controls, audio-only — is `LiveKitEmbed.web.tsx` behind the
+   provider-independent `lib/video`, so it does not have to be rewritten either.
+2. **The half that does not exist is the hard half.** Track orchestration, peer-connection
+   management, subscription policy, reconnection and ICE restart is roughly what
+   `lib/video/livekit.ts` gets from the SDK for free in 536 lines. Writing it is the largest
+   single piece of work in this project, and it is the piece where a subtle bug shows up as a
+   frozen class rather than as a failing test.
+3. **It cannot be proved here the way LiveKit was.** LiveKit's server is open source, so it was
+   built from source and a genuine two-person call was tested against it with no account and no
+   credentials. **Cloudflare Realtime is a proprietary hosted service — there is no local
+   binary.** Any test needs a real Cloudflare account, so the "prove it before you trust it"
+   step that made the LiveKit work believable is not available for free.
+
+**The standing recommendation does not change yet.** The earlier research
+(`.agents/backlog/video-provider-research-2026-08-28.md`) put Cloudflare and self-hosted LiveKit
+as "the credible long-term cost floor" to revisit *after* the product has technical operations
+coverage, and that judgement survives this pricing. Owning the call stack means that when a class
+freezes at eight in the evening there is no vendor to escalate to — a permanent human cost that
+does not end when the code is written. Option 2 above — audio-first for large classes — costs
+nothing, uses a mechanism that already exists and works, and fixes the economics on the provider
+already proven. Do that first. Cloudflare becomes the right answer when volume is real, audio-first
+is not enough, and somebody is prepared to own the stack.
+
 #### Two numbers to confirm from the dashboard
 
 The pricing page cannot be read from the build environment. From
