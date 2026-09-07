@@ -517,7 +517,30 @@ async function paintedPicture(page) {
   });
 }
 
-const painted = { t: await paintedPicture(t.page), s: await paintedPicture(s.page) };
+/**
+ * Wait until every tile has actually started, rather than sampling once and hoping.
+ *
+ * The first version took a single blind reading straight after the rejoin and passed three
+ * times, then failed on the fourth with one tile reporting `playing: false, nonBlackPct: 0` —
+ * a tile caught before its first decoded frame. Nothing was wrong with the call; the assertion
+ * was racing it.
+ *
+ * A flaky test is worse than no test, because it teaches people that red means nothing. So the
+ * question asked is "does every tile start within a reasonable time", which is the real claim,
+ * and the last reading is returned either way so a genuine failure still prints what it saw.
+ */
+async function settledPicture(page, attempts = 20, gap = 500) {
+  let last = [];
+  for (let i = 0; i < attempts; i++) {
+    last = await paintedPicture(page);
+    const ready = last.length >= 2 && last.every((v) => v.playing && v.nonBlackPct > 50);
+    if (ready) return last;
+    await new Promise((r) => setTimeout(r, gap));
+  }
+  return last;
+}
+
+const painted = { t: await settledPicture(t.page), s: await settledPicture(s.page) };
 check("both browsers are playing video, not just receiving it",
   painted.t.length >= 2 && painted.s.length >= 2
   && painted.t.every((v) => v.playing) && painted.s.every((v) => v.playing),
