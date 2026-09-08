@@ -1,8 +1,8 @@
 # Fadko classroom and learning experience blueprint
 
-Status: recommended product contract awaiting the owner's final confirmation of the three defaults
-called out below. This is a product and implementation guide, not authority to merge the LiveKit
-pilot, enable a provider, change payments, migrate production data or record classes.
+Status: **approved product contract**. The owner approved the three defaults below on 2026-09-07.
+This is a product and implementation guide, not authority to merge the LiveKit pilot, enable a
+provider, change payments, migrate production data or record classes.
 
 ## The product idea
 
@@ -18,9 +18,9 @@ The resulting product remains distinctly Fadko: independent Nepal-based teachers
 and non-school skills in one system, a whiteboard-first classroom, licensed-provider payments, low
 bandwidth operation and honest human support.
 
-## Three default decisions
+## Three approved decisions
 
-These are the recommended defaults. Change them only with a recorded owner decision.
+These are binding product defaults. Change them only with a new recorded owner decision.
 
 1. **Board-first stage.** The teacher's video remains visible. Students begin as audience members
    and use Ask to Speak, chat, quick checks or a private scratch board until invited. Do not start
