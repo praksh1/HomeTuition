@@ -64,6 +64,29 @@ export interface PublishRights {
 }
 
 /**
+ * What happened when the server asked the provider to change something.
+ *
+ * ## Three answers, because two of them are not the same
+ *
+ * This was a `boolean`, and the false branch meant both "that student is not in the room" and
+ * "the call to the provider failed" — which are opposite situations. An absent participant is
+ * ordinary and safe: their token permits publishing nothing, so a grant they never received
+ * cannot be used, and reconnecting re-pushes it. A failed call is the dangerous one: the floor
+ * has moved, the class has been told, and the SFU has not agreed. Collapsing them meant a
+ * classroom that reported a mute as done while a microphone was still open.
+ *
+ * `.agents/memory/refusals-must-name-their-reason.md` is this same lesson one layer down: when a
+ * check folds several situations into one boolean, make it return which one and let the caller
+ * decide what to say.
+ */
+export type ProviderApply =
+  | { applied: true }
+  /** The provider answered, and there is nobody by that identity in the room. */
+  | { applied: false; reason: "absent" }
+  /** The provider could not be asked, or refused. The change has **not** taken effect. */
+  | { applied: false; reason: "failed"; error: string };
+
+/**
  * What a provider can do, so the app stops guessing.
  *
  * Not speculative: the native Daily path genuinely cannot screen-share — that is why this app
@@ -152,9 +175,10 @@ export interface VideoProvider {
    * rather than pretending it worked. A provider that cannot enforce a permission must not be
    * asked to look as though it did.
    *
-   * @returns whether the provider actually applied it.
+   * @returns whether the provider applied it, and if not, whether the participant was simply
+   * absent or the call itself failed. The caller must not report a failure as a completed change.
    */
-  setPublishing?(sessionId: string | number, userId: number, rights: PublishRights): Promise<boolean>;
+  setPublishing?(sessionId: string | number, userId: number, rights: PublishRights): Promise<ProviderApply>;
 
   /**
    * Stop whatever this participant currently has open.
@@ -162,7 +186,7 @@ export interface VideoProvider {
    * Separate from `setPublishing` because they answer different questions: one is "may they
    * speak again", the other is "are they speaking now". A teacher pressing mute means both.
    */
-  silence?(sessionId: string | number, userId: number): Promise<boolean>;
+  silence?(sessionId: string | number, userId: number): Promise<ProviderApply>;
 }
 
 /** What the room route hands back. Named for what it is, not for whoever is providing it. */

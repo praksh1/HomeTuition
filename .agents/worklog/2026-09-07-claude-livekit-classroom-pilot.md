@@ -490,3 +490,205 @@ Screenshots of fifteen states at 390, 412, 768 and 1440 in `/tmp/floor-shots`.
 3. Decide the lapsed-plan commercial question, and whether the schema should gain a
    paid-through/renewal record.
 4. Decide whether a discussion should cap how many students may hold a camera at once.
+
+---
+
+# Stage four — Codex's four merge blockers, corrected
+
+- Date: 2026-09-08
+- Agent: claude
+- Branch: `claude/livekit-classroom-pilot`
+- Base commit: `ed3267f`
+- Status: complete, awaiting Codex re-review. Not merged, not deployed.
+
+## Requested
+
+Codex reviewed this branch at `ed3267f` and refused the merge on four findings
+(`origin/codex/learning-program-foundation:.agents/worklog/2026-09-07-codex-livekit-pilot-review.md`).
+Correct only those four, keep the authenticated authority model and the student token restrictions,
+touch nothing in payments, Learning Programs, membership, Daily production behaviour, pricing,
+schema or production configuration. Add a regression test for each. Run the narrow floor, UI,
+LiveKit, lobby, classroom and typecheck gates. Stop for re-review.
+
+The queued Learning Program task was stopped before it began; its work-in-progress sits unpushed on
+`claude/learning-program-phase1` at `2eacaa8` and nothing from it is in this diff.
+
+## Changed
+
+**1 — starting a class emptied the teacher's roster.** `resetFloorFor` cleared `floor.students` and
+`state.names` and rebuilt neither, so a teacher's participant list was empty the instant their class
+began: Invite all and Mute all iterate that list and reached nobody, and a student who later raised
+a hand reappeared as the generic "Student". Split into two named functions in
+`api-server/src/ws/classroomFloor.ts` — `restartFloorFor`, which wipes the previous lesson and then
+rebuilds presence and identity from the clients still connected, and `endFloorFor`, which wipes and
+rebuilds nothing. Clearing first is deliberate: no lesson may inherit the last one's raised hands,
+invitations or permissions. `FloorClient` gained `name`, so the rebuild has a name to restore
+without a database round trip.
+
+**2 — a provider change was reported as done whether or not it happened.** `pushRights` and
+`silenceThem` discarded their promises. Now:
+
+- `VideoProvider.setPublishing` and `.silence` return `ProviderApply` — `{applied:true}`,
+  `{applied:false, reason:"absent"}` or `{applied:false, reason:"failed", error}` — instead of a
+  boolean that meant both "nobody by that name is in the room" and "the call failed"
+  (`lib/video/types.ts`). That is `refusals-must-name-their-reason.md` one layer down.
+- `livekitProvider.ts` classifies by LiveKit's measured error shapes: `not_found` / HTTP 404 /
+  "participant does not exist" is `absent`; everything else, including a missing configuration or a
+  missing identity, is `failed`. A mute that throws part-way fails the whole call rather than
+  reporting partial success.
+- `classroomFloor.ts` marks an instruction **pending before the call is made** (`beginSync`), so
+  the sequence is always ask → pending → answer and `ok` is only ever written by an answer. Five
+  bounded retries at 1/2/4/8/16s, each recomputing the instruction from the floor *as it then
+  stands*; then it stays visibly `failed`. `providerHolds` gates the floor-time stopwatch, so a
+  grant the SFU never accepted starts no clock.
+- Both screens say so. `FloorRow.provider` and `you.provider` carry `ok | pending | failed`;
+  `providerNote` draws a chip on the teacher's row (`participant-provider-<id>`), and
+  `studentOffer` withholds the accept buttons while a grant is unconfirmed.
+
+**3 — floor time was called speaking time.** `classroom.floor.spoke` is now
+`classroom.floor.held`, and every row carries `basis: "permission_and_consent"` and
+`speechConfirmed: false`. Nothing in this build observes a published track, so no code path can
+write `speechConfirmed: true` — a refund rule wanting proof of speech has to find a row that does
+not exist, which is the honest position.
+
+**4 — the discussion could be started after the class had finished.** `discussionWindow` closed at
+`cutoffAt`, ten minutes past the booked finish, quietly making a twenty-minute window a
+thirty-minute one. It now closes at `scheduledEndAt` and its signature dropped the `cutoff`
+argument so the old one cannot be passed by accident. A discussion already running is untouched:
+the overtime allowance exists so a lesson is not cut off mid-sentence, and `endDiscussion` plus the
+cutoff check in `floorProtocol.ts` still end it.
+
+Two things found while correcting these and fixed in the same pass, because leaving them would have
+made the corrections untrue on screen:
+
+- **`providerNote` was written, unit-tested, and never rendered.** The teacher's row drew a failed
+  mute exactly like a completed one — the core of finding 2 — until it was wired into
+  `ClassroomFloor.tsx`.
+- **The student guard was backwards for a failed revocation.** It keyed off `allowedMic`, which a
+  muted student still carries, so a mute the SFU never accepted was announced to that student as
+  "Switching your microphone on…". It now works out what the server actually wants the SFU to hold
+  and says one of two things: a grant that has not landed, or a removal that has not landed —
+  "The class could not confirm your microphone is off", with the one action they can take.
+
+Also wired the two suites that had no `package.json` entry into one: `test:floor` (api-server) and
+`test:floor-ui` (app). A gate nobody can run by name is a gate nobody runs.
+
+## Decisions and assumptions
+
+- **`absent` is not a failure and is not retried.** A student who is not in the SFU's room holds a
+  token that permits publishing nothing, so a grant they never received cannot be used, and
+  `floorJoin` re-pushes their standing grant when they return.
+- **Retries are bounded at five.** An unbounded retry against a provider that is down outlives the
+  lesson and hides the problem behind an optimistic "still trying". Stopping and saying so puts it
+  in front of the teacher, who can carry on without that student's microphone.
+- **A stuck row keeps its controls.** The teacher's actions are how a stuck row is unstuck; hiding
+  the buttons would leave the one person who can fix it with nothing to press.
+- **A student already speaking keeps their ordinary offer.** Taking "Stop speaking" away from
+  somebody mid-sentence because a *later* change is in flight is worse than the problem. They get a
+  chip instead, worded without a direction.
+- Floor time stays in `activity_log` rather than becoming a column: this project pushes schema by
+  hand while the API redeploys on push, so a new column takes the attendance ledger down until
+  `db:push` runs (`.agents/memory/schema-change-deploy-window.md`).
+
+## Verification
+
+Everything below was run in this session, against a real `livekit-server` v1.13.6 and a real
+Postgres, in this order.
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run typecheck` (4 packages) | clean |
+| api-server units | 555 passed, 0 failed |
+| app units | 315 passed, 0 failed |
+| `api-server` `test:floor` (real DB + recording LiveKit stub) | 96 passed, 0 failed |
+| app `test:floor-ui` (rendered, 4 widths) | 216 passed, 0 failed |
+| app `test:livekit` | 92 passed, 0 failed |
+| app `test:lobby` | 90 passed, 0 failed |
+| app `test:classroom` | 47 passed, 0 failed |
+| app `test:floor-live` (three real browsers, real API, real DB) | 50 passed, 0 failed |
+| app `test:livekit-live` (real SFU, real cameras) | 41 passed, 0 failed |
+| `lint:design` | unchanged at 99 hex / 294 sizes |
+| `git diff --check` | clean |
+
+**The two-browser suite is now a three-browser suite**, because one student cannot catch finding 1:
+a single student who raises a hand rebuilds their own row by raising it, and the hole never shows.
+It now registers two students with distinct real names, both of whom sit in the lobby, neither of
+whom reconnects or raises a hand, and then checks after the teacher presses start that the class
+list holds both rows *by name*, that Invite all reaches both, that Mute all reaches both, and that
+`activity_log` records one `invite_all`, one `mute_all` and two `return_audience` lines. Section 7b
+reads the `classroom.floor.held` rows straight out of Postgres and asserts there is no
+`classroom.floor.spoke` row, that every held row says `speechConfirmed = false`, and that its basis
+is `permission_and_consent` — finding 3 checked against the database a support agent reads, not
+against a stub.
+
+**The new checks were confirmed to fail without the fix.** With the rebuild loop in
+`restartFloorFor` disabled behind a temporary environment flag, the class list read "0 students /
+Nobody has joined yet", and Invite all reached neither student: 6 checks failed. The flag was
+reverted, the server rebuilt, and the suite returned to 50/0.
+
+Fifteen-plus rendered states at 390, 412, 768 and 1440 in `/tmp/floor-shots`, including four new
+ones for the provider states. These were looked at, not merely asserted on — see below.
+
+## Problems and surprises
+
+- **A screenshot caught a contradiction the assertions could not.** The student's failed-mute card
+  read "The class could not confirm your microphone is off" with a chip directly beneath it saying
+  "The class could not switch this on" — two opposite sentences on one card. `providerNote`'s
+  student wording assumed a direction it cannot know. It is now direction-neutral and is drawn only
+  in the one case `studentOffer` leaves alone.
+- **`floor-ui-tests` fixtures had no `provider` field**, so every scene with a permission fell into
+  the new guard and the suite failed at the first invitation. The fixture was out of date with the
+  server's view, which is the suite doing its job; `provider: "ok"` is now spelled out with a note
+  saying why the default is not "leave it undefined".
+- **An invisible character, and a wrong inference from it.** A check on the teacher's "2 speaking"
+  badge failed against an expected `"2"` after `.trim()`, printing what looked exactly like
+  `"\n2"`. I reasoned about that for some minutes and concluded it was impossible, because
+  `"\n2".trim()` is `"2"`. It was: the real string was `U+F19F, U+000A, "2"` — the Feather icon's
+  own glyph from the icon font, a private-use character that is not whitespace, survives `trim`,
+  and prints as nothing at all in a terminal. Settled by dumping code points instead of reasoning
+  further. The check now extracts the digits, and `innerText` on anything carrying an icon should
+  be read the same way.
+- **The port-7880 squatter, for the third time.** `test:livekit-live` failed with HTTP 401 because
+  my own dev `livekit-server` was on the port that suite starts its own on. Killed it → 41/41. The
+  worklog already records this lesson twice; it is now recorded three times.
+
+## Fabrications found
+
+Two, both mine, both from the work Codex was reviewing rather than newly introduced here — and
+both now rows in `.agents/backlog/ui-upgrade-progress.md`:
+
+- `classroom.floor.spoke` (finding 3): a real number answering a different question from the one
+  its name asked — permission-and-consent time presented as speaking time, in the log a support
+  agent reads when deciding a refund.
+- A provider change that never landed, drawn on both screens exactly like one that did (finding 2).
+  The teacher's half of this was still live when this session began: `providerNote` existed and had
+  unit tests, and no component rendered it.
+
+Nothing newly fabricated was found in this pass.
+
+## Deliberately not changed
+
+- Payments, booking, membership, Learning Programs, pricing, schema, production configuration.
+- Daily's production behaviour. `dailyProvider` still implements neither `setPublishing` nor
+  `silence`; the classroom refuses the teacher's control rather than pretending, and the strip is
+  not drawn at all where `moderatesPublishing` is false.
+- The behaviour of a discussion that is *already running* during overtime. Finding 4 was about
+  activation only, and the brief says to treat the running case separately.
+- The `sikshya<id>` provider room name, which attendance evidence correlates on.
+
+## Remaining risks / next pickup point
+
+Unverified, and none of it is verifiable from this container:
+
+- **No LiveKit Cloud account.** Everything is against a local `livekit-server`. Cloud's error
+  shapes are assumed to match the ones measured here; the `absent` classification is the one that
+  would matter if they differ, because misreading a real failure as `absent` would restore exactly
+  the bug finding 2 is about.
+- **No real phone and no Kathmandu latency.** The retry delays are chosen, not tuned against a
+  network that drops.
+- **No provider media telemetry.** Until LiveKit's track events are ingested, `speechConfirmed` can
+  only ever be false, and no refund rule may ask whether somebody actually spoke.
+- The four missing schema facts under `7a164ef` still block the commercial half of entitlement.
+
+Next: Codex re-review of this branch. The Learning Program Phase 1 task is queued behind it on
+`claude/learning-program-phase1`.

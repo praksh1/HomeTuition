@@ -19,7 +19,8 @@ import {
   floorAvailable,
   handleFloorFrame,
   isFloorFrame,
-  resetFloorFor,
+  restartFloorFor,
+  endFloorFor,
   tellEveryone,
   type FloorClient,
   type RoomPort,
@@ -327,6 +328,9 @@ function roomPort(sessionId: string): RoomPort {
         out.push({
           userId: c.userId,
           isSessionTeacher: c.isSessionTeacher,
+          // From `authorizeMembership`, which reads it from the database rather than the query
+          // string — so a rebuilt roster cannot be renamed by a client.
+          name: c.name,
           send: (msg: object) => sendTo(c.ws, msg),
         });
       }
@@ -348,7 +352,7 @@ export function broadcastSessionStatus(sessionId: string, status: string): void 
     cutoff check exists to prevent, and this is the same rule arriving by the other door.
   */
   if (status !== "live") {
-    resetFloorFor(id);
+    endFloorFor(id);
     broadcast(id, { type: "floor_ended" });
   }
 }
@@ -394,7 +398,7 @@ export function resetBoardFor(sessionId: string): void {
     of the lesson with nothing to bring them back. Starting a class must leave every student able
     to put their hand up.
   */
-  resetFloorFor(id);
+  restartFloorFor(id, roomPort(id));
 
   broadcast(id, { type: "board_clear" });
   broadcast(id, { type: "material_clear" });
@@ -595,6 +599,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
     const floorClient: FloorClient = {
       userId,
       isSessionTeacher,
+      name,
       send: (msg: object) => sendTo(ws, msg),
     };
     if (floorAvailable()) {

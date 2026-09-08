@@ -43,7 +43,28 @@ export interface FloorRow {
   /** What the server permits, as against what they have switched on. Both matter to a teacher. */
   allowedMic: boolean;
   allowedCamera: boolean;
+  /**
+   * Whether the video provider is actually holding what this row says.
+   *
+   * `ok` is in step. `pending` means the server asked and is still waiting or retrying. `failed`
+   * means it asked, could not get through, and has stopped trying — the decision stands on this
+   * server and the SFU has *not* accepted it.
+   *
+   * It exists because the screen used to claim otherwise. A mute that never reached LiveKit was
+   * drawn as a completed mute, so a teacher believed a microphone was off while the class could
+   * still hear it. A row that is not in step must never read as one that is.
+   */
+  provider: ProviderState;
 }
+
+/**
+ * How far behind the provider is, for one person.
+ *
+ * A view concern rather than a floor concern: the floor records what the classroom decided, and
+ * this records whether the thing carrying the media has caught up. Keeping them apart is what
+ * stops a provider outage from looking like a teacher changing their mind.
+ */
+export type ProviderState = "ok" | "pending" | "failed";
 
 export interface TeacherFloorView {
   scope: "teacher";
@@ -74,6 +95,8 @@ export interface StudentFloorView {
     allowedCamera: boolean;
     acceptedMic: boolean;
     acceptedCamera: boolean;
+    /** Whether the provider is holding this. See `FloorRow.provider`. */
+    provider: ProviderState;
   };
   /** How many hands are up, without saying whose. */
   handsUp: number;
@@ -84,7 +107,11 @@ export interface StudentFloorView {
 export type FloorView = TeacherFloorView | StudentFloorView;
 
 /** The whole floor, for the one person entitled to see it. */
-export function teacherView(floor: Floor, names: ReadonlyMap<number, string>): TeacherFloorView {
+export function teacherView(
+  floor: Floor,
+  names: ReadonlyMap<number, string>,
+  provider: ReadonlyMap<number, ProviderState> = new Map(),
+): TeacherFloorView {
   const students: FloorRow[] = [];
   for (const [userId, s] of floor.students) {
     students.push({
@@ -97,6 +124,7 @@ export function teacherView(floor: Floor, names: ReadonlyMap<number, string>): T
       connected: s.connected,
       allowedMic: s.allowed.mic,
       allowedCamera: s.allowed.camera,
+      provider: provider.get(userId) ?? "ok",
     });
   }
   return {
@@ -111,7 +139,11 @@ export function teacherView(floor: Floor, names: ReadonlyMap<number, string>): T
 }
 
 /** One student's own row, plus the two room facts their screen needs. */
-export function studentView(floor: Floor, userId: number): StudentFloorView {
+export function studentView(
+  floor: Floor,
+  userId: number,
+  provider: ReadonlyMap<number, ProviderState> = new Map(),
+): StudentFloorView {
   const s = floor.students.get(userId);
   const queue = requestQueue(floor);
   const at = queue.findIndex((r) => r.userId === userId);
@@ -131,6 +163,7 @@ export function studentView(floor: Floor, userId: number): StudentFloorView {
           allowedCamera: s.allowed.camera,
           acceptedMic: s.accepted.mic,
           acceptedCamera: s.accepted.camera,
+          provider: provider.get(userId) ?? "ok",
         }
       : {
           // A student who has done nothing yet has no row, and "audience" is the truthful answer
@@ -143,6 +176,8 @@ export function studentView(floor: Floor, userId: number): StudentFloorView {
           allowedCamera: false,
           acceptedMic: false,
           acceptedCamera: false,
+          // Nothing has been asked of the provider for somebody with no row, so nothing is behind.
+          provider: "ok",
         },
     handsUp: queue.length,
     queuePosition: at === -1 ? null : at + 1,

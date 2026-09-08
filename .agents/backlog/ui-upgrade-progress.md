@@ -77,6 +77,8 @@ Found and fixed so far:
 | Student monthly classes | A missing server quote became `Join for NPR 0`, presenting an invented price and leaving a payment action visible |
 | Monthly classes / homework / chat | A failed first load could fall through to “no classes”, “no homework”, or an empty writable conversation instead of saying the data was unavailable |
 | Monthly homework | Optional submission totals used `?? 0`; missing totals now say they are unavailable rather than inventing “0 handed in / 0 marked” |
+| Classroom floor (server) | `classroom.floor.spoke` — mine. A real number answering a different question from the one its name asked: it measured permission plus a student's tap, never a published audio track, and was written identically whether they talked for four minutes or sat in silence with a broken microphone. It went into the log a support agent reads when deciding a refund, where "Sita spoke for four minutes" is a sentence somebody acts on. Now `classroom.floor.held`, carrying `basis` and `speechConfirmed: false` on every row |
+| Classroom floor (app) | A permission or a mute the video provider never accepted was drawn exactly like one that landed — mine. A teacher believed a microphone was off while the class could still hear it, and a student was offered an unmute the SFU would refuse with no explanation. Both screens now say when the provider has not caught up |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

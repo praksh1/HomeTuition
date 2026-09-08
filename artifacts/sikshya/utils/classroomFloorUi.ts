@@ -2,6 +2,7 @@ import type {
   FloorRow,
   InvitationScope,
   MediaState,
+  ProviderState,
   StudentFloorView,
   TeacherFloorView,
 } from "@/hooks/useClassroomSocket";
@@ -71,6 +72,39 @@ export function mediaChip(state: MediaState, mine = false): FloorChip {
   }
 }
 
+/**
+ * What to say when the video provider has not caught up, or never will.
+ *
+ * Null when it is in step, which is the ordinary case and needs no words. The two that are not are
+ * shown to *both* sides, because the mistake this replaces was one-sided: a teacher who believed a
+ * mute had landed and a student who believed they could speak were looking at the same missing
+ * fact from opposite ends.
+ *
+ * The wording says what is true of the class, not what is true of the server. "Could not reach the
+ * class's video" is something a teacher can act on; "provider apply failed" is not.
+ *
+ * ## The student's half says nothing about direction, on purpose
+ *
+ * It used to say "could not switch this on", and the screenshot of a failed *mute* showed that chip
+ * directly beneath a heading saying the microphone might still be live — two opposite sentences on
+ * one card. `studentOffer` already words the grant and the removal separately, and the only place
+ * this is drawn to a student is the case it deliberately leaves alone: somebody who is already
+ * speaking while a further change is still going through. So this says that a change is outstanding
+ * and nothing about which way it points.
+ */
+export function providerNote(state: ProviderState, mine: boolean): FloorChip | null {
+  if (state === "pending") {
+    return { label: mine ? "The class is catching up…" : "Not applied yet", tone: "waiting" };
+  }
+  if (state === "failed") {
+    return {
+      label: mine ? "The class did not accept the change" : "Could not reach the class's video",
+      tone: "stopped",
+    };
+  }
+  return null;
+}
+
 /** What pressing a button asks the server for. The component does not invent these. */
 export type FloorIntent =
   | { do: "ask" }
@@ -130,6 +164,75 @@ export function ordinal(n: number): string {
 export function studentOffer(view: StudentFloorView): FloorOffer {
   const you = view.you;
   const discussion = view.mode === "discussion";
+
+  /*
+    The provider has not agreed, so nothing here may say it has.
+
+    This comes before every other branch on purpose, and it splits three ways because the
+    outstanding instruction points in two different directions and getting them the wrong way round
+    is worse than saying nothing:
+
+    - **A grant they have not used yet.** They would otherwise read "You can speak", press unmute,
+      and be refused by the SFU with no explanation at all — the failure Codex's review found.
+      Saying "still switching on" is slower and true; the buttons come back when the server
+      confirms, and `failed` offers one thing, putting their hand up again, which pushes a fresh
+      decision.
+
+    - **A removal that has not landed.** The half that must fail closed. Their teacher turned them
+      off, or took their turn back, and the SFU has not confirmed it — so their microphone may still
+      be carrying sound to the whole class. Telling them "switching on…" here, which an earlier
+      version of this guard did, is precisely backwards: it reassures somebody who is unknowingly
+      still live.
+
+    - **Already publishing.** Left alone deliberately, and handled by the ordinary branches below.
+      Their media is flowing because the SFU accepted an earlier grant; what is outstanding is some
+      *further* change. Replacing their offer would take away "Stop speaking" — the one control that
+      works regardless of what the provider has caught up with. They get a note beside their state
+      instead; see `providerNote`.
+  */
+  if (you.provider !== "ok" && you.state !== "speaking" && you.state !== "camera-active") {
+    const stuck = you.provider === "failed";
+    /*
+      What the server currently wants the SFU to hold, worked out the same way `publishRightsFor`
+      does it: a microphone the teacher has turned off is not permitted, whatever `allowed.mic`
+      still says. That one line is the difference between the two messages below.
+    */
+    const permitted = (you.allowedMic && you.state !== "muted-by-teacher") || you.allowedCamera;
+
+    if (permitted) {
+      return {
+        title: stuck ? "Your microphone could not be switched on" : "Switching your microphone on…",
+        body: stuck
+          ? "Your teacher allowed it, but the class's video did not accept it. Put your hand up again to retry."
+          : "Your teacher has allowed it. Waiting for the class to be ready.",
+        urgent: stuck,
+        buttons: stuck
+          ? [
+              {
+                id: "ask",
+                label: "Ask again",
+                spoken: "Put my hand up again to try once more",
+                emphasis: "secondary",
+                intent: { do: "ask" },
+              },
+            ]
+          : [],
+      };
+    }
+
+    return {
+      title: stuck
+        ? "The class could not confirm your microphone is off"
+        : "Turning your microphone off…",
+      // Says the one thing they can actually do about it. A child who is still audible and does not
+      // know it is the worst outcome here, so this is deliberately blunt rather than reassuring.
+      body: stuck
+        ? "Turn your microphone off on your phone or computer as well, to be sure."
+        : "Waiting for the class to confirm it.",
+      urgent: true,
+      buttons: [],
+    };
+  }
 
   /*
     An invitation, which is the one thing that must interrupt.
@@ -395,6 +498,14 @@ export interface TeacherButton {
  */
 export function teacherRowButtons(row: FloorRow, view: TeacherFloorView): TeacherButton[] {
   const out: TeacherButton[] = [];
+  /*
+    A row the provider has not caught up on still gets its controls.
+
+    Deliberate: the teacher's actions are how a stuck row is *unstuck* — returning a student to the
+    audience re-pushes a revocation, and asking again re-pushes a grant. Hiding the controls would
+    leave the one person who can do something about it with nothing to press. What changes is the
+    chip beside the name, which says the video has not accepted it yet.
+  */
   const discussion = view.mode === "discussion";
   const someoneElseHasTheCamera =
     !discussion && view.students.some((r) => r.userId !== row.userId && r.allowedCamera);

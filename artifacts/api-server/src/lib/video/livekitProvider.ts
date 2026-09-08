@@ -4,7 +4,7 @@ import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk"
 import { logger } from "../logger";
 import { providerUserId } from "./participantIdentity";
 import { roomNameForSession } from "./roomName";
-import type { JoinOptions, VideoProvider } from "./types";
+import type { JoinOptions, ProviderApply, VideoProvider } from "./types";
 
 /**
  * LiveKit Cloud, behind the same interface Daily uses.
@@ -119,6 +119,39 @@ function config(): LiveKitConfig | null {
   if (!apiKey || !apiSecret || !url) return null;
   return { apiKey, apiSecret, url };
 }
+
+/**
+ * Is this error the provider saying "there is nobody by that name in the room"?
+ *
+ * Measured against a real `livekit-server` 1.13.6 rather than guessed. `updateParticipant` for an
+ * identity that is not in the room answers:
+ *
+ * ```
+ * { name: "Not Found", code: "not_found", status: 404,
+ *   message: "twirp error unknown: participant does not exist" }
+ * ```
+ *
+ * — and the same for a room that does not exist at all, which is the correct answer for us too: a
+ * class nobody has joined yet has no LiveKit room, and a student who is not in it is absent.
+ *
+ * Three independent signals are checked because a Twirp client that changes how it surfaces one of
+ * them must not silently reclassify an absence as an outage. Getting that wrong in *this* direction
+ * is the safe one — an outage treated as an absence would hide a real failure — so anything that
+ * does not match all-clear falls through to `failed`.
+ */
+function looksAbsent(err: unknown): boolean {
+  const e = err as { code?: unknown; status?: unknown; message?: unknown } | null;
+  if (!e) return false;
+  if (e.code === "not_found") return true;
+  if (e.status === 404) return true;
+  return typeof e.message === "string" && /participant does not exist|room does not exist/i.test(e.message);
+}
+
+const failedWith = (err: unknown): ProviderApply => ({
+  applied: false,
+  reason: "failed",
+  error: err instanceof Error ? err.message : String(err),
+});
 
 export const livekitProvider: VideoProvider = {
   name: "livekit",
@@ -290,19 +323,25 @@ export const livekitProvider: VideoProvider = {
    * where the old token is still valid. Updating the live participant applies immediately, to
    * the participant the server names, and leaves nothing reusable behind.
    *
-   * Returns whether it took effect rather than throwing: a student who dropped off a second
-   * before the teacher pressed the button is an ordinary event in a Nepali classroom, not an
-   * error worth failing a request over. The caller records the outcome either way.
+   * Answers with an outcome rather than throwing, and the outcome has three values rather than
+   * two. A student who dropped off a second before the teacher pressed the button is `absent` —
+   * ordinary in a Nepali classroom, and safe, because their token permits publishing nothing and
+   * a reconnect re-pushes the grant. A call that could not be made is `failed`, and the caller
+   * must not report that as a change that happened. See `ProviderApply` in `types.ts`.
    */
   async setPublishing(
     sessionId: string | number,
     userId: number,
     rights: { canPublish: boolean; mic: boolean; camera: boolean },
-  ): Promise<boolean> {
+  ): Promise<ProviderApply> {
     const settings = config();
-    if (!settings) return false;
+    // Not "absent": nobody has been asked anything. Reporting this as absence would let a
+    // deployment with no LiveKit credentials look like a classroom where everybody had left.
+    if (!settings) return { applied: false, reason: "failed", error: "LiveKit is not configured" };
     const identity = providerUserId(userId);
-    if (identity === null) return false;
+    if (identity === null) {
+      return { applied: false, reason: "failed", error: `no usable participant identity for user ${userId}` };
+    }
 
     const sources: TrackSource[] = [];
     if (rights.mic) sources.push(TrackSource.MICROPHONE);
@@ -342,10 +381,11 @@ export const livekitProvider: VideoProvider = {
         somebody a moderator — it is not a rule this code enforces, it is one the protocol does,
         which is the better kind. The compiler rejected an earlier version of this that tried.
       */
-      return true;
+      return { applied: true };
     } catch (err) {
+      if (looksAbsent(err)) return { applied: false, reason: "absent" };
       logger.warn({ err, sessionId, userId }, "could not update LiveKit publishing permission");
-      return false;
+      return failedWith(err);
     }
   },
 
@@ -356,25 +396,54 @@ export const livekitProvider: VideoProvider = {
    * microphone already open. A teacher pressing mute expects silence now, so the live track is
    * muted as well — which is why `endDiscussion` and `muteAllStudents` call both halves.
    */
-  async silence(sessionId: string | number, userId: number): Promise<boolean> {
+  async silence(sessionId: string | number, userId: number): Promise<ProviderApply> {
     const settings = config();
-    if (!settings) return false;
+    if (!settings) return { applied: false, reason: "failed", error: "LiveKit is not configured" };
     const identity = providerUserId(userId);
-    if (identity === null) return false;
+    if (identity === null) {
+      return { applied: false, reason: "failed", error: `no usable participant identity for user ${userId}` };
+    }
 
     try {
       const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
+      /*
+        The roster answers the absence question on its own.
+
+        Measured: `listParticipants` on an empty room, and on a room that does not exist, both
+        return `[]` rather than throwing. So a participant who is not in the list is `absent` —
+        an ordinary outcome that needs no retry, because there is no track to stop.
+      */
       const people = await rooms.listParticipants(roomNameForSession(sessionId));
       const who = people.find((p) => p.identity === identity);
-      if (!who) return false;
-      for (const track of who.tracks ?? []) {
-        if (track.muted) continue;
+      if (!who) return { applied: false, reason: "absent" };
+
+      const open = (who.tracks ?? []).filter((track) => !track.muted);
+      // Present with nothing running is a completed silence: there is nothing left to stop.
+      if (open.length === 0) return { applied: true };
+
+      for (const track of open) {
+        /*
+          One at a time, and a single failure fails the whole call.
+
+          A student publishing a microphone and a camera whose microphone was muted and whose
+          camera was not is still audible in the sense that matters — something the teacher asked
+          to stop is still running. Reporting partial success would put that student back in the
+          "silenced" column on the teacher's screen, which is the exact lie this change exists to
+          remove. The caller retries, and a retry re-lists, so an already-muted track is skipped.
+        */
         await rooms.mutePublishedTrack(roomNameForSession(sessionId), identity, track.sid, true);
       }
-      return true;
+      return { applied: true };
     } catch (err) {
+      /*
+        A participant who vanished between the list and the mute answers `unavailable`/503 ("no
+        response from servers"), which is indistinguishable from a real outage — measured. So it
+        is classified as `failed` and retried; the retry re-lists and finds them absent, which
+        converges on the right answer without ever calling an outage an absence.
+      */
+      if (looksAbsent(err)) return { applied: false, reason: "absent" };
       logger.warn({ err, sessionId, userId }, "could not stop a LiveKit track");
-      return false;
+      return failedWith(err);
     }
   },
 };

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { FloorRow, StudentFloorView, TeacherFloorView } from "@/hooks/useClassroomSocket";
 import {
   discussionControl,
+  providerNote,
   floorSummary,
   mediaChip,
   ordinal,
@@ -40,6 +41,7 @@ function student(over: Partial<StudentFloorView["you"]> = {}, view: Partial<Stud
       allowedCamera: false,
       acceptedMic: false,
       acceptedCamera: false,
+      provider: "ok",
       ...over,
     },
   };
@@ -56,6 +58,7 @@ function row(over: Partial<FloorRow> = {}): FloorRow {
     connected: true,
     allowedMic: false,
     allowedCamera: false,
+    provider: "ok",
     ...over,
   };
 }
@@ -295,4 +298,120 @@ test("once open it offers to end, and says what ending does", () => {
   assert.equal(c.ending, true);
   assert.match(c.label, /End discussion/);
   assert.match(c.hint ?? "", /back to listening/);
+});
+
+/* --- the provider has not caught up ---------------------------------------
+ *
+ * Codex's second finding. The screen used to draw a permission the SFU had refused, and a mute
+ * that never reached it, as completed. Every test here is one half of "do not say it happened".
+ */
+
+test("a student whose grant the video never accepted is not told they can speak", () => {
+  const stuck = studentOffer(student({ state: "allowed-not-accepted", allowedMic: true, provider: "failed" }));
+  assert.match(stuck.title ?? "", /could not be switched on/i);
+  assert.equal(/you can speak/i.test(JSON.stringify(stuck)), false,
+    "the exact sentence that sent a student to press unmute and be refused with no explanation");
+  assert.deepEqual(ids(stuck.buttons), ["ask"], "the one thing that pushes a fresh decision");
+});
+
+test("while the video is still being asked, nothing is offered and nothing is claimed", () => {
+  const waiting = studentOffer(student({ state: "allowed-not-accepted", allowedMic: true, provider: "pending" }));
+  assert.match(waiting.title ?? "", /switching your microphone on/i);
+  assert.deepEqual(waiting.buttons, [], "a button that would be refused is not a button");
+  assert.equal(waiting.urgent, false, "waiting is not an emergency; failing is");
+});
+
+test("an unconfirmed grant outranks even an invitation, because the invitation cannot be accepted", () => {
+  const invited = studentOffer(
+    student({ state: "allowed-not-accepted", invitedAt: NOW, allowedMic: true, provider: "failed" }),
+  );
+  assert.match(invited.title ?? "", /could not be switched on/i);
+  assert.equal(/asked you to speak/i.test(invited.title ?? ""), false);
+});
+
+test("a student the provider is in step with is unaffected", () => {
+  const fine = studentOffer(student({ state: "allowed-not-accepted", invitedAt: NOW, allowedMic: true }));
+  assert.match(fine.title ?? "", /asked you to speak/i);
+});
+
+test("a student the provider was never asked about is shown no problem at all", () => {
+  const idle = studentOffer(student({}));
+  assert.deepEqual(ids(idle.buttons), ["ask"]);
+  assert.equal(idle.title, null);
+});
+
+/*
+  The other direction, and the one an earlier version of this guard got backwards.
+
+  It keyed off `allowedMic`, which a muted student still has — so a mute the provider never accepted
+  was announced to the student as "switching your microphone on". That reassures the one person who
+  most needs to be told the opposite: their microphone may still be carrying sound to the class.
+*/
+test("a mute the video never accepted is never dressed up as a grant", () => {
+  const stuck = studentOffer(student({ state: "muted-by-teacher", allowedMic: true, provider: "failed" }));
+  assert.equal(/switching your microphone on/i.test(stuck.title ?? ""), false,
+    "the exact backwards sentence: a still-live microphone reported as one being switched on");
+  assert.match(stuck.title ?? "", /could not confirm your microphone is off/i);
+  assert.match(stuck.body ?? "", /turn your microphone off on your phone/i,
+    "the one thing they can actually do about it");
+  assert.equal(stuck.urgent, true);
+});
+
+test("a revocation still going through says so, and offers nothing", () => {
+  const going = studentOffer(student({ state: "muted-by-teacher", allowedMic: true, provider: "pending" }));
+  assert.match(going.title ?? "", /turning your microphone off/i);
+  assert.deepEqual(going.buttons, []);
+});
+
+test("a turn taken back that the video never confirmed warns the student too", () => {
+  // `returnToAudience` clears every permission, so the state is plain audience — and a student who
+  // was speaking a second ago may still be audible until the SFU agrees.
+  const back = studentOffer(student({ state: "audience", provider: "failed" }));
+  assert.match(back.title ?? "", /could not confirm your microphone is off/i);
+});
+
+test("a student already speaking keeps the control that stops them", () => {
+  /*
+    Deliberately not swallowed by the guard. Their media is flowing because the SFU accepted an
+    earlier grant; what is outstanding is some further change. Replacing their offer would take away
+    "Stop speaking", which works whatever the provider has caught up with — leaving a student who
+    wants to stop talking with nothing to press.
+  */
+  const live = studentOffer(student({
+    state: "speaking", allowedMic: true, acceptedMic: true, provider: "failed",
+  }));
+  assert.match(live.title ?? "", /you're speaking/i);
+  assert.ok(ids(live.buttons).includes("stop"));
+});
+
+test("the teacher is told which rows the video has not accepted, in their own words", () => {
+  assert.equal(providerNote("ok", false), null, "in step needs no words at all");
+  const pending = providerNote("pending", false);
+  assert.equal(pending?.tone, "waiting");
+  const failed = providerNote("failed", false);
+  assert.equal(failed?.tone, "stopped");
+  assert.match(failed?.label ?? "", /video/i);
+  // A student reads about their class, not about a system.
+  assert.notEqual(providerNote("failed", true)?.label, failed?.label);
+});
+
+test("the student's own note never claims a direction", () => {
+  /*
+    It said "could not switch this on", and the rendered screenshot of a failed *mute* put that
+    directly under a heading warning the microphone might still be live. `studentOffer` words the
+    two directions itself; this only ever appears while somebody is already speaking, where the
+    outstanding change could be either.
+  */
+  for (const state of ["pending", "failed"] as const) {
+    const label = providerNote(state, true)?.label ?? "";
+    assert.equal(/switch(ing)? (this |it )?on/i.test(label), false, label);
+    assert.equal(/off\b/i.test(label), false, label);
+  }
+});
+
+test("a stuck row keeps its controls, because they are what unsticks it", () => {
+  const stuck = row({ state: "speaking", allowedMic: true, provider: "failed" });
+  const buttons = ids(teacherRowButtons(stuck, teacher({ students: [stuck] })));
+  assert.ok(buttons.includes("mute"), "re-pressing mute is how a failed revocation is retried");
+  assert.ok(buttons.includes("return"));
 });

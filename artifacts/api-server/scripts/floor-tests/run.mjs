@@ -59,6 +59,18 @@ const calls = [];
 const present = new Set();
 
 /**
+ * How the fake should answer, per identity.
+ *
+ * `ok` applies. `absent` answers exactly as a real livekit-server does for a participant who is
+ * not in the room — measured: `code: "not_found"`, status 404, "participant does not exist".
+ * `fail` is an outage. `slow` applies, late. Set through `behaviour.set(identity, mode)`.
+ */
+const behaviour = new Map();
+const modeFor = (identity) => behaviour.get(String(identity)) ?? "ok";
+/** Every retry the server made, so a test can prove it retried rather than gave up silently. */
+const attempts = [];
+
+/**
  * The three endpoints `livekit-server-sdk`'s `RoomServiceClient` posts to.
  *
  * Deliberately answers rather than refuses: a stub that 500s would prove only that the code
@@ -79,6 +91,21 @@ function startFakeLiveKit() {
 
         if (method === "UpdateParticipant" && typeof parsed.identity === "string") present.add(parsed.identity);
 
+        const who = parsed.identity ?? "";
+        const mode = modeFor(who);
+        if (method === "UpdateParticipant" || method === "MutePublishedTrack") attempts.push({ method, who, mode });
+
+        if (mode === "absent" && (method === "UpdateParticipant" || method === "MutePublishedTrack")) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ code: "not_found", msg: "participant does not exist" }));
+          return;
+        }
+        if (mode === "fail" && method !== "ListParticipants") {
+          res.writeHead(503, { "content-type": "application/json" });
+          res.end(JSON.stringify({ code: "unavailable", msg: "no response from servers" }));
+          return;
+        }
+
         let answer = {};
         if (method === "ListParticipants") {
           answer = {
@@ -93,8 +120,12 @@ function startFakeLiveKit() {
             })),
           };
         }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(answer));
+        const reply = () => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify(answer));
+        };
+        if (mode === "slow" && method !== "ListParticipants") setTimeout(reply, 700);
+        else reply();
       });
     });
     server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port }));
@@ -148,7 +179,7 @@ await (esbuild.build ?? esbuild.default.build)({
   absWorkingDir: serverRoot,
 });
 const floorModule = await import(bundlePath);
-const { handleFloorFrame, floorJoin, floorLeave, resetFloorFor, forgetFloor, peekFloor } = floorModule;
+const { handleFloorFrame, floorJoin, floorLeave, restartFloorFor, endFloorFor, forgetFloor, peekFloor } = floorModule;
 
 /* ------------------------------------------------------------------------- */
 /* Fixtures                                                                   */
@@ -606,7 +637,7 @@ const grantCase = makeMonthlyClass();
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
 
-  resetFloorFor(String(sessionId));
+  endFloorFor(String(sessionId));
   check("ending the class takes every permission with it",
     (peekFloor(String(sessionId))?.students.size ?? -1) === 0,
     String(peekFloor(String(sessionId))?.students.size));
@@ -699,6 +730,244 @@ const grantCase = makeMonthlyClass();
   const before = one.inbox.length;
   await act(sessionId, room, one, { type: "chat", text: "hello" });
   check("a message outside the floor namespace is left alone", one.inbox.length === before);
+}
+
+/* --- 16. starting a class keeps the lobby, named ------------------------- */
+
+/*
+  Codex's first finding.
+
+  Doors open ten minutes before the booked start, so a teacher presses start into a room that
+  already has people in it. Clearing the floor and telling everybody — without rebuilding it — left
+  the teacher with an empty participant list at the exact moment their class began.
+*/
+{
+  const { sessionId, teacherId, oneId, twoId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const two = person(twoId, false, "Ram Bahadur");
+  const room = makeRoom([teacher, one, two]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+  await floorJoin(String(sessionId), room, two, "Ram Bahadur");
+
+  // Nobody has raised a hand or done anything at all. This is a lobby.
+  restartFloorFor(String(sessionId), room);
+  floorModule.tellEveryone(String(sessionId), room);
+  await settle();
+
+  const roster = teacher.floor()?.students ?? [];
+  check("both lobby students survive the class starting", roster.length === 2, JSON.stringify(roster.length));
+  check("and keep the names the database gave them",
+    roster.map((r) => r.name).sort().join(",") === "Ram Bahadur,Sita Sharma",
+    roster.map((r) => r.name).join(","));
+  check("nobody is granted anything by the class starting",
+    roster.every((r) => !r.allowedMic && !r.allowedCamera && r.state === "audience"),
+    JSON.stringify(roster));
+  check("and everybody is shown as connected", roster.every((r) => r.connected));
+
+  // The two whole-class controls, with no student having acted first.
+  let m = mark();
+  await act(sessionId, room, teacher, { type: "floor_invite_all" });
+  const invited = since(m).filter((c) => c.method === "UpdateParticipant");
+  check("Invite all reaches every student in the lobby", invited.length === 2,
+    invited.map((c) => c.body.identity).join(","));
+  check("and names them individually", invited.map((c) => c.body.identity).sort().join(",") ===
+    [oneId, twoId].map(String).sort().join(","), invited.map((c) => c.body.identity).join(","));
+
+  m = mark();
+  await act(sessionId, room, teacher, { type: "floor_mute_all" });
+  const muted = since(m).filter((c) => c.method === "UpdateParticipant");
+  check("Mute all reaches every student it just invited", muted.length === 2,
+    muted.map((c) => c.body.identity).join(","));
+
+  check("a student's own screen survives it too", one.floor()?.scope === "student");
+  forgetFloor(String(sessionId));
+}
+
+{
+  // The other half of the same rule: a class *ending* clears and rebuilds nothing.
+  const { sessionId, teacherId, oneId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const room = makeRoom([teacher, one]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+  endFloorFor(String(sessionId));
+  check("a class that ends leaves no roster behind",
+    (peekFloor(String(sessionId))?.students.size ?? -1) === 0,
+    String(peekFloor(String(sessionId))?.students.size));
+  forgetFloor(String(sessionId));
+}
+
+/* --- 17. the provider is not believed until it answers ------------------- */
+
+/*
+  Codex's second finding. `pushRights`/`silenceThem` threw their promises away, so a permission
+  LiveKit had refused was drawn as granted and a mute it never received was drawn as done.
+*/
+{
+  const { sessionId, teacherId, oneId, twoId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const two = person(twoId, false, "Ram Bahadur");
+  const room = makeRoom([teacher, one, two]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+  await floorJoin(String(sessionId), room, two, "Ram Bahadur");
+
+  const rowFor = (id) => teacher.floor()?.students.find((r) => r.userId === id);
+
+  // A provider that is simply down.
+  behaviour.set(String(oneId), "fail");
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  check("a grant the provider refused is not reported as applied",
+    rowFor(oneId)?.provider !== "ok", JSON.stringify(rowFor(oneId)));
+  check("the student is told the same thing, not that they may speak",
+    one.floor()?.you.provider !== "ok", JSON.stringify(one.floor()?.you));
+
+  // And it retries rather than giving up on the first answer.
+  const before = attempts.filter((a) => a.who === String(oneId)).length;
+  await new Promise((r) => setTimeout(r, 1400));
+  const after = attempts.filter((a) => a.who === String(oneId)).length;
+  check("and it is retried rather than abandoned after one attempt", after > before, `${before} -> ${after}`);
+
+  // When the provider comes back, the retry lands and the class is told without anybody acting.
+  behaviour.set(String(oneId), "ok");
+  await new Promise((r) => setTimeout(r, 2600));
+  check("once the provider recovers, the row clears itself",
+    rowFor(oneId)?.provider === "ok", JSON.stringify(rowFor(oneId)));
+  check("and the student is told, without having pressed anything",
+    one.floor()?.you.provider === "ok", JSON.stringify(one.floor()?.you));
+
+  // Partial failure: one student lands, the other does not.
+  behaviour.set(String(twoId), "fail");
+  await act(sessionId, room, teacher, { type: "floor_invite_all" });
+  await settle();
+  check("a partial failure marks only the student it failed for",
+    rowFor(twoId)?.provider !== "ok" && rowFor(oneId)?.provider === "ok",
+    JSON.stringify([rowFor(oneId)?.provider, rowFor(twoId)?.provider]));
+  behaviour.delete(String(twoId));
+  forgetFloor(String(sessionId));
+}
+
+{
+  // Absent is not failed. A student who left the SFU's room needs no retry and no warning.
+  const { sessionId, teacherId, oneId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const room = makeRoom([teacher, one]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+
+  behaviour.set(String(oneId), "absent");
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  const row = teacher.floor()?.students.find((r) => r.userId === oneId);
+  check("a participant who is not in the room is accepted, not flagged",
+    row?.provider === "ok", JSON.stringify(row));
+  check("their standing grant is kept, ready for the reconnect that re-pushes it",
+    row?.allowedMic === true, JSON.stringify(row));
+  behaviour.delete(String(oneId));
+  forgetFloor(String(sessionId));
+}
+
+{
+  // A slow provider is pending, then fine. Nothing claims success in between.
+  const { sessionId, teacherId, oneId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const room = makeRoom([teacher, one]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+
+  behaviour.set(String(oneId), "slow");
+  await handleFloorFrame(String(sessionId), room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  await new Promise((r) => setTimeout(r, 120));
+  check("a slow acknowledgement reads as pending, never as done",
+    one.floor()?.you.provider !== "ok", JSON.stringify(one.floor()?.you));
+  await new Promise((r) => setTimeout(r, 1200));
+  check("and settles once the provider answers", one.floor()?.you.provider === "ok",
+    JSON.stringify(one.floor()?.you));
+  behaviour.delete(String(oneId));
+  forgetFloor(String(sessionId));
+}
+
+{
+  // Revocation fails closed: a mute the provider refused leaves the row visibly unresolved.
+  const { sessionId, teacherId, oneId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const room = makeRoom([teacher, one]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
+
+  behaviour.set(String(oneId), "fail");
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
+  const row = teacher.floor()?.students.find((r) => r.userId === oneId);
+  check("a mute the provider refused is not shown to the teacher as finished",
+    row?.provider !== "ok", JSON.stringify(row));
+  check("the floor still records the decision, so nothing new can be granted on top of it",
+    row?.state === "muted-by-teacher", JSON.stringify(row));
+  behaviour.delete(String(oneId));
+  forgetFloor(String(sessionId));
+}
+
+/* --- 18. floor time is not speaking time -------------------------------- */
+
+/*
+  Codex's third finding. The stopwatch is permission plus consent — it observes no audio at all —
+  so it must not be named or summarised as speech, and it must not run at all on a grant the SFU
+  never accepted.
+*/
+{
+  const { sessionId, teacherId, oneId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const room = makeRoom([teacher, one]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
+  await new Promise((r) => setTimeout(r, 1200));
+  await act(sessionId, room, one, { type: "floor_listen_only" });
+  await new Promise((r) => setTimeout(r, 300));
+
+  const spoke = Number(sql(`select count(*) from activity_log
+    where subject_id = ${sessionId} and action = 'classroom.floor.spoke'`));
+  check("nothing claims the student spoke", spoke === 0, String(spoke));
+
+  const held = sql(`select detail::text from activity_log
+    where subject_id = ${sessionId} and action = 'classroom.floor.held' limit 1`);
+  check("what is recorded is floor time", held.length > 0, held);
+  check("and it says on its face that no speech was confirmed",
+    held.includes('"speechConfirmed": false') || held.includes('"speechConfirmed":false'), held);
+  check("and where the number came from", held.includes("permission_and_consent"), held);
+  forgetFloor(String(sessionId));
+}
+
+{
+  // The stopwatch must not run on a grant the provider never accepted.
+  const { sessionId, teacherId, oneId } = makeMonthlyClass();
+  const teacher = person(teacherId, true, "Floor Teacher");
+  const one = person(oneId, false, "Sita Sharma");
+  const room = makeRoom([teacher, one]);
+  await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
+  await floorJoin(String(sessionId), room, one, "Sita Sharma");
+
+  behaviour.set(String(oneId), "fail");
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
+  await new Promise((r) => setTimeout(r, 1500));
+  await act(sessionId, room, one, { type: "floor_listen_only" });
+  await new Promise((r) => setTimeout(r, 300));
+
+  const held = Number(sql(`select count(*) from activity_log
+    where subject_id = ${sessionId} and action = 'classroom.floor.held'`));
+  check("no floor time is recorded for a microphone the provider never opened", held === 0, String(held));
+  behaviour.delete(String(oneId));
+  forgetFloor(String(sessionId));
 }
 
 /* ------------------------------------------------------------------------- */

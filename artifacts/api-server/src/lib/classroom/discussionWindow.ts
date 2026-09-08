@@ -46,26 +46,42 @@ export type WindowCheck =
   | { open: false; code: "no-schedule" | "too-early" | "finished"; reason: string; opensAt: number | null };
 
 /**
- * May the discussion be opened right now?
+ * May the discussion be **opened** right now?
  *
  * Separate from eligibility on purpose. "Not yet" and "not on this plan" are different answers
  * and a teacher acts on them differently — one is a wait, the other is never. Collapsing them
  * into one boolean is the mistake `refusals-must-name-their-reason.md` was written about.
  *
- * `cutoff` is the class's own hard stop, passed in rather than recomputed so this cannot drift
- * from the single timeline it belongs to.
+ * ## It closes at the booked finish, not at the hard cutoff
+ *
+ * The window is the *last twenty minutes of the paid slot*, and that is what the owner asked for.
+ * An earlier version closed it at `cutoffAt` — ten minutes *past* the booked finish — which quietly
+ * turned a twenty-minute window into a thirty-minute one and let a teacher open a brand-new
+ * discussion after the class the student paid for had already ended. A student who booked 10:00 to
+ * 11:00 needs to know they are free at 11:00; that is the same rule the whole of
+ * `lib/sessionStart.ts` is built on, and this is it applied once more.
+ *
+ * ## A discussion already running is a separate question, deliberately left alone
+ *
+ * This function answers "may one be *started*". The overtime allowance in `cutoffAt` exists so a
+ * lesson that ran over is not cut off mid-sentence, and a discussion that was legitimately opened
+ * inside the paid slot goes on until the class itself stops — `endDiscussion` and the cutoff check
+ * in `floorProtocol.ts` end it, not this. Making the grace period also govern *activation* is
+ * precisely the conflation that produced the thirty-minute window.
  */
-export function discussionWindow(
-  session: StartableSession,
-  cutoff: number | null,
-  now: number,
-): WindowCheck {
+export function discussionWindow(session: StartableSession, now: number): WindowCheck {
   const opensAt = discussionOpensAt(session);
-  if (opensAt === null) {
+  const closesAt = scheduledEndAt(session);
+  if (opensAt === null || closesAt === null) {
     return { open: false, code: "no-schedule", reason: "This class has no scheduled time.", opensAt: null };
   }
-  if (cutoff !== null && now >= cutoff) {
-    return { open: false, code: "finished", reason: "This class is over.", opensAt };
+  if (now >= closesAt) {
+    return {
+      open: false,
+      code: "finished",
+      reason: "This class has reached its finish time, so a new discussion cannot be started.",
+      opensAt,
+    };
   }
   if (now < opensAt) {
     return {

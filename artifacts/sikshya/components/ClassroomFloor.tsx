@@ -16,6 +16,7 @@ import {
   discussionControl,
   floorSummary,
   mediaChip,
+  providerNote,
   studentOffer,
   teacherRowButtons,
   type FloorIntent,
@@ -171,6 +172,18 @@ function StudentFloor({
   const { t, space, radius, isCompact } = useLayout();
   const offer = useMemo(() => studentOffer(floor), [floor]);
   const chip = mediaChip(floor.you.state, true);
+  /*
+    Only for the one case `studentOffer` deliberately leaves alone.
+
+    A student who is already speaking keeps their ordinary offer — taking "Stop speaking" away from
+    somebody mid-sentence because a *later* change is still going through would be worse than the
+    problem — so without this their screen would say "You're speaking" and nothing else while the
+    provider had not caught up. Every other state has the offer itself say it, in sentences that
+    know which direction the outstanding change points. Drawing the chip there as well put "could
+    not switch this on" underneath a heading warning that a microphone might still be live.
+  */
+  const speakingNow = floor.you.state === "speaking" || floor.you.state === "camera-active";
+  const note = speakingNow ? providerNote(floor.you.provider, true) : null;
 
   const run = useCallback(
     (intent: FloorIntent) => {
@@ -229,6 +242,10 @@ function StudentFloor({
         */
         <FloorChipView testID="student-floor-state" label={chip.label} tone={chip.tone} />
       )}
+
+      {note ? (
+        <FloorChipView testID="student-floor-provider" label={note.label} tone={note.tone} />
+      ) : null}
 
       <View
         style={[
@@ -599,6 +616,15 @@ function ParticipantRow({
   const colors = useColors();
   const { t, space, radius } = useLayout();
   const chip = mediaChip(row.state);
+  /*
+    The half of Codex's second finding that lives on this screen.
+
+    The state chip says what the *classroom* decided. This says whether the thing carrying the audio
+    agreed. Without it a mute that never reached LiveKit was drawn exactly like one that did, and a
+    teacher who had turned a microphone off believed the class could no longer hear it — while it
+    was still open. Null when the two are in step, which is nearly always.
+  */
+  const note = providerNote(row.provider, false);
 
   return (
     <View
@@ -636,6 +662,10 @@ function ParticipantRow({
         </View>
         <FloorChipView testID={`participant-state-${row.userId}`} label={chip.label} tone={chip.tone} />
       </View>
+
+      {note ? (
+        <FloorChipView testID={`participant-provider-${row.userId}`} label={note.label} tone={note.tone} />
+      ) : null}
 
       {buttons.length > 0 ? (
         <View style={[stack ? floorStyles.rowWrap : floorStyles.row, { gap: space.xs }]}>

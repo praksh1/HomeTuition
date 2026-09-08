@@ -156,9 +156,19 @@ writeFileSync(
 
 const NOW = Date.now();
 
+/*
+  `provider: "ok"` is spelled out rather than left off.
+
+  It is what the server sends for somebody the SFU is in step with, and it is the ordinary case, so
+  every scene below that does not say otherwise gets it. Leaving it undefined would not mean
+  "ordinary" — `studentOffer` treats anything that is not `ok` as not-yet-applied and withholds the
+  buttons, which is deliberate and is the point of the field. The two scenes that exercise the other
+  two values set it themselves.
+*/
 const you = (over = {}) => ({
   state: "audience", requestedAt: null, invitedAt: null, invitationScope: null,
-  allowedMic: false, allowedCamera: false, acceptedMic: false, acceptedCamera: false, ...over,
+  allowedMic: false, allowedCamera: false, acceptedMic: false, acceptedCamera: false,
+  provider: "ok", ...over,
 });
 const asStudent = (yourRow, over = {}) => ({
   scope: "student", mode: "classroom", discussionEligible: false, discussionStartedAt: null,
@@ -166,7 +176,8 @@ const asStudent = (yourRow, over = {}) => ({
 });
 const row = (over = {}) => ({
   userId: 11, name: "Sita Sharma", state: "audience", requestedAt: null, invitedAt: null,
-  invitationScope: null, connected: true, allowedMic: false, allowedCamera: false, ...over,
+  invitationScope: null, connected: true, allowedMic: false, allowedCamera: false,
+  provider: "ok", ...over,
 });
 const asTeacher = (over = {}) => ({
   scope: "teacher", mode: "classroom", discussionEligible: false, discussionStartedAt: null,
@@ -262,6 +273,53 @@ for (const size of SIZES) {
   check(`${L}: being turned off says who did it`, muted.includes("Your teacher turned"), muted);
   check(`${L}: and never reads as a punishment`, (await text("student-floor-body")).includes("hand up again"));
 
+  console.log(`\n[${L}] The video has not caught up with the decision`);
+  /*
+    Drawn, not merely computed.
+
+    A grant the SFU has not accepted must not look like a grant. The unit test next door proves
+    `studentOffer` withholds the buttons; this proves the component draws the waiting sentence
+    instead of an unmute a student would press and be refused by the SFU with no explanation —
+    which is the failure Codex's second finding names.
+  */
+  await show(
+    { floor: asStudent({ state: "allowed-not-accepted", allowedMic: true, provider: "pending" }) },
+    "student-provider-pending",
+  );
+  const waitingOn = await text("student-floor-title");
+  check(`${L}: a grant still going through says so`, waitingOn.includes("Switching your microphone on"), waitingOn);
+  check(`${L}: and offers nothing to press while it is in flight`, !(await seen("student-floor-accept-mic")));
+
+  await show(
+    { floor: asStudent({ state: "allowed-not-accepted", allowedMic: true, provider: "failed" }) },
+    "student-provider-failed",
+  );
+  const stuck = await text("student-floor-title");
+  check(`${L}: a grant the video refused says that too`, stuck.includes("could not be switched on"), stuck);
+  check(`${L}: and the one thing offered is asking again`,
+    (await seen("student-floor-ask")) && !(await seen("student-floor-accept-mic")));
+
+  /*
+    The other direction, which matters more.
+
+    A mute the SFU never accepted leaves a child audible to the whole class. The screen has to say
+    so — and must never say the opposite, which is what an earlier version of this guard did by
+    reading the permission flag a muted student still carries.
+  */
+  await show(
+    { floor: asStudent({ state: "muted-by-teacher", allowedMic: true, provider: "failed" }) },
+    "student-provider-mute-failed",
+  );
+  const stillOn = await text("student-floor-title");
+  check(`${L}: a mute the video never took says the microphone may still be live`,
+    stillOn.includes("could not confirm your microphone is off"), stillOn);
+  check(`${L}: and never that it is being switched on`, !stillOn.includes("Switching"), stillOn);
+
+  await show({ floor: asStudent({ state: "speaking", allowedMic: true, acceptedMic: true, provider: "pending" }) });
+  check(`${L}: a student already speaking keeps the control that stops them`,
+    await seen("student-floor-stop"));
+  check(`${L}: and is told the video has not caught up`, await seen("student-floor-provider"));
+
   console.log(`\n[${L}] A refusal`);
   await show(
     {
@@ -324,6 +382,7 @@ for (const size of SIZES) {
   check(`${L}: muting names the right student`,
     JSON.stringify(await sent()) === JSON.stringify([{ name: "mute", args: [22] }]));
 
+
   /*
     The sheet survives the answer coming back.
 
@@ -336,6 +395,31 @@ for (const size of SIZES) {
   check(`${L}: the sheet stays open when the class changes underneath it`, await seen("participant-sheet"));
   await tap("participant-sheet-close");
   check(`${L}: and closes when asked`, !(await seen("participant-sheet")));
+
+  console.log(`\n[${L}] Rows the video has not caught up with`);
+  /*
+    The half of Codex's second finding that lives on the teacher's list.
+
+    A mute that never reached LiveKit used to be drawn exactly like one that landed, so a teacher
+    believed a microphone was off while the class could still hear it. The chip says otherwise, and
+    the controls stay — pressing mute again is how a failed revocation is retried.
+  */
+  await show({ floor: asTeacher({
+    students: [
+      row({ userId: 22, name: "Ram Bahadur", state: "speaking", allowedMic: true, provider: "failed" }),
+      row({ userId: 55, name: "Anjali Gurung", state: "allowed-not-accepted", allowedMic: true, provider: "pending" }),
+    ],
+    queue: [],
+  }) });
+  await tap("teacher-floor-participants");
+  await p.screenshot({ path: path.join(SHOTS, `${L}-teacher-sheet-provider.png`) });
+  check(`${L}: a row the video refused is marked as such`, await seen("participant-provider-22"));
+  check(`${L}: in words about the class, not about a server`,
+    (await text("participant-provider-22")).includes("Could not reach"), await text("participant-provider-22"));
+  check(`${L}: a row still going through is marked differently`,
+    (await text("participant-provider-55")).includes("Not applied yet"), await text("participant-provider-55"));
+  check(`${L}: and a stuck row keeps the controls that unstick it`, await seen("participant-22-mute"));
+  await tap("participant-sheet-close");
 
   console.log(`\n[${L}] Nobody has joined`);
   await show({ floor: asTeacher({}) });

@@ -40,11 +40,11 @@ test("26: it cannot be opened before that moment", () => {
   const s = session(90);
   const opensAt = discussionOpensAt(s)!;
 
-  const early = discussionWindow(s, cutoffAt(s), opensAt - 1);
+  const early = discussionWindow(s, opensAt - 1);
   assert.equal(early.open, false);
   assert.equal(early.open === false && early.code, "too-early");
 
-  assert.equal(discussionWindow(s, cutoffAt(s), opensAt).open, true, "exactly on time is in time");
+  assert.equal(discussionWindow(s, opensAt).open, true, "exactly on time is in time");
 });
 
 test("27: a wrong device clock cannot open it early, because the caller passes the server's", () => {
@@ -57,7 +57,7 @@ test("27: a wrong device clock cannot open it early, because the caller passes t
   const opensAt = discussionOpensAt(s)!;
   const serverTime = opensAt - 30 * MIN;
 
-  const phoneThinksItIsLater = discussionWindow(s, cutoffAt(s), serverTime);
+  const phoneThinksItIsLater = discussionWindow(s, serverTime);
   assert.equal(phoneThinksItIsLater.open, false);
   assert.equal(phoneThinksItIsLater.open === false && phoneThinksItIsLater.code, "too-early");
 });
@@ -73,22 +73,47 @@ test("28: a teacher who starts late gets a shorter discussion, not a later one",
   assert.equal(cutoffAt(onTime), cutoffAt(twentyMinutesLate));
 });
 
-test("the window closes with the class, not twenty minutes after it", () => {
-  const s = session(90);
-  const cutoff = cutoffAt(s)!;
-  assert.equal(discussionWindow(s, cutoff, cutoff - 1).open, true);
+test("a new discussion cannot be started once the booked class has finished", () => {
+  /*
+    The correction, and the test that used to encode the bug.
 
-  const after = discussionWindow(s, cutoff, cutoff);
-  assert.equal(after.open, false);
-  assert.equal(after.open === false && after.code, "finished");
+    Its first version asserted the window was still open one millisecond before `cutoffAt` — the
+    hard stop *ten minutes past* the booked finish. That passed, and it was wrong: it made the
+    twenty-minute window thirty minutes long and let a teacher open a brand-new discussion after
+    the slot the student paid for had ended. The owner's rule is the last twenty minutes **before
+    the booked end**, so that is what is asserted now.
+  */
+  const s = session(90);
+  const end = scheduledEndAt(s)!;
+  assert.equal(discussionWindow(s, end - 1).open, true, "one millisecond before the finish is still inside");
+
+  const atTheBell = discussionWindow(s, end);
+  assert.equal(atTheBell.open, false);
+  assert.equal(atTheBell.open === false && atTheBell.code, "finished");
+
+  // And nothing about the overtime allowance reopens it.
+  const inOvertime = discussionWindow(s, end + 5 * MIN);
+  assert.equal(inOvertime.open, false);
+  assert.equal(inOvertime.open === false && inOvertime.code, "finished");
+  assert.ok(cutoffAt(s)! > end + 5 * MIN, "and that moment is genuinely inside the overtime grace");
+});
+
+test("the activation window is exactly twenty minutes long, never thirty", () => {
+  const s = session(90);
+  const opensAt = discussionOpensAt(s)!;
+  const end = scheduledEndAt(s)!;
+  assert.equal(end - opensAt, DISCUSSION_WINDOW_MINUTES * MIN);
+  // The measurement that would have caught the original defect on its own.
+  assert.ok(cutoffAt(s)! - opensAt > DISCUSSION_WINDOW_MINUTES * MIN,
+    "the hard cutoff is deliberately later; it must not be what closes activation");
 });
 
 test("a short class still gets a window, bounded by its own length", () => {
   // A thirty-minute class: the window is its last twenty minutes, starting ten minutes in.
   const s = session(30);
   assert.equal(discussionOpensAt(s), NOON + 10 * MIN);
-  assert.equal(discussionWindow(s, cutoffAt(s), NOON + 9 * MIN).open, false);
-  assert.equal(discussionWindow(s, cutoffAt(s), NOON + 10 * MIN).open, true);
+  assert.equal(discussionWindow(s, NOON + 9 * MIN).open, false);
+  assert.equal(discussionWindow(s, NOON + 10 * MIN).open, true);
 });
 
 test("a class shorter than the window opens it immediately rather than never", () => {
@@ -99,13 +124,13 @@ test("a class shorter than the window opens it immediately rather than never", (
   */
   const s = session(15);
   assert.ok(discussionOpensAt(s)! < NOON);
-  assert.equal(discussionWindow(s, cutoffAt(s), NOON).open, true);
+  assert.equal(discussionWindow(s, NOON).open, true);
 });
 
 test("a session with no usable time has no window, rather than one at the epoch", () => {
   const broken = { date: new Date(Number.NaN), duration: 90, endedAt: null, startedAt: null, status: "upcoming" };
   assert.equal(discussionOpensAt(broken), null);
-  const r = discussionWindow(broken, null, NOON);
+  const r = discussionWindow(broken, NOON);
   assert.equal(r.open, false);
   assert.equal(r.open === false && r.code, "no-schedule");
 });

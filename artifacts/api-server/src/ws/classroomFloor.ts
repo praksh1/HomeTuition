@@ -53,12 +53,20 @@ import {
   publishRightsFor,
   type Floor,
 } from "../lib/classroom/speakingFloor.ts";
-import { studentView, teacherView } from "../lib/classroom/floorView.ts";
+import { studentView, teacherView, type ProviderState } from "../lib/classroom/floorView.ts";
 
 /** One connected socket, as far as the floor is concerned. */
 export interface FloorClient {
   userId: number;
   isSessionTeacher: boolean;
+  /**
+   * The display name, from the database rather than anything the client said.
+   *
+   * Carried here so that restarting a class can rebuild the roster *and its names* from whoever is
+   * connected. Without it the rebuild would produce a list of people called "Student", which is
+   * the same defect one step quieter.
+   */
+  name: string;
   send(msg: object): void;
 }
 
@@ -81,8 +89,26 @@ interface RoomFloor {
   cutoff: number | null;
   /** Whose first raised hand has already been written down. See `noteAsk`. */
   loggedAsk: Set<number>;
-  /** When each student's microphone actually went live, for the speaking-time record. */
+  /**
+   * When each student's floor time started — permitted, consented *and* confirmed by the provider.
+   *
+   * Named for what it measures. It is not speaking time; see `FLOOR_HELD_ACTION`.
+   */
   speakingSince: Map<number, number>;
+  /**
+   * Instructions the provider has not confirmed, keyed `kind:userId`.
+   *
+   * Empty is the healthy state and means the SFU holds exactly what the floor decided. See
+   * `ProviderSync`.
+   */
+  provider: Map<string, ProviderSync>;
+  /**
+   * How to reach the room, kept so a retry that resolves seconds later can still tell everybody.
+   *
+   * Refreshed on every join and every frame. The hub rebuilds its port on each call — each one
+   * reads the live client set — so holding the latest is holding a live view, not a stale copy.
+   */
+  room: RoomPort | null;
 }
 
 const floors = new Map<string, RoomFloor>();
@@ -145,6 +171,8 @@ export async function ensureFloor(sessionId: string): Promise<RoomFloor> {
       cutoff: session ? cutoffAt(session) : null,
       loggedAsk: new Set(),
       speakingSince: new Map(),
+      provider: new Map(),
+      room: null,
     };
     floors.set(sessionId, made);
     return made;
@@ -169,7 +197,7 @@ function windowFor(state: RoomFloor, now: number): WindowCheck {
   if (!state.session) {
     return { open: false, code: "no-schedule", reason: "This class has no scheduled time.", opensAt: null };
   }
-  return discussionWindow(state.session, state.cutoff, now);
+  return discussionWindow(state.session, now);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -183,29 +211,62 @@ function windowFor(state: RoomFloor, now: number): WindowCheck {
  * student's is their own row and two counts. `floorView.ts` says why that is two functions rather
  * than one payload and a filter.
  */
+/**
+ * What the provider is holding, per student, for the views to render.
+ *
+ * Built fresh each time rather than stored on the floor, because it describes the *provider*
+ * rather than the classroom's decision and the two must not be confused: the floor says what the
+ * teacher decided, this says whether the SFU has caught up.
+ */
+function providerStates(state: RoomFloor): Map<number, ProviderState> {
+  const out = new Map<number, ProviderState>();
+  for (const userId of state.floor.students.keys()) {
+    const value = providerStateOf(state, userId);
+    if (value !== "ok") out.set(userId, value);
+  }
+  return out;
+}
+
 function tell(state: RoomFloor, room: RoomPort, only: Set<number> | null): void {
+  const sync = providerStates(state);
   for (const client of room.clients()) {
     if (client.isSessionTeacher) {
       // Always. Any change at all is a change to the list they are moderating from.
-      client.send({ type: "floor_state", floor: teacherView(state.floor, state.names) });
+      client.send({ type: "floor_state", floor: teacherView(state.floor, state.names, sync) });
       continue;
     }
     if (only !== null && !only.has(client.userId)) continue;
-    client.send({ type: "floor_state", floor: studentView(state.floor, client.userId) });
+    client.send({ type: "floor_state", floor: studentView(state.floor, client.userId, sync) });
   }
 }
 
 /** Everybody, whatever changed. For a mode switch, a spotlight, or a fresh arrival. */
 export function tellEveryone(sessionId: string, room: RoomPort): void {
   const state = floors.get(sessionId);
-  if (state) tell(state, room, null);
+  if (!state) return;
+  state.room = room;
+  tell(state, room, null);
+}
+
+/**
+ * Tell the room something changed that nobody asked for just now.
+ *
+ * A provider retry resolving, or giving up, happens seconds after the frame that caused it — long
+ * after the socket handler has returned. Without this, a permission that finally landed, or one
+ * that finally failed, would sit in the server and never reach a screen.
+ */
+function announce(state: RoomFloor): void {
+  if (state.room) tell(state, state.room, null);
 }
 
 /** One person, on connect: their own row, without disturbing anybody else's screen. */
 function tellOne(state: RoomFloor, client: FloorClient): void {
+  const sync = providerStates(state);
   client.send({
     type: "floor_state",
-    floor: client.isSessionTeacher ? teacherView(state.floor, state.names) : studentView(state.floor, client.userId),
+    floor: client.isSessionTeacher
+      ? teacherView(state.floor, state.names, sync)
+      : studentView(state.floor, client.userId, sync),
   });
 }
 
@@ -229,6 +290,8 @@ export async function floorJoin(
 ): Promise<void> {
   const state = await ensureFloor(sessionId);
   state.names.set(client.userId, name);
+  // Kept so a provider retry that resolves seconds from now can still reach this room.
+  state.room = room;
 
   if (!client.isSessionTeacher) {
     const before = state.floor.students.get(client.userId);
@@ -242,14 +305,15 @@ export async function floorJoin(
       that permits publishing nothing, so a student who was speaking and dropped would come back
       silent and unable to fix it. Pushing is what restores their standing grant.
     */
-    if (known) void pushRights(sessionId, state, [client.userId]);
+    if (known) applyRights(sessionId, state, [client.userId]);
   }
 
   tellOne(state, client);
   // And the teacher, whose roster now contains one more connected person.
+  const sync = providerStates(state);
   for (const other of room.clients()) {
     if (other.isSessionTeacher && other.userId !== client.userId) {
-      other.send({ type: "floor_state", floor: teacherView(state.floor, state.names) });
+      other.send({ type: "floor_state", floor: teacherView(state.floor, state.names, sync) });
     }
   }
 }
@@ -264,36 +328,80 @@ export async function floorJoin(
 export function floorLeave(sessionId: string, room: RoomPort, userId: number, isTeacher: boolean): void {
   const state = floors.get(sessionId);
   if (!state || isTeacher) return;
-  closeSpeakingStint(sessionId, state, userId);
+  closeFloorHeld(sessionId, state, userId);
   markDisconnected(state.floor, userId);
+  state.room = room;
+  const sync = providerStates(state);
   for (const other of room.clients()) {
     if (other.isSessionTeacher) {
-      other.send({ type: "floor_state", floor: teacherView(state.floor, state.names) });
+      other.send({ type: "floor_state", floor: teacherView(state.floor, state.names, sync) });
     }
   }
 }
 
-/**
- * The class started, or ended. Either way the floor starts again from nothing.
- *
- * Called from the one place the rest of the server already announces a status change, so a class
- * cannot end without this happening. Any speaking stint still open is written down first — a
- * lesson that ends while a student is mid-answer must not lose the record that they answered.
- */
-export function resetFloorFor(sessionId: string): void {
-  const state = floors.get(sessionId);
-  if (!state) return;
-  for (const userId of [...state.speakingSince.keys()]) closeSpeakingStint(sessionId, state, userId);
+/** Everything that belongs to the lesson that just ended, closed and written down. */
+function wipeFloor(sessionId: string, state: RoomFloor): void {
+  for (const userId of [...state.speakingSince.keys()]) closeFloorHeld(sessionId, state, userId);
+  clearAllSync(state);
   endSession(state.floor);
   state.loggedAsk.clear();
   state.names.clear();
+}
+
+/**
+ * The class is starting. Clear the last lesson, then put the lobby back.
+ *
+ * ## The bug this exists to fix
+ *
+ * Students are allowed into the room ten minutes before the booked start, so a teacher pressing
+ * start does it to a room that already has people in it. The previous version cleared
+ * `floor.students` and `state.names` and told everybody — and never rebuilt either. The result was
+ * a teacher whose participant list was *empty* the moment their class began: Invite all and Mute
+ * all reached nobody, and a student who later raised a hand reappeared under the generic name
+ * "Student", because the name map had been thrown away too.
+ *
+ * Nothing about that was visible in the two-browser journey, because it opened the classrooms
+ * after starting the class. It is now the first thing that suite does.
+ *
+ * Clearing first and rebuilding second, rather than keeping the rows, is deliberate: a teacher's
+ * next lesson must not inherit the previous one's raised hands, invitations or — worst — a
+ * *permission* belonging to a student from an hour ago. What is rebuilt is presence and identity
+ * only, which is exactly what is true of the people sitting in the room.
+ */
+export function restartFloorFor(sessionId: string, room: RoomPort): void {
+  const state = floors.get(sessionId);
+  if (!state) return;
+  wipeFloor(sessionId, state);
+  state.room = room;
+
+  for (const client of room.clients()) {
+    if (client.isSessionTeacher) continue;
+    state.names.set(client.userId, client.name);
+    // Creates the row and marks it connected. Nothing is granted: `emptyStudent` starts at
+    // audience, which is the truth about somebody who has just watched their class begin.
+    markReconnected(state.floor, client.userId);
+  }
+}
+
+/**
+ * The class is over. Clear it, and rebuild nothing.
+ *
+ * The opposite of `restartFloorFor` and kept separate from it for that reason: after the end of a
+ * class every floor action is refused by the cutoff check anyway, so rebuilding presence would
+ * draw a roster of controls that all answer "this class is over".
+ */
+export function endFloorFor(sessionId: string): void {
+  const state = floors.get(sessionId);
+  if (!state) return;
+  wipeFloor(sessionId, state);
 }
 
 /** The room emptied. Drop it entirely; the next person to arrive loads it again. */
 export function forgetFloor(sessionId: string): void {
   const state = floors.get(sessionId);
   if (state) {
-    for (const userId of [...state.speakingSince.keys()]) closeSpeakingStint(sessionId, state, userId);
+    for (const userId of [...state.speakingSince.keys()]) closeFloorHeld(sessionId, state, userId);
+    clearAllSync(state);
   }
   floors.delete(sessionId);
 }
@@ -356,11 +464,34 @@ function noteAsk(sessionId: string, state: RoomFloor, userId: number): void {
 }
 
 /**
- * How long somebody actually spoke, written down when their turn ends.
+ * The event name for how long a student *held the floor*.
+ *
+ * ## It is not speaking time, and an earlier version called it that
+ *
+ * The stopwatch below starts when the server has granted a microphone **and** the student has
+ * pressed accept. Both of those are decisions; neither is a measurement. Nothing here observes a
+ * published audio track, a provider acknowledgement, an audio level or any media telemetry — so
+ * this number is written identically whether the student talked for four minutes or sat in
+ * silence with a broken microphone, and it is written even when the permission push to LiveKit
+ * failed and no sound could have been transmitted at all.
+ *
+ * It was called `classroom.floor.spoke`, and it went into the same log a support agent reads when
+ * deciding a refund. "Sita spoke for four minutes" is a sentence somebody would have acted on.
+ *
+ * So the name says what it measures. `speechConfirmed: false` travels on every row as the
+ * machine-readable half of the same statement: **this app cannot currently confirm that any sound
+ * was transmitted**, and until provider media telemetry is ingested, nothing may report it as
+ * though it could. `.agents/backlog/ui-upgrade-progress.md` is about exactly this class of
+ * mistake — a number that is real-looking and answers a different question than the one asked.
+ */
+const FLOOR_HELD_ACTION = "classroom.floor.held";
+
+/**
+ * How long somebody was permitted to speak and had switched their microphone on.
  *
  * ## Why this is a log line and not a column
  *
- * A `spoke_ms` column on `session_participation` would be easier to query and is the better answer
+ * A column on `session_participation` would be easier to query and is the better answer
  * eventually. It is not the answer today because this project pushes schema by hand (`db:push`)
  * while the API redeploys itself on every push — so between a deploy and the owner running that
  * command, an INSERT naming a column the database does not have fails, and
@@ -371,7 +502,7 @@ function noteAsk(sessionId: string, state: RoomFloor, userId: number): void {
  * So it goes to the append-only log, which needs no migration, is read in the same place a support
  * agent reads everything else, and sums to the same answer.
  */
-function closeSpeakingStint(sessionId: string, state: RoomFloor, userId: number): void {
+function closeFloorHeld(sessionId: string, state: RoomFloor, userId: number): void {
   const since = state.speakingSince.get(userId);
   if (since === undefined) return;
   state.speakingSince.delete(userId);
@@ -381,21 +512,42 @@ function closeSpeakingStint(sessionId: string, state: RoomFloor, userId: number)
   if (!Number.isFinite(numericId) || ms < 1000) return;
   recordActivity({
     userId,
-    action: "classroom.floor.spoke",
+    action: FLOOR_HELD_ACTION,
     subjectType: "session",
     subjectId: numericId,
-    detail: { ms },
+    detail: {
+      ms,
+      /*
+        Both fields exist so that a future reader cannot mistake this for what it is not.
+
+        `basis` says where the number came from; `speechConfirmed` says what is still missing.
+        A narrative or refund rule that wants proof of speech has to find a row where this is
+        true, and no code path in this build writes one — which is the honest position, because
+        no provider media telemetry is ingested yet.
+      */
+      basis: "permission_and_consent",
+      speechConfirmed: false,
+    },
   });
 }
 
-/** Start or stop each student's stopwatch from what the floor now says is live. */
-function trackSpeaking(sessionId: string, state: RoomFloor, candidates: number[]): void {
+/**
+ * Start or stop each student's stopwatch from what the floor now says they are permitted to do.
+ *
+ * Named for the floor rather than for speech, deliberately — see `FLOOR_HELD_ACTION`. A student
+ * whose permission push to the provider failed is *not* counted: `providerHolds` is false while a
+ * grant is unconfirmed, so the clock does not run on a microphone the SFU never opened.
+ */
+function trackFloorHeld(sessionId: string, state: RoomFloor, candidates: number[]): void {
   for (const userId of candidates) {
     const s = state.floor.students.get(userId);
     const rights = s ? publishRightsFor(s) : null;
-    const live = Boolean(s && rights && ((rights.mic && s.accepted.mic) || (rights.camera && s.accepted.camera)));
-    if (live && !state.speakingSince.has(userId)) state.speakingSince.set(userId, Date.now());
-    else if (!live) closeSpeakingStint(sessionId, state, userId);
+    const consented = Boolean(
+      s && rights && ((rights.mic && s.accepted.mic) || (rights.camera && s.accepted.camera)),
+    );
+    const held = consented && providerHolds(state, userId);
+    if (held && !state.speakingSince.has(userId)) state.speakingSince.set(userId, Date.now());
+    else if (!held) closeFloorHeld(sessionId, state, userId);
   }
 }
 
@@ -404,39 +556,222 @@ function trackSpeaking(sessionId: string, state: RoomFloor, candidates: number[]
 /* ------------------------------------------------------------------------- */
 
 /**
- * Hand the floor's decision to whoever is carrying the media.
+ * What the provider has been asked for, and whether it agreed.
  *
- * Never awaited by the socket handler. A provider that is slow, or briefly unreachable, must not
- * hold up the message that tells the class what the teacher just decided — the screens update from
- * the floor, and the provider catches up. A failure is logged and the floor stands, because the
- * floor is the record: the next thing this student does is checked against it either way.
+ * Absent from the map means "in step": the last thing the server asked for is what the SFU has.
+ * Anything in the map is an unresolved instruction, and every screen in the class says so.
  */
-function pushRights(sessionId: string, state: RoomFloor, userIds: number[]): void {
+interface ProviderSync {
+  kind: "rights" | "silence";
+  /** `pending` while a retry is still scheduled; `failed` once the attempts are spent. */
+  state: "pending" | "failed";
+  attempts: number;
+  lastError: string;
+  since: number;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * Five attempts over about half a minute, then it stays visibly failed.
+ *
+ * Bounded on purpose. An unbounded retry against a provider that is genuinely down is a loop that
+ * outlives the lesson and hides the problem behind an optimistic "still trying"; stopping and
+ * saying so puts the fact in front of the teacher, who can end the class or carry on without the
+ * student's microphone. The next action on that student pushes again from scratch either way.
+ */
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+
+const syncKey = (kind: ProviderSync["kind"], userId: number) => `${kind}:${userId}`;
+
+/**
+ * Is everything the server asked for on this student's behalf actually in force?
+ *
+ * Read by `trackFloorHeld`, so a grant the SFU never accepted does not start a stopwatch, and by
+ * the views, so nobody is told a permission landed when it did not.
+ */
+function providerHolds(state: RoomFloor, userId: number): boolean {
+  return !state.provider.has(syncKey("rights", userId)) && !state.provider.has(syncKey("silence", userId));
+}
+
+/** How one person's provider state reads on a screen. Declared with the views it is drawn by. */
+export function providerStateOf(state: RoomFloor, userId: number): ProviderState {
+  const rights = state.provider.get(syncKey("rights", userId));
+  const silence = state.provider.get(syncKey("silence", userId));
+  if (rights?.state === "failed" || silence?.state === "failed") return "failed";
+  if (rights || silence) return "pending";
+  return "ok";
+}
+
+/**
+ * Mark an instruction as outstanding, *before* the call is made.
+ *
+ * The correction Codex's second finding is really about. Marking only on failure left a window —
+ * however short — in which the row read "in step" while the request was still in flight, and the
+ * student's own screen offered them an unmute the SFU had not yet agreed to. Now the sequence is
+ * always ask → pending → answer, and "ok" is only ever written by an answer.
+ *
+ * Attempt count and first-failure time survive across a re-begin so a retry does not reset its own
+ * budget and loop for ever.
+ */
+function beginSync(state: RoomFloor, kind: ProviderSync["kind"], userId: number): void {
+  const key = syncKey(kind, userId);
+  const existing = state.provider.get(key);
+  if (existing?.timer) clearTimeout(existing.timer);
+  state.provider.set(key, {
+    kind,
+    state: "pending",
+    attempts: existing?.attempts ?? 0,
+    lastError: existing?.lastError ?? "",
+    since: existing?.since ?? Date.now(),
+    timer: null,
+  });
+}
+
+function clearSync(state: RoomFloor, kind: ProviderSync["kind"], userId: number): void {
+  const existing = state.provider.get(syncKey(kind, userId));
+  if (!existing) return;
+  if (existing.timer) clearTimeout(existing.timer);
+  state.provider.delete(syncKey(kind, userId));
+}
+
+/** Drop every outstanding instruction for a room. Called when its floor is torn down. */
+function clearAllSync(state: RoomFloor): void {
+  for (const entry of state.provider.values()) if (entry.timer) clearTimeout(entry.timer);
+  state.provider.clear();
+}
+
+/**
+ * Record a failure, schedule the retry, and tell the room.
+ *
+ * The retry recomputes the instruction **from the floor as it stands at that moment**, never from
+ * a value captured when the failure happened. A teacher who muted a student and then returned them
+ * to the audience must not have the mute retried into a state that has moved on.
+ */
+function markFailed(
+  sessionId: string,
+  state: RoomFloor,
+  kind: ProviderSync["kind"],
+  userId: number,
+  error: string,
+): void {
+  const key = syncKey(kind, userId);
+  const existing = state.provider.get(key);
+  const attempts = (existing?.attempts ?? 0) + 1;
+  if (existing?.timer) clearTimeout(existing.timer);
+
+  const delay = RETRY_DELAYS_MS[attempts - 1];
+  const entry: ProviderSync = {
+    kind,
+    state: delay === undefined ? "failed" : "pending",
+    attempts,
+    lastError: error,
+    since: existing?.since ?? Date.now(),
+    timer: null,
+  };
+  state.provider.set(key, entry);
+
+  if (delay !== undefined) {
+    entry.timer = setTimeout(() => {
+      entry.timer = null;
+      // The room may have been torn down while this was waiting.
+      if (floors.get(sessionId) !== state) return;
+      if (kind === "rights") void applyRights(sessionId, state, [userId]);
+      else void applySilence(sessionId, state, [userId]);
+    }, delay);
+    // Node must not be held open by a classroom's retry timer.
+    entry.timer.unref?.();
+  } else {
+    logger.error(
+      { sessionId, userId, kind, error },
+      "gave up asking the video provider to apply a floor decision; the class is being told",
+    );
+  }
+  announce(state);
+}
+
+/**
+ * Hand the floor's decision to whoever is carrying the media, and find out whether it took.
+ *
+ * ## Why the promise is no longer thrown away
+ *
+ * It used to be. The floor moved, the class was told immediately, and a failed call produced one
+ * log line — so a student could be told they may speak while LiveKit still refused them, and a
+ * teacher could be told a student was muted while an open microphone carried on. The comment said
+ * "the provider catches up"; nothing implemented that.
+ *
+ * Now the outcome decides what the class is told. `absent` is accepted and needs no retry: a
+ * student who is not in the SFU's room holds a token that permits publishing nothing, and
+ * `floorJoin` re-pushes their standing grant the moment they come back. `failed` is kept, shown
+ * and retried.
+ *
+ * Still not awaited by the socket handler — a slow provider must not hold up the frame — but the
+ * screens now learn the truth a moment later instead of never.
+ */
+function applyRights(sessionId: string, state: RoomFloor, userIds: number[]): void {
   const provider = videoProvider();
   if (!provider.setPublishing || userIds.length === 0) return;
   for (const userId of userIds) {
-    const s = state.floor.students.get(userId);
-    if (!s) continue;
-    const rights = publishRightsFor(s);
-    void provider
-      .setPublishing(sessionId, userId, rights)
-      .then((applied) => {
-        if (!applied) {
-          logger.warn({ sessionId, userId, rights }, "the video provider did not apply a floor decision");
+    const student = state.floor.students.get(userId);
+    if (!student) {
+      // Nothing left to enforce — the row went with the class or the person.
+      clearSync(state, "rights", userId);
+      continue;
+    }
+    const rights = publishRightsFor(student);
+    const setPublishing = provider.setPublishing.bind(provider);
+    /*
+      Pending first, synchronously, so the broadcast the caller is about to send already says so.
+      `handleFloorFrame` calls this before it tells the room, which is what makes one round trip
+      enough for the honest answer rather than two.
+    */
+    beginSync(state, "rights", userId);
+    void setPublishing(sessionId, userId, rights)
+      .then((outcome) => {
+        if (floors.get(sessionId) !== state) return;
+        if (outcome.applied || outcome.reason === "absent") {
+          clearSync(state, "rights", userId);
+          // The stopwatch only runs on a grant the SFU actually holds.
+          trackFloorHeld(sessionId, state, [userId]);
+          announce(state);
+          return;
         }
+        markFailed(sessionId, state, "rights", userId, outcome.error);
       })
-      .catch((err: unknown) => logger.warn({ err, sessionId, userId }, "floor permission push failed"));
+      .catch((err: unknown) => {
+        if (floors.get(sessionId) !== state) return;
+        markFailed(sessionId, state, "rights", userId, err instanceof Error ? err.message : String(err));
+      });
   }
 }
 
-/** Stop tracks that are open right now. Revoking a permission does not close one. */
-function silenceThem(sessionId: string, userIds: number[]): void {
+/**
+ * Stop tracks that are open right now, and keep trying until they are.
+ *
+ * Revoking a permission stops somebody publishing *again*; it does nothing to a microphone that is
+ * already open. This is the half that fails **closed**: while a stop has not been confirmed, the
+ * student is not reported as silenced to anybody, and the teacher's list says so.
+ */
+function applySilence(sessionId: string, state: RoomFloor, userIds: number[]): void {
   const provider = videoProvider();
   if (!provider.silence || userIds.length === 0) return;
   for (const userId of userIds) {
-    void provider
-      .silence(sessionId, userId)
-      .catch((err: unknown) => logger.warn({ err, sessionId, userId }, "could not stop a track"));
+    const silence = provider.silence.bind(provider);
+    beginSync(state, "silence", userId);
+    void silence(sessionId, userId)
+      .then((outcome) => {
+        if (floors.get(sessionId) !== state) return;
+        if (outcome.applied || outcome.reason === "absent") {
+          clearSync(state, "silence", userId);
+          trackFloorHeld(sessionId, state, [userId]);
+          announce(state);
+          return;
+        }
+        markFailed(sessionId, state, "silence", userId, outcome.error);
+      })
+      .catch((err: unknown) => {
+        if (floors.get(sessionId) !== state) return;
+        markFailed(sessionId, state, "silence", userId, err instanceof Error ? err.message : String(err));
+      });
   }
 }
 
@@ -522,10 +857,10 @@ export async function handleFloorFrame(
 
   // The provider first: a permission the class has been told about but the SFU has not is a
   // student pressing "unmute" and being refused by LiveKit while their screen says they may.
-  pushRights(sessionId, state, outcome.push);
-  silenceThem(sessionId, outcome.silence);
+  applyRights(sessionId, state, outcome.push);
+  applySilence(sessionId, state, outcome.silence);
 
-  trackSpeaking(sessionId, state, outcome.touched);
+  trackFloorHeld(sessionId, state, outcome.touched);
   if (parsed.request.action === "ask") noteAsk(sessionId, state, client.userId);
   noteAction(sessionId, outcome);
 

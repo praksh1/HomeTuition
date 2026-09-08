@@ -76,6 +76,19 @@ export type MediaState =
 export type InvitationScope = "mic" | "mic+camera";
 export type FloorMode = "classroom" | "discussion";
 
+/**
+ * How far behind the video provider is on one person.
+ *
+ * `ok` is in step. `pending` means the server asked and has not been told yes yet. `failed` means
+ * it asked, could not get through, and stopped trying — the classroom's decision stands on the
+ * server and the SFU has **not** accepted it.
+ *
+ * It exists because the screen used to claim otherwise: a mute that never reached LiveKit was
+ * drawn as a finished mute, so a teacher believed a microphone was off while the class could still
+ * hear it. Nothing in the app may render a row that is not in step as one that is.
+ */
+export type ProviderState = "ok" | "pending" | "failed";
+
 /** One row of the teacher's participant list. Students never receive these. */
 export interface FloorRow {
   userId: number;
@@ -87,6 +100,7 @@ export interface FloorRow {
   connected: boolean;
   allowedMic: boolean;
   allowedCamera: boolean;
+  provider: ProviderState;
 }
 
 export interface TeacherFloorView {
@@ -115,6 +129,7 @@ export interface StudentFloorView {
     allowedCamera: boolean;
     acceptedMic: boolean;
     acceptedCamera: boolean;
+    provider: ProviderState;
   };
   /** How many hands are up. A count, never names — see `floorView.ts` on the server. */
   handsUp: number;
@@ -172,6 +187,19 @@ export interface FloorActions {
   spotlight: (userId: number | null) => void;
 }
 
+const PROVIDER_STATES: ProviderState[] = ["ok", "pending", "failed"];
+
+/**
+ * Read a provider state, defaulting to `pending` rather than `ok`.
+ *
+ * The one place where the safe default is *not* the optimistic one. A payload from a server that
+ * does not send this field yet, or one this build cannot read, must not be drawn as "the provider
+ * has this" — that is the exact claim the field was added to stop being made without evidence.
+ */
+function toProviderState(raw: unknown): ProviderState {
+  return PROVIDER_STATES.includes(raw as ProviderState) ? (raw as ProviderState) : "pending";
+}
+
 const MEDIA_STATES: MediaState[] = [
   "audience", "requested", "invited", "allowed-not-accepted", "speaking",
   "camera-active", "muted-by-self", "muted-by-teacher", "disconnected",
@@ -209,6 +237,7 @@ function toFloorView(raw: unknown): FloorView | null {
         connected: r.connected !== false,
         allowedMic: r.allowedMic === true,
         allowedCamera: r.allowedCamera === true,
+        provider: toProviderState(r.provider),
       });
     }
     const queue = Array.isArray(o.queue) ? o.queue.filter((n): n is number => typeof n === "number") : [];
@@ -234,6 +263,7 @@ function toFloorView(raw: unknown): FloorView | null {
         allowedCamera: you.allowedCamera === true,
         acceptedMic: you.acceptedMic === true,
         acceptedCamera: you.acceptedCamera === true,
+        provider: toProviderState(you.provider),
       },
       handsUp: typeof o.handsUp === "number" ? o.handsUp : 0,
       queuePosition: typeof o.queuePosition === "number" ? o.queuePosition : null,
