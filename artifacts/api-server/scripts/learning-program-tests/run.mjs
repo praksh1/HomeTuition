@@ -24,7 +24,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -387,7 +387,15 @@ async function moduleOrder() {
 
   // Reordering rewrites the positions rather than leaving a gap or a duplicate.
   const reversed = [...five].reverse();
-  await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: { modules: reversed } });
+  const reorder = await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: { modules: reversed } });
+  /*
+    Asserted rather than assumed, because it was not true once.
+
+    A save carrying only `modules` has no program column to write, and an empty `SET` is an error
+    the database raises — so this returned 500 and the two checks below failed against a list that
+    had never been replaced. A save with one field in it is the ordinary case, not an edge.
+  */
+  check("a save carrying only steps is accepted", reorder.status === 200, `status ${reorder.status}`);
   const after = sql(`select string_agg(title, ',' order by position) from learning_program_modules where program_id = ${id}`);
   check("reordering rewrites the order", after === "Fifth,Fourth,Third,Second,First", after);
   const positions = sql(`select string_agg(position::text, ',' order by position) from learning_program_modules where program_id = ${id}`);
@@ -397,10 +405,12 @@ async function moduleOrder() {
     A client-supplied position is ignored, because two steps claiming position 3 is a body a client
     can send and a state the reader has no honest way to resolve.
   */
-  await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: { modules: [
+  const claimedPositions = await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: { modules: [
     { title: "Says it is third", outcome: "An outcome long enough to be accepted.", position: 3 },
     { title: "Also says it is third", outcome: "An outcome long enough to be accepted.", position: 3 },
   ] } });
+  check("and so is one whose steps carry positions of their own", claimedPositions.status === 200,
+    `status ${claimedPositions.status}`);
   const claimed = sql(`select string_agg(position::text, ',' order by position) from learning_program_modules where program_id = ${id}`);
   check("a position a client sent is ignored in favour of the order it sent", claimed === "0,1", claimed);
 
@@ -430,16 +440,31 @@ async function paging() {
   const overlap = first.body.programs.filter((p) => second.body.programs.some((q) => q.id === p.id));
   check("the next page does not repeat the first", overlap.length === 0, JSON.stringify(overlap.map((p) => p.id)));
 
+  /*
+    One rule for page size: a whole positive number, capped at the maximum.
+
+    Codex's second smaller correction. `Math.max(1, Number(q) || 20)` passed `1.5` straight into the
+    database's LIMIT and turned `"lots"` into the default without ever saying the request was wrong.
+    Capping a large number is the one deliberate normalisation — a client asking for a thousand
+    means "as many as you will give me" — and everything else that is not a whole positive number
+    is refused, because there is no honest guess at what `1.5` meant.
+  */
   const huge = await api("/programs?limit=100000");
-  check("an enormous limit is capped rather than honoured", huge.body.programs.length <= 50, String(huge.body.programs.length));
-  const zero = await api("/programs?limit=0");
-  check("a limit of zero still returns a page", zero.body.programs.length >= 1, String(zero.body.programs.length));
-  const nonsense = await api("/programs?limit=lots");
-  check("a limit that is not a number falls back to the default rather than failing",
-    nonsense.status === 200 && nonsense.body.programs.length <= 20, `${nonsense.status} ${nonsense.body?.programs?.length}`);
+  check("an enormous limit is capped rather than honoured",
+    huge.status === 200 && huge.body.programs.length <= 50, `${huge.status} ${huge.body?.programs?.length}`);
+  for (const bad of ["0", "-1", "1.5", "lots", "1e3", " 2", "2 ", "", "Infinity", "NaN"]) {
+    const res = await api(`/programs?limit=${encodeURIComponent(bad)}`);
+    check(`a page size of "${bad}" is refused rather than guessed at`, res.status === 400, `status ${res.status}`);
+  }
+  const noLimit = await api("/programs");
+  check("and asking for no page size at all gets the default", noLimit.status === 200, `status ${noLimit.status}`);
+  const teacherBadLimit = await api("/learning-programs?limit=1.5", { token: teacher.token });
+  check("the teacher's own list follows the same rule", teacherBadLimit.status === 400, `status ${teacherBadLimit.status}`);
 
   check("a page marker that is not a number is refused", (await api("/programs?cursor=abc")).status === 400);
   check("and so is a negative one", (await api("/programs?cursor=-4")).status === 400);
+  check("and so is one that names only an id, now that the order is by publication time",
+    (await api("/programs?cursor=12")).status === 400);
   check("a filter on a kind of program that does not exist is refused",
     (await api("/programs?type=driving_lesson")).status === 400);
   const filtered = await api("/programs?type=custom&limit=50");
@@ -723,6 +748,405 @@ async function schemaParity() {
 }
 
 /* ------------------------------------------------------------------------- */
+/* 13. A corrupt or skewed snapshot is not served                             */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Codex's first blocking finding, from the public side.
+ *
+ * `readSnapshot` used to normalise a missing required string to `""` and a missing modules array to
+ * `[]`, so a corrupt row reached `/programs` as a public page with no outcome and no steps — which
+ * reads as a teacher who could not be bothered rather than as data this app cannot honestly show.
+ * The pure tests cover every field; these prove the route behaves the same way, against rows
+ * corrupted in the database rather than in a fixture.
+ */
+async function corruptSnapshots() {
+  console.log("\n[13] A snapshot the server cannot vouch for is not shown at all");
+  const teacher = await register("teacher");
+
+  const cases = [
+    ["a required field is missing", `published_snapshot = published_snapshot - 'outcome'`],
+    ["a required field is blank", `published_snapshot = jsonb_set(published_snapshot, '{summary}', '"   "')`],
+    ["a required field is a number", `published_snapshot = jsonb_set(published_snapshot, '{title}', '42')`],
+    ["the steps are gone", `published_snapshot = jsonb_set(published_snapshot, '{modules}', '[]')`],
+    ["a step lost its outcome", `published_snapshot = jsonb_set(published_snapshot, '{modules,0,outcome}', '""')`],
+    ["the positions have a gap", `published_snapshot = jsonb_set(published_snapshot, '{modules,1,position}', '4')`],
+    ["the positions are duplicated", `published_snapshot = jsonb_set(published_snapshot, '{modules,1,position}', '0')`],
+    ["the version is zero", `published_snapshot = jsonb_set(published_snapshot, '{version}', '0')`],
+    ["the type is one this build does not know",
+      `published_snapshot = jsonb_set(published_snapshot, '{type}', '"driving_lesson"')`],
+  ];
+
+  for (const [what, mutation] of cases) {
+    const id = await publishOne(teacher.token, "custom", { title: `Corruptible programme ${what}` });
+    check(`it is public before anything is broken (${what})`, (await api(`/programs/${id}`)).status === 200);
+    sql(`update learning_programs set ${mutation} where id = ${id}`);
+    check(`${what}: the page is withheld rather than half-drawn`,
+      (await api(`/programs/${id}`)).status === 404);
+    const list = await api("/programs?limit=50");
+    check(`${what}: and it is not in the list either`,
+      !list.body.programs.some((p) => p.id === id), JSON.stringify(list.body.programs.map((p) => p.id)).slice(0, 80));
+    sql(`delete from learning_programs where id = ${id}`);
+  }
+
+  /*
+    The version-skew case, which is its own kind of wrong.
+
+    The row's version and the version inside its snapshot are written by one statement, so a
+    disagreement means the two came from different publications — a half-applied write, or a
+    hand-edited row. Both halves are individually well-formed, which is exactly why the check has to
+    be against the row rather than inside the snapshot.
+  */
+  const skewed = await publishOne(teacher.token, "custom", { title: "A programme whose versions disagree" });
+  sql(`update learning_programs set version = 7 where id = ${skewed}`);
+  check("a snapshot whose version disagrees with its row is not served",
+    (await api(`/programs/${skewed}`)).status === 404);
+  check("and is not listed", !(await api("/programs?limit=50")).body.programs.some((p) => p.id === skewed));
+  sql(`update learning_programs set version = 1 where id = ${skewed}`);
+  check("and it comes back once they agree again", (await api(`/programs/${skewed}`)).status === 200);
+
+  /*
+    A page of results is not cut short by one bad row.
+
+    The cursor is taken from the last row read rather than the last program rendered, so an
+    unreadable snapshot costs the page one entry and never stops the paging on it.
+  */
+  const good1 = await publishOne(teacher.token, "custom", { title: "Readable programme one" });
+  const bad = await publishOne(teacher.token, "custom", { title: "Programme that will be broken" });
+  const good2 = await publishOne(teacher.token, "custom", { title: "Readable programme two" });
+  sql(`update learning_programs set published_snapshot = published_snapshot - 'outcome' where id = ${bad}`);
+  const page = await api("/programs?limit=50");
+  const ids = page.body.programs.map((p) => p.id);
+  check("the readable programs on the same page are still there",
+    ids.includes(good1) && ids.includes(good2) && !ids.includes(bad),
+    JSON.stringify(ids).slice(0, 100));
+}
+
+/* ------------------------------------------------------------------------- */
+/* 14. Ordering says what the query does                                      */
+/* ------------------------------------------------------------------------- */
+
+async function ordering() {
+  console.log("\n[14] Newest published first, and the cursor follows the same order");
+  const teacher = await register("teacher");
+
+  const first = await publishOne(teacher.token, "custom", { title: "Published first of the three" });
+  const second = await publishOne(teacher.token, "custom", { title: "Published second of the three" });
+  const third = await publishOne(teacher.token, "custom", { title: "Published third of the three" });
+
+  const before = (await api("/programs?limit=50")).body.programs.map((p) => p.id);
+  check("the newest publication is first",
+    before.indexOf(third) < before.indexOf(second) && before.indexOf(second) < before.indexOf(first),
+    JSON.stringify(before.slice(0, 6)));
+
+  /*
+    The case where ordering by id and ordering by publication time disagree.
+
+    Republishing the *oldest* program makes it the newest publication. Under a `desc(id)` ordering
+    it stays last, which is what the description called "newest-published first" while doing
+    something else — Codex's first smaller correction.
+  */
+  await api(`/learning-programs/${first}`, { method: "PATCH", token: teacher.token, body: { summary: "A revised summary, long enough to satisfy the contract." } });
+  const again = await api(`/learning-programs/${first}/publish`, { method: "POST", token: teacher.token });
+  check("the oldest program can be republished", again.status === 200, `status ${again.status}`);
+
+  const after = (await api("/programs?limit=50")).body.programs.map((p) => p.id);
+  check("republishing it moves it to the front",
+    after.indexOf(first) < after.indexOf(third), `${JSON.stringify(after.slice(0, 6))}`);
+
+  // And the cursor walks that same order without repeating or skipping.
+  const seen = [];
+  let cursor = null;
+  for (let page = 0; page < 8; page += 1) {
+    const res = await api(`/programs?limit=2${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    if (res.status !== 200) { check("paging stayed valid", false, `status ${res.status}`); break; }
+    seen.push(...res.body.programs.map((p) => p.id));
+    cursor = res.body.nextCursor;
+    if (!cursor) break;
+  }
+  check("paging never returns the same program twice", new Set(seen).size === seen.length,
+    JSON.stringify(seen).slice(0, 120));
+  check("and it reaches every one of them",
+    [first, second, third].every((id) => seen.includes(id)), JSON.stringify(seen).slice(0, 120));
+}
+
+/* ------------------------------------------------------------------------- */
+/* 15. Two requests at once                                                   */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Codex's second blocking finding, staged rather than raced.
+ *
+ * Every case below holds the program row still in a second database session, lets the request under
+ * test reach the point where it blocks, commits a change from that session, and then lets the
+ * request finish. That makes the interleaving a decision rather than a coin toss: the request
+ * genuinely observes a world that changed after it set out, which is the whole of the finding.
+ *
+ * Against `58523f1` each of these fails, and fails in the way the review describes — a version
+ * silently overwritten, a stale draft published over a newer save, a published program erased by a
+ * delete that set out while it was still a draft, a transition applied to a state that had moved on.
+ */
+async function openSession() {
+  const require = createRequire(path.join(repoRoot, "lib", "db", "package.json"));
+  const pg = (await import(pathToFileURL(require.resolve("pg")).href)).default;
+  const client = new pg.Client({ connectionString: PGURL });
+  await client.connect();
+  return client;
+}
+
+/**
+ * Wait until the request under test is actually stuck on a lock.
+ *
+ * Polling `pg_stat_activity` rather than sleeping a guessed number of milliseconds: the point of
+ * these tests is the ordering, and an ordering established by a timeout is an ordering that is
+ * wrong on a slower machine.
+ */
+async function waitForBlocked(client, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { rows } = await client.query(
+      `select count(*)::int as waiting from pg_stat_activity
+        where wait_event_type = 'Lock' and pid <> pg_backend_pid()`,
+    );
+    if (rows[0].waiting > 0) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+
+/** A valid published snapshot for a program, as the server would have written it. */
+function snapshotJson(version, title, modules) {
+  return {
+    version,
+    type: "custom",
+    title,
+    summary: "What this covers, who it suits, and how the weeks are spent together.",
+    outcome: "Students can work through the material with support.",
+    intendedLearner: "Anyone starting out",
+    startingLevel: "Beginner",
+    teachingLanguage: "Nepali and English",
+    prerequisites: null,
+    equipment: null,
+    referenceName: null,
+    referenceSource: "none",
+    modules: modules.map((m, position) => ({
+      position, title: m.title, outcome: m.outcome, description: null, practicePrompt: null,
+    })),
+  };
+}
+
+async function concurrency() {
+  console.log("\n[15] Two requests at once, with the interleaving decided rather than raced");
+  const teacher = await register("teacher");
+  const client = await openSession();
+
+  try {
+    /* --- publish crossing another publication --------------------------- */
+    {
+      const id = await publishOne(teacher.token, "custom", { title: "A programme published twice at once" });
+      check("it starts at version 1", Number(sql(`select version from learning_programs where id = ${id}`)) === 1);
+
+      await client.query("BEGIN");
+      await client.query("select id from learning_programs where id = $1 for update", [id]);
+      const inFlight = api(`/learning-programs/${id}/publish`, { method: "POST", token: teacher.token });
+      check("the second publish waits for the first", await waitForBlocked(client));
+
+      // The other publication commits while this one is held.
+      await client.query(
+        `update learning_programs set version = 2, published_at = now(), published_snapshot = $2 where id = $1`,
+        [id, JSON.stringify(snapshotJson(2, "A programme published twice at once", MODULES))],
+      );
+      await client.query("COMMIT");
+
+      const res = await inFlight;
+      check("the held publish still succeeds", res.status === 200, `status ${res.status}`);
+      const version = Number(sql(`select version from learning_programs where id = ${id}`));
+      check("and it is version 3, so the other publication was not silently overwritten",
+        version === 3, `version ${version}`);
+      check("the row and its snapshot agree about the version",
+        Number(sql(`select (published_snapshot->>'version')::int from learning_programs where id = ${id}`)) === version);
+      check("and the public page can still be read", (await api(`/programs/${id}`)).status === 200);
+    }
+
+    /* --- publish crossing a save ---------------------------------------- */
+    {
+      const made = await api("/learning-programs", { method: "POST", token: teacher.token, body: { type: "custom" } });
+      const id = made.body.program.id;
+      await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: complete({ title: "The draft before the save" }) });
+
+      await client.query("BEGIN");
+      await client.query("select id from learning_programs where id = $1 for update", [id]);
+      await client.query("select id from learning_program_modules where program_id = $1 for update", [id]);
+      const inFlight = api(`/learning-programs/${id}/publish`, { method: "POST", token: teacher.token });
+      check("the publish waits for the save", await waitForBlocked(client));
+
+      // A complete save commits: a new title *and* a third step, as one draft.
+      await client.query("update learning_programs set title = $2 where id = $1", [id, "The draft after the save"]);
+      await client.query("delete from learning_program_modules where program_id = $1", [id]);
+      await client.query(
+        `insert into learning_program_modules (program_id, position, title, outcome)
+         values ($1,0,'One','A first outcome long enough to be accepted.'),
+                ($1,1,'Two','A second outcome long enough to be accepted.'),
+                ($1,2,'Three','A third outcome long enough to be accepted.')`,
+        [id],
+      );
+      await client.query("COMMIT");
+
+      const res = await inFlight;
+      check("the publish succeeds", res.status === 200, `status ${res.status}`);
+
+      const published = await api(`/programs/${id}`);
+      const title = published.body?.program?.title;
+      const steps = published.body?.program?.modules?.length;
+      /*
+        One whole draft, and the one that was current when the publication took effect.
+
+        The old code read the row before the save and the modules after it, so the snapshot could
+        carry one draft's title and another draft's steps. It also published a draft that no longer
+        existed, which is the same defect seen from the student's side.
+      */
+      check("what was published is one complete draft, not two halves",
+        title === "The draft after the save" && steps === 3, `title=${title} steps=${steps}`);
+      const storedTitle = sql(`select title from learning_programs where id = ${id}`);
+      const storedSteps = Number(sql(`select count(*) from learning_program_modules where program_id = ${id}`));
+      check("and it is the draft the database now holds", title === storedTitle && steps === storedSteps,
+        `snapshot(${title}, ${steps}) vs stored(${storedTitle}, ${storedSteps})`);
+    }
+
+    /* --- delete crossing a publication ---------------------------------- */
+    {
+      const made = await api("/learning-programs", { method: "POST", token: teacher.token, body: { type: "custom" } });
+      const id = made.body.program.id;
+      await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: complete({ title: "A draft about to be published" }) });
+
+      await client.query("BEGIN");
+      await client.query("select id from learning_programs where id = $1 for update", [id]);
+      const inFlight = api(`/learning-programs/${id}`, { method: "DELETE", token: teacher.token });
+      check("the delete waits", await waitForBlocked(client));
+
+      await client.query(
+        `update learning_programs
+            set status = 'published', version = 1, published_at = now(), published_snapshot = $2
+          where id = $1`,
+        [id, JSON.stringify(snapshotJson(1, "A draft about to be published", MODULES))],
+      );
+      await client.query("COMMIT");
+
+      const res = await inFlight;
+      check("a delete that set out while it was a draft is refused once it is published",
+        res.status === 409 && res.body.code === "not-draft", `${res.status} ${res.body?.code}`);
+      check("and the newly published program survives",
+        Number(sql(`select count(*) from learning_programs where id = ${id}`)) === 1);
+      check("with its snapshot, which is the only record of what was promised",
+        (await api(`/programs/${id}`)).status === 200);
+    }
+
+    /* --- a transition crossing another transition ------------------------ */
+    {
+      const id = await publishOne(teacher.token, "custom", { title: "A programme taken down and away at once" });
+
+      await client.query("BEGIN");
+      await client.query("select id from learning_programs where id = $1 for update", [id]);
+      const inFlight = api(`/learning-programs/${id}/unpublish`, { method: "POST", token: teacher.token });
+      check("the unpublish waits", await waitForBlocked(client));
+      await client.query("update learning_programs set status = 'archived', archived_at = now() where id = $1", [id]);
+      await client.query("COMMIT");
+
+      const res = await inFlight;
+      check("taking down a program that has since been archived is an honest conflict",
+        res.status === 409 && res.body.code === "not-published", `${res.status} ${res.body?.code}`);
+      check("and the archive stands", sql(`select status from learning_programs where id = ${id}`) === "archived");
+    }
+
+    {
+      const id = await publishOne(teacher.token, "custom", { title: "A programme restored while it moved" });
+      await api(`/learning-programs/${id}/archive`, { method: "POST", token: teacher.token });
+
+      await client.query("BEGIN");
+      await client.query("select id from learning_programs where id = $1 for update", [id]);
+      const inFlight = api(`/learning-programs/${id}/restore`, { method: "POST", token: teacher.token });
+      check("the restore waits", await waitForBlocked(client));
+      await client.query("update learning_programs set status = 'draft', archived_at = null where id = $1", [id]);
+      await client.query("COMMIT");
+
+      const res = await inFlight;
+      check("restoring something that is no longer archived is an honest conflict",
+        res.status === 409 && res.body.code === "not-archived", `${res.status} ${res.body?.code}`);
+      check("and it is left as the draft it now is",
+        sql(`select status from learning_programs where id = ${id}`) === "draft");
+    }
+
+    /* --- and the same properties under a genuine race -------------------- */
+    {
+      /*
+        Not a substitute for the staged cases above — a race that happens to interleave proves
+        nothing when it does not. It is here because the staged cases each fix one ordering, and
+        this asks the same questions of whatever ordering the machine actually produces.
+      */
+      const id = await publishOne(teacher.token, "custom", { title: "A programme published from two tabs" });
+      const before = Number(sql(`select version from learning_programs where id = ${id}`));
+      const rounds = 5;
+      for (let round = 0; round < rounds; round += 1) {
+        const [a, b] = await Promise.all([
+          api(`/learning-programs/${id}/publish`, { method: "POST", token: teacher.token }),
+          api(`/learning-programs/${id}/publish`, { method: "POST", token: teacher.token }),
+        ]);
+        if (a.status !== 200 || b.status !== 200) {
+          check("both simultaneous publishes are answered", false, `${a.status} / ${b.status}`);
+          break;
+        }
+      }
+      const after = Number(sql(`select version from learning_programs where id = ${id}`));
+      check("every simultaneous publication counted",
+        after === before + rounds * 2, `${before} -> ${after}, expected ${before + rounds * 2}`);
+      check("the row and its snapshot still agree",
+        Number(sql(`select (published_snapshot->>'version')::int from learning_programs where id = ${id}`)) === after);
+      check("and the public page is readable throughout", (await api(`/programs/${id}`)).status === 200);
+    }
+  } finally {
+    try { await client.query("ROLLBACK"); } catch { /* already committed */ }
+    await client.end();
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* 16. Moderation reads the draft as it now stands                            */
+/* ------------------------------------------------------------------------- */
+
+async function moderationReload() {
+  console.log("\n[16] A partial save moderates the whole stored draft, not the part that was sent");
+  const teacher = await register("teacher");
+  const id = (await api("/learning-programs", { method: "POST", token: teacher.token, body: { type: "custom" } })).body.program.id;
+
+  const flagged = "fuck";
+  await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: complete({
+    modules: [
+      { title: "An ordinary step", outcome: "An outcome long enough to be accepted." },
+      { title: "A step that says something", outcome: `Practise saying ${flagged} out loud.` },
+    ],
+  }) });
+  const first = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
+  check("a step's own words are read when the steps are sent", first > 0, String(first));
+
+  /*
+    Codex's third smaller correction.
+
+    Moderation used to be handed the modules *from the request*, which is an empty array whenever a
+    request did not carry any — so a teacher fixing one word in their title had their whole learning
+    path read as blank, and a flagged step already saved was never looked at again.
+  */
+  const before = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
+  const patch = await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: { title: "A title changed on its own" } });
+  check("a title-only save succeeds", patch.status === 200, `status ${patch.status}`);
+  const after = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
+  check("and the stored steps are read again rather than an empty list", after > before, `${before} -> ${after}`);
+  const excerpt = sql(`select excerpt from moderation_flags where subject_id = ${id} order by id desc limit 1`);
+  check("the excerpt describes the saved draft, including its steps",
+    excerpt.includes("A title changed on its own") && excerpt.includes(flagged), excerpt.slice(0, 120));
+  check("the teacher is still not blocked by it", patch.body.program.status === "draft", patch.body?.program?.status);
+}
+
+/* ------------------------------------------------------------------------- */
 /* 12. Nothing else moved                                                     */
 /* ------------------------------------------------------------------------- */
 
@@ -787,6 +1211,10 @@ async function main() {
     await unauthenticated();
     await lifecycle();
     await moderation();
+    await corruptSnapshots();
+    await ordering();
+    await concurrency();
+    await moderationReload();
     await schemaParity();
     await nothingElseMoved(watched);
   } catch (err) {
