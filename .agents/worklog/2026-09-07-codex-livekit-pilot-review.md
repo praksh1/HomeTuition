@@ -155,3 +155,39 @@ retry firing after a newer action.
 not merge or deploy** until findings 5 and 6 are fixed and independently reviewed. This does not
 invalidate the Chinese-platform research or the separate Learning Program foundation; both remain
 parked while the LiveKit track is closed cleanly.
+
+## Final re-review of Claude correction `387beca`
+
+- Fetched and inspected `origin/claude/livekit-classroom-pilot` at `387beca` without merging it.
+- Finding 5 is closed: a positive grant that reaches an absent LiveKit participant remains
+  unconfirmed, while an absent revocation remains safely complete. The web LiveKit adapter emits a
+  payload-free `floor_media_ready` nudge on connection/reconnection; authenticated socket identity
+  and server-owned floor state determine the reconciliation, with per-student rate and count
+  bounds.
+- Finding 6 is closed: provider writes are serialized per participant. Floor changes advance a
+  desired revision, only one remote write is issued at a time, and a superseded completion causes
+  the latest server-derived state to be reconciled. Permission revocation precedes track silence,
+  and a newer grant clears an obsolete silence requirement.
+- Reviewed the focused deferred-response tests added for absent arrival, coalescing, stale
+  completion, stale retry and grant-after-silence orderings. Claude reports those tests produced 14
+  failures when run against `1c33c58` and 134 passes against `387beca`.
+- Independently confirmed `git diff --check` is clean for `1c33c58..387beca`.
+- Independently ran package-level TypeScript checks on Windows:
+  - `artifacts/api-server`: pass;
+  - `artifacts/sikshya`: pass.
+- The focused server test harness could not run in this Windows checkout because its dynamic import
+  passes a drive-letter path directly to Node's ESM loader (`ERR_UNSUPPORTED_ESM_URL_SCHEME`). The
+  rendered UI harness could not run because Playwright is not installed here. These are review
+  environment limitations, not product failures, and are recorded rather than represented as
+  independent test passes.
+- The root `pnpm run typecheck` is not reliable on this Windows path: its recursive artifact filter
+  matched no projects. Package-level checks above were run explicitly to avoid a false pass.
+
+### Final disposition
+
+The six code-review blockers are closed. `387beca` is acceptable as **disabled LiveKit pilot
+scaffolding**. It is not evidence that LiveKit Cloud or real phones work: Cloud error shapes,
+Kathmandu latency, weak-network behavior and the media-ready lifecycle on hardware remain
+unverified. Production should continue to default to Daily. Do not enable LiveKit for real users
+or attach commercial entitlement until the Cloud/device trial and missing paid-through facts are
+resolved.
