@@ -32,3 +32,4 @@ export * from "./testStudentAccess";
 export * from "./sessionProofAggregates";
 export * from "./sessionProviderEvents";
 export * from "./sessionQualitySamples";
+export * from "./learningPrograms";

@@ -25,6 +25,7 @@ import {
   ensureTicketLifecycle,
   ensureAccountOnboardingTables,
   ensureSessionProofTables,
+  ensureLearningProgramTables,
 } from "./lib/ensureSchema";
 
 const rawPort = process.env["PORT"];
@@ -68,6 +69,9 @@ server.listen(port, () => {
   // Additive and failure-isolated: if this cannot run, classes are unaffected and the
   // operator view reports the provider source as unavailable rather than as empty.
   void ensureSessionProofTables();
+  // Two new tables and nothing else, so a deploy that runs ahead of `db:push` costs this feature
+  // a few minutes and costs sign-in, booking and every live class nothing.
+  void ensureLearningProgramTables();
   // Says once whether uploads can work, and whether a setting had to be interpreted.
   noteStorageConfig();
   // Whether real money can move is too important to have to go and look up.

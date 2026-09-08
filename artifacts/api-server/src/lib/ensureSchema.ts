@@ -1387,3 +1387,93 @@ export async function ensureSessionProofTables(): Promise<void> {
     );
   }
 }
+
+/**
+ * The exact statements the boot guard runs, as data.
+ *
+ * Exported so the parity gate can test the DDL that actually ships rather than a copy of it. The
+ * gate in `scripts/learning-program-tests` executes these into a throwaway Postgres schema and
+ * compares the result, column by column and index by index, against the Drizzle definitions in
+ * `lib/db/src/schema/learningPrograms.ts`. A copy pasted into the test would drift from this the
+ * first time somebody edited one and not the other — which is the whole failure the gate exists to
+ * catch, reintroduced inside the thing meant to catch it.
+ *
+ * Plain strings rather than `sql` templates for the same reason: the gate needs to run them
+ * somewhere other than the app's own connection. Nothing is interpolated into them, so they carry
+ * no injection surface — `sql.raw` below is safe because these are constants in this file and can
+ * never be anything else.
+ */
+export const LEARNING_PROGRAM_DDL: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS "learning_programs" (
+    "id" serial PRIMARY KEY,
+    "teacher_id" integer NOT NULL,
+    "status" text NOT NULL DEFAULT 'draft',
+    "type" text NOT NULL,
+    "title" text,
+    "summary" text,
+    "outcome" text,
+    "intended_learner" text,
+    "starting_level" text,
+    "teaching_language" text,
+    "prerequisites" text,
+    "equipment" text,
+    "reference_name" text,
+    "reference_source" text NOT NULL DEFAULT 'none',
+    "version" integer NOT NULL DEFAULT 0,
+    "published_at" timestamp with time zone,
+    "published_snapshot" jsonb,
+    "archived_at" timestamp with time zone,
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT "learning_programs_teacher_id_users_id_fk"
+      FOREIGN KEY ("teacher_id") REFERENCES "users"("id") ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS "learning_programs_teacher_idx"
+     ON "learning_programs" ("teacher_id", "status", "id")`,
+  `CREATE INDEX IF NOT EXISTS "learning_programs_public_idx"
+     ON "learning_programs" ("status", "published_at")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_modules" (
+    "id" serial PRIMARY KEY,
+    "program_id" integer NOT NULL,
+    "position" integer NOT NULL,
+    "title" text,
+    "outcome" text,
+    "description" text,
+    "practice_prompt" text,
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT "learning_program_modules_program_id_learning_programs_id_fk"
+      FOREIGN KEY ("program_id") REFERENCES "learning_programs"("id") ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_modules_program_idx"
+     ON "learning_program_modules" ("program_id", "position")`,
+];
+
+/**
+ * Creates the two Learning Program tables if they are not there yet.
+ *
+ * The same narrow licence as every guard above: create only, additive only, idempotent, and unable
+ * to stop the server starting. And the same reason — the API redeploys on every push while
+ * `db:push` is a command the owner runs by hand, so a teacher opening the program builder minutes
+ * after a deploy would otherwise meet a 500 from a table that does not exist yet.
+ *
+ * Both are new tables, which `.agents/memory/schema-change-deploy-window.md` records as the safe
+ * shape: nothing that already exists refers to them, so a deploy that runs ahead of `db:push` costs
+ * this feature a few minutes and costs sign-in, booking and every live class nothing at all. A new
+ * *column* on an existing table is the dangerous shape, and this feature deliberately adds none.
+ */
+export async function ensureLearningProgramTables(): Promise<void> {
+  try {
+    for (const statement of LEARNING_PROGRAM_DDL) {
+      await db.execute(sql.raw(statement));
+    }
+    logger.info("learning program tables are present");
+  } catch (err) {
+    logger.warn(
+      { err },
+      "could not ensure the learning program tables; run `pnpm run db:push`. " +
+        "Everything else works — classes, booking and the classroom are untouched, and only the " +
+        "program builder and the public program pages are affected.",
+    );
+  }
+}
