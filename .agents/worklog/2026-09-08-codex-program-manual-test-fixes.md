@@ -2,7 +2,7 @@
 
 Date: 2026-09-08
 Branch: `codex/programs-manual-test-fixes`
-Status: implementation and non-browser gates complete; preview deployment still pending
+Status: deployed to the isolated preview; owner verification pending
 
 ## Scope
 
@@ -101,3 +101,27 @@ reaches the Playwright launch cleanly.
   assertions are encoded but need the browser/device run to execute.
 - The live create/write/publish/delete journey was updated but not executed here.
 - The focused browser bundler compiled all changed component and derivation imports successfully.
+
+## Preview deployment
+
+Commits `609eba9` and `83ee7d6` were pushed to `codex/programs-manual-test-fixes`. The repository's
+`Preview a branch` workflow was dispatched as GitHub Actions run `34277922304` and completed
+successfully in 3 minutes 2 seconds. Its gates independently passed:
+
+- staging API health;
+- clean locked dependency installation;
+- complete typecheck;
+- preview-verification tests;
+- Expo web build;
+- proof that the bundle contains no production API host;
+- Cloudflare preview deployment;
+- post-deploy verification.
+
+A separate HTTP check of the public preview returned 200 and found the new strings `Back to
+Dashboard`, the student-decision guidance, and `Example:` in the exact fingerprinted entry bundle
+`/_expo/static/js/web/entry-19ae684bbb5681555719cb798d37dc44.js`. The preview remains at
+`https://hometuition-preview.praksh-dhakal.workers.dev` and continues to use the staging API.
+
+The preview browser session available to Codex was signed in as the staging operator, not the
+teacher, so Codex did not impersonate or alter the owner's teacher session. The owner must still
+perform the final visual/touch pass while signed in as the staging teacher.
