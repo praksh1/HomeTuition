@@ -92,11 +92,21 @@ export interface ProgramStudioProps {
    */
   leaveAsk?: (() => void) | null;
   onLeaveCancel?: () => void;
+  /**
+   * True while a lifecycle request is in flight: every field, every step control and Save go quiet.
+   *
+   * Not a nicety. Publish, take down, archive and restore act on the copy the server already has,
+   * and their answers become this editor's new baseline — so text written during one belongs to a
+   * draft that is about to be replaced by a response about a different one. The screen still keeps
+   * anything that lands in the frame before this reaches the display, and marks it unsaved.
+   */
+  editingLocked?: boolean;
 }
 
 export default function ProgramStudio(props: ProgramStudioProps) {
   const { program, draft, onDraftChange, saveState, saveError, onSave, approved, onAction,
-    busyAction, actionError, onBack, template, leaveAsk, onLeaveCancel } = props;
+    busyAction, actionError, onBack, template, leaveAsk, onLeaveCancel,
+    editingLocked = false } = props;
   const colors = useColors();
   const { t, gutter, space } = useLayout();
 
@@ -243,7 +253,13 @@ export default function ProgramStudio(props: ProgramStudioProps) {
           */
           body={`${saveError ?? "Fadko could not reach the server."}\n\nYour work is still on this screen. Nothing you have typed has been lost.`}
         >
-          <ProgramButton label="Save again" icon="refresh-cw" onPress={onSave} testID="program-studio-save-retry" />
+          <ProgramButton
+            label="Save again"
+            icon="refresh-cw"
+            disabled={editingLocked}
+            onPress={onSave}
+            testID="program-studio-save-retry"
+          />
         </ProgramNotice>
       ) : null}
 
@@ -290,6 +306,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                 modules={draft.modules}
                 issues={placed.modules}
                 stale={atRisk}
+                locked={editingLocked}
                 onChange={setModules}
               />
             </View>
@@ -312,7 +329,9 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                 icon="save"
                 emphasis="primary"
                 busy={saveState === "saving"}
-                disabled={saveState === "clean" || saveState === "saved"}
+                // Locked during a lifecycle request too: a PATCH crossing a publish is two writes
+                // racing for the same row, and whichever wins decides what students were given.
+                disabled={editingLocked || saveState === "clean" || saveState === "saved"}
                 spoken="Save this draft. Nothing is published"
                 onPress={onSave}
                 grow
@@ -334,6 +353,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                   unplaced={placed.unplaced}
                   onAction={(action) => setConfirming(action)}
                   busyAction={busyAction}
+                  locked={editingLocked}
                 />
               </View>
             </View>
@@ -355,6 +375,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                 value={(draft[field.name] as string | null | undefined) ?? ""}
                 issues={issues.byField[field.name] ?? []}
                 stale={atRisk}
+                locked={editingLocked}
                 onChange={(value) => set({ [field.name]: value } as Partial<ProgramDraft>)}
               />
             ))}
@@ -389,6 +410,7 @@ function Field({
   value,
   issues,
   stale,
+  locked,
   onChange,
 }: {
   field: StudioField;
@@ -396,6 +418,8 @@ function Field({
   issues: ProgramIssue[];
   /** True when `issues` describe the last saved draft rather than what is in the box. */
   stale: boolean;
+  /** True while a lifecycle request is in flight. See `editingLocked` on the props above. */
+  locked: boolean;
   onChange: (value: string) => void;
 }) {
   const colors = useColors();
@@ -420,6 +444,7 @@ function Field({
         onChangeText={onChange}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        editable={!locked}
         multiline={field.multiline}
         placeholder={field.placeholder}
         placeholderTextColor={colors.inkFaint}
@@ -439,6 +464,7 @@ function Field({
             paddingVertical: space.xs,
             minHeight: field.multiline ? HIT_SLOP_MIN * 2 : HIT_SLOP_MIN,
             textAlignVertical: field.multiline ? "top" : "center",
+            opacity: locked ? 0.6 : 1,
           },
         ]}
       />
@@ -510,12 +536,15 @@ function ModuleEditor({
   modules,
   issues,
   stale,
+  locked,
   onChange,
 }: {
   modules: ProgramModuleDraft[];
   issues: Record<number, ProgramIssue[]>;
   /** True when `issues` describe the last saved draft rather than the steps on screen. */
   stale: boolean;
+  /** True while a lifecycle request is in flight. See `editingLocked` on the props above. */
+  locked: boolean;
   onChange: (next: ProgramModuleDraft[]) => void;
 }) {
   const colors = useColors();
@@ -542,14 +571,14 @@ function ModuleEditor({
               testID={`program-module-${index}-up`}
               icon="arrow-up"
               label={`Move step ${index + 1} up`}
-              disabled={!canMoveUp(index)}
+              disabled={locked || !canMoveUp(index)}
               onPress={() => onChange(moveModule(modules, index, -1))}
             />
             <StepControl
               testID={`program-module-${index}-down`}
               icon="arrow-down"
               label={`Move step ${index + 1} down`}
-              disabled={!canMoveDown(index, modules.length)}
+              disabled={locked || !canMoveDown(index, modules.length)}
               onPress={() => onChange(moveModule(modules, index, 1))}
             />
             <StepControl
@@ -557,6 +586,7 @@ function ModuleEditor({
               icon="trash-2"
               label={`Remove step ${index + 1}`}
               tone="stopped"
+              disabled={locked}
               onPress={() => onChange(modules.filter((_, i) => i !== index))}
             />
           </View>
@@ -565,12 +595,14 @@ function ModuleEditor({
             testID={`program-module-${index}-title`}
             label="Step name"
             value={module.title}
+            locked={locked}
             onChange={(title) => update(index, { title })}
           />
           <ModuleField
             testID={`program-module-${index}-outcome`}
             label="What they will be able to do after it"
             value={module.outcome}
+            locked={locked}
             onChange={(outcome) => update(index, { outcome })}
             multiline
           />
@@ -591,6 +623,7 @@ function ModuleEditor({
         label="Add a step"
         icon="plus"
         spoken="Add a step to the learning path"
+        disabled={locked}
         onPress={() => onChange([...modules, emptyModule()])}
         grow
       />
@@ -651,12 +684,15 @@ function ModuleField({
   label,
   value,
   onChange,
+  locked = false,
   multiline = false,
   testID,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  /** True while a lifecycle request is in flight. See `editingLocked` on the studio's props. */
+  locked?: boolean;
   multiline?: boolean;
   testID?: string;
 }) {
@@ -672,6 +708,7 @@ function ModuleField({
         onChangeText={onChange}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        editable={!locked}
         multiline={multiline}
         accessibilityLabel={label}
         style={[
@@ -686,6 +723,7 @@ function ModuleField({
             paddingVertical: space.xs,
             minHeight: multiline ? HIT_SLOP_MIN * 1.5 : HIT_SLOP_MIN,
             textAlignVertical: multiline ? "top" : "center",
+            opacity: locked ? 0.6 : 1,
           },
         ]}
       />
@@ -711,6 +749,7 @@ function ReviewAndPublish({
   approved,
   atRisk,
   saveState,
+  locked,
   unplaced,
   onAction,
   busyAction,
@@ -722,6 +761,8 @@ function ReviewAndPublish({
   atRisk: boolean;
   /** Only to tell "a save is on its way" apart from "you have not pressed Save yet". */
   saveState: SaveState;
+  /** True while a lifecycle request is out: no second one may be started on top of it. */
+  locked: boolean;
   unplaced: ProgramIssue[];
   onAction: (action: ProgramAction) => void;
   busyAction: ProgramAction | null;
@@ -844,6 +885,7 @@ function ReviewAndPublish({
           icon="upload-cloud"
           emphasis="primary"
           busy={busyAction === "publish"}
+          disabled={locked}
           spoken={offer.spoken}
           onPress={() => onAction("publish")}
           grow
@@ -873,6 +915,10 @@ function ReviewAndPublish({
               label={offer.label}
               emphasis={offer.emphasis}
               busy={busyAction === offer.action}
+              // Every other lifecycle button goes quiet while one is out. Two of these racing for
+              // the same row lock is a program whose final state depends on which packet arrived
+              // first, which is not something a teacher can be asked to reason about.
+              disabled={locked && busyAction !== offer.action}
               spoken={offer.spoken}
               onPress={() => onAction(offer.action)}
               grow

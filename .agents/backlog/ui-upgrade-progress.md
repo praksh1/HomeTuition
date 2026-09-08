@@ -81,6 +81,7 @@ Found and fixed so far:
 | Program studio | A save response compared against the draft captured when the request left, so typing during a slow PATCH was marked **Saved** while the server had never been sent it — mine. Found by Codex, not by me |
 | Program studio | The commit message claimed the rule "never lose typed work silently"; the leave guard was a tested function no screen called, and three lifecycle actions could overwrite unsaved text — mine |
 | Program studio | A comment said fetching templates in the chooser saved the studio a round trip. The studio fetches them again — two round trips, described as one — mine |
+| Program studio (test) | The journey claimed to prove a reload was guarded by dispatching a synthetic `beforeunload` and checking `defaultPrevented` — which proves a listener exists and nothing about whether the browser would raise a dialog. Now a real reload asserting a real dialog — mine |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

@@ -550,11 +550,43 @@ for (const size of SIZES) {
       leaveAsk: "__fn__",
     },
   }, "studio-leaving");
+
   check(`${L}: a departure with unsaved work is questioned`, await seen("program-leave-confirm"));
   const leaving = await text("program-leave-confirm");
   check(`${L}: and says what leaving costs`, /loses what you have typed/i.test(leaving), leaving.slice(0, 140));
   check(`${L}: with all three ways out named`,
     (await seen("program-leave-stay")) && (await seen("program-leave-discard")) && (await seen("program-leave-cancel")));
+
+  /* --- the editor while a lifecycle request is out ------------------------- */
+
+  /*
+    Publish, take down, archive and restore act on the copy the server has and replace this
+    editor's baseline when they answer. Text written during one belongs to a draft that is about to
+    be overwritten by a response about a different one, so every field and every step control goes
+    quiet — and so does Save, because a PATCH crossing a publish is two writes racing for one row.
+  */
+  await show({
+    screen: "studio",
+    props: {
+      program: detail({ status: "published", version: 1, published: { version: 1 }, hasUnpublishedChanges: true }),
+      draft: draft(), saveState: "clean", saveError: null, approved: true,
+      busyAction: "publish", actionError: null, editingLocked: true,
+    },
+  }, "studio-publishing");
+  const shut = async (id) => p.locator(`[data-testid="${id}"]`).first().isEditable().then((e) => !e).catch(() => false);
+  check(`${L}: every field is closed while a lifecycle request is out`,
+    (await shut("program-input-title")) && (await shut("program-input-summary")) &&
+      (await shut("program-module-0-title")));
+  check(`${L}: adding and removing steps is closed too`,
+    (await p.locator('[data-testid="program-modules-add"]').getAttribute("aria-disabled")) === "true" &&
+      (await p.locator('[data-testid="program-module-0-remove"]').getAttribute("aria-disabled")) === "true");
+  check(`${L}: and so is Save`,
+    (await p.locator('[data-testid="program-studio-save-button"]').getAttribute("aria-disabled")) === "true");
+  check(`${L}: the action that is running says so`,
+    (await p.locator('[data-testid="program-publish"]').getAttribute("aria-busy")) === "true");
+  check(`${L}: and the ones that are not are closed rather than merely quiet`,
+    (await p.locator('[data-testid="program-action-archive"]').getAttribute("aria-disabled")) === "true" &&
+      (await p.locator('[data-testid="program-action-unpublish"]').getAttribute("aria-disabled")) === "true");
 
   /* --- review and publication -------------------------------------------- */
 

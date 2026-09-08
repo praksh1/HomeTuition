@@ -3,8 +3,8 @@
 - Date: 2026-09-08
 - Agent: claude
 - Branch: `claude/learning-program-phase2`
-- Base commit: `2abedbb` (Codex's Phase 2A review, on `codex/learning-program-foundation`)
-- Status: complete — corrections made after Codex review round 1; awaiting review round 2.
+- Base commit: `bfa35dc` (Codex's second Phase 2A review, on `codex/learning-program-foundation`)
+- Status: complete — corrections made after Codex review rounds 1 and 2; awaiting review round 3.
   **Not merged, not deployed.**
 
 ## Requested
@@ -345,3 +345,165 @@ scope, still listed in `.agents/memory/accessibility-state-does-not-reach-the-we
 - The three-button leave sheet (Stay and save / Leave without saving / Keep editing) is more choices
   than a sheet usually wants. It reads clearly at both sizes, but a real teacher's reaction to it is
   the sort of thing only the owner's testing will settle.
+
+---
+
+# Correction round 2 — after Codex's second review of `7da1036`
+
+Codex's second review is `.agents/worklog/2026-09-08-codex-learning-program-phase2a-second-review.md`
+at `bfa35dc`. Verdict: the three data-loss corrections hold, three findings remain. The branch was
+rebased onto `bfa35dc` and all three are corrected.
+
+## Blocker 3 first, because nothing else could be trusted until it was
+
+**Reproduced exactly.** `.expo/types/router.d.ts` is gitignored and written by whichever
+`expo start` or `expo export` ran last, and `tsconfig.json` includes it. So `tsc` was answering a
+different question on every machine — and the question it answered for me was the easy one, because
+my own web build had regenerated the file minutes earlier.
+
+To reproduce: move `app/(teacher)/programs` aside, regenerate the route types, move it back, then
+typecheck. Seven errors, on exactly the seven program navigation calls Codex named:
+
+```
+app/(teacher)/index.tsx(469,36): error TS2345: Argument of type '"/(teacher)/programs"' is not assignable …
+app/(teacher)/programs/[id].tsx(219,37) … (289,37) …
+app/(teacher)/programs/index.tsx(65,37) … (66,37)
+app/(teacher)/programs/new.tsx(65,22) … (85,40)
+```
+
+The fix is `artifacts/sikshya/scripts/router-types.js`, run by the `typecheck` script before `tsc`.
+It regenerates the declaration file from `app/` as it is on disk using **expo-router's own**
+`getTypedRoutesDeclarationFile` — the same function `@expo/cli` calls from the dev server — rather
+than a reimplementation of the route rules, which would drift and be worse than no check. It fails
+loudly if that module ever moves, because a typecheck that silently stops checking routes is the
+state this exists to end.
+
+Proven from both broken states: with `.expo/types` **absent**, and with a **stale** file that
+predates the routes. Both now pass, and `pnpm --dir artifacts/sikshya run typecheck` is the command.
+
+## Blocker 1 — browser Back really is guarded now, and really is tested
+
+`beforeunload` never fires for a single-page Back, and React Navigation's `beforeRemove` does not
+either, because expo-router answers a browser Back with `resetRoot`, which is not a removal. My
+previous report said this was unguarded; it was.
+
+`hooks/useLeaveGuard.web.ts` now keeps **one sentinel history entry** for the URL the teacher is
+already on. A Back press consumes that entry instead of leaving — the address does not change, so
+the studio stays exactly as it is — and the question is raised. The discipline that keeps it from
+being the infinite trap this pattern usually becomes:
+
+- nothing is re-pushed while a question is open, so the Back the teacher then agrees to is not
+  spent undoing the guard;
+- "Keep editing" re-arms it, so the next Back is caught too;
+- leaving for real runs `history.go(-1)` from where the sentinel was — the navigation originally
+  asked for;
+- saving disarms it and consumes the spare entry, so Back never needs pressing twice;
+- an agreed departure disarms it **without** consuming anything, because the navigation about to run
+  owns that entry.
+
+That last rule was a bug first: consuming and navigating raced, and the loser was the departure — a
+teacher who deleted a draft watched the studio stay exactly where it was. The journey caught it.
+
+The sentinel carries expo-router's own `history.state` with one extra key, because the router finds
+its position by the `id` in there; a bare object would leave it thinking it was at the start of
+history.
+
+**Tested for real**, in the browser, against the API: enter the studio from the Programs page so
+genuine history exists, type, `page.goBack()`, stay in the studio and see the question, cancel and
+find the text intact, Back again, confirm, and arrive where Back was going. Clean work goes back
+with no question. And the reload proof is now a real `page.reload()` asserting the browser **raised**
+a dialog — the previous synthetic `new Event("beforeunload")` proved a listener existed and nothing
+about whether the browser would act on it. Codex was right to reject it.
+
+## Blocker 2 — one operation at a time
+
+`opRef` in `app/(teacher)/programs/[id].tsx` holds the single operation this screen may have in
+flight, and it is set **before anything is awaited** — a React state update does not land until the
+next render, and two presses a few milliseconds apart both happen before that.
+
+- A save while a lifecycle request is out: refused.
+- A lifecycle request while a save is out or queued: refused.
+- A second lifecycle request while one is out: refused.
+- The "is the server behind us?" test at the dispatch boundary is now `atRiskNow()` — failed save,
+  save in flight or queued, or `draftDiffers(draftRef.current, acceptedRef.current)` — read from
+  refs, not from the render's `saveState`, which can be a frame out of date.
+- While a lifecycle request is out the studio closes every field, every step control, Add a step,
+  Save, and every other lifecycle button (`editingLocked`).
+- A keystroke that lands in the frame before that lock is drawn is still kept, and marked unsaved;
+  `act` compares against what it captured at dispatch and leaves newer text alone.
+- Text typed after Publish cannot join the publication: the POST body is `{}` and the server
+  publishes the draft it already holds.
+
+## Verification
+
+Every command run in this container; results as written.
+
+| Command | Where | Result |
+|---|---|---|
+| `pnpm run typecheck:libs` | root | pass |
+| `pnpm --dir artifacts/api-server run typecheck` | root | pass |
+| `pnpm --dir artifacts/sikshya run typecheck` | root, after `rm -rf .expo/types .tsbuildinfo` | pass |
+| `pnpm run test` | `artifacts/sikshya` | 315 pass, 0 fail |
+| `pnpm run test` | `artifacts/api-server` | 474 pass, 0 fail |
+| `pnpm run test:programs` | `artifacts/api-server` | 212 pass, 0 fail |
+| `pnpm run test:programs-ui` | `artifacts/sikshya` | 232 pass, 0 fail |
+| `pnpm run test:program-journey` | `artifacts/sikshya` | 71 pass, 0 fail |
+| `pnpm run test:nav` | `artifacts/sikshya` | 41 pass, 0 fail |
+| `pnpm run test:dashboard` | `artifacts/sikshya` | 6 pass, 0 fail |
+| `pnpm run lint:design` | `artifacts/sikshya` | no new leaks (94 hex / 282 sizes) |
+| `git diff --check` | root | clean |
+
+Re-rendered at 390×844 and 1440×900. One new visible state, `studio-publishing`: every field grey,
+step controls faded, Add a step and Save draft dim, the running action spinning, the other lifecycle
+buttons closed.
+
+## Problems and surprises
+
+1. **The first shape of the Back guard did nothing at all.** It disarmed itself while the question
+   was open — consuming its sentinel with `history.back()` and re-pushing on cancel — and the
+   resulting churn meant a real `page.goBack()` produced no question. Replacing "disarm while the
+   question is open" with "do not *push* while the question is open" removed three moving parts and
+   made it work. Fewer states, and each one is a sentence.
+
+2. **The guard raced the delete.** Both the consume and the departure navigation ran, and the
+   consume won: the program was gone from the database and the studio was still on screen. Fixed
+   with `departing`, which disarms without consuming.
+
+3. A transient run showed the chooser drawing nothing and the check passing anyway, because the
+   test's own template fetch had also come back empty and the two agreed. The assertion now requires
+   the server's list to be non-empty, so "both empty" can no longer be a pass.
+
+4. `const locked` collided with an existing `locked` in the render suite; renamed. Caught by node's
+   own parse rather than by a confusing failure, which is the good version of this.
+
+## Fabrications found
+
+**One, mine, in the previous round's test.** The journey claimed to prove that reloading is guarded,
+by dispatching `new Event("beforeunload")` and checking `defaultPrevented`. That proves a listener
+is registered and says nothing about whether the browser would raise a dialog — the thing a teacher
+would actually see. It is now a real `page.reload()` asserting a real dialog.
+
+Everything else in this round was a missing guard rather than a false claim, and the previous
+worklog said plainly that browser Back was unprotected — which is how Codex knew where to look.
+
+## Deliberately not changed
+
+Phase 1's schema and routes. Payments, booking, membership, refunds, Daily, LiveKit, classroom
+sockets, production config. No student discovery, enrolment, scheduling or Phase 2B. The eighteen
+`accessibilityState` call sites outside `components/programs/`.
+
+Codex also observed that the **root** `pnpm run typecheck` filter can skip the artifact packages on
+Windows. That is a pre-existing repository issue, not one of the three findings, and changing the
+root filter would touch every package's gate; left alone deliberately, and recorded here so it is
+not lost. The direct per-package commands in the table above are unaffected.
+
+## Remaining risks / next pickup point
+
+- **Still never opened on a real Android phone.** `usePreventRemove` and the hardware Back button
+  are wired and typechecked but exercised only through Chromium. The browser guard is now genuinely
+  tested; the phone one is not, and that is the single largest untested claim on this branch.
+- The history guard is proven in Chromium. Safari's back-forward cache and older Android WebViews
+  handle `popstate` and `beforeunload` differently, and neither was tested here.
+- `scripts/router-types.js` calls `expo-router/build/typed-routes/generate`, which is an internal
+  path. It is the same one `@expo/cli` uses, and the script fails loudly rather than quietly if an
+  Expo upgrade moves it — but it will need re-pointing at some SDK bump.

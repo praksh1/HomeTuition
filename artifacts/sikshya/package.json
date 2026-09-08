@@ -9,7 +9,7 @@
     "build": "node scripts/build.js",
     "prebuild:assets": "node scripts/copy-pdf-worker.js",
     "serve": "node server/serve.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "node scripts/router-types.js && tsc -p tsconfig.json --noEmit",
     "test:board": "node scripts/board-tests/run.mjs",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -38,7 +38,8 @@
     "test:programs-ui": "node scripts/program-studio/run.mjs",
     "test:lobby": "node scripts/lobby-tests/run.mjs",
     "test:test-access-ui": "node scripts/test-access-ui/run.mjs",
-    "test:program-journey": "node scripts/program-journey/run.mjs"
+    "test:program-journey": "node scripts/program-journey/run.mjs",
+    "router-types": "node scripts/router-types.js"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

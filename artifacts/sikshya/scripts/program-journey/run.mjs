@@ -120,23 +120,36 @@ async function main() {
    * as the test needs.
    */
   let release = null;
+  let holdFor = null;
   let patches = 0;
-  await page.route("**/api/learning-programs/*", async (route) => {
-    if (route.request().method() !== "PATCH") return route.fallback();
-    patches += 1;
-    if (!release) return route.fallback();
+  /** Every learning-program write the page made, in order, as "METHOD /path". */
+  const writes = [];
+  await page.route("**/api/learning-programs**", async (route) => {
+    const method = route.request().method();
+    if (method === "GET") return route.fallback();
+    writes.push(`${method} ${new URL(route.request().url()).pathname}`);
+    if (method === "PATCH") patches += 1;
+    if (!release || (holdFor && holdFor !== method)) return route.fallback();
     const go = release;
     release = null;
-    await go(); // resolves when the test says the save may complete
+    holdFor = null;
+    await go(); // resolves when the test says this request may reach the server
     return route.fallback();
   });
-  /** Arms the hold and returns the handle that lets the pending save finish. */
-  const holdNextSave = () => {
+  /**
+   * Holds the next write of `method` open until the returned handle is called.
+   *
+   * Every race in this screen happens between a request leaving and its answer arriving, which is a
+   * few milliseconds against a local server. This makes that window as long as the test needs.
+   */
+  const holdNext = (method) => {
     let letGo;
     const held = new Promise((resolve) => { letGo = resolve; });
     release = () => held;
+    holdFor = method;
     return () => letGo();
   };
+  const holdNextSave = () => holdNext("PATCH");
 
   /* ------------------------------------------------------------------ create */
 
@@ -166,7 +179,8 @@ async function main() {
     .map((id) => id.replace("program-type-", ""))
     .sort();
   check("and drew exactly the server's list, not a list of its own",
-    JSON.stringify(drawn) === JSON.stringify(offered), `drew ${drawn} / server ${offered}`);
+    offered.length > 0 && JSON.stringify(drawn) === JSON.stringify(offered),
+    `drew [${drawn}] / server [${offered}] (status ${templates.status})`);
 
   await page.locator('[data-testid="program-type-school_subject"]').click();
   check("choosing a kind opens the studio", await until("studio", () => seen("program-studio")), await read("program-studio"));
@@ -254,22 +268,93 @@ async function main() {
   check("keeping editing puts the question away", await until("gone", async () => !(await seen("program-leave-confirm"))));
   check("and the typing survived it", (await titleBox.inputValue()) === "Grade 10 Mathematics, term by term");
 
-  /*
-    Reload, which no confirmation sheet of ours can cover.
+  /* --- the browser's own Back button -------------------------------------- */
 
-    Playwright dismisses `beforeunload` itself, so the proof is that the dialog was *raised*: the
-    page asked. Without the guard nothing is raised and this counts zero.
+  /*
+    The one the first attempt missed, and said so.
+
+    Expo Router is a single page: Back fires `popstate`, the router swaps the screen, and neither
+    `beforeunload` nor React Navigation's `beforeRemove` sees it. This is a real `page.goBack()`,
+    which is the only way to know.
+
+    The studio was reached by pressing New program on the list, so there is genuine history behind
+    it: /programs → /programs/new → /programs/<id>.
   */
-  let asked = 0;
-  page.on("dialog", (d) => { asked += 1; void d.dismiss(); });
-  await page.evaluate(() => {
-    const event = new Event("beforeunload", { cancelable: true });
-    window.dispatchEvent(event);
-    window.__beforeUnloadPrevented = event.defaultPrevented;
-  });
-  check("the browser is told not to throw the work away on a reload",
-    await page.evaluate(() => window.__beforeUnloadPrevented === true),
-    "beforeunload was not prevented");
+  console.log("\nThe browser's Back button");
+
+  const wasAt = await page.evaluate(() => location.pathname);
+  const depth = await page.evaluate(() => window.history.length);
+  await page.goBack();
+  await page.waitForTimeout(500);
+  check("Back does not leave the studio while work is unsaved",
+    (await page.evaluate(() => location.pathname)) === wasAt,
+    await page.evaluate(() => location.pathname));
+  check("and it asks", await until("ask", () => seen("program-leave-confirm")),
+    `history was ${depth} deep, now ${await page.evaluate(() => window.history.length)}`);
+  check("the studio is still on screen behind the question", await seen("program-studio"));
+
+  await page.locator('[data-testid="program-leave-cancel"]').click();
+  check("keeping editing puts that question away too",
+    await until("gone", async () => !(await seen("program-leave-confirm"))));
+  check("and the typing is still there",
+    (await titleBox.inputValue()) === "Grade 10 Mathematics, term by term",
+    await titleBox.inputValue());
+
+  // Again, and this time agree to go. The original press must complete: one step back from where
+  // the teacher was, not a jump to somewhere the app chose.
+  await page.goBack();
+  await page.waitForTimeout(500);
+  check("a second Back is caught too, so the guard re-armed",
+    await until("ask", () => seen("program-leave-confirm")));
+  await page.locator('[data-testid="program-leave-discard"]').click();
+  check("agreeing completes the navigation the teacher asked for",
+    await until("left", async () => (await page.evaluate(() => location.pathname)) !== wasAt),
+    await page.evaluate(() => location.pathname));
+
+  // Back into the studio, clean this time.
+  await page.goto(`${siteUrl}/programs/${programId}`, { waitUntil: "networkidle" });
+  check("the studio reopens", await until("studio", () => seen("program-studio")));
+  check("with the older title, which is what the server has",
+    (await page.locator('[data-testid="program-input-title"]').inputValue()) === "Grade 10 Mathematics",
+    await page.locator('[data-testid="program-input-title"]').inputValue());
+  check("and nothing unsaved", (await chip()) === "All changes saved", await chip());
+
+  await page.goBack();
+  await page.waitForTimeout(600);
+  check("clean work goes back with no question at all",
+    !(await seen("program-leave-confirm")) && (await page.evaluate(() => location.pathname)) !== `/programs/${programId}`,
+    await page.evaluate(() => location.pathname));
+
+  /* --- reload, which no sheet of ours can cover ----------------------------- */
+
+  await page.goto(`${siteUrl}/programs/${programId}`, { waitUntil: "networkidle" });
+  await until("studio", () => seen("program-studio"));
+  const title2 = page.locator('[data-testid="program-input-title"]');
+  await title2.fill("Grade 10 Mathematics, term by term");
+  check("dirty again", await until("dirty", async () => (await chip()) === "Unsaved changes"), await chip());
+
+  /*
+    A real reload, and a real dialog.
+
+    Playwright auto-dismisses `beforeunload`, so what is asserted is that the browser *raised* one —
+    which it only does when a listener called `preventDefault`. The earlier version of this test
+    dispatched a synthetic event and checked `defaultPrevented`, which proves a listener exists and
+    nothing about whether the browser would act on it. Codex was right to reject that.
+  */
+  let dialogs = 0;
+  const onDialog = (d) => { dialogs += 1; void d.dismiss(); };
+  page.on("dialog", onDialog);
+  await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+  await page.waitForTimeout(500);
+  page.off("dialog", onDialog);
+  check("reloading raises the browser's own leave dialog", dialogs > 0, `${dialogs} dialogs`);
+
+  // The reload threw the unsaved edit away, which is what it is for. Type it again so the rest of
+  // the journey starts where it did before this section was added.
+  await page.goto(`${siteUrl}/programs/${programId}`, { waitUntil: "networkidle" });
+  await until("studio", () => seen("program-studio"));
+  await titleBox.fill("Grade 10 Mathematics, term by term");
+  await until("dirty", async () => (await chip()) === "Unsaved changes");
 
   /* --------------------------------------------------------------- save, then publish */
 
@@ -338,6 +423,82 @@ async function main() {
   check("and the publish button, because there is now something to publish", await seen("program-publish"));
 
   check(`${patches} saves went to the server, each on its own`, patches >= 3, String(patches));
+
+  /* ------------------------------------------ one operation at a time, proved */
+
+  console.log("\nNothing crosses a lifecycle request");
+
+  /*
+    The reverse ordering Codex found: start a publish while clean, then type and press Save while
+    that POST is still out. A PATCH and a POST then race for the same row lock, and which one wins
+    decides what students were given.
+  */
+  // The section above ended with a save, so the screen is already clean and Publish is offered.
+  check("start from a saved draft", await until("saved", async () => {
+    const label = await chip();
+    return label === "Saved" || label === "All changes saved";
+  }), await chip());
+
+  const beforeRace = writes.length;
+  const letPublishFinish = holdNext("POST");
+  await page.locator('[data-testid="program-publish"]').click();
+  await until("confirm", () => seen("program-confirm-publish"));
+  await page.locator('[data-testid="program-confirm-publish-go"]').click();
+  await page.waitForTimeout(400);
+
+  // The editor is shut while it runs, so this typing should not even reach the draft.
+  await page.locator('[data-testid="program-input-summary"]').fill("Typed during a publish").catch(() => {});
+  await page.locator('[data-testid="program-studio-save-button"]').click({ force: true }).catch(() => {});
+  await page.waitForTimeout(400);
+
+  const during = writes.slice(beforeRace);
+  check("only the publish was sent while it was in flight",
+    during.filter((w) => w.startsWith("PATCH")).length === 0, JSON.stringify(during));
+  check("and the fields were locked", await page.locator('[data-testid="program-input-summary"]').isEditable() === false);
+
+  // A second lifecycle press during the first must not reach the server either.
+  await page.locator('[data-testid="program-action-archive"]').click({ force: true }).catch(() => {});
+  await page.waitForTimeout(300);
+  check("and a second lifecycle action was not dispatched",
+    writes.slice(beforeRace).filter((w) => w.startsWith("POST")).length === 1,
+    JSON.stringify(writes.slice(beforeRace)));
+
+  letPublishFinish();
+  check("the publish lands", await until("v2", () =>
+    Promise.resolve(sql(`select version from learning_programs where id = ${programId}`) === "2")),
+    sql(`select status, version from learning_programs where id = ${programId}`));
+  check("exactly one write crossed that whole stretch",
+    writes.slice(beforeRace).length === 1, JSON.stringify(writes.slice(beforeRace)));
+  check("and the screen agrees with what happened",
+    (await until("settled", async () => (await chip()) === "All changes saved")) &&
+      (await seen("program-publish-unchanged")),
+    `${await chip()} / ${await read("program-review-live")}`);
+  check("what students see is the version just published",
+    /Version 2/.test(await read("program-review-live")), await read("program-review-live"));
+
+  /* --- and the other way: no lifecycle request may cross a save -------------- */
+
+  const beforeSaveRace = writes.length;
+  await page.locator('[data-testid="program-input-summary"]').fill("Changed once more, and saved slowly");
+  const letSlowSaveFinish = holdNext("PATCH");
+  await page.locator('[data-testid="program-studio-save-button"]').click();
+  await until("saving", async () => (await chip()) === "Saving…");
+
+  check("publishing is not offered while a save is out", !(await seen("program-publish")));
+  await page.locator('[data-testid="program-action-archive"]').click({ force: true }).catch(() => {});
+  await page.waitForTimeout(300);
+  check("and a lifecycle action pressed anyway is not dispatched",
+    writes.slice(beforeSaveRace).filter((w) => w.startsWith("POST")).length === 0,
+    JSON.stringify(writes.slice(beforeSaveRace)));
+
+  letSlowSaveFinish();
+  check("the save lands", await until("saved", async () => (await chip()) === "Saved"), await chip());
+  const stateAfter = sql(`select status, version from learning_programs where id = ${programId}`);
+  check("and the program is where the publish left it, not where the archive would have",
+    stateAfter === "published|2", stateAfter);
+  check("with the newly saved words on the server",
+    sql(`select summary from learning_programs where id = ${programId}`) === "Changed once more, and saved slowly",
+    sql(`select summary from learning_programs where id = ${programId}`));
 
   /* ------------------------------------------- deleting a draft, with work at risk */
 

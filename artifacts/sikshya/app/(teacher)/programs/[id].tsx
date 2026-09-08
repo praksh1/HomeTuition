@@ -76,15 +76,44 @@ export default function ProgramStudioScreen() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<ProgramAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  /** The render-side copy of `opRef`. It decides what is drawn; `opRef` decides what may run. */
+  const [operation, setOperation] = useState<null | { kind: "save" } | { kind: "action"; action: ProgramAction }>(null);
 
   /** The newest draft, readable from inside a promise that started before it was typed. */
   const draftRef = useRef<ProgramDraft | null>(null);
-  /** True while a PATCH is out. Nothing else may start one. */
-  const savingRef = useRef(false);
+  /** The last draft the server accepted, readable synchronously for the same reason. */
+  const acceptedRef = useRef<ProgramDraft | null>(null);
+  /**
+   * The one operation this screen is allowed to have in flight, or `null`.
+   *
+   * A ref rather than state, and set **before** anything is awaited, because a React state update
+   * does not land until the next render — and two presses a few milliseconds apart both happen
+   * before that. Every dispatch below reads this first. The state copy underneath drives the
+   * drawing only.
+   */
+  const opRef = useRef<null | { kind: "save" } | { kind: "action"; action: ProgramAction }>(null);
   /** Set when Save is pressed during a save. The in-flight one runs it again when it returns. */
   const queuedRef = useRef(false);
+  /** True while the last save failed, so a dispatch can see it without a render. */
+  const failedRef = useRef(false);
 
   const atRisk = wouldLoseWork(saveState);
+
+  /**
+   * Whether the server's copy is behind this screen — asked **now**, not at the last render.
+   *
+   * `wouldLoseWork(saveState)` is a render value, and by the time a press reaches a callback it can
+   * be a frame out of date. This reads the refs instead: a save in flight or queued, a failed save,
+   * or a draft that differs from the last one the server accepted. Codex asked for exactly this at
+   * the dispatch boundary, and the reason is the frame in between.
+   */
+  const atRiskNow = useCallback(() => {
+    if (failedRef.current) return true;
+    if (opRef.current?.kind === "save" || queuedRef.current) return true;
+    const local = draftRef.current;
+    const server = acceptedRef.current;
+    return local !== null && server !== null && draftDiffers(local, server);
+  }, []);
 
   /**
    * Whether this teacher's account has been approved.
@@ -98,6 +127,7 @@ export default function ProgramStudioScreen() {
   const apply = useCallback((detail: ProgramDetail) => {
     setProgram(detail);
     setAccepted(detail.draft);
+    acceptedRef.current = detail.draft;
     setDraft(detail.draft);
     draftRef.current = detail.draft;
   }, []);
@@ -130,6 +160,13 @@ export default function ProgramStudioScreen() {
   }, [load]);
 
   const onDraftChange = useCallback((next: ProgramDraft) => {
+    /*
+      Recorded even while a lifecycle action has the editor locked.
+
+      The lock is drawn on the next render, and a keystroke can land in the frame before it does.
+      Dropping it would be the silent loss this whole screen exists to prevent, so it is kept and
+      counted as unsaved; `act` below then leaves it alone when its answer comes back.
+    */
     draftRef.current = next;
     setDraft(next);
     setSaveState((current) => {
@@ -139,116 +176,6 @@ export default function ProgramStudioScreen() {
       return "unsaved";
     });
   }, []);
-
-  const save = useCallback(async () => {
-    if (!id) return;
-    if (savingRef.current) {
-      // One at a time. This press is remembered and runs on the way out of the loop below, so the
-      // server never has two writes for this program in flight and no answer can arrive stale.
-      queuedRef.current = true;
-      return;
-    }
-    savingRef.current = true;
-    try {
-      do {
-        queuedRef.current = false;
-        const sending = draftRef.current;
-        if (!sending) break;
-        setSaveState("saving");
-        setSaveError(null);
-        try {
-          const answer = await apiPatch<{ program: ProgramDetail }>(
-            `/learning-programs/${id}`,
-            saveBody(sending),
-          );
-          /*
-            The server's answer is authoritative about *its* copy, so `program` and `accepted` take
-            it — including the validation issues, which now describe what was just written.
-
-            The editor keeps whatever is on screen. Replacing it would delete anything typed while
-            the request was in flight, which on a Nepali connection is a whole sentence. And the
-            save state is decided by comparing the answer with `draftRef.current` — the newest text
-            — not with `sending`. Comparing with `sending` is the bug Codex found: type during a
-            slow PATCH and the old response would come back and write "Saved" over work the server
-            has never seen.
-          */
-          setProgram(answer.program);
-          setAccepted(answer.program.draft);
-          const newest = draftRef.current ?? sending;
-          setSaveState(draftDiffers(newest, answer.program.draft) ? "unsaved" : "saved");
-        } catch (err) {
-          setSaveState("failed");
-          // Only what went wrong. The studio adds the reassurance that the work is still on screen,
-          // so saying it here too would print it twice.
-          setSaveError(err instanceof ApiError ? err.message : "Fadko could not reach the server.");
-          // Do not run a queued save on top of a failure: it would replace the message explaining
-          // why the work is not on the server with a second copy of the same failure.
-          break;
-        }
-      } while (queuedRef.current);
-    } finally {
-      savingRef.current = false;
-      queuedRef.current = false;
-    }
-  }, [id]);
-
-  const act = useCallback(async (action: ProgramAction) => {
-    if (!id) return;
-    /*
-      The second door on the same rule.
-
-      `ProgramStudio` does not draw these buttons while work is at risk, so this should be
-      unreachable — which is exactly why it is here. A lifecycle request publishes or files away the
-      server's copy, and its answer becomes the editor's new baseline; dispatching one over unsaved
-      text publishes the wrong thing and then overwrites the right thing.
-
-      Delete is deliberately outside the guard: discarding the work is what it is for, and the
-      confirmation says so in as many words.
-    */
-    if (action !== "delete" && wouldLoseWork(saveState)) return;
-
-    const before = draftRef.current;
-    setBusyAction(action);
-    setActionError(null);
-    try {
-      if (action === "delete") {
-        await apiDelete(`/learning-programs/${id}`);
-        // Through `depart` rather than straight to `router.replace`, so the guard is switched off
-        // before the navigation happens. Otherwise a teacher who deleted a draft with unsaved text
-        // would be asked whether they want to lose work belonging to a program that is now gone.
-        depart(() => router.replace("/(teacher)/programs"));
-        return;
-      }
-      const answer = await apiPost<{ program: ProgramDetail }>(`/learning-programs/${id}/${action}`, {});
-      setProgram(answer.program);
-      setAccepted(answer.program.draft);
-      if (draftRef.current === before) {
-        // Nobody typed while it was in flight, so the server's copy and the screen agree.
-        setDraft(answer.program.draft);
-        draftRef.current = answer.program.draft;
-        setSaveState("clean");
-      } else {
-        // Something was typed after this action began. It stays, and it is unsaved — a successful
-        // publish must not swallow a sentence written a second after it was pressed.
-        setSaveState(draftDiffers(draftRef.current!, answer.program.draft) ? "unsaved" : "clean");
-      }
-    } catch (err) {
-      /*
-        The server's own sentence, verbatim.
-
-        A conflict here is a real one — the program moved while this screen was looking at it — and
-        the server names which state it expected. Rewording that would send a teacher looking for
-        the wrong thing.
-      */
-      setActionError(
-        err instanceof ApiError
-          ? err.message
-          : "Fadko could not reach the server. Nothing was changed.",
-      );
-    } finally {
-      setBusyAction(null);
-    }
-  }, [id, saveState]);
 
   /* ------------------------------------------------------------------ leaving */
 
@@ -275,14 +202,171 @@ export default function ProgramStudioScreen() {
 
   const guarded = atRisk && departure === null;
 
-  // Reload, closing the tab, the address bar. Web only; the file beside the hook is a no-op.
-  useBrowserLeaveGuard(guarded);
+  /*
+    The browser's own ways of leaving. Web only; the file beside the hook is a real no-op.
+
+    `dirty` arms the reload/close dialog and stays on while the question is open — a teacher who
+    reloads instead of answering must still be asked. `armHistory` goes off while the question is
+    open, so the Back guard does not re-arm underneath the answer they are about to give.
+  */
+  useBrowserLeaveGuard({
+    dirty: atRisk && departure === null,
+    armHistory: guarded,
+    questionOpen: leaveAsk !== null,
+    departing: departure !== null,
+    onHistoryBack: useCallback(
+      (goBack: () => void) => setLeaveAsk(() => () => depart(goBack)),
+      [depart],
+    ),
+  });
 
   // Anything React Navigation drives, on either platform: a tab, the Android hardware button, a
   // parent screen popping this one.
   usePreventRemove(guarded, ({ data }) => {
     setLeaveAsk(() => () => depart(() => navigation.dispatch(data.action)));
   });
+
+  const save = useCallback(async () => {
+    if (!id) return;
+    /*
+      One operation at a time, decided synchronously.
+
+      If a save is already out this press is remembered and runs on the way out of the loop below,
+      so the server never has two writes for this program in flight. If a *lifecycle* action is out,
+      this does nothing at all: the studio has the editor and Save locked while one runs, and a
+      PATCH crossing a publish is two writes racing for the same row lock, where whichever wins
+      decides what students were given.
+    */
+    if (opRef.current) {
+      if (opRef.current.kind === "save") queuedRef.current = true;
+      return;
+    }
+    opRef.current = { kind: "save" };
+    setOperation({ kind: "save" });
+    try {
+      do {
+        queuedRef.current = false;
+        const sending = draftRef.current;
+        if (!sending) break;
+        setSaveState("saving");
+        setSaveError(null);
+        try {
+          const answer = await apiPatch<{ program: ProgramDetail }>(
+            `/learning-programs/${id}`,
+            saveBody(sending),
+          );
+          /*
+            The server's answer is authoritative about *its* copy, so `program` and `accepted` take
+            it — including the validation issues, which now describe what was just written.
+
+            The editor keeps whatever is on screen. Replacing it would delete anything typed while
+            the request was in flight, which on a Nepali connection is a whole sentence. And the
+            save state is decided by comparing the answer with `draftRef.current` — the newest text
+            — not with `sending`. Comparing with `sending` is the bug Codex found: type during a
+            slow PATCH and the old response would come back and write "Saved" over work the server
+            has never seen.
+          */
+          setProgram(answer.program);
+          setAccepted(answer.program.draft);
+          acceptedRef.current = answer.program.draft;
+          failedRef.current = false;
+          const newest = draftRef.current ?? sending;
+          setSaveState(draftDiffers(newest, answer.program.draft) ? "unsaved" : "saved");
+        } catch (err) {
+          failedRef.current = true;
+          setSaveState("failed");
+          // Only what went wrong. The studio adds the reassurance that the work is still on screen,
+          // so saying it here too would print it twice.
+          setSaveError(err instanceof ApiError ? err.message : "Fadko could not reach the server.");
+          // Do not run a queued save on top of a failure: it would replace the message explaining
+          // why the work is not on the server with a second copy of the same failure.
+          break;
+        }
+      } while (queuedRef.current);
+    } finally {
+      opRef.current = null;
+      queuedRef.current = false;
+      setOperation(null);
+    }
+  }, [id]);
+
+  const act = useCallback(async (action: ProgramAction) => {
+    if (!id) return;
+    /*
+      Three refusals, all decided before anything is awaited.
+
+      1. Something is already running. Two lifecycle presses a few milliseconds apart both arrive
+         before React can draw either button as busy, and both would reach the server; a publish and
+         an archive racing for the same row lock is a program whose final state depends on which
+         packet won. One at a time, and the ref is what says so — `busyAction` is a render value and
+         is a frame behind.
+      2. The server's copy is behind this screen. `ProgramStudio` does not draw these buttons then,
+         so this should be unreachable, which is why it is here: a lifecycle request acts on the
+         *saved* text and its answer becomes the editor's baseline, so dispatching one over unsaved
+         work publishes the wrong words and then overwrites the right ones. Asked of the refs rather
+         than of `saveState`, for the same frame.
+      3. Delete is deliberately outside the second rule: discarding the work is what it is for, and
+         the confirmation says so in as many words. It is still inside the first.
+    */
+    if (opRef.current) return;
+    if (action !== "delete" && atRiskNow()) return;
+
+    opRef.current = { kind: "action", action };
+    setOperation({ kind: "action", action });
+
+    const before = draftRef.current;
+    setBusyAction(action);
+    setActionError(null);
+    try {
+      if (action === "delete") {
+        await apiDelete(`/learning-programs/${id}`);
+        // Through `depart` rather than straight to `router.replace`, so the guard is switched off
+        // before the navigation happens. Otherwise a teacher who deleted a draft with unsaved text
+        // would be asked whether they want to lose work belonging to a program that is now gone.
+        depart(() => router.replace("/(teacher)/programs"));
+        return;
+      }
+      /*
+        An empty body, which is the whole reason typing cannot join a publication by accident.
+
+        The server publishes the draft it already holds. Nothing typed after this press is sent, and
+        the branch below then leaves it on screen as unsaved rather than folding it into what was
+        just published.
+      */
+      const answer = await apiPost<{ program: ProgramDetail }>(`/learning-programs/${id}/${action}`, {});
+      setProgram(answer.program);
+      setAccepted(answer.program.draft);
+      acceptedRef.current = answer.program.draft;
+      if (draftRef.current === before) {
+        // Nobody typed while it was in flight, so the server's copy and the screen agree.
+        setDraft(answer.program.draft);
+        draftRef.current = answer.program.draft;
+        setSaveState("clean");
+      } else {
+        // Something was typed after this action began — in the frame before the editor locked. It
+        // stays, and it is unsaved: a successful publish must not swallow a sentence written a
+        // moment after it was pressed, and must not claim to have published it either.
+        setSaveState(draftDiffers(draftRef.current!, answer.program.draft) ? "unsaved" : "clean");
+      }
+    } catch (err) {
+      /*
+        The server's own sentence, verbatim.
+
+        A conflict here is a real one — the program moved while this screen was looking at it — and
+        the server names which state it expected. Rewording that would send a teacher looking for
+        the wrong thing.
+      */
+      setActionError(
+        err instanceof ApiError
+          ? err.message
+          : "Fadko could not reach the server. Nothing was changed.",
+      );
+    } finally {
+      opRef.current = null;
+      setOperation(null);
+      setBusyAction(null);
+    }
+  }, [id, atRiskNow, depart]);
 
   /** The studio's own "‹ Programs". It is a plain link, so nothing else would intercept it. */
   const back = useCallback(() => {
@@ -333,6 +417,16 @@ export default function ProgramStudioScreen() {
         actionError={actionError}
         onBack={back}
         template={template}
+        /*
+          Locked while a lifecycle action is out, and only then.
+
+          Publish, take down, archive and restore act on the saved copy and replace the editor's
+          baseline when they answer. Leaving the fields live through that invites a teacher to write
+          into a draft that is about to be overwritten by a server response about a different one.
+          A save does *not* lock the editor: typing through a slow save is the ordinary case this
+          screen was built to survive.
+        */
+        editingLocked={operation?.kind === "action"}
         leaveAsk={leaveAsk}
         onLeaveCancel={() => setLeaveAsk(null)}
       />
