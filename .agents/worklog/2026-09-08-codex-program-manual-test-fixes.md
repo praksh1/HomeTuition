@@ -1,7 +1,7 @@
 # Learning Programs — owner manual-test corrections
 
-Date: 2026-09-08  
-Branch: `codex/programs-manual-test-fixes`  
+Date: 2026-09-08
+Branch: `codex/programs-manual-test-fixes`
 Status: implementation and non-browser gates complete; preview deployment still pending
 
 ## Scope
