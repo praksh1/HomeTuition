@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Fadko classroom and learning experience blueprint](../backlog/2026-09-07-fadko-classroom-learning-blueprint.md) — ClassIn-style teacher-controlled board-first classroom, Ledu-style outcome journey and Aiwen-style prepare/live/practice/reporting adapted for Nepal; phased adoption list, low-bandwidth rules and explicit do-not-copy list. Three recommended defaults await final owner confirmation: board-first stage, meaningful feedback, evidence+board without default recording.
+
 - [Learning Programs and managed-marketplace direction](learning-program-managed-marketplace.md) — owner decision, 7 Sep 2026: Single Class or flexible structured Learning Program for school, skills, language, exam prep or custom teaching; teachers supply content; desired licensed-provider collection, lesson allocation and weekly payout; commercial/legal numbers remain deliberately undecided.
 
 **Open backlog:** [.agents/backlog/](../backlog/) holds work the owner has raised that is not finished. Read the newest file there before planning; a list that lives only in a chat gets half-done, and this project's container has been reset mid-session more than once.
