@@ -20,6 +20,7 @@ import {
   publishOffer,
   saveChip,
   studioSections,
+  wouldLoseWork,
   type ProgramAction,
   type ProgramDetail,
   type ProgramDraft,
@@ -82,11 +83,20 @@ export interface ProgramStudioProps {
   onBack: () => void;
   /** Server templates for this type, for the prompts inside the sections. */
   template?: { promisePrompt?: string; learnerPrompt?: string; referencePrompt?: string | null } | null;
+  /**
+   * Set when something has tried to leave the studio with work at risk: call it to go anyway.
+   *
+   * The screen decides *what* leaving means — a route replace, or the navigation action React
+   * Navigation was about to run — because only it knows which of the several ways out was taken.
+   * The studio only draws the question.
+   */
+  leaveAsk?: (() => void) | null;
+  onLeaveCancel?: () => void;
 }
 
 export default function ProgramStudio(props: ProgramStudioProps) {
   const { program, draft, onDraftChange, saveState, saveError, onSave, approved, onAction,
-    busyAction, actionError, onBack, template } = props;
+    busyAction, actionError, onBack, template, leaveAsk, onLeaveCancel } = props;
   const colors = useColors();
   const { t, gutter, space } = useLayout();
 
@@ -94,6 +104,13 @@ export default function ProgramStudio(props: ProgramStudioProps) {
   const placed = useMemo(() => placeIssues(program.issues, draft.type), [program.issues, draft.type]);
   const status = programStatusChip(program);
   const save = saveChip(saveState);
+  /*
+    Unsaved, saving or failed — the three states in which the server's copy is not what is on
+    screen. Everything on this screen that reads the server's copy is gated on it: the lifecycle
+    buttons, because they act on the old text and their answers replace the new; and the readiness
+    check, because the issues below describe the last draft the server was given.
+  */
+  const atRisk = wouldLoseWork(saveState);
   const [confirming, setConfirming] = useState<ProgramAction | null>(null);
 
   const set = (patch: Partial<ProgramDraft>) => onDraftChange({ ...draft, ...patch });
@@ -158,6 +175,56 @@ export default function ProgramStudio(props: ProgramStudioProps) {
         ) : null}
       </View>
 
+      {leaveAsk ? (
+        /*
+          Something tried to leave while the server does not have this text.
+
+          Whatever it was — the Back link, a tab, the Android button — the screen above hands over a
+          single function that finishes the departure, so this only has to ask the question. Staying
+          is the quiet default and leaving is the loud one, which is the opposite of how a sheet
+          about a destructive action is drawn, because here the destructive choice is *going*.
+
+          Directly under the header, beside the Back link that most often raises it. It was written
+          at the foot of the studio, which on a phone put it four thousand points below the control
+          that triggered it: a teacher tapped "‹ Programs", the page did not move, and nothing they
+          could see had happened. A question nobody is shown is not a guard.
+        */
+        <ProgramNotice
+          testID="program-leave-confirm"
+          tone="stopped"
+          icon="alert-triangle"
+          title="You have changes Fadko has not saved"
+          body="Leaving now loses what you have typed since your last save."
+        >
+          <View style={{ flexDirection: "row", gap: space.xs, flexWrap: "wrap" }}>
+            <ProgramButton
+              testID="program-leave-stay"
+              label="Stay and save"
+              emphasis="primary"
+              onPress={() => {
+                onLeaveCancel?.();
+                onSave();
+              }}
+              grow
+            />
+            <ProgramButton
+              testID="program-leave-discard"
+              label="Leave without saving"
+              emphasis="quiet"
+              spoken="Leave this program. What you have typed since your last save is lost"
+              onPress={leaveAsk}
+              grow
+            />
+          </View>
+          <ProgramButton
+            testID="program-leave-cancel"
+            label="Keep editing"
+            emphasis="quiet"
+            onPress={() => onLeaveCancel?.()}
+            grow
+          />
+        </ProgramNotice>
+      ) : null}
       {saveState === "failed" ? (
         <ProgramNotice
           testID="program-studio-save-failed"
@@ -190,19 +257,39 @@ export default function ProgramStudio(props: ProgramStudioProps) {
         />
       ) : null}
 
+      {atRisk && program.issues.length > 0 ? (
+        /*
+          What is marked below is the server's answer about the *last saved* draft.
+
+          It was being drawn against the text currently on screen, which is a different draft the
+          moment anybody types. So a teacher could fix the outcome, watch "1 to finish" stay exactly
+          where it was, and conclude the app had not noticed — or worse, see a field marked as fine
+          that they had just emptied. Naming which draft was checked costs one line and makes the
+          marks below true again.
+        */
+        <ProgramNotice
+          testID="program-studio-stale-issues"
+          tone="neutral"
+          icon="info"
+          title="What is marked below was checked at your last save"
+          body="Save the draft to check what is on this screen now."
+        />
+      ) : null}
+
       {/* ------------------------------------------------------------ sections */}
       {sections.map((section) => {
         const issues = placed.sections[section.id];
         if (section.id === "path") {
           return (
             <View key={section.id} testID="program-section-path" style={{ gap: space.md }}>
-              <SectionHeading title={section.title} blurb={section.blurb} issues={issues.count} testID="program-heading-path" />
+              <SectionHeading title={section.title} blurb={section.blurb} issues={issues.count} stale={atRisk} testID="program-heading-path" />
               {issues.loose.map((issue) => (
-                <IssueLine key={issue.field + issue.code} issue={issue} testID="program-issue-modules" />
+                <IssueLine key={issue.field + issue.code} issue={issue} stale={atRisk} testID="program-issue-modules" />
               ))}
               <ModuleEditor
                 modules={draft.modules}
                 issues={placed.modules}
+                stale={atRisk}
                 onChange={setModules}
               />
             </View>
@@ -235,12 +322,15 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                   title={section.title}
                   blurb={section.blurb}
                   issues={issues.count}
+                  stale={atRisk}
                   testID="program-heading-review"
                 />
                 <ReviewAndPublish
                   program={program}
                   draft={draft}
                   approved={approved}
+                  atRisk={atRisk}
+                  saveState={saveState}
                   unplaced={placed.unplaced}
                   onAction={(action) => setConfirming(action)}
                   busyAction={busyAction}
@@ -255,6 +345,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
               title={section.title}
               blurb={section.blurb}
               issues={issues.count}
+              stale={atRisk}
               testID={`program-heading-${section.id}`}
             />
             {section.fields.map((field) => (
@@ -263,6 +354,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                 field={field}
                 value={(draft[field.name] as string | null | undefined) ?? ""}
                 issues={issues.byField[field.name] ?? []}
+                stale={atRisk}
                 onChange={(value) => set({ [field.name]: value } as Partial<ProgramDraft>)}
               />
             ))}
@@ -273,6 +365,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
       {confirming ? (
         <ConfirmSheet
           action={confirming}
+          atRisk={atRisk}
           busy={busyAction === confirming}
           onCancel={() => setConfirming(null)}
           onConfirm={() => {
@@ -282,6 +375,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
           }}
         />
       ) : null}
+
     </ScrollView>
   );
 }
@@ -294,17 +388,20 @@ function Field({
   field,
   value,
   issues,
+  stale,
   onChange,
 }: {
   field: StudioField;
   value: string;
   issues: ProgramIssue[];
+  /** True when `issues` describe the last saved draft rather than what is in the box. */
+  stale: boolean;
   onChange: (value: string) => void;
 }) {
   const colors = useColors();
   const { t, space, radius } = useLayout();
   const [focused, setFocused] = useState(false);
-  const bad = issues.length > 0;
+  const bad = issues.length > 0 && !stale;
 
   return (
     <View testID={`program-field-${field.name}`} style={{ gap: space.xxs }}>
@@ -346,24 +443,50 @@ function Field({
         ]}
       />
       {issues.map((issue) => (
-        <IssueLine key={issue.code + issue.message} issue={issue} testID={`program-issue-${field.name}`} />
+        <IssueLine
+          key={issue.code + issue.message}
+          issue={issue}
+          stale={stale}
+          testID={`program-issue-${field.name}`}
+        />
       ))}
     </View>
   );
 }
 
 /** The server's own sentence, beside the field it is about. Never reworded, never summarised. */
-function IssueLine({ issue, testID }: { issue: ProgramIssue; testID?: string }) {
+/**
+ * One thing the server said was missing, and when it said it.
+ *
+ * `stale` is the difference between a claim and a record. Drawn in the destructive colour beside a
+ * field a teacher has since filled in, the sentence is simply false — and red is the app's loudest
+ * signal, so it is the false thing they look at first. Stale, it says which draft it was about, in
+ * a colour that does not shout, and it keeps the guidance rather than hiding it.
+ */
+function IssueLine({
+  issue,
+  stale = false,
+  testID,
+}: {
+  issue: ProgramIssue;
+  stale?: boolean;
+  testID?: string;
+}) {
   const colors = useColors();
   const { t, space } = useLayout();
+  const ink = stale ? colors.mutedForeground : colors.destructive;
   return (
     <View
       testID={testID}
-      accessibilityRole="alert"
+      // An alert is a claim about now. What is stale is a note, and a screen reader should not
+      // interrupt somebody mid-sentence to read out a fact about a draft they have moved past.
+      accessibilityRole={stale ? "text" : "alert"}
       style={{ flexDirection: "row", alignItems: "flex-start", gap: space.xxs }}
     >
-      <Feather name="alert-circle" size={14} color={colors.destructive} />
-      <Text style={[t.caption, { color: colors.destructive, flexShrink: 1 }]}>{issue.message}</Text>
+      <Feather name={stale ? "clock" : "alert-circle"} size={14} color={ink} />
+      <Text style={[t.caption, { color: ink, flexShrink: 1 }]}>
+        {stale ? `At your last save: ${issue.message}` : issue.message}
+      </Text>
     </View>
   );
 }
@@ -386,10 +509,13 @@ function IssueLine({ issue, testID }: { issue: ProgramIssue; testID?: string }) 
 function ModuleEditor({
   modules,
   issues,
+  stale,
   onChange,
 }: {
   modules: ProgramModuleDraft[];
   issues: Record<number, ProgramIssue[]>;
+  /** True when `issues` describe the last saved draft rather than the steps on screen. */
+  stale: boolean;
   onChange: (next: ProgramModuleDraft[]) => void;
 }) {
   const colors = useColors();
@@ -450,7 +576,12 @@ function ModuleEditor({
           />
 
           {(issues[index] ?? []).map((issue) => (
-            <IssueLine key={issue.field + issue.code} issue={issue} testID={`program-module-${index}-issue`} />
+            <IssueLine
+              key={issue.field + issue.code}
+              issue={issue}
+              stale={stale}
+              testID={`program-module-${index}-issue`}
+            />
           ))}
         </ProgramCardShell>
       ))}
@@ -578,6 +709,8 @@ function ReviewAndPublish({
   program,
   draft,
   approved,
+  atRisk,
+  saveState,
   unplaced,
   onAction,
   busyAction,
@@ -585,6 +718,10 @@ function ReviewAndPublish({
   program: ProgramDetail;
   draft: ProgramDraft;
   approved: boolean;
+  /** True while the screen holds work the server has not accepted. Gates everything but Delete. */
+  atRisk: boolean;
+  /** Only to tell "a save is on its way" apart from "you have not pressed Save yet". */
+  saveState: SaveState;
   unplaced: ProgramIssue[];
   onAction: (action: ProgramAction) => void;
   busyAction: ProgramAction | null;
@@ -662,13 +799,37 @@ function ReviewAndPublish({
           body="It may belong to a kind of program you have switched away from."
         >
           {unplaced.map((issue) => (
-            <IssueLine key={issue.field + issue.code} issue={issue} />
+            <IssueLine key={issue.field + issue.code} issue={issue} stale={atRisk} />
           ))}
         </ProgramNotice>
       ) : null}
 
       {/* ------------------------------------------------------------ publish */}
-      {block.blocked ? (
+      {atRisk ? (
+        /*
+          Nothing that acts on the server's copy, while the screen holds something it has not got.
+
+          Every one of these publishes, hides or files away the *last saved* draft and then takes
+          the answer as the editor's new baseline — so pressing Publish over an unsaved paragraph
+          would give students the older text and overwrite the newer. Withheld rather than drawn and
+          refused, and the reason is on screen, because a greyed button with no sentence beside it
+          is the mistake `.agents/memory/refusals-must-name-their-reason.md` exists about.
+
+          Delete is the exception below: throwing the draft away is the thing being asked for.
+        */
+        <ProgramNotice
+          testID="program-actions-blocked"
+          tone="waiting"
+          icon="save"
+          title="Save your draft before publishing or changing its status"
+          body={
+            saveState === "saving"
+              ? "Your save is on its way to the server. This will open when it lands."
+              : "Publishing, taking down and archiving all act on the copy Fadko has, and that is " +
+                "not what is on this screen yet."
+          }
+        />
+      ) : block.blocked ? (
         <ProgramNotice
           testID={`program-publish-blocked-${block.code}`}
           tone={block.code === "incomplete" ? "waiting" : "neutral"}
@@ -676,7 +837,7 @@ function ReviewAndPublish({
           title={block.title}
           body={block.body}
         />
-      ) : (
+      ) : offer ? (
         <ProgramButton
           testID="program-publish"
           label={offer.label}
@@ -687,22 +848,36 @@ function ReviewAndPublish({
           onPress={() => onAction("publish")}
           grow
         />
+      ) : (
+        /*
+          Published, and the draft matches it. There is nothing to publish, so nothing is offered.
+
+          Not a disabled button: publishing writes a new version server-side, and a version that
+          contains no change is a false entry in the record of what students were given.
+        */
+        <Text testID="program-publish-unchanged" style={[t.callout, { color: colors.mutedForeground }]}>
+          Students already have exactly this. Publish again once you have changed something and
+          saved it.
+        </Text>
       )}
 
       {/* --------------------------------------------------------- lifecycle */}
       <View style={{ gap: space.xs }}>
-        {actions.map((offer) => (
-          <ProgramButton
-            key={offer.action}
-            testID={`program-action-${offer.action}`}
-            label={offer.label}
-            emphasis={offer.emphasis}
-            busy={busyAction === offer.action}
-            spoken={offer.spoken}
-            onPress={() => onAction(offer.action)}
-            grow
-          />
-        ))}
+        {actions
+          // Deleting is allowed with work at risk — see the notice above. Nothing else is.
+          .filter((offer) => !atRisk || offer.action === "delete")
+          .map((offer) => (
+            <ProgramButton
+              key={offer.action}
+              testID={`program-action-${offer.action}`}
+              label={offer.label}
+              emphasis={offer.emphasis}
+              busy={busyAction === offer.action}
+              spoken={offer.spoken}
+              onPress={() => onAction(offer.action)}
+              grow
+            />
+          ))}
       </View>
 
       {/*
@@ -755,18 +930,21 @@ function ReviewLine({ label, value, numeric = false }: { label: string; value: s
  */
 function ConfirmSheet({
   action,
+  atRisk,
   busy,
   onCancel,
   onConfirm,
 }: {
   action: ProgramAction;
+  /** Passed through to the copy: a delete agreed to while dirty must say the screen goes too. */
+  atRisk: boolean;
   busy: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const colors = useColors();
   const { t, space, radius } = useLayout();
-  const copy = confirmCopy(action);
+  const copy = confirmCopy(action, { atRisk });
   const destructive = action === "delete" || action === "archive" || action === "unpublish";
   const { bg, ink } = toneColours(destructive ? "stopped" : "live", colors);
 

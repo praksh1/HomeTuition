@@ -4,7 +4,7 @@ import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import { PROGRAM_TYPE_CHOICES, type ProgramType } from "@/utils/learningProgramUi";
+import { type ProgramTypeChoice, type ProgramType } from "@/utils/learningProgramUi";
 import { ProgramCardShell, ProgramFailure } from "./ProgramPieces";
 
 /**
@@ -15,17 +15,21 @@ import { ProgramCardShell, ProgramFailure } from "./ProgramPieces";
  * asked, and the blueprint is explicit that a guitar teacher must not be pushed through a school
  * form. Getting that right here is what makes the studio feel like it was built for them.
  *
- * ## Why the copy is not generated from the server's templates
+ * ## The server decides what is here; this file decides how it reads
  *
- * The templates carry the prompts used *inside* the studio, and the server owns those. This screen
- * is a menu, and a menu whose wording changes because a template gained a field is a menu that
- * drifts. The types themselves are the shared contract — five, and the server refuses a sixth.
+ * `choices` is `offerableTypes(templates)` — the kinds of program the API actually returned a
+ * template for, intersected with the ones this build knows how to describe. The wording, icon and
+ * order are local, so a template gaining a field cannot silently change what the menu says; the
+ * availability is the server's, so the menu cannot offer a kind of program the API would refuse to
+ * create. An earlier version drew all five whatever came back, which meant a teacher could tap a
+ * card and be handed an error for a choice the screen had invited.
  *
- * The templates are still fetched, because the studio needs them; a failure here is shown honestly
- * rather than falling through to a screen that asks the wrong questions.
+ * A response the app can make nothing of is a blank menu with an explanation, not five cards.
  */
 
 export interface ProgramTypeChooserProps {
+  /** What the server said it can make, already narrowed to what this build can describe. */
+  choices: readonly ProgramTypeChoice[];
   /** True while the server's templates are still on their way. */
   loading: boolean;
   failure: string | null;
@@ -38,6 +42,7 @@ export interface ProgramTypeChooserProps {
 }
 
 export default function ProgramTypeChooser({
+  choices,
   loading,
   failure,
   onRetry,
@@ -78,7 +83,7 @@ export default function ProgramTypeChooser({
       {failure ? <ProgramFailure message={failure} onRetry={onRetry} testID="program-type-failure" /> : null}
 
       <View style={{ gap: space.sm }}>
-        {PROGRAM_TYPE_CHOICES.map((choice) => {
+        {choices.map((choice) => {
           const busy = creating === choice.type;
           const blocked = creating !== null && !busy;
           return (
@@ -119,6 +124,20 @@ export default function ProgramTypeChooser({
           );
         })}
       </View>
+
+      {!loading && !failure && choices.length === 0 ? (
+        /*
+          The server offered nothing this app can draw.
+
+          Not an error and not an empty page: the honest reading is that the two halves are out of
+          step — an app older than the API, or an API that has stopped offering the kinds this build
+          knows. Saying so beats five cards that would each fail on tap.
+        */
+        <Text testID="program-type-none" style={[t.callout, { color: colors.mutedForeground }]}>
+          Fadko is not offering any kind of program this version of the app can set up. Update the
+          app, or try again shortly.
+        </Text>
+      ) : null}
 
       {/*
         Leaving is always available, and leaving loses nothing.

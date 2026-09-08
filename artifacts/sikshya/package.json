@@ -37,7 +37,8 @@
     "lint:design:update": "node scripts/design-lint/run.mjs --update",
     "test:programs-ui": "node scripts/program-studio/run.mjs",
     "test:lobby": "node scripts/lobby-tests/run.mjs",
-    "test:test-access-ui": "node scripts/test-access-ui/run.mjs"
+    "test:test-access-ui": "node scripts/test-access-ui/run.mjs",
+    "test:program-journey": "node scripts/program-journey/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

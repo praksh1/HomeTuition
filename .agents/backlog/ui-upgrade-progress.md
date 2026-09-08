@@ -78,6 +78,9 @@ Found and fixed so far:
 | Monthly classes / homework / chat | A failed first load could fall through to “no classes”, “no homework”, or an empty writable conversation instead of saying the data was unavailable |
 | Monthly homework | Optional submission totals used `?? 0`; missing totals now say they are unavailable rather than inventing “0 handed in / 0 marked” |
 | Program studio | “This matches what you have written here” sat directly above a primary button reading “Publish your changes” — mine. A published program in step with its draft was being offered changes that the same screen had just said did not exist |
+| Program studio | A save response compared against the draft captured when the request left, so typing during a slow PATCH was marked **Saved** while the server had never been sent it — mine. Found by Codex, not by me |
+| Program studio | The commit message claimed the rule "never lose typed work silently"; the leave guard was a tested function no screen called, and three lifecycle actions could overwrite unsaved text — mine |
+| Program studio | A comment said fetching templates in the chooser saved the studio a round trip. The studio fetches them again — two round trips, described as one — mine |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

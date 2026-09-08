@@ -17,6 +17,7 @@ import {
   programStatusChip,
   programTitle,
   programTypeLabel,
+  offerableTypes,
   publishBlock,
   publishOffer,
   saveBody,
@@ -216,20 +217,50 @@ test("an approved teacher with a complete draft is not blocked", () => {
   assert.equal(publishBlock(detail(), { approved: true }).blocked, false);
 });
 
-test("the publish button never offers changes that do not exist", () => {
+test("a published program with nothing new is offered no publish button at all", () => {
   /*
-    The review card and the button underneath it are two sentences about the same fact, and they
-    were disagreeing: "This matches what you have written here" sat directly above "Publish your
-    changes". Whichever one a teacher believed, the screen had told them the other.
+    Not a wording problem, which is what the first two attempts treated it as. Publishing increments
+    `version` and writes a new snapshot server-side, so a button here would manufacture a version of
+    a program that is identical to the one before it — an empty entry in the only record of what
+    students were promised.
   */
-  const inStep = publishOffer(detail({ status: "published", hasUnpublishedChanges: false }));
-  assert.equal(inStep.label, "Publish again");
-  assert.match(inStep.spoken, /nothing has changed/i);
+  assert.equal(publishOffer(detail({ status: "published", hasUnpublishedChanges: false })), null);
 
   const ahead = publishOffer(detail({ status: "published", hasUnpublishedChanges: true }));
-  assert.equal(ahead.label, "Publish your changes");
+  assert.equal(ahead?.label, "Publish your changes");
 
-  assert.equal(publishOffer(detail({ status: "draft" })).label, "Publish");
+  assert.equal(publishOffer(detail({ status: "draft" }))?.label, "Publish");
+});
+
+/* --- what the chooser may offer ---------------------------------------------- */
+
+test("the chooser offers only what the server said it can make", () => {
+  const offered = offerableTypes([{ type: "school_subject" }, { type: "custom" }]);
+  assert.deepEqual(offered.map((choice) => choice.type), ["school_subject", "custom"]);
+});
+
+test("a type the server did not return is not offered, whatever this build knows about it", () => {
+  // The failure this prevents: a card that creates a program the API refuses, so the teacher taps
+  // it and gets an error for a choice the screen invited them to make.
+  const offered = offerableTypes([{ type: "language" }]);
+  assert.equal(offered.length, 1);
+  assert.equal(offered[0].type, "language");
+});
+
+test("a type this build has never heard of is skipped rather than drawn blank", () => {
+  const offered = offerableTypes([{ type: "custom" }, { type: "music_theory_grade_5" }]);
+  assert.deepEqual(offered.map((choice) => choice.type), ["custom"]);
+});
+
+test("a missing, empty or malformed template list offers nothing rather than everything", () => {
+  for (const response of [null, undefined, [], [{}], [{ type: 7 }]] as const) {
+    assert.deepEqual(offerableTypes(response as never), [], JSON.stringify(response));
+  }
+});
+
+test("the order is the app's, not the server's", () => {
+  const offered = offerableTypes([{ type: "custom" }, { type: "school_subject" }]);
+  assert.deepEqual(offered.map((choice) => choice.type), ["school_subject", "custom"]);
 });
 
 /* --- saving ------------------------------------------------------------------ */

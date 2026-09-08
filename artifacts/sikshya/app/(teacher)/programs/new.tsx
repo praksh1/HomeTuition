@@ -5,14 +5,20 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ProgramTypeChooser from "@/components/programs/ProgramTypeChooser";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, apiPost, ApiError } from "@/utils/api";
-import type { ProgramType } from "@/utils/learningProgramUi";
+import { offerableTypes, type ProgramType, type ProgramTypeChoice } from "@/utils/learningProgramUi";
 
 /**
  * Choosing what kind of program this is, which is the only decision on the screen.
  *
- * The templates are fetched here rather than in the studio because they are what makes the choice
- * meaningful, and because fetching them now means the studio opens with its prompts already in
- * hand — one round trip on a Nepali connection instead of two in a row.
+ * The templates are fetched here because they decide what the menu may offer: `offerableTypes`
+ * keeps only the kinds the server returned a template for, so this screen can never invite a
+ * teacher to create something the API will refuse. The wording and icons stay local — see
+ * `ProgramTypeChooser`.
+ *
+ * The studio fetches the templates again when it opens, for the prompts inside its sections. That
+ * is a second round trip and it is deliberate: passing them through a route parameter would put a
+ * copy of the server's contract in a URL, and holding them in a module-level cache would serve a
+ * stale one after a deploy. Two small reads beat either.
  *
  * Creating the draft is the one write. It sends only the type; the server owns the id, the status,
  * the ownership and both timestamps, and there is nowhere in this request to say otherwise.
@@ -22,13 +28,16 @@ export default function NewProgramScreen() {
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<string | null>(null);
   const [creating, setCreating] = useState<ProgramType | null>(null);
+  const [choices, setChoices] = useState<readonly ProgramTypeChoice[]>([]);
 
   const loadTemplates = useCallback(async () => {
     setLoading(true);
     setFailure(null);
     try {
-      await apiGet<{ templates: unknown[] }>("/learning-programs/templates");
+      const answer = await apiGet<{ templates: { type?: unknown }[] }>("/learning-programs/templates");
+      setChoices(offerableTypes(answer.templates));
     } catch (err) {
+      setChoices([]);
       setFailure(
         err instanceof ApiError
           ? err.message
@@ -67,6 +76,7 @@ export default function NewProgramScreen() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
       <ProgramTypeChooser
+        choices={choices}
         loading={loading}
         failure={failure}
         onRetry={() => void loadTemplates()}

@@ -280,32 +280,43 @@ export function programActions(program: {
 }
 
 /**
- * What the publish button says, which depends on whether there is anything to publish.
+ * What the publish button says, or `null` when there is nothing to publish.
  *
- * Three different sentences, because a program in three different places is being asked for three
- * different things. The one that matters is the third: a published program whose draft matches what
- * students already see was still being offered "Publish your changes" directly under a line reading
- * "This matches what you have written here" — two statements on one screen that cannot both be true.
- * The action is still allowed (the server takes a republish, and it is a harmless no-op), so what
- * was wrong was the words and not the button.
+ * A published program whose draft matches what students already see is offered **no publish button
+ * at all**. Two wrong answers were tried before this one. The first said "Publish your changes"
+ * directly under a line reading "This matches what you have written here" — two statements on one
+ * screen that cannot both be true. The second changed the words to "Publish again" and kept the
+ * button, on the reasoning that a republish is a harmless no-op.
+ *
+ * **It is not a no-op.** `api-server/src/routes/learningPrograms.ts` increments `version` and writes
+ * a fresh snapshot on every publish, so pressing it would manufacture version 3 of a program that
+ * is identical to version 2. The version is the count of times students were given something new;
+ * an empty one is a lie in the only record of what was promised.
  */
 export function publishOffer(program: {
   status: ProgramStatus | string;
   hasUnpublishedChanges?: boolean;
-}): { label: string; spoken: string } {
+}): { label: string; spoken: string } | null {
   if (program.status !== "published") {
     return { label: "Publish", spoken: "Publish this program so students can find it" };
   }
   return program.hasUnpublishedChanges
     ? { label: "Publish your changes", spoken: "Publish your changes so students see them" }
-    : {
-        label: "Publish again",
-        spoken: "Publish this program again. Nothing has changed since the version students see",
-      };
+    : null;
 }
 
-/** What a confirmation sheet says before a lifecycle action happens. */
-export function confirmCopy(action: ProgramAction): { title: string; body: string; confirm: string } {
+/**
+ * What a confirmation sheet says before a lifecycle action happens.
+ *
+ * `atRisk` is `wouldLoseWork(saveState)`. It changes only the delete sheet, and it has to: every
+ * other action is withheld while there is unsaved work, but deleting is *allowed* then, because
+ * throwing the draft away is the whole point. What must not happen is a teacher agreeing to discard
+ * "this draft" while believing the paragraph they just typed is a separate thing that survives.
+ */
+export function confirmCopy(
+  action: ProgramAction,
+  context: { atRisk?: boolean } = {},
+): { title: string; body: string; confirm: string } {
   switch (action) {
     case "publish":
       return {
@@ -336,7 +347,11 @@ export function confirmCopy(action: ProgramAction): { title: string; body: strin
     case "delete":
       return {
         title: "Delete this draft?",
-        body: "This cannot be undone. It has never been published, so nothing is lost for anybody else.",
+        body:
+          "This cannot be undone. It has never been published, so nothing is lost for anybody else." +
+          (context.atRisk
+            ? " Everything on this screen goes too, including the changes you have not saved."
+            : ""),
         confirm: "Delete",
       };
   }
@@ -800,9 +815,13 @@ export function programTypeLabel(type: ProgramType | string): string {
  *
  * Ordered by how a Nepali teacher is most likely to arrive: school subjects and exam preparation
  * first because they are the largest tuition markets here, then language, then skills, then the
- * escape hatch. The server's templates carry the prompts used *inside* the studio; this is the
- * choosing screen, and it is deliberately not generated from them so that a template gaining a
- * field cannot silently change what the first screen says.
+ * escape hatch.
+ *
+ * This is **presentation only** — the name, the sentence and the icon. What a teacher may actually
+ * choose is decided by the server, through `offerableTypes` below. Writing the wording here rather
+ * than generating it from the templates means a template gaining a field cannot silently change
+ * what the first screen says; letting the server decide availability means the screen cannot offer
+ * a kind of program the API would refuse to create.
  */
 export interface ProgramTypeChoice {
   type: ProgramType;
@@ -843,3 +862,26 @@ export const PROGRAM_TYPE_CHOICES: readonly ProgramTypeChoice[] = [
     icon: "compass",
   },
 ];
+
+/**
+ * The choices to draw, given what the server said it can make.
+ *
+ * The intersection of two lists, in the app's order: a type is offered only if the server returned
+ * a template for it **and** this screen knows how to describe it.
+ *
+ * Both halves matter. Offering a type the server has no template for produces a create request the
+ * API refuses, and a teacher who taps a card and gets an error learns to distrust the screen. And a
+ * type the server adds that this build has never heard of is skipped rather than drawn as a blank
+ * card with an id in it — the app is shipped to phones and will lag the API.
+ *
+ * A response with nothing recognizable in it returns an empty list, which the chooser draws as a
+ * plain "this build is out of step" rather than as an empty page.
+ */
+export function offerableTypes(fromServer: readonly { type?: unknown }[] | null | undefined): ProgramTypeChoice[] {
+  const offered = new Set(
+    (fromServer ?? [])
+      .map((template) => (typeof template?.type === "string" ? template.type : null))
+      .filter((type): type is string => type !== null),
+  );
+  return PROGRAM_TYPE_CHOICES.filter((choice) => offered.has(choice.type));
+}

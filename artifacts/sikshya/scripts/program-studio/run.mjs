@@ -46,6 +46,7 @@ import { createRoot } from "react-dom/client";
 import ProgramHome from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramHome.tsx"))};
 import ProgramTypeChooser from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramTypeChooser.tsx"))};
 import ProgramStudio from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramStudio.tsx"))};
+import { offerableTypes } from ${JSON.stringify(path.join(appRoot, "utils", "learningProgramUi.ts"))};
 
 /** Every callback, recorded rather than performed. */
 window.__sent = [];
@@ -102,9 +103,28 @@ function Harness() {
   const sceneKey = JSON.stringify([scene.screen, Object.keys(scene.props ?? {})]) + String(renders);
   let element = null;
   if (scene.screen === "home") element = React.createElement(ProgramHome, { ...common, ...scene.props });
-  if (scene.screen === "chooser") element = React.createElement(ProgramTypeChooser, { ...common, ...scene.props });
+  if (scene.screen === "chooser") {
+    /*
+      The driver sends what the *server* returned; the narrowing happens here, through the real
+      function. Passing a ready-made choices array would have the suite assert against a copy of the
+      rule written in the test, which is how a menu and its test agree while both are wrong.
+    */
+    const { templates, ...rest } = scene.props ?? {};
+    element = React.createElement(ProgramTypeChooser, {
+      ...common, ...rest, choices: offerableTypes(templates ?? []),
+    });
+  }
   if (scene.screen === "studio") {
-    element = React.createElement(StudioHost, { ...common, ...scene.props });
+    /*
+      A function cannot cross into the page as a prop, so the driver sends the string "__fn__" where
+      one is wanted and it becomes a recorder here. Only leaveAsk needs it: its presence is what
+      makes the studio ask the question, and the screen above is what decides where leaving goes.
+
+      (No backticks in this comment: it lives inside a template literal, and one would end it.)
+    */
+    const props = { ...scene.props };
+    if (props.leaveAsk === "__fn__") props.leaveAsk = record("leaveAsk");
+    element = React.createElement(StudioHost, { ...common, ...props });
   }
   return React.createElement(
     "div",
@@ -204,6 +224,12 @@ const detail = (over = {}) => ({
   hasUnpublishedChanges: false,
   ...over,
 });
+
+/** What a healthy `GET /learning-programs/templates` returns, as far as this screen is concerned. */
+const ALL_TEMPLATES = [
+  { type: "school_subject" }, { type: "exam_preparation" }, { type: "language" },
+  { type: "practical_skill" }, { type: "custom" },
+];
 
 const SIZES = [
   { label: "phone-390", width: 390, height: 844 },
@@ -317,7 +343,10 @@ for (const size of SIZES) {
   /* ------------------------------------------------------------- create flow */
 
   console.log(`\n[${L}] Choosing a kind of program`);
-  await show({ screen: "chooser", props: { loading: false, failure: null, creating: null } }, "chooser");
+  await show({
+    screen: "chooser",
+    props: { templates: ALL_TEMPLATES, loading: false, failure: null, creating: null },
+  }, "chooser");
   for (const type of ["school_subject", "exam_preparation", "language", "practical_skill", "custom"]) {
     check(`${L}: ${type} is offered`, await seen(`program-type-${type}`));
     const card = await text(`program-type-${type}`);
@@ -328,6 +357,33 @@ for (const size of SIZES) {
   check(`${L}: leaving without creating anything is offered`, await seen("program-type-cancel"));
   check(`${L}: the chooser does not scroll sideways`, (await overflow()) <= 1, `overflow ${await overflow()}px`);
   check(`${L}: nothing on the chooser is cut off`, (await clipped()).length === 0, (await clipped()).join(" | "));
+
+  /*
+    What the server offers is what the menu shows.
+
+    Drawing all five whatever came back meant a teacher could tap a card and be handed an error for
+    a choice the screen had just invited them to make.
+  */
+  await show({
+    screen: "chooser",
+    props: {
+      templates: [{ type: "school_subject" }, { type: "custom" }],
+      loading: false, failure: null, creating: null,
+    },
+  });
+  check(`${L}: only the kinds the server returned are offered`,
+    (await seen("program-type-school_subject")) && (await seen("program-type-custom")));
+  check(`${L}: and a kind it did not return is not on the screen`,
+    !(await seen("program-type-language")) && !(await seen("program-type-exam_preparation")) &&
+      !(await seen("program-type-practical_skill")));
+
+  await show({
+    screen: "chooser",
+    props: { templates: [{ type: "something_new" }], loading: false, failure: null, creating: null },
+  });
+  check(`${L}: a server offering nothing this build knows says so`, await seen("program-type-none"));
+  check(`${L}: rather than drawing a card that would fail on tap`,
+    !(await seen("program-type-custom")));
 
   /* ----------------------------------------------------------------- studio */
 
@@ -403,6 +459,102 @@ for (const size of SIZES) {
     (await seen("program-studio-save-failed")) && (await seen("program-studio-save-retry")));
   const failedText = await text("program-studio-save-failed");
   check(`${L}: and says the work is still on the screen`, /still on this screen/i.test(failedText), failedText.slice(0, 120));
+
+  /* --- nothing dangerous runs over unsaved work ---------------------------- */
+
+  console.log(`\n[${L}] What is withheld while work is at risk`);
+
+  /*
+    Publish, take down, archive and restore all act on the copy the server has and then take the
+    answer as the editor's new baseline. Over unsaved text that publishes the wrong words and then
+    overwrites the right ones. Delete stays, because discarding is what it is for.
+  */
+  for (const state of ["unsaved", "saving", "failed"]) {
+    await show({
+      screen: "studio",
+      props: {
+        program: detail({ status: "published", version: 1, published: { version: 1 }, hasUnpublishedChanges: true }),
+        draft: draft(), saveState: state,
+        saveError: state === "failed" ? "The server did not answer." : null,
+        approved: true, busyAction: null, actionError: null,
+      },
+    }, state === "unsaved" ? "studio-at-risk" : undefined);
+    check(`${L}: ${state} — publishing is not offered`, !(await seen("program-publish")));
+    check(`${L}: ${state} — nor taking down or archiving`,
+      !(await seen("program-action-unpublish")) && !(await seen("program-action-archive")));
+    check(`${L}: ${state} — and the reason is on screen`, await seen("program-actions-blocked"));
+    const why = await text("program-actions-blocked");
+    check(`${L}: ${state} — which says to save first`, /save your draft before publishing/i.test(why),
+      why.slice(0, 120));
+  }
+
+  await show({
+    screen: "studio",
+    props: {
+      program: detail({ status: "archived", version: 1, published: { version: 1 } }),
+      draft: draft(), saveState: "unsaved", saveError: null, approved: true, busyAction: null, actionError: null,
+    },
+  });
+  check(`${L}: restoring is withheld too, not just the publishing half`,
+    !(await seen("program-action-restore")) && (await seen("program-actions-blocked")));
+
+  await show({
+    screen: "studio",
+    props: {
+      program: detail(),
+      draft: draft(), saveState: "unsaved", saveError: null, approved: true, busyAction: null, actionError: null,
+    },
+  });
+  check(`${L}: a never-published draft may still be deleted with work at risk`,
+    await seen("program-action-delete"), "discarding the work is the point of it");
+  await p.locator('[data-testid="program-action-delete"]').click();
+  await p.waitForTimeout(200);
+  const deleteAsk = await text("program-confirm-delete");
+  check(`${L}: and the confirmation says the unsaved work goes too`,
+    /not saved/i.test(deleteAsk), deleteAsk.slice(0, 200));
+  await p.locator('[data-testid="program-confirm-delete-cancel"]').click();
+  await p.waitForTimeout(150);
+
+  /* --- the readiness check describes the draft it was run against ---------- */
+
+  await show({
+    screen: "studio",
+    props: {
+      program: detail({ issues: [{ field: "outcome", code: "required", message: "Learning outcome is required." }] }),
+      draft: draft({ outcome: "Typed since, and not saved" }),
+      saveState: "unsaved", saveError: null, approved: true, busyAction: null, actionError: null,
+    },
+  }, "studio-stale-issues");
+  check(`${L}: while dirty, what is marked says which draft it was checked against`,
+    await seen("program-studio-stale-issues"));
+  const staleChip = await text("program-heading-learn-issues");
+  check(`${L}: and the count does not claim to describe the text on screen`,
+    /at your last save/i.test(staleChip) && !/to finish/i.test(staleChip), JSON.stringify(staleChip));
+  /*
+    The line beside the field is the one that matters most, and it was the last to be fixed.
+
+    A red "Learning outcome is required." sitting under a box a teacher has just filled in is simply
+    a false sentence, drawn in the app's loudest colour — so it is the false thing they read first.
+  */
+  const staleField = await text("program-issue-outcome");
+  check(`${L}: and neither does the line beside the field`,
+    /at your last save/i.test(staleField), JSON.stringify(staleField));
+
+  /* --- leaving with work at risk ------------------------------------------- */
+
+  await show({
+    screen: "studio",
+    props: {
+      program: detail(), draft: draft(), saveState: "unsaved", saveError: null,
+      approved: true, busyAction: null, actionError: null,
+      leaveAsk: "__fn__",
+    },
+  }, "studio-leaving");
+  check(`${L}: a departure with unsaved work is questioned`, await seen("program-leave-confirm"));
+  const leaving = await text("program-leave-confirm");
+  check(`${L}: and says what leaving costs`, /loses what you have typed/i.test(leaving), leaving.slice(0, 140));
+  check(`${L}: with all three ways out named`,
+    (await seen("program-leave-stay")) && (await seen("program-leave-discard")) && (await seen("program-leave-cancel")));
 
   /* --- review and publication -------------------------------------------- */
 
@@ -482,19 +634,19 @@ for (const size of SIZES) {
     your changes" — changes the same screen had just said did not exist. Read on their own each
     line looked right, which is why this reads them as a pair.
   */
-  const inStep = await seen("program-review-in-step");
   /*
-    Matched rather than compared, because a button's text starts with its icon.
+    Two sentences about the same fact, checked together — and then the button that is not there.
 
-    `@expo/vector-icons` draws a Feather glyph as a Private Use Area character — U+F204 here — which
-    is part of the element's text and which `trim` does not remove. An equality check against the
-    words fails, and the failure prints as a leading newline, which sends you looking for a layout
-    problem that does not exist. Ask for the words.
+    "This matches what you have written here" was sitting directly above "Publish your changes",
+    changes the same screen had just said did not exist. Rewording it to "Publish again" was the
+    second wrong answer: publishing increments the version server-side, so the button would
+    manufacture an empty version of the record of what students were promised. There is nothing to
+    publish, so there is no button.
   */
-  const publishLabel = await text("program-publish");
-  check(`${L}: a published program in step does not offer changes that do not exist`,
-    inStep && /publish again/i.test(publishLabel) && !/your changes/i.test(publishLabel),
-    `in-step=${inStep} publish=${JSON.stringify(publishLabel)}`);
+  check(`${L}: a published program in step says students already have it`,
+    (await seen("program-review-in-step")) && (await seen("program-publish-unchanged")));
+  check(`${L}: and offers no publish button that would write an empty version`,
+    !(await seen("program-publish")));
 
   await p.locator('[data-testid="program-action-archive"]').click();
   await p.waitForTimeout(200);

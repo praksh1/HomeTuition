@@ -147,11 +147,20 @@ export function SectionHeading({
   title,
   blurb,
   issues = 0,
+  stale = false,
   testID,
 }: {
   title: string;
   blurb?: string | null;
   issues?: number;
+  /**
+   * True when the count describes the last *saved* draft rather than what is on screen.
+   *
+   * The count then says so — "1 at your last save" — instead of "1 to finish", which is a claim
+   * about text the server has not seen. A number presented as current when it is not is how a
+   * teacher ends up fixing something twice or not at all.
+   */
+  stale?: boolean;
   testID?: string;
 }) {
   const colors = useColors();
@@ -163,8 +172,14 @@ export function SectionHeading({
         {issues > 0 ? (
           <ProgramChip
             testID={testID ? `${testID}-issues` : undefined}
-            label={issues === 1 ? "1 to finish" : `${issues} to finish`}
-            tone="waiting"
+            label={
+              stale
+                ? `${issues} at your last save`
+                : issues === 1
+                  ? "1 to finish"
+                  : `${issues} to finish`
+            }
+            tone={stale ? "neutral" : "waiting"}
           />
         ) : null}
       </View>
