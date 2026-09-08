@@ -279,10 +279,16 @@ export function ProgramFailure({
   message,
   onRetry,
   testID = "program-failure",
+  title = "Your programs could not be loaded",
+  retryLabel = "Try again",
 }: {
   message: string;
   onRetry: () => void;
   testID?: string;
+  /** For screens where the default sentence would be a lie — a student on the details page. */
+  title?: string;
+  /** For a "gone" state, where "Try again" would suggest the row will come back. */
+  retryLabel?: string;
 }) {
   const colors = useColors();
   const { t, space, radius } = useLayout();
@@ -301,12 +307,10 @@ export function ProgramFailure({
     >
       <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
         <Feather name="alert-circle" size={18} color={colors.warn} />
-        <Text style={[t.title3, { color: colors.foreground, flexShrink: 1 }]}>
-          Your programs could not be loaded
-        </Text>
+        <Text style={[t.title3, { color: colors.foreground, flexShrink: 1 }]}>{title}</Text>
       </View>
       <Text style={[t.callout, { color: colors.mutedForeground }]}>{message}</Text>
-      <ProgramButton label="Try again" icon="refresh-cw" onPress={onRetry} testID={`${testID}-retry`} />
+      <ProgramButton label={retryLabel} icon="refresh-cw" onPress={onRetry} testID={`${testID}-retry`} />
     </View>
   );
 }

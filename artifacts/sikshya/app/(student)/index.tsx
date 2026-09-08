@@ -25,6 +25,9 @@ import { apiGet } from "@/utils/api";
 import { loadTeacherDirectory } from "@/utils/teacherDirectory";
 import { matches as matchesSearch, score as searchScore } from "@/utils/search";
 import TeacherCard from "@/components/TeacherCard";
+import ProgramDiscoverList from "@/components/programs/ProgramDiscoverList";
+import { appendPage, DISCOVER_SEARCH_PROMPT, type ProgramType, type PublicProgramSummary } from "@/utils/programDiscovery";
+import { ApiError } from "@/utils/api";
 import type { Teacher } from "@/context/AuthContext";
 
 const SUBJECTS = ["All", "Mathematics", "Science", "English", "Nepali", "Computer Science", "History", "Geography"];
@@ -73,8 +76,92 @@ export default function Discover() {
   const insets = useSafeAreaInsets();
   const { unreadCount } = useNotifications();
 
-  /** Which half of Discover is showing: everybody, or just the teachers you follow. */
-  const [view, setView] = useState<"discover" | "following">("discover");
+  /**
+   * Which section of Discover is showing.
+   *
+   * `programs` is the phase-2B addition: a full Learning Program, with an outcome and a path, is a
+   * different thing from a single class or a teacher and belongs in its own view. The Programs view
+   * comes first because that is the featured surface for this phase; the existing teacher-first
+   * "Discover" and "Following" are preserved intact, reached from the same row of chips.
+   */
+  const [view, setView] = useState<"programs" | "discover" | "following">("programs");
+
+  /* ------------------------------------------------------------- programs ----- */
+
+  const [programs, setPrograms] = useState<PublicProgramSummary[]>([]);
+  const [programsCursor, setProgramsCursor] = useState<string | null>(null);
+  const [programsLoading, setProgramsLoading] = useState(true);
+  const [programsLoadingMore, setProgramsLoadingMore] = useState(false);
+  const [programsFailure, setProgramsFailure] = useState<string | null>(null);
+  const [programQuery, setProgramQuery] = useState("");
+  const [programType, setProgramType] = useState<ProgramType | "all">("all");
+
+  /**
+   * A monotonically-increasing request id, so a late answer for an earlier query cannot overwrite
+   * the current results. Same shape the studio uses for saves — an old response arriving after a
+   * newer one has already come back is the ordinary case on a Nepali connection, and this makes
+   * sure that "typed 'guitar' then typed 'exam'" always ends up showing exam results.
+   */
+  const programRequestRef = React.useRef(0);
+
+  const loadPrograms = useCallback(
+    async (opts: { append?: boolean; query?: string; type?: ProgramType | "all" } = {}) => {
+      const append = opts.append === true;
+      const q = opts.query !== undefined ? opts.query : programQuery;
+      const type = opts.type !== undefined ? opts.type : programType;
+      const cursor = append ? programsCursor : null;
+
+      if (append) setProgramsLoadingMore(true);
+      else {
+        setProgramsLoading(true);
+        setProgramsFailure(null);
+      }
+      const mine = ++programRequestRef.current;
+
+      try {
+        const params = new URLSearchParams();
+        params.set("limit", "20");
+        if (q.trim().length > 0) params.set("q", q.trim());
+        if (type !== "all") params.set("type", type);
+        if (cursor) params.set("cursor", cursor);
+        const answer = await apiGet<{ programs: PublicProgramSummary[]; nextCursor: string | null }>(
+          `/programs?${params.toString()}`,
+        );
+        if (mine !== programRequestRef.current) return; // superseded
+
+        if (append) {
+          setPrograms((current) => appendPage({ rows: current, nextCursor: programsCursor }, {
+            rows: answer.programs, nextCursor: answer.nextCursor,
+          }).rows);
+        } else {
+          setPrograms(answer.programs);
+        }
+        setProgramsCursor(answer.nextCursor);
+      } catch (err) {
+        if (mine !== programRequestRef.current) return;
+        // Not an empty list. The four-times-caught mistake — see the memory index — is drawing
+        // a failed load as "no programs yet".
+        if (!append) setPrograms([]);
+        setProgramsFailure(
+          err instanceof ApiError
+            ? err.message
+            : "Fadko could not reach the server. Check your connection and try again.",
+        );
+      } finally {
+        if (mine !== programRequestRef.current) return;
+        if (append) setProgramsLoadingMore(false);
+        else setProgramsLoading(false);
+      }
+    },
+    [programQuery, programType, programsCursor],
+  );
+
+  // First load, and whenever the primary filter changes. The text query re-fetches on submit only
+  // (via `onSubmitEditing`), so typing does not fire a request per keystroke on a bumpy connection.
+  React.useEffect(() => {
+    void loadPrograms({ type: programType, query: programQuery });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [programType]);
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("All");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -296,7 +383,8 @@ export default function Discover() {
         */}
         <View style={[styles.subTabs, { gap: space.xs }]}>
           {([
-            { id: "discover", label: "Discover" },
+            { id: "programs", label: "Programs" },
+            { id: "discover", label: "Teachers" },
             { id: "following", label: "Following" },
           ] as const).map((tab) => {
             const active = view === tab.id;
@@ -436,7 +524,38 @@ export default function Discover() {
         )}
       </View>
 
-      {view === "following" ? (
+      {view === "programs" ? (
+        <ScrollView
+          contentContainerStyle={{
+            paddingHorizontal: gutter, paddingTop: space.md, paddingBottom: insets.bottom + 100, gap: space.md,
+            /*
+              A readable column on a laptop, and nothing at all on a phone. Same 760pt cap the
+              studio and teacher dashboard use — without it, cards stretch across a metre of screen
+              and the page reads as an admin table rather than a learning surface.
+            */
+            width: "100%",
+            maxWidth: 760,
+            alignSelf: "center",
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <ProgramDiscoverList
+            query={programQuery}
+            onQueryChange={setProgramQuery}
+            chosenType={programType}
+            onTypeChange={(next) => setProgramType(next)}
+            programs={programs}
+            loading={programsLoading}
+            loadingMore={programsLoadingMore}
+            hasMore={programsCursor !== null}
+            failure={programsFailure}
+            onLoadMore={() => void loadPrograms({ append: true })}
+            onRetry={() => void loadPrograms({ query: programQuery, type: programType })}
+            onOpen={(id) => router.push(`/(student)/program/${id}`)}
+            onSubmit={(text) => { setProgramQuery(text); void loadPrograms({ query: text, type: programType }); }}
+          />
+        </ScrollView>
+      ) : view === "following" ? (
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}>
           <FollowedTeachers />
         </ScrollView>

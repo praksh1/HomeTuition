@@ -40,7 +40,8 @@
     "test:test-access-ui": "node scripts/test-access-ui/run.mjs",
     "test:program-journey": "node scripts/program-journey/run.mjs",
     "router-types": "node scripts/router-types.js",
-    "test:program-smoke": "node scripts/program-smoke/run.mjs"
+    "test:program-smoke": "node scripts/program-smoke/run.mjs",
+    "test:discover": "node scripts/program-discover/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

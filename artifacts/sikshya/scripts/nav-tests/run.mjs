@@ -219,13 +219,25 @@ async function main() {
 
   await page3.goto(`${siteUrl}/`, { waitUntil: "networkidle" });
   await page3.waitForTimeout(3500);
-  check("Discover has a Following sub-tab", (await page3.locator('[data-testid="discover-subtab-following"]').count()) > 0);
-  // Looked for as an element, not as text: a placeholder is an attribute, so it never appears
-  // in innerText and an assertion against the page's text could not have passed.
-  // By testID, not by placeholder copy: selecting on wording makes a rewrite of the
-  // placeholder look like a navigation failure.
+  /*
+    Discover now has three sub-tabs, not two.
+
+    Phase 2B added Programs as the featured surface, so the initial view is a list of Learning
+    Programs rather than the teacher search. Teachers and Following are the same two views the
+    student had before, kept intact and reachable in one tap. The old assertion "Discover is
+    what it opens on" is no longer true — Programs is — so this checks the three sub-tabs are
+    all present and that Programs opens by default.
+  */
+  check("Discover has a Programs sub-tab", (await page3.locator('[data-testid="discover-subtab-programs"]').count()) > 0);
+  check("and a Teachers sub-tab", (await page3.locator('[data-testid="discover-subtab-discover"]').count()) > 0);
+  check("and a Following sub-tab", (await page3.locator('[data-testid="discover-subtab-following"]').count()) > 0);
+  const programsSearch = '[data-testid="program-discover-search"]';
+  check("Programs is what it opens on", (await page3.locator(programsSearch).count()) > 0);
+
+  // The teacher search box lives in the Teachers sub-tab now.
   const searchBox = '[data-testid="discover-search"]';
-  check("and Discover is what it opens on", (await page3.locator(searchBox).count()) > 0);
+  check("and the teacher search is not on screen until you switch to Teachers",
+    (await page3.locator(searchBox).count()) === 0);
 
   await page3.locator('[data-testid="discover-subtab-following"]').click({ timeout: 10000 });
   await page3.waitForTimeout(2500);
@@ -233,13 +245,15 @@ async function main() {
   check("tapping Following shows the follow list instead of the search",
     /not following anyone yet/i.test(following) || (await page3.locator('[data-testid="followed-teachers"]').count()) > 0,
     following.slice(0, 220).replace(/\n/g, " | "));
-  check("and the search box is out of the way while it is showing",
+  check("and the teacher search box is out of the way while it is showing",
     (await page3.locator(searchBox).count()) === 0, following.slice(0, 220).replace(/\n/g, " | "));
 
   await page3.locator('[data-testid="discover-subtab-discover"]').click({ timeout: 10000 });
   await page3.waitForTimeout(2000);
-  check("and going back to Discover brings the search box back",
+  check("and switching to Teachers brings the teacher search box up",
     (await page3.locator(searchBox).count()) > 0);
+  check("and the Programs search is now the one out of the way",
+    (await page3.locator(programsSearch).count()) === 0);
 
   /**
    * Real conversations first, or this proves nothing.

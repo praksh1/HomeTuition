@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db,
@@ -84,6 +84,29 @@ function readLimit(raw: unknown): number | null {
 }
 
 const LIMIT_REFUSAL = `Ask for a whole number of programs, between 1 and ${MAX_PAGE}.`;
+
+/**
+ * A student's search query, made safe before it becomes SQL.
+ *
+ * Not free-text search over the whole database. This is `ILIKE '%…%'` over a handful of published
+ * snapshot fields and the teacher's display name. Every piece of user input goes through a
+ * parameter, so the "escape" here is only the two characters `%` and `_` that would otherwise turn
+ * the whole query into a match-anything wildcard — and a backslash so that escape itself is
+ * literal.
+ *
+ * Trimmed, then bounded to 80 characters so a hostile client cannot make the server work through a
+ * kilobyte of pattern per row. A blank string returns `null`, which the caller reads as "no
+ * search"; an over-long query is truncated rather than refused because a teacher's title may
+ * legitimately be long and the honest question is still "does this contain what I typed?".
+ */
+function readSearch(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed === "") return null;
+  const capped = trimmed.slice(0, 80);
+  const escaped = capped.replace(/[\\%_]/g, (c) => `\\${c}`);
+  return `%${escaped}%`;
+}
 
 /**
  * A public-list page marker: where a page ended, as `<published_at in ms>_<id>`.
@@ -830,10 +853,46 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
     types = read as string[];
   }
 
+  const search = readSearch(req.query.q);
+
   const where = [publiclyVisible()];
   if (types !== null) where.push(inArray(learningProgramsTable.type, types));
   if (cursor !== null) {
     where.push(sql`(${learningProgramsTable.publishedAt}, ${learningProgramsTable.id}) < (${cursor.at}, ${cursor.id})`);
+  }
+  if (search !== null) {
+    /*
+      The snapshot is stored as JSONB. The `->>` operator reads one text field out of it, which then
+      goes through `ilike` with the query as a bound parameter — the same shape the operator search
+      in `admin.ts` uses. `escape '\\'` names our escape character so a literal `%` a teacher typed
+      into their title matches literally rather than as a wildcard.
+
+      What is searchable is what a student would recognise: the program title, its summary and
+      outcome, who it is for, any curriculum/exam reference the teacher supplied, and the teacher's
+      display name. `type` matches the label a student would type ("exam preparation"), not the code
+      ("exam_preparation").
+    */
+    const like = sql`ilike ${search} escape '\\'`;
+    const snapField = (key: string) =>
+      sql`(${learningProgramsTable.publishedSnapshot} ->> ${key}) ${like}`;
+    /*
+      Type is matched by its student-facing label ("Exam preparation"), not the code, and always
+      through the same parameterised `like`. A caller typing "exam prep" finds every exam-prep
+      program, without needing to know the internal spelling.
+    */
+    const typeLabels = ["School subject", "Practical skill", "Language learning", "Exam preparation", "Custom program"] as const;
+    where.push(
+      or(
+        snapField("title"),
+        snapField("summary"),
+        snapField("outcome"),
+        snapField("intendedLearner"),
+        snapField("startingLevel"),
+        snapField("referenceName"),
+        sql`${usersTable.name} ${like}`,
+        ...typeLabels.map((label) => sql`${label} ${like}`),
+      )!,
+    );
   }
 
   const rows = await db

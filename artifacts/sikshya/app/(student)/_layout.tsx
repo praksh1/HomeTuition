@@ -78,6 +78,7 @@ function ClassicStudentTabLayout() {
       {/* Reached from Discover. See the note in the teacher's layout about the size of the bar. */}
       <Tabs.Screen name="monthly" options={{ href: null }} />
       <Tabs.Screen name="teacher/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="program/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="classroom/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
     </Tabs>
   );

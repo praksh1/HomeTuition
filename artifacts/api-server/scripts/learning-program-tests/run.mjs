@@ -871,6 +871,141 @@ async function ordering() {
 }
 
 /* ------------------------------------------------------------------------- */
+/* 14b. Public search                                                         */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The one filter that reads text: `?q=…`.
+ *
+ * Every input goes through a bound parameter — so this is a search test, not a SQL-injection
+ * safety-net. What it exercises is that the fields a student would recognise are actually the ones
+ * matched, that the escape for `%` and `_` behaves, that the query is bounded rather than
+ * unbounded, that pagination stays deterministic under a search, that filter and search compose,
+ * and that no unpublished or suspended row can be surfaced by any wording.
+ */
+async function publicSearch() {
+  console.log("\n[14b] Public search only reaches what a student may see");
+  const anjali = await register("teacher");
+  sql(`update users set name = 'Anjali Rai' where id = ${anjali.user.id}`);
+  const dipendra = await register("teacher");
+  sql(`update users set name = 'Dipendra Shrestha' where id = ${dipendra.user.id}`);
+
+  const mathsId = await publishOne(anjali.token, "school_subject", {
+    title: "Grade 10 Mathematics, term by term",
+    summary: "A term of Grade 10 mathematics, worked through week by week together.",
+    outcome: "Students can work through a whole past paper with support.",
+    intendedLearner: "Students in Grade 10 preparing for the board examination",
+    referenceName: "NEB Mathematics syllabus",
+  });
+  const guitarId = await publishOne(dipendra.token, "practical_skill", {
+    title: "Beginner guitar from the first chord",
+    summary: "Six weeks of playing songs on acoustic guitar together.",
+    outcome: "Play three songs from memory with clean chord changes.",
+  });
+  const engineeringId = await publishOne(anjali.token, "exam_preparation", {
+    title: "Engineering entrance exam preparation",
+    summary: "Full preparation for the engineering entrance exam.",
+    outcome: "Sit the exam prepared for every kind of question it will ask.",
+    referenceName: "IOE entrance",
+  });
+
+  const idsOf = (r) => (r.body?.programs ?? []).map((p) => p.id);
+  const call = async (q, extra = "") => api(`/programs?limit=50&q=${encodeURIComponent(q)}${extra}`);
+
+  check("search finds a program by title", idsOf(await call("mathematics")).includes(mathsId));
+  check("and by summary", idsOf(await call("acoustic")).includes(guitarId));
+  check("and by outcome", idsOf(await call("past paper")).includes(mathsId));
+  check("and by intended learner", idsOf(await call("board examination")).includes(mathsId));
+  check("and by teacher name", idsOf(await call("dipendra")).includes(guitarId));
+  check("and by reference name", idsOf(await call("NEB")).includes(mathsId));
+  check("and by the type label", idsOf(await call("practical skill")).includes(guitarId));
+
+  // Case does not matter.
+  check("search is case-insensitive", idsOf(await call("GUITAR")).includes(guitarId));
+
+  const empty = await call("guaranteed100percent");
+  check("a query nobody wrote matches nothing", empty.status === 200 && empty.body.programs.length === 0,
+    `${empty.status} ${empty.body?.programs?.length}`);
+
+  // `_` and `%` are wildcards in SQL LIKE. Escaping them means a query with those characters
+  // matches literally, not as a wildcard.
+  const wildcard = await call("100%");
+  check("SQL wildcards typed by a student do not match everything",
+    wildcard.status === 200 && wildcard.body.programs.length === 0,
+    `${wildcard.status} ${wildcard.body?.programs?.length}`);
+  const underscore = await call("____________not_a_real_title____________");
+  check("underscore does not match every character",
+    underscore.status === 200 && underscore.body.programs.length === 0);
+
+  // Bounded input: a huge query is truncated rather than making the server work through kilobytes.
+  const long = await call("m".repeat(2000));
+  check("an over-long search is accepted and truncated", long.status === 200, `status ${long.status}`);
+
+  // Filter and search compose.
+  const filtered = await api(`/programs?limit=50&type=practical_skill&q=${encodeURIComponent("guitar")}`);
+  check("filter and search compose",
+    idsOf(filtered).includes(guitarId) && filtered.body.programs.every((p) => p.type === "practical_skill"),
+    JSON.stringify(filtered.body?.programs?.map((p) => p.type)).slice(0, 80));
+  const filteredOut = await api(`/programs?limit=50&type=school_subject&q=${encodeURIComponent("guitar")}`);
+  check("the filter narrows the search",
+    filteredOut.status === 200 && !idsOf(filteredOut).includes(guitarId),
+    JSON.stringify(filteredOut.body?.programs?.map((p) => p.title)).slice(0, 80));
+
+  // Pagination stays deterministic under a search: two overlapping pages contain the same rows
+  // in the same order, and every match is reachable across pages.
+  for (let i = 0; i < 3; i += 1) {
+    await publishOne(anjali.token, "school_subject", {
+      title: `Grade 9 Mathematics chapter ${i + 1}`,
+      summary: "Working through Chapter " + (i + 1) + " of the Grade 9 syllabus.",
+      outcome: "Understand the whole of the chapter.",
+    });
+  }
+  const walked = [];
+  let cursor = null;
+  for (let page = 0; page < 8; page += 1) {
+    const res = await api(`/programs?limit=2&q=${encodeURIComponent("mathematics")}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    if (res.status !== 200) { check("search paging stayed valid", false, `status ${res.status}`); break; }
+    walked.push(...idsOf(res));
+    cursor = res.body.nextCursor;
+    if (!cursor) break;
+  }
+  check("search paging never repeats a program", new Set(walked).size === walked.length,
+    JSON.stringify(walked).slice(0, 120));
+  check("and reaches every match", walked.includes(mathsId), JSON.stringify(walked).slice(0, 120));
+
+  // Search must not surface anything unpublished, archived, or from a suspended/unapproved teacher.
+  const draftId = (await api("/learning-programs", {
+    method: "POST", token: anjali.token, body: { type: "custom" },
+  })).body.program.id;
+  await api(`/learning-programs/${draftId}`, {
+    method: "PATCH", token: anjali.token, body: { title: "Do not publish this Mathematics draft" },
+  });
+  const found = idsOf(await call("Do not publish this Mathematics draft"));
+  check("a draft with a matching title is not surfaced by search", !found.includes(draftId), JSON.stringify(found));
+
+  // Suspend Dipendra: the guitar program disappears from search too, not just from the list.
+  sql(`update users set suspended_at = now() where id = ${dipendra.user.id}`);
+  const afterSuspend = idsOf(await call("guitar"));
+  check("a suspended teacher's programs are not returned by search",
+    !afterSuspend.includes(guitarId), JSON.stringify(afterSuspend));
+  // Restore for the next test's benefit.
+  sql(`update users set suspended_at = null where id = ${dipendra.user.id}`);
+
+  // No commercial claim ever leaks through the response.
+  const sample = (await api("/programs?limit=50")).body.programs;
+  for (const p of sample) {
+    for (const forbidden of ["price", "priceNpr", "rating", "starRating", "reviewCount", "studentCount", "seats", "popularity"]) {
+      check(`the list carries no ${forbidden} on program ${p.id}`, !(forbidden in p), Object.keys(p).join(","));
+    }
+  }
+  // And nothing from the private snapshot fields either.
+  const detail = (await api(`/programs/${mathsId}`)).body.program;
+  for (const forbidden of ["issues", "hasUnpublishedChanges", "status", "archivedAt"]) {
+    check(`the detail carries no ${forbidden}`, !(forbidden in detail), Object.keys(detail).join(","));
+  }
+}
+
+/* ------------------------------------------------------------------------- */
 /* 15. Two requests at once                                                   */
 /* ------------------------------------------------------------------------- */
 
@@ -1213,6 +1348,7 @@ async function main() {
     await moderation();
     await corruptSnapshots();
     await ordering();
+    await publicSearch();
     await concurrency();
     await moderationReload();
     await schemaParity();
