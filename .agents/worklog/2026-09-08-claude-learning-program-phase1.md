@@ -194,3 +194,198 @@ a program page missing its outcome looks like a teacher who did not bother.
 - Next smallest review step: Codex reviews the authority path (`ownedProgram` → `transition` →
   `publish`) and the public read's join, then decides whether the draft/publish gates are where the
   owner wants them before any UI is built on top.
+
+---
+
+# Correction pass — Codex's Phase 1 review
+
+- Date: 2026-09-08
+- Agent: claude
+- Branch: `claude/learning-program-phase1`
+- Rebased onto: `b3692ab` (`codex/learning-program-foundation` — the approved classroom blueprint,
+  the owner's three product defaults, and Codex's Phase 1 review)
+- Reviewed commit: `58523f1`
+- Status: complete, awaiting Codex re-review. Not merged, not deployed, still no UI.
+
+## Requested
+
+`.agents/worklog/2026-09-08-codex-learning-program-phase1-review.md`: two blocking findings and
+three smaller corrections. Fix only those. Rebase onto the blueprint for durable context but
+implement none of its later features.
+
+The rebase was a fast-forward — `b3692ab` adds only documents on top of the `03c7828` this branch
+already sat on — so nothing of Codex's was overwritten and nothing of this branch's was lost.
+`.agents/backlog/2026-09-07-fadko-classroom-learning-blueprint.md` was read in full; it names
+several things a published program will eventually need (schedule, capacity, completion method, a
+versioned cancellation summary, price) and **none of them was added here**, because it is a product
+guide rather than a licence to widen Phase 1.
+
+## Blocking finding 1 — the snapshot reader promised to refuse and did not
+
+`readSnapshot` said an unreadable snapshot was omitted rather than half-rendered, then normalised a
+missing required string to `""`, a missing modules array to `[]`, and a malformed module member to
+empty title and outcome. A corrupt row therefore reached `/programs` as a public page with no
+outcome and no steps — which reads as a teacher who could not be bothered, not as data the app
+cannot honestly show. Codex also noticed that the test named "refused rather than half-rendered"
+never removed a required field, so it passed without exercising its own title.
+
+Rewritten as rejections rather than repairs:
+
+- every required string must be present, a string, and not blank;
+- an optional field is absent, null, or a non-blank string — a blank string is malformed, not
+  absent;
+- the version must be a safe integer of at least 1, because a version is a count of publications
+  and zero would mean "published and never published";
+- the modules array must be a non-empty array of objects, each with a real title and outcome;
+- positions must be whole, non-negative, unique and dense — a gap is a lost step and a duplicate is
+  two steps claiming one place, and renumbering either would present a guess as the teacher's
+  sequence;
+- and then the reconstructed draft goes back through `validateLearningProgramForPublish`, so
+  anything that could not have been published cannot be read back as published either. That last
+  gate is the one that does not have to be maintained: a rule added to the publish contract
+  tomorrow guards the read path too.
+
+New `publishedSnapshotFor(row)` is what the public routes call. It reads the snapshot **and**
+requires the version inside it to equal the row's own. The two are written by one statement, so a
+disagreement means they came from different publications, and serving either half is serving a
+promise nobody made.
+
+A corrupt row now costs its page one entry in the list and nothing else: the cursor is taken from
+the last row read rather than the last program rendered, so paging advances past it instead of
+stopping on it.
+
+## Blocking finding 2 — time-of-check/time-of-use on every write
+
+Ownership, status and version were read outside a transaction and the write matched on id alone.
+
+Every mutation now runs through one `mutate()` helper: `db.transaction`, `SELECT … FOR UPDATE` on
+the program row, and **ownership and the state machine re-checked inside the lock** — so the
+decision and the write are about the same row. Publication reads its modules from the same
+transaction, so a snapshot is always one whole draft. A request whose expected state has moved on
+gets a 409 naming the state it expected, rather than being applied to whatever it finds.
+
+It is deliberately the same lock for every path, including delete, so no two of them can be in
+flight together. The cost is that two tabs belonging to one teacher serialise for microseconds; the
+alternative is data nobody can explain.
+
+`recordActivity` also moved **out** of the transaction. It writes on its own connection, so a line
+saying a program was published would have survived the publishing transaction being rolled back —
+a record of something that did not happen, which is the defect class this project has found most
+often. The activity is now returned from the transaction and written after it commits.
+
+## Smaller corrections
+
+1. **The list said "newest-published first" and ordered by id.** Fixed the query rather than the
+   sentence: `ORDER BY published_at DESC, id DESC`, with a cursor of `<published_at ms>_<id>` and a
+   row comparison `(published_at, id) < (…)`, so two programs published in the same millisecond are
+   neither skipped nor repeated. A cursor naming only an id is now refused.
+2. **Page sizes are whole positive numbers, capped.** `Math.max(1, Number(q) || 20)` passed `1.5`
+   into the database's `LIMIT` and turned `"lots"` into the default without saying the request was
+   wrong. One rule, refusing everything that is not a whole positive number; capping a large number
+   is the single deliberate normalisation, because a client asking for a thousand means "as many as
+   you will give me". Against `58523f1` the teacher-list case with `limit=1.5` returns **500**,
+   which is the finding demonstrated exactly.
+3. **Moderation reads the stored draft.** It was handed the modules from the *request*, which is an
+   empty array whenever a request did not carry any — so a teacher fixing one word in their title
+   had their whole learning path read as blank, and a flagged step already saved was never looked
+   at again. The complete module set is now reloaded inside the transaction and moderated after it
+   commits.
+
+No new rule was invented about open moderation flags blocking publication. `flagContent` still
+records for an operator and gates nothing.
+
+## Verification
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run typecheck:libs` | clean |
+| `pnpm run typecheck` (4 packages) | clean |
+| api-server unit suite | **474 passed, 0 failed** |
+| focused Learning Program state tests | **40 passed, 0 failed** (24 → 33 in the state file, plus 7 contract) |
+| `pnpm run test:programs` | **212 passed, 0 failed** (135 before) |
+| `pnpm --filter @workspace/sikshya run test` | 261 passed, 0 failed |
+| `lint:design` | unchanged at 94 hex / 282 sizes |
+| `git diff --check` | clean |
+
+### The new tests fail against `58523f1`
+
+Run before fixing, as asked, by restoring `routes/learningPrograms.ts` and
+`lib/learningProgramState.ts` from `58523f1` and leaving the new suites in place.
+
+- **Pure state tests: 25 passed, 8 failed.** Isolated to `readSnapshot` alone (the strict version
+  of the file with only that function reverted), the eight are exactly the ones covering required
+  fields, optionals, version, module arrays, module members, positions, contract compliance and
+  "nothing corrupt is repaired".
+- **`test:programs`: 168 passed, 44 failed.** Every failure names one of the findings:
+  - corrupt snapshots served as public pages, in all nine corruption shapes;
+  - a version-skewed snapshot served;
+  - `and it is version 3, so the other publication was not silently overwritten — version 2`;
+  - `snapshot(The draft before the save, 2) vs stored(The draft after the save, 3)` — a publication
+    of a draft that no longer existed;
+  - `a delete that set out while it was a draft is refused once it is published — 200` and the
+    published program gone with its snapshot;
+  - unpublish and restore applied to states that had moved on (`200` where `409` is right);
+  - `every simultaneous publication counted — 1 -> 6, expected 11` — five of ten publications lost;
+  - `republishing it moves it to the front` — the ordering claim;
+  - five page sizes accepted that should not be, and `the teacher's own list follows the same rule
+    — status 500`;
+  - `and the stored steps are read again rather than an empty list — 1 -> 1`.
+
+### How the concurrency tests are made deterministic
+
+Each case opens a second Postgres session with `pg`, holds the program row with `SELECT … FOR
+UPDATE`, fires the request under test, **waits until that request is genuinely stuck on a lock** by
+polling `pg_stat_activity` rather than sleeping a guessed number of milliseconds, commits a change
+from the held session, and then lets the request finish. The interleaving is a decision, not a coin
+toss, and it does not become wrong on a slower machine.
+
+Four staged cases — publish crossing a publication, publish crossing a complete save, delete
+crossing a publication, and unpublish/restore crossing a transition — plus one genuinely raced
+round of five simultaneous publish pairs, which asks the same questions of whatever ordering the
+machine actually produces. The raced case is not a substitute for the staged ones and is described
+as what it is.
+
+## Problems and surprises
+
+- **I introduced a bug and the new tests caught it.** Making `type` and `referenceSource`
+  conditional in the save's `SET` meant a request carrying *only* `modules` produced an empty `SET`,
+  which Drizzle refuses — so a modules-only save became a 500 and the reorder never happened. Two
+  checks in section 6 failed. Fixed by always writing `updatedAt`, which is also the truthful
+  answer: the program did change. Both module-only saves now assert their status so it cannot
+  regress silently.
+- **A plain `SELECT` does not block on `FOR UPDATE`**, which shaped the Save/Publish test. The old
+  code's reads were all plain, so no lock the test holds can pause it *between* its row read and its
+  module read. The property that is deterministically observable is the one that matters anyway:
+  the published snapshot must be one whole draft **and** the draft that was current when the
+  publication took effect. Old code publishes a draft that no longer exists; new code publishes the
+  saved one.
+
+## Fabrications found
+
+None new. One near-miss removed: `recordActivity` inside the publish transaction could have written
+"published, version N" for a publication that rolled back. Nothing had produced such a row, but the
+path existed and is now closed.
+
+## Deliberately not changed
+
+- Everything in the previous section's list — payments, booking, enrolment, membership, refunds,
+  payouts, subscriptions, Daily, LiveKit, sockets, classrooms, whiteboard, monthly behaviour,
+  production data, `db:push`, deployment, UI, navigation, Discover.
+- The blueprint's later features. It is durable context on this branch and nothing more.
+- The flag-for-operator moderation policy, explicitly.
+- The publish gate assumption from the previous pass — operator approval yes, paid plan no. Still
+  the line to change if the owner decides programs are a paid feature.
+
+## Remaining risks / next pickup point
+
+- **The row lock serialises a program's mutations, including its reads inside `mutate`.** At Phase 1
+  volumes that is invisible; if a future screen polls a program while saving it, the lock is the
+  first thing to look at.
+- **`publishedSnapshotFor` will reject rows written by an older deploy** if the snapshot shape ever
+  changes. That is the intended behaviour — better withheld than half-drawn — but it means a shape
+  change is a migration of stored snapshots, not just a code change. Worth a note before Phase 2
+  adds anything to them.
+- **The concurrency tests need a real Postgres and a second connection.** They will not run in an
+  environment without one, and they are the only tests here that depend on `pg` directly.
+- Still unverified: nothing reads these programs yet, no student can enrol, and the tables do not
+  exist in production.

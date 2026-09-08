@@ -17,7 +17,7 @@ import {
   hasUnpublishedChanges,
   readProgramType,
   readReferenceSource,
-  readSnapshot,
+  publishedSnapshotFor,
   readStatus,
   snapshotOf,
   transition,
@@ -60,6 +60,47 @@ const DEFAULT_PAGE = 20;
 const MAX_MODULES = 40;
 /** Long enough for any honest answer, short enough that a body cannot be used as storage. */
 const MAX_FIELD = 4000;
+
+/**
+ * A page size, or null for "that is not a page size".
+ *
+ * Codex's second smaller correction. It was `Math.min(MAX, Math.max(1, Number(q) || DEFAULT))`,
+ * which turned `1.5` into `1.5` and handed a fraction to the database's `LIMIT`, and turned
+ * `"lots"` into the default without ever saying the request was wrong. One rule now, and it is
+ * stated where it is used: **a whole positive number, capped at the maximum.**
+ *
+ * Capping rather than refusing a large number is deliberate and is the one place normalisation is
+ * kinder than refusal — a client asking for a thousand wants "as many as you will give me", and
+ * fifty is that answer. Everything else that is not a whole positive number is refused, because
+ * there is no honest guess at what `1.5` or `lots` meant.
+ */
+function readLimit(raw: unknown): number | null {
+  if (raw === undefined) return DEFAULT_PAGE;
+  const text = String(raw);
+  if (!/^\d+$/.test(text)) return null;
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < 1) return null;
+  return Math.min(MAX_PAGE, value);
+}
+
+const LIMIT_REFUSAL = `Ask for a whole number of programs, between 1 and ${MAX_PAGE}.`;
+
+/**
+ * A public-list page marker: where a page ended, as `<published_at in ms>_<id>`.
+ *
+ * Both halves are needed because the list is ordered by publication time first. An id alone cannot
+ * resume an ordering it is not the primary key of, which is how the previous cursor could repeat or
+ * skip a row the moment two programs were published out of id order.
+ */
+function readCursor(raw: string): { at: Date; id: number } | null {
+  const match = /^(\d+)_(\d+)$/.exec(raw);
+  if (!match) return null;
+  const at = Number(match[1]);
+  const id = Number(match[2]);
+  if (!Number.isSafeInteger(at) || !Number.isSafeInteger(id) || id < 1) return null;
+  const when = new Date(at);
+  return Number.isNaN(when.getTime()) ? null : { at: when, id };
+}
 
 /**
  * A positive integer id, or null.
@@ -151,8 +192,8 @@ function authoredText(
   return parts.filter((p): p is string => typeof p === "string" && p.length > 0).join(" ");
 }
 
-async function modulesFor(programId: number) {
-  return db
+async function modulesFor(programId: number, reader: { select: typeof db.select } = db) {
+  return reader
     .select({
       id: learningProgramModulesTable.id,
       position: learningProgramModulesTable.position,
@@ -174,10 +215,13 @@ async function modulesFor(programId: number) {
  * because a stored flag is a second source of truth and the drift always ends with somebody being
  * told the wrong thing about their own work.
  */
-async function ownerView(row: typeof learningProgramsTable.$inferSelect) {
-  const modules = await modulesFor(row.id);
+async function ownerView(
+  row: typeof learningProgramsTable.$inferSelect,
+  reader: { select: typeof db.select } = db,
+) {
+  const modules = await modulesFor(row.id, reader);
   const draft = draftFrom(row, modules);
-  const published = readSnapshot(row.publishedSnapshot);
+  const published = publishedSnapshotFor(row);
   return {
     id: row.id,
     status: row.status,
@@ -233,7 +277,11 @@ router.get("/learning-programs", requireAuth, async (req: Request, res: Response
   const teacherId = teacherOnly(req, res);
   if (teacherId === null) return;
 
-  const limit = Math.min(MAX_PAGE, Math.max(1, Number(req.query.limit) || DEFAULT_PAGE));
+  const limit = readLimit(req.query.limit);
+  if (limit === null) {
+    res.status(400).json({ error: LIMIT_REFUSAL });
+    return;
+  }
   const cursor = req.query.cursor === undefined ? null : readId(String(req.query.cursor));
   if (req.query.cursor !== undefined && cursor === null) {
     res.status(400).json({ error: "That page marker is not valid." });
@@ -313,11 +361,62 @@ router.post("/learning-programs", requireAuth, async (req: Request, res: Respons
   res.status(201).json({ program: await ownerView(created) });
 });
 
-/** Load one of the caller's own programs, or answer the refusal. Never leaks another teacher's. */
-async function ownedProgram(
-  req: Request,
-  res: Response,
-): Promise<typeof learningProgramsTable.$inferSelect | null> {
+/**
+ * Everything a program mutation needs, with the row held still while it happens.
+ *
+ * ## The races this closes
+ *
+ * Codex's second blocking finding. Every write used to read ownership, status and version *outside*
+ * a transaction and then update or delete by id alone, so two requests arriving together could each
+ * act on what the other had already changed:
+ *
+ * - two publishes both read version N and both wrote N+1, so one publication vanished with no
+ *   error and the version a student saw did not count the times it had changed;
+ * - a save landing between publish's row read and its module read produced a snapshot with one
+ *   draft's fields and another draft's steps — a page no teacher ever wrote;
+ * - a delete that had read "a draft, never published" raced a publish and erased the newly
+ *   published program *and its snapshot*, which is the only record of what was promised;
+ * - archive, restore and unpublish applied a transition to a state that had moved on.
+ *
+ * `SELECT … FOR UPDATE` on the program row is the whole answer, and it is deliberately the *same*
+ * lock for every path: the second request waits, then re-reads, then finds the world as it now is.
+ * Ownership and the state machine are re-checked **inside** the lock rather than before it, so the
+ * decision and the write cannot be about different rows. Publication reads its modules inside the
+ * same transaction, so a snapshot is always one whole draft.
+ *
+ * The cost is that two people editing one program serialise. They are the same person — a teacher
+ * with two tabs open — so the wait is microseconds and the alternative is data nobody can explain.
+ */
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type ProgramRow = typeof learningProgramsTable.$inferSelect;
+/**
+ * What a mutation answers with, and what it wants written down once it has actually happened.
+ *
+ * `activity` is carried out of the transaction rather than recorded inside it. `recordActivity`
+ * writes on its own connection, so a line saying a program was published would survive the
+ * transaction that published it being rolled back — a record of something that did not happen,
+ * which is the one kind of defect this project has found most often.
+ */
+type Reply = {
+  status: number;
+  body: Record<string, unknown>;
+  activity?: { userId: number; action: string; subjectId: number; detail?: Record<string, unknown> };
+};
+
+const notFound: Reply = {
+  status: 404,
+  // The same answer as somebody else's program. Telling them apart would let anybody walk the id
+  // space and learn which ids are taken — the reasoning `requireAdmin` gives for its own 403.
+  body: { error: "That program was not found." },
+};
+
+/**
+ * Read one of the caller's own programs without locking anything. For the read routes only.
+ *
+ * Nothing here decides a write, so nothing needs the row held: the worst a concurrent change can
+ * do to a read is make it a moment old, which is what a read is.
+ */
+async function ownedProgram(req: Request, res: Response): Promise<ProgramRow | null> {
   const teacherId = teacherOnly(req, res);
   if (teacherId === null) return null;
 
@@ -333,18 +432,71 @@ async function ownedProgram(
     .where(eq(learningProgramsTable.id, id))
     .limit(1);
 
-  /*
-    One answer for "no such program" and for "somebody else's program".
-
-    Telling them apart would let anybody walk the id space and learn how many programs exist and
-    which ids are taken — the same reasoning `requireAdmin` gives for answering every unauthorised
-    request identically.
-  */
   if (!row || row.teacherId !== teacherId) {
-    res.status(404).json({ error: "That program was not found." });
+    res.status(notFound.status).json(notFound.body);
     return null;
   }
   return row;
+}
+
+/**
+ * Run one mutation with the row locked, the owner re-checked and the transition re-decided inside.
+ *
+ * `work` receives the transaction, the row **as it is under the lock**, and the transition that was
+ * allowed from that row — never from whatever the request saw on its way in. A refusal returned
+ * from inside is an honest conflict: the state this request expected is no longer the current one.
+ */
+async function mutate(
+  req: Request,
+  res: Response,
+  action: ProgramAction,
+  work: (tx: Tx, row: ProgramRow, next: ProgramStatus | null) => Promise<Reply>,
+): Promise<void> {
+  const teacherId = teacherOnly(req, res);
+  if (teacherId === null) return;
+
+  const id = readId(req.params.id);
+  if (id === null) {
+    res.status(400).json({ error: "That program address is not valid." });
+    return;
+  }
+
+  const reply = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(learningProgramsTable)
+      .where(eq(learningProgramsTable.id, id))
+      // Everything below decides on this row, and nothing else may change it until this commits.
+      .for("update")
+      .limit(1);
+
+    if (!row || row.teacherId !== teacherId) return notFound;
+
+    const move = transition(row.status as ProgramStatus, action, {
+      /*
+        Read from the locked row, which is the point.
+
+        "Never published *now*" is not "never published *ever*", and both facts have to come from
+        the same instant as the write. A version above zero survives being taken down, so it is what
+        a delete has to look at.
+      */
+      hasEverPublished: row.version > 0 || row.publishedSnapshot !== null,
+    });
+    if (!move.ok) return { status: 409, body: { error: move.reason, code: move.code } };
+
+    return work(tx, row, move.next);
+  });
+
+  if (reply.activity) {
+    recordActivity({
+      userId: reply.activity.userId,
+      action: reply.activity.action,
+      subjectType: "learning_program",
+      subjectId: reply.activity.subjectId,
+      ...(reply.activity.detail ? { detail: reply.activity.detail } : {}),
+    });
+  }
+  res.status(reply.status).json(reply.body);
 }
 
 /** The teacher's own view: the draft, the published version if there is one, and what is missing. */
@@ -364,40 +516,32 @@ router.get("/learning-programs/:id", requireAuth, async (req: Request, res: Resp
  * Modules are replaced wholesale rather than patched. A partial module update needs a stable id per
  * step and a merge rule, and both are Phase 2 problems; rewriting the list is unambiguous, and the
  * order the teacher sent is the order that is stored.
+ *
+ * The body is read *before* the lock is taken, so a malformed request never holds a row still while
+ * it is refused.
  */
 router.patch("/learning-programs/:id", requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const row = await ownedProgram(req, res);
-  if (!row) return;
-
-  const move = transition(row.status as ProgramStatus, "save");
-  if (!move.ok) {
-    res.status(409).json({ error: move.reason, code: move.code });
-    return;
-  }
-
   const body = (req.body ?? {}) as Record<string, unknown>;
 
-  let type = row.type;
+  let wantedType: string | null = null;
   if (body.type !== undefined) {
-    const read = readProgramType(body.type);
-    if (read === null) {
+    wantedType = readProgramType(body.type);
+    if (wantedType === null) {
       res.status(400).json({ error: "That is not a kind of program this app knows.", field: "type" });
       return;
     }
-    type = read;
   }
 
-  let referenceSource = row.referenceSource;
+  let wantedReferenceSource: string | null = null;
   if (body.referenceSource !== undefined) {
-    const read = readReferenceSource(body.referenceSource);
-    if (read === null) {
+    wantedReferenceSource = readReferenceSource(body.referenceSource);
+    if (wantedReferenceSource === null) {
       res.status(400).json({
         error: "Say whether the reference is official, your own, or that there is none.",
         field: "referenceSource",
       });
       return;
     }
-    referenceSource = read;
   }
 
   const textFields = [
@@ -421,10 +565,26 @@ router.patch("/learning-programs/:id", requireAuth, async (req: Request, res: Re
     return;
   }
 
-  await db.transaction(async (tx) => {
+  /** Filled in inside the transaction, moderated after it commits. */
+  let toModerate: { teacherId: number; programId: number; text: string } | null = null;
+
+  await mutate(req, res, "save", async (tx, row) => {
+    /*
+      `updatedAt` is always set, and that is not only bookkeeping.
+
+      A save that changes nothing but the steps has no column of its own to write, and Drizzle
+      refuses an empty `SET` — which is how a modules-only patch became a 500 the first time this
+      was written conditionally. Touching the row is also the truthful answer: the program did
+      change, and its "last edited" time should say so whichever half of it the teacher edited.
+    */
     await tx
       .update(learningProgramsTable)
-      .set({ ...patch, type, referenceSource })
+      .set({
+        ...patch,
+        ...(wantedType === null ? {} : { type: wantedType }),
+        ...(wantedReferenceSource === null ? {} : { referenceSource: wantedReferenceSource }),
+        updatedAt: new Date(),
+      })
       .where(eq(learningProgramsTable.id, row.id));
 
     if (body.modules !== undefined) {
@@ -438,33 +598,44 @@ router.patch("/learning-programs/:id", requireAuth, async (req: Request, res: Re
         );
       }
     }
+
+    /*
+      Re-read inside the lock, and moderate what is *stored* rather than what was sent.
+
+      Codex's third smaller correction. Moderation used to be handed `modules.value`, which is an
+      empty array whenever the request did not carry `modules` — so a teacher fixing one word in
+      their title had their whole learning path read as blank, and a flagged step already saved
+      would never be looked at again. The scan has to describe the draft as it now stands.
+    */
+    const [fresh] = await tx
+      .select()
+      .from(learningProgramsTable)
+      .where(eq(learningProgramsTable.id, row.id))
+      .limit(1);
+    if (!fresh) return notFound;
+    const stored = await modulesFor(row.id, tx);
+    toModerate = { teacherId: fresh.teacherId, programId: fresh.id, text: authoredText(fresh, stored) };
+
+    return { status: 200, body: { program: await ownerView(fresh, tx) } };
   });
 
   /*
-    The same moderation this app already runs on a bio, a class title and a message.
+    Outside the transaction, on purpose.
 
-    Deliberately not a second profanity system, and deliberately not a gate: `flagContent` records
-    a flag for a human to read and returns whether it matched. A teacher is not blocked mid-sentence
-    by a word list, and an operator sees what was written. The publish validator is the thing that
-    refuses, and it refuses claims rather than vocabulary.
+    `flagContent` writes to another table and swallows its own failures; keeping it out of the lock
+    means a slow moderation write cannot hold a teacher's program still. Deliberately **not** a
+    gate — it records a flag for an operator to read, and whether an open flag should block
+    publication is a product decision nobody has made.
   */
-  const [fresh] = await db
-    .select()
-    .from(learningProgramsTable)
-    .where(eq(learningProgramsTable.id, row.id))
-    .limit(1);
-  if (!fresh) {
-    res.status(404).json({ error: "That program was not found." });
-    return;
+  if (toModerate) {
+    const note: { teacherId: number; programId: number; text: string } = toModerate;
+    await flagContent({
+      userId: note.teacherId,
+      surface: "learning_program",
+      subjectId: note.programId,
+      text: note.text,
+    });
   }
-  await flagContent({
-    userId: fresh.teacherId,
-    surface: "learning_program",
-    subjectId: fresh.id,
-    text: authoredText(fresh, modules.value),
-  });
-
-  res.json({ program: await ownerView(fresh) });
 });
 
 /**
@@ -478,75 +649,71 @@ router.patch("/learning-programs/:id", requireAuth, async (req: Request, res: Re
  * Note what is deliberately **not** a door: a paid teaching plan. A plan is what lets somebody run
  * classes, and no commercial rule about programs has been approved — so requiring one here would be
  * inventing a price gate the owner has not agreed to.
+ *
+ * The row, the approval and the modules are all read under the same lock, so the snapshot is one
+ * whole draft and the version it is stamped with is the one immediately after the row's own.
  */
 router.post("/learning-programs/:id/publish", requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const row = await ownedProgram(req, res);
-  if (!row) return;
+  await mutate(req, res, "publish", async (tx, row) => {
+    const [profile] = await tx
+      .select({ approvalStatus: teacherProfilesTable.approvalStatus })
+      .from(teacherProfilesTable)
+      .where(eq(teacherProfilesTable.userId, row.teacherId))
+      .limit(1);
+    if (!profile || profile.approvalStatus !== "approved") {
+      return {
+        status: 403,
+        body: {
+          error: "A Fadko operator must approve your teacher account before your program can be published.",
+          code: "OPERATOR_REVIEW",
+        },
+      };
+    }
 
-  const move = transition(row.status as ProgramStatus, "publish");
-  if (!move.ok) {
-    res.status(409).json({ error: move.reason, code: move.code });
-    return;
-  }
+    const modules = await modulesFor(row.id, tx);
+    const draft = draftFrom(row, modules);
+    const issues = validateLearningProgramForPublish(draft);
+    if (issues.length > 0) {
+      // The validator's own sentences, verbatim. A generic "check your program" would send a
+      // teacher hunting for the field this list already names.
+      return { status: 422, body: { error: "This program is not ready to publish yet.", issues } };
+    }
 
-  const [profile] = await db
-    .select({ approvalStatus: teacherProfilesTable.approvalStatus })
-    .from(teacherProfilesTable)
-    .where(eq(teacherProfilesTable.userId, row.teacherId))
-    .limit(1);
-  if (!profile || profile.approvalStatus !== "approved") {
-    res.status(403).json({
-      error: "A Fadko operator must approve your teacher account before your program can be published.",
-      code: "OPERATOR_REVIEW",
-    });
-    return;
-  }
+    const version = row.version + 1;
+    const [updated] = await tx
+      .update(learningProgramsTable)
+      .set({
+        status: "published",
+        version,
+        publishedAt: new Date(),
+        publishedSnapshot: snapshotOf(draft, version),
+        archivedAt: null,
+      })
+      .where(eq(learningProgramsTable.id, row.id))
+      .returning();
+    if (!updated) return notFound;
 
-  const modules = await modulesFor(row.id);
-  const draft = draftFrom(row, modules);
-  const issues = validateLearningProgramForPublish(draft);
-  if (issues.length > 0) {
-    // The validator's own sentences, verbatim. A generic "check your program" would send a teacher
-    // hunting for the field this list already names.
-    res.status(422).json({ error: "This program is not ready to publish yet.", issues });
-    return;
-  }
-
-  const version = row.version + 1;
-  const snapshot = snapshotOf(draft, version);
-  const [updated] = await db
-    .update(learningProgramsTable)
-    .set({
-      status: "published",
-      version,
-      publishedAt: new Date(),
-      publishedSnapshot: snapshot,
-      archivedAt: null,
-    })
-    .where(eq(learningProgramsTable.id, row.id))
-    .returning();
-  if (!updated) {
-    res.status(503).json({ error: "Could not publish. Please try again." });
-    return;
-  }
-
-  recordActivity({
-    userId: row.teacherId,
-    action: "learning_program.published",
-    subjectType: "learning_program",
-    subjectId: row.id,
-    detail: { version },
+    return {
+      status: 200,
+      body: { program: await ownerView(updated, tx) },
+      activity: {
+        userId: row.teacherId,
+        action: "learning_program.published",
+        subjectId: row.id,
+        detail: { version },
+      },
+    };
   });
-  res.json({ program: await ownerView(updated) });
 });
 
 /**
  * Take it down, put it away, or bring it back — three named moves, one shape.
  *
  * The transitions live in `learningProgramState.ts` so that "restore returns to draft, never
- * straight to published" is a rule with a test rather than a line in a handler. The snapshot is
- * kept through all of them: a student who read a program and later disputes what was promised needs
- * that page to still exist, so nothing here erases what was published.
+ * straight to published" is a rule with a test rather than a line in a handler, and they are
+ * decided against the locked row so a request whose expected state has moved on is refused with a
+ * conflict rather than applied to whatever it finds. The snapshot is kept through all of them: a
+ * student who read a program and later disputes what was promised needs that page to still exist.
  */
 for (const [path, action] of [
   ["unpublish", "unpublish"],
@@ -554,35 +721,23 @@ for (const [path, action] of [
   ["restore", "restore"],
 ] as const satisfies readonly (readonly [string, ProgramAction])[]) {
   router.post(`/learning-programs/:id/${path}`, requireAuth, async (req: Request, res: Response): Promise<void> => {
-    const row = await ownedProgram(req, res);
-    if (!row) return;
+    await mutate(req, res, action, async (tx, row, next) => {
+      const [updated] = await tx
+        .update(learningProgramsTable)
+        .set({
+          status: next as ProgramStatus,
+          archivedAt: next === "archived" ? new Date() : null,
+        })
+        .where(eq(learningProgramsTable.id, row.id))
+        .returning();
+      if (!updated) return notFound;
 
-    const move = transition(row.status as ProgramStatus, action);
-    if (!move.ok) {
-      res.status(409).json({ error: move.reason, code: move.code });
-      return;
-    }
-
-    const [updated] = await db
-      .update(learningProgramsTable)
-      .set({
-        status: move.next as ProgramStatus,
-        archivedAt: move.next === "archived" ? new Date() : null,
-      })
-      .where(eq(learningProgramsTable.id, row.id))
-      .returning();
-    if (!updated) {
-      res.status(503).json({ error: "Could not change the program. Please try again." });
-      return;
-    }
-
-    recordActivity({
-      userId: row.teacherId,
-      action: `learning_program.${action}`,
-      subjectType: "learning_program",
-      subjectId: row.id,
+      return {
+        status: 200,
+        body: { program: await ownerView(updated, tx) },
+        activity: { userId: row.teacherId, action: `learning_program.${action}`, subjectId: row.id },
+      };
     });
-    res.json({ program: await ownerView(updated) });
   });
 }
 
@@ -592,31 +747,22 @@ for (const [path, action] of [
  * Anything that has been public is archived instead, and the refusal says so. Somebody may have
  * read it and enrolled on the strength of it, and deleting the page would destroy the only record
  * of what was promised — which is the one thing a refund argument turns on.
+ *
+ * The "never published" test is made against the locked row, so a delete that set out while the
+ * program was still a draft cannot erase it after somebody published it a moment later. That
+ * request gets a conflict, and the newly published program survives.
  */
 router.delete("/learning-programs/:id", requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const row = await ownedProgram(req, res);
-  if (!row) return;
-
-  const move = transition(row.status as ProgramStatus, "delete", {
-    // Never published *now* is not the same as never published *ever*; a version above zero is the
-    // fact that survives being taken down.
-    hasEverPublished: row.version > 0 || row.publishedSnapshot !== null,
+  await mutate(req, res, "delete", async (tx, row) => {
+    // The modules go with it: the foreign key cascades, and a step with no program is not a row
+    // anything can read.
+    await tx.delete(learningProgramsTable).where(eq(learningProgramsTable.id, row.id));
+    return {
+      status: 200,
+      body: { deleted: true },
+      activity: { userId: row.teacherId, action: "learning_program.deleted", subjectId: row.id },
+    };
   });
-  if (!move.ok) {
-    res.status(409).json({ error: move.reason, code: move.code });
-    return;
-  }
-
-  // The modules go with it: the foreign key cascades, and a step with no program is not a row
-  // anything can read.
-  await db.delete(learningProgramsTable).where(eq(learningProgramsTable.id, row.id));
-  recordActivity({
-    userId: row.teacherId,
-    action: "learning_program.deleted",
-    subjectType: "learning_program",
-    subjectId: row.id,
-  });
-  res.json({ deleted: true });
 });
 
 /* ------------------------------------------------------------------------- */
@@ -641,17 +787,36 @@ const publiclyVisible = () =>
 /**
  * The public list.
  *
- * Ordered newest-published first, keyset-paginated on id. Filterable by program type, which is the
- * one filter that is a *fact* about a program — there is no rating to sort by, no enrolment count,
- * and nothing this app could honestly call popular. The backlog's Discover integration will read
- * this endpoint; it is shaped now so that it never has to grow a "top pick" that means `rows[0]`.
+ * Ordered by publication time, newest first, with the id breaking ties — and paginated on that same
+ * pair, so the description and the query say the same thing. They did not: the copy claimed
+ * "newest-published first" and the query ordered by descending id, which agrees only while nobody
+ * ever republishes an older program. Codex's first smaller correction, and the honest fix is the
+ * ordering rather than the sentence, because a student browsing programs wants the ones published
+ * most recently.
+ *
+ * A cursor is `<published_at in milliseconds>_<id>`, and the page is everything strictly *after*
+ * that pair in the ordering — Postgres compares the row `(published_at, id)` as a whole, so a
+ * second program published in the same millisecond is neither skipped nor repeated.
+ *
+ * Filterable by program type, which is the one filter that is a *fact* about a program: there is no
+ * rating to sort by, no enrolment count, and nothing this app could honestly call popular. The
+ * backlog's Discover integration will read this endpoint, and it is shaped now so that it never has
+ * to grow a "top pick" that means `rows[0]`.
  */
 router.get("/programs", async (req: Request, res: Response): Promise<void> => {
-  const limit = Math.min(MAX_PAGE, Math.max(1, Number(req.query.limit) || DEFAULT_PAGE));
-  const cursor = req.query.cursor === undefined ? null : readId(String(req.query.cursor));
-  if (req.query.cursor !== undefined && cursor === null) {
-    res.status(400).json({ error: "That page marker is not valid." });
+  const limit = readLimit(req.query.limit);
+  if (limit === null) {
+    res.status(400).json({ error: LIMIT_REFUSAL });
     return;
+  }
+
+  let cursor: { at: Date; id: number } | null = null;
+  if (req.query.cursor !== undefined) {
+    cursor = readCursor(String(req.query.cursor));
+    if (cursor === null) {
+      res.status(400).json({ error: "That page marker is not valid." });
+      return;
+    }
   }
 
   let types: string[] | null = null;
@@ -667,7 +832,9 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
 
   const where = [publiclyVisible()];
   if (types !== null) where.push(inArray(learningProgramsTable.type, types));
-  if (cursor !== null) where.push(lt(learningProgramsTable.id, cursor));
+  if (cursor !== null) {
+    where.push(sql`(${learningProgramsTable.publishedAt}, ${learningProgramsTable.id}) < (${cursor.at}, ${cursor.id})`);
+  }
 
   const rows = await db
     .select({
@@ -683,15 +850,22 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
     .innerJoin(usersTable, eq(usersTable.id, learningProgramsTable.teacherId))
     .innerJoin(teacherProfilesTable, eq(teacherProfilesTable.userId, learningProgramsTable.teacherId))
     .where(and(...where))
-    .orderBy(desc(learningProgramsTable.id))
+    .orderBy(desc(learningProgramsTable.publishedAt), desc(learningProgramsTable.id))
+    // One more than asked for, so "is there another page" is known rather than guessed.
     .limit(limit + 1);
 
   const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
   res.json({
     programs: page.flatMap((row) => {
-      const snapshot = readSnapshot(row.snapshot);
-      // A snapshot this build cannot read is left out of the list rather than rendered half-empty.
-      // A program page missing its outcome looks like a teacher who did not bother.
+      const snapshot = publishedSnapshotFor({ version: row.version, publishedSnapshot: row.snapshot });
+      /*
+        A snapshot this build cannot read, or one whose version disagrees with the row's, is left
+        out of the list rather than repaired into something that looks like an unfinished program.
+        The count of programs on a page can therefore be smaller than the page size; the cursor is
+        taken from the last *row* rather than the last rendered program, so paging still advances
+        past the unreadable one instead of stopping on it.
+      */
       if (!snapshot) return [];
       return [{
         id: row.id,
@@ -709,7 +883,7 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
         moduleCount: snapshot.modules.length,
       }];
     }),
-    nextCursor: rows.length > limit ? String(page[page.length - 1]?.id) : null,
+    nextCursor: rows.length > limit && last?.publishedAt ? `${last.publishedAt.getTime()}_${last.id}` : null,
   });
 });
 
@@ -717,9 +891,10 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
  * One published program, exactly as it was published.
  *
  * Served from the snapshot, so a teacher's unpublished edits are invisible here however long they
- * have been saved. A draft, an archived program, or a program whose teacher is not approved
- * answers 404 — the same answer as an id that never existed, because "this exists but you may not
- * see it" tells a stranger the id space.
+ * have been saved. A draft, an archived program, a program whose teacher is not approved, or one
+ * whose stored snapshot does not survive `publishedSnapshotFor` all answer 404 — the same answer as
+ * an id that never existed, because "this exists but you may not see it" tells a stranger the id
+ * space, and a program that cannot be read honestly is not a program that should be half-drawn.
  */
 router.get("/programs/:id", async (req: Request, res: Response): Promise<void> => {
   const id = readId(req.params.id);
@@ -731,7 +906,6 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
   const [row] = await db
     .select({
       id: learningProgramsTable.id,
-      type: learningProgramsTable.type,
       version: learningProgramsTable.version,
       publishedAt: learningProgramsTable.publishedAt,
       snapshot: learningProgramsTable.publishedSnapshot,
@@ -744,7 +918,9 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
     .where(and(eq(learningProgramsTable.id, id), publiclyVisible()))
     .limit(1);
 
-  const snapshot = row ? readSnapshot(row.snapshot) : null;
+  const snapshot = row
+    ? publishedSnapshotFor({ version: row.version, publishedSnapshot: row.snapshot })
+    : null;
   if (!row || !snapshot) {
     res.status(404).json({ error: "That program was not found." });
     return;
@@ -753,10 +929,10 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
   /*
     `type` and `version` come from the snapshot, not from the row's columns.
 
-    They agree today — publication writes both — but only one of them is the frozen copy, and the
-    rule this whole file rests on is that a student reads the frozen copy. Listing them separately
-    here would have made the row's columns the source for two fields and the snapshot the source
-    for the rest, which is exactly the kind of half-and-half a later edit gets wrong.
+    They agree — `publishedSnapshotFor` refuses the row outright if the two versions differ — and
+    only one of them is the frozen copy. Listing them separately would have made the row the source
+    for two fields and the snapshot the source for the rest, which is exactly the kind of
+    half-and-half a later edit gets wrong.
   */
   res.json({
     program: {

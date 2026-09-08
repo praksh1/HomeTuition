@@ -19,6 +19,7 @@
  */
 import {
   PROGRAM_TYPES,
+  validateLearningProgramForPublish,
   type LearningProgramDraft,
   type LearningProgramModuleDraft,
   type LearningProgramType,
@@ -305,52 +306,172 @@ export function snapshotOf(draft: LearningProgramDraft, version: number): Publis
 }
 
 /**
- * Read a stored snapshot back, or refuse it.
+ * Read a stored snapshot back, or refuse it — and refuse means refuse.
  *
  * The stored value is our own and was written by `snapshotOf`, so this is not defending against a
- * hostile writer — it is defending against *version skew*, which is the realistic failure: a row
- * written by an older deploy, or by a future one this code has not caught up with. A snapshot
- * that cannot be read is reported as unavailable rather than rendered half-empty, because a
- * program page missing its outcome looks like a teacher who did not bother.
+ * hostile writer. It is defending against **version skew**, which is the realistic failure: a row
+ * written by an older deploy, or by a future one this code has not caught up with.
+ *
+ * ## An earlier version said this and did the opposite
+ *
+ * It normalised a missing required string to `""`, a missing modules array to `[]`, and a malformed
+ * module member to empty title and outcome — so a corrupt snapshot reached `/programs` as a public
+ * page with no outcome and no steps, which looks exactly like a teacher who could not be bothered
+ * to fill their program in. Codex's first blocking finding, and the test that claimed to cover it
+ * never removed a required field, so it passed without exercising its own title.
+ *
+ * Every check below is therefore a rejection rather than a repair. The last one is the strongest:
+ * the reconstructed draft is put back through `validateLearningProgramForPublish`, so anything that
+ * could not have been published in the first place cannot be *read* as published either. That
+ * closes the whole class rather than the fields somebody happened to think of — if the publish
+ * contract gains a rule tomorrow, this gains it too.
  */
 export function readSnapshot(raw: unknown): PublishedProgram | null {
-  if (!raw || typeof raw !== "object") return null;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
+
   const type = readProgramType(o.type);
   const referenceSource = readReferenceSource(o.referenceSource);
   if (type === null || referenceSource === null) return null;
-  if (typeof o.version !== "number" || !Number.isFinite(o.version)) return null;
 
-  const str = (value: unknown): string => (typeof value === "string" ? value : "");
-  const orNull = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value : null);
+  /*
+    A version is a count of publications, so the first one is 1.
 
-  const rawModules = Array.isArray(o.modules) ? o.modules : [];
-  const modules: PublishedModule[] = rawModules.map((entry, index) => {
-    const m = (entry ?? {}) as Record<string, unknown>;
-    return {
-      position: typeof m.position === "number" ? m.position : index,
-      title: str(m.title),
-      outcome: str(m.outcome),
-      description: orNull(m.description),
-      practicePrompt: orNull(m.practicePrompt),
-    };
-  });
+    Zero would mean "published, and never published", and a fraction or a value beyond the safe
+    integer range means the number cannot be compared with the row's own version — which is the
+    comparison the public routes make before serving anything.
+  */
+  if (typeof o.version !== "number" || !Number.isSafeInteger(o.version) || o.version < 1) return null;
 
-  return {
+  /** Required: present, a string, and not blank. Blank is the failure mode being rejected. */
+  const required = (value: unknown): string | null =>
+    typeof value === "string" && value.trim().length > 0 ? value : null;
+  /** Optional: absent or null, or a non-blank string. A blank string is malformed, not absent. */
+  const optional = (value: unknown): { ok: true; value: string | null } | { ok: false } => {
+    if (value === undefined || value === null) return { ok: true, value: null };
+    if (typeof value !== "string" || value.trim().length === 0) return { ok: false };
+    return { ok: true, value };
+  };
+
+  const title = required(o.title);
+  const summary = required(o.summary);
+  const outcome = required(o.outcome);
+  const intendedLearner = required(o.intendedLearner);
+  const startingLevel = required(o.startingLevel);
+  const teachingLanguage = required(o.teachingLanguage);
+  if (
+    title === null || summary === null || outcome === null ||
+    intendedLearner === null || startingLevel === null || teachingLanguage === null
+  ) {
+    return null;
+  }
+
+  const prerequisites = optional(o.prerequisites);
+  const equipment = optional(o.equipment);
+  const referenceName = optional(o.referenceName);
+  if (!prerequisites.ok || !equipment.ok || !referenceName.ok) return null;
+
+  if (!Array.isArray(o.modules) || o.modules.length === 0) return null;
+  const modules: PublishedModule[] = [];
+  for (const entry of o.modules) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const m = entry as Record<string, unknown>;
+    const moduleTitle = required(m.title);
+    const moduleOutcome = required(m.outcome);
+    const description = optional(m.description);
+    const practicePrompt = optional(m.practicePrompt);
+    if (moduleTitle === null || moduleOutcome === null || !description.ok || !practicePrompt.ok) {
+      return null;
+    }
+    if (typeof m.position !== "number" || !Number.isSafeInteger(m.position) || m.position < 0) {
+      return null;
+    }
+    modules.push({
+      position: m.position,
+      title: moduleTitle,
+      outcome: moduleOutcome,
+      description: description.value,
+      practicePrompt: practicePrompt.value,
+    });
+  }
+
+  /*
+    Dense and unique, checked rather than sorted into looking right.
+
+    A duplicate position is two steps claiming the same place in the path and a gap is a step that
+    was lost; either way the order a student would read is not the order that was published, and
+    quietly renumbering them would present a guess as the teacher's own sequence.
+  */
+  const positions = [...modules.map((m) => m.position)].sort((a, b) => a - b);
+  if (positions.some((position, index) => position !== index)) return null;
+  modules.sort((a, b) => a.position - b.position);
+
+  const snapshot: PublishedProgram = {
     version: o.version,
     type,
-    title: str(o.title),
-    summary: str(o.summary),
-    outcome: str(o.outcome),
-    intendedLearner: str(o.intendedLearner),
-    startingLevel: str(o.startingLevel),
-    teachingLanguage: str(o.teachingLanguage),
-    prerequisites: orNull(o.prerequisites),
-    equipment: orNull(o.equipment),
-    referenceName: orNull(o.referenceName),
+    title,
+    summary,
+    outcome,
+    intendedLearner,
+    startingLevel,
+    teachingLanguage,
+    prerequisites: prerequisites.value,
+    equipment: equipment.value,
+    referenceName: referenceName.value,
     referenceSource,
-    modules: modules.sort((a, b) => a.position - b.position),
+    modules,
   };
+
+  /*
+    The last gate, and the one that does not have to be maintained.
+
+    Everything above is shape. This is *content*: an exam program that names no exam, a summary
+    shorter than the contract allows, a guaranteed pass — none of those could have been published,
+    so none of them may be read back as published. Running the real validator rather than repeating
+    its rules is what keeps the two from drifting apart.
+  */
+  if (validateLearningProgramForPublish(asDraft(snapshot)).length > 0) return null;
+
+  return snapshot;
+}
+
+/** A published snapshot in the shape the publish validator reads. */
+function asDraft(snapshot: PublishedProgram): LearningProgramDraft {
+  return {
+    type: snapshot.type,
+    title: snapshot.title,
+    summary: snapshot.summary,
+    outcome: snapshot.outcome,
+    intendedLearner: snapshot.intendedLearner,
+    startingLevel: snapshot.startingLevel,
+    teachingLanguage: snapshot.teachingLanguage,
+    prerequisites: snapshot.prerequisites ?? undefined,
+    equipment: snapshot.equipment ?? undefined,
+    referenceName: snapshot.referenceName ?? undefined,
+    referenceSource: snapshot.referenceSource,
+    modules: snapshot.modules.map((module) => ({
+      title: module.title,
+      outcome: module.outcome,
+      description: module.description ?? undefined,
+      practicePrompt: module.practicePrompt ?? undefined,
+    })),
+  };
+}
+
+/**
+ * The snapshot a student may be served for this row, or null.
+ *
+ * Two facts have to agree: the snapshot must be readable, and the version written *inside* it must
+ * be the version the row says is current. They are written together by one statement, so a
+ * disagreement means the row and its snapshot came from different publications — a half-applied
+ * write, or a hand-edited row. Serving either half of that is serving a promise nobody made.
+ */
+export function publishedSnapshotFor(
+  row: { version: number; publishedSnapshot: unknown },
+): PublishedProgram | null {
+  const snapshot = readSnapshot(row.publishedSnapshot);
+  if (!snapshot || snapshot.version !== row.version) return null;
+  return snapshot;
 }
 
 /**

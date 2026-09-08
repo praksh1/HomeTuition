@@ -7,6 +7,7 @@ import {
   hasUnpublishedChanges,
   readProgramType,
   readReferenceSource,
+  publishedSnapshotFor,
   readSnapshot,
   readStatus,
   snapshotOf,
@@ -254,20 +255,153 @@ test("module order is the array order, renumbered densely from zero", () => {
   assert.equal(snapshot.modules[0]?.title, "Where we start");
 });
 
-test("a snapshot round-trips, and one this build cannot read is refused rather than half-rendered", () => {
+test("a snapshot round-trips", () => {
   const snapshot = snapshotOf(pilot({}), 2);
   assert.deepEqual(readSnapshot(JSON.parse(JSON.stringify(snapshot))), snapshot);
-
-  for (const broken of [null, "a string", {}, { version: 1 }, { ...snapshot, type: "driving_lesson" },
-    { ...snapshot, referenceSource: "endorsed" }, { ...snapshot, version: "1" }]) {
-    assert.equal(readSnapshot(broken), null, `${JSON.stringify(broken)?.slice(0, 40)} is unreadable`);
-  }
 });
 
 test("a stored snapshot is read back in position order even if it was written out of order", () => {
   const snapshot = snapshotOf(pilot({}), 1);
   const shuffled = { ...snapshot, modules: [...snapshot.modules].reverse() };
   assert.deepEqual(readSnapshot(shuffled)?.modules.map((m) => m.position), [0, 1]);
+});
+
+/* --- refusing a snapshot means refusing it -------------------------------
+ *
+ * Codex's first blocking finding. `readSnapshot` promised that an unreadable snapshot was omitted
+ * rather than half-rendered, and then normalised a missing required string to `""`, a missing
+ * modules array to `[]`, and a malformed module to empty title and outcome — so a corrupt row
+ * reached the public page looking like a teacher who could not be bothered to fill it in.
+ *
+ * The test that claimed to cover this never removed a required field, so it passed without
+ * exercising its own title. These do.
+ */
+
+const REQUIRED_STRINGS = [
+  "title", "summary", "outcome", "intendedLearner", "startingLevel", "teachingLanguage",
+] as const;
+
+test("every required published field must be present, a string, and not blank", () => {
+  const good = snapshotOf(pilot({}), 1);
+  for (const field of REQUIRED_STRINGS) {
+    for (const [what, broken] of [
+      ["missing", { ...good, [field]: undefined }],
+      ["null", { ...good, [field]: null }],
+      ["blank", { ...good, [field]: "   " }],
+      ["empty", { ...good, [field]: "" }],
+      ["a number", { ...good, [field]: 42 }],
+      ["an object", { ...good, [field]: { text: "x" } }],
+    ] as const) {
+      assert.equal(readSnapshot(broken), null, `${field} ${what} must be refused`);
+    }
+  }
+});
+
+test("an optional field is absent or a real answer, never a blank string", () => {
+  const good = snapshotOf(pilot({ prerequisites: "Some algebra", equipment: "A notebook" }), 1);
+  assert.equal(readSnapshot({ ...good, prerequisites: null })?.prerequisites, null);
+  assert.equal(readSnapshot({ ...good, prerequisites: undefined })?.prerequisites, null);
+  for (const broken of [{ ...good, equipment: "" }, { ...good, equipment: "  " }, { ...good, equipment: 7 }]) {
+    assert.equal(readSnapshot(broken), null, "a blank or wrongly typed optional is malformed, not absent");
+  }
+});
+
+test("the version must be a whole number of publications, starting at one", () => {
+  const good = snapshotOf(pilot({}), 1);
+  for (const version of [0, -1, 1.5, NaN, Infinity, "1", null, undefined, Number.MAX_SAFE_INTEGER + 2]) {
+    assert.equal(readSnapshot({ ...good, version }), null, `version ${String(version)} must be refused`);
+  }
+  assert.equal(readSnapshot({ ...good, version: 1 })?.version, 1);
+});
+
+test("a program with no steps, or steps that are not a list, is not a program", () => {
+  const good = snapshotOf(pilot({}), 1);
+  for (const modules of [undefined, null, [], "two of them", {}, 3]) {
+    assert.equal(readSnapshot({ ...good, modules }), null, `modules ${JSON.stringify(modules)} must be refused`);
+  }
+});
+
+test("a step missing its title or its outcome is refused, not blanked", () => {
+  const good = snapshotOf(pilot({}), 1);
+  const first = good.modules[0]!;
+  for (const [what, broken] of [
+    ["no title", { ...first, title: undefined }],
+    ["a blank title", { ...first, title: "  " }],
+    ["a numeric title", { ...first, title: 1 }],
+    ["no outcome", { ...first, outcome: undefined }],
+    ["a blank outcome", { ...first, outcome: "" }],
+    ["a blank optional", { ...first, description: "" }],
+    ["not an object at all", "just a string"],
+    ["null", null],
+  ] as const) {
+    assert.equal(readSnapshot({ ...good, modules: [broken, good.modules[1]] }), null,
+      `a step with ${what} must be refused`);
+  }
+});
+
+test("positions must be whole, non-negative, unique and dense", () => {
+  const good = snapshotOf(pilot({}), 1);
+  const [a, b] = good.modules;
+  for (const [what, modules] of [
+    ["a gap", [{ ...a!, position: 0 }, { ...b!, position: 2 }]],
+    ["a duplicate", [{ ...a!, position: 1 }, { ...b!, position: 1 }]],
+    ["a negative", [{ ...a!, position: -1 }, { ...b!, position: 0 }]],
+    ["a fraction", [{ ...a!, position: 0.5 }, { ...b!, position: 1 }]],
+    ["a string", [{ ...a!, position: "0" }, { ...b!, position: 1 }]],
+    ["none at all", [{ ...a!, position: undefined }, { ...b!, position: 1 }]],
+    ["a start at one", [{ ...a!, position: 1 }, { ...b!, position: 2 }]],
+  ] as const) {
+    assert.equal(readSnapshot({ ...good, modules }), null, `${what} must be refused`);
+  }
+  // Out of order is fine — order is what `position` is for. It is put back in order, not renumbered.
+  assert.deepEqual(
+    readSnapshot({ ...good, modules: [{ ...b!, position: 1 }, { ...a!, position: 0 }] })?.modules.map((m) => m.title),
+    [a!.title, b!.title],
+  );
+});
+
+test("a snapshot that could not have been published cannot be read back as published", () => {
+  /*
+    The gate that does not have to be maintained. Shape is checked above; this is content, and it is
+    checked by running the real publish validator rather than repeating its rules — so a rule added
+    to the contract tomorrow guards the read path too.
+  */
+  const exam = snapshotOf(pilot({
+    type: "exam_preparation",
+    referenceName: "Nepal Engineering Council registration examination",
+    referenceSource: "teacher_supplied",
+  }), 1);
+  assert.notEqual(readSnapshot(exam), null, "the honest one reads back");
+
+  assert.equal(readSnapshot({ ...exam, referenceName: null, referenceSource: "none" }), null,
+    "an exam program that names no exam could never have been published");
+  assert.equal(readSnapshot({ ...exam, outcome: "Students are guaranteed to pass." }), null,
+    "nor could one guaranteeing a result");
+  assert.equal(readSnapshot({ ...exam, title: "Short" }), null,
+    "nor one whose title is below the contract's minimum");
+});
+
+test("a snapshot is only served when its version is the one the row says is current", () => {
+  const snapshot = snapshotOf(pilot({}), 2);
+  assert.deepEqual(publishedSnapshotFor({ version: 2, publishedSnapshot: snapshot }), snapshot);
+  /*
+    The row and its snapshot are written by one statement, so a disagreement means they came from
+    different publications — a half-applied write, or a hand-edited row. Serving either half of that
+    is serving a promise nobody made.
+  */
+  assert.equal(publishedSnapshotFor({ version: 3, publishedSnapshot: snapshot }), null, "row ahead");
+  assert.equal(publishedSnapshotFor({ version: 1, publishedSnapshot: snapshot }), null, "row behind");
+  assert.equal(publishedSnapshotFor({ version: 1, publishedSnapshot: null }), null, "nothing published");
+});
+
+test("nothing corrupt is repaired into something that looks unfinished", () => {
+  // The shape of the old failure, stated once as its own test: a snapshot missing everything used
+  // to come back as a readable program with empty strings and no steps.
+  const emptied = { version: 1, type: "custom", referenceSource: "none" };
+  assert.equal(readSnapshot(emptied), null);
+  for (const outer of [null, undefined, "a string", 7, [], [{ version: 1 }]]) {
+    assert.equal(readSnapshot(outer), null, `${JSON.stringify(outer)} is not a snapshot`);
+  }
 });
 
 test("an edit after publication is visible to its author and to nobody else", () => {
