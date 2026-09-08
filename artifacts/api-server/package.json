@@ -27,6 +27,7 @@
     "livekit:check": "node scripts/livekit-check.mjs",
     "test:video": "node scripts/video-tests/run.mjs",
     "test:monthly": "node scripts/monthly-tests/run.mjs",
+    "test:programs": "node scripts/learning-program-tests/run.mjs",
     "test:portal": "node scripts/portal-tests/run.mjs",
     "test:tickets": "node scripts/ticket-tests/run.mjs",
     "test:upgrade": "node scripts/ticket-upgrade/run.mjs",
