@@ -85,3 +85,37 @@ Sikshya typecheck.
 No Phase 2B, student discovery, enrolment, money, scheduling, video/classroom, schema, production
 table, merge or deployment work belongs in this pass. Preserve the accepted Phase 1 code and the
 good Phase 2A UI.
+
+## Final review — commit `2e81c59`
+
+Claude rebased onto this review and corrected the three remaining findings. Phase 2A is now
+**accepted for a branch-preview deployment and owner testing**. This is not yet production approval.
+
+Verified in the final code:
+
+- Web navigation uses a single, bounded history sentinel and a real `popstate` path. It preserves
+  Expo Router's existing history state, does not re-arm under an open question, and distinguishes
+  housekeeping from an actual Back request. The journey uses real browser Back twice, cancellation,
+  confirmed departure, clean Back, and an actual reload dialog.
+- A synchronous `opRef` admits only one write operation. The dispatch boundary also compares the
+  latest draft and accepted draft refs. Lifecycle actions lock editing and every write control;
+  saves block lifecycle dispatch; a second lifecycle request is refused before network work.
+- The Sikshya typecheck now regenerates ignored Expo route declarations from the current `app/`
+  tree using Expo Router's own installed generator before invoking TypeScript.
+
+Independent Codex verification on exact commit `2e81c59`, after temporarily removing the existing
+generated route declaration and restoring the user's prior file afterward:
+
+- `pnpm --dir artifacts/sikshya run typecheck`: pass; the missing route declaration was regenerated.
+- focused Learning Program UI rules: 54 passed, 0 failed.
+- `pnpm --filter @workspace/sikshya run lint:design`: pass, unchanged at 94 hex / 282 raw sizes.
+- `git diff --check bfa35dc..2e81c59`: clean.
+
+Claude reports the full real-API browser journey at 71 checks, the program API suite at 212, the
+render suite at 232, API/app units at 474/315, and the navigation/dashboard suites at 41/6. Codex
+inspected the new deterministic network holds and assertions but did not independently rerun the
+database/browser harness on Windows.
+
+Remaining manual boundary: no real Android hardware Back test, older Android WebView test, or
+Safari back-forward-cache test has occurred. The next safe action is a branch-preview deployment so
+the owner can test the teacher Program flow before any Phase 2B or production integration begins.
