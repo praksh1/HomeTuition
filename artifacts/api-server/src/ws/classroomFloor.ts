@@ -96,12 +96,12 @@ interface RoomFloor {
    */
   speakingSince: Map<number, number>;
   /**
-   * Instructions the provider has not confirmed, keyed `kind:userId`.
+   * One reconciliation record per student, whether or not anything is outstanding.
    *
-   * Empty is the healthy state and means the SFU holds exactly what the floor decided. See
-   * `ProviderSync`.
+   * A record whose `confirmed` equals its `desired` is the healthy state and means the SFU holds
+   * exactly what the floor decided. See `ParticipantSync`.
    */
-  provider: Map<string, ProviderSync>;
+  provider: Map<number, ParticipantSync>;
   /**
    * How to reach the room, kept so a retry that resolves seconds later can still tell everybody.
    *
@@ -304,8 +304,12 @@ export async function floorJoin(
       provider matters more: LiveKit sees a *new* participant on a reconnect, minted from a token
       that permits publishing nothing, so a student who was speaking and dropped would come back
       silent and unable to fix it. Pushing is what restores their standing grant.
+
+      It will very often find them absent, because this is the *classroom* socket and their media
+      connection is seconds behind it. That is now an unconfirmed grant rather than a completed
+      one, and `noteMediaReady` finishes it when their video arrives.
     */
-    if (known) applyRights(sessionId, state, [client.userId]);
+    if (known) syncParticipants(sessionId, state, [client.userId], []);
   }
 
   tellOne(state, client);
@@ -556,223 +560,406 @@ function trackFloorHeld(sessionId: string, state: RoomFloor, candidates: number[
 /* ------------------------------------------------------------------------- */
 
 /**
- * What the provider has been asked for, and whether it agreed.
+ * One participant's reconciliation state — a revision counter and a single running loop.
  *
- * Absent from the map means "in step": the last thing the server asked for is what the SFU has.
- * Anything in the map is an unresolved instruction, and every screen in the class says so.
+ * ## Why a revision rather than a pending flag per instruction
+ *
+ * The previous version kept one entry per `kind:userId` and started a fresh provider call for each
+ * decision, so two decisions a second apart meant two calls in flight with no ordering between
+ * them. Codex's sixth finding: an older answer could clear the pending state belonging to a newer
+ * instruction, and an older retry could fire after a newer decision and re-apply authority the
+ * teacher had already taken back. Tagging each call with an id and discarding stale *answers* does
+ * not fix it — by the time a stale answer is discarded, the stale **write** has already reached the
+ * SFU.
+ *
+ * So no two writes for one participant are ever in flight. `desired` moves on every floor change;
+ * one loop at a time reads it, asks the provider for exactly that, and on returning checks whether
+ * the floor moved underneath it. If it did, the loop goes round again from the *current* state
+ * rather than finishing the instruction it started with. Intermediate states are skipped, which is
+ * correct and is also cheaper: a teacher who invites and then mutes within a second causes one
+ * write, of the mute.
+ *
+ * `confirmed === desired` is the whole definition of "the SFU holds what the classroom decided",
+ * and it is what every screen renders.
  */
-interface ProviderSync {
-  kind: "rights" | "silence";
-  /** `pending` while a retry is still scheduled; `failed` once the attempts are spent. */
-  state: "pending" | "failed";
+interface ParticipantSync {
+  /** Bumped by every floor change that alters what this participant may publish. Monotonic. */
+  desired: number;
+  /** The newest revision the provider has confirmed. Never assigned from a superseded call. */
+  confirmed: number;
+  /** True while this participant's loop is running. Exactly one, which is the whole design. */
+  running: boolean;
+  /** Failed attempts at the **current** desired revision. Reset the moment it moves. */
   attempts: number;
+  /**
+   * Why the last attempt did not stick, which decides how the class is told about it.
+   *
+   * `absent` on a grant is not a failure of the provider — it is a student whose media connection
+   * has not arrived yet — so it reads as still-pending and is resolved by `noteMediaReady` rather
+   * than by calling the class broken. `error` is an outage and becomes visibly failed once the
+   * retry budget is spent.
+   */
+  stalledBy: "none" | "absent" | "error";
   lastError: string;
-  since: number;
+  /**
+   * An instruction to stop tracks that are open **now**, outstanding until it is confirmed.
+   *
+   * Sticky on purpose. Revoking a permission stops somebody publishing *again* and does nothing to
+   * a microphone already open, so a stop that was asked for and never confirmed must survive the
+   * next decision — otherwise a teacher who muted a student and then returned them to the audience
+   * would silently drop the requirement to close a track that may still be running. Only a
+   * decision that permits publishing again clears it, because silencing somebody a moment after
+   * allowing them to speak would undo the grant.
+   */
+  needSilence: boolean;
+  /** Wakes an interruptible backoff, so a newer decision never queues behind an older one's wait. */
+  wake: (() => void) | null;
   timer: ReturnType<typeof setTimeout> | null;
+  /** Bounding `floor_media_ready`: when the last one was accepted, and how many have been. */
+  lastNudge: number;
+  nudges: number;
 }
 
 /**
- * Five attempts over about half a minute, then it stays visibly failed.
+ * Five attempts over about half a minute, then it stops.
  *
  * Bounded on purpose. An unbounded retry against a provider that is genuinely down is a loop that
  * outlives the lesson and hides the problem behind an optimistic "still trying"; stopping and
  * saying so puts the fact in front of the teacher, who can end the class or carry on without the
- * student's microphone. The next action on that student pushes again from scratch either way.
+ * student's microphone. Any later decision starts the budget again.
  */
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
 
-const syncKey = (kind: ProviderSync["kind"], userId: number) => `${kind}:${userId}`;
+/**
+ * How often one student's `floor_media_ready` is allowed to do anything, and how many in a class.
+ *
+ * The frame carries no identity and no authority — see `noteMediaReady` — but it does cause work,
+ * so a client that sent it in a loop would be asking this server to talk to LiveKit in a loop.
+ * Two seconds apart and twenty in a lesson is far more than a real reconnection storm needs and far
+ * less than a useful amount of noise.
+ */
+const MEDIA_READY_MIN_GAP_MS = 2_000;
+const MEDIA_READY_MAX_PER_STUDENT = 20;
+
+function syncFor(state: RoomFloor, userId: number): ParticipantSync {
+  const existing = state.provider.get(userId);
+  if (existing) return existing;
+  const made: ParticipantSync = {
+    desired: 0,
+    confirmed: 0,
+    running: false,
+    attempts: 0,
+    stalledBy: "none",
+    lastError: "",
+    needSilence: false,
+    wake: null,
+    timer: null,
+    lastNudge: 0,
+    nudges: 0,
+  };
+  state.provider.set(userId, made);
+  return made;
+}
 
 /**
  * Is everything the server asked for on this student's behalf actually in force?
  *
- * Read by `trackFloorHeld`, so a grant the SFU never accepted does not start a stopwatch, and by
- * the views, so nobody is told a permission landed when it did not.
+ * Read by `trackFloorHeld`, so a grant the SFU never accepted starts no stopwatch, and by the
+ * views, so nobody is told a permission landed when it did not.
  */
 function providerHolds(state: RoomFloor, userId: number): boolean {
-  return !state.provider.has(syncKey("rights", userId)) && !state.provider.has(syncKey("silence", userId));
+  const s = state.provider.get(userId);
+  return s === undefined || s.confirmed === s.desired;
 }
 
 /** How one person's provider state reads on a screen. Declared with the views it is drawn by. */
 export function providerStateOf(state: RoomFloor, userId: number): ProviderState {
-  const rights = state.provider.get(syncKey("rights", userId));
-  const silence = state.provider.get(syncKey("silence", userId));
-  if (rights?.state === "failed" || silence?.state === "failed") return "failed";
-  if (rights || silence) return "pending";
-  return "ok";
+  const s = state.provider.get(userId);
+  if (!s || s.confirmed === s.desired) return "ok";
+  /*
+    Spent, and it was the provider's fault. Only this reads as failed.
+
+    A grant waiting on a media participant that has not arrived stays `pending` however long it
+    waits, because that is what is true: nothing is broken, the student's video has not connected,
+    and `noteMediaReady` will finish the job when it does. Calling that `failed` would send a
+    teacher chasing an outage that is not happening.
+  */
+  if (!s.running && s.stalledBy === "error" && s.attempts >= RETRY_DELAYS_MS.length) return "failed";
+  return "pending";
 }
 
 /**
- * Mark an instruction as outstanding, *before* the call is made.
+ * Record that what this participant may publish has changed, and invalidate anything older.
  *
- * The correction Codex's second finding is really about. Marking only on failure left a window —
- * however short — in which the row read "in step" while the request was still in flight, and the
- * student's own screen offered them an unmute the SFU had not yet agreed to. Now the sequence is
- * always ask → pending → answer, and "ok" is only ever written by an answer.
- *
- * Attempt count and first-failure time survive across a re-begin so a retry does not reset its own
- * budget and loop for ever.
+ * Called for every user in a decision's effects **before** the room is told, so the broadcast that
+ * follows already says the provider has not caught up. `ok` is only ever written by an answer.
  */
-function beginSync(state: RoomFloor, kind: ProviderSync["kind"], userId: number): void {
-  const key = syncKey(kind, userId);
-  const existing = state.provider.get(key);
-  if (existing?.timer) clearTimeout(existing.timer);
-  state.provider.set(key, {
-    kind,
-    state: "pending",
-    attempts: existing?.attempts ?? 0,
-    lastError: existing?.lastError ?? "",
-    since: existing?.since ?? Date.now(),
-    timer: null,
+function bump(state: RoomFloor, userId: number, wantsSilence: boolean): void {
+  const s = syncFor(state, userId);
+  s.desired += 1;
+  // A new decision gets a fresh budget: the previous one's failures say nothing about this one.
+  s.attempts = 0;
+  s.stalledBy = "none";
+  s.lastError = "";
+
+  const student = state.floor.students.get(userId);
+  const permits = student ? publishRightsFor(student).canPublish : false;
+  s.needSilence = wantsSilence || (s.needSilence && !permits);
+
+  // Cut short any backoff belonging to the instruction this one replaces.
+  const wake = s.wake;
+  s.wake = null;
+  if (wake) wake();
+}
+
+/** A backoff that a newer decision can end early. Resolves on the timer or on `wake`. */
+function backoff(s: ParticipantSync, ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      if (s.timer) clearTimeout(s.timer);
+      s.timer = null;
+      s.wake = null;
+      resolve();
+    };
+    s.wake = done;
+    s.timer = setTimeout(done, ms);
+    // Node must not be held open by a classroom's retry timer.
+    s.timer.unref?.();
   });
 }
 
-function clearSync(state: RoomFloor, kind: ProviderSync["kind"], userId: number): void {
-  const existing = state.provider.get(syncKey(kind, userId));
-  if (!existing) return;
-  if (existing.timer) clearTimeout(existing.timer);
-  state.provider.delete(syncKey(kind, userId));
+type Step = { ok: true } | { ok: false; reason: "absent" | "error"; error: string };
+
+/**
+ * One pass at making the SFU agree with the floor, derived from the floor *at this instant*.
+ *
+ * Nothing is captured from the decision that triggered it. That is what lets the loop above throw
+ * away a superseded instruction: whatever it does next is recomputed here from the current state,
+ * so a stale grant can never be the thing that gets written.
+ *
+ * ## The order, and why it is this way round
+ *
+ * Permission first, then the open track. Stopping a live microphone while its owner is still
+ * permitted to publish leaves them able to switch it straight back on — the mute would look like it
+ * worked and last a second. Revoking first closes the door, and the track is then closed behind it.
+ */
+async function applyOnce(
+  sessionId: string,
+  state: RoomFloor,
+  userId: number,
+  provider: ReturnType<typeof videoProvider>,
+): Promise<Step> {
+  const student = state.floor.students.get(userId);
+  const rights = student
+    ? publishRightsFor(student)
+    : // No row means no permission: a student whose class ended, or who was never on the floor.
+      { canPublish: false, mic: false, camera: false };
+  // Read, never created. A loop still in flight when its class was torn down must not put a record
+  // back into a map that has just been cleared.
+  const sync = state.provider.get(userId);
+
+  if (provider.setPublishing) {
+    const push = await provider.setPublishing(sessionId, userId, rights);
+    if (!push.applied) {
+      if (push.reason === "failed") return { ok: false, reason: "error", error: push.error };
+      /**
+       * Absent, and what that means depends entirely on which way the instruction points.
+       *
+       * **A revocation of somebody who is not in the room is complete.** There is nobody by that
+       * identity to publish anything, and if they arrive they arrive on a token that permits
+       * nothing. Nothing is outstanding.
+       *
+       * **A grant to somebody who is not in the room is not.** Codex's fifth finding, and the
+       * ordering that produces it is ordinary rather than exotic: the classroom WebSocket and the
+       * LiveKit media connection are separate, and a student is on the first for a second or two
+       * before they are on the second. A teacher granting the floor in that window used to be told
+       * it had landed — and it had not, and nothing would ever push it again, so the student sat
+       * there with a locked token and a screen saying they could speak.
+       */
+      if (rights.canPublish) {
+        return {
+          ok: false,
+          reason: "absent",
+          error: "the student's video connection has not reached the class yet",
+        };
+      }
+    }
+  }
+
+  // A grant never carries a stop: `bump` clears it, and this is the second guard on the same rule.
+  if (!sync?.needSilence || rights.canPublish) return { ok: true };
+  if (!provider.silence) return { ok: true };
+
+  const stop = await provider.silence(sessionId, userId);
+  // Absent is a completed silence here for the same reason as above: nobody is publishing.
+  if (stop.applied || stop.reason === "absent") {
+    sync.needSilence = false;
+    return { ok: true };
+  }
+  return { ok: false, reason: "error", error: stop.error };
+}
+
+/**
+ * Run this participant's reconciliation until the provider holds the latest decision.
+ *
+ * Never awaited by a socket handler — a slow provider must not hold up a frame — and never started
+ * twice. A second call while a loop is running is a no-op precisely *because* the running loop
+ * re-reads `desired` after every await and will pick the new revision up itself.
+ */
+function reconcile(sessionId: string, state: RoomFloor, userId: number): void {
+  const sync = syncFor(state, userId);
+  if (sync.running) return;
+
+  const provider = videoProvider();
+  if (!provider.setPublishing) {
+    // Nothing can be enforced, so nothing is outstanding. Daily takes this branch and the floor is
+    // refused long before here anyway; this keeps a provider swap from leaving rows stuck pending.
+    sync.confirmed = sync.desired;
+    return;
+  }
+
+  sync.running = true;
+  void (async () => {
+    try {
+      while (sync.confirmed !== sync.desired) {
+        const revision = sync.desired;
+        const step = await applyOnce(sessionId, state, userId, provider);
+        // The room may have been torn down, or reloaded, while this was in flight.
+        if (floors.get(sessionId) !== state) return;
+        /*
+          Or the *lesson* ended underneath it.
+
+          `restartFloorFor` and `endFloorFor` keep the same room object and clear its records, so
+          the check above does not catch them. A loop holding a record the room has dropped is no
+          longer the authority on anything: it stops rather than reconciling a floor that has been
+          wiped, and rather than writing its answer into an object nothing reads.
+        */
+        if (state.provider.get(userId) !== sync) return;
+        // The floor moved underneath us. Throw this answer away and reconcile the newest state,
+        // which `applyOnce` will read for itself.
+        if (sync.desired !== revision) continue;
+
+        if (step.ok) {
+          sync.confirmed = revision;
+          sync.attempts = 0;
+          sync.stalledBy = "none";
+          sync.lastError = "";
+          // The stopwatch only runs on a grant the SFU actually holds.
+          trackFloorHeld(sessionId, state, [userId]);
+          announce(state);
+          continue;
+        }
+
+        sync.attempts += 1;
+        sync.stalledBy = step.reason;
+        sync.lastError = step.error;
+        trackFloorHeld(sessionId, state, [userId]);
+        announce(state);
+
+        const delay = RETRY_DELAYS_MS[sync.attempts - 1];
+        if (delay === undefined) {
+          logger.warn(
+            { sessionId, userId, reason: step.reason, error: step.error },
+            step.reason === "absent"
+              ? "a grant is waiting for the student's video to reach the class; the room has been told"
+              : "gave up asking the video provider to apply a floor decision; the class is being told",
+          );
+          return;
+        }
+        await backoff(sync, delay);
+        if (floors.get(sessionId) !== state) return;
+      }
+    } finally {
+      sync.running = false;
+    }
+  })();
+}
+
+/**
+ * Push what the floor says for these people, and stop any track the decision closed.
+ *
+ * Two passes on purpose: every revision moves before any provider call starts, so the state the
+ * caller is about to broadcast is already the truth about all of them rather than about whichever
+ * one happened to be reconciled first.
+ */
+function syncParticipants(
+  sessionId: string,
+  state: RoomFloor,
+  push: readonly number[],
+  silence: readonly number[],
+): void {
+  const stopping = new Set(silence);
+  const everyone = new Set([...push, ...silence]);
+  for (const userId of everyone) bump(state, userId, stopping.has(userId));
+  for (const userId of everyone) reconcile(sessionId, state, userId);
+}
+
+/**
+ * The student's own client saying its media connection is up — a nudge, and nothing else.
+ *
+ * ## What it is allowed to be
+ *
+ * The gap Codex's fifth finding leaves open is that nothing on this server knows when a student's
+ * LiveKit participant appears. `floorJoin` is a *classroom socket* hook and fires earlier; LiveKit
+ * webhooks would be the authoritative answer and are a separate piece of work with its own
+ * configuration (see the note in `livekitProvider.ts`). So the client says when its own media is
+ * ready, and this is written so that a client saying it dishonestly, or a thousand times, gains
+ * nothing:
+ *
+ * - **Identity comes from the authenticated socket**, never from the frame. The frame has no body.
+ * - **The rights come from the floor**, recomputed by `applyOnce`. This grants nothing and cannot:
+ *   it does not move `desired`, so a student with nothing outstanding causes exactly one map
+ *   lookup and no provider call at all.
+ * - **It is bounded**: a minimum gap between accepted nudges and a ceiling per student per class.
+ *
+ * The most a client can do with it is ask this server to re-attempt a decision its own teacher
+ * already made — which is the entire point.
+ */
+function noteMediaReady(sessionId: string, room: RoomPort, client: FloorClient): void {
+  const state = floors.get(sessionId);
+  if (!state || client.isSessionTeacher) return;
+  state.room = room;
+
+  const sync = state.provider.get(client.userId);
+  // Nothing has ever been asked of the provider for them, so there is nothing to re-attempt.
+  if (!sync || sync.confirmed === sync.desired) return;
+
+  const now = Date.now();
+  if (now - sync.lastNudge < MEDIA_READY_MIN_GAP_MS) return;
+  if (sync.nudges >= MEDIA_READY_MAX_PER_STUDENT) return;
+  sync.lastNudge = now;
+  sync.nudges += 1;
+
+  /*
+    A fresh retry budget, but only for the one stall this signal is about.
+
+    A grant stalled on an absent participant is stalled on precisely the thing that has just
+    arrived, so starting again is the right response. A grant stalled on an outage is not, and
+    resetting there would let a client turn a bounded retry into an unbounded one.
+  */
+  if (sync.stalledBy === "absent") sync.attempts = 0;
+  const wake = sync.wake;
+  sync.wake = null;
+  if (wake) wake();
+  reconcile(sessionId, state, client.userId);
 }
 
 /** Drop every outstanding instruction for a room. Called when its floor is torn down. */
 function clearAllSync(state: RoomFloor): void {
-  for (const entry of state.provider.values()) if (entry.timer) clearTimeout(entry.timer);
-  state.provider.clear();
-}
-
-/**
- * Record a failure, schedule the retry, and tell the room.
- *
- * The retry recomputes the instruction **from the floor as it stands at that moment**, never from
- * a value captured when the failure happened. A teacher who muted a student and then returned them
- * to the audience must not have the mute retried into a state that has moved on.
- */
-function markFailed(
-  sessionId: string,
-  state: RoomFloor,
-  kind: ProviderSync["kind"],
-  userId: number,
-  error: string,
-): void {
-  const key = syncKey(kind, userId);
-  const existing = state.provider.get(key);
-  const attempts = (existing?.attempts ?? 0) + 1;
-  if (existing?.timer) clearTimeout(existing.timer);
-
-  const delay = RETRY_DELAYS_MS[attempts - 1];
-  const entry: ProviderSync = {
-    kind,
-    state: delay === undefined ? "failed" : "pending",
-    attempts,
-    lastError: error,
-    since: existing?.since ?? Date.now(),
-    timer: null,
-  };
-  state.provider.set(key, entry);
-
-  if (delay !== undefined) {
-    entry.timer = setTimeout(() => {
-      entry.timer = null;
-      // The room may have been torn down while this was waiting.
-      if (floors.get(sessionId) !== state) return;
-      if (kind === "rights") void applyRights(sessionId, state, [userId]);
-      else void applySilence(sessionId, state, [userId]);
-    }, delay);
-    // Node must not be held open by a classroom's retry timer.
-    entry.timer.unref?.();
-  } else {
-    logger.error(
-      { sessionId, userId, kind, error },
-      "gave up asking the video provider to apply a floor decision; the class is being told",
-    );
-  }
-  announce(state);
-}
-
-/**
- * Hand the floor's decision to whoever is carrying the media, and find out whether it took.
- *
- * ## Why the promise is no longer thrown away
- *
- * It used to be. The floor moved, the class was told immediately, and a failed call produced one
- * log line — so a student could be told they may speak while LiveKit still refused them, and a
- * teacher could be told a student was muted while an open microphone carried on. The comment said
- * "the provider catches up"; nothing implemented that.
- *
- * Now the outcome decides what the class is told. `absent` is accepted and needs no retry: a
- * student who is not in the SFU's room holds a token that permits publishing nothing, and
- * `floorJoin` re-pushes their standing grant the moment they come back. `failed` is kept, shown
- * and retried.
- *
- * Still not awaited by the socket handler — a slow provider must not hold up the frame — but the
- * screens now learn the truth a moment later instead of never.
- */
-function applyRights(sessionId: string, state: RoomFloor, userIds: number[]): void {
-  const provider = videoProvider();
-  if (!provider.setPublishing || userIds.length === 0) return;
-  for (const userId of userIds) {
-    const student = state.floor.students.get(userId);
-    if (!student) {
-      // Nothing left to enforce — the row went with the class or the person.
-      clearSync(state, "rights", userId);
-      continue;
-    }
-    const rights = publishRightsFor(student);
-    const setPublishing = provider.setPublishing.bind(provider);
+  for (const entry of state.provider.values()) {
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = null;
     /*
-      Pending first, synchronously, so the broadcast the caller is about to send already says so.
-      `handleFloorFrame` calls this before it tells the room, which is what makes one round trip
-      enough for the honest answer rather than two.
-    */
-    beginSync(state, "rights", userId);
-    void setPublishing(sessionId, userId, rights)
-      .then((outcome) => {
-        if (floors.get(sessionId) !== state) return;
-        if (outcome.applied || outcome.reason === "absent") {
-          clearSync(state, "rights", userId);
-          // The stopwatch only runs on a grant the SFU actually holds.
-          trackFloorHeld(sessionId, state, [userId]);
-          announce(state);
-          return;
-        }
-        markFailed(sessionId, state, "rights", userId, outcome.error);
-      })
-      .catch((err: unknown) => {
-        if (floors.get(sessionId) !== state) return;
-        markFailed(sessionId, state, "rights", userId, err instanceof Error ? err.message : String(err));
-      });
-  }
-}
+      Woken rather than left hanging.
 
-/**
- * Stop tracks that are open right now, and keep trying until they are.
- *
- * Revoking a permission stops somebody publishing *again*; it does nothing to a microphone that is
- * already open. This is the half that fails **closed**: while a stop has not been confirmed, the
- * student is not reported as silenced to anybody, and the teacher's list says so.
- */
-function applySilence(sessionId: string, state: RoomFloor, userIds: number[]): void {
-  const provider = videoProvider();
-  if (!provider.silence || userIds.length === 0) return;
-  for (const userId of userIds) {
-    const silence = provider.silence.bind(provider);
-    beginSync(state, "silence", userId);
-    void silence(sessionId, userId)
-      .then((outcome) => {
-        if (floors.get(sessionId) !== state) return;
-        if (outcome.applied || outcome.reason === "absent") {
-          clearSync(state, "silence", userId);
-          trackFloorHeld(sessionId, state, [userId]);
-          announce(state);
-          return;
-        }
-        markFailed(sessionId, state, "silence", userId, outcome.error);
-      })
-      .catch((err: unknown) => {
-        if (floors.get(sessionId) !== state) return;
-        markFailed(sessionId, state, "silence", userId, err instanceof Error ? err.message : String(err));
-      });
+      A loop parked in `backoff` when its class ends would otherwise sit on a promise nobody will
+      resolve for up to sixteen seconds. It wakes, sees the floor is gone, and returns.
+    */
+    const wake = entry.wake;
+    entry.wake = null;
+    if (wake) wake();
   }
+  state.provider.clear();
 }
 
 /* ------------------------------------------------------------------------- */
@@ -781,8 +968,16 @@ function applySilence(sessionId: string, state: RoomFloor, userIds: number[]): v
 
 /** Whether the hub should stop looking at this frame. False means "not a floor message". */
 export function isFloorFrame(msg: Record<string, unknown>): boolean {
-  return readFloorMessage(msg).kind !== "other";
+  return msg.type === MEDIA_READY_FRAME || readFloorMessage(msg).kind !== "other";
 }
+
+/**
+ * The frame a client sends when its own video connection is up.
+ *
+ * Carries nothing but its own name — deliberately. See `noteMediaReady` for why a body would be a
+ * mistake and what the server does with it instead.
+ */
+export const MEDIA_READY_FRAME = "floor_media_ready";
 
 /**
  * Handle one floor frame from one authenticated socket.
@@ -797,6 +992,19 @@ export async function handleFloorFrame(
   client: FloorClient,
   msg: Record<string, unknown>,
 ): Promise<void> {
+  /*
+    Handled before anything else, because it is not a request and has no authority to check.
+
+    It asks for nothing; it says a fact about the sender's own connection, and the only thing this
+    server does with it is re-attempt a decision the teacher already made. It is answered even
+    while the class is past its cutoff: what is outstanding there is a *revocation*, and finishing
+    one late is always right.
+  */
+  if (msg.type === MEDIA_READY_FRAME) {
+    if (floorAvailable()) noteMediaReady(sessionId, room, client);
+    return;
+  }
+
   const parsed = readFloorMessage(msg);
   if (parsed.kind === "other") return;
 
@@ -857,8 +1065,7 @@ export async function handleFloorFrame(
 
   // The provider first: a permission the class has been told about but the SFU has not is a
   // student pressing "unmute" and being refused by LiveKit while their screen says they may.
-  applyRights(sessionId, state, outcome.push);
-  applySilence(sessionId, state, outcome.silence);
+  syncParticipants(sessionId, state, outcome.push, outcome.silence);
 
   trackFloorHeld(sessionId, state, outcome.touched);
   if (parsed.request.action === "ask") noteAsk(sessionId, state, client.userId);

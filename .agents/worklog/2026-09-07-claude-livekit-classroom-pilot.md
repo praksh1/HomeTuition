@@ -692,3 +692,241 @@ Unverified, and none of it is verifiable from this container:
 
 Next: Codex re-review of this branch. The Learning Program Phase 1 task is queued behind it on
 `claude/learning-program-phase1`.
+
+---
+
+# Stage five — Codex's two re-review blockers, corrected
+
+- Date: 2026-09-08
+- Agent: claude
+- Branch: `claude/livekit-classroom-pilot`
+- Base commit: `1c33c58`
+- Status: complete, awaiting Codex re-review. Not merged, not deployed.
+
+## Requested
+
+Codex re-reviewed `1c33c58` (`origin/codex/learning-program-foundation` at `5dc1ff7`), confirmed the
+original four findings were materially fixed, and raised two more:
+
+**5 — `absent` is treated as success for a grant.** The classroom WebSocket and the LiveKit media
+connection are separate, and the first comes up before the second. A teacher granting the floor in
+that gap gets `absent` from `updateParticipant`; the server cleared its pending state and drew the
+grant as healthy. The student's token still permitted publishing nothing, and nothing would ever
+push again — `floorJoin` is a classroom-socket hook, not a media-participant hook.
+
+**6 — overlapping asynchronous provider operations can finish out of order.** `beginSync` replaced
+a `kind:userId` entry, but the promises and timers it replaced carried no identity, so an older
+success could clear a newer instruction's pending state and an older retry could fire after a newer
+decision. The brief was explicit that an operation id plus discarding stale *answers* is not a fix:
+by the time the answer is discarded, the stale **write** has already reached the SFU.
+
+Constraints unchanged: no merge, no deploy, no provider change, nothing in payments, schema or
+Learning Programs, no unrelated redesign.
+
+## Changed
+
+### The provider layer is now a per-participant serialized reconciler
+
+`api-server/src/ws/classroomFloor.ts`. `ProviderSync` (per `kind:userId`) is replaced by
+`ParticipantSync` (per user):
+
+- **`desired` moves on every floor change** that alters what that participant may publish; `bump`
+  does it before the room is told, so the broadcast already says the provider has not caught up.
+- **`confirmed` is only ever written by an answer to the revision that produced it.** `ok` on any
+  screen is exactly `confirmed === desired`.
+- **One loop per participant, and one write in flight.** `reconcile` refuses to start a second; a
+  running loop re-reads `desired` after every await, and if the floor moved it throws its own
+  answer away and goes round again from the current state. So a second write is not merely ignored
+  when it returns — it is never issued. That is what makes finding 6's "the stale write may already
+  have reached LiveKit" unreachable rather than merely handled.
+- **`applyOnce` derives everything from the floor at that instant**, capturing nothing from the
+  decision that triggered it. A stale grant cannot be the thing that gets written because no
+  instruction is carried across an await.
+- **Ordering inside one step**: permission first, then the open track. Stopping a live microphone
+  while its owner is still permitted to publish leaves them able to switch it straight back on.
+- **Cross-kind ordering** falls out of the same property: an old `silence` and a newer grant cannot
+  race, because they are steps of one loop. `needSilence` is sticky until confirmed — a stop that
+  was asked for and never confirmed survives the next decision — except that a decision permitting
+  publishing clears it, since silencing somebody a moment after allowing them to speak would undo
+  the grant.
+- **The backoff is interruptible.** A newer decision wakes it rather than queueing behind up to
+  sixteen seconds of an older instruction's wait.
+- Intermediate states are coalesced. Four decisions taken while one write is open produce one
+  further write, of the last of them.
+
+### `absent` now means what it means, which depends on direction
+
+In `applyOnce`: a revocation of an absent participant is complete — nobody by that identity can
+publish, and if they arrive they arrive on a token permitting nothing. A **grant** to an absent
+participant is not, and stays outstanding.
+
+Such a grant reads `pending`, never `failed`, however long it waits: nothing is broken, the
+student's video has not connected. `providerStateOf` distinguishes `stalledBy: "absent"` from
+`"error"` for exactly that reason — telling a teacher a class is broken when it is not sends them
+chasing an outage that is not happening.
+
+### The signal that finishes it: `floor_media_ready`
+
+The bounded retry alone is not enough, as the brief says: a media connection that arrives after the
+budget is spent would never be reconciled. LiveKit webhooks would be the authoritative answer and
+are separate work with their own configuration, so the client says when its own media is up:
+
+- `LiveKitEmbed.web.tsx` fires `onMediaReady` on every arrival at `connected`, reconnections
+  included — to LiveKit a reconnection is a new participant on the same locked token.
+- `VideoCall.tsx` passes it through; Daily ignores it and is untouched.
+- `useClassroomSocket` sends `{ type: "floor_media_ready" }` — no payload at all.
+- `noteMediaReady` takes the **identity from the authenticated socket** and the **rights from the
+  floor**. It does not move `desired`, so it cannot grant anything; the most it can do is ask for a
+  decision the teacher already made to be re-attempted. A student with nothing outstanding causes
+  one map lookup and no provider call. It is rate-limited (2 s between accepted nudges) and capped
+  (20 per student per class), and it only refreshes the retry budget when the stall was `absent` —
+  refreshing on an outage would turn a bounded retry into an unbounded one on a client's say-so.
+
+### Two smaller things found while reviewing the new code
+
+- **`applyOnce` read its record through `syncFor`**, which creates on demand — so a loop still in
+  flight when its class was torn down would put a record back into a just-cleared map. It now reads
+  without creating.
+- **A torn-down lesson could not be noticed by a running loop.** `restartFloorFor` and
+  `endFloorFor` keep the same room object and clear its records, so the existing "is my room still
+  the current one" check missed them. The loop now also checks that the record it holds is still
+  the one the room has, and stops if not. Both have a regression test.
+
+## Decisions and assumptions
+
+- **Serialization over generation ids.** Codex suggested tagging instructions and ignoring stale
+  completions; the brief then ruled that out, and it is right to — an ignored answer says nothing
+  about a write that already landed. One write in flight per participant is a stronger property and
+  a simpler one to state.
+- **A stalled grant stays `pending` for ever rather than becoming `failed`.** It is true, it is
+  visible, and the teacher can press again. A false `failed` would be a new version of the same
+  defect: a screen asserting something the server does not know.
+- **The media-ready frame is a nudge, not a request.** It has no body precisely so that no future
+  reader is tempted to trust one.
+- **`nudges` is never reset**, so a class is bounded at 20 accepted signals per student even across
+  many reconnections. A student who reconnects a twenty-first time relies on the teacher acting
+  again — bounded work matters more than the last unit of convenience here.
+
+## Verification
+
+Everything below was run in this session against a real `livekit-server` v1.13.6 and a real
+Postgres. The container had been recycled, so Postgres, the LiveKit dev server and the API were all
+restarted first; `test:livekit-live` needs port 7880 to itself and the dev server was stopped for
+it, which is the same trap this log has now recorded four times.
+
+| Gate | Result |
+| --- | --- |
+| `pnpm run typecheck` (4 packages) | clean |
+| api-server units | 555 passed, 0 failed |
+| app units | 315 passed, 0 failed |
+| `test:floor` (real DB + recording LiveKit stub) | **134 passed, 0 failed** (96 before) |
+| `test:floor-ui` (rendered, 4 widths) | 216 passed, 0 failed |
+| `test:livekit` | 92 passed, 0 failed |
+| `test:lobby` | 90 passed, 0 failed |
+| `test:classroom` | 47 passed, 0 failed |
+| `test:floor-live` (three real browsers, real API + DB) | **51 passed, 0 failed** (50 before) |
+| `test:livekit-live` (real SFU, real cameras) | 41 passed, 0 failed |
+| `lint:design` | unchanged at 99 hex / 294 sizes |
+| `git diff --check` | clean |
+
+### The new tests fail against `1c33c58`
+
+Required by the brief and done properly: `src/ws/classroomFloor.ts` was replaced with the version
+from `1c33c58`, leaving the new suite in place, and the suite run. **118 passed, 14 failed**, and
+every failure names one of the two findings:
+
+- `a grant to somebody the SFU has never seen is not reported as applied` — old code answered
+  `provider: "ok"`. Finding 5, exactly.
+- `the media-ready signal makes the server try again` — no such frame existed; it came back
+  `floor_refused / unknown-action` and nothing was retried.
+- `the second decision does not start a second write while the first is open — 2 writes` — two
+  concurrent writes for one participant.
+- `the older answer does not confirm the newer decision` — the stale answer marked the newer
+  instruction as in step. Finding 6, exactly.
+- `the outstanding stop does not follow the grant and silence them again — ["TR_cam_1026"]` — an
+  old `silence` muting a student the teacher had just re-granted. The cross-kind case.
+- `four more decisions start no further writes while one is open — 5` — no coalescing.
+
+Restored, the same suite is 134 / 0.
+
+### How the ordering tests are made deterministic
+
+The fake LiveKit gained a `hold` mode: it parks the HTTP response and the test releases it by hand.
+So "an older answer arrives after a newer decision" is staged rather than waited for, and none of
+these tests depend on a timeout being long enough on the machine running them. The required
+orderings are covered:
+
+1. grant → revoke, with the grant's answer released after the revoke was taken;
+2. mute (with an outstanding stop) → grant, with the old silence's answer arriving last;
+3. an old retry firing after a newer decision, during a real backoff;
+4. the provider's final recorded rights checked against the latest floor state in each;
+5. `provider` never reading `ok` for an unconfirmed latest revision, asserted at each step;
+6. no stale retry restoring authority the teacher took back.
+
+Finding 5's required ordering is tested in the order it happens: classroom socket connected →
+teacher grants → provider answers absent → media participant appears → the grant becomes applied,
+with no second raised hand, no classroom reconnect and no further teacher action. Plus: fifty
+media-ready frames in a row buy at most one extra attempt; a student with nothing outstanding
+causes no provider traffic at all; and a teacher's media-ready does not finish a student's grant.
+
+## Problems and surprises
+
+- **Seven of my own new checks failed first time, all from one mistake**: I filtered the recorded
+  Twirp calls on an identity of `u<id>`, and `providerUserId` is the bare account id. Worth
+  recording because the failure looked like six different problems and was one.
+- **This suite's own file header was wrong, and I had written it.** It said neither browser joins
+  the LiveKit room. They do — each classroom screen mounts the real embed against the real
+  `livekit-server` — which is why a grant there comes back `applied` rather than `absent`. Under
+  the old code that distinction was invisible, because both were drawn as success; under the new
+  code the difference is load-bearing, so the claim had to be checked rather than inherited. It is
+  now asserted (`the teacher's row shows nothing outstanding against the provider`) and the header
+  says what is actually true: media never flows here because no device is ever granted, and that
+  is what `livekit-live` is for.
+- **One of my new assertions was wrong about `endFloorFor`.** It checked the teacher's last
+  received `floor_state`, which predates the wipe because `endFloorFor` does not broadcast. Fixed
+  to read the server's own floor. A test asserting on a message when it meant to assert on state.
+- Postgres, LiveKit and the API were all down at the start of this session — the container is
+  recycled between sessions and nothing in the repo restarts them. Worth knowing before assuming a
+  suite is broken.
+
+## Fabrications found
+
+One, mine, and it was in this worklog's own suite rather than in the product: the
+`floor-live-tests` header asserted a fact about the test environment ("no browser joins the LiveKit
+room") that was not true and that nothing checked. Nothing user-facing depended on it, but it is
+the same defect class — a confident sentence with no evidence under it — so it is corrected and now
+has an assertion holding it up. Not added to `ui-upgrade-progress.md`, which tracks things users
+were shown; this one only ever misled a reviewer.
+
+## Deliberately not changed
+
+- Payments, booking, membership, Learning Programs, pricing, schema, production configuration,
+  `VIDEO_PROVIDER`.
+- Daily. It implements neither `setPublishing` nor `silence`, takes no `onMediaReady`, and the
+  floor is refused outright where `moderatesPublishing` is false.
+- The security properties from earlier stages, all still in force and still covered: a student's
+  token publishes nothing; identity and authority are server-derived; pay-as-you-go remains
+  ineligible for discussion; activation closes at the booked finish; evidence is
+  `classroom.floor.held` with `speechConfirmed: false`.
+- LiveKit webhook ingestion, which would be the authoritative "participant connected" signal. It
+  needs SFU-side configuration and signature verification of its own — a separate piece of work,
+  named in `livekitProvider.ts` and in SESSION-PROOF.md.
+
+## Remaining risks / next pickup point
+
+- **No LiveKit Cloud.** Cloud's error shapes are assumed to match the ones measured against a local
+  server. Misreading a real failure as `absent` would now be *safer* than before for a grant (it
+  stays pending) and is still the classification to check first if Cloud behaves differently.
+- **The media-ready signal is untested on a real phone or a bad network**, and it is the mechanism
+  that closes finding 5 outside the retry budget. On the web it is exercised by `floor-live-tests`
+  only incidentally — the browsers there connect fast enough that grants are applied first time, so
+  the staged ordering lives in `floor-tests` against the stub.
+- **A client that never sends it** — an older app build against this server — falls back to the
+  bounded retry, so a grant made in the first thirty seconds of a slow media connection can end up
+  pending until the teacher acts again. Visible and honest, but a real reduction in convenience for
+  a stale client.
+- No real phone, no Kathmandu latency, no provider media telemetry. The four missing schema facts
+  under `7a164ef` still block the commercial half of entitlement.
+
+Next: Codex re-review. The Learning Program Phase 1 task stays queued on
+`claude/learning-program-phase1`.

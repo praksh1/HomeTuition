@@ -1160,6 +1160,12 @@ export default function StudentClassroom() {
                   displayName={studentName}
                   style={StyleSheet.absoluteFill}
                   onLeft={handleDailyLeft}
+                  /*
+                    The classroom socket is up long before this is, and a grant made in that gap
+                    reaches LiveKit before the student's participant does. The server keeps such a
+                    grant pending rather than reporting it done; this is what tells it to finish.
+                  */
+                  onMediaReady={floorActions.mediaReady}
                   watchUserName={session?.teacherName}
                   onWatchedParticipantLeft={notifyTeacherLeft}
                   teacherUserId={teacherParticipantId}

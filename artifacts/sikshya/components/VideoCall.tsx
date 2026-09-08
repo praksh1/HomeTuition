@@ -28,6 +28,14 @@ export interface VideoCallProps {
   style?: StyleProp<ViewStyle>;
   /** The instant the local person leaves the call. */
   onLeft?: () => void;
+  /**
+   * The instant this device's media connection comes up.
+   *
+   * Only a provider whose permissions the server can change mid-call has anything to do with it,
+   * so Daily ignores it — and on Daily every participant may unmute themselves anyway, which is
+   * why there is no grant to be waiting on. The classroom passes it to the floor.
+   */
+  onMediaReady?: () => void;
   /** Watch for one named participant leaving — how a student learns the teacher has gone. */
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
@@ -91,6 +99,7 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
           displayName={props.displayName}
           style={props.style}
           onLeft={props.onLeft}
+          onMediaReady={props.onMediaReady}
           watchUserName={props.watchUserName}
           onWatchedParticipantLeft={props.onWatchedParticipantLeft}
           canScreenShare={props.canScreenShare}

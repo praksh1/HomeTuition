@@ -157,6 +157,20 @@ export interface FloorActions {
   /* A student, about their own place */
   ask: () => void;
   cancelAsk: () => void;
+  /**
+   * "My video is connected now." A fact about this device, and not a request for anything.
+   *
+   * The classroom socket and the video connection are separate, and this one comes up first — so a
+   * teacher who grants the floor in the gap is granting it to somebody the SFU has never heard of.
+   * The server used to record that as done; it now leaves it pending and finishes it when this
+   * arrives.
+   *
+   * It carries no payload, deliberately. The server takes the identity from this authenticated
+   * socket and the rights from its own floor, so the most a client can do with it is ask for a
+   * decision its teacher already made to be re-attempted. Sending it in a loop achieves nothing:
+   * the server rate-limits and caps it.
+   */
+  mediaReady: () => void;
   /** Answer an invitation, or switch on what the teacher has already permitted. */
   accept: (scope: InvitationScope) => void;
   /**
@@ -823,6 +837,15 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     return {
       ask: () => ask({ type: "floor_ask" }),
       cancelAsk: () => ask({ type: "floor_cancel_ask" }),
+      /*
+        Sent bare, and without clearing a refusal.
+
+        Every other action here is something the person did, so it replaces whatever the server
+        last said no to. This one is the device talking about itself while the person is reading
+        that message, and wiping it off their screen would be this app losing an answer they
+        asked for.
+      */
+      mediaReady: () => send({ type: "floor_media_ready" }),
       accept: (scope) => ask({ type: "floor_accept", scope }),
       setMic: (on) => ask({ type: "floor_accept", mic: on }),
       setCamera: (on) => ask({ type: "floor_accept", camera: on }),

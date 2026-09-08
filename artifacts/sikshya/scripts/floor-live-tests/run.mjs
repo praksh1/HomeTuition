@@ -22,15 +22,20 @@
  * in the lobby, neither of whom reconnects and neither of whom raises a hand before the class
  * starts. That is the shape the failure needs to be visible.
  *
- * ## What it deliberately does not prove
+ * ## What it proves about the provider, and what it does not
  *
- * That media flows. No browser joins the LiveKit room — that needs cameras, and
- * `scripts/livekit-live` already does it. The API is pointed at a real `livekit-server` so
- * `moderatesPublishing` is true and the permission push goes somewhere real, but the participants
- * are not in that room, so the push finds nobody. That is a truthful outcome the server is written
- * to tolerate — `absent`, not `failed` — and the exact shape of the request it sends, along with
- * every provider failure and retry path, is asserted by `api-server/scripts/floor-tests` against a
- * recording stub.
+ * The browsers **do** join the LiveKit room — each classroom screen mounts the real embed against
+ * the real `livekit-server`, so a permission push names a participant that is genuinely there and
+ * comes back applied. An earlier version of this comment said the opposite and was wrong; it is
+ * now asserted rather than assumed, in section 3, because a grant the provider has not confirmed
+ * withholds the student's buttons and would fail the checks around it.
+ *
+ * What it does not prove is that **media flows**: nothing here grants a camera or a microphone to
+ * the browser, so no track is ever published. That is `scripts/livekit-live`, with real devices.
+ * Nor can it stage the orderings the reconciler is built for — a grant that arrives before the
+ * student's media does, two decisions crossing, a stale retry — because those need the provider's
+ * answer held open by hand. `api-server/scripts/floor-tests` does exactly that against a recording
+ * stub, and is where findings 5 and 6 are proved.
  *
  * Needs a built app and an API running with LiveKit configured:
  *   EXPO_PUBLIC_API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/sikshya run build
@@ -336,6 +341,19 @@ async function main() {
   const invited = await textOf(s.page, "student-floor-title");
   check("and it reads as their teacher asking them, not as a setting changing",
     /asked you to speak/i.test(invited), invited);
+
+  /*
+    The grant reached a real SFU and a real participant, and the class was told so.
+
+    Worth asserting out loud rather than inferred from the sentence above. A grant the provider has
+    not confirmed now withholds those buttons and says "Switching your microphone on…" instead, so
+    the invitation being drawn at all means `livekit-server` accepted `updateParticipant` for a
+    participant that was actually in the room — which is only true because both browsers really do
+    join it. The file header used to claim they did not.
+  */
+  check("the teacher's row shows nothing outstanding against the provider",
+    (await t.page.locator(`[data-testid="participant-provider-${student.user.id}"]`).count()) === 0,
+    await textOf(t.page, `participant-provider-${student.user.id}`));
 
   console.log("\n[4] The student accepts, and the class agrees about it");
   await s.page.locator('[data-testid="student-floor-accept-mic"]').click();

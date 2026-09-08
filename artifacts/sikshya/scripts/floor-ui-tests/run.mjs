@@ -51,6 +51,7 @@ window.__sent = [];
 const record = (name) => (...args) => { window.__sent.push({ name, args }); };
 const actions = {
   ask: record("ask"), cancelAsk: record("cancelAsk"), accept: record("accept"),
+  mediaReady: record("mediaReady"),
   setMic: record("setMic"), setCamera: record("setCamera"), decline: record("decline"),
   listenOnly: record("listenOnly"), joinDiscussion: record("joinDiscussion"),
   leaveDiscussion: record("leaveDiscussion"), allow: record("allow"), dismiss: record("dismiss"),

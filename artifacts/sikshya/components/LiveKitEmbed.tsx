@@ -39,6 +39,13 @@ export interface LiveKitEmbedProps {
   meetingToken?: string | null;
   displayName: string;
   onLeft?: () => void;
+  /**
+   * Accepted and never called here, because this build never connects.
+   *
+   * It stays in the contract for the same reason the chat props do — one prop list for both
+   * platforms — and its absence is honest: there is no media connection on a phone to report.
+   */
+  onMediaReady?: () => void;
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
   style?: StyleProp<ViewStyle>;

@@ -108,6 +108,18 @@ interface Props {
   meetingToken?: string | null;
   displayName: string;
   onLeft?: () => void;
+  /**
+   * This device's media connection has come up, and the classroom needs to hear about it.
+   *
+   * The classroom WebSocket connects first and the SFU connection follows a moment later, so a
+   * teacher granting the floor in that gap grants it to somebody LiveKit has never seen. The
+   * server keeps such a grant pending rather than pretending, and this is what tells it to finish.
+   *
+   * Fired on every arrival at `connected`, reconnections included — a reconnection is a *new*
+   * participant to LiveKit, minted from the same locked token, so the standing grant has to be
+   * pushed again. The server bounds how often it will act on it.
+   */
+  onMediaReady?: () => void;
   /** Watch for one named person leaving — how a student learns the teacher has gone. */
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
@@ -469,6 +481,7 @@ export default function LiveKitEmbed({
   meetingToken,
   displayName,
   onLeft,
+  onMediaReady,
   watchUserName,
   onWatchedParticipantLeft,
   canScreenShare,
@@ -495,9 +508,11 @@ export default function LiveKitEmbed({
   const onLeftRef = useRef(onLeft);
   const onWatchedLeftRef = useRef(onWatchedParticipantLeft);
   const watchNameRef = useRef(watchUserName);
+  const onMediaReadyRef = useRef(onMediaReady);
   onLeftRef.current = onLeft;
   onWatchedLeftRef.current = onWatchedParticipantLeft;
   watchNameRef.current = watchUserName;
+  onMediaReadyRef.current = onMediaReady;
 
   /** Whether the watched person has ever been seen, so their absence means something. */
   const watchedSeen = useRef(false);
@@ -553,6 +568,16 @@ export default function LiveKitEmbed({
           live.onConnectionStateChange((state) => {
             setConnection(state);
             if (state === "disconnected") announceOnce();
+            /*
+              Every arrival at `connected`, not only the first.
+
+              To LiveKit a reconnection is a *new* participant, minted from the same token — which
+              for a student permits publishing nothing. So a student who was speaking, dropped and
+              came back needs their standing grant pushed again, and this is what asks for it. The
+              server decides whether anything is actually outstanding; announcing it when nothing
+              is costs one frame and no provider call at all.
+            */
+            if (state === "connected") onMediaReadyRef.current?.();
           }),
         );
         cleanups.push(
