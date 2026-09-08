@@ -445,6 +445,44 @@ export default function TeacherDashboard() {
         <Feather name="chevron-right" size={20} color={colors.inkFaint} />
       </TouchableOpacity>
 
+      {/*
+        The way in to Learning Programs.
+
+        Beside the monthly class rather than in the tab bar: the bar already holds six and the note
+        in `_layout.tsx` records why a seventh is a squeeze on a cheap Android. A program is the
+        same shape of thing as a monthly class — written once, then lived inside — so it belongs in
+        the same place, and the sentence under it says what a program is, because a teacher who has
+        never made one has every reason to think it is another word for a class.
+      */}
+      <TouchableOpacity
+        testID="teacher-programs-entry"
+        style={[
+          styles.monthlyEntry,
+          {
+            backgroundColor: colors.card,
+            borderColor: colors.border,
+            borderRadius: radius.md,
+            padding: space.md,
+            gap: space.sm,
+          },
+        ]}
+        onPress={() => router.push("/(teacher)/programs")}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Learning programs. A learning journey you can offer again and again"
+      >
+        <View style={[styles.squareIcon, { backgroundColor: colors.actionSoft, borderRadius: radius.sm }]}>
+          <Feather name="map" size={20} color={colors.primary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[t.title3, { color: colors.foreground }]}>Programs</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground, marginTop: 2 }]}>
+            A learning journey you can offer again and again.
+          </Text>
+        </View>
+        <Feather name="chevron-right" size={20} color={colors.inkFaint} />
+      </TouchableOpacity>
+
       {/* -------------------------------------------------------------- upcoming */}
       <View style={[styles.sectionHeader, { marginTop: space.xs }]}>
         <Text style={[t.title2, { color: colors.foreground }]}>Upcoming</Text>

@@ -77,6 +77,7 @@ Found and fixed so far:
 | Student monthly classes | A missing server quote became `Join for NPR 0`, presenting an invented price and leaving a payment action visible |
 | Monthly classes / homework / chat | A failed first load could fall through to “no classes”, “no homework”, or an empty writable conversation instead of saying the data was unavailable |
 | Monthly homework | Optional submission totals used `?? 0`; missing totals now say they are unavailable rather than inventing “0 handed in / 0 marked” |
+| Program studio | “This matches what you have written here” sat directly above a primary button reading “Publish your changes” — mine. A published program in step with its draft was being offered changes that the same screen had just said did not exist |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

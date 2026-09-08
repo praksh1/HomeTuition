@@ -35,6 +35,7 @@
     "test:storage-check": "node scripts/storage-check/run.mjs",
     "lint:design": "node scripts/design-lint/run.mjs",
     "lint:design:update": "node scripts/design-lint/run.mjs --update",
+    "test:programs-ui": "node scripts/program-studio/run.mjs",
     "test:lobby": "node scripts/lobby-tests/run.mjs",
     "test:test-access-ui": "node scripts/test-access-ui/run.mjs"
   },

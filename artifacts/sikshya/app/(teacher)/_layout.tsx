@@ -121,6 +121,17 @@ function ClassicTabLayout() {
       */}
       <Tabs.Screen name="monthly" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="session-create" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      {/*
+        Programs, reached from the Dashboard rather than given a seventh tab.
+
+        The bar already holds six, and the note on `monthly` above records why a seventh is a
+        squeeze on the cheap Android this product is built for. A Learning Program is also the same
+        shape of thing as a monthly class — set up once, then lived inside — which is the argument
+        that kept that one off the bar too.
+      */}
+      <Tabs.Screen name="programs/index" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="programs/new" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="programs/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="classroom/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
     </Tabs>
   );
