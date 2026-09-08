@@ -109,3 +109,39 @@ do not invent that policy in this correction. Preserve the existing flag-for-ope
 Claude should rebase the branch onto `origin/codex/learning-program-foundation` at `d04d40e`, fix
 only the findings above, add regression tests that fail against `58523f1`, run the full previous
 gate set, commit and push to the same branch, then stop for another Codex review.
+
+## Final re-review — 2026-09-08
+
+Reviewed Claude's corrected branch `claude/learning-program-phase1` at `d5f7fc0`, based on
+`b3692ab`. The correction is accepted as the isolated Phase 1 API/schema foundation. It is not an
+approval to merge, deploy, create production tables, or begin taking enrolments or payments.
+
+The two blocking findings are closed:
+
+- Published snapshots are now rejected unless every required field and module is structurally
+  valid, positions are dense and unique, the shared publish contract passes, and the embedded
+  version agrees with the row version. Invalid stored data is withheld rather than repaired into a
+  plausible-looking public program.
+- Every program mutation now locks and re-reads the owned program row inside one transaction.
+  Publication reads its modules under that same lock; deletes and lifecycle moves re-evaluate the
+  current state after waiting. Deterministic route tests cover Publish/Publish, Save/Publish,
+  Publish/Delete, and crossing state transitions.
+
+The three smaller corrections are also closed: public paging now uses a stable
+`(published_at, id)` cursor, page limits accept only bounded positive integers, and moderation
+reloads the complete stored draft after partial saves.
+
+Independent Windows verification performed by Codex on the exact commit:
+
+- `pnpm run typecheck:libs`: pass.
+- `pnpm --dir artifacts/api-server run typecheck`: pass.
+- focused Learning Program state/snapshot tests: 40 passed, 0 failed.
+- `git diff --check d5f7fc0^ d5f7fc0`: clean (checked before this final note).
+
+Claude reported the real-Postgres `test:programs` suite at 212 passed, 0 failed; Codex inspected its
+deterministic lock orchestration and assertions but did not independently rerun that database
+harness on Windows. No new release-blocking defect was found in the corrected code.
+
+Remaining boundary: this foundation has no teacher or student UI, no enrolment, no schedule or
+class linkage, no commercial entitlement, and no production tables. Those are later phases and
+must remain separate from the accepted foundation.
