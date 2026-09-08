@@ -12,6 +12,7 @@ import {
   fieldsShownFor,
   groupPrograms,
   moveModule,
+  moduleFieldExamples,
   placeIssues,
   programActions,
   programStatusChip,
@@ -326,6 +327,19 @@ test("every type gets the same six-or-five sections in the same order", () => {
   }
 });
 
+test("every offered program and module field has persistent example guidance", () => {
+  for (const type of PROGRAM_TYPES) {
+    const fields = studioSections(type).flatMap((section) => section.fields);
+    assert.ok(fields.length > 0, `${type} offers fields`);
+    for (const field of fields) {
+      assert.ok(field.example.trim().length > 0, `${type}.${field.name} has an example`);
+    }
+    const modules = moduleFieldExamples(type);
+    assert.ok(modules.title.trim().length > 0, `${type} module title has an example`);
+    assert.ok(modules.outcome.trim().length > 0, `${type} module outcome has an example`);
+  }
+});
+
 test("the server's own prompt is used where it supplies one", () => {
   const sections = studioSections("school_subject", {
     promisePrompt: "What topic will students understand or be able to solve?",
@@ -578,7 +592,7 @@ test("no derivation in this file produces a number nobody has", () => {
       studioSections(type).flatMap((section) => [
         section.title,
         section.blurb,
-        ...section.fields.flatMap((field) => [field.label, field.help ?? "", field.placeholder ?? ""]),
+        ...section.fields.flatMap((field) => [field.label, field.help ?? "", field.example, field.placeholder ?? ""]),
       ]),
     ),
   ].join(" ").toLowerCase();

@@ -1,8 +1,8 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
-import { ScrollView, Text, TextInput, View } from "react-native";
+import React, { useEffect, useMemo, useState } from "react";
+import { Modal, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-import { HIT_SLOP_MIN } from "@/constants/layout";
+import { elevation, HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import {
@@ -11,6 +11,7 @@ import {
   confirmCopy,
   emptyModule,
   moveModule,
+  moduleFieldExamples,
   placeIssues,
   programActions,
   programStatusChip,
@@ -31,6 +32,7 @@ import {
 } from "@/utils/learningProgramUi";
 import {
   ProgramButton,
+  ProgramBackControl,
   ProgramCardShell,
   ProgramChip,
   ProgramNotice,
@@ -122,6 +124,29 @@ export default function ProgramStudio(props: ProgramStudioProps) {
   */
   const atRisk = wouldLoseWork(saveState);
   const [confirming, setConfirming] = useState<ProgramAction | null>(null);
+  const [confirmationStarted, setConfirmationStarted] = useState(false);
+
+  /*
+    Keep the question in front of the teacher while the server is deciding. It closes only after
+    a successful answer; a failure stays in the same sheet rather than appearing somewhere behind
+    it in the long editor.
+  */
+  useEffect(() => {
+    if (!confirming || !confirmationStarted || busyAction !== null || actionError) return;
+    setConfirming(null);
+    setConfirmationStarted(false);
+  }, [actionError, busyAction, confirmationStarted, confirming]);
+
+  const openConfirmation = (action: ProgramAction) => {
+    setConfirmationStarted(false);
+    setConfirming(action);
+  };
+
+  const closeConfirmation = () => {
+    if (busyAction !== null) return;
+    setConfirmationStarted(false);
+    setConfirming(null);
+  };
 
   const set = (patch: Partial<ProgramDraft>) => onDraftChange({ ...draft, ...patch });
   const setModules = (modules: ProgramModuleDraft[]) => onDraftChange({ ...draft, modules });
@@ -149,32 +174,11 @@ export default function ProgramStudio(props: ProgramStudioProps) {
     >
       {/* ------------------------------------------------------------- header */}
       <View style={{ gap: space.sm }}>
-        <Text
-          testID="program-studio-back"
-          accessibilityRole="link"
-          accessibilityLabel="Back to your programs"
-          onPress={onBack}
-          style={[
-            t.bodyStrong,
-            {
-              color: colors.primary,
-              /*
-                A 44-high target, and only as wide as the words.
-
-                It was the height of its own text — 22 points on a phone — which is half the floor
-                and the easiest control on the screen to miss with a thumb. `alignSelf` keeps the
-                tap area off the rest of the row, so a teacher reaching for the title does not
-                leave the studio instead.
-              */
-              minHeight: HIT_SLOP_MIN,
-              lineHeight: HIT_SLOP_MIN,
-              alignSelf: "flex-start",
-            },
-          ]}
-        >
-          ‹ Programs
-        </Text>
+        <ProgramBackControl onPress={onBack} testID="program-studio-back" />
         <Text style={[t.title1, { color: colors.foreground }]}>{programTitle(draft)}</Text>
+        <Text testID="program-studio-student-decision" style={[t.callout, { color: colors.mutedForeground }]}>
+          Students use these details to understand what they will learn and decide whether to join.
+        </Text>
         <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, flexWrap: "wrap" }}>
           <ProgramChip testID="program-studio-status" label={status.label} tone={status.tone} />
           <ProgramChip label={programTypeLabel(draft.type)} />
@@ -303,6 +307,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                 <IssueLine key={issue.field + issue.code} issue={issue} stale={atRisk} testID="program-issue-modules" />
               ))}
               <ModuleEditor
+                type={draft.type}
                 modules={draft.modules}
                 issues={placed.modules}
                 stale={atRisk}
@@ -351,7 +356,7 @@ export default function ProgramStudio(props: ProgramStudioProps) {
                   atRisk={atRisk}
                   saveState={saveState}
                   unplaced={placed.unplaced}
-                  onAction={(action) => setConfirming(action)}
+                  onAction={openConfirmation}
                   busyAction={busyAction}
                   locked={editingLocked}
                 />
@@ -383,20 +388,18 @@ export default function ProgramStudio(props: ProgramStudioProps) {
         );
       })}
 
-      {confirming ? (
-        <ConfirmSheet
-          action={confirming}
-          atRisk={atRisk}
-          busy={busyAction === confirming}
-          onCancel={() => setConfirming(null)}
-          onConfirm={() => {
-            const action = confirming;
-            setConfirming(null);
-            onAction(action);
-          }}
-        />
-      ) : null}
-
+      <ConfirmSheet
+        action={confirming}
+        atRisk={atRisk}
+        busy={confirming !== null && busyAction === confirming}
+        failure={actionError}
+        onCancel={closeConfirmation}
+        onConfirm={() => {
+          if (!confirming) return;
+          setConfirmationStarted(true);
+          onAction(confirming);
+        }}
+      />
     </ScrollView>
   );
 }
@@ -431,9 +434,9 @@ function Field({
     <View testID={`program-field-${field.name}`} style={{ gap: space.xxs }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
         <Text style={[t.bodyStrong, { color: colors.foreground }]}>{field.label}</Text>
-        {!field.required ? (
-          <Text style={[t.caption, { color: colors.inkFaint }]}>Optional</Text>
-        ) : null}
+        <Text style={[t.caption, { color: colors.inkFaint }]}>
+          {field.required ? "Required" : "Optional"}
+        </Text>
       </View>
       {field.help ? (
         <Text style={[t.caption, { color: colors.mutedForeground }]}>{field.help}</Text>
@@ -468,6 +471,9 @@ function Field({
           },
         ]}
       />
+      <Text testID={`program-example-${field.name}`} style={[t.caption, { color: colors.mutedForeground }]}>
+        Example: {field.example}
+      </Text>
       {issues.map((issue) => (
         <IssueLine
           key={issue.code + issue.message}
@@ -533,12 +539,14 @@ function IssueLine({
  * renumbers positions from the list it is sent, so what a teacher sees here is what is stored.
  */
 function ModuleEditor({
+  type,
   modules,
   issues,
   stale,
   locked,
   onChange,
 }: {
+  type: ProgramDraft["type"];
   modules: ProgramModuleDraft[];
   issues: Record<number, ProgramIssue[]>;
   /** True when `issues` describe the last saved draft rather than the steps on screen. */
@@ -549,6 +557,7 @@ function ModuleEditor({
 }) {
   const colors = useColors();
   const { t, space } = useLayout();
+  const examples = moduleFieldExamples(type);
 
   const update = (index: number, patch: Partial<ProgramModuleDraft>) => {
     onChange(modules.map((module, i) => (i === index ? { ...module, ...patch } : module)));
@@ -594,6 +603,7 @@ function ModuleEditor({
           <ModuleField
             testID={`program-module-${index}-title`}
             label="Step name"
+            example={examples.title}
             value={module.title}
             locked={locked}
             onChange={(title) => update(index, { title })}
@@ -601,6 +611,7 @@ function ModuleEditor({
           <ModuleField
             testID={`program-module-${index}-outcome`}
             label="What they will be able to do after it"
+            example={examples.outcome}
             value={module.outcome}
             locked={locked}
             onChange={(outcome) => update(index, { outcome })}
@@ -682,6 +693,7 @@ function StepControl({
 
 function ModuleField({
   label,
+  example,
   value,
   onChange,
   locked = false,
@@ -689,6 +701,7 @@ function ModuleField({
   testID,
 }: {
   label: string;
+  example: string;
   value: string;
   onChange: (value: string) => void;
   /** True while a lifecycle request is in flight. See `editingLocked` on the studio's props. */
@@ -701,7 +714,10 @@ function ModuleField({
   const [focused, setFocused] = useState(false);
   return (
     <View style={{ gap: space.xxs }}>
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>{label}</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>{label}</Text>
+        <Text style={[t.caption, { color: colors.inkFaint }]}>Required</Text>
+      </View>
       <TextInput
         testID={testID}
         value={value}
@@ -727,6 +743,9 @@ function ModuleField({
           },
         ]}
       />
+      <Text testID={`${testID}-example`} style={[t.caption, { color: colors.mutedForeground }]}>
+        Example: {example}
+      </Text>
     </View>
   );
 }
@@ -978,69 +997,97 @@ function ConfirmSheet({
   action,
   atRisk,
   busy,
+  failure,
   onCancel,
   onConfirm,
 }: {
-  action: ProgramAction;
+  action: ProgramAction | null;
   /** Passed through to the copy: a delete agreed to while dirty must say the screen goes too. */
   atRisk: boolean;
   busy: boolean;
+  failure: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
   const colors = useColors();
-  const { t, space, radius } = useLayout();
+  const { t, gutter, space, radius } = useLayout();
+  if (!action) return null;
   const copy = confirmCopy(action, { atRisk });
   const destructive = action === "delete" || action === "archive" || action === "unpublish";
   const { bg, ink } = toneColours(destructive ? "stopped" : "live", colors);
 
   return (
-    <View
-      testID={`program-confirm-${action}`}
-      accessibilityRole="alert"
-      accessibilityViewIsModal
-      style={{
-        gap: space.md,
-        padding: space.lg,
-        borderRadius: radius.lg,
-        borderWidth: 1,
-        borderColor: colors.border,
-        backgroundColor: colors.card,
-      }}
-    >
-      <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
-        <View
-          style={{
-            width: space.xxl,
-            height: space.xxl,
-            borderRadius: radius.pill,
-            alignItems: "center",
-            justifyContent: "center",
-            backgroundColor: bg,
-          }}
-        >
-          <Feather name={destructive ? "alert-triangle" : "check"} size={18} color={ink} />
+    <Modal visible transparent animationType="fade" onRequestClose={busy ? undefined : onCancel}>
+      <SafeAreaView
+        style={{ flex: 1, justifyContent: "flex-end", backgroundColor: colors.scrim }}
+      >
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={busy ? undefined : onCancel}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss confirmation"
+        />
+        <View style={{ width: "100%", maxWidth: readingWidth, alignSelf: "center", padding: gutter }}>
+          <View
+            testID={`program-confirm-${action}`}
+            accessibilityRole="alert"
+            accessibilityViewIsModal
+            style={{
+              gap: space.md,
+              padding: space.lg,
+              borderRadius: radius.lg,
+              borderWidth: 1,
+              borderColor: colors.border,
+              backgroundColor: colors.card,
+              ...elevation.modal,
+            }}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
+              <View
+                style={{
+                  width: space.xxl,
+                  height: space.xxl,
+                  borderRadius: radius.pill,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: bg,
+                }}
+              >
+                <Feather name={destructive ? "alert-triangle" : "check"} size={18} color={ink} />
+              </View>
+              <Text style={[t.title3, { color: colors.foreground, flexShrink: 1 }]}>{copy.title}</Text>
+            </View>
+            <Text style={[t.body, { color: colors.mutedForeground }]}>{copy.body}</Text>
+            {failure ? (
+              <ProgramNotice
+                testID={`program-confirm-${action}-failed`}
+                tone="stopped"
+                icon="alert-triangle"
+                title="That did not happen"
+                body={failure}
+              />
+            ) : null}
+            <View style={{ flexDirection: "row", gap: space.xs, flexWrap: "wrap" }}>
+              <ProgramButton
+                testID={`program-confirm-${action}-cancel`}
+                label="Keep it as it is"
+                emphasis="quiet"
+                onPress={onCancel}
+                disabled={busy}
+                grow
+              />
+              <ConfirmAction
+                testID={`program-confirm-${action}-go`}
+                label={copy.confirm}
+                destructive={destructive}
+                busy={busy}
+                onPress={onConfirm}
+              />
+            </View>
+          </View>
         </View>
-        <Text style={[t.title3, { color: colors.foreground, flexShrink: 1 }]}>{copy.title}</Text>
-      </View>
-      <Text style={[t.body, { color: colors.mutedForeground }]}>{copy.body}</Text>
-      <View style={{ flexDirection: "row", gap: space.xs, flexWrap: "wrap" }}>
-        <ProgramButton
-          testID={`program-confirm-${action}-cancel`}
-          label="Keep it as it is"
-          emphasis="quiet"
-          onPress={onCancel}
-          grow
-        />
-        <ConfirmAction
-          testID={`program-confirm-${action}-go`}
-          label={copy.confirm}
-          destructive={destructive}
-          busy={busy}
-          onPress={onConfirm}
-        />
-      </View>
-    </View>
+      </SafeAreaView>
+    </Modal>
   );
 }
 

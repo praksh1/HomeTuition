@@ -62,6 +62,42 @@ export function ProgramChip({
   );
 }
 
+/** A consistent, thumb-sized way back from both program setup screens. */
+export function ProgramBackControl({
+  onPress,
+  testID,
+  label = "Back to Programs",
+  accessibilityLabel = label,
+}: {
+  onPress: () => void;
+  testID: string;
+  label?: string;
+  accessibilityLabel?: string;
+}) {
+  const colors = useColors();
+  const { t, space, radius } = useLayout();
+  return (
+    <Pressable
+      testID={testID}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      style={{
+        minHeight: HIT_SLOP_MIN,
+        alignSelf: "flex-start",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: space.xxs,
+        paddingHorizontal: space.xs,
+        borderRadius: radius.sm,
+      }}
+    >
+      <Feather name="arrow-left" size={space.lg} color={colors.primary} />
+      <Text style={[t.bodyStrong, { color: colors.primary }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 /**
  * A button, in the four weights this feature uses.
  *

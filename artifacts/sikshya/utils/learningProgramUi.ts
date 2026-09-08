@@ -418,6 +418,8 @@ export interface StudioField {
   help: string | null;
   multiline: boolean;
   required: boolean;
+  /** Persistent guidance below the input; unlike a placeholder it remains after typing starts. */
+  example: string;
   placeholder?: string;
 }
 
@@ -452,6 +454,39 @@ export function studioSections(
   const isLanguage = type === "language";
   const isSkill = type === "practical_skill";
 
+  const examples = {
+    title: isExam
+      ? "Nepal Engineering Council exam preparation"
+      : isLanguage
+        ? "Everyday English for confident conversation"
+        : isSkill
+          ? "Beginner guitar from the first chord"
+          : isSchool
+            ? "Grade 10 Mathematics, term by term"
+            : "Foundations of digital illustration",
+    summary: isExam
+      ? "Weekly guided practice across the exam topics, question styles and timed papers."
+      : isSkill
+        ? "A practical course that builds the core technique through guided weekly practice."
+        : "A week-by-week course with explanations, practice and feedback at each stage.",
+    outcome: isLanguage
+      ? "Hold a ten-minute everyday conversation and understand the main response."
+      : isSkill
+        ? "Play three complete songs with steady rhythm and clean chord changes."
+        : isExam
+          ? "Work through a complete past paper and explain how each answer was reached."
+          : "Solve the main problems in this level independently and explain the method used.",
+    learner: isExam
+      ? "Engineering graduates preparing for their first registration examination."
+      : isLanguage
+        ? "Adults who understand basic English but want more confidence speaking."
+        : isSkill
+          ? "Complete beginners who can practise for twenty minutes between lessons."
+          : isSchool
+            ? "Grade 10 students who want structured support throughout the term."
+            : "Beginners who want a guided path and regular feedback.",
+  };
+
   const sections: StudioSection[] = [
     {
       id: "learn",
@@ -464,7 +499,8 @@ export function studioSections(
           help: "What a student will see first.",
           multiline: false,
           required: true,
-          placeholder: "Grade 10 Mathematics, term by term",
+          example: examples.title,
+          placeholder: examples.title,
         },
         {
           name: "summary",
@@ -472,6 +508,7 @@ export function studioSections(
           help: "A few lines on what the weeks together cover.",
           multiline: true,
           required: true,
+          example: examples.summary,
         },
         {
           name: "outcome",
@@ -479,6 +516,7 @@ export function studioSections(
           help: template?.promisePrompt ?? "Describe the result, not the syllabus.",
           multiline: true,
           required: true,
+          example: examples.outcome,
         },
       ],
     },
@@ -493,6 +531,7 @@ export function studioSections(
           help: template?.learnerPrompt ?? "Who should join, and what they should know already.",
           multiline: true,
           required: true,
+          example: examples.learner,
           placeholder: isSchool ? "Students in Grade 10" : "Anyone starting out",
         },
         {
@@ -503,6 +542,7 @@ export function studioSections(
             : "What a student should be able to do before the first lesson.",
           multiline: false,
           required: true,
+          example: isLanguage ? "Can read short messages and introduce themselves." : "Complete beginner.",
           placeholder: isLanguage ? "Can read simple English" : "Complete beginner",
         },
       ],
@@ -524,6 +564,7 @@ export function studioSections(
           help: "The language you actually teach in, including a mix.",
           multiline: false,
           required: true,
+          example: "Nepali and English.",
           placeholder: "Nepali and English",
         },
         {
@@ -532,6 +573,7 @@ export function studioSections(
           help: "Leave empty if there is nothing.",
           multiline: true,
           required: false,
+          example: isSchool ? "Comfortable with Grade 9 arithmetic." : "No previous experience needed.",
         },
         {
           name: "equipment",
@@ -541,6 +583,7 @@ export function studioSections(
             : "Books, a notebook, software. Leave empty if there is nothing.",
           multiline: true,
           required: false,
+          example: isSkill ? "Any acoustic guitar and a notebook." : "A notebook and the current course textbook.",
           placeholder: isSkill ? "Any acoustic guitar" : undefined,
         },
       ],
@@ -571,6 +614,11 @@ export function studioSections(
             : template?.referencePrompt ?? "Leave empty if you do not follow one.",
           multiline: false,
           required: isExam,
+          example: isExam
+            ? "Nepal Engineering Council registration examination."
+            : isLanguage
+              ? "Common European Framework of Reference, A2."
+              : "SEE Mathematics syllabus.",
           placeholder: isExam
             ? "Nepal Engineering Council registration examination"
             : "SEE Mathematics syllabus",
@@ -587,6 +635,20 @@ export function studioSections(
   });
 
   return sections;
+}
+
+/** Persistent examples for the two fields every learning-path step contains. */
+export function moduleFieldExamples(type: ProgramType | string): { title: string; outcome: string } {
+  if (type === "language") {
+    return { title: "Introducing yourself", outcome: "Introduce themselves and ask a new person three simple questions." };
+  }
+  if (type === "practical_skill") {
+    return { title: "First chord changes", outcome: "Move between three chords cleanly while keeping a steady rhythm." };
+  }
+  if (type === "exam_preparation") {
+    return { title: "Understanding the question paper", outcome: "Identify each question type and choose an efficient method." };
+  }
+  return { title: "Where we start", outcome: "Explain the first key idea and use it in a guided problem." };
 }
 
 /** Every field name the studio shows for this type. Used to check no issue is left unreachable. */

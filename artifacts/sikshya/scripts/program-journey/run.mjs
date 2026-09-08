@@ -175,12 +175,16 @@ async function main() {
   const offered = templates.body.templates.map((t) => t.type).sort();
   const drawn = (await page.locator('[data-testid^="program-type-"]').evaluateAll((nodes) =>
     nodes.map((n) => n.getAttribute("data-testid"))))
-    .filter((id) => !["program-type-chooser", "program-type-cancel", "program-type-none", "program-type-failure"].includes(id))
+    .filter((id) => !["program-type-chooser", "program-type-back", "program-type-none", "program-type-failure"].includes(id))
     .map((id) => id.replace("program-type-", ""))
     .sort();
   check("and drew exactly the server's list, not a list of its own",
     offered.length > 0 && JSON.stringify(drawn) === JSON.stringify(offered),
     `drew [${drawn}] / server [${offered}] (status ${templates.status})`);
+  const chooserBack = await page.locator('[data-testid="program-type-back"]').boundingBox();
+  check("the chooser has an immediately visible thumb-sized Back to Programs control",
+    chooserBack && chooserBack.height >= 44 && chooserBack.y < 844,
+    JSON.stringify(chooserBack));
 
   await page.locator('[data-testid="program-type-school_subject"]').click();
   check("choosing a kind opens the studio", await until("studio", () => seen("program-studio")), await read("program-studio"));
@@ -188,6 +192,12 @@ async function main() {
   const programId = Number(sql(`select id from learning_programs where teacher_id = ${teacher.user.id} order by id desc limit 1`));
   check("and the server has exactly one program for this teacher",
     Number(sql(`select count(*) from learning_programs where teacher_id = ${teacher.user.id}`)) === 1);
+  const studioBack = await page.locator('[data-testid="program-studio-back"]').boundingBox();
+  check("the studio has an immediately visible thumb-sized Back to Programs control",
+    studioBack && studioBack.height >= 44 && studioBack.y < 844,
+    JSON.stringify(studioBack));
+  const titleExample = await read("program-example-title");
+  check("field examples are visible before typing", titleExample.startsWith("Example:"), titleExample);
 
   /* ------------------------------------------- the stale response, in the flesh */
 
@@ -195,6 +205,7 @@ async function main() {
 
   const titleBox = page.locator('[data-testid="program-input-title"]');
   await titleBox.fill("Grade 10 Mathematics");
+  check("field examples remain visible after typing", (await read("program-example-title")) === titleExample);
   check("typing marks the draft unsaved", (await chip()) === "Unsaved changes", await chip());
 
   const letSaveFinish = holdNextSave();
@@ -386,6 +397,10 @@ async function main() {
     await read("program-section-review"));
   await page.locator('[data-testid="program-publish"]').click();
   check("publishing asks first", await until("confirm", () => seen("program-confirm-publish")));
+  const publishBox = await page.locator('[data-testid="program-confirm-publish"]').boundingBox();
+  check("publish confirmation is immediately visible without scrolling",
+    publishBox && publishBox.y < 844 && publishBox.y + publishBox.height > 0,
+    JSON.stringify(publishBox));
   await page.locator('[data-testid="program-confirm-publish-go"]').click();
 
   check("and the program is published",
@@ -523,6 +538,10 @@ async function main() {
 
   await page.locator('[data-testid="program-action-delete"]').click();
   check("delete still asks", await until("ask", () => seen("program-confirm-delete")));
+  const deleteBox = await page.locator('[data-testid="program-confirm-delete"]').boundingBox();
+  check("delete confirmation is immediately visible without scrolling",
+    deleteBox && deleteBox.y < 844 && deleteBox.y + deleteBox.height > 0,
+    JSON.stringify(deleteBox));
   check("and warns that the unsaved work goes too", /not saved/i.test(await read("program-confirm-delete")),
     await read("program-confirm-delete"));
   await page.locator('[data-testid="program-confirm-delete-go"]').click();

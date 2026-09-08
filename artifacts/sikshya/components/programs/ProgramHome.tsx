@@ -13,6 +13,7 @@ import {
   type ProgramSummary,
 } from "@/utils/learningProgramUi";
 import {
+  ProgramBackControl,
   ProgramButton,
   ProgramCardShell,
   ProgramChip,
@@ -48,6 +49,7 @@ export interface ProgramHomeProps {
   onRetry: () => void;
   onOpen: (id: number) => void;
   onCreate: () => void;
+  onBack: () => void;
 }
 
 export default function ProgramHome({
@@ -57,6 +59,7 @@ export default function ProgramHome({
   onRetry,
   onOpen,
   onCreate,
+  onBack,
 }: ProgramHomeProps) {
   const colors = useColors();
   const { t, gutter, space } = useLayout();
@@ -82,6 +85,12 @@ export default function ProgramHome({
         alignSelf: "center",
       }}
     >
+      <ProgramBackControl
+        onPress={onBack}
+        testID="program-home-back"
+        label="Back to Dashboard"
+        accessibilityLabel="Back to teacher dashboard"
+      />
       <View style={{ gap: space.xxs }}>
         <Text style={[t.title1, { color: colors.foreground }]}>Programs</Text>
         <Text style={[t.callout, { color: colors.mutedForeground }]}>

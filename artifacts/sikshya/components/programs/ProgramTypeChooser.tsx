@@ -5,7 +5,7 @@ import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { type ProgramTypeChoice, type ProgramType } from "@/utils/learningProgramUi";
-import { ProgramCardShell, ProgramFailure } from "./ProgramPieces";
+import { ProgramBackControl, ProgramCardShell, ProgramFailure } from "./ProgramPieces";
 
 /**
  * The first decision, and the only one on the screen.
@@ -73,6 +73,8 @@ export default function ProgramTypeChooser({
         alignSelf: "center",
       }}
     >
+      <ProgramBackControl onPress={onCancel} testID="program-type-back" />
+
       <View style={{ gap: space.xxs }}>
         <Text style={[t.title1, { color: colors.foreground }]}>What kind of program?</Text>
         <Text style={[t.callout, { color: colors.mutedForeground }]}>
@@ -139,21 +141,6 @@ export default function ProgramTypeChooser({
         </Text>
       ) : null}
 
-      {/*
-        Leaving is always available, and leaving loses nothing.
-
-        Nothing has been created until a type is chosen, so this is a plain way back rather than a
-        confirmation. The brief's rule — a teacher must be able to leave with an incomplete draft and
-        continue later — starts here, with not being trapped before there is even a draft.
-      */}
-      <Text
-        testID="program-type-cancel"
-        accessibilityRole="link"
-        onPress={onCancel}
-        style={[t.bodyStrong, { color: colors.primary, textAlign: "center", paddingVertical: space.sm }]}
-      >
-        Not now
-      </Text>
     </ScrollView>
   );
 }

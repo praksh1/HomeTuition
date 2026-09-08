@@ -295,6 +295,12 @@ for (const size of SIZES) {
     "loading, empty and failed are three different pictures");
 
   await show({ screen: "home", props: { programs: [], loading: false, failure: null } }, "home-empty");
+  check(`${L}: the Programs list has a top-level way back to the teacher dashboard`,
+    await seen("program-home-back"));
+  const homeBack = await p.locator('[data-testid="program-home-back"]').boundingBox();
+  check(`${L}: the Programs-list Back control is thumb-sized and immediately visible`,
+    homeBack && homeBack.height >= 44 && homeBack.y < size.height,
+    JSON.stringify(homeBack));
   check(`${L}: the empty state explains what a program is`, await seen("program-home-empty"));
   const empty = await text("program-home-empty");
   check(`${L}: and says plainly that it is not a single class`, /not a single class/i.test(empty), empty.slice(0, 120));
@@ -354,7 +360,11 @@ for (const size of SIZES) {
   }
   check(`${L}: the exam choice says results are not promised`,
     /no promises about results/i.test(await text("program-type-exam_preparation")));
-  check(`${L}: leaving without creating anything is offered`, await seen("program-type-cancel"));
+  check(`${L}: a Back to Programs control is at the top of the chooser`, await seen("program-type-back"));
+  const chooserBack = await p.locator('[data-testid="program-type-back"]').boundingBox();
+  check(`${L}: the chooser Back control is thumb-sized and immediately visible`,
+    chooserBack && chooserBack.height >= 44 && chooserBack.y < size.height,
+    JSON.stringify(chooserBack));
   check(`${L}: the chooser does not scroll sideways`, (await overflow()) <= 1, `overflow ${await overflow()}px`);
   check(`${L}: nothing on the chooser is cut off`, (await clipped()).length === 0, (await clipped()).join(" | "));
 
@@ -397,6 +407,28 @@ for (const size of SIZES) {
     check(`${L}: the ${section} section is there`, await seen(`program-section-${section}`));
   }
   check(`${L}: the learning path can be added to`, await seen("program-modules-add"));
+  check(`${L}: a Back to Programs control is at the top of the studio`, await seen("program-studio-back"));
+  const studioBack = await p.locator('[data-testid="program-studio-back"]').boundingBox();
+  check(`${L}: the studio Back control is thumb-sized and immediately visible`,
+    studioBack && studioBack.height >= 44 && studioBack.y < size.height,
+    JSON.stringify(studioBack));
+  check(`${L}: the studio explains how students use these details`,
+    /students use these details.+decide whether to join/i.test(await text("program-studio-student-decision")));
+  const examples = p.locator('[data-testid^="program-example-"]');
+  check(`${L}: every offered custom-program field has a visible example`,
+    await examples.count() === 9 && await examples.evaluateAll((nodes) =>
+      nodes.every((node) => /^Example:\s+\S/i.test(node.textContent || ""))),
+    await examples.allTextContents());
+  const examplesBeforeTyping = await examples.allTextContents();
+  const offeredInputs = p.locator('[data-testid^="program-input-"]');
+  for (let index = 0; index < await offeredInputs.count(); index += 1) {
+    await offeredInputs.nth(index).fill(`Teacher-written answer ${index + 1}`);
+  }
+  check(`${L}: every field example remains visible after typing`,
+    JSON.stringify(await examples.allTextContents()) === JSON.stringify(examplesBeforeTyping),
+    await examples.allTextContents());
+  check(`${L}: both fields on every drawn module have examples`,
+    (await seen("program-module-0-title-example")) && (await seen("program-module-0-outcome-example")));
   check(`${L}: every step has move up, move down and remove`,
     (await seen("program-module-0-up")) && (await seen("program-module-0-down")) && (await seen("program-module-0-remove")));
   check(`${L}: the first step cannot move up`,
@@ -512,6 +544,10 @@ for (const size of SIZES) {
   const deleteAsk = await text("program-confirm-delete");
   check(`${L}: and the confirmation says the unsaved work goes too`,
     /not saved/i.test(deleteAsk), deleteAsk.slice(0, 200));
+  const deleteBox = await p.locator('[data-testid="program-confirm-delete"]').boundingBox();
+  check(`${L}: delete confirmation is visible immediately without scrolling`,
+    deleteBox && deleteBox.y < size.height && deleteBox.y + deleteBox.height > 0,
+    JSON.stringify(deleteBox));
   await p.locator('[data-testid="program-confirm-delete-cancel"]').click();
   await p.waitForTimeout(150);
 
@@ -684,6 +720,10 @@ for (const size of SIZES) {
   await p.waitForTimeout(200);
   await p.screenshot({ path: path.join(SHOTS, `${L}-confirm-archive.png`), fullPage: true });
   check(`${L}: archiving asks first`, await seen("program-confirm-archive"));
+  const archiveBox = await p.locator('[data-testid="program-confirm-archive"]').boundingBox();
+  check(`${L}: archive confirmation is visible immediately without scrolling`,
+    archiveBox && archiveBox.y < size.height && archiveBox.y + archiveBox.height > 0,
+    JSON.stringify(archiveBox));
   check(`${L}: with a way to change your mind`, await seen("program-confirm-archive-cancel"));
   const confirm = await text("program-confirm-archive");
   check(`${L}: and says what happens`, /restore it later/i.test(confirm), confirm.slice(0, 140));
