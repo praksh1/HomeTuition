@@ -104,3 +104,54 @@ Claude should correct only these four findings on `claude/livekit-classroom-pilo
 tests, rerun its narrow gates, commit and push. Codex then re-reviews. The Learning Program schema
 task stays queued and must not start until this pilot review is closed.
 
+## Re-review of Claude correction `1c33c58`
+
+- Fetched and inspected `origin/claude/livekit-classroom-pilot` at `1c33c58` without merging it.
+- Confirmed that the original four findings were materially addressed:
+  - class start now clears prior lesson authority and rebuilds connected lobby students and their
+    database-sourced display names;
+  - provider operations expose pending/failed state, bounded retries and UI explanations;
+  - the evidence event is now `classroom.floor.held`, explicitly marked
+    `speechConfirmed: false`;
+  - Discussion Mode cannot be activated after the booked finish.
+- Confirmed `git diff --check` is clean for `ed3267f..1c33c58`.
+- Did **not** merge, deploy or change a provider.
+
+### New blocking finding 5: an absent media participant is accepted too early
+
+`applyRights()` clears its pending state for both `applied` and `absent`. That is safe for a
+revocation, but not for a grant. The classroom WebSocket and LiveKit media connection are separate.
+A student can already be present in the Fadko classroom socket while their LiveKit participant is
+not yet in the SFU room. If the teacher grants the floor during that interval, LiveKit answers
+`absent`; the server displays the grant as healthy and never retries. When the student's media
+connection arrives, their original token still permits publishing nothing. `floorJoin()` cannot
+repair this because it is a classroom-WebSocket join hook, not a LiveKit participant-connected
+hook.
+
+Required correction: treat `absent` as success only for a deny/revoke/silence operation. A grant
+for an absent participant must remain pending and retry for a bounded period, or be reapplied from
+a trustworthy LiveKit participant-connected signal. Test the actual ordering: classroom socket
+connected -> teacher grant -> provider absent -> media participant appears -> permission becomes
+applied without another hand raise or classroom reconnect.
+
+### New blocking finding 6: stale async answers can erase a newer instruction
+
+Provider synchronization is keyed only by `kind:userId`. `beginSync()` replaces the map entry, but
+the earlier promise retains no generation/request identifier. If a teacher acts twice quickly,
+responses may arrive out of order. An older success can call `clearSync()` and delete the pending
+state for a newer instruction; an older failure can call `markFailed()` and retry after a newer
+success. The UI may therefore report `ok`, or the retry may apply obsolete authority, even though
+the provider's final state does not match the latest floor decision.
+
+Required correction: give every provider instruction a monotonic generation/operation id and
+ignore completions, failures and timers that no longer match the current generation. A retry must
+recompute current desired rights but must also belong to the current generation. Add deterministic
+deferred-promise tests for grant -> revoke with responses resolved in both orders, and for an old
+retry firing after a newer action.
+
+### Re-review disposition
+
+`1c33c58` is a substantial and useful correction, but the pilot remains **changes requested; do
+not merge or deploy** until findings 5 and 6 are fixed and independently reviewed. This does not
+invalidate the Chinese-platform research or the separate Learning Program foundation; both remain
+parked while the LiveKit track is closed cleanly.
