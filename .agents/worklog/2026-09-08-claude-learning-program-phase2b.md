@@ -464,3 +464,24 @@ Push this review branch, point only the isolated Railway staging service at it, 
 preview Worker against that staging API, then give the owner an exact short journey covering:
 Classes first-load, search/clear on a phone, card hand-off, visible highlighted class, and the
 existing Book & Pay control. Production remains unchanged until the owner explicitly approves it.
+
+### Preview checkpoint completed
+
+- Pushed `codex/phase2b-final-review` at `c6dfa46`.
+- Changed only Railway service `hometuition-api-staging` to that branch. Railway deployment
+  `cfa96063-1bd4-48aa-8a4d-3d7c2dbdb030` became Active and passed `/api/healthz`.
+- Verified the deployed `GET /api/public/classes` answered HTTP 200 before publishing the web app.
+- Ran GitHub workflow `34310996260` on the review branch. Every step passed: staging allowlist,
+  health probe, typecheck, preview-verifier tests, Expo build, production-host rejection, preview
+  Worker upload, and post-deploy byte/host verification.
+- Preview URL remains `https://hometuition-preview.praksh-dhakal.workers.dev`. Production Worker,
+  production Railway service and production database were not touched.
+- The staging public list was empty, which would have made the owner's review meaningless. Added
+  exactly one idempotent, clearly named fixture directly to the isolated Neon staging database:
+  session `3`, teacher/profile `1` (`Staging Review Teacher`), topic
+  `STAGING TEST — Algebra problem-solving class`, Mathematics, NPR 500, 60 minutes, 10 seats,
+  scheduled two days ahead. The public endpoint was then read back and returned the fixture with
+  the correct `teacherProfileId`. No booking, enrolment, payment, message or production row was
+  created.
+- The owner is now the tester. Do not merge or deploy production until their phone/laptop journey
+  is reported back. Remove or expire the staging class after review if it is no longer useful.
