@@ -14,7 +14,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "@react-navigation/native";
 
 import {
   HIT_SLOP_MIN,
@@ -332,26 +331,15 @@ export default function Discover() {
   }, [monthlyLoadedOnce]);
 
   /**
-   * Load each view's data the first time that view is opened, and refresh it on focus while
-   * that view is still the one on screen. Programs loads on mount because it is the initial
-   * view; Classes and Teachers wait until the student switches to them.
+   * Load each secondary marketplace once, when it is first selected. Programs has its own
+   * mount/filter effect above because it is the initial view.
    *
-   * This is Codex correction round 2, item 4: on a cheap Android phone opening Programs must
-   * not immediately download Classes, all Teachers and Monthly-class data. Each view is
-   * responsible for its own network, and a background refresh that fails never wipes previously
-   * successful content off the screen.
+   * This is intentionally one effect rather than an effect plus `useFocusEffect`. A focus
+   * effect re-runs when its memoised callback changes while the screen is focused; combining
+   * both triggers started two requests on the first tab switch before React had painted the
+   * first loading-state update. Successful rows stay in state when the student visits another
+   * tab and returns.
    */
-  useFocusEffect(useCallback(() => {
-    if (view === "classes" && !classesLoadedOnce) void loadClasses();
-    if (view === "teachers") {
-      if (!teachersLoadedOnce) void loadTeachers();
-      if (!monthlyLoadedOnce) void loadMonthly();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, classesLoadedOnce, teachersLoadedOnce, monthlyLoadedOnce]));
-
-  // Switching to a view for the first time triggers its load immediately, not on the next
-  // focus event. `useFocusEffect` only re-runs when the screen loses and regains focus.
   React.useEffect(() => {
     if (view === "classes" && !classesLoadedOnce && !classesLoading) void loadClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1034,7 +1022,7 @@ function ClassesView(props: {
   const { rows, hasMore, initialLoad, loadingMore, initialError, paginationError,
     typedQuery, submittedQuery, onQueryChange, onSubmit, onRetry, onLoadMore, onOpen } = props;
   const colors = useColors();
-  const { t, gutter, space, radius } = useLayout();
+  const { t, gutter, space, radius, isCompact } = useLayout();
   const insets = useSafeAreaInsets();
 
   const state = publicClassListState({
@@ -1054,7 +1042,13 @@ function ClassesView(props: {
       }}
       keyboardShouldPersistTaps="handled"
     >
-      <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
+      <View
+        style={{
+          flexDirection: isCompact ? "column" : "row",
+          alignItems: isCompact ? "stretch" : "center",
+          gap: space.xs,
+        }}
+      >
         <View
           style={{
             flexDirection: "row", alignItems: "center", gap: space.xs,
@@ -1099,6 +1093,7 @@ function ClassesView(props: {
             minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN,
             alignItems: "center", justifyContent: "center",
             paddingHorizontal: space.md,
+            alignSelf: isCompact ? "stretch" : "auto",
             borderRadius: radius.sm,
             backgroundColor: colors.primary,
           }}

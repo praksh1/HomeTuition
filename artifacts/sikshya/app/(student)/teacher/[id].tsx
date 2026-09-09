@@ -5,6 +5,8 @@ import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  findNodeHandle,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -162,6 +164,9 @@ export default function TeacherDetail() {
   const [detailsLoadState, setDetailsLoadState] = useState<
     "loading" | "ready" | "failed"
   >("loading");
+  const pageScrollRef = React.useRef<ScrollView>(null);
+  const highlightedSessionRef = React.useRef<React.ElementRef<typeof View>>(null);
+  const scrolledToSessionRef = React.useRef<string | null>(null);
 
   const studentId = user?.role === "student" ? (user as Student).id : undefined;
 
@@ -219,6 +224,49 @@ export default function TeacherDetail() {
     if (highlightSessionId !== null) setSessionTab("upcoming");
   }, [highlightSessionId]);
 
+  /**
+   * Bring the class chosen on Discover into the viewport after its real booking state has loaded.
+   *
+   * The first implementation added only a test id. Its automated journey found the button in
+   * the DOM and called that "on screen", even though a student still landed at the top of a long
+   * teacher profile and could not see what their tap had opened. Web can ask the rendered node to
+   * scroll into view directly; native measures the same node relative to the ScrollView.
+   */
+  React.useEffect(() => {
+    if (
+      highlightSessionId === null ||
+      detailsLoadState !== "ready" ||
+      !upcomingSessions.some((session) => session.id === highlightSessionId) ||
+      scrolledToSessionRef.current === highlightSessionId
+    ) return;
+
+    const frame = requestAnimationFrame(() => {
+      const target = highlightedSessionRef.current;
+      if (!target) return;
+
+      if (Platform.OS === "web") {
+        const webTarget = target as unknown as {
+          scrollIntoView?: (options?: ScrollIntoViewOptions) => void;
+        };
+        webTarget.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        scrolledToSessionRef.current = highlightSessionId;
+        return;
+      }
+
+      const scrollHandle = findNodeHandle(pageScrollRef.current);
+      if (scrollHandle === null) return;
+      target.measureLayout(
+        scrollHandle,
+        (_x, y) => {
+          pageScrollRef.current?.scrollTo({ y: Math.max(0, y - space.md), animated: true });
+          scrolledToSessionRef.current = highlightSessionId;
+        },
+        () => undefined,
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [detailsLoadState, highlightSessionId, space.md, upcomingSessions]);
+
   useEffect(() => {
     if (liveSessions.length === 0) return;
     const timer = setInterval(loadData, 20000);
@@ -246,7 +294,7 @@ export default function TeacherDetail() {
 
       const [upcomingRes, liveRes, pastRes, revRes] = await Promise.all([
         apiGet<{ sessions: ApiSession[] }>(
-          `/sessions?teacherId=${apiTeacher.userId}&status=upcoming`,
+          `/sessions?teacherId=${apiTeacher.userId}&status=upcoming${highlightSessionId ? "&limit=100" : ""}`,
         ),
         apiGet<{ sessions: ApiSession[] }>(
           `/sessions?teacherId=${apiTeacher.userId}&status=live`,
@@ -643,9 +691,16 @@ You can join from your Sessions tab — the class opens a few minutes before it 
     .join("")
     .toUpperCase();
 
+  const orderedUpcomingSessions = highlightSessionId === null
+    ? upcomingSessions
+    : [...upcomingSessions].sort((a, b) => {
+        if (a.id === highlightSessionId) return -1;
+        if (b.id === highlightSessionId) return 1;
+        return 0;
+      });
   const activeSessions =
     sessionTab === "upcoming"
-      ? upcomingSessions
+      ? orderedUpcomingSessions
       : sessionTab === "live"
         ? liveSessions
         : pastSessions;
@@ -659,6 +714,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
 
   return (
     <ScrollView
+      ref={pageScrollRef}
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={[
         styles.container,
@@ -1102,7 +1158,21 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                 // Already signed up: say so, rather than inviting them to pay a second time.
                 if (a?.isEnrolled) {
                   return (
-                    <View key={s.id} testID={highlighted ? `focused-session-${s.id}` : undefined}>
+                    <View
+                      key={s.id}
+                      ref={highlighted ? highlightedSessionRef : undefined}
+                      nativeID={highlighted ? `focused-session-${s.id}` : undefined}
+                      testID={highlighted ? `focused-session-${s.id}` : undefined}
+                      accessibilityLabel={highlighted ? "Selected class from Discover" : undefined}
+                      style={highlighted ? {
+                        borderWidth: 2,
+                        borderColor: colors.primary,
+                        borderRadius: radius.md,
+                        backgroundColor: colors.actionSoft,
+                        padding: space.xxs,
+                        marginBottom: space.sm,
+                      } : undefined}
+                    >
                       <SessionCard session={s} onPress={() => {}} />
                       <View
                         style={[
@@ -1143,7 +1213,21 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                   );
                 }
                 return (
-                  <View key={s.id} testID={highlighted ? `focused-session-${s.id}` : undefined}>
+                  <View
+                    key={s.id}
+                    ref={highlighted ? highlightedSessionRef : undefined}
+                    nativeID={highlighted ? `focused-session-${s.id}` : undefined}
+                    testID={highlighted ? `focused-session-${s.id}` : undefined}
+                    accessibilityLabel={highlighted ? "Selected class from Discover" : undefined}
+                    style={highlighted ? {
+                      borderWidth: 2,
+                      borderColor: colors.primary,
+                      borderRadius: radius.md,
+                      backgroundColor: colors.actionSoft,
+                      padding: space.xxs,
+                      marginBottom: space.sm,
+                    } : undefined}
+                  >
                     <SessionCard session={s} onPress={() => bookSession(s)} />
                     <View
                       style={[

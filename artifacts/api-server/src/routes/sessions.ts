@@ -17,7 +17,14 @@ import { PLATFORM_HEADER, videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
-import { canJoin, canStart, isCreatableAt, isPastCutoff, studentDoorClosesAt } from "../lib/sessionStart";
+import {
+  canJoin,
+  canStart,
+  isCreatableAt,
+  isPastCutoff,
+  STUDENT_GRACE_MINUTES,
+  studentDoorClosesAt,
+} from "../lib/sessionStart";
 import type { StartCheck, StartRefusal } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
@@ -140,9 +147,9 @@ const router: IRouter = Router();
  * - Only teachers whose profile is `approved` and whose account is not suspended.
  * - Only classes with `status = 'upcoming'` (never `live` / `completed` / `cancelled`; a live
  *   class is one nobody new may join, and the other two are self-explanatory).
- * - Only classes whose cutoff is in the future (`isPastCutoff` false). A class whose booked slot
- *   has already passed cannot honestly be sold; the sessions.ts main handler exposes an
- *   `expired` flag on general listings and this route just filters those rows out.
+ * - Only classes whose **student booking door** is still open. This is the booked finish plus
+ *   `STUDENT_GRACE_MINUTES`, the same boundary `POST /sessions/:id/book` enforces. The call's
+ *   later teacher/overtime cutoff is not a sale window.
  * - Only classes with a seat available (`enrolled_count < max_students`). A student cannot
  *   book a full class; showing it is a "why can I not buy this" moment we do not need.
  * - The authoritative teacher id, so the Classes card knows which teacher page to open.
@@ -235,13 +242,14 @@ router.get("/public/classes", async (req: Request, res: Response): Promise<void>
   ];
 
   /*
-    Expiry: filter here in SQL rather than in JS, so a page never comes back short because a row
-    turned out to be past the cutoff. `isPastCutoff` in `lib/sessionStart.ts` is the authority for
-    the exact rule, but the SQL below mirrors its "booked_end + overtime_cutoff" reading for
-    upcoming (never-started) classes, which is what this route filters. Signed-in owner lists
-    still use `isPastCutoff` on the server-side after fetch (they need the `expired` flag).
+    Filter in SQL so expired rows do not consume a page. The storefront must close at the same
+    instant as the booking transaction: scheduled finish plus the student's five-minute grace.
+    The previous version used the ten-minute call cutoff, leaving a five-minute window where a
+    card said "View & book" and the booking route correctly refused it as over.
   */
-  where.push(sql`(${sessionsTable.date} + make_interval(mins => ${sessionsTable.duration} + 10)) > now()`);
+  where.push(
+    sql`(${sessionsTable.date} + make_interval(mins => ${sessionsTable.duration} + ${STUDENT_GRACE_MINUTES})) > now()`,
+  );
 
   if (cursor !== null) {
     // Soonest first, so "after this cursor" means strictly later in time (or later id at the

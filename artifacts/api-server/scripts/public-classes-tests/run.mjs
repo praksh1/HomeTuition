@@ -222,6 +222,19 @@ async function classShapeGate() {
   const expired = await makeClass(teacher, { topic: `${tag}-expired` });
   sql(`UPDATE sessions SET date = now() - interval '1 day' WHERE id = ${expired.id};`);
 
+  // The student booking door closes five minutes after the scheduled finish. The call itself
+  // remains recoverable by the teacher for another five minutes, but that is not permission to
+  // keep advertising a class a new student can no longer buy.
+  const bookingClosedCallOpen = await makeClass(teacher, {
+    topic: `${tag}-booking-closed-call-open`, duration: 1,
+  });
+  sql(`UPDATE sessions SET date = now() - interval '7 minutes' WHERE id = ${bookingClosedCallOpen.id};`);
+
+  const bookingStillOpen = await makeClass(teacher, {
+    topic: `${tag}-booking-still-open`, duration: 1,
+  });
+  sql(`UPDATE sessions SET date = now() - interval '5 minutes' WHERE id = ${bookingStillOpen.id};`);
+
   const full = await makeClass(teacher, { topic: `${tag}-full`, maxStudents: 1 });
   sql(`UPDATE sessions SET enrolled_count = max_students WHERE id = ${full.id};`);
 
@@ -233,6 +246,10 @@ async function classShapeGate() {
     `saw recurring id ${recurring.id} in ${[...ids].join(", ")}`);
   check("cancelled classes are excluded", !ids.has(cancellable.id));
   check("expired classes are excluded", !ids.has(expired.id));
+  check("a class disappears when the student booking door closes, not at the later call cutoff",
+    !ids.has(bookingClosedCallOpen.id));
+  check("a class remains visible during the student's five-minute booking grace",
+    ids.has(bookingStillOpen.id));
   check("classes with no seats are excluded", !ids.has(full.id));
 }
 

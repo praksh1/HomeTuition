@@ -170,10 +170,16 @@ async function main() {
   check("the Classes list container appears",
     await until("classes-scroll", () => page.locator('[data-testid="single-classes-scroll"]').count().then((n) => n > 0)));
 
-  check("opening Classes triggers /public/classes",
+  check("opening Classes triggers a /public/classes request",
     await until("public-classes-fetch",
       () => Promise.resolve(requests.filter((r) => r.startsWith("/api/public/classes")).length > 0)),
     `requests: ${requests.filter((r) => r.startsWith("/api/public/classes")).join(", ")}`);
+
+  await page.waitForTimeout(500);
+  const firstClassRequestCount = requests.filter((r) => r.startsWith("/api/public/classes")).length;
+  check("the first Classes tab switch does not dispatch a duplicate request",
+    firstClassRequestCount === 1,
+    `saw ${firstClassRequestCount} requests: ${requests.filter((r) => r.startsWith("/api/public/classes")).join(", ")}`);
 
   await page.waitForTimeout(1500);
   check(`the class ${bookableClass.id} shows on the Classes list`,
@@ -220,11 +226,9 @@ async function main() {
 
   console.log("\nClearing the query shows the class again");
 
-  // The clear button sits inside the search field row; on a narrow 390pt layout the visible
-  // Search submit button can end up above it in stacking order, so a synthetic DOM click on
-  // the element itself avoids any coordinate collision the browser would otherwise resolve
-  // for a mouse or a finger. This is exactly what the user's tap on the "x" produces.
-  await page.locator('[data-testid="single-classes-clear"]').evaluate((el) => el.click());
+  // A real coordinate-based browser click is intentional. A synthetic DOM click once hid a
+  // narrow-screen overlap where the Search button intercepted the clear control's touch area.
+  await page.locator('[data-testid="single-classes-clear"]').click({ timeout: 10000 });
   await page.waitForTimeout(1500);
   check(`the class ${bookableClass.id} is back on the list`,
     await page.locator(`[data-testid="public-class-${bookableClass.id}"]`).count() > 0);
@@ -246,6 +250,16 @@ async function main() {
 
   check("the specific session is highlighted so the student can see which one they came for",
     await page.locator(`[data-testid="focused-session-${bookableClass.id}"]`).count() > 0);
+
+  const selectedBox = await page.locator(`[data-testid="focused-session-${bookableClass.id}"]`).boundingBox();
+  check("the selected class is actually inside the phone viewport, not merely present in the DOM",
+    selectedBox !== null && selectedBox.y < 844 && selectedBox.y + selectedBox.height > 0,
+    selectedBox ? `top ${selectedBox.y}, bottom ${selectedBox.y + selectedBox.height}` : "no box");
+
+  const bookBox = await page.locator(`[data-testid="book-btn-${bookableClass.id}"]`).boundingBox();
+  check("the existing Book & Pay control is visibly reachable after the hand-off",
+    bookBox !== null && bookBox.y < 844 && bookBox.y + bookBox.height > 0,
+    bookBox ? `top ${bookBox.y}, bottom ${bookBox.y + bookBox.height}` : "no box");
 
   // Prove no video room, no direct booking-completion screen was opened.
   check("the tap did NOT route straight into a classroom",

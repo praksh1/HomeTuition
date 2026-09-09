@@ -1,5 +1,7 @@
 # Memory Index
 
+- [DOM presence is not visible or tappable](dom-presence-is-not-visible-or-tappable.md) — a DOM-count assertion called an off-screen booking control visible, and a synthetic `element.click()` hid a real 390 px touch overlap. Marketplace journeys must assert viewport intersection and use coordinate-based clicks/taps.
+
 - [Fadko classroom and learning experience blueprint](../backlog/2026-09-07-fadko-classroom-learning-blueprint.md) — approved 7 Sep 2026: ClassIn-style teacher-controlled board-first classroom, Ledu-style outcome journey and Aiwen-style prepare/live/practice/reporting adapted for Nepal; meaningful feedback instead of points/leaderboards; session evidence plus saved board without automatic video recording; phased adoption and explicit do-not-copy lists.
 
 - [Learning Programs and managed-marketplace direction](learning-program-managed-marketplace.md) — owner decision, 7 Sep 2026: Single Class or flexible structured Learning Program for school, skills, language, exam prep or custom teaching; teachers supply content; desired licensed-provider collection, lesson allocation and weekly payout; commercial/legal numbers remain deliberately undecided.

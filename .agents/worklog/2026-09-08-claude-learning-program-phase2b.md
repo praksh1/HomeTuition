@@ -392,3 +392,75 @@ noted here so the number is not underreported.
 - **No schema change, no `db:push`.** The new route joins existing tables.
 - **No production or staging deploy.** Everything ran against a local Postgres in this
   container.
+
+## Codex final review and takeover (2026-09-09)
+
+The owner asked Codex to carry the work after Claude reached its weekly limit. This review began
+from Claude's pushed `b5b732f` on a separate branch, `codex/phase2b-final-review`. No Claude file
+was overwritten blindly; the public Classes route, Discover loading, teacher-page hand-off and
+the tests were read against the existing booking authority first.
+
+### Defects found and corrected
+
+1. **The public storefront stayed open five minutes longer than booking.** `GET /public/classes`
+   filtered at scheduled finish + 10 minutes (the call recovery/overtime cutoff), while the
+   atomic booking transaction closes at scheduled finish + 5 minutes. A class could therefore
+   advertise “View & book” and then correctly refuse payment. The query now uses the exported
+   `STUDENT_GRACE_MINUTES` rule. The integration fixture has both sides of this exact boundary.
+2. **The first Classes/Teachers tab visit could issue the same request twice.** A React effect and
+   a focus effect both owned first-load. The focus callback changes when the loading flag paints,
+   which re-runs it on a focused screen. Each secondary marketplace now has one first-load effect;
+   its successful rows remain cached when changing tabs. The journey requires exactly one request.
+3. **The Discover hand-off did not actually reveal the class.** The earlier “highlight” was only a
+   test id, and the journey counted a DOM node as visible. The selected class is now sorted first,
+   receives a visible tokenised highlight, and is scrolled into the phone viewport after its real
+   booking/access state loads. The journey checks both the class and the existing Book & Pay
+   control intersect the 390×844 viewport.
+4. **The selected class could be outside the first 20 upcoming rows.** Only a hand-off carrying
+   `?session=` expands the existing teacher-session query to its already-supported cap of 100.
+   Ordinary profile visits retain their previous limit.
+5. **The 390 px search controls physically overlapped.** Claude's journey bypassed browser hit
+   testing with `element.click()` and described it as equivalent to a user tap. On compact screens
+   the input and Search action now stack; the action is full width, the clear control keeps its
+   44-point target, and the test uses a real coordinate-based click.
+6. **Root typecheck silently skipped the artifact workspaces on Windows.** The path-glob filters
+   matched differently across shells. The root command now names the four intended workspace
+   packages explicitly. The regenerated Expo route types and all four package typechecks passed.
+7. **Browser test portability.** The shared harness knew Linux Chrome paths but not the Chrome and
+   Edge locations on the owner's Windows machine. Those existing-browser fallbacks were added;
+   only the free Playwright driver was installed globally. No browser, account, service or paid
+   dependency was added to the repository.
+
+### Verification performed by Codex
+
+| Gate | Result |
+|---|---|
+| root `pnpm.cmd run typecheck` | pass; all 4 intended packages visibly ran |
+| API unit tests | 474 pass, 0 fail |
+| app unit tests | 351 pass, 0 fail |
+| `test:discover` rendered at phone/laptop sizes | 146 pass, 0 fail |
+| `test:programs-ui` rendered at phone/laptop sizes | 254 pass, 0 fail |
+| `lint:design` | no new leaks; baseline remains 94 hex / 282 sizes |
+| `git diff --check` | clean (line-ending notices only on Windows) |
+
+The first browser attempt failed because Playwright was not installed on this Windows machine.
+Chrome was already installed. Codex installed the free driver without downloading a second browser,
+added the Windows fallback paths, and both rendered suites then passed.
+
+### Not yet claimed
+
+- The new Postgres boundary fixture and full `test:classes-booking` journey have not run in this
+  Windows checkout: it has no local PostgreSQL or API on ports 55432/8080. Claude's prior 41/0 and
+  27/0 runs cover the pre-review version, not these new assertions. They must run against an
+  isolated staging/local database after this branch is available to Railway.
+- Nothing in this review has been deployed to staging or production yet.
+- No payment, membership, booking transaction, Monthly-class, classroom, Daily or LiveKit logic
+  was changed. No schema or database command, purchase, production write or production deploy was
+  performed.
+
+### Next owner-visible checkpoint
+
+Push this review branch, point only the isolated Railway staging service at it, deploy only the
+preview Worker against that staging API, then give the owner an exact short journey covering:
+Classes first-load, search/clear on a phone, card hand-off, visible highlighted class, and the
+existing Book & Pay control. Production remains unchanged until the owner explicitly approves it.
