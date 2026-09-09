@@ -41,7 +41,9 @@
     "test:program-journey": "node scripts/program-journey/run.mjs",
     "router-types": "node scripts/router-types.js",
     "test:program-smoke": "node scripts/program-smoke/run.mjs",
-    "test:discover": "node scripts/program-discover/run.mjs"
+    "test:discover": "node scripts/program-discover/run.mjs",
+    "test:classes-booking": "node scripts/classes-booking-journey/run.mjs",
+    "test:back-journey": "node scripts/program-back-journey/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

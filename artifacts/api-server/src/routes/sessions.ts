@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, testClassesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
@@ -113,6 +113,204 @@ async function tagTestClasses<T extends { id: number }>(rows: T[]): Promise<T[]>
 }
 
 const router: IRouter = Router();
+
+/* ========================================================================== *
+ * Public class discovery                                                       *
+ * ========================================================================== */
+
+/**
+ * The Classes tab on Discover asks this route, and only this route, for what a stranger may see.
+ *
+ * `GET /sessions` is the mixed list every existing screen already reads — a teacher's own list, a
+ * student's own list, and the browsing list that a signed-in student's Discover has read for
+ * months. It excludes monthly-recurring class-days when neither `teacherId` nor `studentId` is
+ * present, but it does not enforce the visibility gate a public storefront needs: a rejected,
+ * suspended, or not-yet-approved teacher's classes still surface through the general list. That
+ * is fine for a signed-in owner and wrong for a stranger.
+ *
+ * `GET /public/classes` layers the same gate the public Learning-Programs list uses and adds
+ * the search / cursor pagination the Programs list has. It never touches `/sessions`. Doing it
+ * as a separate route keeps two contracts distinct: no other screen has to remember which
+ * combination of query parameters produces the guarded shape, and no owner's-own-list caller
+ * loses rows the moment a teacher is temporarily suspended.
+ *
+ * ## What it returns
+ *
+ * - Only single classes (`notARecurringDay` excludes monthly-class-day materialisations).
+ * - Only teachers whose profile is `approved` and whose account is not suspended.
+ * - Only classes with `status = 'upcoming'` (never `live` / `completed` / `cancelled`; a live
+ *   class is one nobody new may join, and the other two are self-explanatory).
+ * - Only classes whose cutoff is in the future (`isPastCutoff` false). A class whose booked slot
+ *   has already passed cannot honestly be sold; the sessions.ts main handler exposes an
+ *   `expired` flag on general listings and this route just filters those rows out.
+ * - Only classes with a seat available (`enrolled_count < max_students`). A student cannot
+ *   book a full class; showing it is a "why can I not buy this" moment we do not need.
+ * - The authoritative teacher id, so the Classes card knows which teacher page to open.
+ *
+ * ## Ordering and pagination
+ *
+ * Soonest scheduled class first, `id` as the deterministic tie-breaker. A cursor is
+ * `<date-ms>_<id>` and the page is everything strictly after that pair — so a class rescheduled
+ * to the same millisecond as another is neither skipped nor repeated.
+ *
+ * ## Search
+ *
+ * Bounded and parameterised, the same shape the Programs public list uses:
+ * `readClassSearch()` trims, caps at 80 chars, escapes `%`/`_`/`\`, returns `null` for a blank
+ * query. The columns searched are the ones a stranger would recognise: subject, topic, and the
+ * teacher's display name — no private data (email, phone, notes) reaches the query.
+ *
+ * The route accepts no client claim about a teacher being approved or a class being for sale;
+ * every gate is server-side.
+ */
+
+const CLASS_MAX_PAGE = 50;
+const CLASS_DEFAULT_PAGE = 20;
+const CLASS_SEARCH_MAX = 80;
+
+function readClassLimit(raw: unknown): number | null {
+  if (raw === undefined) return CLASS_DEFAULT_PAGE;
+  const text = String(raw);
+  if (!/^\d+$/.test(text)) return null;
+  const n = parseInt(text, 10);
+  if (n <= 0) return null;
+  return Math.min(CLASS_MAX_PAGE, n);
+}
+
+/** `<date-ms>_<id>`; anything else is refused rather than reinterpreted. */
+function readClassCursor(raw: string): { at: Date; id: number } | null {
+  const parts = raw.split("_");
+  if (parts.length !== 2) return null;
+  if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) return null;
+  const at = new Date(Number(parts[0]));
+  const id = Number(parts[1]);
+  if (Number.isNaN(at.getTime()) || id <= 0) return null;
+  return { at, id };
+}
+
+/**
+ * Bounded, parameter-safe LIKE query. Returns null for an empty string so the route can skip the
+ * search branch entirely rather than joining an "always match" clause.
+ */
+function readClassSearch(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  const trimmed = String(raw).trim();
+  if (trimmed.length === 0) return null;
+  const capped = trimmed.slice(0, CLASS_SEARCH_MAX);
+  // Escape LIKE wildcards and the escape character itself, in that order.
+  const escaped = capped.replace(/\\/g, "\\\\").replace(/[%_]/g, (c) => `\\${c}`);
+  return `%${escaped}%`;
+}
+
+router.get("/public/classes", async (req: Request, res: Response): Promise<void> => {
+  const limit = readClassLimit(req.query.limit);
+  if (limit === null) {
+    res.status(400).json({ error: "That is not a page size this list accepts." });
+    return;
+  }
+
+  let cursor: { at: Date; id: number } | null = null;
+  if (req.query.cursor !== undefined) {
+    cursor = readClassCursor(String(req.query.cursor));
+    if (cursor === null) {
+      res.status(400).json({ error: "That page marker is not valid." });
+      return;
+    }
+  }
+
+  const search = readClassSearch(req.query.q);
+
+  const where = [
+    // Only actual single classes for sale — never a materialised monthly class-day.
+    notARecurringDay,
+    // Only "upcoming" — a live / completed / cancelled class cannot be bought.
+    eq(sessionsTable.status, "upcoming"),
+    // Only teachers permitted to appear publicly.
+    eq(teacherProfilesTable.approvalStatus, "approved"),
+    sql`${usersTable.suspendedAt} is null`,
+    // Only classes with a seat available. Full classes could be shown with a Sold Out label,
+    // but that requires a booking journey that handles the refusal cleanly; for now, keep them
+    // out of the public list.
+    sql`${sessionsTable.enrolledCount} < ${sessionsTable.maxStudents}`,
+  ];
+
+  /*
+    Expiry: filter here in SQL rather than in JS, so a page never comes back short because a row
+    turned out to be past the cutoff. `isPastCutoff` in `lib/sessionStart.ts` is the authority for
+    the exact rule, but the SQL below mirrors its "booked_end + overtime_cutoff" reading for
+    upcoming (never-started) classes, which is what this route filters. Signed-in owner lists
+    still use `isPastCutoff` on the server-side after fetch (they need the `expired` flag).
+  */
+  where.push(sql`(${sessionsTable.date} + make_interval(mins => ${sessionsTable.duration} + 10)) > now()`);
+
+  if (cursor !== null) {
+    // Soonest first, so "after this cursor" means strictly later in time (or later id at the
+    // same instant). Postgres' row comparison handles the tie-break atomically.
+    where.push(sql`(${sessionsTable.date}, ${sessionsTable.id}) > (${cursor.at}, ${cursor.id})`);
+  }
+
+  if (search !== null) {
+    const like = sql`ilike ${search} escape '\\'`;
+    where.push(
+      or(
+        sql`${sessionsTable.subject} ${like}`,
+        sql`${sessionsTable.topic} ${like}`,
+        sql`${usersTable.name} ${like}`,
+      )!,
+    );
+  }
+
+  const rows = await db
+    .select({
+      id: sessionsTable.id,
+      teacherUserId: sessionsTable.teacherId,
+      teacherProfileId: teacherProfilesTable.id,
+      teacherName: usersTable.name,
+      subject: sessionsTable.subject,
+      topic: sessionsTable.topic,
+      date: sessionsTable.date,
+      duration: sessionsTable.duration,
+      maxStudents: sessionsTable.maxStudents,
+      enrolledCount: sessionsTable.enrolledCount,
+      price: sessionsTable.price,
+    })
+    .from(sessionsTable)
+    .innerJoin(usersTable, eq(usersTable.id, sessionsTable.teacherId))
+    .innerJoin(teacherProfilesTable, eq(teacherProfilesTable.userId, sessionsTable.teacherId))
+    .where(and(...where))
+    .orderBy(asc(sessionsTable.date), asc(sessionsTable.id))
+    // One more than asked for, so "is there another page" is known rather than guessed.
+    .limit(limit + 1);
+
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+
+  res.json({
+    classes: page.map((row) => ({
+      id: row.id,
+      /*
+        Two ids for a teacher, both authoritative, because the app has to talk about them in two
+        different ways. `teacherUserId` is the id used to identify the teacher across the whole
+        system (sessions, enrolments, follows, WebSocket identity); `teacherProfileId` is the id
+        the `/(student)/teacher/[id]` route uses to look them up. Sending both keeps the caller
+        honest: this route is not the place to decide which one they want.
+      */
+      teacherUserId: row.teacherUserId,
+      teacherProfileId: row.teacherProfileId,
+      teacherName: row.teacherName,
+      subject: row.subject,
+      topic: row.topic,
+      date: row.date,
+      duration: row.duration,
+      maxStudents: row.maxStudents,
+      enrolledCount: row.enrolledCount,
+      price: row.price,
+    })),
+    nextCursor: rows.length > limit && last?.date
+      ? `${last.date.getTime()}_${last.id}`
+      : null,
+  });
+});
 
 router.get("/sessions", async (req, res): Promise<void> => {
   const { teacherId, studentId, status, page = "1", limit = "20" } = req.query as Record<string, string>;

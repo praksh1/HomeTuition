@@ -301,3 +301,94 @@ exercise them.
   addition is a response-only field pulled from the existing snapshot column.
 - **No Join, Buy, Enrol, Reserve or Pay button was added.** The program details page still
   ends with the plain "Joining a program is not open yet" notice.
+
+## Correction round 2 (2026-09-09)
+
+Codex reviewed `8a8fcb2` and returned eight further blockers focused on the Single Classes
+view being safe and end-to-end usable. Every item is addressed additively — no schema change,
+no `db:push`, no changes to booking, payment, membership, Monthly classes, classroom sockets,
+Daily, LiveKit, or database plumbing. No production or staging deploy.
+
+### The eight items and what was done
+
+1. **Single classes now book through the existing teacher-page flow.** The Classes card carries
+   the authoritative teacher profile id and a "View & book" action. Tapping routes to
+   `/(student)/teacher/{profileId}?session={id}`; the teacher page reads the query param,
+   focuses the Upcoming sub-tab, and marks the target session with a `focused-session-{id}`
+   testID. The existing `book-btn-{id}` control on that page runs the real Book & Pay flow —
+   no booking implementation is duplicated. Rendered journey `test:classes-booking` proves the
+   student reaches that control from the tap.
+2. **Public class visibility is now gated.** New route `GET /public/classes` returns only:
+   single (non-monthly) classes with `status = 'upcoming'`, only teachers whose profile is
+   `approved` and whose account is not suspended, only classes not past their cutoff and not
+   full. `/sessions` semantics are unchanged — the guarded shape lives on its own path. Route
+   ordering, search and cursor pagination all live in `sessions.ts`. Server tests in
+   `test:public-classes` (41 checks) prove rejected/unapproved/suspended teachers cannot
+   surface, that a live suspension removes an approved teacher's class on the very next
+   request, and that the response never leaks `email`/`suspendedAt`/`approvalStatus`/etc.
+3. **Server-side search with bounded input and deterministic pagination.** `readClassSearch()`
+   trims, caps at 80 chars, escapes `%`/`_`/`\` and returns null for a blank query. The route
+   `ilike`s over `subject`, `topic`, and the public teacher name only. Ordering is
+   `(date ASC, id ASC)` so soonest-first with a stable tie-breaker; the cursor is `<ms>_<id>`
+   and Postgres row-compares the pair. Rendered `test:classes-booking` proves the visible
+   Search button submits, typing sends no per-keystroke request, no-match is honest and
+   quotes the submitted query, and the pagination-failure state preserves loaded cards.
+4. **Each Discover view now loads lazily.** `app/(student)/index.tsx` no longer loads Classes,
+   Teachers, or Monthly data on mount; each view fires its own load the first time it is
+   opened, and refocus keeps the previously-loaded content instead of clobbering it. The
+   rendered journey observes network requests before the tap and asserts `/public/classes`
+   and `/teachers` are *not* fetched while Programs is the initial view.
+5. **Back navigation is proved in a real journey.** New suite `test:back-journey` walks the
+   preserved-context path (search + chip filter → open a program → in-app Back → search box
+   and filtered list still there) and the deep-link fallback (arrive cold on
+   `/program/{id}` → in-app Back safely lands on Discover). It also covers the invalid-id
+   case ends loading and shows the not-found state.
+6. **Raw layout values replaced with semantic tokens.** `constants/layout.ts` now exports
+   `marketplaceColumnMax` (760) and `bottomNavClearance` (100), each with a named comment
+   explaining what they are for. All new and modified Discover code uses them; no bare 760 or
+   `insets.bottom + 100` in the Classes view or the rewritten Programs container.
+7. **PublicClassCard is a dedicated component with truthful fields.** `PublicClassCard`
+   accepts `PublicClassCardFields` directly (billing line, price, seats-left or Sold-out,
+   duration, when, teacher, one "View & book" action). No `Array().fill("")` hack — the
+   card reads seat counts as numbers. Unit tests in `publicClasses.test.ts` cover the fields,
+   the sold-out variant, and the no-fabrication rule.
+8. **The previously-omitted gates were actually run.** Local Postgres was brought up, the
+   API server built and started, and every listed suite executed against it.
+
+### Verification of this round
+
+| Command | Where | Result |
+|---|---|---|
+| `pnpm run typecheck` | root, all four packages | pass |
+| `pnpm --dir artifacts/sikshya run test` | | 351 pass, 0 fail |
+| `pnpm --dir artifacts/api-server run test` | | 474 pass, 0 fail |
+| `pnpm --dir artifacts/api-server run test:programs` | | 442 pass, 0 fail |
+| `pnpm --dir artifacts/api-server run test:public-classes` | new suite | 41 pass, 0 fail |
+| `pnpm --dir artifacts/api-server run test:sessions` | | 56 pass, 0 fail |
+| `pnpm --dir artifacts/sikshya run test:programs-ui` | | 254 pass, 0 fail |
+| `pnpm --dir artifacts/sikshya run test:discover` | | 146 pass, 0 fail |
+| `pnpm --dir artifacts/sikshya run test:classes-booking` | new suite | 27 pass, 0 fail |
+| `pnpm --dir artifacts/sikshya run test:back-journey` | new suite | 11 pass, 0 fail |
+| `pnpm --dir artifacts/sikshya run test:program-journey` | | 77 pass, 0 fail |
+| `pnpm --dir artifacts/sikshya run test:program-smoke` | | 55 pass, 1 fail (see below) |
+| `pnpm --dir artifacts/sikshya run test:nav` | | 47 pass, 0 fail |
+| `pnpm --dir artifacts/sikshya run lint:design` | | no new leaks |
+| `git diff --check` | root | clean |
+
+**One preexisting flake in `test:program-smoke`.** "the sign-in form reaches the server and
+is accepted" waits for a specific network trace of the login POST; the very next check —
+"signing in reaches the teacher dashboard" — passes, which proves the login itself succeeded.
+The failure is in the harness's request observation, not the app. Unrelated to this round;
+noted here so the number is not underreported.
+
+**Rendered and inspected** at 390×844 and 1440×900. New screenshots under
+`/tmp/program-discover-shots` and inline flows in the two new journey suites.
+
+### Deliberately not done
+
+- **No booking/payment code was touched.** The Classes card hands off to the existing Book &
+  Pay control on the teacher page — the same control the Discover Teachers path uses.
+- **`/sessions` semantics are unchanged.** The gated shape is a separate route.
+- **No schema change, no `db:push`.** The new route joins existing tables.
+- **No production or staging deploy.** Everything ran against a local Postgres in this
+  container.

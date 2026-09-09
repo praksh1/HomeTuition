@@ -172,3 +172,29 @@ export const boardShare: Record<Tier, number> = {
 
 /** Anything a finger has to hit. Below this, people miss — and miss more on a bumpy bus. */
 export const HIT_SLOP_MIN = 44;
+
+/**
+ * The widest a Discover column of cards should ever get.
+ *
+ * `readingWidth` (680) is for prose; this is for a marketplace list — one card per row, meant
+ * to be scanned. On a laptop, cards past ~760 stop being cards and start being admin rows.
+ * `ProgramView`, the student Discover, the Classes view and (in future) any other public list
+ * cap themselves at this value with `alignSelf: center`, so a screen that fills a metre of
+ * pixels still reads as an editorial column.
+ *
+ * Named because a raw `760` in six places is exactly what makes design choices decay: a change
+ * on one screen never touches the others.
+ */
+export const marketplaceColumnMax = 760;
+
+/**
+ * Extra space at the bottom of a scrollable Discover page, so the tab bar and any floating
+ * controls do not eat the last card.
+ *
+ * `insets.bottom` already accounts for the safe-area chrome (home indicator, gesture bar); this
+ * is the tab-bar clearance *on top of* that. Tab bar heights and safe-area insets are drawn
+ * from platform values at runtime; this is the constant designers agreed for the storefront
+ * pages that scroll under it — Discover Programs, Discover Classes, and any subsequent public
+ * list that lives beneath the same tab bar.
+ */
+export const bottomNavClearance = 100;

@@ -120,7 +120,22 @@ function mapApiSession(s: ApiSession, teacherId: string): Session {
 type SessionTab = "upcoming" | "live" | "past";
 
 export default function TeacherDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const params = useLocalSearchParams<{ id: string; session?: string | string[] }>();
+  const id = params.id;
+  /**
+   * A specific session the caller wants highlighted, from `?session=<id>`.
+   *
+   * The Discover Classes tab hands off to this page rather than duplicating the booking flow;
+   * it routes here with the class's session id, and this screen finds it in the Upcoming list
+   * and focuses it. Never gates anything the server rules — it is a display convenience only,
+   * so a signed-out visitor or a class that has ended between the tap and the arrival simply
+   * see no highlight.
+   */
+  const highlightSessionId = React.useMemo(() => {
+    const raw = Array.isArray(params.session) ? params.session[0] : params.session;
+    if (typeof raw !== "string" || raw.length === 0) return null;
+    return /^\d+$/.test(raw) ? raw : null;
+  }, [params.session]);
   const colors = useColors();
   const { t, numeric, gutter, space, radius, elevation, isExpanded } =
     useLayout();
@@ -193,6 +208,16 @@ export default function TeacherDetail() {
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id, studentId]),
   );
+
+  /**
+   * If the caller pointed at a specific session, make sure the Upcoming tab is on when the
+   * page arrives so the class is actually visible. This is the second half of the Classes-tap
+   * hand-off; the highlight ring on the card itself is applied inline below by matching the
+   * session id.
+   */
+  React.useEffect(() => {
+    if (highlightSessionId !== null) setSessionTab("upcoming");
+  }, [highlightSessionId]);
 
   useEffect(() => {
     if (liveSessions.length === 0) return;
@@ -1073,10 +1098,11 @@ You can join from your Sessions tab — the class opens a few minutes before it 
             {sessionTab === "upcoming" &&
               activeSessions.map((s) => {
                 const a = access[s.id];
+                const highlighted = highlightSessionId !== null && String(s.id) === highlightSessionId;
                 // Already signed up: say so, rather than inviting them to pay a second time.
                 if (a?.isEnrolled) {
                   return (
-                    <View key={s.id}>
+                    <View key={s.id} testID={highlighted ? `focused-session-${s.id}` : undefined}>
                       <SessionCard session={s} onPress={() => {}} />
                       <View
                         style={[
@@ -1117,7 +1143,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                   );
                 }
                 return (
-                  <View key={s.id}>
+                  <View key={s.id} testID={highlighted ? `focused-session-${s.id}` : undefined}>
                     <SessionCard session={s} onPress={() => bookSession(s)} />
                     <View
                       style={[

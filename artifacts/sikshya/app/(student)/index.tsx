@@ -1,10 +1,11 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,7 +16,11 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 
-import { HIT_SLOP_MIN } from "@/constants/layout";
+import {
+  HIT_SLOP_MIN,
+  bottomNavClearance,
+  marketplaceColumnMax,
+} from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { numeric } from "@/constants/typography";
@@ -26,11 +31,10 @@ import { apiGet } from "@/utils/api";
 import { loadTeacherDirectory } from "@/utils/teacherDirectory";
 import { matches as matchesSearch, score as searchScore } from "@/utils/search";
 import TeacherCard from "@/components/TeacherCard";
-import SessionCard from "@/components/SessionCard";
 import ProgramDiscoverList from "@/components/programs/ProgramDiscoverList";
+import PublicClassCard from "@/components/programs/PublicClassCard";
 import {
   appendPage,
-  DISCOVER_SEARCH_PROMPT,
   DISCOVER_TABS,
   TEACHERS_TABS,
   type DiscoverView,
@@ -38,6 +42,12 @@ import {
   type PublicProgramSummary,
   type TeachersView,
 } from "@/utils/programDiscovery";
+import {
+  appendClassPage,
+  publicClassCard,
+  publicClassListState,
+  type PublicClass,
+} from "@/utils/publicClasses";
 import { ApiError } from "@/utils/api";
 import type { Teacher } from "@/context/AuthContext";
 
@@ -79,21 +89,6 @@ const DEFAULT_FILTERS: Filters = {
 interface MonthlyBrief {
   id: number;
   teacherId: number;
-}
-
-/** One single (non-monthly) class as `/sessions` returns it for browsing. */
-interface ApiSingleClass {
-  id: number;
-  teacherName: string;
-  subject: string;
-  topic: string;
-  date: string;
-  duration: number;
-  maxStudents: number;
-  enrolledCount: number;
-  price: number;
-  status: string;
-  expired?: boolean;
 }
 
 export default function Discover() {
@@ -147,7 +142,7 @@ export default function Discover() {
    * newer one has already come back is the ordinary case on a Nepali connection, and this makes
    * sure that "typed 'guitar' then typed 'exam'" always ends up showing exam results.
    */
-  const programRequestRef = React.useRef(0);
+  const programRequestRef = useRef(0);
 
   const loadPrograms = useCallback(
     async (opts: { append?: boolean; query?: string; type?: ProgramType | "all" } = {}) => {
@@ -191,11 +186,8 @@ export default function Discover() {
           ? err.message
           : "Fadko could not reach the server. Check your connection and try again.";
         if (append) {
-          // Do not wipe the already-loaded page. The retry sits beside "Show more" and the
-          // cards on screen stay put.
           setProgramsMoreError(message);
         } else {
-          // A first-load failure. Nothing was on screen, so the failure card is the screen.
           setPrograms([]);
           setProgramsInitialError(message);
         }
@@ -208,9 +200,10 @@ export default function Discover() {
     [programQuery, programType, programsCursor],
   );
 
-  // First load, and whenever the primary type filter changes. Typing does *not* fetch on every
-  // keystroke — the query only re-fetches when the student submits (the visible Search button or
-  // the keyboard's return key), so a Nepali bus connection is not billed one call per letter.
+  // First load when the screen mounts (Programs is the initial view), and again whenever the
+  // primary type filter changes. Typing does *not* fetch on every keystroke — the request fires
+  // on Enter or on the visible Search button, so a Nepali bus connection is not billed one call
+  // per letter.
   React.useEffect(() => {
     void loadPrograms({ type: programType, query: programQuery });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -218,113 +211,158 @@ export default function Discover() {
 
   /* ---------------------------------------------------------- single classes --- */
 
-  const [singleClasses, setSingleClasses] = useState<ApiSingleClass[]>([]);
-  const [singleLoading, setSingleLoading] = useState(true);
-  const [singleFailed, setSingleFailed] = useState(false);
-  const [singleQuery, setSingleQuery] = useState("");
+  const [classes, setClasses] = useState<PublicClass[]>([]);
+  const [classesCursor, setClassesCursor] = useState<string | null>(null);
+  const [classesLoading, setClassesLoading] = useState(false);
+  const [classesLoadingMore, setClassesLoadingMore] = useState(false);
+  const [classesInitialError, setClassesInitialError] = useState<string | null>(null);
+  const [classesMoreError, setClassesMoreError] = useState<string | null>(null);
+  /** What is currently typed (unsubmitted). Only fetches on submit or the Search button. */
+  const [classQuery, setClassQuery] = useState("");
+  /** What was last submitted to the server. Drives the no-match phrasing. */
+  const [classSubmittedQuery, setClassSubmittedQuery] = useState("");
+  const [classesLoadedOnce, setClassesLoadedOnce] = useState(false);
+  const classRequestRef = useRef(0);
 
-  const loadSingleClasses = useCallback(async () => {
-    setSingleLoading(true);
-    setSingleFailed(false);
-    try {
-      const res = await apiGet<{ sessions: ApiSingleClass[] }>(`/sessions?status=upcoming&limit=50`);
-      /*
-        The class must still be sellable. `expired` is the server's fact from the clock rather
-        than from the row: a class whose `status` is still "upcoming" but whose booked slot has
-        gone by should not appear as buyable, and — as noted on the teacher-details page — 19 of
-        20 "upcoming" rows on the live site had already passed. Filter on the server's answer
-        rather than re-computing here.
-      */
-      setSingleClasses((res.sessions ?? []).filter((s) => s.expired !== true));
-    } catch {
-      setSingleFailed(true);
-      setSingleClasses([]);
-    } finally {
-      setSingleLoading(false);
+  const loadClasses = useCallback(async (opts: { append?: boolean; query?: string } = {}) => {
+    const append = opts.append === true;
+    const q = opts.query !== undefined ? opts.query : classSubmittedQuery;
+    const cursor = append ? classesCursor : null;
+
+    if (append) {
+      setClassesLoadingMore(true);
+      setClassesMoreError(null);
+    } else {
+      setClassesLoading(true);
+      setClassesInitialError(null);
+      setClassesMoreError(null);
     }
-  }, []);
+    const mine = ++classRequestRef.current;
 
-  useFocusEffect(useCallback(() => { void loadSingleClasses(); }, [loadSingleClasses]));
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      if (q.trim().length > 0) params.set("q", q.trim());
+      if (cursor) params.set("cursor", cursor);
+      const answer = await apiGet<{ classes: PublicClass[]; nextCursor: string | null }>(
+        `/public/classes?${params.toString()}`,
+      );
+      if (mine !== classRequestRef.current) return;
 
-  const filteredSingleClasses = useMemo(() => {
-    const q = singleQuery.trim().toLowerCase();
-    if (q === "") return singleClasses;
-    return singleClasses.filter((s) =>
-      [s.teacherName, s.subject, s.topic].some((field) =>
-        (field ?? "").toLowerCase().includes(q),
-      ),
-    );
-  }, [singleClasses, singleQuery]);
+      if (append) {
+        setClasses((current) => appendClassPage(
+          { rows: current, nextCursor: classesCursor },
+          { rows: answer.classes, nextCursor: answer.nextCursor },
+        ).rows);
+      } else {
+        setClasses(answer.classes);
+      }
+      setClassesCursor(answer.nextCursor);
+      setClassesLoadedOnce(true);
+    } catch (err) {
+      if (mine !== classRequestRef.current) return;
+      const message = err instanceof ApiError
+        ? err.message
+        : "Fadko could not reach the server. Check your connection and try again.";
+      if (append) {
+        // Do not wipe the loaded page — retry sits beside "Show more".
+        setClassesMoreError(message);
+      } else {
+        setClasses([]);
+        setClassesInitialError(message);
+      }
+    } finally {
+      if (mine !== classRequestRef.current) return;
+      if (append) setClassesLoadingMore(false);
+      else setClassesLoading(false);
+    }
+  }, [classSubmittedQuery, classesCursor]);
+
+  const submitClassQuery = useCallback((text: string) => {
+    setClassSubmittedQuery(text);
+    void loadClasses({ query: text });
+  }, [loadClasses]);
 
   /* --------------------------------------------------------------- teachers --- */
 
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("All");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
-  /**
-   * How many approved teachers there are, as opposed to how many arrived in this page.
-   *
-   * The API caps pages at 100; loadTeacherDirectory follows its pagination so local search
-   * covers the same directory as this total, including new unrated teachers on later pages.
-   */
   const [teacherTotal, setTeacherTotal] = useState<number | null>(null);
-  /**
-   * True until the first fetch answers.
-   *
-   * Without it this screen said "No teachers found — try a different keyword" for the second
-   * or two before anyone arrived, which is not merely blank but wrong: it blames the student
-   * for a search that has not run yet.
-   */
-  const [loadingTeachers, setLoadingTeachers] = useState(true);
+  const [loadingTeachers, setLoadingTeachers] = useState(false);
   const [teacherLoadFailed, setTeacherLoadFailed] = useState(false);
-  /**
-   * The monthly classes running right now.
-   *
-   * One public request, not one per teacher. It answers two questions this screen could not
-   * answer before: how many monthly classes actually exist, and which teachers run one — so a
-   * student can tell the two billing models apart before they tap rather than after.
-   *
-   * Null means we have not heard back. A teacher is never marked as *not* having a monthly
-   * class on the strength of a request that failed.
-   */
+  const [teachersLoadedOnce, setTeachersLoadedOnce] = useState(false);
   const [monthly, setMonthly] = useState<MonthlyBrief[] | null>(null);
+  const [monthlyLoadedOnce, setMonthlyLoadedOnce] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("rating");
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [showSort, setShowSort] = useState(false);
   const [showFilter, setShowFilter] = useState(false);
   const [draftFilters, setDraftFilters] = useState<Filters>(DEFAULT_FILTERS);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadTeachers();
-      loadMonthly();
-    }, [])
-  );
-
-  const loadTeachers = async () => {
+  const loadTeachers = useCallback(async () => {
     setLoadingTeachers(true);
     setTeacherLoadFailed(false);
     try {
       const res = await loadTeacherDirectory<Teacher>(apiGet);
       setTeachers(res.teachers.map((t: Teacher) => ({ ...t, credentials: [] })));
       setTeacherTotal(res.total ?? res.teachers.length);
+      setTeachersLoadedOnce(true);
     } catch (_e) {
-      setTeacherLoadFailed(true);
-      setTeachers([]);
-      setTeacherTotal(null);
+      if (!teachersLoadedOnce) {
+        // First-load failure — the empty state may show. A refresh that fails does *not* wipe
+        // successful teachers off the screen.
+        setTeacherLoadFailed(true);
+        setTeachers([]);
+        setTeacherTotal(null);
+      }
     } finally {
       setLoadingTeachers(false);
     }
-  };
+  }, [teachersLoadedOnce]);
 
-  const loadMonthly = async () => {
+  const loadMonthly = useCallback(async () => {
     try {
       const res = await apiGet<{ classes: MonthlyBrief[] }>("/monthly/classes");
       setMonthly(res.classes ?? []);
+      setMonthlyLoadedOnce(true);
     } catch {
-      setMonthly(null);
+      if (!monthlyLoadedOnce) setMonthly(null);
     }
-  };
+  }, [monthlyLoadedOnce]);
+
+  /**
+   * Load each view's data the first time that view is opened, and refresh it on focus while
+   * that view is still the one on screen. Programs loads on mount because it is the initial
+   * view; Classes and Teachers wait until the student switches to them.
+   *
+   * This is Codex correction round 2, item 4: on a cheap Android phone opening Programs must
+   * not immediately download Classes, all Teachers and Monthly-class data. Each view is
+   * responsible for its own network, and a background refresh that fails never wipes previously
+   * successful content off the screen.
+   */
+  useFocusEffect(useCallback(() => {
+    if (view === "classes" && !classesLoadedOnce) void loadClasses();
+    if (view === "teachers") {
+      if (!teachersLoadedOnce) void loadTeachers();
+      if (!monthlyLoadedOnce) void loadMonthly();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, classesLoadedOnce, teachersLoadedOnce, monthlyLoadedOnce]));
+
+  // Switching to a view for the first time triggers its load immediately, not on the next
+  // focus event. `useFocusEffect` only re-runs when the screen loses and regains focus.
+  React.useEffect(() => {
+    if (view === "classes" && !classesLoadedOnce && !classesLoading) void loadClasses();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+  React.useEffect(() => {
+    if (view === "teachers") {
+      if (!teachersLoadedOnce && !loadingTeachers) void loadTeachers();
+      if (!monthlyLoadedOnce) void loadMonthly();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   /** Teachers who also run a monthly class, for the badge on their card. */
   const monthlyTeacherIds = useMemo(
@@ -344,23 +382,10 @@ export default function Discover() {
     const q = search.trim();
     let result = teachers.filter((teacher) => {
       if (q) {
-        /**
-         * Spacing carries no meaning in a search box.
-         *
-         * This was a plain substring match, so looking for "Ram Prasad" as `RamPrasad`,
-         * `ram p rasa d` or `r ampr asad` — all reported — found nobody. See utils/search.ts.
-         * Each field is offered separately rather than glued into one string, so a name match
-         * can outrank a word that merely appears in a bio.
-         */
         const fields = [
-          teacher.name,
-          teacher.email ?? "",
-          teacher.subject,
-          teacher.bio,
-          teacher.location ?? "",
-          teacher.district ?? "",
-          ...(teacher.subjects ?? []),
-          ...(teacher.languages ?? []),
+          teacher.name, teacher.email ?? "", teacher.subject, teacher.bio,
+          teacher.location ?? "", teacher.district ?? "",
+          ...(teacher.subjects ?? []), ...(teacher.languages ?? []),
         ];
         if (!fields.some((field) => matchesSearch(field, q))) return false;
       }
@@ -371,8 +396,6 @@ export default function Discover() {
       return true;
     });
 
-    // A search is itself a ranking. Sorting by rating while someone is typing a name buries
-    // the person they asked for under whoever happens to be rated highest.
     if (q) {
       const rank = (teacher: Teacher) =>
         searchScore(
@@ -403,34 +426,29 @@ export default function Discover() {
     return result;
   }, [teachers, search, subject, sortKey, filters]);
 
-  /**
-   * Only crown somebody the students have actually rated.
-   *
-   * "Top Pick" was `filtered[0]` — whoever sorted first. Before anybody has left a review every
-   * teacher is rated zero, so the platform was picking a favourite at random and presenting it
-   * as a recommendation, in the largest card on the storefront.
-   */
   const topPick = filtered.length > 0 && filtered[0].reviewCount > 0 ? filtered[0] : null;
   const restTeachers = topPick ? filtered.slice(1) : filtered;
   const isSearching = !!search.trim() || subject !== "All" || activeFilterCount > 0;
 
-  const openFilter = () => {
-    setDraftFilters({ ...filters });
-    setShowFilter(true);
-  };
-
-  const applyFilters = () => {
-    setFilters({ ...draftFilters });
-    setShowFilter(false);
-  };
-
-  const resetFilters = () => {
-    setDraftFilters({ ...DEFAULT_FILTERS });
-  };
+  const openFilter = () => { setDraftFilters({ ...filters }); setShowFilter(true); };
+  const applyFilters = () => { setFilters({ ...draftFilters }); setShowFilter(false); };
+  const resetFilters = () => { setDraftFilters({ ...DEFAULT_FILTERS }); };
 
   const currentSortLabel = SORT_OPTIONS.find((s) => s.key === sortKey)?.label ?? "Sort";
-
   const inTeachersAll = view === "teachers" && teachersView === "all";
+
+  /**
+   * Tapping a class card routes to the teacher's public page with `?session=<id>`, where the
+   * existing Book & Pay control lives. This screen deliberately does not duplicate the booking
+   * flow — the teacher page knows about payment methods, test-class grants, the join window
+   * and everything else. Codex correction round 2, item 1.
+   */
+  const openClassOnTeacherPage = useCallback((row: PublicClass) => {
+    // The teacher page is looked up by *profile* id (not user id), so route with that. The
+    // API returns both — the tap uses profileId; if a future action needs the user id it is
+    // already on the row.
+    router.push(`/(student)/teacher/${row.teacherProfileId}?session=${row.id}`);
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -443,18 +461,11 @@ export default function Discover() {
       >
         <View style={styles.titleRow}>
           <View style={{ flex: 1 }}>
-            {/*
-              Each view carries its own heading and one-line subtitle. Before this round the page
-              always said "Find a teacher" and "197 verified teachers", whatever tab the student
-              had picked — a page that says teacher-teacher-teacher while a Programs list is on
-              screen is telling the student they are somewhere they are not. See `DISCOVER_TABS`
-              in `utils/programDiscovery.ts`.
-            */}
             <Text testID="discover-heading" style={[t.title1, { color: colors.foreground }]}>
               {currentTab.heading}
             </Text>
             {view === "teachers" ? (
-              loadingTeachers ? (
+              loadingTeachers && !teachersLoadedOnce ? (
                 <View style={{ marginTop: space.xxs }}><Skeleton width={168} height={13} /></View>
               ) : (
                 <Text
@@ -493,11 +504,6 @@ export default function Discover() {
           </TouchableOpacity>
         </View>
 
-        {/*
-          The three primary product views, in the shape Codex approved: Programs, Classes,
-          Teachers. Each pill uses the short `label` so the row fits at 390pt; the screen reader
-          hears the full `accessibilityLabel` ("Single classes" rather than just "Classes").
-        */}
         <View style={[styles.subTabs, { gap: space.xs }]}>
           {DISCOVER_TABS.map((tab) => {
             const active = view === tab.view;
@@ -528,11 +534,6 @@ export default function Discover() {
           })}
         </View>
 
-        {/*
-          The Teachers view has its own two sub-choices, All and Following. They sit *under*
-          Teachers because a follow is a relationship with a teacher and belongs where teachers
-          live. Codex correction round 1, item 1.
-        */}
         {view === "teachers" ? (
           <View style={[styles.subTabs, { gap: space.xs }]}>
             {TEACHERS_TABS.map((tab) => {
@@ -679,14 +680,10 @@ export default function Discover() {
       {view === "programs" ? (
         <ScrollView
           contentContainerStyle={{
-            paddingHorizontal: gutter, paddingTop: space.md, paddingBottom: insets.bottom + 100, gap: space.md,
-            /*
-              A readable column on a laptop, and nothing at all on a phone. Same 760pt cap the
-              studio and teacher dashboard use — without it, cards stretch across a metre of screen
-              and the page reads as an admin table rather than a learning surface.
-            */
+            paddingHorizontal: gutter, paddingTop: space.md,
+            paddingBottom: insets.bottom + bottomNavClearance, gap: space.md,
             width: "100%",
-            maxWidth: 760,
+            maxWidth: marketplaceColumnMax,
             alignSelf: "center",
           }}
           keyboardShouldPersistTaps="handled"
@@ -695,11 +692,6 @@ export default function Discover() {
             query={programQuery}
             onQueryChange={setProgramQuery}
             chosenType={programType}
-            /*
-              A chip tap is a new filter, and a new filter is a new fetch — the parent runs it.
-              The comment in `ProgramDiscoverList` says the same thing; the two matching is
-              Codex correction round 1, item 5.
-            */
             onTypeChange={(next) => setProgramType(next)}
             programs={programs}
             initialLoad={programsLoading}
@@ -715,19 +707,24 @@ export default function Discover() {
         </ScrollView>
       ) : view === "classes" ? (
         <ClassesView
-          classes={filteredSingleClasses}
-          totalCount={singleClasses.length}
-          loading={singleLoading}
-          failed={singleFailed}
-          query={singleQuery}
-          onQueryChange={setSingleQuery}
-          onRetry={() => void loadSingleClasses()}
-          onOpen={(id) => router.push(`/session/${id}`)}
+          rows={classes}
+          hasMore={classesCursor !== null}
+          initialLoad={classesLoading && !classesLoadedOnce}
+          loadingMore={classesLoadingMore}
+          initialError={classesInitialError}
+          paginationError={classesMoreError}
+          typedQuery={classQuery}
+          submittedQuery={classSubmittedQuery}
+          onQueryChange={setClassQuery}
+          onSubmit={submitClassQuery}
+          onRetry={() => void loadClasses({ query: classSubmittedQuery })}
+          onLoadMore={() => void loadClasses({ append: true })}
+          onOpen={openClassOnTeacherPage}
         />
       ) : view === "teachers" && teachersView === "following" ? (
         <ScrollView
           testID="teachers-following-scroll"
-          contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + bottomNavClearance }}
         >
           <FollowedTeachers />
         </ScrollView>
@@ -736,22 +733,10 @@ export default function Discover() {
           <FlatList
             data={isSearching ? filtered : restTeachers}
             keyExtractor={(item) => item.id}
-            contentContainerStyle={{ paddingHorizontal: gutter, paddingTop: space.md, paddingBottom: insets.bottom + 100 }}
+            contentContainerStyle={{ paddingHorizontal: gutter, paddingTop: space.md, paddingBottom: insets.bottom + bottomNavClearance }}
             showsVerticalScrollIndicator={false}
             ListHeaderComponent={
               <>
-                {/*
-                  The two billing models, told apart before anybody taps.
-                  ────────────────────────────────────────────────────────
-                  Everything below this row is bought one class at a time. This row is the other
-                  kind: bought once for a month of daily classes. They were previously
-                  distinguished only by the word "Monthly" in a title, and a student who read
-                  "NPR 3,000" on one and "NPR 500" on the other had no way to know that one was
-                  a month and the other was an hour.
-
-                  So the row wears the brand crimson and says its billing model in a badge, and
-                  every price in the list below now carries "per class" in words.
-                */}
                 {!isSearching && (
                   <TouchableOpacity
                     testID="student-monthly-entry"
@@ -829,8 +814,7 @@ export default function Discover() {
               />
             )}
             ListEmptyComponent={
-              loadingTeachers ? (
-                // Holds the shape of the cards that are coming, so nothing jumps into place.
+              loadingTeachers && !teachersLoadedOnce ? (
                 <View style={{ gap: space.sm }}>
                   {[0, 1, 2, 3].map((i) => (
                     <View
@@ -878,7 +862,6 @@ export default function Discover() {
             }
           />
 
-          {/* ------------------------------------------------------------ sort sheet */}
           <Modal visible={showSort} transparent animationType="slide" onRequestClose={() => setShowSort(false)}>
             <TouchableOpacity style={[styles.overlay, { backgroundColor: colors.scrim }]} activeOpacity={1} onPress={() => setShowSort(false)} />
             <View
@@ -915,7 +898,6 @@ export default function Discover() {
             </View>
           </Modal>
 
-          {/* ---------------------------------------------------------- filter sheet */}
           <Modal visible={showFilter} transparent animationType="slide" onRequestClose={() => setShowFilter(false)}>
             <TouchableOpacity style={[styles.overlay, { backgroundColor: colors.scrim }]} activeOpacity={1} onPress={() => setShowFilter(false)} />
             <View
@@ -1030,72 +1012,102 @@ export default function Discover() {
 }
 
 /**
- * The Single Classes view: real bookable classes from `/sessions`, one per row.
- *
- * Never invents a bookable class. If the fetch failed, the screen says it failed and offers a
- * retry; if nothing is running, it says so honestly rather than showing a made-up list. Tapping
- * a card opens the session page — the same route the Sessions screen uses — where the real
- * booking flow (payment, join window) lives.
+ * The Single Classes view. Server-side search on submit; deterministic pagination; a
+ * pagination failure keeps successful cards on screen; every card carries a "View & book"
+ * action that opens the class on the teacher's page, where the existing Book & Pay flow lives.
  */
 function ClassesView(props: {
-  classes: ApiSingleClass[];
-  totalCount: number;
-  loading: boolean;
-  failed: boolean;
-  query: string;
+  rows: PublicClass[];
+  hasMore: boolean;
+  initialLoad: boolean;
+  loadingMore: boolean;
+  initialError: string | null;
+  paginationError: string | null;
+  typedQuery: string;
+  submittedQuery: string;
   onQueryChange: (next: string) => void;
+  onSubmit: (query: string) => void;
   onRetry: () => void;
-  onOpen: (id: number) => void;
+  onLoadMore: () => void;
+  onOpen: (row: PublicClass) => void;
 }) {
-  const { classes, totalCount, loading, failed, query, onQueryChange, onRetry, onOpen } = props;
+  const { rows, hasMore, initialLoad, loadingMore, initialError, paginationError,
+    typedQuery, submittedQuery, onQueryChange, onSubmit, onRetry, onLoadMore, onOpen } = props;
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const insets = useSafeAreaInsets();
+
+  const state = publicClassListState({
+    initialLoad, loadedRows: rows, hasMore, initialError, paginationError,
+    submittedQuery,
+  });
 
   return (
     <ScrollView
       testID="single-classes-scroll"
       contentContainerStyle={{
-        paddingHorizontal: gutter, paddingTop: space.md, paddingBottom: insets.bottom + 100, gap: space.md,
-        width: "100%", maxWidth: 760, alignSelf: "center",
+        paddingHorizontal: gutter, paddingTop: space.md,
+        paddingBottom: insets.bottom + bottomNavClearance, gap: space.md,
+        width: "100%",
+        maxWidth: marketplaceColumnMax,
+        alignSelf: "center",
       }}
       keyboardShouldPersistTaps="handled"
     >
-      <View
-        style={{
-          flexDirection: "row", alignItems: "center", gap: space.xs,
-          backgroundColor: colors.surfaceSunk, borderRadius: radius.sm,
-          paddingHorizontal: space.sm, paddingVertical: space.xs,
-          minHeight: HIT_SLOP_MIN,
-        }}
-      >
-        <Feather name="search" size={16} color={colors.mutedForeground} />
-        <TextInput
-          testID="single-classes-search"
-          value={query}
-          onChangeText={onQueryChange}
-          placeholder={DISCOVER_SEARCH_PROMPT}
-          placeholderTextColor={colors.mutedForeground}
-          accessibilityLabel={DISCOVER_SEARCH_PROMPT}
-          style={[t.body, { flex: 1, color: colors.foreground, minHeight: HIT_SLOP_MIN, paddingVertical: space.xs }]}
-        />
-        {query.length > 0 ? (
-          <TouchableOpacity
-            testID="single-classes-clear"
-            onPress={() => onQueryChange("")}
-            accessibilityRole="button"
-            accessibilityLabel="Clear search"
-            style={{
-              minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN,
-              alignItems: "center", justifyContent: "center",
-            }}
-          >
-            <Feather name="x" size={16} color={colors.mutedForeground} />
-          </TouchableOpacity>
-        ) : null}
+      <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
+        <View
+          style={{
+            flexDirection: "row", alignItems: "center", gap: space.xs,
+            backgroundColor: colors.surfaceSunk, borderRadius: radius.sm,
+            paddingHorizontal: space.sm, paddingVertical: space.xs,
+            minHeight: HIT_SLOP_MIN, flex: 1,
+          }}
+        >
+          <Feather name="search" size={16} color={colors.mutedForeground} />
+          <TextInput
+            testID="single-classes-search"
+            value={typedQuery}
+            onChangeText={onQueryChange}
+            placeholder="Search a subject, topic or teacher"
+            placeholderTextColor={colors.mutedForeground}
+            returnKeyType="search"
+            onSubmitEditing={() => onSubmit(typedQuery)}
+            accessibilityLabel="Search classes"
+            style={[t.body, { flex: 1, color: colors.foreground, minHeight: HIT_SLOP_MIN, paddingVertical: space.xs }]}
+          />
+          {typedQuery.length > 0 ? (
+            <Pressable
+              testID="single-classes-clear"
+              onPress={() => { onQueryChange(""); onSubmit(""); }}
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              style={{
+                minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN,
+                alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <Feather name="x" size={16} color={colors.mutedForeground} />
+            </Pressable>
+          ) : null}
+        </View>
+        <Pressable
+          testID="single-classes-search-submit"
+          onPress={() => onSubmit(typedQuery)}
+          accessibilityRole="button"
+          accessibilityLabel="Search classes"
+          style={{
+            minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN,
+            alignItems: "center", justifyContent: "center",
+            paddingHorizontal: space.md,
+            borderRadius: radius.sm,
+            backgroundColor: colors.primary,
+          }}
+        >
+          <Text style={[t.bodyStrong, { color: colors.onInverse }]}>Search</Text>
+        </Pressable>
       </View>
 
-      {loading ? (
+      {state.kind === "loading" ? (
         <View testID="single-classes-loading" style={{ gap: space.sm }}>
           {[0, 1, 2].map((i) => (
             <View
@@ -1107,7 +1119,7 @@ function ClassesView(props: {
             />
           ))}
         </View>
-      ) : failed ? (
+      ) : state.kind === "error" ? (
         <View
           testID="single-classes-failure"
           accessibilityRole="alert"
@@ -1120,10 +1132,8 @@ function ClassesView(props: {
             <Feather name="alert-circle" size={18} color={colors.warn} />
             <Text style={[t.title3, { color: colors.foreground }]}>Could not load classes</Text>
           </View>
-          <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            Check your connection and try again.
-          </Text>
-          <TouchableOpacity
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>{state.message}</Text>
+          <Pressable
             testID="single-classes-retry"
             onPress={onRetry}
             accessibilityRole="button"
@@ -1138,9 +1148,9 @@ function ClassesView(props: {
             }}
           >
             <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
-      ) : totalCount === 0 ? (
+      ) : state.kind === "empty" ? (
         <View
           testID="single-classes-empty"
           style={{
@@ -1150,11 +1160,11 @@ function ClassesView(props: {
         >
           <Text style={[t.title3, { color: colors.foreground }]}>No classes yet</Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            Teachers have not scheduled any single classes right now. Tap Programs for full journeys,
-            or Teachers to browse who is on Fadko.
+            Teachers on Fadko have not scheduled any single classes right now. Tap Programs for
+            full journeys, or Teachers to browse who is on Fadko.
           </Text>
         </View>
-      ) : classes.length === 0 ? (
+      ) : state.kind === "noMatch" ? (
         <View
           testID="single-classes-nomatch"
           style={{
@@ -1164,29 +1174,77 @@ function ClassesView(props: {
         >
           <Text style={[t.title3, { color: colors.foreground }]}>No matching classes</Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            No scheduled class on Fadko matches “{query.trim()}”. Try different words.
+            {`No scheduled class on Fadko matches “${state.query}”. Try different words.`}
           </Text>
         </View>
       ) : (
-        classes.map((s) => (
-          <SessionCard
-            key={s.id}
-            session={{
-              id: String(s.id),
-              teacherName: s.teacherName,
-              subject: s.subject,
-              topic: s.topic,
-              date: s.date,
-              duration: s.duration,
-              maxStudents: s.maxStudents,
-              enrolledStudents: Array(s.enrolledCount).fill(""),
-              price: s.price,
-              status: s.status as "upcoming" | "live" | "completed" | "cancelled",
-            }}
-            showTeacher
-            onPress={() => onOpen(s.id)}
-          />
-        ))
+        <View style={{ gap: space.md }}>
+          {state.rows.map((row) => (
+            <PublicClassCard
+              key={row.id}
+              testID={`public-class-${row.id}`}
+              fields={publicClassCard(row)}
+              dateIso={row.date}
+              onPress={() => onOpen(row)}
+            />
+          ))}
+          {state.hasMore ? (
+            <View style={{ gap: space.xs }}>
+              <Pressable
+                testID="single-classes-more"
+                onPress={onLoadMore}
+                accessibilityRole="button"
+                accessibilityLabel="Show more classes"
+                disabled={loadingMore}
+                aria-busy={loadingMore}
+                aria-disabled={loadingMore}
+                style={{
+                  minHeight: HIT_SLOP_MIN,
+                  borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary,
+                  backgroundColor: colors.card,
+                  alignItems: "center", justifyContent: "center",
+                  paddingHorizontal: space.md, paddingVertical: space.xs,
+                  opacity: loadingMore ? 0.6 : 1,
+                }}
+              >
+                <Text style={[t.bodyStrong, { color: colors.primary }]}>
+                  {loadingMore ? "Loading…" : "Show more classes"}
+                </Text>
+              </Pressable>
+              {state.paginationError !== null ? (
+                <View
+                  testID="single-classes-more-error"
+                  accessibilityRole="alert"
+                  style={{
+                    flexDirection: "row", alignItems: "center", gap: space.xs,
+                    padding: space.sm, borderRadius: radius.sm,
+                    borderWidth: 1, borderColor: colors.border,
+                    backgroundColor: colors.warnSoft,
+                  }}
+                >
+                  <Feather name="alert-circle" size={16} color={colors.warn} />
+                  <Text style={[t.caption, { flex: 1, color: colors.foreground }]}>
+                    {state.paginationError}
+                  </Text>
+                  <Pressable
+                    testID="single-classes-more-retry"
+                    onPress={onLoadMore}
+                    accessibilityRole="button"
+                    accessibilityLabel="Try loading more classes again"
+                    disabled={loadingMore}
+                    style={{
+                      minHeight: HIT_SLOP_MIN, minWidth: HIT_SLOP_MIN,
+                      paddingHorizontal: space.sm,
+                      alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
       )}
     </ScrollView>
   );
@@ -1201,7 +1259,6 @@ const styles = StyleSheet.create({
     position: "absolute", top: -3, right: -3, minWidth: 18, height: 18, borderRadius: 9,
     borderWidth: 2, justifyContent: "center", alignItems: "center", paddingHorizontal: 3,
   },
-  // The overline step carries uppercase and tracking; a counter needs neither.
   badgeText: { letterSpacing: 0, textTransform: "none" },
 
   subTabs: { flexDirection: "row" },
