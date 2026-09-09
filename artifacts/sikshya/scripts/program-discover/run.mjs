@@ -3,12 +3,14 @@
  *
  * ## What this proves
  *
- * That every state a student can be in on the Programs section is drawn distinctly (loading, empty,
- * failed, no-match, listed), that the card carries only what the public API actually sends and no
- * price/rating/seat/enrolment/popularity fabrication, that the type chips work locally on an
- * already-loaded page (so a chip change is not a network call), that the details page renders the
- * whole published snapshot in order and never draws a Join button, and that at both viewport sizes
- * nothing overflows sideways or clips its own label.
+ * That every state a student can be in on the Programs section is drawn distinctly (loading,
+ * global-empty, no-match, first-load failure, pagination failure while cards still show, listed),
+ * that the card carries only what the public API actually sends and no
+ * price/rating/seat/enrolment/popularity fabrication, that a chip change is a filter change (the
+ * screen submits it as a new query), that the details page renders the whole published snapshot
+ * in order and never draws a Join button, that a visible ≥44 Search button sits beside the input,
+ * that the reference disclosure is neutral for every value of `referenceSource`, and that at both
+ * viewport sizes nothing overflows sideways or clips its own label.
  *
  * ## What it does not prove
  *
@@ -62,7 +64,8 @@ let setScene = null;
 let renders = 0;
 
 // The list owns the query and the chosen type inside the app; the harness holds them so a chip
-// press or a search-submit is reflected on screen.
+// press or a search-submit is reflected on screen. A chip tap forwards to the recorded onSubmit
+// so the test can see the filter travel the same way the app runs it.
 function ListHost(props) {
   const [query, setQuery] = React.useState(props.query ?? "");
   const [type, setType] = React.useState(props.chosenType ?? "all");
@@ -70,13 +73,14 @@ function ListHost(props) {
   return React.createElement(ProgramDiscoverList, {
     ...props,
     query, onQueryChange: setQuery,
-    chosenType: type, onTypeChange: setType,
+    chosenType: type,
+    onTypeChange: (next) => { setType(next); window.__sent.push({ name: "onTypeChange", args: [next] }); },
     onSubmit: record("onSubmit"),
   });
 }
 
 function Harness() {
-  const [scene, set] = React.useState({ screen: "list", props: { programs: [], loading: false, failure: null, loadingMore: false, hasMore: false } });
+  const [scene, set] = React.useState({ screen: "list", props: { programs: [], initialLoad: false, initialError: null, paginationError: null, loadingMore: false, hasMore: false } });
   setScene = set;
   const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onOpenTeacher: record("onOpenTeacher") };
   const sceneKey = JSON.stringify([scene.screen, Object.keys(scene.props ?? {})]) + String(renders);
@@ -145,6 +149,7 @@ const summary = (over = {}) => ({
   title: "Grade 10 Mathematics, term by term",
   summary: "A term of Grade 10 mathematics, worked through week by week together.",
   outcome: "Students can work through a whole past paper with support.",
+  intendedLearner: "Students in Grade 10 preparing for the board examination",
   startingLevel: "Comfortable with Grade 9 arithmetic",
   teachingLanguage: "Nepali and English",
   referenceName: "NEB Mathematics syllabus", referenceSource: "teacher_supplied",
@@ -152,7 +157,7 @@ const summary = (over = {}) => ({
 });
 
 const detail = (over = {}) => ({
-  ...summary(), intendedLearner: "Students in Grade 10 preparing for the board examination",
+  ...summary(),
   prerequisites: null, equipment: null,
   modules: [
     { title: "Where we start", outcome: "Know what the first lesson covers and why it comes first." },
@@ -167,12 +172,18 @@ const list = () => [
     title: "Beginner guitar from the first chord",
     summary: "Six weeks of playing songs on acoustic guitar together.",
     outcome: "Play three songs from memory with clean chord changes.",
-    startingLevel: "Never held a guitar before" }),
+    startingLevel: "Never held a guitar before",
+    intendedLearner: null }),
   summary({ id: 14, type: "language", teacher: { id: 44, name: "Sujata Karki" },
     title: "Everyday spoken Nepali for new arrivals",
     summary: "Ordinary sentences you need in Kathmandu the first week.",
     outcome: "Ask for directions, order food, greet a neighbour." }),
 ];
+
+const listState = (over = {}) => ({
+  programs: [], initialLoad: false, initialError: null, paginationError: null,
+  loadingMore: false, hasMore: false, ...over,
+});
 
 const SIZES = [
   { label: "phone-390", width: 390, height: 844 },
@@ -216,15 +227,12 @@ for (const size of SIZES) {
 
   await show({
     screen: "list",
-    props: { programs: [], loading: true, failure: null, loadingMore: false, hasMore: false },
+    props: listState({ initialLoad: true }),
   }, "list-loading");
   check(`${L}: loading is skeletons, not a spinner`, await seen("program-discover-loading"));
   check(`${L}: and never the empty state`, !(await seen("program-discover-empty")));
 
-  await show({
-    screen: "list",
-    props: { programs: [], loading: false, failure: null, loadingMore: false, hasMore: false },
-  }, "list-empty");
+  await show({ screen: "list", props: listState() }, "list-empty");
   check(`${L}: no programs at all reads as "no programs yet"`, await seen("program-discover-empty"));
   const emptyText = await text("program-discover-empty");
   check(`${L}: and says a program is different from a single class`,
@@ -232,15 +240,15 @@ for (const size of SIZES) {
 
   await show({
     screen: "list",
-    props: { programs: [], loading: false, failure: "Fadko could not reach the server.", loadingMore: false, hasMore: false },
+    props: listState({ initialError: "Fadko could not reach the server." }),
   }, "list-failed");
-  check(`${L}: a failed load says so`, await seen("program-discover-failure"));
+  check(`${L}: a first-load failure says so`, await seen("program-discover-failure"));
   check(`${L}: and is never drawn as "no programs yet"`, !(await seen("program-discover-empty")),
     "a failed load rendered as empty tells a student their world is smaller than it is");
 
   await show({
     screen: "list",
-    props: { programs: list(), loading: false, failure: null, loadingMore: false, hasMore: true },
+    props: listState({ programs: list(), hasMore: true }),
   }, "list-populated");
   check(`${L}: every published program is on screen`,
     (await seen("program-card-12")) && (await seen("program-card-13")) && (await seen("program-card-14")));
@@ -249,6 +257,7 @@ for (const size of SIZES) {
   check(`${L}: and the type is shown as a chip`,
     /Practical skill/i.test(await body()) && /Language/i.test(await body()) && /School subject/i.test(await body()));
   check(`${L}: with a "Show more" while the server says there is more`, await seen("program-discover-more"));
+  check(`${L}: a visible Search button sits beside the input`, await seen("program-discover-search-submit"));
 
   const wholeList = await body();
   for (const invented of ["NPR", "Rs.", "rating", "star rating", "5 stars", "students enrolled", "enrolled", "Popular", "Top pick", "Available now", "earned", "reviews", "seats", "spots"]) {
@@ -259,28 +268,74 @@ for (const size of SIZES) {
   check(`${L}: no control on the list is below the touch floor`,
     (await smallTargets()).length === 0, (await smallTargets()).join(", "));
 
-  /* ---------------------------------------------------------- local filter */
+  /* -------------- intended-learner rendered when the API sends it, absent otherwise */
+
+  check(`${L}: "who it is for" is shown on cards that carry it`,
+    await seen("program-card-12-learner"));
+  check(`${L}: and simply omitted on cards that do not`,
+    !(await seen("program-card-13-learner")),
+    "guitar card had null intendedLearner and must not invent one");
+
+  /* ---------------------------------------------------------- chip means fetch */
+
+  console.log(`\n[${L}] Chip taps and search submissions`);
+
+  await p.evaluate(() => { window.__sent = []; });
+  await p.locator('[data-testid="program-discover-chip-practical_skill"]').click();
+  await p.waitForTimeout(50);
+  const sentAfterChip = await p.evaluate(() => window.__sent);
+  check(`${L}: a chip tap fires onTypeChange, and the parent will re-fetch`,
+    sentAfterChip.some((e) => e.name === "onTypeChange" && e.args[0] === "practical_skill"),
+    JSON.stringify(sentAfterChip).slice(0, 200));
+
+  /* --------------------------------------------- visible search submits the query */
+
+  await show({ screen: "list", props: listState({ programs: list(), query: "guitar" }) });
+  await p.evaluate(() => { window.__sent = []; });
+  await p.locator('[data-testid="program-discover-search-submit"]').click();
+  await p.waitForTimeout(50);
+  const sentAfterSubmit = await p.evaluate(() => window.__sent);
+  check(`${L}: the Search button calls onSubmit with the current text`,
+    sentAfterSubmit.some((e) => e.name === "onSubmit" && e.args[0] === "guitar"),
+    JSON.stringify(sentAfterSubmit).slice(0, 200));
+
+  /* --------------------------------------------- no-match versus empty distinguished */
 
   await show({
     screen: "list",
-    props: {
-      programs: list(), loading: false, failure: null, loadingMore: false, hasMore: false,
-      chosenType: "practical_skill",
-    },
-  }, "list-filtered");
-  check(`${L}: choosing a type narrows the list on screen without a network call`,
-    (await seen("program-card-13")) && !(await seen("program-card-12")) && !(await seen("program-card-14")));
-
-  await show({
-    screen: "list",
-    props: {
-      programs: list(), loading: false, failure: null, loadingMore: false, hasMore: false,
-      query: "guaranteed100percent",
-    },
-  }, "list-nomatch");
-  check(`${L}: a query nothing matches gets its own state`, await seen("program-discover-nomatch"));
+    props: listState({ query: "guaranteed100percent" }),
+  }, "list-nomatch-query");
+  check(`${L}: server returned [] with an active query is "no matching"`, await seen("program-discover-nomatch"));
+  check(`${L}: and never the global empty state`, !(await seen("program-discover-empty")));
   check(`${L}: which quotes the query`,
     /guaranteed100percent/i.test(await text("program-discover-nomatch")));
+
+  await show({
+    screen: "list",
+    props: listState({ chosenType: "practical_skill" }),
+  }, "list-nomatch-filter");
+  check(`${L}: server returned [] with an active type filter is "no matching"`,
+    await seen("program-discover-nomatch"));
+  check(`${L}: and never the global empty state`, !(await seen("program-discover-empty")));
+
+  /* --------------------- pagination failure keeps successful cards on screen */
+
+  await show({
+    screen: "list",
+    props: listState({
+      programs: list(),
+      hasMore: true,
+      paginationError: "Fadko could not load the next page. Check your connection and try again.",
+    }),
+  }, "list-more-error");
+  check(`${L}: the already-loaded cards stay on screen`,
+    (await seen("program-card-12")) && (await seen("program-card-13")) && (await seen("program-card-14")));
+  check(`${L}: a pagination failure is drawn beside "Show more"`,
+    await seen("program-discover-more-error"));
+  check(`${L}: never as the whole-list failure card`,
+    !(await seen("program-discover-failure")),
+    "a pagination failure that hides successful cards is Codex correction round 1, item 4");
+  check(`${L}: with a Try again beside it`, await seen("program-discover-more-retry"));
 
   /* ---------------------------------------------------------- details */
 
@@ -293,7 +348,20 @@ for (const size of SIZES) {
   check(`${L}: the starting level is shown`, await seen("program-view-starting-level"));
   check(`${L}: the teaching language is shown`, await seen("program-view-language"));
   check(`${L}: the reference is shown with a non-endorsement`,
-    (await seen("program-view-reference")) && /Fadko does not check or endorse/i.test(await text("program-view-reference-disclosure")));
+    (await seen("program-view-reference"))
+      && /Fadko has not independently verified or endorsed it/i.test(await text("program-view-reference-disclosure")));
+  check(`${L}: and never as "teacher supplied", even for a teacher_supplied source`,
+    !/teacher supplied/i.test(await text("program-view-reference-disclosure")),
+    await text("program-view-reference-disclosure"));
+
+  // Same neutral disclosure for an `official` reference — no false provenance claim.
+  await show({ screen: "view", props: { program: detail({ referenceSource: "official", referenceName: "IOE entrance framework" }) } });
+  check(`${L}: an official reference uses the same neutral disclosure`,
+    /Fadko has not independently verified or endorsed it/i.test(await text("program-view-reference-disclosure")));
+
+  // Back to the full detail for the remaining checks.
+  await show({ screen: "view", props: { program: detail() } });
+
   check(`${L}: the learning path has every step in order`,
     (await seen("program-view-module-0")) && (await seen("program-view-module-1")) && (await seen("program-view-module-2")));
   const step0 = await text("program-view-module-0");

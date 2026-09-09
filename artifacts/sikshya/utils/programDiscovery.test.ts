@@ -7,12 +7,14 @@ import assert from "node:assert/strict";
 
 import {
   DISCOVER_TABS,
+  TEACHERS_TABS,
   appendPage,
   cardFromDetail,
   cardFromSummary,
   localMatches,
   localTypeMatches,
   missingOptional,
+  programListState,
   programTypeFilters,
   referenceBlock,
   type PublicProgramDetail,
@@ -44,6 +46,25 @@ const full = (over: Partial<PublicProgramDetail> = {}): PublicProgramDetail => (
 
 test("Discover has exactly three views, in the order Programs, Single classes, Teachers", () => {
   assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["programs", "classes", "teachers"]);
+});
+
+test("each view has an accurate heading, subtitle and accessible label", () => {
+  const p = DISCOVER_TABS.find((t) => t.view === "programs")!;
+  const c = DISCOVER_TABS.find((t) => t.view === "classes")!;
+  const tc = DISCOVER_TABS.find((t) => t.view === "teachers")!;
+  assert.match(p.heading, /learning program/i);
+  assert.match(c.heading, /class/i);
+  assert.match(tc.heading, /teacher/i);
+  // The Classes pill is deliberately short for a 390pt row, so the screen-reader label carries
+  // the full phrase.
+  assert.equal(c.label, "Classes");
+  assert.equal(c.accessibilityLabel, "Single classes");
+});
+
+test("Following is a sub-choice of Teachers, not a primary product view", () => {
+  assert.deepEqual(TEACHERS_TABS.map((t) => t.view), ["all", "following"]);
+  assert.equal(DISCOVER_TABS.some((t) => t.view === ("following" as never)), false,
+    "Following belongs under Teachers, not beside Programs");
 });
 
 test("the type filters cover exactly the program types this build knows, plus 'All' first", () => {
@@ -83,8 +104,18 @@ test("a card falls back to 'Untitled program' when the title is empty, never to 
   assert.equal(cardFromDetail(full({ title: "" })).title, "Untitled program");
 });
 
-test("the detail card includes the intended learner; the summary card does not (the API does not send it)", () => {
-  assert.equal(cardFromSummary(row()).intendedLearnerLine, null);
+test("the summary card shows 'who it is for' when the API sends it, and nothing when it does not", () => {
+  const withLearner = cardFromSummary(row({ intendedLearner: "Grade 10 students" }));
+  assert.match(withLearner.intendedLearnerLine ?? "", /Grade 10 students/);
+
+  const older = cardFromSummary(row({ intendedLearner: undefined }));
+  assert.equal(older.intendedLearnerLine, null);
+
+  const blank = cardFromSummary(row({ intendedLearner: "   " }));
+  assert.equal(blank.intendedLearnerLine, null, "a whitespace-only field is not a claim");
+});
+
+test("the detail card also shows the intended learner", () => {
   assert.match(cardFromDetail(full()).intendedLearnerLine ?? "", /Grade 10/);
 });
 
@@ -117,10 +148,17 @@ test("type filters match by code, not by label", () => {
 
 /* --- reference disclosure ---------------------------------------------- */
 
-test("a teacher-supplied reference is shown with an explicit non-endorsement", () => {
-  const block = referenceBlock(full({ referenceName: "NEB Mathematics syllabus" }));
-  assert.equal(block?.name, "NEB Mathematics syllabus");
-  assert.match(block?.disclosure ?? "", /Fadko does not check or endorse/i);
+test("a cited reference is disclosed with a neutral non-endorsement, not a provenance claim", () => {
+  const teacher = referenceBlock(full({ referenceName: "NEB Mathematics syllabus", referenceSource: "teacher_supplied" }));
+  assert.equal(teacher?.name, "NEB Mathematics syllabus");
+  assert.match(teacher?.disclosure ?? "", /not independently verified or endorsed/i);
+  // Codex's sixth correction: calling an `official` reference "teacher supplied" would be a
+  // false provenance claim.
+  assert.doesNotMatch(teacher?.disclosure ?? "", /teacher supplied/i);
+
+  const official = referenceBlock(full({ referenceName: "IOE entrance", referenceSource: "official" }));
+  assert.equal(official?.disclosure, teacher?.disclosure,
+    "the disclosure is the same for every source, because Fadko endorses none of them");
 });
 
 test("a program with no reference gets no reference block at all", () => {
@@ -134,6 +172,51 @@ test("optional fields the teacher left blank are named as missing, not filled in
 });
 
 /* --- pagination ---------------------------------------------------------- */
+
+/* --- list state ---------------------------------------------------------- */
+
+const listInput = (over: Partial<Parameters<typeof programListState>[0]> = {}) => ({
+  initialLoad: false, loadedRows: [] as PublicProgramSummary[], hasMore: false,
+  initialError: null as string | null, paginationError: null as string | null,
+  query: "", chosenType: "all" as const, ...over,
+});
+
+test("the first load is loading, always, whatever else is true", () => {
+  assert.equal(programListState(listInput({ initialLoad: true })).kind, "loading");
+});
+
+test("zero rows with no query and no filter is the global empty state", () => {
+  assert.equal(programListState(listInput()).kind, "empty");
+});
+
+test("zero rows with an active query is a no-match, not an empty state", () => {
+  const state = programListState(listInput({ query: "guaranteed100percent" }));
+  assert.equal(state.kind, "noMatch");
+  if (state.kind === "noMatch") assert.equal(state.query, "guaranteed100percent");
+});
+
+test("zero rows with an active type filter is also a no-match", () => {
+  const state = programListState(listInput({ chosenType: "practical_skill" }));
+  assert.equal(state.kind, "noMatch");
+  if (state.kind === "noMatch") assert.equal(state.filterActive, true);
+});
+
+test("a first-load failure with nothing rendered is the failure state", () => {
+  const state = programListState(listInput({ initialError: "Network is down" }));
+  assert.equal(state.kind, "error");
+});
+
+test("a pagination failure never hides successful cards", () => {
+  const state = programListState(listInput({
+    loadedRows: [row()], hasMore: true, paginationError: "Next page failed",
+  }));
+  assert.equal(state.kind, "ready");
+  if (state.kind === "ready") {
+    assert.equal(state.rows.length, 1);
+    assert.equal(state.paginationError, "Next page failed");
+    assert.equal(state.hasMore, true);
+  }
+});
 
 test("merging pages deduplicates by id and keeps order", () => {
   const first = { rows: [row({ id: 1 }), row({ id: 2 })], nextCursor: "a" };

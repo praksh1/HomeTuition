@@ -204,3 +204,100 @@ promoted.
   and (b) the follow signal so a student who found a program can be told when its teacher
   publishes another. Both are additive, both use the existing public snapshot, both leave the
   commercial questions untouched.
+
+## Correction round 1 (2026-09-09)
+
+Codex reviewed `c8febd0` and returned eleven items. Every one has been addressed additively —
+no schema change, no `db:push`, no production or staging deployment, no changes to booking,
+payments, membership, Monthly classes, classroom sockets, Daily, LiveKit, or database plumbing.
+
+### The eleven items and what was done
+
+1. **Restore the approved Discover architecture.** The primary tabs are now
+   Programs / Classes / Teachers. Following moved back inside Teachers as a nested All / Following
+   sub-choice. The Classes view was built and shows real bookable classes from
+   `GET /sessions?status=upcoming` — excluding monthly-class-day rows the server already omits
+   from that call, filtering out any row the server marked `expired`. Reuses `SessionCard`.
+   See `DISCOVER_TABS` and `TEACHERS_TABS` in `utils/programDiscovery.ts` and the switched view
+   in `app/(student)/index.tsx`.
+2. **Per-view heading, subtitle and identity.** The page no longer says "Find a teacher / 197
+   verified teachers" on every view. Each view owns a heading and one-line subtitle in
+   `DISCOVER_TABS` and the screen renders them. The verified-teacher count is drawn only in
+   Teachers; Programs shows the Programs subtitle, Classes shows the Classes subtitle. The pill
+   labels stay short ("Programs / Classes / Teachers") so the row fits at 390pt; the screen
+   reader label carries the full phrase ("Single classes").
+3. **Empty search results say "no matching", not "no programs yet".** Decided in
+   `programListState()` from what happened (initial-load status, query text, chosen type) rather
+   than only from row count. A server-returned `[]` with any active filter is `noMatch`; only
+   the truly-empty world is `empty`. Tests in `programDiscovery.test.ts` cover both branches,
+   and the rendered suite covers server `[]` with a query and server `[]` with a filter.
+4. **Preserve successful results when "Show more" fails.** `programsInitialError` and
+   `programsMoreError` are separate state fields in `app/(student)/index.tsx`. The list consumes
+   both through `programListState()`: a pagination failure renders inline beside "Show more",
+   never in place of the loaded cards. Rendered suite verifies both the preserved cards and the
+   inline error UI.
+5. **Make Search obvious and truthful about fetching.** A visible ≥44 Search button now sits
+   beside the input in `ProgramDiscoverList`, calling `onSubmit(query)`. Typing still does not
+   fetch on every keystroke — the request fires on Enter or on the button. Chip taps forward as
+   filter changes (`onTypeChange`) and the parent re-fetches; the code comment says exactly that
+   now rather than the previous claim that chip changes were "local".
+6. **Neutral reference disclosure.** `referenceBlock()` returns the same sentence for every
+   value of `referenceSource`: "This is the curriculum or reference named in the program. Fadko
+   has not independently verified or endorsed it." No source is called "teacher supplied" — that
+   was a false provenance claim for `official` — and no source is called "official", because no
+   endorsement process exists.
+7. **Show "who it is for" when the API sends it.** `intendedLearner` is now included in the
+   public list response (`GET /programs`) additively; `PublicProgramSummary` has an optional
+   `intendedLearner?: string | null`; `cardFromSummary` shows it when the string is non-blank,
+   and returns `null` (no line at all) when the row is absent or whitespace. Never invented.
+8. **Details-page Back respects history.** `app/(student)/program/[id].tsx` uses
+   `router.canGoBack() ? router.back() : router.replace("/(student)")`. A deep link still lands
+   the student on Discover; a normal in-app arrival returns to wherever they came from.
+9. **Invalid/missing ID no longer hangs.** The id is validated (`/^\d+$/` and positive) up
+   front; an invalid id ends loading immediately and renders an honest not-found state ("Program
+   link is missing an id") with a Back to Discover control. The old loader returned early
+   without ever ending loading, so a bad link spun forever.
+10. **Design pass.** Raw skeleton heights replaced with `space.xxxl * 3` (token multiple);
+    the new subtabs use `HIT_SLOP_MIN = 44` for the row minimum. `lint:design` reports no new
+    leaks (94 hex / 282 sizes unchanged).
+11. **Tests extended for every correction.** `programDiscovery.test.ts` gained per-view
+    heading/subtitle/accessibility-label assertions, the TEACHERS_TABS shape, the neutral
+    disclosure for both `teacher_supplied` and `official`, the intended-learner rules
+    (present / absent / whitespace-blank), and `programListState()` for all five states
+    including pagination-failure-preserves-cards. `scripts/program-discover/run.mjs` now
+    tests the visible Search button, the chip-tap-fires-onTypeChange contract, the pagination
+    failure-preserves-cards flow, the neutral disclosure at both source values, and the
+    intended-learner rendering rules. `scripts/nav-tests/run.mjs` was updated for the new
+    tab shape (Programs / Classes / Teachers, with All/Following nested under Teachers).
+
+### Verification of this round
+
+| Command | Where | Result |
+|---|---|---|
+| `pnpm run typecheck` | root, all four packages | pass |
+| `pnpm run test` | `artifacts/sikshya` | 338 pass, 0 fail |
+| `pnpm run test` | `artifacts/api-server` | 474 pass, 0 fail |
+| `pnpm run test:programs-ui` | `artifacts/sikshya` | 254 pass, 0 fail |
+| `pnpm run test:discover` | `artifacts/sikshya` | 146 pass, 0 fail (+26 checks for the corrections) |
+| `pnpm run lint:design` | `artifacts/sikshya` | no new leaks |
+| `git diff --check` | root | clean |
+
+**Not run in this session because Postgres is not available in the container:**
+`test:programs` (API integration), `test:program-journey`, `test:program-smoke`, `test:nav`
+(need a live DB and built app). The suites themselves were updated for the new architecture
+where they touched it (`nav-tests`); Codex's CI environment or the owner's local run will
+exercise them.
+
+**Rendered and inspected** at 390×844 and 1440×900. Screenshots refreshed under
+`/tmp/program-discover-shots` — `list-loading`, `list-empty`, `list-failed`, `list-populated`,
+`list-nomatch-query`, `list-nomatch-filter`, `list-more-error`, `view-full`.
+
+### Deliberately not done
+
+- **No changes to booking, payments, membership, Monthly classes, classroom sockets, Daily,
+  LiveKit, or database deployment.** The Classes view is a *browsing* surface that opens
+  `/session/:id` where the existing booking flow lives; nothing is duplicated.
+- **No schema change, no `db:push`, no production or staging deploy.** The `intendedLearner`
+  addition is a response-only field pulled from the existing snapshot column.
+- **No Join, Buy, Enrol, Reserve or Pay button was added.** The program details page still
+  ends with the plain "Joining a program is not open yet" notice.

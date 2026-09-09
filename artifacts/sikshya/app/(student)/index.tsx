@@ -15,6 +15,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 
+import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { numeric } from "@/constants/typography";
@@ -25,8 +26,18 @@ import { apiGet } from "@/utils/api";
 import { loadTeacherDirectory } from "@/utils/teacherDirectory";
 import { matches as matchesSearch, score as searchScore } from "@/utils/search";
 import TeacherCard from "@/components/TeacherCard";
+import SessionCard from "@/components/SessionCard";
 import ProgramDiscoverList from "@/components/programs/ProgramDiscoverList";
-import { appendPage, DISCOVER_SEARCH_PROMPT, type ProgramType, type PublicProgramSummary } from "@/utils/programDiscovery";
+import {
+  appendPage,
+  DISCOVER_SEARCH_PROMPT,
+  DISCOVER_TABS,
+  TEACHERS_TABS,
+  type DiscoverView,
+  type ProgramType,
+  type PublicProgramSummary,
+  type TeachersView,
+} from "@/utils/programDiscovery";
 import { ApiError } from "@/utils/api";
 import type { Teacher } from "@/context/AuthContext";
 
@@ -70,6 +81,21 @@ interface MonthlyBrief {
   teacherId: number;
 }
 
+/** One single (non-monthly) class as `/sessions` returns it for browsing. */
+interface ApiSingleClass {
+  id: number;
+  teacherName: string;
+  subject: string;
+  topic: string;
+  date: string;
+  duration: number;
+  maxStudents: number;
+  enrolledCount: number;
+  price: number;
+  status: string;
+  expired?: boolean;
+}
+
 export default function Discover() {
   const colors = useColors();
   const { t, gutter, space, radius, elevation } = useLayout();
@@ -77,14 +103,23 @@ export default function Discover() {
   const { unreadCount } = useNotifications();
 
   /**
-   * Which section of Discover is showing.
+   * Which of the three product views is showing.
    *
-   * `programs` is the phase-2B addition: a full Learning Program, with an outcome and a path, is a
-   * different thing from a single class or a teacher and belongs in its own view. The Programs view
-   * comes first because that is the featured surface for this phase; the existing teacher-first
-   * "Discover" and "Following" are preserved intact, reached from the same row of chips.
+   * Programs, Single classes, Teachers — the shape Codex approved for this phase. Following used
+   * to be one of the top-level tabs; it has moved back inside Teachers as a sub-choice, because a
+   * follow is a relationship with a teacher and not a product category of its own.
    */
-  const [view, setView] = useState<"programs" | "discover" | "following">("programs");
+  const [view, setView] = useState<DiscoverView>("programs");
+
+  /**
+   * When Teachers is the primary view, which of its two sub-lists to show.
+   */
+  const [teachersView, setTeachersView] = useState<TeachersView>("all");
+
+  const currentTab = useMemo(
+    () => DISCOVER_TABS.find((tab) => tab.view === view) ?? DISCOVER_TABS[0],
+    [view],
+  );
 
   /* ------------------------------------------------------------- programs ----- */
 
@@ -92,7 +127,17 @@ export default function Discover() {
   const [programsCursor, setProgramsCursor] = useState<string | null>(null);
   const [programsLoading, setProgramsLoading] = useState(true);
   const [programsLoadingMore, setProgramsLoadingMore] = useState(false);
-  const [programsFailure, setProgramsFailure] = useState<string | null>(null);
+  /**
+   * Two separate failure fields.
+   *
+   * `programsInitialError` is a first-load failure with no cards yet — the whole list is drawn
+   * as a failure and offers "Try again". `programsMoreError` is a "Show more" failure with rows
+   * already visible; the successful cards stay on screen and the retry sits beside "Show more".
+   * Merging them (as this file used to) hid successful cards behind a full failure card because
+   * a pagination request failed — Codex correction round 1, item 4.
+   */
+  const [programsInitialError, setProgramsInitialError] = useState<string | null>(null);
+  const [programsMoreError, setProgramsMoreError] = useState<string | null>(null);
   const [programQuery, setProgramQuery] = useState("");
   const [programType, setProgramType] = useState<ProgramType | "all">("all");
 
@@ -111,10 +156,13 @@ export default function Discover() {
       const type = opts.type !== undefined ? opts.type : programType;
       const cursor = append ? programsCursor : null;
 
-      if (append) setProgramsLoadingMore(true);
-      else {
+      if (append) {
+        setProgramsLoadingMore(true);
+        setProgramsMoreError(null);
+      } else {
         setProgramsLoading(true);
-        setProgramsFailure(null);
+        setProgramsInitialError(null);
+        setProgramsMoreError(null);
       }
       const mine = ++programRequestRef.current;
 
@@ -139,14 +187,18 @@ export default function Discover() {
         setProgramsCursor(answer.nextCursor);
       } catch (err) {
         if (mine !== programRequestRef.current) return;
-        // Not an empty list. The four-times-caught mistake — see the memory index — is drawing
-        // a failed load as "no programs yet".
-        if (!append) setPrograms([]);
-        setProgramsFailure(
-          err instanceof ApiError
-            ? err.message
-            : "Fadko could not reach the server. Check your connection and try again.",
-        );
+        const message = err instanceof ApiError
+          ? err.message
+          : "Fadko could not reach the server. Check your connection and try again.";
+        if (append) {
+          // Do not wipe the already-loaded page. The retry sits beside "Show more" and the
+          // cards on screen stay put.
+          setProgramsMoreError(message);
+        } else {
+          // A first-load failure. Nothing was on screen, so the failure card is the screen.
+          setPrograms([]);
+          setProgramsInitialError(message);
+        }
       } finally {
         if (mine !== programRequestRef.current) return;
         if (append) setProgramsLoadingMore(false);
@@ -156,12 +208,56 @@ export default function Discover() {
     [programQuery, programType, programsCursor],
   );
 
-  // First load, and whenever the primary filter changes. The text query re-fetches on submit only
-  // (via `onSubmitEditing`), so typing does not fire a request per keystroke on a bumpy connection.
+  // First load, and whenever the primary type filter changes. Typing does *not* fetch on every
+  // keystroke — the query only re-fetches when the student submits (the visible Search button or
+  // the keyboard's return key), so a Nepali bus connection is not billed one call per letter.
   React.useEffect(() => {
     void loadPrograms({ type: programType, query: programQuery });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [programType]);
+
+  /* ---------------------------------------------------------- single classes --- */
+
+  const [singleClasses, setSingleClasses] = useState<ApiSingleClass[]>([]);
+  const [singleLoading, setSingleLoading] = useState(true);
+  const [singleFailed, setSingleFailed] = useState(false);
+  const [singleQuery, setSingleQuery] = useState("");
+
+  const loadSingleClasses = useCallback(async () => {
+    setSingleLoading(true);
+    setSingleFailed(false);
+    try {
+      const res = await apiGet<{ sessions: ApiSingleClass[] }>(`/sessions?status=upcoming&limit=50`);
+      /*
+        The class must still be sellable. `expired` is the server's fact from the clock rather
+        than from the row: a class whose `status` is still "upcoming" but whose booked slot has
+        gone by should not appear as buyable, and — as noted on the teacher-details page — 19 of
+        20 "upcoming" rows on the live site had already passed. Filter on the server's answer
+        rather than re-computing here.
+      */
+      setSingleClasses((res.sessions ?? []).filter((s) => s.expired !== true));
+    } catch {
+      setSingleFailed(true);
+      setSingleClasses([]);
+    } finally {
+      setSingleLoading(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => { void loadSingleClasses(); }, [loadSingleClasses]));
+
+  const filteredSingleClasses = useMemo(() => {
+    const q = singleQuery.trim().toLowerCase();
+    if (q === "") return singleClasses;
+    return singleClasses.filter((s) =>
+      [s.teacherName, s.subject, s.topic].some((field) =>
+        (field ?? "").toLowerCase().includes(q),
+      ),
+    );
+  }, [singleClasses, singleQuery]);
+
+  /* --------------------------------------------------------------- teachers --- */
+
   const [search, setSearch] = useState("");
   const [subject, setSubject] = useState("All");
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -334,6 +430,8 @@ export default function Discover() {
 
   const currentSortLabel = SORT_OPTIONS.find((s) => s.key === sortKey)?.label ?? "Sort";
 
+  const inTeachersAll = view === "teachers" && teachersView === "all";
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* ------------------------------------------------------------------ header */}
@@ -345,14 +443,35 @@ export default function Discover() {
       >
         <View style={styles.titleRow}>
           <View style={{ flex: 1 }}>
-            <Text style={[t.title1, { color: colors.foreground }]}>Find a teacher</Text>
-            {loadingTeachers ? (
-              <View style={{ marginTop: 4 }}><Skeleton width={168} height={13} /></View>
+            {/*
+              Each view carries its own heading and one-line subtitle. Before this round the page
+              always said "Find a teacher" and "197 verified teachers", whatever tab the student
+              had picked — a page that says teacher-teacher-teacher while a Programs list is on
+              screen is telling the student they are somewhere they are not. See `DISCOVER_TABS`
+              in `utils/programDiscovery.ts`.
+            */}
+            <Text testID="discover-heading" style={[t.title1, { color: colors.foreground }]}>
+              {currentTab.heading}
+            </Text>
+            {view === "teachers" ? (
+              loadingTeachers ? (
+                <View style={{ marginTop: space.xxs }}><Skeleton width={168} height={13} /></View>
+              ) : (
+                <Text
+                  testID="discover-subtitle"
+                  style={[t.caption, numeric, { color: colors.mutedForeground, marginTop: space.xxs / 2 }]}
+                >
+                  {teacherTotal === null
+                    ? currentTab.subtitle
+                    : `${teacherTotal} verified ${teacherTotal === 1 ? "teacher" : "teachers"} across Nepal`}
+                </Text>
+              )
             ) : (
-              <Text style={[t.caption, numeric, { color: colors.mutedForeground, marginTop: 2 }]}>
-                {teacherTotal === null
-                  ? "Browse teachers across Nepal"
-                  : `${teacherTotal} verified ${teacherTotal === 1 ? "teacher" : "teachers"} across Nepal`}
+              <Text
+                testID="discover-subtitle"
+                style={[t.caption, { color: colors.mutedForeground, marginTop: space.xxs / 2 }]}
+              >
+                {currentTab.subtitle}
               </Text>
             )}
           </View>
@@ -375,27 +494,23 @@ export default function Discover() {
         </View>
 
         {/*
-          Two ways to arrive at a teacher, side by side.
-
-          The owner asked for "Teachers You Follow" to move here from Profile and to sit in a
-          sub-tab of its own. Finding somebody new and going back to somebody you already like
-          are the same errand, and the second one was buried at the bottom of a settings screen.
+          The three primary product views, in the shape Codex approved: Programs, Classes,
+          Teachers. Each pill uses the short `label` so the row fits at 390pt; the screen reader
+          hears the full `accessibilityLabel` ("Single classes" rather than just "Classes").
         */}
         <View style={[styles.subTabs, { gap: space.xs }]}>
-          {([
-            { id: "programs", label: "Programs" },
-            { id: "discover", label: "Teachers" },
-            { id: "following", label: "Following" },
-          ] as const).map((tab) => {
-            const active = view === tab.id;
+          {DISCOVER_TABS.map((tab) => {
+            const active = view === tab.view;
             return (
               <TouchableOpacity
-                key={tab.id}
-                testID={`discover-subtab-${tab.id}`}
-                onPress={() => setView(tab.id)}
+                key={tab.view}
+                testID={`discover-subtab-${tab.view}`}
+                onPress={() => setView(tab.view)}
                 activeOpacity={0.75}
                 accessibilityRole="tab"
+                accessibilityLabel={tab.accessibilityLabel}
                 accessibilityState={{ selected: active }}
+                aria-selected={active}
                 style={[
                   styles.subTab,
                   {
@@ -413,8 +528,45 @@ export default function Discover() {
           })}
         </View>
 
-        {/* Searching, filtering and sorting are Discover's; Following is just a list. */}
-        {view === "discover" && (
+        {/*
+          The Teachers view has its own two sub-choices, All and Following. They sit *under*
+          Teachers because a follow is a relationship with a teacher and belongs where teachers
+          live. Codex correction round 1, item 1.
+        */}
+        {view === "teachers" ? (
+          <View style={[styles.subTabs, { gap: space.xs }]}>
+            {TEACHERS_TABS.map((tab) => {
+              const active = teachersView === tab.view;
+              return (
+                <TouchableOpacity
+                  key={tab.view}
+                  testID={`teachers-subtab-${tab.view}`}
+                  onPress={() => setTeachersView(tab.view)}
+                  activeOpacity={0.75}
+                  accessibilityRole="tab"
+                  accessibilityLabel={tab.label}
+                  accessibilityState={{ selected: active }}
+                  aria-selected={active}
+                  style={[
+                    styles.subTab,
+                    {
+                      borderColor: active ? colors.primary : colors.border,
+                      backgroundColor: active ? colors.actionSoft : colors.surface,
+                      borderRadius: radius.sm,
+                    },
+                  ]}
+                >
+                  <Text style={[t.bodyStrong, { color: active ? colors.primary : colors.mutedForeground }]}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        ) : null}
+
+        {/* Search, sort and filters belong to the Teachers "All" list. */}
+        {inTeachersAll && (
           <>
             <View
               style={[
@@ -425,7 +577,7 @@ export default function Discover() {
               <Feather name="search" size={17} color={colors.inkFaint} />
               <TextInput
                 testID="discover-search"
-                style={[t.body, { flex: 1, color: colors.foreground, paddingVertical: space.sm }]}
+                style={[t.body, { flex: 1, color: colors.foreground, paddingVertical: space.sm, minHeight: HIT_SLOP_MIN }]}
                 placeholder="Search by name, subject or district"
                 placeholderTextColor={colors.inkFaint}
                 value={search}
@@ -543,20 +695,40 @@ export default function Discover() {
             query={programQuery}
             onQueryChange={setProgramQuery}
             chosenType={programType}
+            /*
+              A chip tap is a new filter, and a new filter is a new fetch — the parent runs it.
+              The comment in `ProgramDiscoverList` says the same thing; the two matching is
+              Codex correction round 1, item 5.
+            */
             onTypeChange={(next) => setProgramType(next)}
             programs={programs}
-            loading={programsLoading}
+            initialLoad={programsLoading}
             loadingMore={programsLoadingMore}
             hasMore={programsCursor !== null}
-            failure={programsFailure}
+            initialError={programsInitialError}
+            paginationError={programsMoreError}
             onLoadMore={() => void loadPrograms({ append: true })}
             onRetry={() => void loadPrograms({ query: programQuery, type: programType })}
             onOpen={(id) => router.push(`/(student)/program/${id}`)}
             onSubmit={(text) => { setProgramQuery(text); void loadPrograms({ query: text, type: programType }); }}
           />
         </ScrollView>
-      ) : view === "following" ? (
-        <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}>
+      ) : view === "classes" ? (
+        <ClassesView
+          classes={filteredSingleClasses}
+          totalCount={singleClasses.length}
+          loading={singleLoading}
+          failed={singleFailed}
+          query={singleQuery}
+          onQueryChange={setSingleQuery}
+          onRetry={() => void loadSingleClasses()}
+          onOpen={(id) => router.push(`/session/${id}`)}
+        />
+      ) : view === "teachers" && teachersView === "following" ? (
+        <ScrollView
+          testID="teachers-following-scroll"
+          contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+        >
           <FollowedTeachers />
         </ScrollView>
       ) : (
@@ -857,6 +1029,169 @@ export default function Discover() {
   );
 }
 
+/**
+ * The Single Classes view: real bookable classes from `/sessions`, one per row.
+ *
+ * Never invents a bookable class. If the fetch failed, the screen says it failed and offers a
+ * retry; if nothing is running, it says so honestly rather than showing a made-up list. Tapping
+ * a card opens the session page — the same route the Sessions screen uses — where the real
+ * booking flow (payment, join window) lives.
+ */
+function ClassesView(props: {
+  classes: ApiSingleClass[];
+  totalCount: number;
+  loading: boolean;
+  failed: boolean;
+  query: string;
+  onQueryChange: (next: string) => void;
+  onRetry: () => void;
+  onOpen: (id: number) => void;
+}) {
+  const { classes, totalCount, loading, failed, query, onQueryChange, onRetry, onOpen } = props;
+  const colors = useColors();
+  const { t, gutter, space, radius } = useLayout();
+  const insets = useSafeAreaInsets();
+
+  return (
+    <ScrollView
+      testID="single-classes-scroll"
+      contentContainerStyle={{
+        paddingHorizontal: gutter, paddingTop: space.md, paddingBottom: insets.bottom + 100, gap: space.md,
+        width: "100%", maxWidth: 760, alignSelf: "center",
+      }}
+      keyboardShouldPersistTaps="handled"
+    >
+      <View
+        style={{
+          flexDirection: "row", alignItems: "center", gap: space.xs,
+          backgroundColor: colors.surfaceSunk, borderRadius: radius.sm,
+          paddingHorizontal: space.sm, paddingVertical: space.xs,
+          minHeight: HIT_SLOP_MIN,
+        }}
+      >
+        <Feather name="search" size={16} color={colors.mutedForeground} />
+        <TextInput
+          testID="single-classes-search"
+          value={query}
+          onChangeText={onQueryChange}
+          placeholder={DISCOVER_SEARCH_PROMPT}
+          placeholderTextColor={colors.mutedForeground}
+          accessibilityLabel={DISCOVER_SEARCH_PROMPT}
+          style={[t.body, { flex: 1, color: colors.foreground, minHeight: HIT_SLOP_MIN, paddingVertical: space.xs }]}
+        />
+        {query.length > 0 ? (
+          <TouchableOpacity
+            testID="single-classes-clear"
+            onPress={() => onQueryChange("")}
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+            style={{
+              minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN,
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <Feather name="x" size={16} color={colors.mutedForeground} />
+          </TouchableOpacity>
+        ) : null}
+      </View>
+
+      {loading ? (
+        <View testID="single-classes-loading" style={{ gap: space.sm }}>
+          {[0, 1, 2].map((i) => (
+            <View
+              key={i}
+              style={{
+                height: space.xxxl * 3, borderRadius: radius.md,
+                backgroundColor: colors.muted, opacity: 0.55,
+              }}
+            />
+          ))}
+        </View>
+      ) : failed ? (
+        <View
+          testID="single-classes-failure"
+          accessibilityRole="alert"
+          style={{
+            padding: space.lg, backgroundColor: colors.card, borderRadius: radius.md,
+            borderWidth: 1, borderColor: colors.border, gap: space.sm,
+          }}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
+            <Feather name="alert-circle" size={18} color={colors.warn} />
+            <Text style={[t.title3, { color: colors.foreground }]}>Could not load classes</Text>
+          </View>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            Check your connection and try again.
+          </Text>
+          <TouchableOpacity
+            testID="single-classes-retry"
+            onPress={onRetry}
+            accessibilityRole="button"
+            accessibilityLabel="Try loading classes again"
+            style={{
+              minHeight: HIT_SLOP_MIN,
+              alignSelf: "flex-start",
+              paddingHorizontal: space.md, paddingVertical: space.xs,
+              borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary,
+              backgroundColor: colors.card,
+              alignItems: "center", justifyContent: "center",
+            }}
+          >
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+          </TouchableOpacity>
+        </View>
+      ) : totalCount === 0 ? (
+        <View
+          testID="single-classes-empty"
+          style={{
+            padding: space.lg, backgroundColor: colors.card, borderRadius: radius.md,
+            borderWidth: 1, borderColor: colors.border, gap: space.xs,
+          }}
+        >
+          <Text style={[t.title3, { color: colors.foreground }]}>No classes yet</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            Teachers have not scheduled any single classes right now. Tap Programs for full journeys,
+            or Teachers to browse who is on Fadko.
+          </Text>
+        </View>
+      ) : classes.length === 0 ? (
+        <View
+          testID="single-classes-nomatch"
+          style={{
+            padding: space.lg, backgroundColor: colors.card, borderRadius: radius.md,
+            borderWidth: 1, borderColor: colors.border, gap: space.xs,
+          }}
+        >
+          <Text style={[t.title3, { color: colors.foreground }]}>No matching classes</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            No scheduled class on Fadko matches “{query.trim()}”. Try different words.
+          </Text>
+        </View>
+      ) : (
+        classes.map((s) => (
+          <SessionCard
+            key={s.id}
+            session={{
+              id: String(s.id),
+              teacherName: s.teacherName,
+              subject: s.subject,
+              topic: s.topic,
+              date: s.date,
+              duration: s.duration,
+              maxStudents: s.maxStudents,
+              enrolledStudents: Array(s.enrolledCount).fill(""),
+              price: s.price,
+              status: s.status as "upcoming" | "live" | "completed" | "cancelled",
+            }}
+            showTeacher
+            onPress={() => onOpen(s.id)}
+          />
+        ))
+      )}
+    </ScrollView>
+  );
+}
+
 /** Structure only. Colour, spacing, radius and type arrive from the hooks at render time. */
 const styles = StyleSheet.create({
   header: { borderBottomWidth: StyleSheet.hairlineWidth },
@@ -870,7 +1205,7 @@ const styles = StyleSheet.create({
   badgeText: { letterSpacing: 0, textTransform: "none" },
 
   subTabs: { flexDirection: "row" },
-  subTab: { flex: 1, alignItems: "center", borderWidth: 1, paddingVertical: 9, minHeight: 42, justifyContent: "center" },
+  subTab: { flex: 1, alignItems: "center", borderWidth: 1, paddingVertical: 9, minHeight: 44, justifyContent: "center" },
 
   searchBar: { flexDirection: "row", alignItems: "center", borderWidth: StyleSheet.hairlineWidth },
   chip: { borderWidth: StyleSheet.hairlineWidth, paddingVertical: 7, justifyContent: "center" },

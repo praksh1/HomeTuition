@@ -34,6 +34,12 @@ export interface PublicProgramSummary {
   title: string;
   summary: string;
   outcome: string;
+  /**
+   * Added in Phase 2B correction round 1. Optional in the type because a client built against an
+   * older server may not receive it, and the screen must still render honestly — see
+   * `cardFromSummary` for the fallback (no line, not a made-up sentence).
+   */
+  intendedLearner?: string | null;
   startingLevel: string;
   teachingLanguage: string;
   referenceName?: string | null;
@@ -76,20 +82,61 @@ export type DiscoverView = "programs" | "classes" | "teachers";
 
 export interface DiscoverTab {
   view: DiscoverView;
+  /** The word on the pill. Kept short so the row fits at 390 points. */
   label: string;
+  /** Spoken in full by a screen reader. */
+  accessibilityLabel: string;
+  /** The heading and one-line explanation each view puts at the top of the page. */
+  heading: string;
+  subtitle: string;
 }
 
 /**
- * The three views, in the order Discover shows them.
+ * The three primary product views, in the order Discover shows them.
  *
- * Programs first, because this phase makes Programs the featured learning surface. `classes` and
- * `teachers` are the existing Discover implementations, deliberately kept — this screen navigates
- * between them rather than replacing them.
+ * Programs first — this phase makes them the featured learning surface. Then Single classes,
+ * which are individual bookable sessions from `GET /sessions`, distinct from monthly and from a
+ * teacher's own list. Then Teachers, which is the existing browse-by-person view, with the
+ * "Following" list nested inside it as a sub-choice — Codex was clear that Following is not a
+ * third product category and belongs where a teacher relationship lives.
+ *
+ * `label` is the word on the pill; `accessibilityLabel` is the full phrase a screen reader hears,
+ * because "Classes" alone does not say which kind. The page title and the subtitle also come from
+ * here, so a change to a view name changes both the pill and the heading — impossible for one to
+ * drift.
  */
 export const DISCOVER_TABS: readonly DiscoverTab[] = [
-  { view: "programs", label: "Programs" },
-  { view: "classes", label: "Single classes" },
-  { view: "teachers", label: "Teachers" },
+  {
+    view: "programs", label: "Programs", accessibilityLabel: "Learning programs",
+    heading: "Find a learning program", subtitle: "A full journey with an outcome and a path, offered by a teacher.",
+  },
+  {
+    view: "classes", label: "Classes", accessibilityLabel: "Single classes",
+    heading: "Find a class", subtitle: "One class you can join, paid one at a time.",
+  },
+  {
+    view: "teachers", label: "Teachers", accessibilityLabel: "Teachers",
+    heading: "Find a teacher", subtitle: "Browse teachers across Nepal.",
+  },
+];
+
+/**
+ * Teachers has its own two sub-views: everyone, and the ones this student follows.
+ *
+ * Following was previously a third top-level product view. Codex asked for it to be nested here,
+ * and the reason is right: a follow is a relationship with a teacher and belongs in the Teachers
+ * view. Nothing about the follow list itself changes.
+ */
+export type TeachersView = "all" | "following";
+
+export interface TeachersTab {
+  view: TeachersView;
+  label: string;
+}
+
+export const TEACHERS_TABS: readonly TeachersTab[] = [
+  { view: "all", label: "All teachers" },
+  { view: "following", label: "Following" },
 ];
 
 /** The one search prompt the whole Discover screen shares. */
@@ -147,7 +194,7 @@ export interface ProgramCardFields {
   teacherName: string;
 }
 
-/** For a summary row: the intended learner is not on the list, so the line has a graceful default. */
+/** For a summary row from the list; the intended learner comes through when the API sends it. */
 export function cardFromSummary(row: PublicProgramSummary): ProgramCardFields {
   return {
     id: row.id,
@@ -155,8 +202,10 @@ export function cardFromSummary(row: PublicProgramSummary): ProgramCardFields {
     outcome: row.outcome,
     summary: row.summary,
     typeLabel: programTypeLabel(row.type),
-    // The list does not carry `intendedLearner`; the card just omits the line rather than inventing.
-    intendedLearnerLine: null,
+    // Present when the server includes it. Never invented, never inferred from another field —
+    // an older server that does not send it produces a card with no learner line rather than a
+    // made-up one.
+    intendedLearnerLine: (row.intendedLearner ?? "").trim().length > 0 ? row.intendedLearner!.trim() : null,
     teachingLanguage: row.teachingLanguage,
     teacherName: row.teacher.name,
   };
@@ -180,13 +229,15 @@ export function cardFromDetail(program: PublicProgramDetail): ProgramCardFields 
  * ========================================================================== */
 
 /**
- * A published reference the student can read, plus the disclosure they need beside it.
+ * A published reference the student can read, plus the honest disclosure beside it.
  *
- * The API returns `referenceName` verbatim and `referenceSource` from an enum. This screen never
- * calls anything "official" of its own initiative — that would be the app endorsing a curriculum
- * it has not reviewed — so the source is used only to decide the *disclosure*: for any teacher-
- * supplied reference the page says so plainly, and for a program that is "official" today the page
- * still notes that Fadko does not endorse the curriculum, since no endorsement process exists.
+ * The API returns `referenceName` verbatim and `referenceSource` from an enum with three values
+ * (`official`, `teacher_supplied`, `none`). The previous version of this function called every
+ * citation "teacher supplied" even when the source was `official` — a false provenance claim
+ * Codex rightly rejected. The corrected wording is neutral: the disclosure names what the block
+ * *is* — the reference the program cited — and says only what Fadko can honestly say about it,
+ * which is that Fadko has not verified or endorsed it. That is true of every value of
+ * `referenceSource`, because no endorsement process exists at all.
  */
 export interface ReferenceBlock {
   name: string;
@@ -199,7 +250,7 @@ export function referenceBlock(program: PublicProgramDetail): ReferenceBlock | n
   return {
     name,
     disclosure:
-      "The teacher supplied this citation. Fadko does not check or endorse the curriculum, exam board, or book.",
+      "This is the curriculum or reference named in the program. Fadko has not independently verified or endorsed it.",
   };
 }
 
@@ -284,6 +335,61 @@ export function appendPage(current: ProgramList, next: ProgramList): ProgramList
   const seen = new Set(current.rows.map((r) => r.id));
   const additions = next.rows.filter((r) => !seen.has(r.id));
   return { rows: [...current.rows, ...additions], nextCursor: next.nextCursor };
+}
+
+/* ========================================================================== *
+ * Program-list state                                                          *
+ * ========================================================================== */
+
+/**
+ * What the Programs list is showing right now, decided from what happened rather than what is
+ * currently loading.
+ *
+ * The distinction the previous round got wrong: a first load that returned zero rows was drawn as
+ * "no programs yet" whether the request had a query and a filter or not. That is honest for the
+ * global empty state (there are no published programs on Fadko) and false for a search that
+ * matched nothing (there are programs, just none for those words). Getting the two mixed up
+ * teaches a student that the site is empty because their spelling was wrong.
+ *
+ * `paginationError` is separate from `error`: a next-page failure keeps the successful rows on
+ * screen with a small retry beside "Show more", and never replaces the whole list with a failure
+ * card. Codex's fourth correction.
+ */
+export type ProgramListState =
+  | { kind: "loading" }
+  | { kind: "error"; message: string }
+  | { kind: "empty" }
+  | { kind: "noMatch"; query: string; filterActive: boolean }
+  | { kind: "ready"; rows: PublicProgramSummary[]; hasMore: boolean; paginationError: string | null };
+
+export interface ProgramListInput {
+  initialLoad: boolean;
+  loadedRows: PublicProgramSummary[];
+  hasMore: boolean;
+  initialError: string | null;
+  paginationError: string | null;
+  query: string;
+  chosenType: ProgramType | "all";
+}
+
+export function programListState(input: ProgramListInput): ProgramListState {
+  if (input.initialLoad) return { kind: "loading" };
+  if (input.initialError !== null && input.loadedRows.length === 0) {
+    return { kind: "error", message: input.initialError };
+  }
+  if (input.loadedRows.length === 0) {
+    const filterActive = input.chosenType !== "all";
+    if (input.query.trim().length > 0 || filterActive) {
+      return { kind: "noMatch", query: input.query.trim(), filterActive };
+    }
+    return { kind: "empty" };
+  }
+  return {
+    kind: "ready",
+    rows: input.loadedRows,
+    hasMore: input.hasMore,
+    paginationError: input.paginationError,
+  };
 }
 
 /* ========================================================================== *

@@ -935,6 +935,13 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
         title: snapshot.title,
         summary: snapshot.summary,
         outcome: snapshot.outcome,
+        /*
+          Added in Phase 2B correction round 1. The card's "Who it is for" line was previously
+          promised in Phase 2B's initial review and then never drawn because the list did not carry
+          it — the client's card fell back to `null`. It is already in the snapshot and search
+          already reaches it; there is no reason to hide it from the list.
+        */
+        intendedLearner: snapshot.intendedLearner,
         startingLevel: snapshot.startingLevel,
         teachingLanguage: snapshot.teachingLanguage,
         referenceName: snapshot.referenceName,

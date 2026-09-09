@@ -32,9 +32,10 @@ import { ProgramBackControl, ProgramCardShell, ProgramChip } from "./ProgramPiec
  *
  * ## The reference disclosure
  *
- * When a teacher cites a curriculum or exam board, the page shows it verbatim and says in plain
- * words that Fadko does not check or endorse it. Endorsement would be the app claiming a review
- * process that does not exist.
+ * When a program cites a curriculum or exam board, the page shows the name verbatim and says in
+ * plain words that Fadko has not independently verified or endorsed it — the same sentence for
+ * every value of `referenceSource`, because no endorsement process exists. Calling an official
+ * reference "teacher supplied" (the older wording did) would be a false provenance claim.
  */
 export interface ProgramViewProps {
   program: PublicProgramDetail;

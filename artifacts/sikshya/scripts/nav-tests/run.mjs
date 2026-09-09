@@ -220,40 +220,48 @@ async function main() {
   await page3.goto(`${siteUrl}/`, { waitUntil: "networkidle" });
   await page3.waitForTimeout(3500);
   /*
-    Discover now has three sub-tabs, not two.
+    Discover has three primary views: Programs, Single classes, Teachers.
 
-    Phase 2B added Programs as the featured surface, so the initial view is a list of Learning
-    Programs rather than the teacher search. Teachers and Following are the same two views the
-    student had before, kept intact and reachable in one tap. The old assertion "Discover is
-    what it opens on" is no longer true — Programs is — so this checks the three sub-tabs are
-    all present and that Programs opens by default.
+    Phase 2B correction round 1: the middle tab is now Single classes (bookable one-off classes)
+    rather than Following, because Following is a relationship with a teacher and belongs inside
+    the Teachers view as a sub-choice. Programs opens by default because that is the featured
+    surface for this phase.
   */
   check("Discover has a Programs sub-tab", (await page3.locator('[data-testid="discover-subtab-programs"]').count()) > 0);
-  check("and a Teachers sub-tab", (await page3.locator('[data-testid="discover-subtab-discover"]').count()) > 0);
-  check("and a Following sub-tab", (await page3.locator('[data-testid="discover-subtab-following"]').count()) > 0);
+  check("and a Classes sub-tab", (await page3.locator('[data-testid="discover-subtab-classes"]').count()) > 0);
+  check("and a Teachers sub-tab", (await page3.locator('[data-testid="discover-subtab-teachers"]').count()) > 0);
+  check("and Following is not a primary product view any more",
+    (await page3.locator('[data-testid="discover-subtab-following"]').count()) === 0);
   const programsSearch = '[data-testid="program-discover-search"]';
   check("Programs is what it opens on", (await page3.locator(programsSearch).count()) > 0);
 
-  // The teacher search box lives in the Teachers sub-tab now.
+  // The teacher search box only lives inside the Teachers > All view.
   const searchBox = '[data-testid="discover-search"]';
   check("and the teacher search is not on screen until you switch to Teachers",
     (await page3.locator(searchBox).count()) === 0);
 
-  await page3.locator('[data-testid="discover-subtab-following"]').click({ timeout: 10000 });
+  // The Classes tab has its own search box, backed by real /sessions data.
+  await page3.locator('[data-testid="discover-subtab-classes"]').click({ timeout: 10000 });
+  await page3.waitForTimeout(2500);
+  check("tapping Classes shows the single-classes list, not Programs",
+    (await page3.locator('[data-testid="single-classes-scroll"]').count()) > 0);
+  check("and the Programs search leaves the screen while Classes is showing",
+    (await page3.locator(programsSearch).count()) === 0);
+
+  await page3.locator('[data-testid="discover-subtab-teachers"]').click({ timeout: 10000 });
+  await page3.waitForTimeout(2000);
+  check("switching to Teachers brings the teacher search box up",
+    (await page3.locator(searchBox).count()) > 0);
+  check("with the All/Following sub-choices under it",
+    (await page3.locator('[data-testid="teachers-subtab-all"]').count()) > 0
+      && (await page3.locator('[data-testid="teachers-subtab-following"]').count()) > 0);
+
+  await page3.locator('[data-testid="teachers-subtab-following"]').click({ timeout: 10000 });
   await page3.waitForTimeout(2500);
   const following = await page3.evaluate(() => document.body.innerText);
-  check("tapping Following shows the follow list instead of the search",
+  check("tapping Following inside Teachers shows the follow list",
     /not following anyone yet/i.test(following) || (await page3.locator('[data-testid="followed-teachers"]').count()) > 0,
     following.slice(0, 220).replace(/\n/g, " | "));
-  check("and the teacher search box is out of the way while it is showing",
-    (await page3.locator(searchBox).count()) === 0, following.slice(0, 220).replace(/\n/g, " | "));
-
-  await page3.locator('[data-testid="discover-subtab-discover"]').click({ timeout: 10000 });
-  await page3.waitForTimeout(2000);
-  check("and switching to Teachers brings the teacher search box up",
-    (await page3.locator(searchBox).count()) > 0);
-  check("and the Programs search is now the one out of the way",
-    (await page3.locator(programsSearch).count()) === 0);
 
   /**
    * Real conversations first, or this proves nothing.
