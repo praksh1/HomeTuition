@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: `codex/programs-profile-follow`
 - Base commit: `9f28ed9`
-- Status: complete; isolated preview deployed; owner verification pending
+- Status: complete; owner verified; production release pending
 
 ## Requested
 
@@ -77,7 +77,10 @@ ambiguous pause.
   returned exactly one published program; the preview returned HTTP 200.
 - Manual Codex browser smoke: after a hard reload, the Staging Review Teacher profile rendered its
   `Learning programs` section before `Book a class`; `View program` opened `/program/1` and rendered
-  the immutable details and learning path. Owner verification is still required.
+  the immutable details and learning path. This was the machine-assisted smoke before the owner's
+  independent check.
+- Owner manual verification: passed on 2026-09-10. The owner checked the deployed preview and
+  approved moving this phase to production.
 
 ## Problems and surprises
 
@@ -129,9 +132,7 @@ fabricate a user-facing claim, but the prior green check did.
    notification contract or the restored dispute audit evidence fails.
 3. The isolated preview/staging pair is deployed and profile id `1` already has one harmless
    published staging program.
-4. Ask the owner to verify: program cards appear on the correct teacher profile; a genuine empty
-   teacher has no empty Programs box; opening a card reaches the correct immutable program; failure
-   and pagination states remain usable; one first-publication follower notification arrives and a
-   revision does not create another.
-5. Only after that manual pass merge and release. Commercial Program rules remain a separate owner
-   decision and must not be inferred from this feature.
+4. Owner verification passed. Merge the reviewed branch into the latest `main`, run the production
+   workflow, and verify both the Railway API and public Worker rather than assuming a push deployed.
+5. Commercial Program rules remain a separate owner decision and must not be inferred from this
+   feature.
