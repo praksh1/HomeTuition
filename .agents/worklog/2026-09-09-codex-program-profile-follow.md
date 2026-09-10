@@ -82,6 +82,20 @@ ambiguous pause.
 - Owner manual verification: passed on 2026-09-10. The owner checked the deployed preview and
   approved moving this phase to production.
 
+## Production release follow-up
+
+- The reviewed branch was fast-forwarded into `main` at `d0784a8` and pushed after the owner's
+  approval. Production workflow run `34460883367` correctly stopped before Cloudflare deployment.
+- Every server contract passed. The browser journey reached the monthly-class Discover flow and
+  failed because Programs is now the intentional first Discover view while the older journey still
+  looked immediately for a control rendered only in the Teachers view.
+- This was a test-navigation regression, not a product rollback and not a timing problem. The
+  journey now taps the visible `Teachers` Discover sub-tab before asserting and opening Monthly
+  classes, matching the path a student actually follows. It does not add a delay or weaken an
+  assertion.
+- The production site was not changed by the failed run; deployment steps occur only after every
+  gate passes.
+
 ## Problems and surprises
 
 - Importing the data-owning profile section into the isolated render harness pulled in
@@ -108,6 +122,10 @@ ambiguous pause.
   because the preview runner had no Playwright/Chromium installation. Production already installed
   it for the same rendered harness; preview now does too. No Worker was uploaded in either failed
   run, which confirms the new gates fail closed.
+- The first authorized production run (`34460883367`) stopped in `test:monthly-browser` after the
+  Discover redesign made Programs the first view. The output itself showed the Programs/Classes/
+  Teachers tabs and no monthly entry, proving that waiting longer could not help. The correction
+  explicitly selects Teachers before looking for the existing monthly-class entry.
 
 ## Fabrications found
 
@@ -123,16 +141,15 @@ fabricate a user-facing claim, but the prior green check did.
 - No booking, membership, Monthly-class, Daily, LiveKit or WebSocket classroom behavior.
 - No database migration or destructive schema action.
 - No production or staging data was edited.
-- No branch was merged or deployed at the time of this entry.
+- The reviewed branch was later fast-forwarded into `main`; the first production workflow failed
+  closed before any Worker deployment, as recorded above.
 
 ## Remaining risks / next pickup point
 
-1. Run the final API/app/design/diff gates and push the branch.
-2. Let the preview GitHub workflow run both real Postgres suites. Do not deploy if either the first-publication
-   notification contract or the restored dispute audit evidence fails.
-3. The isolated preview/staging pair is deployed and profile id `1` already has one harmless
-   published staging program.
-4. Owner verification passed. Merge the reviewed branch into the latest `main`, run the production
-   workflow, and verify both the Railway API and public Worker rather than assuming a push deployed.
-5. Commercial Program rules remain a separate owner decision and must not be inferred from this
+1. Push the monthly-journey navigation correction and require a completely green production run.
+2. Verify both the Railway API health and the public Worker after that run; do not infer deployment
+   from a successful push.
+3. The isolated preview/staging pair remains deployed and profile id `1` has one harmless published
+   staging program.
+4. Commercial Program rules remain a separate owner decision and must not be inferred from this
    feature.
