@@ -2,8 +2,9 @@
 
 Status: **foundation only; no checkout, collection, refund or payout is enabled by this work.**
 
-This document turns the approved managed-marketplace direction into a small accounting contract
-without inventing the commercial numbers the owner has not chosen.
+This document turns the approved managed-marketplace direction into a small accounting contract.
+The beta terms below were approved by the owner on 2026-09-10. They are implemented first through
+test enrolments and a shadow ledger; no real money moves.
 
 ## The simple product users should understand
 
@@ -69,28 +70,39 @@ Operator:
 - human-readable reasons and an append-only history;
 - no automatic verdict based on camera, microphone, attendance or whiteboard activity alone.
 
+## Approved beta contract (2026-09-10)
+
+- Flexible only at launch; Teacher Pro stays hidden for now.
+- The teacher receives 70% and Fadko retains 30% of tuition.
+- Students pay no separate platform fee during beta.
+- The complaint window is 48 hours after each delivered lesson.
+- A complaint freezes only the affected lesson allocation.
+- A teacher-cancelled lesson first needs a mutually agreed make-up; otherwise an approved refund
+  is owed for that lesson allocation.
+- Eligible allocations enter a weekly payout cycle, provisionally Wednesday. The real provider's
+  bank timetable and cutoff must be confirmed before this is promised in production.
+- Existing Monthly and Single Class products keep their current contracts.
+- Engineering starts with simulated enrolments and a shadow ledger, never provider-looking fake
+  payments.
+
 ## Decisions that still block real money
 
 The following must be approved and versioned before a checkout or ledger table is built:
 
 1. Licensed Nepal payment provider and whether it supports marketplace collection/delayed payout.
 2. Merchant/supplier of record.
-3. Learning Program complaint window.
-4. Weekly payout day and cutoff.
-5. Flexible fee/commission and Teacher Pro subscription/commission.
-6. Student service fee, whether it is fixed or percentage-based, and when it is refundable.
-7. Gateway-fee and tax/TDS/VAT treatment.
-8. Chargeback, reserve and negative-balance rules.
-9. Parent/guardian contracting for minors.
-10. Treatment of already-purchased Monthly classes during migration.
+3. Wednesday payout cutoff and confirmation that the provider/bank timetable supports it.
+4. Future Teacher Pro subscription/commission, if that option is ever introduced.
+5. Gateway-fee and tax/TDS/VAT treatment.
+6. Chargeback, reserve and negative-balance rules.
+7. Parent/guardian contracting for minors.
 
 Until those are answered, production must continue to say that joining a Learning Program is not
 open. Existing Single Class and Monthly purchases keep their current contracts.
 
-## Recommended launch shape for owner approval
+## Reasoning behind the approved launch shape
 
-This is the smallest offer likely to be understandable and operable at launch. It is a proposal,
-not a live rule:
+This is the smallest offer likely to be understandable and operable at launch:
 
 1. Launch **Flexible** first: no teacher subscription to understand, one disclosed percentage from
    eligible tuition. Add Teacher Pro only after real teachers teach enough volume for its discount
@@ -111,8 +123,9 @@ not a live rule:
    recover the cost from an unpaid teacher allocation only when its agreements and provider allow
    that—it cannot erase the student's remedy with app copy.
 
-The 48-hour window and Wednesday cadence are recommended defaults only. Commission, subscription,
-student fee, refundability and provider remain deliberately blank.
+The Wednesday cadence remains provisional only because a provider has not confirmed its bank
+cutoff. The 70/30 split, zero separate student fee, 48-hour window and affected-lesson remedy are
+approved beta product rules.
 
 ## Current Nepal provider facts checked on 2026-09-10
 

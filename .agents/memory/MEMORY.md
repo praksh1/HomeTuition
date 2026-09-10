@@ -4,7 +4,7 @@
 
 - [Fadko classroom and learning experience blueprint](../backlog/2026-09-07-fadko-classroom-learning-blueprint.md) — approved 7 Sep 2026: ClassIn-style teacher-controlled board-first classroom, Ledu-style outcome journey and Aiwen-style prepare/live/practice/reporting adapted for Nepal; meaningful feedback instead of points/leaderboards; session evidence plus saved board without automatic video recording; phased adoption and explicit do-not-copy lists.
 
-- [Learning Programs and managed-marketplace direction](learning-program-managed-marketplace.md) — owner decision, 7 Sep 2026: Single Class or flexible structured Learning Program for school, skills, language, exam prep or custom teaching; teachers supply content; desired licensed-provider collection, lesson allocation and weekly payout; commercial/legal numbers remain deliberately undecided.
+- [Learning Programs and managed-marketplace direction](learning-program-managed-marketplace.md) — owner decisions, 7 and 10 Sep 2026: Single Class or structured Learning Program; beta launches Flexible only at a 70/30 teacher/Fadko split, no separate student fee, 48-hour per-lesson complaint window, affected-lesson holds, make-up-or-refund for teacher cancellation, provisional Wednesday payout; existing Monthly/Single Class unchanged; shadow ledger only until provider/legal details are confirmed.
 
 **Open backlog:** [.agents/backlog/](../backlog/) holds work the owner has raised that is not finished. Read the newest file there before planning; a list that lives only in a chat gets half-done, and this project's container has been reset mid-session more than once.
 

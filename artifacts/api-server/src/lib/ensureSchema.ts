@@ -1447,10 +1447,77 @@ export const LEARNING_PROGRAM_DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS "learning_program_modules_program_idx"
      ON "learning_program_modules" ("program_id", "position")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_enrollments" (
+    "id" serial PRIMARY KEY,
+    "program_id" integer NOT NULL,
+    "student_id" integer NOT NULL,
+    "program_version" integer NOT NULL,
+    "total_tuition_npr" integer NOT NULL,
+    "paid_lesson_count" integer NOT NULL,
+    "teacher_share_bps" integer NOT NULL,
+    "platform_share_bps" integer NOT NULL,
+    "student_fee_npr" integer NOT NULL DEFAULT 0,
+    "complaint_window_hours" integer NOT NULL,
+    "payout_weekday" integer NOT NULL,
+    "payment_status" text NOT NULL DEFAULT 'test_confirmed',
+    "payment_reference" text,
+    "terms_snapshot" jsonb NOT NULL,
+    "created_by" integer,
+    "enrolled_at" timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT "learning_program_enrollments_program_id_learning_programs_id_fk"
+      FOREIGN KEY ("program_id") REFERENCES "learning_programs"("id") ON DELETE RESTRICT,
+    CONSTRAINT "learning_program_enrollments_student_id_users_id_fk"
+      FOREIGN KEY ("student_id") REFERENCES "users"("id") ON DELETE RESTRICT,
+    CONSTRAINT "learning_program_enrollments_created_by_users_id_fk"
+      FOREIGN KEY ("created_by") REFERENCES "users"("id") ON DELETE SET NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "learning_program_enrollments_student_program_idx"
+     ON "learning_program_enrollments" ("student_id", "program_id")`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_enrollments_teacher_statement_idx"
+     ON "learning_program_enrollments" ("program_id", "id")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_allocations" (
+    "id" serial PRIMARY KEY,
+    "enrollment_id" integer NOT NULL,
+    "lesson_number" integer NOT NULL,
+    "gross_amount_npr" integer NOT NULL,
+    "teacher_amount_npr" integer NOT NULL,
+    "platform_amount_npr" integer NOT NULL,
+    "state" text NOT NULL DEFAULT 'future',
+    "state_changed_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT "learning_program_allocations_enrollment_id_learning_program_enrollments_id_fk"
+      FOREIGN KEY ("enrollment_id") REFERENCES "learning_program_enrollments"("id") ON DELETE CASCADE
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "learning_program_allocations_lesson_idx"
+     ON "learning_program_allocations" ("enrollment_id", "lesson_number")`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_allocations_state_idx"
+     ON "learning_program_allocations" ("state", "id")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_ledger_entries" (
+    "id" serial PRIMARY KEY,
+    "enrollment_id" integer NOT NULL,
+    "allocation_id" integer,
+    "actor_id" integer,
+    "event" text NOT NULL,
+    "from_state" text,
+    "to_state" text,
+    "gross_amount_npr" integer NOT NULL,
+    "detail" jsonb NOT NULL,
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT "learning_program_ledger_entries_enrollment_id_learning_program_enrollments_id_fk"
+      FOREIGN KEY ("enrollment_id") REFERENCES "learning_program_enrollments"("id") ON DELETE CASCADE,
+    CONSTRAINT "learning_program_ledger_entries_allocation_id_learning_program_allocations_id_fk"
+      FOREIGN KEY ("allocation_id") REFERENCES "learning_program_allocations"("id") ON DELETE CASCADE,
+    CONSTRAINT "learning_program_ledger_entries_actor_id_users_id_fk"
+      FOREIGN KEY ("actor_id") REFERENCES "users"("id") ON DELETE SET NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_ledger_enrollment_idx"
+     ON "learning_program_ledger_entries" ("enrollment_id", "id")`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_ledger_created_idx"
+     ON "learning_program_ledger_entries" ("created_at", "id")`,
 ];
 
 /**
- * Creates the two Learning Program tables if they are not there yet.
+ * Creates the additive Learning Program tables if they are not there yet.
  *
  * The same narrow licence as every guard above: create only, additive only, idempotent, and unable
  * to stop the server starting. And the same reason — the API redeploys on every push while

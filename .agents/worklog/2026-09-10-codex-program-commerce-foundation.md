@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: `codex/program-commerce-foundation`
 - Base commit: `0ff5a40`
-- Status: in progress
+- Status: shadow-ledger backend implemented; UI and preview still pending
 
 ## Requested
 
@@ -25,6 +25,16 @@ inventing unapproved financial terms.
   complaint freeze, replacement-before-refund and weekly eligibility) without filling any rate.
 - Checked current NRB, Khalti and eSewa primary material and recorded exactly what their public
   contracts establish—and what they do not establish about marketplace settlement.
+- After owner approval, recorded the nine beta rules in durable memory and this commerce contract.
+- Added three new, isolated tables for simulated Program enrolments, lesson allocations and an
+  append-only decision history. Existing tables and columns were not changed.
+- Added an operator-only test-enrolment route. It requires a live student test grant, records
+  `test_confirmed` rather than `paid`, leaves the provider reference null and says no payment moved.
+- Added an operator-only allocation transition route through the tested state machine; complaint
+  and refund decisions require a written reason.
+- Added read-only teacher statement, operator reconciliation and student-own-test-place endpoints.
+- Extended the existing schema-parity gate to cover all five Program tables, their indexes and all
+  eight foreign keys.
 
 ## Decisions and assumptions
 
@@ -34,13 +44,16 @@ inventing unapproved financial terms.
   handling and exact conservation of the confirmed total.
 - Evidence never makes a refund decision and cannot transition an allocation directly.
 - A provider confirmation, not a UI action or API acceptance, completes a payout or refund.
+- Approved beta terms: Flexible-only launch; 70% teacher / 30% Fadko; no separate student fee;
+  48-hour complaint window; only the affected lesson freezes; replacement before an approved
+  affected-lesson refund; provisional Wednesday payout; current Monthly and Single Class unchanged.
 
 ## Verification
 
-- Focused `programCommerce.test.ts`: 20 passed, 0 failed.
+- Focused commerce scenarios: 21 passed, 0 failed, including exact 70/30 conservation.
 - `pnpm run typecheck`: passed across all four workspace packages when run with access to the
   installed dependency junctions.
-- API unit suite: 494 passed, 0 failed, including the 20 new scenarios.
+- API unit suite: 495 passed, 0 failed, including the 21 commerce scenarios.
 - `git diff --check`: passed before final documentation review.
 
 ## Problems and surprises
@@ -59,23 +72,31 @@ inventing unapproved financial terms.
   categorically uninvolved in refunds: they place service-quality disputes on the merchant. The
   exact merchant-of-record and teacher-recovery arrangement therefore remains a provider/legal
   decision, not a disclaimer to code.
+- The first Programs integration attempt ran a stale API bundle and never came up. Rebuilding the
+  API fixed startup. The second reached the test harness, then stopped because this Windows host
+  has no `psql` executable. CI installs PostgreSQL client and owns the real schema-parity result;
+  do not describe that integration suite as passed locally.
+- A first statement query displayed the program's editable current title beside frozen purchase
+  terms. Corrected it to read the snapshotted title, so a later edit cannot rewrite history.
 
 ## Fabrications found
 
-None in the product UI. The existing Monthly model still contains an approved 30% platform share;
-this work deliberately does not copy that number into Learning Programs, where no rate is approved.
+None in the product UI. The shadow ledger is repeatedly labelled test-only and cannot claim a
+gateway payment, refund or payout occurred.
 
 ## Deliberately not changed
 
-- No schema, route, screen, checkout, provider, payment, refund, payout, booking, membership,
+- No screen, checkout, provider, real payment, real refund, real payout, booking, membership,
   Monthly-class, Single-Class, Daily, LiveKit or classroom change.
+- No existing database table or column changed, and no `db:push` was run.
 - No production or staging data and no third-party account.
-- No commission, fee, complaint window, payout day or price default.
+- No gateway credentials, production provider or teacher-set Program price was added.
 
 ## Remaining risks / next pickup point
 
-1. Run focused and repository gates and review the state vocabulary against every approved product
-   rule.
-2. Convert the ten unresolved decisions in `PROGRAM-COMMERCE.md` into an owner decision packet.
-3. Only after approval, add new tables alongside current commerce and start with simulated/test
-   enrolment. Do not route production money through this foundation.
+1. Push this backend slice and let CI run the PostgreSQL schema-parity suite unavailable locally.
+2. Build the teacher shadow statement and operator reconciliation UI, with test-only labelling on
+   every monetary total and no button that resembles a real checkout.
+3. Deploy a staging preview, seed one approved test Program enrolment, and give the owner exact
+   teacher/student/operator pages to inspect before any production merge.
+4. Do not connect a gateway until provider/legal questions in `PROGRAM-COMMERCE.md` are resolved.

@@ -15,10 +15,17 @@ an online school that owns every curriculum and not a directory of disconnected 
 - Desired payment direction: student pays through Fadko using an NRB-licensed provider; tuition is
   allocated lesson-by-lesson; eligible teacher earnings are paid on a published weekly cycle after
   the complaint window. An internal ledger is not to be called escrow or a wallet.
-- Teacher commercial choices are provisionally Flexible and Teacher Pro, separate from what a
-  student buys. Do not build a confusing prepaid/postpaid 2x2 grid.
-- No price, commission, student fee, provider, payout window, tax treatment or legal allocation is
-  approved yet. Confirm those before real money code.
+- Beta commercial contract approved by the owner on 2026-09-10: launch Flexible only; teacher
+  share 70%, Fadko share 30%; no separate student fee; a 48-hour lesson complaint window; only the
+  affected lesson allocation is frozen; a teacher cancellation first offers a make-up and then an
+  approved affected-lesson refund; weekly payout is provisionally Wednesday pending provider bank
+  timing. These terms must be snapshotted per purchase rather than read from mutable constants.
+- Teacher Pro remains a future option, separate from what a student buys. Do not build a confusing
+  prepaid/postpaid 2x2 grid.
+- Existing Monthly and Single Class contracts remain unchanged. Phase 3 starts with a shadow
+  ledger and test enrolments only: no gateway, collection, real payout or real refund is enabled.
+- Provider, gateway/tax treatment, parent contracting and production payout cutoff remain open and
+  still block real-money activation.
 - Preserve existing purchased terms and atomic booking/membership rules. New program/ledger work
   must be introduced alongside current recurring structures, then migrated explicitly.
 

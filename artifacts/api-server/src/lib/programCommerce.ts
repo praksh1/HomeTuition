@@ -46,6 +46,18 @@ export interface ProgramLessonAllocation {
   state: ProgramAllocationState;
 }
 
+export interface ProgramLessonShare extends ProgramLessonAllocation {
+  teacherAmountNpr: number;
+  platformAmountNpr: number;
+}
+
+export const PROGRAM_BETA_TEACHER_SHARE_BPS = 7_000;
+export const PROGRAM_BETA_PLATFORM_SHARE_BPS = 3_000;
+export const PROGRAM_BETA_STUDENT_FEE_NPR = 0;
+export const PROGRAM_BETA_COMPLAINT_WINDOW_HOURS = 48;
+/** ISO weekday: Monday 1 ... Sunday 7. Wednesday remains provisional until a provider confirms it. */
+export const PROGRAM_BETA_PAYOUT_WEEKDAY = 3;
+
 export class ProgramCommerceInputError extends Error {
   constructor(message: string) {
     super(message);
@@ -86,6 +98,26 @@ export function allocateProgramTuition(
     lessonNumber: index + 1,
     amountNpr: base + (index < remainder ? 1 : 0),
     state: "future" as const,
+  }));
+}
+
+/**
+ * Freeze the approved 70/30 beta split without losing a rupee to per-lesson rounding.
+ * The total shares are calculated once, then each is distributed deterministically.
+ */
+export function allocateProgramShares(totalNpr: number, paidLessonCount: number): ProgramLessonShare[] {
+  const gross = allocateProgramTuition(totalNpr, paidLessonCount);
+  const teacherTotal = Math.floor((totalNpr * PROGRAM_BETA_TEACHER_SHARE_BPS) / 10_000);
+  const distribute = (total: number) => {
+    const base = Math.floor(total / paidLessonCount);
+    const remainder = total % paidLessonCount;
+    return Array.from({ length: paidLessonCount }, (_, index) => base + (index < remainder ? 1 : 0));
+  };
+  const teacher = distribute(teacherTotal);
+  return gross.map((row, index) => ({
+    ...row,
+    teacherAmountNpr: teacher[index]!,
+    platformAmountNpr: row.amountNpr - teacher[index]!,
   }));
 }
 

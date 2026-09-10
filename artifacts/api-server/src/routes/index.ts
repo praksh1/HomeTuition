@@ -17,6 +17,7 @@ import monthlyPortalRouter from "./monthlyPortal";
 import onboardingRouter from "./onboarding";
 import sessionProofRouter from "./sessionProof";
 import learningProgramsRouter from "./learningPrograms";
+import programCommerceRouter from "./programCommerce";
 
 const router: IRouter = Router();
 
@@ -36,6 +37,7 @@ router.use(monthlyPortalRouter);
 router.use(onboardingRouter);
 router.use(sessionProofRouter);
 router.use(learningProgramsRouter);
+router.use(programCommerceRouter);
 router.use(operatorsRouter);
 router.use(adminRouter);
 router.use(passwordResetRouter);

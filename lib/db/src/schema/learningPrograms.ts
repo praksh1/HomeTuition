@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, serial, text, timestamp } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { usersTable } from "./users";
 
@@ -22,10 +22,10 @@ import { usersTable } from "./users";
  *
  * ## What is deliberately absent
  *
- * No price, no fee, no commission, no payout, no provider, no ledger and no enrolment. None of
- * those numbers is decided — `.agents/backlog/2026-09-07-learning-program-managed-marketplace.md`
- * lists nine commercial questions still open — and a column invites a convenient constant to be
- * put in it and later read as settled. Phase 3 adds the ledger; this is Phase 1.
+ * The program rows themselves still carry no price or commercial terms. Phase 3 adds separate
+ * shadow-ledger tables below, after the owner approved the beta terms on 2026-09-10. Keeping them
+ * separate means a published Program remains editorial content and each simulated purchase keeps
+ * its own frozen agreement. No provider, checkout, real collection, refund or payout exists here.
  */
 
 /** The only three states. A program is being written, is public, or has been put away. */
@@ -127,5 +127,91 @@ export const learningProgramModulesTable = pgTable(
   (table) => [index("learning_program_modules_program_idx").on(table.programId, table.position)],
 );
 
+/**
+ * A simulated Learning Program purchase used to prove Fadko's accounting before a gateway is
+ * connected. `payment_status` is deliberately `test_confirmed`, never `paid`: no report may turn
+ * test access into revenue. Commercial terms are frozen here so later edits to a Program cannot
+ * rewrite an old student's agreement.
+ */
+export const learningProgramEnrollmentsTable = pgTable(
+  "learning_program_enrollments",
+  {
+    id: serial("id").primaryKey(),
+    programId: integer("program_id")
+      .notNull()
+      .references(() => learningProgramsTable.id, { onDelete: "restrict" }),
+    studentId: integer("student_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "restrict" }),
+    programVersion: integer("program_version").notNull(),
+    totalTuitionNpr: integer("total_tuition_npr").notNull(),
+    paidLessonCount: integer("paid_lesson_count").notNull(),
+    teacherShareBps: integer("teacher_share_bps").notNull(),
+    platformShareBps: integer("platform_share_bps").notNull(),
+    studentFeeNpr: integer("student_fee_npr").notNull().default(0),
+    complaintWindowHours: integer("complaint_window_hours").notNull(),
+    payoutWeekday: integer("payout_weekday").notNull(),
+    paymentStatus: text("payment_status").notNull().default("test_confirmed"),
+    paymentReference: text("payment_reference"),
+    termsSnapshot: jsonb("terms_snapshot").notNull(),
+    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    enrolledAt: timestamp("enrolled_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("learning_program_enrollments_student_program_idx").on(table.studentId, table.programId),
+    index("learning_program_enrollments_teacher_statement_idx").on(table.programId, table.id),
+  ],
+);
+
+/** One immutable slice of the simulated purchase. Only its state changes through the ledger. */
+export const learningProgramAllocationsTable = pgTable(
+  "learning_program_allocations",
+  {
+    id: serial("id").primaryKey(),
+    enrollmentId: integer("enrollment_id")
+      .notNull()
+      .references(() => learningProgramEnrollmentsTable.id, { onDelete: "cascade" }),
+    lessonNumber: integer("lesson_number").notNull(),
+    grossAmountNpr: integer("gross_amount_npr").notNull(),
+    teacherAmountNpr: integer("teacher_amount_npr").notNull(),
+    platformAmountNpr: integer("platform_amount_npr").notNull(),
+    state: text("state").notNull().default("future"),
+    stateChangedAt: timestamp("state_changed_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("learning_program_allocations_lesson_idx").on(table.enrollmentId, table.lessonNumber),
+    index("learning_program_allocations_state_idx").on(table.state, table.id),
+  ],
+);
+
+/** Append-only explanation of every simulated enrolment and allocation decision. */
+export const learningProgramLedgerEntriesTable = pgTable(
+  "learning_program_ledger_entries",
+  {
+    id: serial("id").primaryKey(),
+    enrollmentId: integer("enrollment_id")
+      .notNull()
+      .references(() => learningProgramEnrollmentsTable.id, { onDelete: "cascade" }),
+    allocationId: integer("allocation_id").references(() => learningProgramAllocationsTable.id, {
+      onDelete: "cascade",
+    }),
+    actorId: integer("actor_id").references(() => usersTable.id, { onDelete: "set null" }),
+    event: text("event").notNull(),
+    fromState: text("from_state"),
+    toState: text("to_state"),
+    grossAmountNpr: integer("gross_amount_npr").notNull(),
+    detail: jsonb("detail").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("learning_program_ledger_enrollment_idx").on(table.enrollmentId, table.id),
+    index("learning_program_ledger_created_idx").on(table.createdAt, table.id),
+  ],
+);
+
 export type LearningProgramRow = typeof learningProgramsTable.$inferSelect;
 export type LearningProgramModuleRow = typeof learningProgramModulesTable.$inferSelect;
+export type LearningProgramEnrollmentRow = typeof learningProgramEnrollmentsTable.$inferSelect;
+export type LearningProgramAllocationRow = typeof learningProgramAllocationsTable.$inferSelect;
+export type LearningProgramLedgerEntryRow = typeof learningProgramLedgerEntriesTable.$inferSelect;

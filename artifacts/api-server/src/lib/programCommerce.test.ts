@@ -6,12 +6,21 @@ import {
   PROGRAM_ALLOCATION_STATES,
   ProgramCommerceInputError,
   allocateProgramTuition,
+  allocateProgramShares,
   allocationMayBeRefunded,
   allocationMayEnterPayout,
   transitionProgramAllocation,
   type ProgramAllocationEvent,
   type ProgramAllocationState,
 } from "./programCommerce.ts";
+
+test("the approved beta split preserves every rupee across uneven lessons", () => {
+  const rows = allocateProgramShares(1_003, 4);
+  assert.equal(rows.reduce((sum, row) => sum + row.teacherAmountNpr, 0), 702);
+  assert.equal(rows.reduce((sum, row) => sum + row.platformAmountNpr, 0), 301);
+  assert.equal(rows.reduce((sum, row) => sum + row.teacherAmountNpr + row.platformAmountNpr, 0), 1_003);
+  assert.ok(rows.every((row) => row.teacherAmountNpr + row.platformAmountNpr === row.amountNpr));
+});
 
 test("a divisible program price becomes equal lesson allocations", () => {
   assert.deepEqual(allocateProgramTuition(4_000, 8), [
