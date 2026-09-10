@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: `codex/programs-profile-follow`
 - Base commit: `9f28ed9`
-- Status: complete; isolated preview pending
+- Status: complete; isolated preview deployed; owner verification pending
 
 ## Requested
 
@@ -67,7 +67,17 @@ ambiguous pause.
   sizes; no new leaks.
 - `git diff --check`: passed after the worklog and final dispute correction.
 - Real-database `test:programs` and `test:attendance`: not available on this Windows host. They were
-  added/retained as required GitHub Actions gates and must pass before any deployment is claimed.
+  added/retained as required GitHub Actions gates. Both passed in the successful isolated-preview
+  run `34437689401` before deployment.
+- Isolated-preview run `34437689401`: passed all steps in 4m56s — staging-health guard, typecheck,
+  disposable API/schema setup, Program/follower contract, attendance/dispute evidence, Chromium
+  install, 390/1440 rendered Program/profile checks, preview-safety tests, Expo web build,
+  production-host exclusion, Cloudflare deployment and served-bundle verification.
+- Public staging checks after deployment: `/api/healthz` returned `ok`; public profile id `1`
+  returned exactly one published program; the preview returned HTTP 200.
+- Manual Codex browser smoke: after a hard reload, the Staging Review Teacher profile rendered its
+  `Learning programs` section before `Book a class`; `View program` opened `/program/1` and rendered
+  the immutable details and learning path. Owner verification is still required.
 
 ## Problems and surprises
 
@@ -117,8 +127,8 @@ fabricate a user-facing claim, but the prior green check did.
 1. Run the final API/app/design/diff gates and push the branch.
 2. Let the preview GitHub workflow run both real Postgres suites. Do not deploy if either the first-publication
    notification contract or the restored dispute audit evidence fails.
-3. Deploy only to the isolated preview/staging pair and seed or publish a harmless staging program
-   for the test teacher if the profile otherwise has nothing visible.
+3. The isolated preview/staging pair is deployed and profile id `1` already has one harmless
+   published staging program.
 4. Ask the owner to verify: program cards appear on the correct teacher profile; a genuine empty
    teacher has no empty Programs box; opening a card reaches the correct immutable program; failure
    and pagination states remain usable; one first-publication follower notification arrives and a
