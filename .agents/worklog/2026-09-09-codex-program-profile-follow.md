@@ -91,6 +91,10 @@ ambiguous pause.
   schema. That was a workflow-wiring fault, not a Program failure: the API never came up and no
   assertion ran. Preview now mirrors production's disposable-database setup by running `db:push`,
   building the API, starting its shared test instance and waiting for health before either contract.
+- The second preview run (`34437465007`) proved both real-database contracts passed, then stopped
+  because the preview runner had no Playwright/Chromium installation. Production already installed
+  it for the same rendered harness; preview now does too. No Worker was uploaded in either failed
+  run, which confirms the new gates fail closed.
 
 ## Fabrications found
 

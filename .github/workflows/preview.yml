@@ -215,6 +215,11 @@ jobs:
       - name: Attendance and dispute evidence
         run: pnpm --filter @workspace/api-server run test:attendance
 
+      - name: Install Chromium for rendered checks
+        run: |
+          npm i -g playwright
+          npx playwright install --with-deps chromium
+
       - name: Render Program discovery and teacher profiles
         run: pnpm --filter @workspace/sikshya run test:discover
 
