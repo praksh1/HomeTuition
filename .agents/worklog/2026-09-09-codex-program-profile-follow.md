@@ -35,8 +35,10 @@ ambiguous pause.
 - `TeacherProgramsPanel` reuses the Phase 2B `ProgramCard`, design tokens and 44-point interaction
   floor. Four programs load initially and additional pages remain available.
 - The student teacher profile renders the section immediately before class booking.
-- The deployment workflow now runs the real-database Program route suite and the rendered Discover,
-  program-details and teacher-profile suite. The prior production workflow contained neither gate.
+- Both deployment workflows now run the relevant gates. Production runs the real-database Program
+  route suite and rendered Discover/profile suite; preview additionally gets its own disposable
+  Postgres service and runs Programs, attendance/dispute evidence, and rendered Discover/profile
+  before uploading anything. The prior workflows contained none of those Program gates.
 - While preparing the release, GitHub Actions exposed an older, real refund-evidence defect:
   successful dispute creation did not write the `dispute.create` activity row asserted by the
   attendance suite. The case, opening ticket event and activity row are now one database
@@ -104,7 +106,7 @@ fabricate a user-facing claim, but the prior green check did.
 ## Remaining risks / next pickup point
 
 1. Run the final API/app/design/diff gates and push the branch.
-2. Let GitHub Actions run both real Postgres suites. Do not deploy if either the first-publication
+2. Let the preview GitHub workflow run both real Postgres suites. Do not deploy if either the first-publication
    notification contract or the restored dispute audit evidence fails.
 3. Deploy only to the isolated preview/staging pair and seed or publish a harmless staging program
    for the test teacher if the profile otherwise has nothing visible.

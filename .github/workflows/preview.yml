@@ -54,9 +54,23 @@ jobs:
   preview:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hometuition_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
       # Metro keeps a coordinator and a transform worker and both inherit this, so their combined
       # ceiling has to fit under the runner's — see the deploy workflow.
       NODE_OPTIONS: --max-old-space-size=1024
@@ -172,6 +186,17 @@ jobs:
       # *see* a change, not to certify it.
       - name: Typecheck
         run: pnpm run typecheck
+
+      # These are the two server contracts this preview exists to review. Running them against a
+      # fresh database caught a missing dispute audit entry that reused local databases concealed.
+      - name: Published programs and follower news
+        run: pnpm --filter @workspace/api-server run test:programs
+
+      - name: Attendance and dispute evidence
+        run: pnpm --filter @workspace/api-server run test:attendance
+
+      - name: Render Program discovery and teacher profiles
+        run: pnpm --filter @workspace/sikshya run test:discover
 
       - name: Test preview verification
         run: node --test scripts/verify-preview.test.mjs
