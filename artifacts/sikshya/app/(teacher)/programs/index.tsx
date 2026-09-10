@@ -65,6 +65,7 @@ export default function ProgramsScreen() {
         onOpen={(id) => router.push(`/(teacher)/programs/${id}`)}
         onCreate={() => router.push("/(teacher)/programs/new")}
         onBack={() => router.replace("/(teacher)")}
+        onViewStatement={() => router.push("/(teacher)/programs/statement")}
       />
     </SafeAreaView>
   );

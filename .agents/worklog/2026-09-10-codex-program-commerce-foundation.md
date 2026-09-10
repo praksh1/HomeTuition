@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: `codex/program-commerce-foundation`
 - Base commit: `0ff5a40`
-- Status: shadow-ledger backend implemented; UI and preview still pending
+- Status: shadow ledger and rehearsal UI implemented; preview deployment pending
 
 ## Requested
 
@@ -35,6 +35,14 @@ inventing unapproved financial terms.
 - Added read-only teacher statement, operator reconciliation and student-own-test-place endpoints.
 - Extended the existing schema-parity gate to cover all five Program tables, their indexes and all
   eight foreign keys.
+- Added a teacher `Money rehearsal` statement reached from Programs, separating every allocation
+  state and labelling every figure as test-only and not payable.
+- Added an operator Programs tab that selects a published Program and an approved test student,
+  creates the simulated enrolment, and rehearses each allowed lesson transition with required
+  reasons for complaint/refund decisions.
+- Added a student Program-page state that shows frozen rehearsal terms when the signed-in student
+  has a test place. A failed private lookup says it could not check rather than falsely saying the
+  student has no place.
 
 ## Decisions and assumptions
 
@@ -54,6 +62,8 @@ inventing unapproved financial terms.
 - `pnpm run typecheck`: passed across all four workspace packages when run with access to the
   installed dependency junctions.
 - API unit suite: 495 passed, 0 failed, including the 21 commerce scenarios.
+- Sikshya unit suite passed after the UI changes.
+- Design ratchet: 94 hex / 282 raw font sizes, unchanged; no new leaks.
 - `git diff --check`: passed before final documentation review.
 
 ## Problems and surprises
@@ -78,6 +88,9 @@ inventing unapproved financial terms.
   do not describe that integration suite as passed locally.
 - A first statement query displayed the program's editable current title beside frozen purchase
   terms. Corrected it to read the snapshotted title, so a later edit cannot rewrite history.
+- The first operator picker prefilled paid lesson count from the number of editorial Program steps.
+  Those are not the same fact. Removed the inference; the operator must enter the rehearsal's paid
+  lesson count explicitly.
 
 ## Fabrications found
 
@@ -94,9 +107,7 @@ gateway payment, refund or payout occurred.
 
 ## Remaining risks / next pickup point
 
-1. Push this backend slice and let CI run the PostgreSQL schema-parity suite unavailable locally.
-2. Build the teacher shadow statement and operator reconciliation UI, with test-only labelling on
-   every monetary total and no button that resembles a real checkout.
-3. Deploy a staging preview, seed one approved test Program enrolment, and give the owner exact
+1. Push the UI slice and let CI run the PostgreSQL schema-parity suite unavailable locally.
+2. Deploy a staging preview, seed one approved test Program enrolment, and give the owner exact
    teacher/student/operator pages to inspect before any production merge.
-4. Do not connect a gateway until provider/legal questions in `PROGRAM-COMMERCE.md` are resolved.
+3. Do not connect a gateway until provider/legal questions in `PROGRAM-COMMERCE.md` are resolved.

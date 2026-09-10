@@ -41,9 +41,15 @@ export interface ProgramViewProps {
   program: PublicProgramDetail;
   onBack: () => void;
   onOpenTeacher: (teacherId: number) => void;
+  testEnrollment?: {
+    totalTuitionNpr: number;
+    paidLessonCount: number;
+    allocations: Array<{ lessonNumber: number; state: string }>;
+  } | null;
+  testEnrollmentUnavailable?: boolean;
 }
 
-export default function ProgramView({ program, onBack, onOpenTeacher }: ProgramViewProps) {
+export default function ProgramView({ program, onBack, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false }: ProgramViewProps) {
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const reference = referenceBlock(program);
@@ -184,19 +190,29 @@ export default function ProgramView({ program, onBack, onOpenTeacher }: ProgramV
         joining is not open.
       */}
       <View
-        testID="program-view-not-open"
+        testID={testEnrollment ? "program-view-test-enrolled" : testEnrollmentUnavailable ? "program-view-test-unknown" : "program-view-not-open"}
         style={{
           padding: space.md, backgroundColor: colors.surfaceSunk, borderRadius: radius.md,
           gap: space.xxs,
         }}
       >
-        <Text style={[t.bodyStrong, { color: colors.foreground }]}>
-          Joining a program is not open yet
-        </Text>
-        <Text style={[t.callout, { color: colors.mutedForeground }]}>
-          Fadko is still setting up how a student joins a Learning Program. You can read the whole
-          program, look at the teacher, and come back later.
-        </Text>
+        {testEnrollment ? (
+          <>
+            <Text style={[t.bodyStrong, { color: colors.warn }]}>TEST enrolment — no payment was processed</Text>
+            <Text style={[t.callout, { color: colors.foreground }]}>This is a rehearsal place created by an operator so you can test the Program journey.</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>Rehearsal terms: NPR {testEnrollment.totalTuitionNpr.toLocaleString()} across {testEnrollment.paidLessonCount} paid lessons. These figures are not a receipt and cannot be paid out.</Text>
+          </>
+        ) : testEnrollmentUnavailable ? (
+          <>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Your test place could not be checked</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>The Program is available to read, but Fadko could not confirm whether an operator created a rehearsal enrolment for you. Try this page again.</Text>
+          </>
+        ) : (
+          <>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Joining a program is not open yet</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>Fadko is still setting up how a student joins a Learning Program. You can read the whole program, look at the teacher, and come back later.</Text>
+          </>
+        )}
       </View>
     </ScrollView>
   );

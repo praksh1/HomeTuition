@@ -132,6 +132,7 @@ function ClassicTabLayout() {
       <Tabs.Screen name="programs/index" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="programs/new" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="programs/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="programs/statement" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="classroom/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
     </Tabs>
   );

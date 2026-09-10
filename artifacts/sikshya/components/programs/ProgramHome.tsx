@@ -50,6 +50,7 @@ export interface ProgramHomeProps {
   onOpen: (id: number) => void;
   onCreate: () => void;
   onBack: () => void;
+  onViewStatement?: () => void;
 }
 
 export default function ProgramHome({
@@ -60,6 +61,7 @@ export default function ProgramHome({
   onOpen,
   onCreate,
   onBack,
+  onViewStatement,
 }: ProgramHomeProps) {
   const colors = useColors();
   const { t, gutter, space } = useLayout();
@@ -97,6 +99,17 @@ export default function ProgramHome({
           A program is the learning journey you offer. Classes are how you deliver it.
         </Text>
       </View>
+      {onViewStatement ? (
+        <ProgramButton
+          testID="program-home-statement"
+          label="Money rehearsal"
+          icon="bar-chart-2"
+          emphasis="secondary"
+          spoken="Open the test Program money statement"
+          onPress={onViewStatement}
+          grow
+        />
+      ) : null}
 
       {failure ? <ProgramFailure message={failure} onRetry={onRetry} /> : null}
 

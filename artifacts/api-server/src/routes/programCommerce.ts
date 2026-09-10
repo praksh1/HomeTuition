@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db,
@@ -6,11 +6,12 @@ import {
   learningProgramEnrollmentsTable,
   learningProgramLedgerEntriesTable,
   learningProgramsTable,
+  testStudentGrantsTable,
   usersTable,
 } from "@workspace/db";
 
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
-import { liveTestStudentGrant } from "../lib/testStudentAccess";
+import { liveTestStudentGrant, testStudentAllowed } from "../lib/testStudentAccess";
 import {
   PROGRAM_ALLOCATION_EVENTS,
   PROGRAM_BETA_COMPLAINT_WINDOW_HOURS,
@@ -55,6 +56,44 @@ const EVENTS_REQUIRING_NOTE = new Set<ProgramAllocationEvent>([
   "complaint_upheld",
   "complaint_denied",
 ]);
+
+/** Published Programs and currently authorised test students for the operator rehearsal screen. */
+router.get(
+  "/admin/program-commerce/setup",
+  requireAuth,
+  requireAdmin,
+  async (_req: Request, res: Response): Promise<void> => {
+    const programs = await db
+      .select({
+        id: learningProgramsTable.id,
+        version: learningProgramsTable.version,
+        snapshot: learningProgramsTable.publishedSnapshot,
+      })
+      .from(learningProgramsTable)
+      .where(eq(learningProgramsTable.status, "published"))
+      .orderBy(desc(learningProgramsTable.publishedAt));
+    const students = testStudentAllowed()
+      ? await db
+          .select({ id: usersTable.id, name: usersTable.name, validUntil: testStudentGrantsTable.validUntil })
+          .from(testStudentGrantsTable)
+          .innerJoin(usersTable, eq(usersTable.id, testStudentGrantsTable.studentId))
+          .where(and(
+            isNull(testStudentGrantsTable.revokedAt),
+            gt(testStudentGrantsTable.validUntil, sql`now()`),
+            eq(usersTable.role, "student"),
+          ))
+          .orderBy(asc(usersTable.name))
+      : [];
+    res.json({
+      programs: programs.flatMap((row) => {
+        const snapshot = publishedSnapshotFor({ version: row.version, publishedSnapshot: row.snapshot });
+        return snapshot ? [{ id: row.id, version: row.version, title: snapshot.title, lessonCount: snapshot.modules.length }] : [];
+      }),
+      students,
+      testAccessEnabled: testStudentAllowed(),
+    });
+  },
+);
 
 /**
  * Create a shadow enrolment. This is an operator-only test fixture, not a checkout: it requires
@@ -290,7 +329,6 @@ router.get(
       .select({
         id: learningProgramEnrollmentsTable.id,
         programId: learningProgramEnrollmentsTable.programId,
-        title: learningProgramsTable.title,
         teacherId: learningProgramsTable.teacherId,
         studentId: learningProgramEnrollmentsTable.studentId,
         totalTuitionNpr: learningProgramEnrollmentsTable.totalTuitionNpr,
@@ -317,6 +355,7 @@ router.get(
       totals: totals(allocations),
       enrollments: enrollments.map((row) => ({
         ...row,
+        title: (row.terms as { programTitle?: unknown } | null)?.programTitle ?? null,
         allocations: allocations.filter((allocation) => allocation.enrollmentId === row.id),
         history: ledger.filter((entry) => entry.enrollmentId === row.id),
       })),

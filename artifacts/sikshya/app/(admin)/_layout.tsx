@@ -76,6 +76,10 @@ export default function AdminTabLayout() {
           name="activity"
           options={{ title: "Activity", tabBarIcon: ({ color }) => <Feather name="list" size={22} color={color} /> }}
         />
+        <Tabs.Screen
+          name="program-commerce"
+          options={{ title: "Programs", tabBarIcon: ({ color }) => <Feather name="layers" size={22} color={color} /> }}
+        />
         <Tabs.Screen name="ticket/[id]" options={{ href: null }} />
         <Tabs.Screen name="person/[id]" options={{ href: null }} />
       </Tabs>

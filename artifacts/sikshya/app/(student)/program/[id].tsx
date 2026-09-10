@@ -53,6 +53,12 @@ export default function StudentProgramScreen() {
   const validId = useMemo(() => /^\d+$/.test(id) && Number(id) > 0, [id]);
 
   const [program, setProgram] = useState<PublicProgramDetail | null>(null);
+  const [testEnrollment, setTestEnrollment] = useState<{
+    totalTuitionNpr: number;
+    paidLessonCount: number;
+    allocations: Array<{ lessonNumber: number; state: string }>;
+  } | null>(null);
+  const [testEnrollmentUnavailable, setTestEnrollmentUnavailable] = useState(false);
   const [loading, setLoading] = useState(validId);
   const [failure, setFailure] = useState<string | null>(null);
   /**
@@ -75,8 +81,15 @@ export default function StudentProgramScreen() {
     setFailure(null);
     setGone(false);
     try {
-      const answer = await apiGet<{ program: PublicProgramDetail }>(`/programs/${id}`);
+      const [answer, rehearsal] = await Promise.all([
+        apiGet<{ program: PublicProgramDetail }>(`/programs/${id}`),
+        apiGet<{ testEnrollment: { totalTuitionNpr: number; paidLessonCount: number } | null; allocations?: Array<{ lessonNumber: number; state: string }> }>(`/programs/${id}/my-test-enrolment`)
+          .then((value) => ({ value, unavailable: false }))
+          .catch(() => ({ value: { testEnrollment: null }, unavailable: true })),
+      ]);
       setProgram(answer.program);
+      setTestEnrollment(rehearsal.value.testEnrollment ? { ...rehearsal.value.testEnrollment, allocations: rehearsal.value.allocations ?? [] } : null);
+      setTestEnrollmentUnavailable(rehearsal.unavailable);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
         setGone(true);
@@ -161,7 +174,7 @@ export default function StudentProgramScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
-      <ProgramView program={program} onBack={back} onOpenTeacher={openTeacher} />
+      <ProgramView program={program} onBack={back} onOpenTeacher={openTeacher} testEnrollment={testEnrollment} testEnrollmentUnavailable={testEnrollmentUnavailable} />
     </SafeAreaView>
   );
 }
