@@ -187,6 +187,26 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Start a test API against the throwaway database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: preview-ci-only-not-a-real-secret
+          PORT: 8080
+          NODE_ENV: test
+        run: |
+          set -euo pipefail
+          pnpm run db:push
+          pnpm --filter @workspace/api-server run build
+          nohup node artifacts/api-server/dist/index.mjs > /tmp/preview-api.log 2>&1 &
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8080/api/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/preview-api.log
+          exit 1
+
       # These are the two server contracts this preview exists to review. Running them against a
       # fresh database caught a missing dispute audit entry that reused local databases concealed.
       - name: Published programs and follower news

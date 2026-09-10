@@ -86,6 +86,11 @@ ambiguous pause.
   transactional rather than adding a timing delay to the test.
 - A sandboxed package-only typecheck falsely reported `jose` and `livekit-server-sdk` missing because
   it could not traverse installed workspace junctions. The complete elevated repository gate passed.
+- The first strengthened preview run (`34437168151`) stopped before deployment because the new job
+  asked `test:programs` to start `dist/index.mjs` without first building the API or creating the base
+  schema. That was a workflow-wiring fault, not a Program failure: the API never came up and no
+  assertion ran. Preview now mirrors production's disposable-database setup by running `db:push`,
+  building the API, starting its shared test instance and waiting for health before either contract.
 
 ## Fabrications found
 
