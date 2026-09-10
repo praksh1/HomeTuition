@@ -69,7 +69,10 @@ export default function NotificationsScreen() {
     await markRead();
     const role = user?.role;
     const home = role === "teacher" ? "/(teacher)" : role === "student" ? "/(student)" : "/welcome";
-    if (item.type === "session_reminder" || item.type === "live") {
+    const programId = item.data?.programId;
+    if (role === "student" && item.data?.type === "program_published" && (typeof programId === "string" || typeof programId === "number")) {
+      router.push(`/(student)/program/${programId}`);
+    } else if (item.type === "session_reminder" || item.type === "live") {
       if (role === "teacher") router.replace("/(teacher)/sessions");
       else if (role === "student") router.replace("/(student)/sessions");
       else router.replace(home);

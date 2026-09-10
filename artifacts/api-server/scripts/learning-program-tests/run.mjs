@@ -25,6 +25,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { WebSocket } from "ws";
 import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -59,6 +60,34 @@ async function api(p, { method = "GET", token, body } = {}) {
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text }; }
   return { status: res.status, body: parsed };
+}
+
+/** The signed-in notification channel the app keeps open. */
+function openChannel(token) {
+  const ws = new WebSocket(`ws://127.0.0.1:${API_PORT}/api/ws?token=${encodeURIComponent(token)}`);
+  const events = [];
+  ws.on("message", (raw) => {
+    let event;
+    try { event = JSON.parse(String(raw)); } catch { return; }
+    if (event?.type === "notification") events.push(event);
+  });
+  return {
+    events,
+    open: () => new Promise((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    }),
+    next: async (kind, ms = 3000) => {
+      const until = Date.now() + ms;
+      while (Date.now() < until) {
+        const event = events.find((item) => item.kind === kind);
+        if (event) return event;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return null;
+    },
+    close: () => ws.close(),
+  };
 }
 
 let seq = 0;
@@ -496,6 +525,69 @@ async function paging() {
   ]) {
     const res = await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body });
     check(`${what} is refused`, res.status === 400, `status ${res.status}`);
+  }
+}
+
+/* ------------------------------------------------------------------------- */
+/* 7b. Teacher profiles and follower news                                    */
+/* ------------------------------------------------------------------------- */
+
+async function profileProgramsAndFollowers() {
+  console.log("\n[7b] A teacher's public profile and the followers waiting for new work");
+  const teacher = await register("teacher");
+  const other = await register("teacher");
+  const follower = await register("student");
+  const teacherProfileId = Number(sql(`select id from teacher_profiles where user_id = ${teacher.user.id}`));
+
+  const followed = await api(`/teachers/${teacherProfileId}/follow`, {
+    method: "POST", token: follower.token, body: {},
+  });
+  check("a student can follow the teacher whose profile they are viewing", followed.status === 201,
+    `status ${followed.status}`);
+
+  const channel = openChannel(follower.token);
+  await channel.open();
+  try {
+    const ownId = await publishOne(teacher.token, "practical_skill", {
+      title: "Fingerstyle guitar from the first pattern",
+    });
+    const otherId = await publishOne(other.token, "language", {
+      title: "Conversational Japanese for beginners",
+    });
+
+    const event = await channel.next("program_published");
+    check("the follower is told when this teacher first publishes a program",
+      event?.programId === ownId && event?.programTitle === "Fingerstyle guitar from the first pattern" &&
+        event?.fromUserId === teacher.user.id,
+      JSON.stringify(event));
+
+    const profile = await api(`/programs?teacherProfileId=${teacherProfileId}&limit=50`);
+    const ids = profile.body?.programs?.map((program) => program.id) ?? [];
+    check("the teacher profile returns that teacher's published snapshots",
+      profile.status === 200 && ids.includes(ownId), JSON.stringify(ids));
+    check("and never leaks another teacher's program into the section",
+      !ids.includes(otherId), JSON.stringify(ids));
+
+    await api(`/learning-programs/${ownId}`, {
+      method: "PATCH", token: teacher.token, body: { summary: "A clearer description for students." },
+    });
+    await api(`/learning-programs/${ownId}/publish`, { method: "POST", token: teacher.token });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    check("re-publishing an edit does not announce a second new program",
+      channel.events.filter((item) => item.kind === "program_published").length === 1,
+      JSON.stringify(channel.events));
+
+    await api(`/learning-programs/${ownId}/unpublish`, { method: "POST", token: teacher.token });
+    const after = await api(`/programs?teacherProfileId=${teacherProfileId}`);
+    check("taking a program down removes it from the teacher's public profile",
+      !after.body.programs.some((program) => program.id === ownId));
+  } finally {
+    channel.close();
+  }
+
+  for (const bad of ["no", "1.5", "-1", "0"]) {
+    check(`a teacher profile filter of "${bad}" is refused`,
+      (await api(`/programs?teacherProfileId=${encodeURIComponent(bad)}`)).status === 400);
   }
 }
 
@@ -1343,6 +1435,7 @@ async function main() {
     await publicReads(who);
     await moduleOrder();
     await paging();
+    await profileProgramsAndFollowers();
     await unauthenticated();
     await lifecycle();
     await moderation();

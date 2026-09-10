@@ -4,6 +4,7 @@ import {
   db,
   learningProgramModulesTable,
   learningProgramsTable,
+  studentTeacherSubscriptionsTable,
   teacherProfilesTable,
   usersTable,
 } from "@workspace/db";
@@ -11,6 +12,7 @@ import {
 import { requireAuth } from "../middlewares/requireAuth";
 import { flagContent } from "../lib/moderation";
 import { recordActivity } from "../lib/activityLog";
+import { notifyMany, type NotificationEvent } from "../lib/notify";
 import { validateLearningProgramForPublish, LEARNING_PROGRAM_TEMPLATES } from "../lib/learningPrograms";
 import {
   draftFrom,
@@ -424,6 +426,8 @@ type Reply = {
   status: number;
   body: Record<string, unknown>;
   activity?: { userId: number; action: string; subjectId: number; detail?: Record<string, unknown> };
+  /** Prepared under the lock, dispatched only after the transaction really committed. */
+  notifications?: { userIds: number[]; event: NotificationEvent }[];
 };
 
 const notFound: Reply = {
@@ -518,6 +522,9 @@ async function mutate(
       subjectId: reply.activity.subjectId,
       ...(reply.activity.detail ? { detail: reply.activity.detail } : {}),
     });
+  }
+  for (const notification of reply.notifications ?? []) {
+    notifyMany(notification.userIds, notification.event);
   }
   res.status(reply.status).json(reply.body);
 }
@@ -703,18 +710,41 @@ router.post("/learning-programs/:id/publish", requireAuth, async (req: Request, 
     }
 
     const version = row.version + 1;
+    const publishedAt = new Date();
     const [updated] = await tx
       .update(learningProgramsTable)
       .set({
         status: "published",
         version,
-        publishedAt: new Date(),
+        publishedAt,
         publishedSnapshot: snapshotOf(draft, version),
         archivedAt: null,
       })
       .where(eq(learningProgramsTable.id, row.id))
       .returning();
     if (!updated) return notFound;
+
+    /*
+      A follower hears about a new program once, after the first publication only. Re-publishing
+      an edited snapshot is not a new program and must not become notification spam. The follower
+      ids and teacher name are read in the transaction, but delivery is carried by `Reply` and
+      begins only after commit — a rolled-back publication can never announce something students
+      cannot open.
+    */
+    const firstPublication = row.version === 0 && row.publishedSnapshot === null;
+    const followers = firstPublication
+      ? await tx
+          .select({ studentId: studentTeacherSubscriptionsTable.studentId })
+          .from(studentTeacherSubscriptionsTable)
+          .where(eq(studentTeacherSubscriptionsTable.teacherId, row.teacherId))
+      : [];
+    const [teacher] = firstPublication
+      ? await tx
+          .select({ name: usersTable.name })
+          .from(usersTable)
+          .where(eq(usersTable.id, row.teacherId))
+          .limit(1)
+      : [];
 
     return {
       status: 200,
@@ -725,6 +755,21 @@ router.post("/learning-programs/:id/publish", requireAuth, async (req: Request, 
         subjectId: row.id,
         detail: { version },
       },
+      ...(firstPublication && followers.length > 0
+        ? {
+            notifications: [{
+              userIds: followers.map((follower) => follower.studentId),
+              event: {
+                kind: "program_published" as const,
+                at: publishedAt.toISOString(),
+                fromUserId: row.teacherId,
+                fromName: teacher?.name ?? "A teacher you follow",
+                programId: row.id,
+                programTitle: draft.title ?? "New learning program",
+              },
+            }],
+          }
+        : {}),
     };
   });
 });
@@ -855,7 +900,17 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
 
   const search = readSearch(req.query.q);
 
+  let teacherProfileId: number | null = null;
+  if (req.query.teacherProfileId !== undefined) {
+    teacherProfileId = readId(String(req.query.teacherProfileId));
+    if (teacherProfileId === null) {
+      res.status(400).json({ error: "That teacher address is not valid." });
+      return;
+    }
+  }
+
   const where = [publiclyVisible()];
+  if (teacherProfileId !== null) where.push(eq(teacherProfilesTable.id, teacherProfileId));
   if (types !== null) where.push(inArray(learningProgramsTable.type, types));
   if (cursor !== null) {
     where.push(sql`(${learningProgramsTable.publishedAt}, ${learningProgramsTable.id}) < (${cursor.at}, ${cursor.id})`);

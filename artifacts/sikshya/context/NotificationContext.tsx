@@ -19,6 +19,7 @@ import {
   markAllRead,
   notifyNewFollower,
   notifyNewMessage,
+  notifyProgramPublished,
   notifySessionInvite,
   notifySessionLive,
   notifySessionBooked,
@@ -86,9 +87,12 @@ function openTarget(data: {
   type?: string;
   sessionId?: string | number;
   conversationWith?: string | number;
+  programId?: string | number;
 }): void {
   try {
-    if (data.sessionId != null && data.type === "session_message") {
+    if (data.programId != null && data.type === "program_published") {
+      router.push(`/(student)/program/${data.programId}`);
+    } else if (data.sessionId != null && data.type === "session_message") {
       // The class's own page, where the thread is and where the Join button is — not the
       // classroom, which would put a waiting student into a call to read a message.
       router.push(`/session/${data.sessionId}`);
@@ -158,6 +162,12 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           });
         } else if (event.kind === "follower") {
           await notifyNewFollower({ name: event.fromName ?? "A student", userId: event.fromUserId ?? 0 });
+        } else if (event.kind === "program_published" && event.programId != null) {
+          await notifyProgramPublished({
+            teacherName: event.fromName,
+            title: event.programTitle,
+            programId: event.programId,
+          });
         } else if (event.kind === "session_invite") {
           await notifySessionInvite({
             topic: event.topic ?? "a class",
@@ -292,7 +302,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
           await refresh();
           const data = response?.notification?.request?.content?.data as
-            | { type?: string; sessionId?: string | number; conversationWith?: string | number }
+            | { type?: string; sessionId?: string | number; conversationWith?: string | number; programId?: string | number }
             | undefined;
           if (data) openTarget(data);
         });

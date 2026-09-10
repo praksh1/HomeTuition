@@ -7,7 +7,7 @@
  */
 
 export type PrefChannel = "push" | "email";
-export type PrefKind = "messages" | "followers" | "sessionLive" | "reminders" | "bookings";
+export type PrefKind = "messages" | "followers" | "programs" | "sessionLive" | "reminders" | "bookings";
 
 export interface NotificationPrefs {
   push: Record<PrefKind, boolean>;
@@ -15,8 +15,8 @@ export interface NotificationPrefs {
 }
 
 export const DEFAULT_PREFS: NotificationPrefs = {
-  push: { messages: true, followers: true, sessionLive: true, reminders: true, bookings: true },
-  email: { messages: true, followers: false, sessionLive: false, reminders: false, bookings: true },
+  push: { messages: true, followers: true, programs: true, sessionLive: true, reminders: true, bookings: true },
+  email: { messages: true, followers: false, programs: false, sessionLive: false, reminders: false, bookings: true },
 };
 
 /**
@@ -27,12 +27,13 @@ export const DEFAULT_PREFS: NotificationPrefs = {
  * notification nobody can turn off — which is exactly how "New bookings" arrived: on by
  * default, on both channels, with no switch anywhere.
  */
-export const PREF_ORDER: PrefKind[] = ["messages", "bookings", "sessionLive", "followers", "reminders"];
+export const PREF_ORDER: PrefKind[] = ["messages", "bookings", "sessionLive", "programs", "followers", "reminders"];
 
 /** Label and explanation for each switch, so both roles read the same wording. */
 export const PREF_LABELS: Record<PrefKind, { title: string; help: string }> = {
   messages: { title: "Messages", help: "When someone sends you a message" },
   followers: { title: "New followers", help: "When someone starts following you" },
+  programs: { title: "New programs", help: "When a teacher you follow publishes a new program" },
   sessionLive: { title: "Class starting", help: "When a class you are in goes live" },
   reminders: { title: "Class reminders", help: "30 minutes before a class you booked" },
   // Teachers only in practice — a student never receives one — but the switch is listed for

@@ -26,6 +26,7 @@ import { notifyUser } from "../ws/userHub";
 const PREF_KEY: Record<NotificationKind, PrefKind> = {
   message: "messages",
   follower: "followers",
+  program_published: "programs",
   session_live: "sessionLive",
   // An invitation is a class about to exist, so it follows the same switch as a class going
   // live: someone who does not want to hear about classes does not want to hear about these.

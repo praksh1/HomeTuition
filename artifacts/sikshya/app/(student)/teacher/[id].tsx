@@ -24,6 +24,7 @@ import { apiGet, apiPost, apiDelete } from "@/utils/api";
 import StarRating from "@/components/StarRating";
 import SessionCard from "@/components/SessionCard";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
+import TeacherProgramsSection from "@/components/programs/TeacherProgramsSection";
 import { TEST_BOOKING_LABEL } from "@/utils/testAccess";
 import type { Teacher, Student } from "@/context/AuthContext";
 
@@ -985,6 +986,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
           </View>
 
           <View style={{ flex: 1, width: "100%" }}>
+            <TeacherProgramsSection teacherProfileId={String(teacher.id)} />
             <Text style={[t.title2, { color: colors.foreground }]}>
               Book a class
             </Text>

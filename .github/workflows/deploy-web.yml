@@ -157,6 +157,14 @@ jobs:
           HEARTBEAT_MS: 3000
         run: pnpm --filter @workspace/api-server run test:notifications
 
+      # Programs are served from immutable published snapshots. This route suite also proves the
+      # teacher-profile filter and that a follower is notified once on first publication, never on
+      # an edit. It starts a second API on its own port and leaves the shared test API untouched.
+      - name: Published programs and follower news
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: pnpm --filter @workspace/api-server run test:programs
+
       # The size at which a shared picture stops reaching the class, and the size at which it
       # closes the teacher's board connection. Pinned down because a teacher hit both from an
       # iPhone and the app said nothing either time.
@@ -488,6 +496,10 @@ jobs:
           # quietly leaves it unreachable: the route still exists, everything compiles, and the
           # only way to find out is to open the app and try to get to it.
           pnpm --filter @workspace/sikshya run test:nav
+          # Discover, program details and the published-program section on a teacher profile at
+          # both phone and laptop widths. This catches reachable DOM that is off-screen or too
+          # small to tap — defects a typecheck cannot see.
+          pnpm --filter @workspace/sikshya run test:discover
           # Moving a class and dropping one, through the screens rather than the API. The
           # figures are read off the rendered page and out of the confirmation dialog, because
           # the number somebody agrees to lose is the number on their screen — not the one the

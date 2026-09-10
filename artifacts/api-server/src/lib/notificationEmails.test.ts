@@ -88,6 +88,7 @@ test("nothing else's wording moved", () => {
   const cases: [NotificationEvent, RegExp][] = [
     [{ kind: "message", at, fromName: "Sita", preview: "hello" }, /sent you a message/],
     [{ kind: "follower", at, fromName: "Sita" }, /has started following you/],
+    [{ kind: "program_published", at, fromName: "Sita", programId: 3, programTitle: "Spoken English" }, /published "Spoken English"/],
     [{ kind: "session_invite", at, fromName: "Sita", topic: "Algebra" }, /has scheduled a new class/],
     [{ kind: "session_dropped", at, fromName: "Sita", topic: "Algebra" }, /has dropped your class/],
     [{ kind: "session_live", at, topic: "Algebra" }, /is live now/],

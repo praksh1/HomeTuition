@@ -14,6 +14,7 @@
 export type NotificationKind =
   | "message"
   | "follower"
+  | "program_published"
   | "session_live"
   | "session_invite"
   | "session_booked"
@@ -29,6 +30,8 @@ export interface NotificationEvent {
   preview?: string;
   sessionId?: number;
   topic?: string;
+  programId?: number;
+  programTitle?: string;
   /** What was paid, for the notifications about money arriving or going back. */
   amount?: number;
   /**
@@ -83,6 +86,17 @@ export function emailFor(event: NotificationEvent, recipientName: string): { sub
           `They will be told when you schedule a class.` +
           signoff,
       };
+    case "program_published": {
+      const link = appUrl(`/program/${event.programId ?? ""}`);
+      return {
+        subject: `${event.fromName ?? "A teacher you follow"} published a new program`,
+        text:
+          `${hello}\n\n${event.fromName ?? "A teacher you follow"} published ` +
+          `"${event.programTitle ?? "a new learning program"}" on Fadko.\n` +
+          (link ? `\nView the program: ${link}\n` : "") +
+          signoff,
+      };
+    }
     case "session_invite": {
       const link = appUrl(`/session/${event.sessionId ?? ""}`);
       return {

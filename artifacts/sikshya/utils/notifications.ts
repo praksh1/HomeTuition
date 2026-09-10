@@ -183,6 +183,26 @@ export async function notifyNewFollower(follower: { name: string; userId: number
   });
 }
 
+/** A teacher this student follows has published a genuinely new learning program. */
+export async function notifyProgramPublished(program: {
+  teacherName?: string;
+  title?: string;
+  programId: number | string;
+}): Promise<void> {
+  const title = `${program.teacherName ?? "A teacher you follow"} published a new program`;
+  const body = `“${program.title ?? "New learning program"}” — tap to see the learning path.`;
+  const data = { type: "program_published", programId: String(program.programId) };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({ content: { title, body, data, sound: true }, trigger: null });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry below still lands.
+    }
+  }
+  await addInAppNotification({ title, body, type: "general", data });
+}
+
 /**
  * Raised when a teacher schedules a class and tells their students about it.
  *

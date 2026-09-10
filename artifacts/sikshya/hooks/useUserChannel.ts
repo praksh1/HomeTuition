@@ -14,6 +14,7 @@ export interface UserEvent {
   kind:
     | "message"
     | "follower"
+    | "program_published"
     | "session_live"
     | "session_invite"
     | "session_booked"
@@ -27,6 +28,8 @@ export interface UserEvent {
   preview?: string;
   sessionId?: number | string;
   topic?: string;
+  programId?: number | string;
+  programTitle?: string;
   /** What was paid, when the news is about money. */
   amount?: number;
   /**

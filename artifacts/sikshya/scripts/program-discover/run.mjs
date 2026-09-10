@@ -49,6 +49,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import ProgramDiscoverList from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramDiscoverList.tsx"))};
 import ProgramView from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramView.tsx"))};
+import { TeacherProgramsPanel } from ${JSON.stringify(path.join(appRoot, "components", "programs", "TeacherProgramsPanel.tsx"))};
 
 window.__sent = [];
 const record = (name) => (...args) => { window.__sent.push({ name, args }); };
@@ -87,6 +88,12 @@ function Harness() {
   let element = null;
   if (scene.screen === "list") element = React.createElement(ListHost, { ...common, ...scene.props });
   if (scene.screen === "view") element = React.createElement(ProgramView, { ...common, ...scene.props });
+  if (scene.screen === "profile") element = React.createElement(TeacherProgramsPanel, {
+    ...scene.props,
+    onRetry: record("onRetry"),
+    onLoadMore: record("onLoadMore"),
+    onOpen: record("onOpen"),
+  });
   return React.createElement(
     "div",
     { style: { width: "100vw", minHeight: "100vh", background: "#FBFAF8" } },
@@ -267,6 +274,45 @@ for (const size of SIZES) {
   check(`${L}: the list does not scroll sideways`, (await overflow()) <= 1, `overflow ${await overflow()}px`);
   check(`${L}: no control on the list is below the touch floor`,
     (await smallTargets()).length === 0, (await smallTargets()).join(", "));
+
+  /* --------------------------------------------- programs on a teacher profile */
+
+  console.log(`\n[${L}] Published programs on a teacher profile`);
+
+  await show({
+    screen: "profile",
+    props: { list: { rows: [], nextCursor: null }, state: "ready", loadingMore: false },
+  });
+  check(`${L}: a teacher with no published programs gets no empty marketing section`,
+    !(await seen("teacher-programs-section")));
+
+  await show({
+    screen: "profile",
+    props: { list: { rows: [], nextCursor: null }, state: "failed", loadingMore: false },
+  }, "profile-failed");
+  check(`${L}: a failed request is not presented as no programs`,
+    /Programs couldn't load/i.test(await body()));
+
+  await show({
+    screen: "profile",
+    props: { list: { rows: list(), nextCursor: "next-page" }, state: "ready", loadingMore: false },
+  }, "profile-programs");
+  check(`${L}: the profile shows each published snapshot`,
+    (await seen("teacher-program-12")) && (await seen("teacher-program-13")) && (await seen("teacher-program-14")));
+  check(`${L}: the profile offers another page only when the server has one`,
+    await seen("teacher-programs-more"));
+  await p.evaluate(() => { window.__sent = []; });
+  await p.locator('[data-testid="teacher-program-12"]').click();
+  const profileOpen = await p.evaluate(() => window.__sent);
+  check(`${L}: a profile card opens the exact program`,
+    profileOpen.some((event) => event.name === "onOpen" && event.args[0] === 12), JSON.stringify(profileOpen));
+  check(`${L}: the teacher-profile section does not scroll sideways`,
+    (await overflow()) <= 1, `overflow ${await overflow()}px`);
+  check(`${L}: every profile-program control reaches the touch floor`,
+    (await smallTargets()).length === 0, (await smallTargets()).join(", "));
+
+  // Return to the populated Discover list before its card and interaction checks continue.
+  await show({ screen: "list", props: listState({ programs: list(), hasMore: true }) });
 
   /* -------------- intended-learner rendered when the API sends it, absent otherwise */
 
