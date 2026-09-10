@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, or } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
+  activityLogTable,
   db,
   disputeReasonEnum,
   disputesTable,
@@ -144,28 +145,40 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
     }
   }
 
-  const [dispute] = await db.insert(disputesTable).values({
-    userId,
-    sessionId: about,
-    reason: reason as typeof disputeReasonEnum.enumValues[number],
-    description: description.trim(),
-    evidenceUrl: attachment,
-  }).returning();
-
   /**
-   * The history starts where the request does.
+   * The case, its opening history and its audit evidence are one fact.
    *
-   * Without this first entry a ticket's trail begins at whatever an agent did to it, which
-   * reads as though nothing happened until somebody looked — the exact impression the
-   * reporter already has and this is meant to correct.
+   * Keeping all three in one transaction prevents an operator from receiving a case whose
+   * history says it was never opened, or a refund review from losing the durable record that
+   * the student filed it. This is deliberately stronger than the best-effort activity logger:
+   * a dispute is itself evidence, so its audit line is part of the write rather than telemetry.
    */
-  await recordOpened(dispute!.id, userId, req.user!.role, await nameOf(userId));
+  const dispute = await db.transaction(async (tx) => {
+    const [created] = await tx.insert(disputesTable).values({
+      userId,
+      sessionId: about,
+      reason: reason as typeof disputeReasonEnum.enumValues[number],
+      description: description.trim(),
+      evidenceUrl: attachment,
+    }).returning();
+
+    await recordOpened(created!.id, userId, req.user!.role, await nameOf(userId), tx);
+    await tx.insert(activityLogTable).values({
+      userId,
+      action: "dispute.create",
+      subjectType: "dispute",
+      subjectId: created!.id,
+      detail: about === null ? null : { sessionId: about },
+    });
+
+    return created!;
+  });
 
   // The problem travels with the reply, so the app can say the report went and the photo did not.
   res.status(201).json({
     ...dispute,
     /** The number they quote when they ask about it. */
-    ref: ticketRef(dispute!.id),
+    ref: ticketRef(dispute.id),
     attachmentProblem,
     remaining: allowance.remaining - 1,
   });
