@@ -485,3 +485,13 @@ existing Book & Pay control. Production remains unchanged until the owner explic
   created.
 - The owner is now the tester. Do not merge or deploy production until their phone/laptop journey
   is reported back. Remove or expire the staging class after review if it is no longer useful.
+
+### Owner verification and release decision (2026-09-09)
+
+The owner completed the supplied student journey on the deployed preview through
+`/teacher/1?session=3` and reported **“Passed — I think.”** This is recorded as an owner-visible
+pass of the Classes search/clear, card hand-off, selected-class reveal and existing booking-control
+path, not as proof of payment: staging deliberately has no payment credentials and no purchase was
+attempted. The owner asked Codex to keep working on the next steps. `origin/main` was verified to be
+an ancestor of this branch (0 commits on main only, 25 on the tested branch), so release can be a
+fast-forward without resolving or overwriting another line of work.
