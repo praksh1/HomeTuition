@@ -71,6 +71,14 @@ inventing unapproved financial terms.
   `codex/programs-profile-follow` to `codex/program-commerce-foundation` and redeployed. The public
   staging health endpoint returned HTTP 200 with `{"status":"ok"}`; the new unsigned setup route
   returned the expected 401 rather than 404, proving the new server route is present.
+- Enabled `ALLOW_TEST_STUDENT_ACCESS=true` on the isolated Railway staging service only. No
+  production variable or service was changed.
+- Through the existing operator UI, granted student id 2 seven days of test booking access with
+  the reason `Program commerce rehearsal — no payment` (expires 17 September 2026).
+- Created one staging-only test enrolment for the published Mathematics Program and Staging Review
+  Student: NPR 3,000 over three paid lessons. The reconciliation screen showed three future
+  allocations of NPR 1,000 each, split NPR 700 teacher / NPR 300 Fadko. No provider reference,
+  payment, refund or payout was created.
 
 ## Problems and surprises
 
@@ -106,6 +114,11 @@ inventing unapproved financial terms.
   not have access to this." This is a stale/wrong staging sign-in, not evidence that the new route
   should weaken its database-backed operator check. No permission rule was changed. Owner must sign
   in again as the named synthetic staging operator before a rehearsal fixture can be created.
+- In-app preview tabs share one browser login. After the operator signed in, a tab previously used
+  as the student was also the operator. Its private enrolment lookup correctly returned no student
+  place, while the public Program remained readable. This is a testing-session limitation, not a
+  product defect: operator, student and teacher verification must use separate browser profiles or
+  separate devices, or sign out between roles.
 
 ## Fabrications found
 
@@ -118,16 +131,13 @@ gateway payment, refund or payout occurred.
   Monthly-class, Single-Class, Daily, LiveKit or classroom change.
 - No existing database table or column changed, and no `db:push` was run.
 - No production data and no new third-party account. Staging source branch was changed as recorded
-  above; no rehearsal enrolment has yet been written.
+  above; one explicitly simulated rehearsal enrolment was written as recorded above.
 - No gateway credentials, production provider or teacher-set Program price was added.
 
 ## Remaining risks / next pickup point
 
-1. Have the owner sign in to the preview with `staging.operator.20260903@example.com`; do not ask
-   for or record its password.
-2. In `/program-commerce`, create exactly one explicitly simulated enrolment for the existing
-   published Program and active synthetic student, then inspect the operator, student and teacher
-   views. If the student's old test grant has expired, renew only that staging grant through the
-   existing operator UI before creating the fixture.
-3. Do not merge to production or connect a gateway until the owner passes this review and the
+1. Owner should verify the operator reconciliation at `/program-commerce`, the student frozen
+   terms at `/program/1`, and the teacher test statement at `/programs/statement`. Use separate
+   browser profiles/devices for simultaneous roles because preview tabs share authentication.
+2. Do not merge to production or connect a gateway until the owner passes this review and the
    provider/legal questions in `PROGRAM-COMMERCE.md` are resolved.
