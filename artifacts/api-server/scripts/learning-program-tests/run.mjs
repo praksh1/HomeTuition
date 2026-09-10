@@ -842,7 +842,7 @@ async function schemaParity() {
     const fks = sql(`
       select count(*) from information_schema.table_constraints
        where table_schema = '${scratch}' and constraint_type = 'FOREIGN KEY'`);
-    check("all commerce foreign keys are created, so an orphan row cannot exist", Number(fks) === 8, fks);
+    check("all commerce foreign keys are created, so an orphan row cannot exist", Number(fks) === 9, fks);
   } finally {
     execFileSync("psql", [PGURL, "-q", "-c", `DROP SCHEMA IF EXISTS ${scratch} CASCADE`], { encoding: "utf8" });
   }

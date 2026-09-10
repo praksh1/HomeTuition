@@ -91,6 +91,10 @@ inventing unapproved financial terms.
 - The first operator picker prefilled paid lesson count from the number of editorial Program steps.
   Those are not the same fact. Removed the inference; the operator must enter the rehearsal's paid
   lesson count explicitly.
+- The first CI parity run proved every new column and index matched, then failed because I counted
+  eight foreign keys in the assertion where the five-table schema correctly has nine (two original,
+  three enrolment, one allocation, three ledger). Corrected the expected count; no product schema
+  changed.
 
 ## Fabrications found
 
