@@ -1,5 +1,13 @@
 # Fadko — the whole project, in one document
 
+**11 September teacher-flow correction (preview only):** the owner rejected mandatory
+Program → Batch setup. New teachers use **Create a class** (what / when / size and price / review),
+with an optional teaching outline. Backend snapshots and shared 30-day rules remain underneath.
+Read `.agents/memory/create-a-class-not-a-hierarchy.md` and
+`.agents/worklog/2026-09-11-codex-simple-class-setup.md` before extending the teacher setup.
+Existing paid/Monthly classes, signup and approval are unchanged. New group listings still cannot
+enrol students, collect payment or start live rooms. Do not confuse simpler setup with launch readiness.
+
 **Written for somebody arriving cold.** A human joining the project, or a second AI being asked
 to help alongside the first. It assumes no prior conversation and nothing carried over from a
 chat.

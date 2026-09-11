@@ -86,7 +86,23 @@ try {
     await page.getByTestId("warning-cancel").click();
     check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${width}: no horizontal scroll`);
     check(errors.length === 0, `${width}: no browser exceptions ${errors.join("; ")}`);
+    const savedClass = await page.evaluate(() => window.savedClassFixture);
     await page.close();
+    const home = await browser.newPage({ viewport: { width, height }, timezoneId });
+    // A 03:00 Nepal boundary would be the previous calendar date in Chicago if formatted directly.
+    const start = "2026-09-14T21:15:00.000Z", end = "2026-10-14T21:15:00.000Z";
+    savedClass.batch.tuitionPeriod = { groupId: 1, index: 0, startsAt: start, endsAt: end };
+    const next = structuredClone(savedClass); next.batch.id = 2; next.batch.status = "draft"; next.batch.published = null;
+    next.batch.tuitionPeriod = { groupId: 1, index: 1, startsAt: end, endsAt: "2026-11-13T21:15:00.000Z" };
+    await home.addInitScript((fixtures) => { window.classHomeFixtures = fixtures; }, [next, savedClass]);
+    await home.goto(`http://127.0.0.1:${server.address().port}/teaching-classes`);
+    await home.getByText("SEE Maths evening tuition", { exact: true }).waitFor();
+    check(await home.getByText("SEE Maths evening tuition", { exact: true }).count() === 1, `${width}: one class name for current and next dates`);
+    check(await home.getByRole("button", { name: /^Continue setup for/ }).count() === 1 && await home.getByRole("button", { name: /^View dates for/ }).count() === 1, `${width}: both date sets remain accessible`);
+    check(await home.getByText(/Sep 15, 2026.*03:00 Nepal time until/).count() > 0, `${width}: class list pins early-morning boundaries to Nepal, not viewer timezone`);
+    check(await home.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: grouped class list fits`);
+    await home.screenshot({ path: path.join(work, `${width}-classes.png`) });
+    await home.close();
   }
 } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 console.log(`${checks} checks passed. Screenshots: ${work}`);

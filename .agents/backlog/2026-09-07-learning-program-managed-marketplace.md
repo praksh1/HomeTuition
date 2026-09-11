@@ -1,5 +1,11 @@
 # Learning Programs and the managed marketplace
 
+**Teacher UX superseded, 11 Sep:** the owner does not want a mandatory Program → Batch hierarchy.
+The approved entry is one **Create a class** flow with an optional outline; regular tuition and
+short courses use the existing contracts underneath. Renewals stay under one named class card.
+See `../memory/create-a-class-not-a-hierarchy.md`. This changes presentation and aggregate setup,
+not the approved commercial model. Do not restart formal required-path UX for ordinary tuition.
+
 Status: approved product direction; architecture foundation in progress. No real payment provider,
 teacher payout, new price, production migration or database change has been made.
 

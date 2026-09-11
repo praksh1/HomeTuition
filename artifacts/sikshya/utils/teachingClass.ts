@@ -28,6 +28,24 @@ export interface ClassForm {
   totalTuitionNpr: string;
   lessons: ProgramBatchLessonDraft[];
 }
+
+/** Renewal dates belong to the same class, not a second card with the same name. */
+export function groupTeachingClasses(items: TeachingClass[]) {
+  const groups = new Map<
+    string,
+    { key: string; title: string; items: TeachingClass[] }
+  >();
+  for (const item of items) {
+    const key =
+      item.batch.format === "ongoing" && item.batch.tuitionGroupId
+        ? `tuition-${item.batch.tuitionGroupId}`
+        : `class-${item.batch.id}`;
+    const group = groups.get(key) ?? { key, title: item.title, items: [] };
+    group.items.push(item);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
 export function emptyClassForm(): ClassForm {
   return {
     title: "",

@@ -69,6 +69,23 @@ hierarchy with one simple class setup. Approval/signup explicitly unchanged. No 
   no outline, 9 Tue/Thu lessons Sep15–Oct13 at16:15 Nepal, 6students, NPR3000 for shared30days.
   No real students or payments. Publication and final release verification still pending.
 
+### Final usability pass and real staging proof
+
+- Real staging class12 published successfully, repeated publication disabled. Public API search
+  returns Program6 with explicit class presentation; its public offer is Batch12, 9lessons,
+  capacity6, NPR3000, cutoff `2026-09-15T10:30:00Z` (16:15Nepal). No blank formal path shown.
+- Prepare next30days reached class13 directly, retained the description/price/capacity, and required
+  fresh dates within Oct15 16:15–Nov14 16:15 Nepal. Left that successor as a draft with no lessons.
+- Real screenshot of My classes was inspected. AX includes an offscreen retained router screen,
+  but screenshot confirms only the current screen is visible; no overlapping panes.
+- That inspection showed duplicate same-name cards for successive30days. Corrected to one card per
+  stable tuition group, each date set retains its own status and edit action. Different groups and
+  fixed courses never merge just because names match. Pure grouping test preserves every item once.
+- Added actual grouped-list rendering to the browser suite, including03:00Nepal boundaries in both
+  Kathmandu and Chicago. New browser60/60; app370/370; typecheck and design ratchet unchanged.
+- `ac75a62` preview run `34638470626` passed: API/DB574/0, attendance74/0, discovery160/0,
+  legacyplanner123, simplebrowser48. Final grouped-list commit/deployment pending.
+
 ## Problems and surprises
 
 - Initial JSX closure error and wrong reused calendar prop names: typecheck caught them, fixed.

@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useSyncExternalStore, useEffect } from "react";
 let id;
 const listeners = new Set();
 export const router = {
@@ -9,4 +9,5 @@ export function useLocalSearchParams() { return { id: useSyncExternalStore((fn) 
 export function useNavigation() { return { dispatch: () => {} }; }
 export function usePreventRemove() {} // Native Back remains a real-device test.
 export function useAuth() { return { user: { id: 1 } }; }
+export function useFocusEffect(fn) { useEffect(fn, [fn]); }
 export const randomUUID = () => crypto.randomUUID();

@@ -15,7 +15,11 @@ import {
 } from "@/components/programs/ProgramPieces";
 import { apiGet } from "@/utils/api";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
-import { classIsPublished, type TeachingClass } from "@/utils/teachingClass";
+import {
+  classIsPublished,
+  groupTeachingClasses,
+  type TeachingClass,
+} from "@/utils/teachingClass";
 
 export default function TeachingClasses() {
   const colors = useColors();
@@ -107,42 +111,61 @@ export default function TeachingClasses() {
             <ProgramButton label="Try again" onPress={() => void load()} />
           </ProgramNotice>
         ) : items.length ? (
-          items.map((item) => (
-            <ProgramCardShell key={item.batch.id}>
-              <ProgramChip
-                label={
-                  item.batch.status === "closed"
-                    ? "Closed"
-                    : classIsPublished(item)
-                      ? "Published"
-                      : item.batch.status === "published"
-                        ? "Unpublished changes"
-                        : "Draft"
-                }
-              />
+          groupTeachingClasses(items).map((group) => (
+            <ProgramCardShell key={group.key}>
               <Text style={[t.title3, { color: colors.foreground }]}>
-                {item.title}
+                {group.title}
               </Text>
               <Text style={[t.callout, { color: colors.mutedForeground }]}>
-                {item.batch.format === "ongoing"
-                  ? "Regular tuition · 30 days"
+                {group.items[0]!.batch.format === "ongoing"
+                  ? "Regular tuition · shared 30-day dates"
                   : "Short course"}
               </Text>
-              {item.batch.tuitionPeriod ? (
-                <Text style={[t.caption, { color: colors.mutedForeground }]}>
-                  {dateLabel(item.batch.tuitionPeriod.startsAt)} until {dateLabel(item.batch.tuitionPeriod.endsAt)}
-                </Text>
-              ) : null}
-              <ProgramButton
-                label="Open class"
-                spoken={`Open ${item.title}`}
-                onPress={() =>
-                  router.push({
-                    pathname: "/(teacher)/teaching-class/[id]",
-                    params: { id: String(item.batch.id) },
-                  })
-                }
-              />
+              {group.items.map((item) => (
+                <View
+                  key={item.batch.id}
+                  style={{
+                    gap: space.sm,
+                    paddingTop: space.sm,
+                    borderTopWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                >
+                  <ProgramChip
+                    label={
+                      item.batch.status === "closed"
+                        ? "Closed"
+                        : classIsPublished(item)
+                          ? "Published"
+                          : item.batch.status === "published"
+                            ? "Unpublished changes"
+                            : "Draft"
+                    }
+                  />
+                  {item.batch.tuitionPeriod ? (
+                    <Text
+                      style={[t.caption, { color: colors.mutedForeground }]}
+                    >
+                      {dateLabel(item.batch.tuitionPeriod.startsAt)} until{" "}
+                      {dateLabel(item.batch.tuitionPeriod.endsAt)}
+                    </Text>
+                  ) : null}
+                  <ProgramButton
+                    label={
+                      item.batch.status === "draft"
+                        ? "Continue setup"
+                        : "View these dates"
+                    }
+                    spoken={`${item.batch.status === "draft" ? "Continue setup" : "View dates"} for ${item.title}${item.batch.tuitionPeriod ? `, ${dateLabel(item.batch.tuitionPeriod.startsAt)}` : ""}`}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/(teacher)/teaching-class/[id]",
+                        params: { id: String(item.batch.id) },
+                      })
+                    }
+                  />
+                </View>
+              ))}
             </ProgramCardShell>
           ))
         ) : (
