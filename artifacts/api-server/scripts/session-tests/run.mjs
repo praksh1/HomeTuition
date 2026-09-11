@@ -154,6 +154,9 @@ async function testForceCloseDoesNotBlockTheNextClass() {
   check("the teacher being in the room is recorded", seen === "1", `rows: ${seen}`);
 
   // While the teacher is really there, a second class is still refused — that rule stays.
+  // Consecutive booked slots, with the first call still connected after its scheduled
+  // finish. Two identical booked slots are now correctly refused at creation.
+  sql(`update sessions set date = now() - interval '60 minutes' where id = ${first.id}`);
   const second = await createSession(teacher);
   const blocked = await goLive(teacher, second.id);
   check("a second class is refused while the first is genuinely running", blocked.status === 409, `status ${blocked.status}`);
@@ -181,6 +184,7 @@ async function testTeacherCanGetBackIntoTheirClass() {
   await socket.open();
   await wait(600);
 
+  sql(`update sessions set date = now() - interval '60 minutes' where id = ${first.id}`);
   const second = await createSession(teacher);
   const blocked = await goLive(teacher, second.id);
   check("the refusal carries the class to return to", blocked.body?.liveSessionId === first.id,
@@ -271,6 +275,8 @@ async function testSurvivesAMissingActivityTable() {
   sql(`update sessions set started_at = now() - interval '10 minutes' where id = ${first.id}`);
   sql("drop table if exists session_activity");
 
+  // A still-live call from the preceding booked slot, not a double booking.
+  sql(`update sessions set date = now() - interval '60 minutes' where id = ${first.id}`);
   const second = await createSession(teacher);
   const blocked = await goLive(teacher, second.id);
   check(
@@ -289,8 +295,9 @@ async function testSurvivesAMissingActivityTable() {
 
   // And a brand new class still starts, which is the thing that was actually broken.
   sql(`update sessions set status = 'completed' where id = ${first.id}`);
-  const third = await createSession(teacher);
-  const started = await goLive(teacher, third.id);
+  // This upcoming class was created after the table disappeared. Reuse it rather
+  // than creating a third class in its already-booked slot.
+  const started = await goLive(teacher, second.id);
   check("a new class can still be started", started.status === 200, `status ${started.status}`);
 
   // Put it back for whatever runs next; the server recreates it at boot in real life.
