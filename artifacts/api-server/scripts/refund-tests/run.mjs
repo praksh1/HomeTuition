@@ -14,6 +14,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+import { fixtureStart } from "../test-support/fixtureSchedule.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -68,18 +69,6 @@ async function makeAgent() {
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-
-/** Independent money scenarios need real, non-overlapping fixture timetables. */
-function fixtureStart(teacherId, target, duration, excludingId = 0) {
-  const raw = sql(`select coalesce(json_agg(json_build_object('start', extract(epoch from date)*1000, 'duration', duration)), '[]') from sessions where teacher_id=${teacherId} and id<>${excludingId} and status in ('upcoming','live')`);
-  const slots = JSON.parse(raw);
-  let at = target;
-  for (;;) {
-    const hit = slots.find((slot) => at < Number(slot.start) + slot.duration * 60000 && at + duration * 60000 > Number(slot.start));
-    if (!hit) return at;
-    at = Number(hit.start) + hit.duration * 60000 + 60000;
-  }
-}
 
 /** A class, by default far enough ahead that every rule here is satisfied. */
 async function makeSession(teacher, { inDays = 10, price = 500, duration = 60, maxStudents = 10 } = {}) {
@@ -808,7 +797,8 @@ async function run() {
   {
     const quotaTeacher = await register("teacher", "Racing Rita");
     ageChanges(quotaTeacher.user.id);
-    const classes = await Promise.all(Array.from({ length: 8 }, () => makeSession(quotaTeacher)));
+    const classes = [];
+    for (let i = 0; i < 8; i++) classes.push(await makeSession(quotaTeacher));
     // Eight moves fired at once against an allowance of five. Some may lose the race and be
     // refused, but the count must never end up above five.
     await Promise.all(classes.map((s, i) =>

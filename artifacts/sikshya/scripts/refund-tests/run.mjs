@@ -62,12 +62,13 @@ async function register(role, name) {
   return { ...res.body, email };
 }
 
+import { fixtureStart } from "../../../api-server/scripts/test-support/fixtureSchedule.mjs";
 const DAY = 24 * 3_600_000;
 
 async function makeSession(teacher, { inDays = 10, price = 500 } = {}) {
   const res = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: `Browser class ${++seq}`, subject: "Mathematics", description: "d",
-    date: new Date(Date.now() + inDays * DAY).toISOString(),
+    date: new Date(fixtureStart(teacher.user.id, Date.now() + inDays * DAY, 60)).toISOString(),
     duration: 60, price, maxStudents: 10 } });
   if (res.status > 201) throw new Error(`create session: ${res.status} ${JSON.stringify(res.body)}`);
   return res.body;

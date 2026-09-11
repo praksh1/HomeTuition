@@ -24,6 +24,7 @@
 import { execFileSync } from "node:child_process";
 import { WebSocket } from "ws";
 import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+import { fixtureStart } from "../test-support/fixtureSchedule.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const WS = API.replace(/^http/, "ws");
@@ -70,7 +71,7 @@ const DAY = 24 * 3_600_000;
 async function makeSession(teacher, { inDays = 10, price = 400 } = {}) {
   const res = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: `Alert ${++seq}`, subject: "Maths", description: "d",
-    date: new Date(Date.now() + inDays * DAY).toISOString(),
+    date: new Date(fixtureStart(teacher.user.id, Date.now() + inDays * DAY, 60)).toISOString(),
     duration: 60, price, maxStudents: 20 } });
   if (res.status > 201) throw new Error(`create: ${res.status} ${JSON.stringify(res.body)}`);
   return res.body;

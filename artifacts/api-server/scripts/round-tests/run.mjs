@@ -10,6 +10,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+import { fixtureStart } from "../test-support/fixtureSchedule.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -54,7 +55,7 @@ const DAY = 24 * 60 * MIN;
 async function makeSession(teacher, { inDays = 10, price = 500, duration = 60 } = {}) {
   const res = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: `Round ${++seq}`, subject: "Maths", description: "d",
-    date: new Date(Date.now() + inDays * DAY).toISOString(),
+    date: new Date(fixtureStart(teacher.user.id, Date.now() + inDays * DAY, duration)).toISOString(),
     duration, price, maxStudents: 10 } });
   if (res.status > 201) throw new Error(`create session: ${res.status} ${JSON.stringify(res.body)}`);
   return res.body;
@@ -88,7 +89,9 @@ async function run() {
       date: new Date().toISOString(), duration: 60, price: 500, maxStudents: 10 } });
     check("but a class starting right now still works", now.status <= 201, `status=${now.status} ${JSON.stringify(now.body)}`);
 
-    const soon = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    // Same timing boundary, a different teacher: the first teacher is already teaching now.
+    const soonTeacher = await register("teacher", "Near start boundary");
+    const soon = await api("/sessions", { method: "POST", token: soonTeacher.token, body: {
       topic: "In a minute", subject: "Maths", description: "d",
       date: new Date(Date.now() + MIN).toISOString(), duration: 60, price: 500, maxStudents: 10 } });
     check("and so does one a minute from now", soon.status <= 201, `status=${soon.status}`);
