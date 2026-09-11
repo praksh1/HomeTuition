@@ -7,6 +7,17 @@ an online school that owns every curriculum and not a directory of disconnected 
   teacher "Monthly Plan".
 - Programs support school subjects, practical skills, languages, exam preparation and custom
   topics. School/grade fields are conditional, not universal.
+- Owner clarification, 2026-09-11: explicitly include neighbourhood/after-school tuition by
+  college students and schoolteachers, language consultancies, MBBS/Engineering/Lok Sewa exam
+  preparation, IELTS/TOEFL, and music/arts/drama teachers. Do not force all of these into a school
+  syllabus or assume every offer is a finite course. Consultancy/team administration is not
+  already implemented merely because language Programs exist.
+- Owner payment decision, 2026-09-11: students/families must pay BEFORE the teaching they buy
+  begins. Do not offer attendance on credit or guarantee collection after delivery. Student
+  payment timing is separate from teacher payout timing and teacher platform-plan fees.
+  For ongoing tuition, advance renewal for each period is the proposed design; exact period
+  boundaries, enrollment rules and any course installments remain to be approved, not invented.
+  This does not change previously purchased terms or enable a real payment gateway.
 - The common learning loop is Prepare -> Learn live -> Discuss -> Practice -> Progress. Monthly
   Discussion Mode remains exclusive to the eligible recurring/monthly student product.
 - Teachers remain independent providers by intended model and supply their own expertise/content;
