@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: c8029ea
-- Status: local verification passed; preview deployment pending
+- Status: preview deployed and verified; owner phone acceptance pending
 
 ## Requested
 
@@ -57,3 +57,17 @@ real enrollment and production. No new dependency or purchase.
 
 Deploy isolated preview and check CI real-database gates and served build before owner testing.
 Future paid Batch checkout must lock purchased terms and feed this conflict resolver's edit policy.
+
+## Release evidence
+
+- Feature commit: `8d12292`, pushed to `codex/program-batch-foundation`.
+- Preview workflow `34647216637`: success. Real API/DB 593/0, attendance 74/0,
+  Discover 182/0, legacy planner 123/0, simple setup 75/0, full typecheck passed.
+- Worker version `760d08d4-dd1a-4e77-90b0-bf566435fd6c`.
+- Served HTML and every initial bundle matched this exact build and the staging API.
+- Railway commit status `HomeTuition - hometuition-api-staging`: success for `8d12292`;
+  staging `/api/healthz` returned `{ "status": "ok" }` after deployment.
+- Preview: https://hometuition-preview.praksh-dhakal.workers.dev
+- No production merge/deploy, no paid plan, no database migration, no user schedule mutation.
+- Next action belongs to the owner: test conflict editing and the compact student offer on phone.
+  No further implementation is silently pending. Real hardware behavior remains unverified here.
