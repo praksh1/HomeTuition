@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: 357c222
-- Status: in progress
+- Status: complete
 
 ## Requested
 
@@ -99,7 +99,17 @@ preview build); Worker ae872fe2-5778-47a3-8e01-79b5d5cbf318. Served HTML and thr
 the build; Railway staging status success. An initial dispatch used the wrong workflow filename
 and returned404 without starting anything; corrected to the repo's preview.yml. No deployment
 configuration changed. Added durable test-fixture scheduling note to prevent repeating CI traps.
-Finish production workflow34652719052 and verify exact served build. Owner reviews Teaching &
+Production workflow34652719052 at7503a13: SUCCESS. Released approved357c222 plus only test-file
+corrections (confirmed by diff). Worker edb7e289-705c-4b6a-8df5-31fa2a356ed3. Railway production
+status success. Public home independently fetched: title Fadko, entry
+entry-1e4e9af1968452eaf99e0ad0aa4425cc.js matches deployment verification; production and staging
+health status ok. Workflow verified production API URL. This is not a claim of a fresh physical
+phone test after deployment; owner's approved preview test remains the physical evidence.
+Release gates include Programs593, refunds152, video42, session56, Monthly199, portal72,
+classroom browser47, Discover182, browser refunds69, dashboard6, filters33, phone board18,
+photo7, call chat17 and call leave9; all zero failures. Entire production gate succeeded.
+
+Owner reviews Teaching &
 earnings at preview /subscription before the billing transition is released to production.
 Build batch-specific purchases/allocations and session mapping before new classroom access.
 Preserve group homework/chat with their own enrollment-scoped authorization; never use a
