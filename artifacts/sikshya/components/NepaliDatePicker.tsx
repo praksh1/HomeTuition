@@ -60,14 +60,15 @@ export default function NepaliDatePicker({
 
   // A single picker instance serves every lesson in the batch planner. Re-open it on that lesson's
   // saved day instead of leaving the previous lesson highlighted.
+  const valueMs = value?.getTime();
   useEffect(() => {
     if (!visible) return;
-    const next = toBikramSambat(value ?? new Date());
+    const next = toBikramSambat(valueMs === undefined ? new Date() : new Date(valueMs));
     if (!next) return;
     setYear(next.year);
     setMonth(next.month);
-    setChosen(value ? next.day : null);
-  }, [value, visible]);
+    setChosen(valueMs === undefined ? null : next.day);
+  }, [valueMs, visible]);
 
   const num = (n: number) => (nepaliNumerals ? toNepaliDigits(n) : String(n));
   const monthNames = nepaliNumerals ? BS_MONTHS_NP : BS_MONTHS;
@@ -107,7 +108,7 @@ export default function NepaliDatePicker({
     return true;
   };
 
-  const chosenDate = chosen === null ? null : fromBikramSambat(year, month, chosen);
+  const chosenDate = chosen === null || !dayIsAllowed(chosen) ? null : fromBikramSambat(year, month, chosen);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>

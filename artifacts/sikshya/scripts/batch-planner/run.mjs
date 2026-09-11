@@ -1,0 +1,107 @@
+/** Real planner + calendar + web history guard. Synthetic API, router and native-only controls.
+ * No server, provider, payment or database writes. Screenshots are retained in the temp directory.
+ */
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createServer } from "node:http";
+import { bundleForBrowser } from "../bundle-for-browser.mjs";
+import { getChromium } from "../board-tests/harness.mjs";
+const here = path.dirname(fileURLToPath(import.meta.url));
+const work = mkdtempSync(path.join(tmpdir(), "fadko-batch-planner-"));
+const bundle = path.join(work, "bundle.js");
+const built = await bundleForBrowser({ entry: path.join(here, "entry.tsx"), outfile: bundle, alias: {
+  "@/utils/api": path.join(here, "api.js"),
+  "expo-router": path.join(here, "router.js"),
+  "@react-navigation/native": path.join(here, "router.js"),
+  "react-native-safe-area-context": path.join(here, "native.js"),
+  "@react-native-community/datetimepicker": path.join(here, "native.js"),
+  "expo-font": path.join(here, "font.js"),
+  "@/hooks/useLeaveGuard": path.resolve(here, "../../hooks/useLeaveGuard.web.ts"),
+} });
+assert.ok(built.ok, built.error);
+const html = '<!doctype html><html><head><meta charset="utf-8"><style>html,body,#root{height:100%;margin:0}body{font-family:system-ui}</style></head><body><div id="root"></div><script src="/bundle.js"></script></body></html>';
+const server = createServer((req, res) => { res.setHeader("Content-Type", req.url === "/bundle.js" ? "application/javascript" : "text/html"); res.end(req.url === "/bundle.js" ? readFileSync(bundle) : html); });
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const base = `http://127.0.0.1:${server.address().port}`;
+const browser = await (await getChromium()).launch({ headless: true });
+let checks = 0;
+const check = (value, label) => { assert.ok(value, label); checks++; console.log(`PASS ${label}`); };
+try {
+  for (const [width, height, timezoneId] of [[360, 640, "Asia/Kathmandu"], [390, 844, "America/Chicago"], [1440, 900, "America/Chicago"]]) {
+    const page = await browser.newPage({ viewport: { width, height }, timezoneId });
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(String(error)));
+    await page.goto(base + "/previous");
+    await page.goto(base + "/planner");
+    const button = (name) => page.getByRole("button", { name, exact: true });
+    await page.getByTestId("batch-card-1").click();
+    await page.getByLabel("Maximum students", { exact: true }).fill("11");
+    await button("Next: schedule").click();
+    check(await page.getByText("Choose a class size from 1 to 10 students.", { exact: true }).isVisible(), `${width}: details validation visible`);
+    await page.getByLabel("Maximum students", { exact: true }).fill("6");
+    await page.getByLabel("Full batch price (NPR)", { exact: true }).fill("4000");
+    await button("Next: schedule").click();
+    check((await page.evaluate(() => window.batchRequests)).length === 0, `${width}: next does not write`);
+    await page.getByRole("button", { name: /^Date:/ }).click();
+    check(await page.getByText("Choose Lesson 1 date", { exact: true }).isVisible(), `${width}: actual Nepali calendar opened`);
+    await page.getByText("Cancel", { exact: true }).click();
+    await page.getByTestId("batch-time-0").fill("15:15");
+    await button("Weekly").click();
+    await button("Mon · on").click();
+    check(await page.getByTestId("batch-use-repeat").isDisabled(), `${width}: no selected days cannot generate`);
+    await button("Weekly").click();
+    await page.getByTestId("batch-use-repeat").click();
+    check(await page.getByText(/8 lesson dates prepared/).isVisible(), `${width}: recurrence applied`);
+    await page.getByTestId("batch-use-repeat").click();
+    await page.getByTestId("batch-confirmation").waitFor();
+    const modal = await page.getByTestId("batch-confirmation").boundingBox();
+    check(modal.y >= 0 && modal.y + modal.height <= height, `${width}: replace confirmation fits viewport`);
+    await page.screenshot({ path: path.join(work, `${width}-confirmation.png`) });
+    await page.getByTestId("warning-cancel").click();
+    await button("Next: review").click();
+    check(await page.getByText("8 lessons · up to 6 students", { exact: true }).isVisible(), `${width}: summary matches generated lessons`);
+    const footer = await button("Save draft").boundingBox();
+    check(footer.y >= 0 && footer.y + footer.height <= height, `${width}: save visible without scrolling`);
+    await page.screenshot({ path: path.join(work, `${width}-review.png`) });
+    await page.evaluate(() => { window.failBatchSave = true; });
+    await button("Save draft").click();
+    await page.getByText("Test connection lost. Your changes have not been saved.", { exact: true }).waitFor();
+    check(await button("Save draft").isEnabled(), `${width}: failed save can retry`);
+    await page.evaluate(() => { window.failBatchSave = false; });
+    await button("Save draft").click();
+    await button("Publish batch preview").waitFor();
+    const writes = await page.evaluate(() => window.batchRequests);
+    check(writes.length === 2 && writes[1].input.lessons.length === 8 && writes[1].input.lessons.every((lesson) => lesson.time === "15:15"), `${width}: exact dates saved once per attempt`);
+    await button("Publish batch preview").click();
+    check((await page.evaluate(() => window.batchRequests)).length === 2, `${width}: opening confirmation does not publish`);
+    await page.getByTestId("warning-confirm").click();
+    await page.getByText("Batch preview published. Joining and payment are not open yet.", { exact: true }).waitFor();
+    await button("Previous").click();
+    await button("Previous").click();
+    await page.getByLabel("Full batch price (NPR)", { exact: true }).fill("4500");
+    await page.goBack();
+    await page.getByTestId("batch-confirmation").waitFor();
+    check(await page.getByText("Leave without saving?", { exact: true }).isVisible(), `${width}: browser Back protects dirty work`);
+    await page.getByTestId("warning-cancel").click();
+    check(await page.getByLabel("Full batch price (NPR)", { exact: true }).inputValue() === "4500", `${width}: cancel retains typed price`);
+    const reloadDialog = page.waitForEvent("dialog");
+    const reloading = page.reload({ timeout: 5000 }).catch(() => null);
+    const dialog = await reloadDialog;
+    check(dialog.type() === "beforeunload", `${width}: actual reload prompts for unsaved work`);
+    await dialog.dismiss();
+    await reloading;
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+    check(!overflow, `${width}: no horizontal page overflow`);
+    check(errors.length === 0, `${width}: no browser exceptions ${errors.join("; ")}`);
+    await page.goBack();
+    await page.getByTestId("warning-confirm").click();
+    await page.waitForURL(base + "/previous");
+    check(true, `${width}: confirmed browser Back reaches original destination`);
+    await page.close();
+  }
+} finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
+writeFileSync(path.join(work, "result.txt"), `${checks} checks passed\n`);
+console.log(`${checks} checks passed. Screenshots and bundle: ${work}`);

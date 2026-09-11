@@ -190,11 +190,14 @@ Verification performed before preview redeployment:
 - Design ratchet: PASS, unchanged at 94 hex literals / 282 raw font sizes.
 - Static web export against Railway staging: PASS; API target and Fadko identity checks passed.
 - `test:nav` was attempted locally but correctly stopped because no test API was running at
-  `127.0.0.1:8080`. It did not execute or fail an assertion; the preview CI run remains the real
-  navigation gate.
+  `127.0.0.1:8080`. It did not execute or fail an assertion. Correction: preview CI runs rendered
+  Program discovery/profile checks, not `test:nav`; it must not be described as a navigation pass.
 - `pnpm peers check` still reports the repository's existing Radix React-19 range mismatch and
   LiveKit's missing optional media-capture type peer. The new date/time picker is not named in either
   warning. Build and typecheck pass.
 
 No server route, database row, Program rule, Monthly/Single Class behavior, payment behavior,
 Daily/LiveKit integration, production deployment or purchase was changed in this correction.
+
+Correction deployment completed at `be1dafa`: preview workflow `34559376565` succeeded in 4m13s.
+Follow-up guided planner work is recorded in `2026-09-11-codex-guided-batch-planner.md`.

@@ -27,6 +27,7 @@ test("lesson editing and display are pinned to Nepal time", () => {
 test("batch schedule pickers round-trip the stored wall-clock values", () => {
   assert.equal(batchDateValue("2026-10-15")?.getDate(), 15);
   assert.equal(batchDateValue("not-a-date"), null);
+  assert.equal(batchDateValue("2027-02-29"), null);
   assert.equal(batchTimeDraft(batchTimeValue("16:30")), "16:30");
   assert.equal(batchTimeDraft(batchTimeValue("bad")), "09:00");
 });

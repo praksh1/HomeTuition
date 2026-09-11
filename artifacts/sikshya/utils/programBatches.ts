@@ -17,11 +17,12 @@ export interface ProgramBatchSnapshot {
   lessons: Array<{ position: number; startsAt: string; durationMinutes: number }>;
 }
 
-/** A saved Nepal calendar day, opened at noon so timezone offsets cannot move it a day. */
+/** A local calendar carrier for the picker, not an instant to serialize to the server. */
 export function batchDateValue(value: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const date = new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? null : date;
+  const parts = value.split("-").map(Number);
+  return Number.isNaN(date.getTime()) || date.getFullYear() !== parts[0] || date.getMonth() + 1 !== parts[1] || date.getDate() !== parts[2] ? null : date;
 }
 
 /** The native picker needs a Date even though the server stores only a Nepal wall-clock time. */

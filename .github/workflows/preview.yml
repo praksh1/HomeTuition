@@ -223,6 +223,9 @@ jobs:
       - name: Render Program discovery and teacher profiles
         run: pnpm --filter @workspace/sikshya run test:discover
 
+      - name: Verify guided batch planning and unsaved-work protection
+        run: pnpm --filter @workspace/sikshya run test:batch-planner
+
       - name: Test preview verification
         run: node --test scripts/verify-preview.test.mjs
 
