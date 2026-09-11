@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: be1dafa
-- Status: in progress
+- Status: complete (preview deployed; owner device review pending)
 
 ## Requested
 
@@ -53,6 +53,7 @@ guided setup and repeat-date generation; it does not redesign the commercial con
 - Full `pnpm run typecheck`: passed all four artifact/scripts workspaces and library build.
 - App unit suite at first complete pass: 364 passed, 0 failed (358 existing + 6 schedule tests).
 - Design ratchet: unchanged 94 hex / 282 sizes at first pass.
+- Final app regression rerun: 364/0; final full typecheck and `git diff --check` passed.
 - `test:batch-planner`: 51 checks pass at 360×640 Kathmandu, 390×844 Chicago, 1440×900 Chicago.
   Exercises validation, real BS calendar opening, native HTML clock input, recurrence, empty days,
   replacement cancellation, visible save/footer, failed-save retry, precise PATCH input, separate
@@ -73,6 +74,8 @@ guided setup and repeat-date generation; it does not redesign the commercial con
 - Two attempted script reads used the repository scripts directory instead of the app's scripts;
   resolved from actual package scripts. PowerShell wildcard path passed to rg also failed; no edits
   resulted from either mistake.
+- Optional inventory of an old recording-viewer helper process was denied by the sandbox; no
+  process was modified. The current browser harness closes its own browser/server in `finally`.
 - First preview pipeline `34561076611` stopped in the browser harness before deployment: after
   a clean publish then an edit, immediate browser Back did not show the leave question on Linux
   Chromium (Windows passed). The screen unnecessarily armed history during clean publish requests,
@@ -80,6 +83,9 @@ guided setup and repeat-date generation; it does not redesign the commercial con
   for the observable history sentinel to be removed after save and armed after editing, rather than
   assuming a React effect has run as soon as Playwright finishes typing. Retesting locally and CI;
   this failure must not be presented as a successful deployment.
+- Corrected revision `1360590` reran 51/51 locally, and the formerly failing browser stage passed
+  on Linux in preview retry `34561445017`. No gate was removed or disabled. Both actual reload
+  dialogs and confirmed Back destinations remain asserted.
 
 ## Fabrications found
 
@@ -104,3 +110,19 @@ but mocked in the browser harness. Real API authorization/schema parity runs in 
 this new harness deliberately tests UI/writes with a stand-in, not live server persistence.
 Follow-up: duplicate a Batch with fresh dates; reusable scheduling defaults if still helpful;
 commercial enrollment/checkout is separate and must not be inferred from this UI.
+
+## Release ledger
+
+- `a8359f5` — guided planner, recurrence, dialogs, tests and initial documentation; pushed.
+- `1360590` — scope history protection to dirty work and synchronize the rendered test with the
+  actual history guard; pushed. This is the application revision in the preview retry.
+- Staging API health read returned 200 / `{"status":"ok"}` after the initial push.
+- Preview workflow `34561076611` failed before build/deploy (see above).
+- Retry `34561445017`: SUCCESS in 5m19s, application commit `1360590`. Passed database, evidence,
+  discovery and new planner browser checks, web build, production-target refusal, deploy and exact
+  served-bundle hash verification. Existing GitHub Node-20-to-24 action deprecation annotation only.
+- Independently fetched `https://hometuition-preview.praksh-dhakal.workers.dev/program-batches/1`:
+  HTTP 200, served `entry-606b7bfdadd608b1b7e885696f552f80.js`. This verifies the route's SPA shell,
+  not an authenticated real teacher journey. Owner review still required.
+- Final documentation-only commit follows the deployed application revision; no code differs.
+- Nothing merged to main; production unchanged. Owner must physically review before promotion.
