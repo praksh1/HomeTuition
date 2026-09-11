@@ -39,6 +39,11 @@ ratchet unchanged 94 hex / 282 sizes; diff check clean. Examined 360px conflict 
 then suppressed duplicate warnings after a refused publication. Real DB checks and preview
 outcome to be recorded below.
 
+First application commit `d62e3e0`, preview workflow `34566341975`: real PostgreSQL Programs/
+schedule checks and attendance checks passed before the rendered stage. Review then added a
+cancelled-class reactivation guard plus Monthly time-change and reactivation route assertions;
+these require a fresh final workflow run before owner handoff.
+
 ## Problems and surprises
 
 The old Batch validator checked only increasing starts, not occupied intervals. Make-up checks

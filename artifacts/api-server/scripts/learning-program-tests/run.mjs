@@ -1594,12 +1594,17 @@ async function scheduleConflicts() {
     const missed = Number(sql(`insert into recurring_days (recurring_id,cycle_index,kind,scheduled_for,status) values (${course},0,'regular',now() - interval '1 hour','missed') returning id`).split("\n")[0]);
     const makeup = await api(`/monthly/classes/${course}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed, at: at("19:20") } });
     check("new make-up cannot overlap a published Batch", makeup.status === 409, JSON.stringify(makeup.body));
+    const moveMonthly = await api(`/monthly/classes/${course}/time`, { method: "PATCH", token: teacher.token, body: { startMinute: 19 * 60 + 15 } });
+    check("changed Monthly timetable cannot overlap Batch", moveMonthly.status === 409 && /overlap/.test(moveMonthly.body.error), JSON.stringify(moveMonthly.body));
+    check("failed Monthly move keeps its original start", Number(sql(`select start_minute from recurring_sessions where id=${course}`)) === 960);
     const cancelled = await createClass("10:00");
     assertStatus(cancelled, 201, "cancellation fixture");
     const cancelledId = cancelled.body.session?.id ?? cancelled.body.id;
     sql(`update sessions set status='cancelled' where id=${cancelledId}`);
     const f = await create(); await patch(f, input("10:00"));
     check("cancelled ordinary classes release their time", (await publish(f)).status === 200);
+    const resurrect = await api(`/sessions/${cancelledId}`, { method: "PATCH", token: teacher.token, body: { status: "upcoming" } });
+    check("reactivating a cancelled class cannot bypass conflict protection", resurrect.status === 409);
   } finally {
     // Only synthetic fixtures created here, never existing or production rows.
     sql(`delete from recurring_days where recurring_id in (select id from recurring_sessions where teacher_id=${tid}); delete from recurring_sessions where teacher_id=${tid}; delete from teacher_plans where teacher_id=${tid}; delete from sessions where teacher_id=${tid}`);

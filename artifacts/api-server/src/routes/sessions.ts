@@ -1338,7 +1338,8 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     session = await db.transaction(async (tx) => {
       await lockTeacherSchedule(tx, user.userId);
       const [current] = await tx.select().from(sessionsTable).where(eq(sessionsTable.id, id)).for("update");
-      if ((updates.date !== undefined || updates.duration !== undefined) && current && ["upcoming", "live"].includes(current.status)) {
+      const reactivating = current && !["upcoming", "live"].includes(current.status) && (status === "upcoming" || status === "live");
+      if (current && ((updates.date !== undefined || updates.duration !== undefined) && ["upcoming", "live"].includes(current.status) || reactivating)) {
         await assertTeacherSchedule(tx, user.userId, [{ startsAt: newDate ?? current.date, durationMinutes: duration ?? current.duration, label: `Class “${current.topic}”` }], { sessionId: id });
       }
       const [updated] = await tx.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
