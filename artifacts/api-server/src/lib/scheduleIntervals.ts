@@ -1,5 +1,26 @@
 /** Booked time is half-open: a class ending at six does not block one starting at six. */
-export interface TeachingSlot { startsAt: Date; durationMinutes: number; label: string }
+export interface TeachingSlot {
+  startsAt: Date; durationMinutes: number; label: string;
+  source?: { kind: "class" | "batch" | "session" | "monthly"; id: number; title: string; locked: "paid" | "review" | null };
+}
+
+/** Structured facts for UI actions. Never parse human-readable conflict strings for identity. */
+export function conflictDetails(proposed: TeachingSlot[], occupied: TeachingSlot[]) {
+  const rows = [];
+  for (let i = 0; i < proposed.length; i++) {
+    const candidate = proposed[i]!;
+    const others = [...proposed.slice(0, i).map((slot, index) => ({ slot, index })), ...occupied.map((slot) => ({ slot, index: null }))];
+    for (const { slot, index } of others) {
+      if (!overlaps(candidate, slot)) continue;
+      rows.push({ lessonIndex: i, otherLessonIndex: index,
+        startsAt: candidate.startsAt.toISOString(), durationMinutes: candidate.durationMinutes,
+        otherStartsAt: slot.startsAt.toISOString(), otherDurationMinutes: slot.durationMinutes,
+        otherTitle: slot.source?.title ?? slot.label, source: slot.source ?? null });
+      if (rows.length === 10) return rows;
+    }
+  }
+  return rows;
+}
 
 export function overlaps(a: TeachingSlot, b: TeachingSlot): boolean {
   return a.startsAt.getTime() < b.startsAt.getTime() + b.durationMinutes * 60_000 &&

@@ -1,9 +1,9 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { db, sessionsTable, recurringDaysTable, recurringSessionsTable, learningProgramBatchesTable, learningProgramsTable } from "@workspace/db";
+import { db, sessionsTable, sessionEnrollmentsTable, recurringDaysTable, recurringSessionsTable, learningProgramBatchesTable, learningProgramsTable, teachingClassSetupsTable } from "@workspace/db";
 import { readBatchSnapshot } from "./programBatches";
 import { classInstants, localDayKey } from "./monthlySchedule";
 import { lockScheduleQuota } from "./scheduleChanges";
-import { conflictMessages, ScheduleConflictError, type TeachingSlot } from "./scheduleIntervals";
+import { conflictDetails, conflictMessages, ScheduleConflictError, type TeachingSlot } from "./scheduleIntervals";
 
 type Reader = Pick<typeof db, "select">;
 export { lockScheduleQuota as lockTeacherSchedule };
@@ -19,29 +19,35 @@ async function recordedSchedule(reader: Reader, teacherId: number, exclude: Excl
     .innerJoin(recurringSessionsTable, eq(recurringSessionsTable.id, recurringDaysTable.recurringId))
     .where(eq(recurringSessionsTable.teacherId, teacherId));
   const courses = await reader.select().from(recurringSessionsTable).where(and(eq(recurringSessionsTable.teacherId, teacherId), eq(recurringSessionsTable.status, "active")));
-  const batches = await reader.select({ id: learningProgramBatchesTable.id, snapshot: learningProgramBatchesTable.publishedSnapshot })
+  const paid = sessions.length ? await reader.select({ sessionId: sessionEnrollmentsTable.sessionId }).from(sessionEnrollmentsTable)
+    .where(and(inArray(sessionEnrollmentsTable.sessionId, sessions.map((s) => s.id)), eq(sessionEnrollmentsTable.paymentStatus, "paid"))) : [];
+  const paidIds = new Set(paid.map((r) => r.sessionId));
+  const batches = await reader.select({ id: learningProgramBatchesTable.id, snapshot: learningProgramBatchesTable.publishedSnapshot, simpleId: teachingClassSetupsTable.programId })
     .from(learningProgramBatchesTable).innerJoin(learningProgramsTable, eq(learningProgramsTable.id, learningProgramBatchesTable.programId))
+    .leftJoin(teachingClassSetupsTable, eq(teachingClassSetupsTable.programId, learningProgramsTable.id))
     .where(and(eq(learningProgramsTable.teacherId, teacherId), eq(learningProgramBatchesTable.status, "published")));
   const ignoredSessions = new Set(days.filter(({ day }) => day.recurringId === exclude.recurringId).map(({ day }) => day.sessionId));
   const slots: TeachingSlot[] = sessions.filter((row) => row.id !== exclude.sessionId && !ignoredSessions.has(row.id))
-    .map((row) => ({ startsAt: row.date, durationMinutes: row.duration, label: `class “${row.topic}”` }));
+    .map((row) => ({ startsAt: row.date, durationMinutes: row.duration, label: `class “${row.topic}”`, source: { kind: "session", id: row.id, title: row.topic, locked: paidIds.has(row.id) ? "paid" : "review" } }));
   for (const { day, course } of days) {
     // A materialised session is authoritative and already included above.
     if (day.sessionId !== null || course.id === exclude.recurringId || course.status !== "active" || day.status !== "planned") continue;
-    slots.push({ startsAt: day.scheduledFor, durationMinutes: course.durationMinutes, label: `${day.kind === "makeup" ? "make-up" : "Monthly class"} “${course.topic}”` });
+    slots.push({ startsAt: day.scheduledFor, durationMinutes: course.durationMinutes, label: `${day.kind === "makeup" ? "make-up" : "Monthly class"} “${course.topic}”`, source: { kind: "monthly", id: course.id, title: course.topic, locked: "review" } });
   }
   for (const row of batches) {
     if (row.id === exclude.batchId) continue;
     const snapshot = readBatchSnapshot(row.snapshot);
     // Corrupt stored offers must never be interpreted as an empty calendar.
     if (!snapshot) throw new Error("Published Batch schedule is unreadable");
-    for (const lesson of snapshot.lessons) slots.push({ startsAt: new Date(lesson.startsAt), durationMinutes: lesson.durationMinutes, label: `“${snapshot.programTitle}”, Batch ${row.id}, lesson ${lesson.position + 1}` });
+    for (const lesson of snapshot.lessons) slots.push({ startsAt: new Date(lesson.startsAt), durationMinutes: lesson.durationMinutes, label: `“${snapshot.programTitle}”, Batch ${row.id}, lesson ${lesson.position + 1}`, source: { kind: row.simpleId ? "class" : "batch", id: row.id, title: snapshot.programTitle,
+      // Batch checkout is still disabled. Do not reuse this allowance once paid Batch enrollment exists.
+      locked: Date.parse(snapshot.tuitionPeriod?.startsAt ?? snapshot.lessons[0]!.startsAt) <= Date.now() ? "review" : null } });
   }
   return { slots, courses, days };
 }
 
-export async function teacherScheduleIssues(reader: Reader, teacherId: number, proposed: TeachingSlot[], exclude: Exclusions = {}): Promise<string[]> {
-  if (!proposed.length) return [];
+export async function teacherScheduleReview(reader: Reader, teacherId: number, proposed: TeachingSlot[], exclude: Exclusions = {}) {
+  if (!proposed.length) return { issues: [], conflicts: [] };
   const { slots, courses, days } = await recordedSchedule(reader, teacherId, exclude);
   for (const course of courses) {
     if (course.id === exclude.recurringId) continue;
@@ -55,11 +61,15 @@ export async function teacherScheduleIssues(reader: Reader, teacherId: number, p
       for (const at of classInstants(from, to, course.startMinute, course.timeZone)) {
         if (seen.has(at) || recordedDates.has(localDayKey(at, course.timeZone))) continue;
         seen.add(at);
-        slots.push({ startsAt: new Date(at), durationMinutes: course.durationMinutes, label: `Monthly class “${course.topic}”` });
+        slots.push({ startsAt: new Date(at), durationMinutes: course.durationMinutes, label: `Monthly class “${course.topic}”`, source: { kind: "monthly", id: course.id, title: course.topic, locked: "review" } });
       }
     }
   }
-  return conflictMessages(proposed, slots);
+  return { issues: conflictMessages(proposed, slots), conflicts: conflictDetails(proposed, slots) };
+}
+
+export async function teacherScheduleIssues(reader: Reader, teacherId: number, proposed: TeachingSlot[], exclude: Exclusions = {}): Promise<string[]> {
+  return (await teacherScheduleReview(reader, teacherId, proposed, exclude)).issues;
 }
 
 export async function assertTeacherSchedule(reader: Reader, teacherId: number, proposed: TeachingSlot[], exclude: Exclusions = {}) {

@@ -1,5 +1,9 @@
 # Memory Index
 
+- [Actionable conflicts and compact offers](actionable-conflicts-compact-offers.md) — 11 Sep phone
+  corrections: direct affected-lesson editing, safe other-schedule links, paid commitments protected
+  from conflict shortcuts; BS-first concise student offer with expandable timetable and details.
+
 - [Late joining and purchased promises](late-joining-and-purchased-promises.md) — approved 11 Sep:
   optional future-lessons-only joining for ongoing tuition, upfront prorated price, shared end date,
   clear lesson counts and publication warning. Replaces prior blanket no-proration rule; real checkout

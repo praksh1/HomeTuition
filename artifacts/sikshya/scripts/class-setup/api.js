@@ -17,6 +17,7 @@ export async function apiPost(url, input) {
   }
   if (!url.endsWith("/publish")) item.batch.allowLateJoining = input.allowLateJoining === true;
   else item.batch.published.allowLateJoining = item.batch.allowLateJoining;
+  if (window.conflictFixtures) item.batch.scheduleConflicts = structuredClone(window.conflictFixtures);
   window.savedClassFixture = structuredClone(item);
   return { item: structuredClone(item), created: true };
 }

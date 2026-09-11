@@ -129,6 +129,27 @@ try {
   const singleModal = await single.getByTestId("batch-confirmation").boundingBox();
   check(singleModal.y >= 0 && singleModal.y + singleModal.height <= 640, "single lesson confirmation fits small phone");
   await single.screenshot({ path: path.join(work, "360-single-lesson-confirm.png") });
+  await single.getByTestId("warning-cancel").click();
+  const singleFixture = await single.evaluate(() => window.savedClassFixture);
+  await single.evaluate((at) => { window.conflictFixtures = [
+    { lessonIndex: 0, otherLessonIndex: null, startsAt: at, durationMinutes: 60, otherStartsAt: at, otherDurationMinutes: 60, otherTitle: "Paid Mathematics", source: { kind: "session", id: 99, title: "Paid Mathematics", locked: "paid" } },
+    { lessonIndex: 0, otherLessonIndex: null, startsAt: at, durationMinutes: 60, otherStartsAt: at, otherDurationMinutes: 60, otherTitle: "Other tuition", source: { kind: "class", id: 88, title: "Other tuition", locked: null } },
+  ]; }, singleFixture.batch.lessons[0].startsAt);
+  await singleButton("Edit details").click();
+  await single.getByLabel("Class name", { exact: true }).fill("Maths conflict review class");
+  await singleButton("Continue").click(); await singleButton("Continue").click(); await singleButton("Review my class").click();
+  await singleButton("Save draft").click();
+  const edits = single.getByRole("button", { name: "Edit lesson 1 time", exact: true });
+  await edits.first().scrollIntoViewIfNeeded();
+  check(await single.getByText("Students have paid for the other class. Change this lesson.", { exact: true }).count() === 1, "paid conflict explains why this lesson must move");
+  check(await single.getByRole("button", { name: "Keep this time · edit other schedule", exact: true }).count() === 1, "only safe other class gets edit shortcut");
+  await single.screenshot({ path: path.join(work, "360-conflict-review.png") });
+  await edits.first().click();
+  check(await single.getByText("Overlapping time · lesson 1", { exact: true }).isVisible(), "edit conflict jumps to highlighted lesson editor");
+  check(await single.getByTestId("class-time-0").count() === 1, "exact affected time is editable");
+  await singleButton("Continue").click(); await singleButton("Review my class").click();
+  await single.getByRole("button", { name: "Keep this time · edit other schedule", exact: true }).click();
+  check((await single.evaluate(() => window.lastNavigation))?.params?.id === "88", "other schedule link uses authenticated structured identity");
   await single.close();
 } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 console.log(`${checks} checks passed. Screenshots: ${work}`);

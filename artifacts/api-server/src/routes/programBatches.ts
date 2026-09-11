@@ -14,7 +14,7 @@ import {
 
 import { requireAuth } from "../middlewares/requireAuth";
 import { recordActivity } from "../lib/activityLog";
-import { assertTeacherSchedule, lockTeacherSchedule, teacherScheduleIssues } from "../lib/teacherSchedule";
+import { assertTeacherSchedule, lockTeacherSchedule, teacherScheduleReview } from "../lib/teacherSchedule";
 import { publishedSnapshotFor } from "../lib/learningProgramState";
 import { batchSnapshot, readBatchSnapshot, sameBatchOffer, validateProgramBatch } from "../lib/programBatches";
 import { tuitionPeriod, tuitionPeriodIssues } from "../lib/tuitionPeriods";
@@ -59,6 +59,7 @@ export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferS
   const anchor = linked?.group.anchorAt ?? lessons[0]?.startsAt;
   const period = linked && anchor ? tuitionPeriod(linked.group.id, linked.link.periodIndex, anchor) : null;
   const [program] = await reader.select({ version: learningProgramsTable.version, teacherId: learningProgramsTable.teacherId }).from(learningProgramsTable).where(eq(learningProgramsTable.id, row.programId)).limit(1);
+  const review = program ? await teacherScheduleReview(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : { issues: [], conflicts: [] };
   return {
     id: row.id,
     programId: row.programId,
@@ -69,9 +70,10 @@ export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferS
     periodAnchorLocked: !!linked?.group.anchorAt,
     currentProgramVersion: program?.version ?? null,
     scheduleIssues: [
-      ...(program ? await teacherScheduleIssues(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : []),
+      ...review.issues,
       ...(period ? tuitionPeriodIssues(period, lessons) : []),
     ],
+    scheduleConflicts: review.conflicts,
     status: row.status,
     capacity: row.capacity,
     totalTuitionNpr: row.totalTuitionNpr,

@@ -1592,6 +1592,7 @@ async function scheduleConflicts() {
     const a = await create(), b = await create(another);
     let saved = await patch(a, { ...input("17:00"), lessons: [...input("17:00").lessons, ...input("17:30", 30).lessons] });
     check("overlapping draft saves and names both lessons", saved.status === 200 && /Lesson 2.*Lesson 1/.test(saved.body.batch.scheduleIssues.join(" ")));
+    check("internal overlap supplies both editable lesson positions", saved.body.batch.scheduleConflicts[0]?.lessonIndex === 1 && saved.body.batch.scheduleConflicts[0]?.otherLessonIndex === 0);
     let refused = await publish(a);
     check("duration overlap within Batch blocks publication", refused.status === 409 && refused.body.issues.length > 0);
     check("refused publication writes no version or snapshot", sql(`select version || ':' || status || ':' || (published_snapshot is null)::text from learning_program_batches where id=${a}`) === "0:draft:true");
@@ -1608,7 +1609,8 @@ async function scheduleConflicts() {
     check("different teachers may teach concurrently", (await publish(otherBatch, other.token)).status === 200);
     saved = await patch(winner, input("12:00"));
     check("saved replacement keeps previous published time reserved", saved.status === 200 && saved.body.batch.published.lessons[0].startsAt === new Date(at(oldTime)).toISOString());
-    await patch(loser, input("17:45", 30));
+    const crossReview = await patch(loser, input("17:45", 30));
+    check("other published schedule has a structured safe edit target", crossReview.body.batch.scheduleConflicts[0]?.source?.id === winner && crossReview.body.batch.scheduleConflicts[0]?.source?.locked === null);
     check("draft time does not erase original published reservation", (await publish(loser)).status === 409);
     check("ordinary class cannot be created over a published Batch", (await createClass("17:45")).status === 409);
     await patch(loser, input("12:00"));
@@ -1618,7 +1620,12 @@ async function scheduleConflicts() {
     assertStatus(ordinary, 201, "ordinary class fixture");
     const classId = ordinary.body.session?.id ?? ordinary.body.id;
     const c = await create();
-    await patch(c, input("17:30"));
+    let ordinaryConflict = await patch(c, input("17:30"));
+    check("legacy class does not invent edit safety", ordinaryConflict.body.batch.scheduleConflicts[0]?.source?.kind === "session" && ordinaryConflict.body.batch.scheduleConflicts[0]?.source?.locked === "review");
+    const paidFixture = await register("student");
+    sql(`insert into session_enrollments (session_id,student_id,payment_status,payment_reference) values (${classId},${paidFixture.user.id},'paid','synthetic-conflict-test-only')`);
+    ordinaryConflict = await patch(c, input("17:30"));
+    check("paid existing class cannot be offered as editable conflict target", ordinaryConflict.body.batch.scheduleConflicts[0]?.source?.locked === "paid");
     check("Batch cannot cover an ordinary class", (await publish(c)).status === 409);
     await patch(c, input("18:00"));
     check("back-to-back Batch starts when ordinary class ends", (await publish(c)).status === 200);

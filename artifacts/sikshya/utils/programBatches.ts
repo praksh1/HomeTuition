@@ -58,6 +58,7 @@ export function batchTimeDraft(value: Date): string {
 }
 
 export interface OwnerProgramBatch {
+  scheduleConflicts?: ScheduleConflict[];
   allowLateJoining?: boolean;
   format?: "fixed" | "ongoing";
   tuitionGroupId?: number | null;
@@ -75,6 +76,17 @@ export interface OwnerProgramBatch {
   published: ProgramBatchSnapshot | null;
   lessons: Array<{ id: number; position: number; startsAt: string; durationMinutes: number }>;
   updatedAt: string;
+}
+
+export interface ScheduleConflict {
+  lessonIndex: number;
+  otherLessonIndex: number | null;
+  startsAt: string;
+  durationMinutes: number;
+  otherStartsAt: string;
+  otherDurationMinutes: number;
+  otherTitle: string;
+  source: { kind: "class" | "batch" | "session" | "monthly"; id: number; title: string; locked: "paid" | "review" | null } | null;
 }
 
 export function batchMatchesPublication(batch: OwnerProgramBatch): boolean {

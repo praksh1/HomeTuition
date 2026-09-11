@@ -392,9 +392,18 @@ for (const size of SIZES) {
     tuitionPeriod: { groupId: 1, index: 0, startsAt: lateLessons[0].startsAt, endsAt: "2026-10-31T10:00:00Z" }, lessons: lateLessons,
     joiningPreview: { previewOnly: true, status: "remaining_lessons", calculatedAt: "2026-10-07T11:00:00Z", totalLessonCount: 18, remainingLessonCount: 11, startedLessonCount: 7, amountNpr: 3056, lessonPositions: Array.from({ length: 11 }, (_, n) => n + 7), validBefore: lateLessons[7].startsAt, periodEndsAt: "2026-10-31T10:00:00Z" } };
   await show({ screen: "view", props: { program: detail(), batches: [lateBatch] } }, "view-late-joining");
-  check(`${L}: late quote is distinct from original total`, /Original full-period price:.*5,000/s.test(await body()) && /3,056 per student.*11 lessons/s.test(await body()));
+  const card = p.getByTestId("program-view-batch-99");
+  check(`${L}: student sees the remaining price and count first`, /Est\. NPR 3,056 \/ student/.test(await body()) && /11 remaining lessons/.test(await body()));
+  check(`${L}: timetable starts collapsed`, await p.getByTestId("offer-schedule-99").count() === 0);
+  check(`${L}: joining details start collapsed`, await p.getByTestId("offer-details-99").count() === 0);
+  check(`${L}: primary date is Nepali, not Gregorian`, /Next lesson:.*2083 BS/.test(await card.innerText()) && !/Oct .*2026/.test(await card.innerText()));
+  check(`${L}: collapsed offer is concise`, (await card.innerText()).length < 500);
+  await p.getByRole("button", { name: "View all 18 lesson dates", exact: true }).click();
+  check(`${L}: full schedule opens with Nepali dates`, /2083 BS/.test(await p.getByTestId("offer-schedule-99").innerText()));
+  await p.getByRole("button", { name: "Price & joining details", exact: true }).click();
+  check(`${L}: original price remains available`, /Original full-period price:.*5,000/s.test(await body()));
   check(`${L}: no invented delivery claim or seat reservation`, /7 scheduled lessons have already started/.test(await body()) && /does not reserve a seat/.test(await body()));
-  check(`${L}: exact remaining subset is labelled`, (await body()).match(/Not included/g)?.length === 7 && (await body()).match(/Included in estimate/g)?.length === 11);
+  check(`${L}: exact remaining subset is labelled`, (await body()).match(/Not included/g)?.length === 7 && (await p.getByTestId("offer-schedule-99").innerText()).match(/· Included/g)?.length === 11);
   check(`${L}: late breakdown fits viewport width`, (await overflow()) <= 1);
   check(`${L}: period summary never contradicts enabled late joining`, !(await body()).includes("No automatic charge or mid-period joining"));
   await show({ screen: "view", props: { program: detail() } }, "view-full");

@@ -28,6 +28,7 @@ import {
 } from "@/components/programs/ProgramPieces";
 import { BatchConfirmation } from "@/components/programs/BatchConfirmation";
 import { NativeTimePicker } from "./NativeTimePicker";
+import { ScheduleConflictPanel } from "./ScheduleConflictPanel";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 import { classPriceBreakdown, classPublishSummary } from "@/utils/classPrice";
 import {
@@ -89,6 +90,7 @@ export default function ClassSetup() {
   const [weekdays, setWeekdays] = useState<number[] | null>(null);
   const [count, setCount] = useState("8");
   const [individual, setIndividual] = useState(false);
+  const [focusLesson, setFocusLesson] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<
     "publish" | "leave" | "replace" | "close" | null
   >(null);
@@ -101,6 +103,9 @@ export default function ClassSetup() {
   const key = useRef("");
   const keyStorage = `fadko-class-create-${user?.id ?? "unknown"}`;
   const dirty = JSON.stringify(form) !== accepted;
+  const scheduleFresh = !!item && JSON.stringify(form.lessons) === JSON.stringify(item.batch.lessons.map(lessonDraft));
+  const conflicts = scheduleFresh ? item?.batch.scheduleConflicts ?? [] : [];
+  const conflictIndices = new Set(conflicts.flatMap((c) => [c.lessonIndex, ...(c.otherLessonIndex === null ? [] : [c.otherLessonIndex])]));
   const locked = busy || !editing || item?.batch.status === "closed";
   const published = !!item && classIsPublished(item) && !dirty;
   const askLeave = useCallback((go: () => void) => {
@@ -139,6 +144,8 @@ export default function ClassSetup() {
     setDeparture(null);
     setConfirm(null);
     setWeekdays(null);
+    setFocusLesson(null);
+    setIndividual(false);
     try {
       if (id) {
         const result = await apiGet<{ item: TeachingClass }>(
@@ -172,6 +179,13 @@ export default function ClassSetup() {
     setIssues([]);
     setNotice("");
     scroll.current?.scrollTo({ y: 0, animated: false });
+  };
+  const editConflict = (index: number) => {
+    if (busy || !form.lessons[index]) return;
+    setEditing(true);
+    setIndividual(true);
+    setFocusLesson(index);
+    move(1);
   };
   const first = form.lessons[0]!;
   const period = draftTuitionPeriod(
@@ -554,8 +568,10 @@ export default function ClassSetup() {
                 body={`From ${instantLabel(period.startsAt)} until ${instantLabel(period.endsAt)}. All lessons must finish inside these dates.`}
               />
             ) : null}
-            {(individual ? form.lessons : [first]).map((lesson, i) => (
+            {focusLesson !== null ? <ProgramButton label="Show all lesson editors" emphasis="quiet" onPress={() => setFocusLesson(null)} /> : null}
+            {(individual ? form.lessons.map((lesson, index) => ({ lesson, index })).filter(({ index }) => focusLesson === null || index === focusLesson) : [{ lesson: first, index: 0 }]).map(({ lesson, index: i }) => (
               <ProgramCardShell key={i}>
+                {conflictIndices.has(i) ? <Text style={[t.bodyStrong, { color: colors.destructive }]}>Overlapping time · lesson {i + 1}</Text> : null}
                 <Text style={[t.title3, { color: colors.foreground }]}>
                   {individual ? `Lesson ${i + 1}` : "First lesson"}
                 </Text>
@@ -698,9 +714,9 @@ export default function ClassSetup() {
               {form.lessons.map((l, i) => (
                 <Text
                   key={i}
-                  style={[t.callout, numeric, { color: colors.foreground }]}
+                  style={[t.callout, numeric, { color: conflictIndices.has(i) ? colors.destructive : colors.foreground }]}
                 >
-                  {i + 1}. {dateLabel(l.date)} · {l.time || "Time not chosen"} ·{" "}
+                  {conflictIndices.has(i) ? "⚠ " : ""}{i + 1}. {dateLabel(l.date)} · {l.time || "Time not chosen"} ·{" "}
                   {l.durationMinutes} min
                 </Text>
               ))}
@@ -716,7 +732,7 @@ export default function ClassSetup() {
                 }
                 disabled={locked}
                 emphasis="quiet"
-                onPress={() => setIndividual(!individual)}
+                onPress={() => { setFocusLesson(null); setIndividual(!individual); }}
               />
             </ProgramCardShell>
           </>
@@ -800,9 +816,9 @@ export default function ClassSetup() {
               {form.lessons.map((l, i) => (
                 <Text
                   key={i}
-                  style={[t.callout, numeric, { color: colors.foreground }]}
+                  style={[t.callout, numeric, { color: conflictIndices.has(i) ? colors.destructive : colors.foreground }]}
                 >
-                  {dateLabel(l.date)} · {l.time} · {l.durationMinutes} min
+                  {conflictIndices.has(i) ? "⚠ " : ""}{i + 1}. {dateLabel(l.date)} · {l.time} · {l.durationMinutes} min
                 </Text>
               ))}
             </ProgramCardShell>
@@ -816,7 +832,11 @@ export default function ClassSetup() {
                 </Text>
               </ProgramCardShell>
             ) : null}
-            {!dirty && item?.batch.scheduleIssues?.length ? (
+            {conflicts.length ? <ScheduleConflictPanel conflicts={conflicts} formatDate={instantLabel} onEdit={editConflict} busy={busy}
+              onRefresh={() => { if (dirty) void save(); else void load(); }}
+              onOpen={(source) => leave(() => source.kind === "class" ? router.push({ pathname: "/(teacher)/teaching-class/[id]", params: { id: String(source.id) } }) : router.push({ pathname: "/(teacher)/program-batches/[id]", params: { id: String(source.id) } }))} /> : null}
+            {item && !scheduleFresh ? <ProgramNotice title="Dates changed" body="Save draft to check these times for overlaps." /> : null}
+            {!dirty && !conflicts.length && item?.batch.scheduleIssues?.length ? (
               <ProgramNotice title="Some dates need attention" tone="stopped">
                 {item.batch.scheduleIssues.map((message, i) => (
                   <Text
