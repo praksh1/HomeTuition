@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: faedded
-- Status: in progress
+- Status: deployed to preview; awaiting owner physical review, not production
 
 ## Requested
 
@@ -58,7 +58,16 @@ reusing previous Programs/Batches with mandatory review before publication.
 - Final rendered rerun: 75/75 passed at 360×640, 390×844, 1440×900, in Kathmandu/Chicago timezones.
   Inspected published and template screenshots in `C:/Users/missk/AppData/Local/Temp/fadko-batch-planner-vGxwVt`.
 - Real database cases run in preview CI, not on this Windows checkout (no local psql fixture).
-- Final browser count, preview run, commits and served build recorded below when complete.
+- Application commit: `9207183`, pushed to `codex/program-batch-foundation`.
+- Preview workflow `34563235845` completed successfully, including real PostgreSQL route tests
+  and concurrent Batch publication checks. No production deployment.
+- Authenticated staging browser verification at
+  `https://hometuition-preview.praksh-dhakal.workers.dev/program-batches/1`: opened existing
+  Batch 3 and observed “Published version is up to date”, “Edit details”, and a disabled
+  “Published — up to date” button. This also verifies the staging API supplies the current
+  Program version required by the new UI. Navigation/read-only inspection only: no live
+  edit, copy or publication was performed during this check.
+- Real phone touch behavior and owner publish/edit/template workflow remain for physical review.
 
 ## Problems and surprises
 
