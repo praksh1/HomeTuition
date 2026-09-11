@@ -358,6 +358,12 @@ async function main() {
 
   console.log("\nA teacher looks at a class without starting it");
 
+  // The rejoin scenario is finished. Do not keep its live call/socket competing
+  // with the independent upcoming-class scenario in the same teacher account.
+  await ctx2.close();
+  const finishedRejoin = await api(`/sessions/${mine.body.id}`, { method: "PATCH", token: teacher.token, body: { status: "completed" } });
+  if (finishedRejoin.status !== 200) throw new Error(`Could not end rejoin fixture: ${finishedRejoin.status}`);
+
   /**
    * The owner's ask, driven through the real screen: "the teacher should be able to click on
    * it and see the students that have enrolled", and "the start option should be grayed out"
@@ -528,19 +534,23 @@ async function main() {
    * Driven by moving the class's booked slot, because that is what the clock reads. Nothing
    * here waits out a real hour.
    */
-  const timed = await api("/sessions", { method: "POST", token: teacher.token, body: {
+  const timedTeacher = await register("teacher");
+  sql(`update teacher_profiles set approval_status = 'approved', subscription_active = true where user_id = ${timedTeacher.user.id}`);
+  const timed = await api("/sessions", { method: "POST", token: timedTeacher.token, body: {
     topic: "Running Late", subject: "Mathematics", description: "d",
     date: new Date(Date.now() + 5 * 60_000).toISOString(),
     duration: 60, price: 500, maxStudents: 20 } });
   const timedId = timed.body.id;
-  await api(`/sessions/${timedId}`, { method: "PATCH", token: teacher.token, body: { status: "live" } });
+  if (timed.status !== 201 || !Number.isInteger(timedId)) throw new Error(`Could not create timing fixture: ${timed.status} ${JSON.stringify(timed.body)}`);
+  const timedLive = await api(`/sessions/${timedId}`, { method: "PATCH", token: timedTeacher.token, body: { status: "live" } });
+  if (timedLive.status !== 200) throw new Error(`Could not start timing fixture: ${timedLive.status}`);
 
   const ctx4 = await browser.newContext({
     viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
     permissions: [],
   });
   const page4 = await ctx4.newPage();
-  await page4.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+  await page4.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), timedTeacher.token);
 
   // Three minutes from the booked finish: inside the warning, nowhere near the cutoff.
   sql(`update sessions set date = now() - interval '57 minutes' where id = ${timedId}`);
@@ -581,7 +591,7 @@ async function main() {
     permissions: [],
   });
   const idlePage = await idleCtx.newPage();
-  await idlePage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+  await idlePage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), timedTeacher.token);
   await idlePage.goto(`${siteUrl}/session/${timedId}`, { waitUntil: "networkidle" });
   await idlePage.waitForTimeout(3500);
   await idlePage.locator('[data-testid="session-start-btn"]').first().click({ timeout: 15000 });
@@ -601,7 +611,7 @@ async function main() {
     permissions: [],
   });
   const overPage = await overCtx.newPage();
-  await overPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+  await overPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), timedTeacher.token);
 
   /**
    * A class whose cutoff falls a few seconds after the teacher walks in.
@@ -637,7 +647,6 @@ async function main() {
   await overCtx.close();
   await ctx4.close();
 
-  await ctx2.close();
   await browser.close();
   stopServer();
 
