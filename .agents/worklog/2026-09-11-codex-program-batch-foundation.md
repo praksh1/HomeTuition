@@ -127,3 +127,29 @@ Routes added:
 Commit and push this branch, let CI and staging run the real database/parity path, deploy only the
 Railway staging server and Cloudflare preview, then give the owner one exact teacher link and one
 student link. Do not merge to production before that physical test passes.
+
+## Staging deployment and CI verification
+
+- Committed and pushed `e1da6c5` (`Add Learning Program batch previews`) to
+  `origin/codex/program-batch-foundation`.
+- Changed only the Railway **staging** API service source branch from
+  `codex/program-commerce-foundation` to `codex/program-batch-foundation` and started a deployment.
+  Production was not changed.
+- Verified `https://hometuition-api-staging-production.up.railway.app/api/healthz` returned HTTP 200
+  with `{ "status": "ok" }`.
+- Verified the new public route exists on staging: `GET /api/programs/1/batches` returned HTTP 200
+  with `{ "batches": [] }`. This distinguished the deployed build from the preceding API revision.
+- Dispatched GitHub Actions preview run `34556264494` for the exact commit `e1da6c5`. It completed
+  successfully in 4m53s. The workflow passed typecheck, the real throwaway-Postgres Program tests,
+  attendance/dispute checks, rendered Program discovery/profile checks, preview verification, web
+  export, the production-target refusal check, and Cloudflare preview deployment.
+- Preview URL: `https://hometuition-preview.praksh-dhakal.workers.dev`.
+- The GitHub runner emitted only an infrastructure deprecation annotation: several official actions
+  still target Node 20 and GitHub forced them onto Node 24. It did not fail the run and is unrelated
+  to the application behavior.
+
+## Current handoff state
+
+The staging API and Cloudflare preview now run the same branch and commit. The remaining gate is the
+owner's physical teacher/student review of Batch planning and read-only display. No production
+merge/deploy, payment action, purchase, checkout, enrolment or real-money behavior has occurred.
