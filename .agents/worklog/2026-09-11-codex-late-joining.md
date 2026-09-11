@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: 779d809
-- Status: in progress
+- Status: complete — preview planning/estimate slice deployed; physical review pending
 
 ## Requested
 
@@ -29,9 +29,19 @@ lesson completion. Old publications without policy remain closed at original cut
 - Root typecheck passed all four packages outside restricted filesystem sandbox.
 - API unit: 519 passed; app unit: 373 passed; design ratchet unchanged 94 hex / 282 font sizes.
 - Rendered teacher setup: 70 passed at 360/390/1440 incl. one-lesson warning and explicit policy save.
-- Rendered Discover/student detail: 168 passed incl. 11-lesson estimate and original-price distinction.
+- Rendered Discover/student detail: final 170 passed incl. 11-lesson estimate, original-price distinction and no contradictory period policy.
 - Screenshot review: small-phone publish confirmation fits with count, price and both controls.
-- Real API/DB/schema parity awaits the isolated CI PostgreSQL gate; no local psql executable found.
+- Isolated CI real API/DB/schema parity passed; no local psql executable found. Synthetic snapshot
+  time-shift proves the real public API returns 11 remaining lessons / NPR 3056 and hides suspended
+  teachers. The fixture was only in the disposable CI database, not staging/production.
+- Preview run **34643706125** succeeded at **2db0d72** (feature **0aba09f**). Typecheck, real API,
+  attendance 74/0, student browser 170/0, legacy planner 123, simple setup 70, build and served-bundle
+  isolation verification passed. Worker version **8e2b9054-b9f6-402c-86cc-ecec1adb5ece**.
+- Staging `/api/programs/6/batches` now returns the new server-time preview: existing offer12,
+  9 lessons, NPR3000, previewOnly=true. No fixture or user setting changed in staging this turn.
+- Test link: https://hometuition-preview.praksh-dhakal.workers.dev/create-class . Existing teacher
+  edits at `/teaching-classes`. Production is not merged or deployed. This closing doc commit does
+  not require another frontend deployment.
 
 ## Problems and surprises
 
@@ -58,6 +68,12 @@ No paid service/dependency or column added to an existing table.
 
 ## Remaining risks / next pickup point
 
-Finish gates/rendering and preview deployment. Real checkout must freeze exact version, subset and
-amount, atomically enforce capacity and cutoff and block unauthorized paid-promise changes. It must
-allocate the actual late payment, not mutate existing buyers. Preview quote is not a reservation.
+Next step belongs to OWNER: test the late-joining switch, lesson price breakdown and one-lesson
+confirmation on the preview. Hardware touch/native switches still require real-device review;
+Chromium at phone widths is not physical phone testing. No further deployment is silently pending.
+
+Future real checkout must freeze exact version, subset and amount, atomically enforce capacity and
+cutoff and block unauthorized paid-promise changes. It must allocate the actual late payment, not
+mutate existing buyers. Preview quote is not a reservation. Teacher readiness approval, recordings
+and free catch-up are not offered by this slice. Rolling date-based estimates use server time,
+no-store response headers and explicit calculation timestamps; eventual payment must requote.
