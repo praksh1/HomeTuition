@@ -49,6 +49,9 @@ The 30-day cadence is not a calendar month or legacy Monthly attendance entitlem
   smaller exact patches instead.
 - Sandboxed API unit run could not resolve the shared `jose` package. Same command with authorized
   dependency-cache access passed 507/507; this was not an application change.
+- Pre-deployment review found period equality using JSON text, which is unsafe because PostgreSQL
+  jsonb can reorder keys. Replaced it with explicit field comparisons and added a reordered-key
+  regression assertion. No-op publication must survive a real database round trip.
 
 ## Fabrications found
 None found so far. No claim of payment, automatic renewal or transferred enrolment is permitted.

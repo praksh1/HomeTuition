@@ -41,7 +41,8 @@ export function sameBatchOffer(a: ProgramBatchSnapshot | null, b: ProgramBatchSn
     a.programVersion === b.programVersion && a.programTitle === b.programTitle &&
     a.capacity === b.capacity && a.totalTuitionNpr === b.totalTuitionNpr &&
     a.timeZone === b.timeZone && a.enrollmentClosesAt === b.enrollmentClosesAt &&
-    JSON.stringify(a.tuitionPeriod ?? null) === JSON.stringify(b.tuitionPeriod ?? null) &&
+    a.tuitionPeriod?.groupId === b.tuitionPeriod?.groupId && a.tuitionPeriod?.index === b.tuitionPeriod?.index &&
+    a.tuitionPeriod?.startsAt === b.tuitionPeriod?.startsAt && a.tuitionPeriod?.endsAt === b.tuitionPeriod?.endsAt &&
     a.lessons.length === b.lessons.length && a.lessons.every((lesson, index) => {
       const other = b.lessons[index]!;
       return lesson.position === other.position && lesson.startsAt === other.startsAt && lesson.durationMinutes === other.durationMinutes;

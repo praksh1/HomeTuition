@@ -28,6 +28,8 @@ test("corrupt periods cannot be published as valid public evidence", () => {
   const snapshot = batchSnapshot({ batchId: 1, version: 1, programId: 1, programVersion: 1, programTitle: "Maths", capacity: 6, totalTuitionNpr: 3000, tuitionPeriod: p, lessons: [{ position: 0, startsAt: new Date("2028-01-02T00:00:00Z"), durationMinutes: 60 }] });
   assert.equal(snapshot.enrollmentClosesAt, p.startsAt);
   assert.ok(readBatchSnapshot(snapshot));
+  const reordered = { endsAt: p.endsAt, startsAt: p.startsAt, index: p.index, groupId: p.groupId };
+  assert.equal(sameBatchOffer(snapshot, { ...snapshot, tuitionPeriod: reordered }), true, "PostgreSQL jsonb key order must not make an unchanged offer look edited");
   assert.equal(readBatchSnapshot({ ...snapshot, enrollmentClosesAt: snapshot.lessons[0]!.startsAt }), null);
   assert.equal(readBatchSnapshot({ ...snapshot, tuitionPeriod: { ...p, endsAt: p.startsAt } }), null);
   assert.equal(sameBatchOffer(snapshot, { ...snapshot, tuitionPeriod: { ...p, groupId: 5 } }), false);
