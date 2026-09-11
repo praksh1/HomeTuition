@@ -142,6 +142,47 @@ try {
     await button("Next: review").click();
     check(await page.getByText("Lesson 1: choose a valid date and start time.", { exact: true }).isVisible(), `${width}: template cannot progress without fresh dates`);
     await page.close();
+
+    const tuition = await browser.newPage({ viewport: { width, height }, timezoneId });
+    const tuitionErrors = [];
+    tuition.on("pageerror", (e) => tuitionErrors.push(String(e)));
+    await tuition.addInitScript(() => { window.ongoingFixture = true; });
+    await tuition.goto(base + "/planner");
+    const tb = (name) => tuition.getByRole("button", { name, exact: true });
+    check(await tb("Start ongoing tuition").isVisible(), `${width}: formats are separate choices`);
+    await tuition.screenshot({ path: path.join(work, `${width}-formats.png`) });
+    await tuition.getByTestId("batch-card-1").click();
+    check(await tuition.getByLabel("Full 30-day price (NPR)", { exact: true }).isVisible(), `${width}: tuition price has an explicit period unit`);
+    await tb("Next: schedule").click();
+    check(await tuition.getByLabel("Total lessons", { exact: true }).count() === 0, `${width}: ongoing generation does not ask for arbitrary lesson count`);
+    await tb("Weekly").click();
+    await tuition.getByTestId("batch-use-repeat").click();
+    check(await tuition.getByText(/5 lesson dates prepared/).isVisible(), `${width}: 30-day weekly tuition generates five lessons, not thirty`);
+    await tb("Next: review").click();
+    const summary = tuition.getByTestId("tuition-period-summary");
+    const periodText = await summary.innerText();
+    check(periodText.includes("BS") && periodText.includes("AD") && periodText.includes("Nepal time"), `${width}: period boundaries show both calendars in Nepal time`);
+    check(periodText.includes("No automatic charge") && periodText.includes("Checkout is not open"), `${width}: no payment or automatic renewal promise`);
+    await tuition.screenshot({ path: path.join(work, `${width}-tuition-review.png`) });
+    await tb("Save draft").click();
+    await tb("Publish batch preview").waitFor();
+    await tuition.getByRole("checkbox", { name: "I checked the class size and full price per student." }).click();
+    await tuition.getByRole("checkbox", { name: "I checked every lesson date, Nepal time and duration." }).click();
+    await tb("Publish batch preview").click();
+    await tuition.getByTestId("warning-confirm").click();
+    await tb("Published — up to date").waitFor();
+    check(await tb("Published — up to date").isDisabled(), `${width}: ongoing no-op publication stays disabled`);
+    await tb("Prepare / open next period").click();
+    await tuition.getByText(/Next period prepared in the same group/).waitFor();
+    check((await tuition.getByTestId("tuition-period-summary").innerText()).includes("Period 2"), `${width}: successor stays in the group with period two`);
+    check(await tuition.getByLabel("Full 30-day price (NPR)", { exact: true }).inputValue() === "3000", `${width}: next period copies published full price`);
+    await tuition.screenshot({ path: path.join(work, `${width}-tuition-next.png`) });
+    await tb("Next: schedule").click();
+    await tb("Next: review").click();
+    check(await tuition.getByText("Lesson 1: choose a valid date and start time.", { exact: true }).isVisible(), `${width}: next period needs a reviewed new schedule`);
+    check(!(await tuition.evaluate(() => document.documentElement.scrollWidth > innerWidth)), `${width}: tuition layout has no horizontal overflow`);
+    check(tuitionErrors.length === 0, `${width}: tuition has no browser exceptions ${tuitionErrors.join("; ")}`);
+    await tuition.close();
   }
 } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 writeFileSync(path.join(work, "result.txt"), `${checks} checks passed\n`);

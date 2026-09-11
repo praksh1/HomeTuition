@@ -4,6 +4,8 @@ import {
   db,
   learningProgramBatchLessonsTable,
   learningProgramBatchesTable,
+  learningProgramBatchPeriodsTable,
+  learningProgramTuitionGroupsTable,
   learningProgramsTable,
   teacherProfilesTable,
   usersTable,
@@ -14,6 +16,7 @@ import { recordActivity } from "../lib/activityLog";
 import { assertTeacherSchedule, lockTeacherSchedule, teacherScheduleIssues } from "../lib/teacherSchedule";
 import { publishedSnapshotFor } from "../lib/learningProgramState";
 import { batchSnapshot, readBatchSnapshot, sameBatchOffer, validateProgramBatch } from "../lib/programBatches";
+import { tuitionPeriod, tuitionPeriodIssues } from "../lib/tuitionPeriods";
 
 const router: IRouter = Router();
 
@@ -39,14 +42,32 @@ async function lessonsFor(batchId: number, reader: { select: typeof db.select } 
     .orderBy(asc(learningProgramBatchLessonsTable.position));
 }
 
+async function periodFor(batchId: number, reader: { select: typeof db.select } = db) {
+  const [row] = await reader.select({ group: learningProgramTuitionGroupsTable, link: learningProgramBatchPeriodsTable })
+    .from(learningProgramBatchPeriodsTable)
+    .innerJoin(learningProgramTuitionGroupsTable, eq(learningProgramTuitionGroupsTable.id, learningProgramBatchPeriodsTable.groupId))
+    .where(eq(learningProgramBatchPeriodsTable.batchId, batchId));
+  return row ?? null;
+}
+
 async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
   const lessons = await lessonsFor(row.id, reader);
+  const linked = await periodFor(row.id, reader);
+  const anchor = linked?.group.anchorAt ?? lessons[0]?.startsAt;
+  const period = linked && anchor ? tuitionPeriod(linked.group.id, linked.link.periodIndex, anchor) : null;
   const [program] = await reader.select({ version: learningProgramsTable.version, teacherId: learningProgramsTable.teacherId }).from(learningProgramsTable).where(eq(learningProgramsTable.id, row.programId)).limit(1);
   return {
     id: row.id,
     programId: row.programId,
+    format: linked ? "ongoing" : "fixed",
+    tuitionGroupId: linked?.group.id ?? null,
+    tuitionPeriod: period,
+    periodAnchorLocked: !!linked?.group.anchorAt,
     currentProgramVersion: program?.version ?? null,
-    scheduleIssues: program ? await teacherScheduleIssues(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : [],
+    scheduleIssues: [
+      ...(program ? await teacherScheduleIssues(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : []),
+      ...(period ? tuitionPeriodIssues(period, lessons) : []),
+    ],
     status: row.status,
     capacity: row.capacity,
     totalTuitionNpr: row.totalTuitionNpr,
@@ -101,10 +122,16 @@ router.post("/learning-programs/:programId/batches", requireAuth, async (req, re
     res.status(409).json({ error: "Publish the Program before planning a batch." });
     return;
   }
-  const [created] = await db
-    .insert(learningProgramBatchesTable)
-    .values({ programId: program.id, status: "draft" })
-    .returning();
+  const format = req.body?.format ?? "fixed";
+  if (format !== "fixed" && format !== "ongoing") { res.status(422).json({ error: "Choose ongoing tuition or a fixed course." }); return; }
+  const created = await db.transaction(async (tx) => {
+    const [batch] = await tx.insert(learningProgramBatchesTable).values({ programId: program.id, status: "draft" }).returning();
+    if (format === "ongoing") {
+      const [group] = await tx.insert(learningProgramTuitionGroupsTable).values({ programId: program.id }).returning();
+      await tx.insert(learningProgramBatchPeriodsTable).values({ batchId: batch!.id, groupId: group!.id, periodIndex: 0 });
+    }
+    return batch;
+  });
   if (!created) {
     res.status(503).json({ error: "Could not start the batch. Please try again." });
     return;
@@ -219,7 +246,14 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
     return;
   }
   const version = joined.batch.version + 1;
+  const linked = await periodFor(batch.id, tx);
+  const period = linked ? tuitionPeriod(linked.group.id, linked.link.periodIndex, linked.group.anchorAt ?? validation.lessons[0]!.startsAt) : undefined;
+  if (period) {
+    const periodProblems = tuitionPeriodIssues(period, validation.lessons);
+    if (periodProblems.length) { res.status(422).json({ error: "Check the tuition period dates.", issues: periodProblems }); return null; }
+  }
   const snapshot = batchSnapshot({
+    tuitionPeriod: period,
     batchId: joined.batch.id,
     version,
     programId: joined.program.id,
@@ -235,7 +269,13 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
   }
   const future = validateProgramBatch(input, Date.now());
   if (!future.ok) { res.status(422).json({ error: "This batch is not ready to publish.", issues: future.issues }); return null; }
+  if (period && Date.parse(period.startsAt) <= Date.now()) {
+    res.status(422).json({ error: "This tuition period has started. Its published offer can no longer change." }); return null;
+  }
   await assertTeacherSchedule(tx, joined.program.teacherId, validation.lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: batch.id });
+  if (linked && !linked.group.anchorAt) {
+    await tx.update(learningProgramTuitionGroupsTable).set({ anchorAt: validation.lessons[0]!.startsAt }).where(eq(learningProgramTuitionGroupsTable.id, linked.group.id));
+  }
   const [updated] = await tx
     .update(learningProgramBatchesTable)
     .set({ status: "published", version, publishedAt: new Date(), publishedSnapshot: snapshot })
@@ -246,6 +286,36 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
   if (!result) return;
   if (result.changed) recordActivity({ userId: owned.program.teacherId, action: "learning_program_batch.published", subjectType: "learning_program_batch", subjectId: owned.batch.id, detail: { programId: owned.program.id, version: result.batch.version } });
   res.json({ batch: result.batch, unchanged: !result.changed });
+});
+
+/** Preparation, not enrolment renewal: no money, seats or student access are created. */
+router.post("/learning-program-batches/:id/next-period", requireAuth, async (req, res): Promise<void> => {
+  const owned = await ownedBatch(req, res);
+  if (!owned) return;
+  const next = await db.transaction(async (tx) => {
+    // Same ordering as publication. Serializes repeats without creating two next periods.
+    await lockTeacherSchedule(tx, owned.program.teacherId);
+    await tx.select().from(learningProgramsTable).where(eq(learningProgramsTable.id, owned.program.id)).for("update");
+    const [source] = await tx.select().from(learningProgramBatchesTable).where(eq(learningProgramBatchesTable.id, owned.batch.id)).for("update");
+    const linked = await periodFor(owned.batch.id, tx);
+    const published = readBatchSnapshot(source?.publishedSnapshot);
+    if (!source || source.status !== "published" || !linked?.group.anchorAt || !published?.tuitionPeriod || linked.link.periodIndex >= 1200) {
+      res.status(409).json({ error: "Publish an ongoing tuition period before preparing the next one." }); return null;
+    }
+    const index = linked.link.periodIndex + 1;
+    const [existing] = await tx.select({ batch: learningProgramBatchesTable }).from(learningProgramBatchPeriodsTable)
+      .innerJoin(learningProgramBatchesTable, eq(learningProgramBatchesTable.id, learningProgramBatchPeriodsTable.batchId))
+      .where(and(eq(learningProgramBatchPeriodsTable.groupId, linked.group.id), eq(learningProgramBatchPeriodsTable.periodIndex, index)));
+    if (existing) return { batch: await ownerBatch(existing.batch, tx), created: false };
+    const bounds = tuitionPeriod(linked.group.id, index, linked.group.anchorAt);
+    if (Date.parse(bounds.startsAt) <= Date.now()) { res.status(409).json({ error: "The next period has already started. Create a new tuition group with a future start date." }); return null; }
+    const [created] = await tx.insert(learningProgramBatchesTable).values({ programId: owned.program.id, capacity: published.capacity, totalTuitionNpr: published.totalTuitionNpr }).returning();
+    await tx.insert(learningProgramBatchPeriodsTable).values({ batchId: created!.id, groupId: linked.group.id, periodIndex: index });
+    return { batch: await ownerBatch(created!, tx), created: true };
+  });
+  if (!next) return;
+  if (next.created) recordActivity({ userId: owned.program.teacherId, action: "learning_program_batch.period_prepared", subjectType: "learning_program_batch", subjectId: next.batch.id, detail: { sourceBatchId: owned.batch.id, groupId: next.batch.tuitionGroupId } });
+  res.status(next.created ? 201 : 200).json(next);
 });
 
 router.post("/learning-program-batches/:id/close", requireAuth, async (req, res): Promise<void> => {

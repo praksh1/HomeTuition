@@ -13,6 +13,7 @@ import {
 } from "@/utils/programDiscovery";
 import { ProgramBackControl, ProgramCardShell, ProgramChip } from "./ProgramPieces";
 import { fullBatchPrice, nepalDate, type ProgramBatchSnapshot } from "@/utils/programBatches";
+import { TuitionPeriodSummary } from "./TuitionPeriodSummary";
 
 /**
  * What a student reads before deciding whether a program is for them.
@@ -193,9 +194,10 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
                   <Text style={[t.title3, { color: colors.foreground }]}>Starts {nepalDate(batch.lessons[0]!.startsAt)}</Text>
                   <ProgramChip label={`Up to ${batch.capacity} students`} tone="neutral" />
                 </View>
-                <Text style={[t.bodyStrong, { color: colors.primary }]}>{fullBatchPrice(batch.totalTuitionNpr)}</Text>
+                {batch.tuitionPeriod ? <TuitionPeriodSummary period={batch.tuitionPeriod} /> : null}
+                <Text style={[t.bodyStrong, { color: colors.primary }]}>{fullBatchPrice(batch.totalTuitionNpr, batch.tuitionPeriod)}</Text>
                 <Text style={[t.callout, { color: colors.mutedForeground }]}>
-                  {batch.lessons.length} {batch.lessons.length === 1 ? "lesson" : "lessons"}. Enrollment will close when the first lesson starts.
+                  {batch.lessons.length} {batch.lessons.length === 1 ? "lesson" : "lessons"}. {batch.tuitionPeriod ? "Enrollment is planned to close at the period start." : "Enrollment will close when the first lesson starts."}
                 </Text>
                 <View style={{ gap: space.xxs }}>
                   {batch.lessons.map((lesson, index) => (

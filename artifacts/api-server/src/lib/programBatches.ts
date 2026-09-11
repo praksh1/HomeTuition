@@ -1,4 +1,5 @@
 import { instantOfLocalTime } from "./monthlySchedule.ts";
+import { readTuitionPeriod, tuitionPeriodIssues, type TuitionPeriod } from "./tuitionPeriods.ts";
 
 export const PROGRAM_BATCH_TIME_ZONE = "Asia/Kathmandu";
 export const PROGRAM_BATCH_DURATIONS = [30, 45, 60, 90] as const;
@@ -17,6 +18,7 @@ export interface ProgramBatchLesson {
 }
 
 export interface ProgramBatchSnapshot {
+  tuitionPeriod?: TuitionPeriod;
   batchId: number;
   version: number;
   programId: number;
@@ -39,6 +41,7 @@ export function sameBatchOffer(a: ProgramBatchSnapshot | null, b: ProgramBatchSn
     a.programVersion === b.programVersion && a.programTitle === b.programTitle &&
     a.capacity === b.capacity && a.totalTuitionNpr === b.totalTuitionNpr &&
     a.timeZone === b.timeZone && a.enrollmentClosesAt === b.enrollmentClosesAt &&
+    JSON.stringify(a.tuitionPeriod ?? null) === JSON.stringify(b.tuitionPeriod ?? null) &&
     a.lessons.length === b.lessons.length && a.lessons.every((lesson, index) => {
       const other = b.lessons[index]!;
       return lesson.position === other.position && lesson.startsAt === other.startsAt && lesson.durationMinutes === other.durationMinutes;
@@ -117,6 +120,7 @@ export function validateProgramBatch(
 }
 
 export function batchSnapshot(input: {
+  tuitionPeriod?: TuitionPeriod;
   batchId: number;
   version: number;
   programId: number;
@@ -132,6 +136,7 @@ export function batchSnapshot(input: {
     durationMinutes: lesson.durationMinutes,
   }));
   return {
+    ...(input.tuitionPeriod ? { tuitionPeriod: input.tuitionPeriod } : {}),
     batchId: input.batchId,
     version: input.version,
     programId: input.programId,
@@ -140,7 +145,7 @@ export function batchSnapshot(input: {
     capacity: input.capacity,
     totalTuitionNpr: input.totalTuitionNpr,
     timeZone: PROGRAM_BATCH_TIME_ZONE,
-    enrollmentClosesAt: lessons[0]!.startsAt,
+    enrollmentClosesAt: input.tuitionPeriod?.startsAt ?? lessons[0]!.startsAt,
     lessons,
   };
 }
@@ -167,6 +172,9 @@ export function readBatchSnapshot(value: unknown): ProgramBatchSnapshot | null {
     ) return null;
     previous = startsAt;
   }
-  if (row.enrollmentClosesAt !== row.lessons[0]!.startsAt) return null;
+  if (row.tuitionPeriod !== undefined) {
+    const period = readTuitionPeriod(row.tuitionPeriod);
+    if (!period || row.enrollmentClosesAt !== period.startsAt || tuitionPeriodIssues(period, row.lessons.map((l) => ({ ...l, startsAt: new Date(l.startsAt) }))).length) return null;
+  } else if (row.enrollmentClosesAt !== row.lessons[0]!.startsAt) return null;
   return row as ProgramBatchSnapshot;
 }

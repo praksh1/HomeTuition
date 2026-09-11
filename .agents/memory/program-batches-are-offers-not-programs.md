@@ -1,8 +1,10 @@
 # Program Batches are offers, not Programs
 
 Owner decision, 2026-09-10: a Learning Program is reusable editorial content. One scheduled run is
-a Batch. A Batch owns its 1–10 capacity, one all-inclusive NPR price, ordered Nepal-time lessons and
-the enrollment cutoff derived from Lesson 1. A Program may have multiple Batches.
+a Batch. A Batch owns its 1–10 capacity, one all-inclusive NPR price and ordered Nepal-time lessons.
+Fixed courses close enrollment at Lesson 1. The 11 September ongoing-tuition extension closes at
+the shared period start instead (even if Lesson 1 is later). A Program may have multiple Batches.
+See `tuition-periods-are-shared.md`; absence of a period link remains a fixed course.
 
 Never put these fields on the Program itself, and never describe the existing
 `learning_program_enrollments` rehearsal row as a Batch enrollment: it is unique by student and

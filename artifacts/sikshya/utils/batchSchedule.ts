@@ -1,4 +1,4 @@
-import type { ProgramBatchLessonDraft } from "./programBatches.ts";
+import type { ProgramBatchLessonDraft, TuitionPeriod } from "./programBatches.ts";
 
 export const BATCH_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 export const BATCH_MAX_LESSONS = 60;
@@ -29,6 +29,18 @@ export function repeatLessons(first: ProgramBatchLessonDraft, count: number, wee
     day.setUTCDate(day.getUTCDate() + 1);
   }
   return { ok: true, lessons };
+}
+
+/** Explicit dates inside the period; never silently continue into a second period. */
+export function repeatPeriodLessons(first: ProgramBatchLessonDraft, weekdays: number[], period: TuitionPeriod | null): ReturnType<typeof repeatLessons> {
+  if (!period) return { ok: false, message: "Choose Lesson 1's date and time to set the period." };
+  const repeated = repeatLessons(first, BATCH_MAX_LESSONS, weekdays);
+  if (!repeated.ok) return repeated;
+  const start = Date.parse(period.startsAt), end = Date.parse(period.endsAt);
+  const firstAt = Date.parse(`${first.date}T${first.time}:00+05:45`);
+  if (firstAt < start || firstAt + first.durationMinutes * 60000 > end) return { ok: false, message: "Choose a first lesson inside this 30-day period." };
+  const lessons = repeated.lessons.filter((lesson) => Date.parse(`${lesson.date}T${lesson.time}:00+05:45`) + lesson.durationMinutes * 60000 <= end);
+  return lessons.length ? { ok: true, lessons } : { ok: false, message: "No complete lesson fits inside this period." };
 }
 
 export function batchDetailsIssues(capacity: string, price: string): string[] {

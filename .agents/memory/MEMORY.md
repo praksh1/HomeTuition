@@ -1,5 +1,9 @@
 # Memory Index
 
+- [Tuition periods are shared](tuition-periods-are-shared.md) — approved 11 Sep: ongoing groups
+  use shared 30-day advance-paid periods, exact lessons, BS + AD dates; fixed courses remain
+  separate. No mid-period proration or automatic debit. Planning preview is not Batch checkout.
+
 - `program-batches-are-offers-not-programs.md` — Program is reusable content; Batch owns schedule,
   capacity and full price. Public reads use immutable Batch snapshots; current Program-level test
   enrollment must never be presented as a Batch enrollment.

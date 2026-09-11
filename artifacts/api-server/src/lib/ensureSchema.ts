@@ -1465,6 +1465,21 @@ export const LEARNING_PROGRAM_DDL: readonly string[] = [
      ON "learning_program_batches" ("program_id", "status", "id")`,
   `CREATE INDEX IF NOT EXISTS "learning_program_batches_public_idx"
      ON "learning_program_batches" ("status", "published_at")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_tuition_groups" (
+    "id" serial PRIMARY KEY,
+    "program_id" integer NOT NULL REFERENCES "learning_programs"("id") ON DELETE CASCADE,
+    "anchor_at" timestamptz,
+    "created_at" timestamptz NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_tuition_groups_program_idx"
+    ON "learning_program_tuition_groups" ("program_id")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_batch_periods" (
+    "batch_id" integer PRIMARY KEY REFERENCES "learning_program_batches"("id") ON DELETE CASCADE,
+    "group_id" integer NOT NULL REFERENCES "learning_program_tuition_groups"("id") ON DELETE CASCADE,
+    "period_index" integer NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "learning_program_batch_periods_group_idx"
+    ON "learning_program_batch_periods" ("group_id", "period_index")`,
   `CREATE TABLE IF NOT EXISTS "learning_program_batch_lessons" (
     "id" serial PRIMARY KEY,
     "batch_id" integer NOT NULL,

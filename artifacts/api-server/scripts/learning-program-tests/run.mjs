@@ -725,7 +725,7 @@ async function schemaParity() {
     entry,
     [
       `export { LEARNING_PROGRAM_DDL } from ${JSON.stringify(path.join(serverRoot, "src", "lib", "ensureSchema.ts"))};`,
-      `export { learningProgramsTable, learningProgramModulesTable, learningProgramBatchesTable, learningProgramBatchLessonsTable, learningProgramEnrollmentsTable, learningProgramAllocationsTable, learningProgramLedgerEntriesTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
+      `export { learningProgramsTable, learningProgramModulesTable, learningProgramBatchesTable, learningProgramBatchLessonsTable, learningProgramTuitionGroupsTable, learningProgramBatchPeriodsTable, learningProgramEnrollmentsTable, learningProgramAllocationsTable, learningProgramLedgerEntriesTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
       `export { getTableColumns } from "drizzle-orm";`,
     ].join("\n"),
   );
@@ -773,7 +773,7 @@ async function schemaParity() {
         out.set(column.name, {
           type,
           notNull: Boolean(column.notNull) || Boolean(column.primary),
-          hasDefault: Boolean(column.hasDefault) || Boolean(column.primary),
+          hasDefault: Boolean(column.hasDefault),
         });
       }
       return out;
@@ -799,6 +799,8 @@ async function schemaParity() {
       ["learning_program_modules", mod.learningProgramModulesTable],
       ["learning_program_batches", mod.learningProgramBatchesTable],
       ["learning_program_batch_lessons", mod.learningProgramBatchLessonsTable],
+      ["learning_program_tuition_groups", mod.learningProgramTuitionGroupsTable],
+      ["learning_program_batch_periods", mod.learningProgramBatchPeriodsTable],
       ["learning_program_enrollments", mod.learningProgramEnrollmentsTable],
       ["learning_program_allocations", mod.learningProgramAllocationsTable],
       ["learning_program_ledger_entries", mod.learningProgramLedgerEntriesTable],
@@ -835,6 +837,8 @@ async function schemaParity() {
       "learning_program_batches_public_idx",
       "learning_program_batch_lessons_position_idx",
       "learning_program_batch_lessons_start_idx",
+      "learning_program_tuition_groups_program_idx",
+      "learning_program_batch_periods_group_idx",
       "learning_program_enrollments_student_program_idx",
       "learning_program_enrollments_teacher_statement_idx",
       "learning_program_allocations_lesson_idx",
@@ -848,7 +852,7 @@ async function schemaParity() {
     const fks = sql(`
       select count(*) from information_schema.table_constraints
        where table_schema = '${scratch}' and constraint_type = 'FOREIGN KEY'`);
-    check("all Program foreign keys are created, so an orphan row cannot exist", Number(fks) === 11, fks);
+    check("all Program foreign keys are created, so an orphan row cannot exist", Number(fks) === 14, fks);
   } finally {
     execFileSync("psql", [PGURL, "-q", "-c", `DROP SCHEMA IF EXISTS ${scratch} CASCADE`], { encoding: "utf8" });
   }
@@ -1460,6 +1464,7 @@ async function main() {
     await concurrency();
     await moderationReload();
     await batchPublication();
+    await tuitionPeriods();
     await schemaParity();
     await nothingElseMoved(watched);
     await scheduleConflicts();
@@ -1507,6 +1512,55 @@ async function batchPublication() {
   const closed = await api(`/learning-program-batches/${id}/close`, { method: "POST", token: teacher.token });
   check("closed Batch remains closed under an edit attempt", closed.status === 200 && (await patch(input)).status === 409);
   check("closed Batch cannot be republished", (await publish()).status === 409);
+}
+
+async function tuitionPeriods() {
+  console.log("\n[Tuition periods] Shared anchor, advance cutoff, repeated next-period requests and unchanged old contracts");
+  const teacher = await register("teacher"), other = await register("teacher"), student = await register("student");
+  const program = await publishOne(teacher.token, "custom");
+  const start = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
+  const offsetDay = (n) => new Date(Date.parse(`${start}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+  const make = (format, token = teacher.token) => api(`/learning-programs/${program}/batches`, { method: "POST", token, body: { format } });
+  const patch = (id, days, price = 3000) => api(`/learning-program-batches/${id}`, { method: "PATCH", token: teacher.token, body: { capacity: 6, totalTuitionNpr: price, lessons: days.map((day) => ({ date: offsetDay(day), time: "16:00", durationMinutes: 60 })), tuitionPeriod: { groupId: 99, index: 99 } } });
+  const publish = (id) => api(`/learning-program-batches/${id}/publish`, { method: "POST", token: teacher.token });
+  const next = (id, token = teacher.token) => api(`/learning-program-batches/${id}/next-period`, { method: "POST", token });
+  const made = await make("ongoing");
+  check("ongoing draft creates a distinct stable group without dates", made.status === 201 && made.body.batch.format === "ongoing" && made.body.batch.tuitionGroupId > 0 && made.body.batch.tuitionPeriod === null);
+  const id = made.body.batch.id;
+  check("unknown format refused", (await make("monthly_credit")).status === 422);
+  check("students cannot create groups", (await make("ongoing", student.token)).status === 403);
+  check("another teacher cannot prepare or read this group's next period", (await next(id, other.token)).status === 404);
+  check("unpublished period cannot produce a renewal draft", (await next(id)).status === 409);
+  await patch(id, [0, 30]);
+  check("lesson at exclusive boundary cannot publish", (await publish(id)).status === 422);
+  check("failed publication does not freeze anchor", sql(`select anchor_at is null from learning_program_tuition_groups where id=${made.body.batch.tuitionGroupId}`) === "t");
+  await patch(id, [0, 7, 14, 21, 28]);
+  const first = await publish(id);
+  check("five weekly lessons publish as one 30-day period", first.status === 200 && first.body.batch.published.lessons.length === 5 && first.body.batch.periodAnchorLocked);
+  const p = first.body.batch.published.tuitionPeriod;
+  check("server ignores client group and index; derives thirty days", p.index === 0 && p.groupId === made.body.batch.tuitionGroupId && Date.parse(p.endsAt) - Date.parse(p.startsAt) === 30 * 86400000);
+  check("public snapshot exposes advance payment boundary", (await api(`/programs/${program}/batches`)).body.batches[0].enrollmentClosesAt === p.startsAt);
+  check("unchanged ongoing publish is a no-op", (await publish(id)).body.unchanged === true);
+  // A draft is not a new published price, and preparation must not silently use it.
+  await patch(id, [1, 7, 14], 4000);
+  const requests = await Promise.all(Array.from({ length: 8 }, () => next(id)));
+  check("eight concurrent preparations create exactly one next draft", requests.filter((r) => r.status === 201).length === 1 && requests.every((r) => [200, 201].includes(r.status)) && new Set(requests.map((r) => r.body.batch.id)).size === 1);
+  const second = requests[0].body.batch;
+  check("same group, exact boundary, no copied lessons or unpublished price", second.tuitionGroupId === p.groupId && second.tuitionPeriod.index === 1 && second.tuitionPeriod.startsAt === p.endsAt && second.lessons.length === 0 && second.totalTuitionNpr === 3000 && second.status === "draft");
+  await patch(second.id, [29]);
+  check("next period rejects dates before its start", (await publish(second.id)).status === 422);
+  await patch(second.id, [31, 38]);
+  const secondPublished = await publish(second.id);
+  check("next period may start teaching later without moving payment cutoff", secondPublished.status === 200 && secondPublished.body.batch.published.enrollmentClosesAt === p.endsAt);
+  const firstAgain = await publish(id);
+  check("changing first lesson later never moves frozen group anchor", firstAgain.status === 200 && firstAgain.body.batch.tuitionPeriod.startsAt === p.startsAt);
+  check("periods never create enrolments", sql(`select count(*) from learning_program_enrollments where program_id=${program}`) === "0");
+  const fixed = await make("fixed");
+  check("fixed courses have no tuition group", fixed.body.batch.format === "fixed" && fixed.body.batch.tuitionGroupId === null);
+  check("fixed course cannot prepare ongoing renewal", (await next(fixed.body.batch.id)).status === 409);
+  await api(`/learning-program-batches/${second.id}/close`, { method: "POST", token: teacher.token });
+  check("closing a period does not cause a duplicate replacement", (await next(id)).body.batch.id === second.id);
+  check("closed period cannot create a successor", (await next(second.id)).status === 409);
 }
 
 async function scheduleConflicts() {

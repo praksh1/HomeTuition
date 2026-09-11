@@ -1,6 +1,7 @@
-# Teaching-period recommendation — awaiting owner approval
+# Teaching-period recommendation — approved 11 September 2026
 
-Research date: 2026-09-11. Product recommendation, NOT an approved billing change.
+Research date: 2026-09-11. Owner approved the shared 30-day / fixed-course distinction with
+"Ok go for it". Implementation is a planning preview; real payment activation is not approved.
 
 ## Public first-party evidence
 
@@ -32,5 +33,5 @@ or approved proration logic. No silent auto-debit or unpaid-credit access is imp
 BS-calendar billing can be added later if demand warrants it; do not implement both calendars as
 separate billing engines for the first release.
 
-Next step: owner accepts or changes the recommended period before implementation. Neither real
-money nor a new renewal system is enabled by this research.
+Next step: implement and test group-linked periods alongside existing fixed batches. Mid-period
+proration remains unapproved. Neither real money nor automatic collection is enabled.

@@ -16,15 +16,18 @@ import {
   ProgramNotice,
 } from "@/components/programs/ProgramPieces";
 import { BatchConfirmation } from "@/components/programs/BatchConfirmation";
+import { TuitionPeriodSummary } from "@/components/programs/TuitionPeriodSummary";
 import { HIT_SLOP_MIN, marketplaceColumnMax, space as staticSpace } from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { useBrowserLeaveGuard } from "@/hooks/useLeaveGuard";
 import { apiGet, apiPatch, apiPost, ApiError } from "@/utils/api";
-import { BATCH_MAX_LESSONS, BATCH_WEEKDAYS, batchDetailsIssues, batchScheduleIssues, calendarDay, repeatLessons } from "@/utils/batchSchedule";
+import { BATCH_MAX_LESSONS, BATCH_WEEKDAYS, batchDetailsIssues, batchScheduleIssues, calendarDay, repeatLessons, repeatPeriodLessons } from "@/utils/batchSchedule";
 import {
   batchDateValue,
+  draftTuitionPeriod,
+  draftPeriodIssues,
   batchMatchesPublication,
   batchTemplate,
   batchTimeDraft,
@@ -67,7 +70,7 @@ export default function ProgramBatchPlannerScreen() {
   }, []);
   const [accepted, setAccepted] = useState(JSON.stringify(emptyForm()));
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<"create" | "save" | "publish" | "close" | null>(null);
+  const [busy, setBusy] = useState<"create" | "next" | "save" | "publish" | "close" | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [confirming, setConfirming] = useState<"leave" | "publish" | "close" | "replace" | null>(null);
@@ -131,13 +134,13 @@ export default function ProgramBatchPlannerScreen() {
     setNotice(null);
   };
 
-  const create = async (template?: OwnerProgramBatch) => {
+  const create = async (template?: OwnerProgramBatch, format: "fixed" | "ongoing" = "fixed") => {
     if (operation.current) return;
     operation.current = true;
     setBusy("create");
     setFailure(null);
     try {
-      const answer = await apiPost<{ batch: OwnerProgramBatch }>(`/learning-programs/${programId}/batches`, {});
+      const answer = await apiPost<{ batch: OwnerProgramBatch }>(`/learning-programs/${programId}/batches`, { format });
       setBatches((current) => [answer.batch, ...current]);
       choose(answer.batch);
       setEditing(true);
@@ -152,6 +155,19 @@ export default function ProgramBatchPlannerScreen() {
     } catch (err) {
       setFailure(err instanceof ApiError ? err.message : "Fadko could not start the batch.");
     } finally { operation.current = false; setBusy(null); }
+  };
+
+  const prepareNext = async () => {
+    if (!selected || operation.current || dirty) return;
+    operation.current = true; setBusy("next"); setFailure(null);
+    try {
+      const answer = await apiPost<{ batch: OwnerProgramBatch; created: boolean }>(`/learning-program-batches/${selected.id}/next-period`, {});
+      setBatches((current) => [answer.batch, ...current.filter((b) => b.id !== answer.batch.id)]);
+      choose(answer.batch); setEditing(answer.batch.status === "draft" || !batchMatchesPublication(answer.batch));
+      setWeekdays(null); setExpandedLesson(0); moveTo(answer.batch.status === "draft" ? 0 : 2);
+      setNotice(answer.created ? "Next period prepared in the same group. Only the published price and class size were copied. Choose and review its lesson dates. Nobody has been enrolled or charged." : "Opened the next period you already prepared. No duplicate was created.");
+    } catch (err) { setFailure(err instanceof Error ? err.message : "Could not prepare the next period."); }
+    finally { operation.current = false; setBusy(null); }
   };
 
   const replaceSelected = (batch: OwnerProgramBatch, sent: string) => {
@@ -211,15 +227,17 @@ export default function ProgramBatchPlannerScreen() {
   };
 
   const nextStep = () => {
-    const problems = step === 0 ? batchDetailsIssues(form.capacity, form.totalTuitionNpr) : batchScheduleIssues(form.lessons, Date.now());
+    const problems = step === 0 ? batchDetailsIssues(form.capacity, form.totalTuitionNpr) : [...batchScheduleIssues(form.lessons, Date.now()), ...draftPeriodIssues(period, form.lessons)];
     if (problems.length) { setIssues(problems); scroll.current?.scrollTo({ y: 0, animated: false }); return; }
     moveTo(step === 0 ? 1 : 2);
   };
 
   const first = form.lessons[0]!;
+  const ongoing = selected?.format === "ongoing";
+  const period = draftTuitionPeriod(selected, first);
   const firstWeekday = calendarDay(first.date)?.getUTCDay();
   const selectedWeekdays = weekdays ?? (firstWeekday === undefined ? [] : [firstWeekday]);
-  const repeated = repeatLessons(first, Number(repeatCount), selectedWeekdays);
+  const repeated = ongoing ? repeatPeriodLessons(first, selectedWeekdays, period) : repeatLessons(first, Number(repeatCount), selectedWeekdays);
   const applyRepeat = (lessons: ProgramBatchLessonDraft[]) => {
     setForm((current) => ({ ...current, lessons }));
     setExpandedLesson(null);
@@ -231,8 +249,8 @@ export default function ProgramBatchPlannerScreen() {
 
   const formSummary = useMemo(() => {
     const amount = Number(form.totalTuitionNpr);
-    return Number.isSafeInteger(amount) && amount > 0 ? fullBatchPrice(amount) : "Enter one all-inclusive price in NPR.";
-  }, [form.totalTuitionNpr]);
+    return Number.isSafeInteger(amount) && amount > 0 ? (ongoing ? `NPR ${amount.toLocaleString()} per student for this 30-day period` : fullBatchPrice(amount)) : "Enter one all-inclusive price in NPR.";
+  }, [form.totalTuitionNpr, ongoing]);
 
   if (loading) return <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}><View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}><ActivityIndicator color={colors.primary} /></View></SafeAreaView>;
   if (failure && batches.length === 0 && !selected) return <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}><View style={{ flex: 1, justifyContent: "center", padding: gutter }}><ProgramBackControl onPress={back} testID="batch-error-back" label="Back to Program" /><ProgramFailure title="Your batches could not be loaded" message={failure} onRetry={() => void load()} /></View></SafeAreaView>;
@@ -265,7 +283,7 @@ export default function ProgramBatchPlannerScreen() {
   const repeatPanel = <ProgramCardShell>
     <Text style={[t.title2, { color: colors.foreground }]}>Repeat Lesson 1</Text>
     <Text style={[t.callout, { color: colors.mutedForeground }]}>Use the same time and duration on the days below. Holidays are not skipped automatically.</Text>
-    <Field disabled={locked} label="Total lessons" example="Example: 8 weekly lessons. Include Lesson 1 in this count (1–60)." value={repeatCount} onChangeText={setRepeatCount} keyboardType="number-pad" />
+    {ongoing ? <Text style={[t.callout, { color: colors.mutedForeground }]}>Prepare all matching dates from Lesson 1 to the end of this period. You can still adjust individual lessons before publishing.</Text> : <Field disabled={locked} label="Total lessons" example="Example: 8 weekly lessons. Include Lesson 1 in this count (1–60)." value={repeatCount} onChangeText={setRepeatCount} keyboardType="number-pad" />}
     <View style={{ flexDirection: "row", gap: space.xs, flexWrap: "wrap" }}>
       <ProgramButton label="Weekly" disabled={locked || firstWeekday === undefined} onPress={() => setWeekdays(firstWeekday === undefined ? [] : [firstWeekday])} />
       <ProgramButton label="Sun–Fri" disabled={locked} onPress={() => setWeekdays([0, 1, 2, 3, 4, 5])} />
@@ -326,7 +344,7 @@ export default function ProgramBatchPlannerScreen() {
       <ScrollView ref={scroll} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: gutter, gap: space.lg, paddingBottom: staticSpace.huge, width: "100%", maxWidth: marketplaceColumnMax, alignSelf: "center" }}>
         <View style={{ gap: space.xxs }}>
           <Text style={[t.title1, { color: colors.foreground }]}>{selected ? ["Class size & price", "Plan your lessons", "Review your batch"][step] : "Teach this Program"}</Text>
-          <Text style={[t.callout, { color: colors.mutedForeground }]}>{selected ? `Step ${step + 1} of 3 · Batch ${selected.id}` : "Your Program describes what you teach. Each batch adds when you teach it, the class size and one full price."}</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>{selected ? `Step ${step + 1} of 3 · ${ongoing ? `Tuition group ${selected.tuitionGroupId}` : `Batch ${selected.id}`}` : "Your Program describes what you teach. Choose ongoing tuition for a continuing group, or a fixed course with a set finish."}</Text>
         </View>
         {!selected || step === 2 ? <ProgramNotice title="Planning preview only" body="Students cannot join or pay yet. No payment gateway or real money is connected to these batches." tone="waiting" icon="shield" /> : null}
         {failure ? <ProgramNotice title="Something did not work" body={failure} tone="stopped" icon="alert-circle" /> : null}
@@ -334,21 +352,23 @@ export default function ProgramBatchPlannerScreen() {
         {notice && issues.length === 0 ? <View accessibilityLiveRegion="polite"><ProgramNotice title={notice} tone="neutral" /></View> : null}
         {selected && !dirty && issues.length === 0 && !!selected.scheduleIssues?.length ? <View accessibilityLiveRegion="polite"><ProgramNotice title="Lesson times need attention" body="Your draft is safe. Publishing checks your whole teaching schedule again and blocks overlapping lessons."><View style={{ gap: space.sm }}>{selected.scheduleIssues.map((message, index) => <Text key={index} style={[t.callout, { color: colors.warn }]}>{message}</Text>)}</View></ProgramNotice></View> : null}
         {!selected ? <View style={{ gap: space.sm }}>
+          <ProgramCardShell><Text style={[t.title2, { color: colors.foreground }]}>Ongoing tuition</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>For regular Maths, Science or language tuition. Keep the same group and plan each 30-day period with its own lessons and advance price.</Text><ProgramButton label="Start ongoing tuition" icon="repeat" emphasis="primary" disabled={busy !== null} onPress={() => void create(undefined, "ongoing")} grow /></ProgramCardShell>
+          <ProgramCardShell><Text style={[t.title2, { color: colors.foreground }]}>Fixed course</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>For an IELTS course, entrance preparation or an eight-lesson guitar course. One scheduled batch, one finish and one full advance price.</Text><ProgramButton label="New batch" icon="plus" disabled={busy !== null} onPress={() => void create()} grow /></ProgramCardShell>
           <Text style={[t.title2, { color: colors.foreground }]}>Your batches</Text>
           {batches.length === 0 ? <Text style={[t.callout, { color: colors.mutedForeground }]}>No batch has been planned for this Program.</Text> : batches.map((batch) => (
             <View key={batch.id} style={{ gap: space.xs }}><ProgramCardShell onPress={() => { if (!operation.current) { choose(batch); setEditing(batch.status !== "closed" && !batchMatchesPublication(batch)); setWeekdays(null); setExpandedLesson(0); moveTo(batch.status === "published" || batch.status === "closed" ? 2 : 0); } }} testID={`batch-card-${batch.id}`} accessibilityLabel={`Open batch ${batch.id}`}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.sm }}><Text style={[t.bodyStrong, { color: colors.foreground }]}>Batch {batch.id}</Text><ProgramChip label={batch.status === "published" ? "Published" : batch.status === "closed" ? "Closed" : "Draft"} tone={batch.status === "published" ? "live" : batch.status === "closed" ? "stopped" : "waiting"} /></View>
-              {batch.published ? <><Text style={[t.body, numeric, { color: colors.foreground }]}>{fullBatchPrice(batch.published.totalTuitionNpr)}</Text><Text style={[t.caption, { color: colors.mutedForeground }]}>{batch.published.lessons.length} lessons · starts {nepalDate(batch.published.lessons[0]!.startsAt)}</Text></> : <Text style={[t.caption, { color: colors.mutedForeground }]}>Not visible to students yet.</Text>}
-            </ProgramCardShell><ProgramButton label="Use as template" spoken={`Use Batch ${batch.id} as a template for a new batch`} disabled={busy !== null} icon="copy" onPress={() => void create(batch)} /></View>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.sm }}><Text style={[t.bodyStrong, { color: colors.foreground, flex: 1 }]}>{batch.format === "ongoing" ? `Tuition group ${batch.tuitionGroupId} · Period ${(batch.tuitionPeriod?.index ?? 0) + 1}` : `Batch ${batch.id}`}</Text><ProgramChip label={batch.status === "published" ? "Published" : batch.status === "closed" ? "Closed" : "Draft"} tone={batch.status === "published" ? "live" : batch.status === "closed" ? "stopped" : "waiting"} /></View>
+              {batch.published ? <><Text style={[t.body, numeric, { color: colors.foreground }]}>{fullBatchPrice(batch.published.totalTuitionNpr, batch.published.tuitionPeriod)}</Text><Text style={[t.caption, { color: colors.mutedForeground }]}>{batch.published.lessons.length} lessons · starts {nepalDate(batch.published.lessons[0]!.startsAt)}</Text></> : <Text style={[t.caption, { color: colors.mutedForeground }]}>Not visible to students yet.</Text>}
+            </ProgramCardShell>{batch.format !== "ongoing" ? <ProgramButton label="Use as template" spoken={`Use Batch ${batch.id} as a template for a new batch`} disabled={busy !== null} icon="copy" onPress={() => void create(batch)} /> : null}</View>
           ))}
-          <ProgramButton label="New batch" icon="plus" emphasis="primary" busy={busy === "create"} onPress={() => void create()} grow />
         </View> : null}
 
         {selected ? (
           <View style={{ gap: space.lg }}>
+            {period ? <TuitionPeriodSummary period={period} provisional={!selected.periodAnchorLocked} /> : ongoing ? <ProgramNotice title="A 30-day teaching period" body="Choose Lesson 1's date and time in the next step. That sets your group's first period. No money or enrolments are created." /> : null}
             {step === 0 ? <ProgramCardShell>
               <Field disabled={locked} label="Maximum students" example="How many students can you teach well together? Example: 6. Choose 1 to 10." value={form.capacity} onChangeText={(capacity) => setForm({ ...form, capacity })} keyboardType="number-pad" />
-              <Field disabled={locked} label="Full batch price (NPR)" example="One price per student for every lesson together, not per lesson. Example: 3000 for an eight-lesson guitar course. This is only an example, not a suggested price." value={form.totalTuitionNpr} onChangeText={(totalTuitionNpr) => setForm({ ...form, totalTuitionNpr })} keyboardType="number-pad" />
+              <Field disabled={locked} label={ongoing ? "Full 30-day price (NPR)" : "Full batch price (NPR)"} example={ongoing ? "One advance price per student for every listed lesson in this period. Example: 3000 for the period, not per lesson. This is an example, not a suggested price." : "One price per student for every lesson together, not per lesson. Example: 3000 for an eight-lesson guitar course. This is only an example, not a suggested price."} value={form.totalTuitionNpr} onChangeText={(totalTuitionNpr) => setForm({ ...form, totalTuitionNpr })} keyboardType="number-pad" />
               <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>{formSummary}</Text>
             </ProgramCardShell> : null}
             {step === 1 ? <View style={{ gap: space.sm }}>
@@ -403,7 +423,7 @@ export default function ProgramBatchPlannerScreen() {
                 <Text style={[t.title2, { color: colors.foreground }]}>What this batch includes</Text>
                 <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>{formSummary}</Text>
                 <Text style={[t.body, { color: colors.foreground }]}>{form.lessons.length} lessons · up to {form.capacity || "—"} students</Text>
-                <Text style={[t.callout, { color: colors.mutedForeground }]}>One full-batch price per student. Enrollment is planned to close at the start of Lesson 1.</Text>
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>{ongoing ? "One full-period price per student. Enrollment is planned to close at the period start, even if its first lesson is later." : "One full-batch price per student. Enrollment is planned to close at the start of Lesson 1."}</Text>
               </ProgramCardShell>
               <ProgramCardShell><Text style={[t.title2, { color: colors.foreground }]}>Every lesson · Nepal time</Text>{form.lessons.map((lesson, index) => <Text key={index} style={[t.callout, { color: colors.foreground }]}>{index + 1}. {batchDateValue(lesson.date) ? dates.formatBoth(batchDateValue(lesson.date)!) : "Date not chosen"} · {lesson.time || "Time not chosen"} · {lesson.durationMinutes} min</Text>)}</ProgramCardShell>
               <Text style={[t.callout, { color: colors.mutedForeground }]}>{dirty ? "These changes are not saved yet. Save the draft first; publishing is a separate confirmation." : "This is your saved draft. Students only see the version you explicitly publish."}</Text>
@@ -413,6 +433,7 @@ export default function ProgramBatchPlannerScreen() {
                 <ReviewCheck label="I checked every lesson date, Nepal time and duration." checked={checkedDates} disabled={busy !== null} onPress={() => setCheckedDates(!checkedDates)} />
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>Changing or saving details resets these checks. Nothing is published automatically.</Text>
               </ProgramCardShell> : null}
+              {ongoing && selected.status === "published" ? <ProgramButton label="Prepare / open next period" icon="repeat" disabled={dirty || busy !== null} busy={busy === "next"} onPress={() => void prepareNext()} /> : null}
               {selected.status === "published" ? <ProgramButton label="Close this batch" icon="x-circle" emphasis="danger" disabled={dirty || busy !== null} onPress={() => setConfirming("close")} /> : null}
               {selected.status === "closed" ? <ProgramNotice title="This batch is closed" body="It is no longer visible to students and cannot be edited." tone="stopped" icon="lock" /> : null}
             </> : null}

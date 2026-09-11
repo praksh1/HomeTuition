@@ -161,6 +161,21 @@ export const learningProgramBatchesTable = pgTable(
 );
 
 /** A lesson promised by one batch, ordered by position and stored as an absolute instant. */
+/** A stable group survives successive prepaid periods. Anchor freezes on first publication. */
+export const learningProgramTuitionGroupsTable = pgTable("learning_program_tuition_groups", {
+  id: serial("id").primaryKey(),
+  programId: integer("program_id").notNull().references(() => learningProgramsTable.id, { onDelete: "cascade" }),
+  anchorAt: timestamp("anchor_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index("learning_program_tuition_groups_program_idx").on(table.programId)]);
+
+/** Absence means an existing fixed course; never reinterpret historical batches as tuition. */
+export const learningProgramBatchPeriodsTable = pgTable("learning_program_batch_periods", {
+  batchId: integer("batch_id").primaryKey().references(() => learningProgramBatchesTable.id, { onDelete: "cascade" }),
+  groupId: integer("group_id").notNull().references(() => learningProgramTuitionGroupsTable.id, { onDelete: "cascade" }),
+  periodIndex: integer("period_index").notNull(),
+}, (table) => [uniqueIndex("learning_program_batch_periods_group_idx").on(table.groupId, table.periodIndex)]);
+
 export const learningProgramBatchLessonsTable = pgTable(
   "learning_program_batch_lessons",
   {

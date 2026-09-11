@@ -711,6 +711,14 @@ was added.
 
 ### Batch checkout gate: changes after a student buys (11 September 2026)
 
+The owner also approved two learning formats: ongoing tuition in shared 30-day group periods,
+and fixed courses. Ongoing periods are anchored at the group's first published lesson, not each
+student's payment. Each period has exact lessons and a full advance price, shown with BS + AD dates.
+This must NOT inherit old Monthly daily/25-attended/5-makeup rules: 30 days is not 30 lessons.
+Next-period preparation preserves group identity but never charges or enrolls a student. No
+mid-period proration, silent auto-debit or real Batch checkout is enabled. Implementation status:
+`.agents/worklog/2026-09-11-codex-tuition-periods.md`.
+
 New Program Batches are still previews: no Batch checkout or paid Batch enrollment exists. The
 Program-level `test_confirmed` accounting rehearsal must not be mistaken for this. Owner raised
 whether teachers can edit after payment. Before Batch checkout is enabled, each purchase must

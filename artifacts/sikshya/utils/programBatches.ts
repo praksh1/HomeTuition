@@ -1,3 +1,6 @@
+export interface TuitionPeriod { groupId: number; index: number; startsAt: string; endsAt: string }
+export const TUITION_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
+
 export interface ProgramBatchLessonDraft {
   date: string;
   time: string;
@@ -5,6 +8,7 @@ export interface ProgramBatchLessonDraft {
 }
 
 export interface ProgramBatchSnapshot {
+  tuitionPeriod?: TuitionPeriod;
   batchId: number;
   version: number;
   programId: number;
@@ -41,6 +45,10 @@ export function batchTimeDraft(value: Date): string {
 }
 
 export interface OwnerProgramBatch {
+  format?: "fixed" | "ongoing";
+  tuitionGroupId?: number | null;
+  tuitionPeriod?: TuitionPeriod | null;
+  periodAnchorLocked?: boolean;
   id: number;
   programId: number;
   currentProgramVersion?: number | null;
@@ -105,6 +113,24 @@ export function lessonDraft(value: { startsAt: string; durationMinutes: number }
   };
 }
 
-export function fullBatchPrice(amount: number): string {
-  return `NPR ${amount.toLocaleString()} total for the full batch`;
+export function fullBatchPrice(amount: number, period?: TuitionPeriod | null): string {
+  return `NPR ${amount.toLocaleString()} ${period ? "per student for this 30-day period" : "total for the full batch"}`;
+}
+
+/** Only the first unpublished period follows Lesson 1; later boundaries are server-owned. */
+export function draftTuitionPeriod(batch: OwnerProgramBatch | null, first: ProgramBatchLessonDraft): TuitionPeriod | null {
+  if (batch?.format !== "ongoing") return null;
+  if (batch.periodAnchorLocked) return batch.tuitionPeriod ?? null;
+  const at = Date.parse(`${first.date}T${first.time}:00+05:45`);
+  if (!Number.isFinite(at) || !batch.tuitionGroupId) return null;
+  return { groupId: batch.tuitionGroupId, index: 0, startsAt: new Date(at).toISOString(), endsAt: new Date(at + TUITION_PERIOD_MS).toISOString() };
+}
+
+export function draftPeriodIssues(period: TuitionPeriod | null, lessons: ProgramBatchLessonDraft[]): string[] {
+  if (!period) return [];
+  return lessons.flatMap((lesson, i) => {
+    const at = Date.parse(`${lesson.date}T${lesson.time}:00+05:45`);
+    return at < Date.parse(period.startsAt) || at >= Date.parse(period.endsAt) || at + lesson.durationMinutes * 60000 > Date.parse(period.endsAt)
+      ? [`Lesson ${i + 1} must start and finish inside this group's 30-day period.`] : [];
+  });
 }
