@@ -94,6 +94,11 @@ Local Metro build failed before the entry module because this Windows dependency
 not resolve @babel/traverse from react-native-worklets. No dependency/lockfile changed and the
 render suite did not run. Fresh CI installs/builds have passed; use the final preview CI build
 for deployment. Do not claim the changed legacy link label was separately browser-tested here.
+Final preview34f7e55 passed workflow34653027003 (601 API checks, rendered billing gate and full
+preview build); Worker ae872fe2-5778-47a3-8e01-79b5d5cbf318. Served HTML and three bundles matched
+the build; Railway staging status success. An initial dispatch used the wrong workflow filename
+and returned404 without starting anything; corrected to the repo's preview.yml. No deployment
+configuration changed. Added durable test-fixture scheduling note to prevent repeating CI traps.
 Finish production workflow34652719052 and verify exact served build. Owner reviews Teaching &
 earnings at preview /subscription before the billing transition is released to production.
 Build batch-specific purchases/allocations and session mapping before new classroom access.

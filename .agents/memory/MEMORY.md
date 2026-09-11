@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Test fixtures must respect schedules](test-fixtures-must-respect-schedules.md) — independent slots,
+  exact cancellation boundaries, and call-context cleanup; never weaken conflict checks for CI.
 - [Commission transition preserves learning](commission-transition-preserves-learning.md) — 11 Sep:
   retire new teacher-tier sales without deleting existing contracts, Monthly homework or chat;
   new class listings still have no real checkout/live-session mapping. Never double-charge.
