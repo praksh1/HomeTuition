@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: bfaff64
-- Status: in progress
+- Status: complete (preview implementation and deployment; owner physical acceptance pending)
 
 ## Requested
 
@@ -86,6 +86,34 @@ hierarchy with one simple class setup. Approval/signup explicitly unchanged. No 
 - `ac75a62` preview run `34638470626` passed: API/DB574/0, attendance74/0, discovery160/0,
   legacyplanner123, simplebrowser48. Final grouped-list commit/deployment pending.
 
+### Final release candidate
+
+- `bfa0908` groups renewal dates under one class name; includes regression tests and handover.
+  Preview run `34639174819` is the final release run. No new dependency or provider configuration.
+- New list descriptions use the explicit lightweight/custom category. Subject taxonomy/filter
+  refinement is not implemented here; text search still covers the teacher-written title/summary.
+- Rollback is redeploying an earlier reviewed preview commit, not dropping tables. Keep the new
+  setup rows and published snapshots even on rollback. Older readers may hide new lightweight
+  snapshots rather than display them incompletely; redeploying this feature restores their view.
+- Physical phone touch, iOS keyboard/native Back and poor-network measurements remain owner/device
+  tests. Automated viewport checks are not a claim of real-device testing.
+
+### Completed release
+
+- Final preview run **34639174819**, commit **bfa0908**, completed successfully. Gates: full workspace
+  typecheck; real API/DB/parity **574/0**; attendance **74/0**; discovery **160/0**; prior planner
+  **123**; new setup/grouped list **60**; preview isolation check, build and Worker deployment passed.
+- Local API unit **513/0**, final app unit **370/0**, design ratchet **94 hex / 282 sizes**, diff clean.
+- Refreshed the real signed-in preview after final deployment. Screenshot and current UI show ONE
+  class card with the published Sep15–Oct15 dates and draft Oct15–Nov14 dates, both at16:15Nepal,
+  correct BS/AD labels, clear separate actions, no route-name tab and no overlapping old screen.
+- Teacher testing entry: `https://hometuition-preview.praksh-dhakal.workers.dev/teaching-classes`.
+  Direct new setup: `/create-class`. Published sample: `/teaching-class/12`; next draft: `/teaching-class/13`.
+  Existing approved staging teacher session remains signed in. No new accounts or credentials.
+- Production was not merged or deployed. All implementation commits pushed on the preview branch:
+  `5c99a8e`, `9e41cca`, `ac75a62`, `bfa0908`. This closing record is a docs-only commit; no further
+  frontend deployment is needed for it.
+
 ## Problems and surprises
 
 - Initial JSX closure error and wrong reused calendar prop names: typecheck caught them, fixed.
@@ -111,8 +139,9 @@ yet emit followed-teacher news; do not claim notification parity before wiring/t
 
 ## Remaining risks / next pickup point
 
-Complete CI, inspect real staging create/save/publish journey, record commit/deployment and fixture
-IDs. Then owner physical review, not production. Native time picker/hardware Back need physical
+Next step belongs to the OWNER: test Create a class on a physical phone, then report usability
+feedback or approve a separate production release. No more coding or deployment is silently pending
+for this slice. Native time picker/hardware Back need physical
 Android/iPhone checks. Older programs remain on their earlier editor; migration is not this slice.
 Future enrolment/live-class wiring must use batch/period snapshots and actual paid receipts; this
 slice is simpler listing setup, not an operational paid-tuition launch.
