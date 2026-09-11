@@ -342,7 +342,12 @@ router.get(
       .orderBy(desc(learningProgramEnrollmentsTable.id));
     const ids = enrollments.map((row) => row.id);
     const allocations = ids.length
-      ? await db.select().from(learningProgramAllocationsTable).where(inArray(learningProgramAllocationsTable.enrollmentId, ids))
+      ? await db.select().from(learningProgramAllocationsTable)
+          .where(inArray(learningProgramAllocationsTable.enrollmentId, ids))
+          .orderBy(
+            asc(learningProgramAllocationsTable.enrollmentId),
+            asc(learningProgramAllocationsTable.lessonNumber),
+          )
       : [];
     const ledger = ids.length
       ? await db.select().from(learningProgramLedgerEntriesTable)

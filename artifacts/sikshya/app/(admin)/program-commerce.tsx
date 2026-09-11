@@ -8,12 +8,25 @@ import { readingWidth } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
+import {
+  orderedProgramCommerceHistory,
+  programCommerceEventLabel,
+  programCommerceNepalTime,
+  type ProgramCommerceHistoryEntry,
+} from "@/utils/programCommerceHistory";
 
 interface SetupProgram { id: number; title: string; lessonCount: number }
 interface SetupStudent { id: number; name: string; validUntil: string }
 interface Setup { programs: SetupProgram[]; students: SetupStudent[]; testAccessEnabled: boolean }
 interface Allocation { id: number; lessonNumber: number; grossAmountNpr: number; teacherAmountNpr: number; platformAmountNpr: number; state: string }
-interface ReconciliationEnrollment { id: number; title: string | null; totalTuitionNpr: number; paymentStatus: string; allocations: Allocation[] }
+interface ReconciliationEnrollment {
+  id: number;
+  title: string | null;
+  totalTuitionNpr: number;
+  paymentStatus: string;
+  allocations: Allocation[];
+  history: ProgramCommerceHistoryEntry[];
+}
 interface Reconciliation { notice: string; enrollments: ReconciliationEnrollment[] }
 
 const NEXT: Record<string, Array<{ event: string; label: string; reason?: boolean }>> = {
@@ -161,6 +174,25 @@ export default function ProgramCommerceDesk() {
                     </View>
                   </View>
                 ))}
+                {enrollment.history.length > 0 ? (
+                  <View style={{ gap: space.sm, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: colors.border }}>
+                    <Text style={[t.title3, { color: colors.foreground }]}>Rehearsal history</Text>
+                    <Text style={[t.caption, { color: colors.mutedForeground }]}>Oldest first · all times shown in Nepal time</Text>
+                    {orderedProgramCommerceHistory(enrollment.history).map((entry) => {
+                      const allocation = enrollment.allocations.find((row) => row.id === entry.allocationId);
+                      const note = entry.detail?.note?.trim();
+                      return (
+                        <View key={entry.id} style={{ gap: space.xxs, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceSunk }}>
+                          <Text style={[t.bodyStrong, { color: colors.foreground }]}>
+                            {allocation ? `Lesson ${allocation.lessonNumber}` : "Enrolment"} · {programCommerceEventLabel(entry.event)}
+                          </Text>
+                          <Text style={[t.caption, { color: colors.mutedForeground }]}>{programCommerceNepalTime(entry.createdAt)}</Text>
+                          {note ? <Text style={[t.callout, { color: colors.foreground }]}>Reason: {note}</Text> : null}
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
               </View>
             ))}
           </View>

@@ -79,6 +79,17 @@ inventing unapproved financial terms.
   Student: NPR 3,000 over three paid lessons. The reconciliation screen showed three future
   allocations of NPR 1,000 each, split NPR 700 teacher / NPR 300 Fadko. No provider reference,
   payment, refund or payout was created.
+- After owner approval of the initial three-role view, rehearsed three distinct lesson outcomes in
+  staging. Lesson 1 moved through delivered, disputed, complaint upheld, refund owed and simulated
+  refunded. Lesson 2 moved through delivered, complaint window closed, eligible and simulated paid
+  out. Lesson 3 recorded a teacher cancellation, waited for a remedy, accepted a replacement and
+  returned the same allocation to future. Every provider-facing completion remained simulated.
+- Added an operator-facing rehearsal history, oldest first, with plain event labels, decision notes
+  and timestamps pinned and labelled as Nepal time. Internal event codes are not shown; an unknown
+  future event remains visible as a generic recorded action.
+- Made the operator reconciliation query explicitly order allocations by enrolment and lesson
+  number. PostgreSQL had returned the three cards as lesson 3, lesson 1, lesson 2 after state
+  transitions; the screen must not depend on incidental row order.
 
 ## Problems and surprises
 
@@ -119,6 +130,10 @@ inventing unapproved financial terms.
   place, while the public Program remained readable. This is a testing-session limitation, not a
   product defect: operator, student and teacher verification must use separate browser profiles or
   separate devices, or sign out between roles.
+- The cancellation/replacement rehearsal exposed a material presentation gap: once a replacement
+  was agreed, the allocation correctly returned to `future`, but the screen looked identical to a
+  lesson that had never been cancelled. The API already returned its append-only history; the app
+  discarded it. The history is now rendered rather than changing the state machine or adding data.
 
 ## Fabrications found
 
@@ -139,5 +154,8 @@ gateway payment, refund or payout occurred.
 1. Owner should verify the operator reconciliation at `/program-commerce`, the student frozen
    terms at `/program/1`, and the teacher test statement at `/programs/statement`. Use separate
    browser profiles/devices for simultaneous roles because preview tabs share authentication.
-2. Do not merge to production or connect a gateway until the owner passes this review and the
+2. Owner should verify the new operator history after the updated preview is deployed: lesson 1
+   ends refunded, lesson 2 ends paid out, and lesson 3 is future but visibly records its cancellation
+   and replacement. All amounts and completions must remain labelled as rehearsal/test-only.
+3. Do not merge to production or connect a gateway until the owner passes this review and the
    provider/legal questions in `PROGRAM-COMMERCE.md` are resolved.
