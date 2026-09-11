@@ -1,5 +1,7 @@
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
+import { assertDailySchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
+import { ScheduleConflictError } from "../lib/scheduleIntervals";
 import {
   teacherLeaveTable,
   db,
@@ -742,6 +744,8 @@ router.post("/monthly/classes", requireAuth, async (req: Request, res: Response)
 
   try {
     const created = await db.transaction(async (tx) => {
+      await lockTeacherSchedule(tx, user.userId);
+      await assertDailySchedule(tx, { teacherId: user.userId, startMinute: body.startMinute!, durationMinutes: duration, timeZone: (body.timeZone ?? "Asia/Kathmandu").trim() || "Asia/Kathmandu", topic }, startedAt.getTime());
       const [klass] = await tx
         .insert(recurringSessionsTable)
         .values({
@@ -774,6 +778,7 @@ router.post("/monthly/classes", requireAuth, async (req: Request, res: Response)
     res.status(201).json({ class: await describeClass(created, user.userId) });
   } catch (err) {
     req.log?.error({ err }, "could not create a monthly class");
+    if (err instanceof ScheduleConflictError) { res.status(409).json({ error: err.message, issues: err.issues }); return; }
     res.status(500).json({ error: "Could not create the class. Please try again." });
   }
 });
@@ -1032,6 +1037,7 @@ router.patch("/monthly/classes/:id/time", requireAuth, async (req: Request, res:
     change = await changeDailyTime(klass, anchorMs, startMinute!);
   } catch (err) {
     req.log?.error({ err, klass: klass.id }, "could not move a monthly class's daily time");
+    if (err instanceof ScheduleConflictError) { res.status(409).json({ error: err.message, issues: err.issues }); return; }
     res.status(500).json({ error: "Could not move the class. Nothing was changed — please try again." });
     return;
   }

@@ -49,7 +49,7 @@ export function batchScheduleIssues(lessons: ProgramBatchLessonDraft[], nowMs: n
     }
     const instant = Date.parse(`${lesson.date}T${lesson.time}:00+05:45`);
     if (instant <= nowMs) issues.push(`Lesson ${index + 1}: choose a future start time in Nepal.`);
-    if (instant <= previous) issues.push(`Lesson ${index + 1}: dates must be in order, without duplicate start times.`);
+    if (instant < previous) issues.push(`Lesson ${index + 1}: dates must be in order.`);
     if (![30, 45, 60, 90].includes(lesson.durationMinutes)) issues.push(`Lesson ${index + 1}: choose 30, 45, 60 or 90 minutes.`);
     previous = instant;
   });

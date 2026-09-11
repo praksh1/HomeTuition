@@ -1,5 +1,6 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
+import { ScheduleConflictError } from "./lib/scheduleIntervals";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
@@ -66,6 +67,10 @@ app.use("/api", router);
  * The other is simply that a stack trace is not for the public.
  */
 app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof ScheduleConflictError) {
+    res.status(409).json({ error: err.message, issues: err.issues });
+    return;
+  }
   const status = typeof (err as { status?: number })?.status === "number" ? (err as { status: number }).status : 500;
   const type = (err as { type?: string })?.type;
 

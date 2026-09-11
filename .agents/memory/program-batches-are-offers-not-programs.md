@@ -31,3 +31,9 @@ until Save succeeds.
 Paid-Batch edits are a checkout RELEASE BLOCKER, not a shipped safeguard: no Batch-level paid
 enrollment exists yet. The Program rehearsal is not that system. Before enabling payments, bind and
 freeze the purchased Batch version/terms and implement audited changes/cancellation/remedies.
+
+Owner decision, 11 September: a teacher cannot publish overlapping lessons, across Batches,
+Programs, Single Classes, Monthly classes or make-ups. Conflicting drafts stay saveable with
+warnings. Use full occupied intervals, not just equal start times. End-to-start adjacency is
+allowed, no compulsory break; different teachers may teach simultaneously. Student purchase
+conflicts should also be blocked when Batch checkout is built; not an existing checkout feature.

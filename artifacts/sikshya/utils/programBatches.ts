@@ -44,6 +44,7 @@ export interface OwnerProgramBatch {
   id: number;
   programId: number;
   currentProgramVersion?: number | null;
+  scheduleIssues?: string[];
   status: "draft" | "published" | "closed" | string;
   capacity: number | null;
   totalTuitionNpr: number | null;

@@ -29,6 +29,7 @@ import {
   type Clawback,
 } from "./monthly";
 import { classInstants, instantOfLocalTime, localDayKey } from "./monthlySchedule";
+import { assertDailySchedule, assertTeacherSchedule, lockTeacherSchedule } from "./teacherSchedule";
 
 /** Anything that can run a query — the database, or a transaction on it. */
 type Db = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -126,10 +127,14 @@ export async function generateCycle(
   cycleStartMs: number,
   conn: Db = db,
 ): Promise<number> {
+  if (conn === db) return db.transaction((tx) => generateCycle(klass, cycleIndex, cycleStartMs, tx));
+  await lockTeacherSchedule(conn, klass.teacherId);
+  const current = await classById(klass.id, conn);
+  if (!current || current.status !== "active") return 0;
   const endMs = cycleEnd(cycleStartMs);
   if (endMs === null) return 0;
 
-  const instants = classInstants(cycleStartMs, endMs, klass.startMinute, klass.timeZone);
+  const instants = classInstants(cycleStartMs, endMs, current.startMinute, current.timeZone);
   if (instants.length === 0) return 0;
 
   await conn
@@ -402,6 +407,7 @@ export async function materialiseDueDays(
   const made: number[] = [];
   for (const day of due) {
     const createdId = await db.transaction(async (tx) => {
+      await lockTeacherSchedule(tx, klass.teacherId);
       // Re-read under a lock. Two readers hitting this at the same instant would otherwise
       // both see an unmaterialised day and create two classes for it.
       const [locked] = await tx
@@ -651,6 +657,8 @@ export async function changeDailyTime(
   now: number = Date.now(),
 ): Promise<TimeChange> {
   return db.transaction(async (tx) => {
+    await lockTeacherSchedule(tx, klass.teacherId);
+    await assertDailySchedule(tx, { ...klass, startMinute: newStartMinute }, now, { recurringId: klass.id });
     const days = await tx
       .select({
         id: recurringDaysTable.id,
@@ -669,6 +677,11 @@ export async function changeDailyTime(
       .orderBy(asc(recurringDaysTable.scheduledFor));
 
     const cycles = new Set<number>();
+    const proposed = days.map((day) => {
+      const [year, month, date] = localDayKey(day.scheduledFor.getTime(), klass.timeZone).split("-").map(Number);
+      return { startsAt: new Date(instantOfLocalTime(year!, month!, date!, newStartMinute, klass.timeZone)), durationMinutes: klass.durationMinutes, label: `Monthly lesson “${klass.topic}”` };
+    });
+    await assertTeacherSchedule(tx, klass.teacherId, proposed, { recurringId: klass.id });
     let classesMoved = 0;
     let nextAt: Date | null = null;
 
@@ -1204,6 +1217,7 @@ export async function addMakeup(
   cycleIndex: number,
 ): Promise<{ ok: true; id: number } | { ok: false; reason: string }> {
   return db.transaction(async (tx) => {
+    await lockTeacherSchedule(tx, klass.teacherId);
     const [missed] = await tx
       .select()
       .from(recurringDaysTable)
@@ -1281,6 +1295,7 @@ export async function addMakeup(
       return { ok: false as const, reason: "There is already a class at that time. Pick another slot." };
     }
 
+    await assertTeacherSchedule(tx, klass.teacherId, [{ startsAt: at, durationMinutes: klass.durationMinutes, label: `Make-up “${klass.topic}”` }]);
     const used = await makeupsIn(klass.id, cycleIndex, tx);
     const [total] = await tx
       .select({ n: count() })

@@ -174,7 +174,7 @@ export default function ProgramBatchPlannerScreen() {
         capacity: Number(sending.capacity), totalTuitionNpr: Number(sending.totalTuitionNpr), lessons: sending.lessons,
       });
       replaceSelected(answer.batch, JSON.stringify(sending));
-      setNotice(JSON.stringify(formRef.current) === JSON.stringify(formOf(answer.batch)) ? "Draft saved. Review the details below, then publish when you are ready." : "Earlier changes saved. Your newer edits are still here and need saving.");
+      setNotice(JSON.stringify(formRef.current) === JSON.stringify(formOf(answer.batch)) ? (answer.batch.scheduleIssues?.length ? "Draft saved, but some lesson times conflict. Change those times and save again before publishing." : "Draft saved. Review the details below, then publish when you are ready.") : "Earlier changes saved. Your newer edits are still here and need saving.");
     } catch (err) {
       if (err instanceof ApiError) {
         const details = (err as ApiError & { data?: { issues?: string[] } }).data?.issues;
@@ -331,7 +331,8 @@ export default function ProgramBatchPlannerScreen() {
         {!selected || step === 2 ? <ProgramNotice title="Planning preview only" body="Students cannot join or pay yet. No payment gateway or real money is connected to these batches." tone="waiting" icon="shield" /> : null}
         {failure ? <ProgramNotice title="Something did not work" body={failure} tone="stopped" icon="alert-circle" /> : null}
         {issues.length > 0 ? <View accessibilityRole="alert"><ProgramNotice title="Check these details" tone="stopped" icon="alert-circle">{issues.map((issue) => <Text key={issue} style={[t.callout, { color: colors.mutedForeground }]}>{issue}</Text>)}</ProgramNotice></View> : null}
-        {notice ? <View accessibilityLiveRegion="polite"><ProgramNotice title={notice} tone="neutral" /></View> : null}
+        {notice && issues.length === 0 ? <View accessibilityLiveRegion="polite"><ProgramNotice title={notice} tone="neutral" /></View> : null}
+        {selected && !dirty && issues.length === 0 && !!selected.scheduleIssues?.length ? <View accessibilityLiveRegion="polite"><ProgramNotice title="Lesson times need attention" body="Your draft is safe. Publishing checks your whole teaching schedule again and blocks overlapping lessons."><View style={{ gap: space.sm }}>{selected.scheduleIssues.map((message, index) => <Text key={index} style={[t.callout, { color: colors.warn }]}>{message}</Text>)}</View></ProgramNotice></View> : null}
         {!selected ? <View style={{ gap: space.sm }}>
           <Text style={[t.title2, { color: colors.foreground }]}>Your batches</Text>
           {batches.length === 0 ? <Text style={[t.callout, { color: colors.mutedForeground }]}>No batch has been planned for this Program.</Text> : batches.map((batch) => (

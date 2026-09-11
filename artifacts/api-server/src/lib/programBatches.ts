@@ -106,8 +106,8 @@ export function validateProgramBatch(
     });
   }
   for (let index = 1; index < lessons.length; index += 1) {
-    if (lessons[index]!.startsAt.getTime() <= lessons[index - 1]!.startsAt.getTime()) {
-      issues.push("Put lessons in date and time order, without duplicate times.");
+    if (lessons[index]!.startsAt.getTime() < lessons[index - 1]!.startsAt.getTime()) {
+      issues.push("Put lessons in date and time order.");
       break;
     }
   }

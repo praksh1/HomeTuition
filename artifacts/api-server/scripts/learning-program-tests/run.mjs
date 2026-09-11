@@ -1462,6 +1462,7 @@ async function main() {
     await batchPublication();
     await schemaParity();
     await nothingElseMoved(watched);
+    await scheduleConflicts();
   } catch (err) {
     console.error(err);
     failed += 1;
@@ -1506,6 +1507,103 @@ async function batchPublication() {
   const closed = await api(`/learning-program-batches/${id}/close`, { method: "POST", token: teacher.token });
   check("closed Batch remains closed under an edit attempt", closed.status === 200 && (await patch(input)).status === 409);
   check("closed Batch cannot be republished", (await publish()).status === 409);
+}
+
+async function scheduleConflicts() {
+  console.log("\n[Teacher schedule] Cross-product conflicts, drafts, snapshots and concurrent writers");
+  const teacher = await register("teacher"), other = await register("teacher");
+  const tid = teacher.user.id;
+  const program = await publishOne(teacher.token, "custom");
+  const another = await publishOne(teacher.token, "custom");
+  const otherProgram = await publishOne(other.token, "custom");
+  const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const at = (time) => `${date}T${time}:00+05:45`;
+  const input = (time, durationMinutes = 60) => ({ capacity: 6, totalTuitionNpr: 3000, lessons: [{ date, time, durationMinutes }] });
+  const patch = (id, value, token = teacher.token) => api(`/learning-program-batches/${id}`, { method: "PATCH", token, body: value });
+  const publish = (id, token = teacher.token) => api(`/learning-program-batches/${id}/publish`, { method: "POST", token, body: {} });
+  const close = (id) => api(`/learning-program-batches/${id}/close`, { method: "POST", token: teacher.token });
+  const create = async (p = program, token = teacher.token) => {
+    const result = await api(`/learning-programs/${p}/batches`, { method: "POST", token, body: {} });
+    assertStatus(result, 201, "create batch fixture");
+    return result.body.batch.id;
+  };
+  const createClass = (time, token = teacher.token) => api("/sessions", { method: "POST", token, body: { subject: "Guitar", topic: "Schedule test class", date: at(time), duration: 60, maxStudents: 10, price: 500 } });
+  function assertStatus(result, expected, context) { if (result.status !== expected) throw new Error(`${context}: ${result.status} ${JSON.stringify(result.body)}`); }
+  try {
+    const a = await create(), b = await create(another);
+    let saved = await patch(a, { ...input("17:00"), lessons: [...input("17:00").lessons, ...input("17:30", 30).lessons] });
+    check("overlapping draft saves and names both lessons", saved.status === 200 && /Lesson 2.*Lesson 1/.test(saved.body.batch.scheduleIssues.join(" ")));
+    let refused = await publish(a);
+    check("duration overlap within Batch blocks publication", refused.status === 409 && refused.body.issues.length > 0);
+    check("refused publication writes no version or snapshot", sql(`select version || ':' || status || ':' || (published_snapshot is null)::text from learning_program_batches where id=${a}`) === "0:draft:true");
+    saved = await patch(a, { ...input("17:00"), lessons: [...input("17:00").lessons, ...input("17:00").lessons] });
+    check("identical starts can be saved but cannot be published", saved.status === 200 && (await publish(a)).status === 409);
+    await patch(a, input("17:00"));
+    await patch(b, input("17:30"));
+    const race = await Promise.all([publish(a), publish(b)]);
+    check("cross-Program simultaneous overlapping publications permit exactly one", race.filter((r) => r.status === 200).length === 1 && race.filter((r) => r.status === 409).length === 1);
+    const winner = race[0].status === 200 ? a : b, loser = winner === a ? b : a;
+    const oldTime = winner === a ? "17:00" : "17:30";
+    const otherBatch = await create(otherProgram, other.token);
+    await patch(otherBatch, input("17:30"), other.token);
+    check("different teachers may teach concurrently", (await publish(otherBatch, other.token)).status === 200);
+    saved = await patch(winner, input("12:00"));
+    check("saved replacement keeps previous published time reserved", saved.status === 200 && saved.body.batch.published.lessons[0].startsAt === new Date(at(oldTime)).toISOString());
+    await patch(loser, input("17:45", 30));
+    check("draft time does not erase original published reservation", (await publish(loser)).status === 409);
+    check("ordinary class cannot be created over a published Batch", (await createClass("17:45")).status === 409);
+    await patch(loser, input("12:00"));
+    check("unpublished replacement does not reserve its draft time", (await publish(loser)).status === 200);
+    await close(winner); await close(loser);
+    const ordinary = await createClass("17:00");
+    assertStatus(ordinary, 201, "ordinary class fixture");
+    const classId = ordinary.body.session?.id ?? ordinary.body.id;
+    const c = await create();
+    await patch(c, input("17:30"));
+    check("Batch cannot cover an ordinary class", (await publish(c)).status === 409);
+    await patch(c, input("18:00"));
+    check("back-to-back Batch starts when ordinary class ends", (await publish(c)).status === 200);
+    check("duration-only edit cannot grow into Batch", (await api(`/sessions/${classId}`, { method: "PATCH", token: teacher.token, body: { duration: 90 } })).status === 409);
+    check("rejected extension leaves duration unchanged", Number(sql(`select duration from sessions where id=${classId}`)) === 60);
+    check("reschedule cannot move into Batch", (await api(`/sessions/${classId}`, { method: "PATCH", token: teacher.token, body: { date: at("18:15") } })).status === 409);
+    await close(c);
+    const d = await create(); await patch(d, input("20:00"));
+    const mixedRace = await Promise.all([publish(d), createClass("20:00")]);
+    check("Batch versus Single Class race commits exactly one", mixedRace.filter((r) => r.status === 200 || r.status === 201).length === 1 && mixedRace.filter((r) => r.status === 409).length === 1);
+    await close(d);
+    sql(`delete from sessions where teacher_id=${tid}`);
+    const plan = Number(sql(`insert into teacher_plans (teacher_id,price,cycle_anchor) values (${tid},1000,now()) returning id` ).split("\n")[0]);
+    const futureBatch = await create(); await patch(futureBatch, input("16:00")); await publish(futureBatch);
+    const monthly = (minute) => api("/monthly/classes", { method: "POST", token: teacher.token, body: { subject: "Guitar", topic: "Daily guitar", startMinute: minute, durationMinutes: 60, monthlyPrice: 1000, maxStudents: 10, timeZone: "Asia/Kathmandu" } });
+    const refusedMonthly = await monthly(16 * 60 + 30);
+    check("new Monthly timetable cannot overlap a Batch", refusedMonthly.status === 409, JSON.stringify(refusedMonthly.body));
+    check("refused Monthly creation is atomic", Number(sql(`select count(*) from recurring_sessions where teacher_id=${tid}`)) === 0);
+    await close(futureBatch);
+    // Explicit DB fixtures: cover a repeating timetable beyond its generated cycle and a make-up.
+    const course = Number(sql(`insert into recurring_sessions (plan_id,teacher_id,subject,topic,start_minute,duration_minutes,monthly_price) values (${plan},${tid},'Guitar','Daily guitar',960,60,1000) returning id`).split("\n")[0]);
+    const farDate = new Date(Date.now() + 100 * 86400000).toISOString().slice(0, 10);
+    const e = await create();
+    await patch(e, { ...input("16:30"), lessons: [{ date: farDate, time: "16:30", durationMinutes: 30 }] });
+    check("ungenerated future Monthly recurrence still reserves its time", (await publish(e)).status === 409);
+    sql(`insert into recurring_days (recurring_id,cycle_index,kind,scheduled_for,status) values (${course},0,'makeup','${at("19:00")}','planned')`);
+    await patch(e, input("19:15", 30));
+    check("Monthly make-up also blocks Batch publication", (await publish(e)).status === 409);
+    sql(`update recurring_days set status='cancelled' where recurring_id=${course}`);
+    check("cancelled make-up releases its time", (await publish(e)).status === 200);
+    // Create a missed day for the actual make-up endpoint, respecting the active cycle.
+    const missed = Number(sql(`insert into recurring_days (recurring_id,cycle_index,kind,scheduled_for,status) values (${course},0,'regular',now() - interval '1 hour','missed') returning id`).split("\n")[0]);
+    const makeup = await api(`/monthly/classes/${course}/makeups`, { method: "POST", token: teacher.token, body: { missedDayId: missed, at: at("19:20") } });
+    check("new make-up cannot overlap a published Batch", makeup.status === 409, JSON.stringify(makeup.body));
+    const cancelled = await createClass("10:00");
+    assertStatus(cancelled, 201, "cancellation fixture");
+    const cancelledId = cancelled.body.session?.id ?? cancelled.body.id;
+    sql(`update sessions set status='cancelled' where id=${cancelledId}`);
+    const f = await create(); await patch(f, input("10:00"));
+    check("cancelled ordinary classes release their time", (await publish(f)).status === 200);
+  } finally {
+    // Only synthetic fixtures created here, never existing or production rows.
+    sql(`delete from recurring_days where recurring_id in (select id from recurring_sessions where teacher_id=${tid}); delete from recurring_sessions where teacher_id=${tid}; delete from teacher_plans where teacher_id=${tid}; delete from sessions where teacher_id=${tid}`);
+  }
 }
 
 await main();

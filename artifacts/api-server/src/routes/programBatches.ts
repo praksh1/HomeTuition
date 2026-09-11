@@ -11,6 +11,7 @@ import {
 
 import { requireAuth } from "../middlewares/requireAuth";
 import { recordActivity } from "../lib/activityLog";
+import { assertTeacherSchedule, lockTeacherSchedule, teacherScheduleIssues } from "../lib/teacherSchedule";
 import { publishedSnapshotFor } from "../lib/learningProgramState";
 import { batchSnapshot, readBatchSnapshot, sameBatchOffer, validateProgramBatch } from "../lib/programBatches";
 
@@ -40,11 +41,12 @@ async function lessonsFor(batchId: number, reader: { select: typeof db.select } 
 
 async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
   const lessons = await lessonsFor(row.id, reader);
-  const [program] = await reader.select({ version: learningProgramsTable.version }).from(learningProgramsTable).where(eq(learningProgramsTable.id, row.programId)).limit(1);
+  const [program] = await reader.select({ version: learningProgramsTable.version, teacherId: learningProgramsTable.teacherId }).from(learningProgramsTable).where(eq(learningProgramsTable.id, row.programId)).limit(1);
   return {
     id: row.id,
     programId: row.programId,
     currentProgramVersion: program?.version ?? null,
+    scheduleIssues: program ? await teacherScheduleIssues(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : [],
     status: row.status,
     capacity: row.capacity,
     totalTuitionNpr: row.totalTuitionNpr,
@@ -181,6 +183,7 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
   if (!owned) return;
   // The same Batch lock as PATCH: read one complete draft, and serialize repeated publication.
   const result = await db.transaction(async (tx) => {
+  await lockTeacherSchedule(tx, owned.program.teacherId);
   const [program] = await tx.select().from(learningProgramsTable).where(eq(learningProgramsTable.id, owned.program.id)).for("update");
   const [batch] = await tx.select().from(learningProgramBatchesTable).where(eq(learningProgramBatchesTable.id, owned.batch.id)).for("update");
   if (!program || !batch) { res.status(404).json({ error: "That batch was not found." }); return null; }
@@ -232,6 +235,7 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
   }
   const future = validateProgramBatch(input, Date.now());
   if (!future.ok) { res.status(422).json({ error: "This batch is not ready to publish.", issues: future.issues }); return null; }
+  await assertTeacherSchedule(tx, joined.program.teacherId, validation.lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: batch.id });
   const [updated] = await tx
     .update(learningProgramBatchesTable)
     .set({ status: "published", version, publishedAt: new Date(), publishedSnapshot: snapshot })

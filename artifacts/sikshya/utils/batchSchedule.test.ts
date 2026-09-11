@@ -46,6 +46,6 @@ test("step validation names bad entries and leaves authority with the server", (
   assert.equal(batchDetailsIssues("", "1.5").length, 2);
   assert.deepEqual(batchScheduleIssues([first], Date.parse("2028-02-28T10:44:59Z")), []);
   assert.match(batchScheduleIssues([first], Date.parse("2028-02-28T10:45:00Z"))[0]!, /future/);
-  assert.match(batchScheduleIssues([first, first], 0)[0]!, /order/);
+  assert.deepEqual(batchScheduleIssues([first, first], 0), [], "overlapping drafts remain saveable; publication is checked by the server");
   assert.match(batchScheduleIssues([{ ...first, date: "2027-02-29" }], 0)[0]!, /valid/);
 });

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, testClassesTable, usersTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
+import { assertTeacherSchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
 import {
   JOIN_WINDOW_MINUTES,
   accessRefusalFor,
@@ -626,7 +627,10 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
 
   const [userRow] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, user.userId));
 
-  const [session] = await db.insert(sessionsTable).values({
+  const session = await db.transaction(async (tx) => {
+  await lockTeacherSchedule(tx, user.userId);
+  await assertTeacherSchedule(tx, user.userId, [{ startsAt: when!, durationMinutes: duration ?? 60, label: `Class “${topic!.trim()}”` }]);
+  const [created] = await tx.insert(sessionsTable).values({
     teacherId: user.userId,
     teacherName: userRow?.name ?? "Unknown",
     subject: subject!.trim(),
@@ -638,6 +642,9 @@ router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
     price: price!,
     status: "upcoming",
   }).returning();
+
+  return created!;
+  });
 
   /**
    * A class created under a test grant is written down as one, once, now.
@@ -1272,6 +1279,8 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       // Nobody else may spend this teacher's allowance until this transaction ends. Per teacher,
       // so two teachers moving classes at the same moment never wait on each other.
       await lockScheduleQuota(tx, user.userId);
+      const [current] = await tx.select().from(sessionsTable).where(eq(sessionsTable.id, id)).for("update");
+      await assertTeacherSchedule(tx, user.userId, [{ startsAt: newDate!, durationMinutes: duration ?? current!.duration, label: `Class “${existing.topic}”` }], { sessionId: id });
 
       // Counted again, now that the count cannot change underneath us. This is the check that
       // decides; the one above the write only saves a lock when the answer is already no.
@@ -1326,7 +1335,15 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
     session = outcome.updated;
     movedAffected = outcome.affected;
   } else {
-    [session] = await db.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
+    session = await db.transaction(async (tx) => {
+      await lockTeacherSchedule(tx, user.userId);
+      const [current] = await tx.select().from(sessionsTable).where(eq(sessionsTable.id, id)).for("update");
+      if ((updates.date !== undefined || updates.duration !== undefined) && current && ["upcoming", "live"].includes(current.status)) {
+        await assertTeacherSchedule(tx, user.userId, [{ startsAt: newDate ?? current.date, durationMinutes: duration ?? current.duration, label: `Class “${current.topic}”` }], { sessionId: id });
+      }
+      const [updated] = await tx.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
+      return updated!;
+    });
   }
 
   if (topic !== undefined || subject !== undefined) {
