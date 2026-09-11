@@ -25,6 +25,8 @@ import { apiGet, apiPatch, apiPost, ApiError } from "@/utils/api";
 import { BATCH_MAX_LESSONS, BATCH_WEEKDAYS, batchDetailsIssues, batchScheduleIssues, calendarDay, repeatLessons } from "@/utils/batchSchedule";
 import {
   batchDateValue,
+  batchMatchesPublication,
+  batchTemplate,
   batchTimeDraft,
   batchTimeValue,
   fullBatchPrice,
@@ -70,6 +72,9 @@ export default function ProgramBatchPlannerScreen() {
   const [issues, setIssues] = useState<string[]>([]);
   const [confirming, setConfirming] = useState<"leave" | "publish" | "close" | "replace" | null>(null);
   const [step, setStep] = useState<0 | 1 | 2>(0);
+  const [editing, setEditing] = useState(true);
+  const [checkedPrice, setCheckedPrice] = useState(false);
+  const [checkedDates, setCheckedDates] = useState(false);
   const [repeatCount, setRepeatCount] = useState("8");
   const [weekdays, setWeekdays] = useState<number[] | null>(null);
   const [replacement, setReplacement] = useState<ProgramBatchLessonDraft[] | null>(null);
@@ -77,11 +82,13 @@ export default function ProgramBatchPlannerScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const operation = useRef(false);
   const scroll = useRef<ScrollView>(null);
-  const locked = busy !== null || selected?.status === "closed";
+  const locked = busy !== null || selected?.status === "closed" || !editing;
+  const publishedUnchanged = selected !== null && batchMatchesPublication(selected) && JSON.stringify(form) === accepted;
   const moveTo = (next: 0 | 1 | 2) => { setStep(next); setIssues([]); setNotice(null); scroll.current?.scrollTo({ y: 0, animated: false }); };
   const [pickingDateFor, setPickingDateFor] = useState<number | null>(null);
   const [pickingTimeFor, setPickingTimeFor] = useState<number | null>(null);
   const dirty = selected !== null && JSON.stringify(form) !== accepted;
+  useEffect(() => { setCheckedPrice(false); setCheckedDates(false); }, [form, selected?.id]);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
   const [departure, setDeparture] = useState<(() => void) | null>(null);
   useEffect(() => { if (departure) departure(); }, [departure]);
@@ -124,7 +131,7 @@ export default function ProgramBatchPlannerScreen() {
     setNotice(null);
   };
 
-  const create = async () => {
+  const create = async (template?: OwnerProgramBatch) => {
     if (operation.current) return;
     operation.current = true;
     setBusy("create");
@@ -133,9 +140,15 @@ export default function ProgramBatchPlannerScreen() {
       const answer = await apiPost<{ batch: OwnerProgramBatch }>(`/learning-programs/${programId}/batches`, {});
       setBatches((current) => [answer.batch, ...current]);
       choose(answer.batch);
+      setEditing(true);
+      if (template) {
+        setForm(batchTemplate(template));
+        setRepeatCount(String(template.lessons.length || 1));
+      }
       setWeekdays(null);
       setExpandedLesson(0);
       moveTo(0);
+      if (template) setNotice(`Settings copied from Batch ${template.id}. All dates are cleared. Check the price and class size, choose new dates, then review before publishing. The original is unchanged; this copy is not saved yet.`);
     } catch (err) {
       setFailure(err instanceof ApiError ? err.message : "Fadko could not start the batch.");
     } finally { operation.current = false; setBusy(null); }
@@ -172,6 +185,7 @@ export default function ProgramBatchPlannerScreen() {
 
   const act = async (action: "publish" | "close") => {
     if (!selected || operation.current || JSON.stringify(formRef.current) !== accepted) return;
+    if (action === "publish" && (batchMatchesPublication(selected) || !checkedPrice || !checkedDates)) return;
     operation.current = true;
     const sending = JSON.stringify(formRef.current);
     setBusy(action);
@@ -179,6 +193,7 @@ export default function ProgramBatchPlannerScreen() {
     try {
       const answer = await apiPost<{ batch: OwnerProgramBatch }>(`/learning-program-batches/${selected.id}/${action}`, {});
       replaceSelected(answer.batch, sending);
+      setEditing(false);
       setNotice(action === "close" ? "Batch closed. Students can no longer see it." : "Batch preview published. Joining and payment are not open yet.");
     } catch (err) {
       if (err instanceof ApiError) {
@@ -320,10 +335,10 @@ export default function ProgramBatchPlannerScreen() {
         {!selected ? <View style={{ gap: space.sm }}>
           <Text style={[t.title2, { color: colors.foreground }]}>Your batches</Text>
           {batches.length === 0 ? <Text style={[t.callout, { color: colors.mutedForeground }]}>No batch has been planned for this Program.</Text> : batches.map((batch) => (
-            <ProgramCardShell key={batch.id} onPress={() => { if (!operation.current) { choose(batch); setWeekdays(null); setExpandedLesson(0); moveTo(batch.status === "closed" ? 2 : 0); } }} testID={`batch-card-${batch.id}`} accessibilityLabel={`Open batch ${batch.id}`}>
+            <View key={batch.id} style={{ gap: space.xs }}><ProgramCardShell onPress={() => { if (!operation.current) { choose(batch); setEditing(batch.status !== "closed" && !batchMatchesPublication(batch)); setWeekdays(null); setExpandedLesson(0); moveTo(batch.status === "published" || batch.status === "closed" ? 2 : 0); } }} testID={`batch-card-${batch.id}`} accessibilityLabel={`Open batch ${batch.id}`}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.sm }}><Text style={[t.bodyStrong, { color: colors.foreground }]}>Batch {batch.id}</Text><ProgramChip label={batch.status === "published" ? "Published" : batch.status === "closed" ? "Closed" : "Draft"} tone={batch.status === "published" ? "live" : batch.status === "closed" ? "stopped" : "waiting"} /></View>
               {batch.published ? <><Text style={[t.body, numeric, { color: colors.foreground }]}>{fullBatchPrice(batch.published.totalTuitionNpr)}</Text><Text style={[t.caption, { color: colors.mutedForeground }]}>{batch.published.lessons.length} lessons · starts {nepalDate(batch.published.lessons[0]!.startsAt)}</Text></> : <Text style={[t.caption, { color: colors.mutedForeground }]}>Not visible to students yet.</Text>}
-            </ProgramCardShell>
+            </ProgramCardShell><ProgramButton label="Use as template" spoken={`Use Batch ${batch.id} as a template for a new batch`} disabled={busy !== null} icon="copy" onPress={() => void create(batch)} /></View>
           ))}
           <ProgramButton label="New batch" icon="plus" emphasis="primary" busy={busy === "create"} onPress={() => void create()} grow />
         </View> : null}
@@ -391,21 +406,34 @@ export default function ProgramBatchPlannerScreen() {
               </ProgramCardShell>
               <ProgramCardShell><Text style={[t.title2, { color: colors.foreground }]}>Every lesson · Nepal time</Text>{form.lessons.map((lesson, index) => <Text key={index} style={[t.callout, { color: colors.foreground }]}>{index + 1}. {batchDateValue(lesson.date) ? dates.formatBoth(batchDateValue(lesson.date)!) : "Date not chosen"} · {lesson.time || "Time not chosen"} · {lesson.durationMinutes} min</Text>)}</ProgramCardShell>
               <Text style={[t.callout, { color: colors.mutedForeground }]}>{dirty ? "These changes are not saved yet. Save the draft first; publishing is a separate confirmation." : "This is your saved draft. Students only see the version you explicitly publish."}</Text>
-              {selected.status === "published" ? <ProgramButton label="Close this batch" icon="x-circle" emphasis="danger" disabled={dirty || locked} onPress={() => setConfirming("close")} /> : null}
+              {!publishedUnchanged && selected.status !== "closed" ? <ProgramCardShell>
+                <Text style={[t.title3, { color: colors.foreground }]}>Check before publishing</Text>
+                <ReviewCheck label="I checked the class size and full price per student." checked={checkedPrice} disabled={busy !== null} onPress={() => setCheckedPrice(!checkedPrice)} />
+                <ReviewCheck label="I checked every lesson date, Nepal time and duration." checked={checkedDates} disabled={busy !== null} onPress={() => setCheckedDates(!checkedDates)} />
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>Changing or saving details resets these checks. Nothing is published automatically.</Text>
+              </ProgramCardShell> : null}
+              {selected.status === "published" ? <ProgramButton label="Close this batch" icon="x-circle" emphasis="danger" disabled={dirty || busy !== null} onPress={() => setConfirming("close")} /> : null}
               {selected.status === "closed" ? <ProgramNotice title="This batch is closed" body="It is no longer visible to students and cannot be edited." tone="stopped" icon="lock" /> : null}
             </> : null}
           </View>
         ) : null}
       </ScrollView>
       {selected && selected.status !== "closed" ? <View style={{ borderTopWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}><View style={{ width: "100%", maxWidth: marketplaceColumnMax, alignSelf: "center", paddingHorizontal: gutter, paddingVertical: space.sm, gap: space.xs }}>
-        <Text style={[t.caption, { color: colors.mutedForeground }]}>{busy ? "Please wait — saving your change…" : dirty ? "Unsaved changes · Next does not save" : "Draft saved"}</Text>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>{busy ? "Please wait — saving your change…" : dirty ? "Unsaved changes · Next does not save" : publishedUnchanged ? "Published version is up to date" : "Draft saved"}</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
-          {step > 0 ? <ProgramButton label="Previous" disabled={locked} onPress={() => moveTo(step === 2 ? 1 : 0)} /> : null}
-          {step < 2 ? <ProgramButton label={step === 0 ? "Next: schedule" : "Next: review"} disabled={locked} emphasis="primary" onPress={nextStep} grow /> : dirty ? <ProgramButton label="Save draft" icon="save" emphasis="primary" busy={busy === "save"} disabled={locked} onPress={() => void save()} grow /> : <ProgramButton label={selected.status === "published" ? "Publish updated details" : "Publish batch preview"} icon="eye" emphasis="primary" busy={busy === "publish"} disabled={locked} onPress={() => setConfirming("publish")} grow />}
+          {step > 0 && editing ? <ProgramButton label="Previous" disabled={locked} onPress={() => moveTo(step === 2 ? 1 : 0)} /> : null}
+          {!editing && step === 2 ? <ProgramButton label="Edit details" icon="edit-2" disabled={busy !== null} onPress={() => { setEditing(true); moveTo(0); }} /> : null}
+          {step < 2 ? <ProgramButton label={step === 0 ? "Next: schedule" : "Next: review"} disabled={locked} emphasis="primary" onPress={nextStep} grow /> : dirty ? <ProgramButton label="Save draft" icon="save" emphasis="primary" busy={busy === "save"} disabled={locked} onPress={() => void save()} grow /> : <ProgramButton label={publishedUnchanged ? "Published — up to date" : selected.status === "published" ? "Publish updated details" : "Publish batch preview"} icon={publishedUnchanged ? "check-circle" : "eye"} emphasis={publishedUnchanged ? "quiet" : "primary"} busy={busy === "publish"} disabled={busy !== null || publishedUnchanged || !checkedPrice || !checkedDates} onPress={() => setConfirming("publish")} grow />}
         </View>
       </View></View> : null}
     </SafeAreaView>
   );
+}
+
+function ReviewCheck({ label, checked, disabled, onPress }: { label: string; checked: boolean; disabled: boolean; onPress: () => void }) {
+  const colors = useColors();
+  const { t, space } = useLayout();
+  return <Pressable accessibilityRole="checkbox" accessibilityLabel={label} accessibilityState={{ checked, disabled }} aria-checked={checked} aria-disabled={disabled} disabled={disabled} onPress={onPress} style={{ minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.sm }}><Feather name={checked ? "check-square" : "square"} size={space.lg} color={colors.primary} /><Text style={[t.body, { color: colors.foreground, flex: 1 }]}>{label}</Text></Pressable>;
 }
 
 function ScheduleChoice({ label, value, icon, onPress, disabled = false }: { label: string; value: string; icon: React.ComponentProps<typeof Feather>["name"]; onPress: () => void; disabled?: boolean }) {

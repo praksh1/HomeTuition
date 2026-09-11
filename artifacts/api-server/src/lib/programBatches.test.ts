@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { batchSnapshot, readBatchSnapshot, validateProgramBatch } from "./programBatches.ts";
+import { batchSnapshot, readBatchSnapshot, sameBatchOffer, validateProgramBatch } from "./programBatches.ts";
 
 const now = Date.parse("2026-09-10T00:00:00.000Z");
+
+test("batch equality ignores only publication version, never the purchased promise", () => {
+  const snapshot = batchSnapshot({ batchId: 1, version: 1, programId: 2, programVersion: 3, programTitle: "Guitar", capacity: 6, totalTuitionNpr: 3000, lessons: [{ position: 0, startsAt: new Date("2028-01-01T00:00:00Z"), durationMinutes: 60 }] });
+  assert.equal(sameBatchOffer(snapshot, { ...snapshot, version: 2 }), true);
+  for (const change of [{ capacity: 5 }, { totalTuitionNpr: 4000 }, { programVersion: 4 }, { programTitle: "Math" }, { lessons: [] }, { lessons: [{ ...snapshot.lessons[0]!, durationMinutes: 90 }] }]) {
+    assert.equal(sameBatchOffer(snapshot, { ...snapshot, ...change }), false);
+  }
+  assert.equal(sameBatchOffer(null, snapshot), false);
+});
 
 test("accepts ordered future Nepal lessons and derives the enrolment cutoff", () => {
   const result = validateProgramBatch({

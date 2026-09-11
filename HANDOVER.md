@@ -709,6 +709,17 @@ was added.
 
 ## 8. What needs a decision — questions for the owner, not for an AI
 
+### Batch checkout gate: changes after a student buys (11 September 2026)
+
+New Program Batches are still previews: no Batch checkout or paid Batch enrollment exists. The
+Program-level `test_confirmed` accounting rehearsal must not be mistaken for this. Owner raised
+whether teachers can edit after payment. Before Batch checkout is enabled, each purchase must
+retain its accepted Batch version, price and lesson schedule; material edits must not silently
+rewrite that agreement. Enrollment vs editing must be serialized server-side. Exact reschedule,
+cancellation, notification and student-remedy policy remains to be agreed before activation.
+Current repeat-publish prevention and template review are NOT that paid-student safeguard.
+See `.agents/worklog/2026-09-11-codex-batch-publication-templates.md` for implementation status.
+
 **Do not start any of these without an answer.** They are pricing and fairness questions before
 they are code questions. Full context is in `.agents/backlog/monthly-partial-months-and-dropping.md`,
 written to be readable months later by somebody who has forgotten the conversation.

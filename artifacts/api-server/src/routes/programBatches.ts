@@ -12,7 +12,7 @@ import {
 import { requireAuth } from "../middlewares/requireAuth";
 import { recordActivity } from "../lib/activityLog";
 import { publishedSnapshotFor } from "../lib/learningProgramState";
-import { batchSnapshot, readBatchSnapshot, validateProgramBatch } from "../lib/programBatches";
+import { batchSnapshot, readBatchSnapshot, sameBatchOffer, validateProgramBatch } from "../lib/programBatches";
 
 const router: IRouter = Router();
 
@@ -40,9 +40,11 @@ async function lessonsFor(batchId: number, reader: { select: typeof db.select } 
 
 async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
   const lessons = await lessonsFor(row.id, reader);
+  const [program] = await reader.select({ version: learningProgramsTable.version }).from(learningProgramsTable).where(eq(learningProgramsTable.id, row.programId)).limit(1);
   return {
     id: row.id,
     programId: row.programId,
+    currentProgramVersion: program?.version ?? null,
     status: row.status,
     capacity: row.capacity,
     totalTuitionNpr: row.totalTuitionNpr,
@@ -153,7 +155,9 @@ router.patch("/learning-program-batches/:id", requireAuth, async (req, res): Pro
     res.status(422).json({ error: "Check the batch details.", issues: validation.issues });
     return;
   }
-  const [updated] = await db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(learningProgramBatchesTable).where(eq(learningProgramBatchesTable.id, joined.batch.id)).for("update");
+    if (!locked || locked.status === "closed") return null;
     const rows = await tx
       .update(learningProgramBatchesTable)
       .set({ capacity: validation.capacity, totalTuitionNpr: validation.totalTuitionNpr, updatedAt: new Date() })
@@ -163,23 +167,29 @@ router.patch("/learning-program-batches/:id", requireAuth, async (req, res): Pro
     await tx.insert(learningProgramBatchLessonsTable).values(
       validation.lessons.map((lesson) => ({ batchId: joined.batch.id, ...lesson })),
     );
-    return rows;
+    return ownerBatch(rows[0]!, tx);
   });
   if (!updated) {
-    res.status(404).json({ error: "That batch was not found." });
+    res.status(409).json({ error: "This batch was closed. Reload to see its current details." });
     return;
   }
-  res.json({ batch: await ownerBatch(updated) });
+  res.json({ batch: updated });
 });
 
 router.post("/learning-program-batches/:id/publish", requireAuth, async (req, res): Promise<void> => {
-  const joined = await ownedBatch(req, res);
-  if (!joined) return;
+  const owned = await ownedBatch(req, res);
+  if (!owned) return;
+  // The same Batch lock as PATCH: read one complete draft, and serialize repeated publication.
+  const result = await db.transaction(async (tx) => {
+  const [program] = await tx.select().from(learningProgramsTable).where(eq(learningProgramsTable.id, owned.program.id)).for("update");
+  const [batch] = await tx.select().from(learningProgramBatchesTable).where(eq(learningProgramBatchesTable.id, owned.batch.id)).for("update");
+  if (!program || !batch) { res.status(404).json({ error: "That batch was not found." }); return null; }
+  const joined = { program, batch };
   if (joined.batch.status === "closed") {
     res.status(409).json({ error: "A closed batch cannot be published." });
     return;
   }
-  const [profile] = await db
+  const [profile] = await tx
     .select({ approvalStatus: teacherProfilesTable.approvalStatus })
     .from(teacherProfilesTable)
     .where(eq(teacherProfilesTable.userId, joined.program.teacherId))
@@ -193,13 +203,14 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
     res.status(409).json({ error: "Publish the Program before publishing its batch." });
     return;
   }
-  const lessons = await lessonsFor(joined.batch.id);
+  const lessons = await lessonsFor(joined.batch.id, tx);
   const localParts = lessons.map((lesson) => {
     const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kathmandu", year: "numeric", month: "2-digit", day: "2-digit" }).format(lesson.startsAt);
     const time = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kathmandu", hour: "2-digit", minute: "2-digit", hour12: false }).format(lesson.startsAt);
     return { date, time, durationMinutes: lesson.durationMinutes };
   });
-  const validation = validateProgramBatch({ capacity: joined.batch.capacity, totalTuitionNpr: joined.batch.totalTuitionNpr, lessons: localParts }, Date.now());
+  const input = { capacity: joined.batch.capacity, totalTuitionNpr: joined.batch.totalTuitionNpr, lessons: localParts };
+  const validation = validateProgramBatch(input, 0);
   if (!validation.ok) {
     res.status(422).json({ error: "This batch is not ready to publish.", issues: validation.issues });
     return;
@@ -215,13 +226,22 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
     totalTuitionNpr: validation.totalTuitionNpr,
     lessons: validation.lessons,
   });
-  const [updated] = await db
+  const previous = readBatchSnapshot(joined.batch.publishedSnapshot);
+  if (joined.batch.status === "published" && previous?.version === joined.batch.version && sameBatchOffer(previous, snapshot)) {
+    return { batch: await ownerBatch(joined.batch, tx), changed: false };
+  }
+  const future = validateProgramBatch(input, Date.now());
+  if (!future.ok) { res.status(422).json({ error: "This batch is not ready to publish.", issues: future.issues }); return null; }
+  const [updated] = await tx
     .update(learningProgramBatchesTable)
     .set({ status: "published", version, publishedAt: new Date(), publishedSnapshot: snapshot })
     .where(eq(learningProgramBatchesTable.id, joined.batch.id))
     .returning();
-  recordActivity({ userId: joined.program.teacherId, action: "learning_program_batch.published", subjectType: "learning_program_batch", subjectId: joined.batch.id, detail: { programId: joined.program.id, version } });
-  res.json({ batch: await ownerBatch(updated!) });
+  return { batch: await ownerBatch(updated!, tx), changed: true };
+  });
+  if (!result) return;
+  if (result.changed) recordActivity({ userId: owned.program.teacherId, action: "learning_program_batch.published", subjectType: "learning_program_batch", subjectId: owned.batch.id, detail: { programId: owned.program.id, version: result.batch.version } });
+  res.json({ batch: result.batch, unchanged: !result.changed });
 });
 
 router.post("/learning-program-batches/:id/close", requireAuth, async (req, res): Promise<void> => {

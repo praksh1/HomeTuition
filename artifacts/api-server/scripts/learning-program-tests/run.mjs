@@ -1459,6 +1459,7 @@ async function main() {
     await publicSearch();
     await concurrency();
     await moderationReload();
+    await batchPublication();
     await schemaParity();
     await nothingElseMoved(watched);
   } catch (err) {
@@ -1473,6 +1474,38 @@ async function main() {
     for (const f of failures) console.log(`  - ${f}`);
     process.exit(1);
   }
+}
+
+async function batchPublication() {
+  console.log("\n[Batch publication] No-op, concurrent requests, immutable offers and parent revisions");
+  const teacher = await register("teacher");
+  const other = await register("teacher");
+  const programId = await publishOne(teacher.token, "custom");
+  const made = await api(`/learning-programs/${programId}/batches`, { method: "POST", token: teacher.token, body: {} });
+  check("batch created as unpublished draft", made.status === 201 && made.body.batch.version === 0);
+  const id = made.body.batch.id;
+  const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  const input = { capacity: 6, totalTuitionNpr: 3000, lessons: [{ date, time: "16:30", durationMinutes: 60 }] };
+  const patch = (body) => api(`/learning-program-batches/${id}`, { method: "PATCH", token: teacher.token, body });
+  const publish = () => api(`/learning-program-batches/${id}/publish`, { method: "POST", token: teacher.token, body: {} });
+  check("other teacher cannot edit batch", (await api(`/learning-program-batches/${id}`, { method: "PATCH", token: other.token, body: input })).status === 404);
+  check("batch draft saved", (await patch(input)).status === 200);
+  const first = await publish();
+  check("first publication creates version one", first.status === 200 && first.body.batch.version === 1);
+  const repeated = await Promise.all(Array.from({ length: 8 }, publish));
+  check("eight concurrent duplicates are all successful no-ops", repeated.every((reply) => reply.status === 200 && reply.body.unchanged === true && reply.body.batch.version === 1));
+  check("duplicates preserve publication time and complete snapshot", repeated.every((reply) => reply.body.batch.publishedAt === first.body.batch.publishedAt && JSON.stringify(reply.body.batch.published) === JSON.stringify(first.body.batch.published)));
+  const changed = await patch({ ...input, totalTuitionNpr: 4200 });
+  check("saving changed draft preserves old public price", changed.status === 200 && changed.body.batch.published.totalTuitionNpr === 3000);
+  const updated = await Promise.all([publish(), publish()]);
+  check("changed draft publishes exactly one additional version", updated.every((reply) => reply.status === 200 && reply.body.batch.version === 2 && reply.body.batch.published.totalTuitionNpr === 4200) && updated.filter((reply) => reply.body.unchanged === false).length === 1);
+  await api(`/learning-programs/${programId}`, { method: "PATCH", token: teacher.token, body: complete({ title: "Updated course title for the next run" }) });
+  const parent = await api(`/learning-programs/${programId}/publish`, { method: "POST", token: teacher.token });
+  const refreshed = await publish();
+  check("new parent publication is not mistaken for an unchanged Batch", refreshed.status === 200 && refreshed.body.batch.version === 3 && refreshed.body.batch.currentProgramVersion === parent.body.program.version && refreshed.body.batch.published.programTitle === "Updated course title for the next run");
+  const closed = await api(`/learning-program-batches/${id}/close`, { method: "POST", token: teacher.token });
+  check("closed Batch remains closed under an edit attempt", closed.status === 200 && (await patch(input)).status === 409);
+  check("closed Batch cannot be republished", (await publish()).status === 409);
 }
 
 await main();

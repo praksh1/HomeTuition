@@ -33,6 +33,18 @@ export type BatchValidation =
   | { ok: true; capacity: number; totalTuitionNpr: number; lessons: ProgramBatchLesson[] }
   | { ok: false; issues: string[] };
 
+/** Publication metadata is not a change to the promise students see. */
+export function sameBatchOffer(a: ProgramBatchSnapshot | null, b: ProgramBatchSnapshot): boolean {
+  return a !== null && a.batchId === b.batchId && a.programId === b.programId &&
+    a.programVersion === b.programVersion && a.programTitle === b.programTitle &&
+    a.capacity === b.capacity && a.totalTuitionNpr === b.totalTuitionNpr &&
+    a.timeZone === b.timeZone && a.enrollmentClosesAt === b.enrollmentClosesAt &&
+    a.lessons.length === b.lessons.length && a.lessons.every((lesson, index) => {
+      const other = b.lessons[index]!;
+      return lesson.position === other.position && lesson.startsAt === other.startsAt && lesson.durationMinutes === other.durationMinutes;
+    });
+}
+
 function localInstant(date: string, time: string): Date | null {
   const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   const clock = /^(\d{2}):(\d{2})$/.exec(time);

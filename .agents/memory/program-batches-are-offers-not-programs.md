@@ -18,4 +18,16 @@ only a draft helper, not a new recurring billing model: UTC calendar arithmetic 
 date/time inputs to the existing API. First weekday must match; holidays are not skipped. Applying
 generated dates is not saving, and saving is not publishing. Do not combine those actions silently.
 `test:batch-planner` covers browser interaction with synthetic API; native controls still need owner
-device testing. No duplicate-batch or saved-template feature was implemented in this slice.
+device testing.
+
+Owner correction, 11 September: unchanged published batches must not be published repeatedly.
+Compare the actual offer on both client and server; ignore publication version only when comparing
+content, not the parent Program's version. UI review is read-only until Edit details. Publish requires
+fresh price/schedule acknowledgments. Batch template reuse creates a NEW draft from saved source
+settings and clears ALL dates. It does not copy enrollment/payment/publication, or duplicate the
+Program itself. Copies still require a fresh schedule and review; local copied values are not saved
+until Save succeeds.
+
+Paid-Batch edits are a checkout RELEASE BLOCKER, not a shipped safeguard: no Batch-level paid
+enrollment exists yet. The Program rehearsal is not that system. Before enabling payments, bind and
+freeze the purchased Batch version/terms and implement audited changes/cancellation/remedies.

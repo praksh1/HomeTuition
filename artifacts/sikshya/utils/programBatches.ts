@@ -43,6 +43,7 @@ export function batchTimeDraft(value: Date): string {
 export interface OwnerProgramBatch {
   id: number;
   programId: number;
+  currentProgramVersion?: number | null;
   status: "draft" | "published" | "closed" | string;
   capacity: number | null;
   totalTuitionNpr: number | null;
@@ -51,6 +52,27 @@ export interface OwnerProgramBatch {
   published: ProgramBatchSnapshot | null;
   lessons: Array<{ id: number; position: number; startsAt: string; durationMinutes: number }>;
   updatedAt: string;
+}
+
+export function batchMatchesPublication(batch: OwnerProgramBatch): boolean {
+  const published = batch.published;
+  return batch.status === "published" && published !== null &&
+    batch.version === published.version && batch.id === published.batchId && batch.programId === published.programId &&
+    batch.currentProgramVersion === published.programVersion &&
+    batch.capacity === published.capacity && batch.totalTuitionNpr === published.totalTuitionNpr &&
+    batch.lessons.length === published.lessons.length && batch.lessons.every((lesson, index) => {
+      const other = published.lessons[index]!;
+      return lesson.position === other.position && Date.parse(lesson.startsAt) === Date.parse(other.startsAt) && lesson.durationMinutes === other.durationMinutes;
+    });
+}
+
+/** Copy teaching settings only. Every new run needs fresh dates and its own explicit review. */
+export function batchTemplate(batch: OwnerProgramBatch) {
+  return {
+    capacity: batch.capacity === null ? "" : String(batch.capacity),
+    totalTuitionNpr: batch.totalTuitionNpr === null ? "" : String(batch.totalTuitionNpr),
+    lessons: batch.lessons.length ? batch.lessons.map((lesson) => ({ ...lessonDraft(lesson), date: "" })) : [{ date: "", time: "", durationMinutes: 60 }],
+  };
 }
 
 export function nepalDate(value: string): string {
