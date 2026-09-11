@@ -50,6 +50,25 @@ hierarchy with one simple class setup. Approval/signup explicitly unchanged. No 
 - Design ratchet unchanged: 94 hex / 282 raw font sizes. New files token-only.
 - Full real-DB, regression gates and deployed staging walkthrough pending below.
 
+### First deployment verification
+
+- `5c99a8e`: feature commit, pushed. Preview run `34637548400` succeeded: full typecheck,
+  real Postgres contracts/parity 572/0, attendance74/0, discovery160/0, legacy planner123,
+  new class browser48, build/isolation/deploy all passed.
+- `9e41cca`: stops older Program editor rewriting simple classes; adds regression assertions.
+  Its redundant run `34638052972` was cancelled to combine the final calendar-label correction.
+- Local legacy planner123/123 and Discover160/0; full root typecheck explicitly covered all four
+  artifact packages, including fresh generated routes. New browser48/48 passed again after
+  idempotent recovery and route-navigation changes.
+- Final read found My classes range used viewer-local instants; changed it to Nepal wall-clock
+  dates before BS/AD formatting, matching the editor even when a teacher is overseas.
+- Browser automation's time-input fill sets DOM but not React state in this environment. Native
+  ArrowUp/ArrowDown controls propagated 16:15 properly; this is the previously documented CUA
+  limitation, not evidence that typing is broken. Headless Playwright fill works.
+- Real staging create/save reached `/teaching-class/12`: explicitly named PREVIEW SEE Maths,
+  no outline, 9 Tue/Thu lessons Sep15–Oct13 at16:15 Nepal, 6students, NPR3000 for shared30days.
+  No real students or payments. Publication and final release verification still pending.
+
 ## Problems and surprises
 
 - Initial JSX closure error and wrong reused calendar prop names: typecheck caught them, fixed.

@@ -14,12 +14,17 @@ import {
   ProgramNotice,
 } from "@/components/programs/ProgramPieces";
 import { apiGet } from "@/utils/api";
+import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import { classIsPublished, type TeachingClass } from "@/utils/teachingClass";
 
 export default function TeachingClasses() {
   const colors = useColors();
   const { t, space, gutter } = useLayout();
   const dates = useDates();
+  const dateLabel = (iso: string) => {
+    const wallClock = lessonDraft({ startsAt: iso, durationMinutes: 60 });
+    return `${dates.formatBoth(batchDateValue(wallClock.date)!)} · ${wallClock.time} Nepal time`;
+  };
   const [items, setItems] = useState<TeachingClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -125,11 +130,7 @@ export default function TeachingClasses() {
               </Text>
               {item.batch.tuitionPeriod ? (
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>
-                  {dates.formatBoth(
-                    new Date(item.batch.tuitionPeriod.startsAt),
-                  )}{" "}
-                  –{" "}
-                  {dates.formatBoth(new Date(item.batch.tuitionPeriod.endsAt))}
+                  {dateLabel(item.batch.tuitionPeriod.startsAt)} until {dateLabel(item.batch.tuitionPeriod.endsAt)}
                 </Text>
               ) : null}
               <ProgramButton
