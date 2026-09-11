@@ -91,8 +91,8 @@ async function book(student, sessionId) {
 function setStart(sessionId, ms) {
   const row = JSON.parse(sql(`select json_build_object('teacher',teacher_id,'duration',duration) from sessions where id=${sessionId}`));
   const at = fixtureStart(row.teacher, ms, Math.max(row.duration, 180), sessionId);
-  // These fixtures intentionally model the <48-hour refund cutoff. Never silently age past it.
-  if (ms - Date.now() < 48 * HOUR && at - Date.now() >= 48 * HOUR) throw new Error("refund fixture exhausted the under-48-hour timetable");
+  // A student drop closes at 24 hours (teacher moves at 48). Preserve the stricter boundary.
+  if (ms - Date.now() < 24 * HOUR && at - Date.now() >= 24 * HOUR) throw new Error("refund fixture exhausted the under-24-hour timetable; use a dedicated teacher");
   sql(`update sessions set date = to_timestamp(${Math.round(at / 1000)}) where id = ${sessionId}`);
 }
 
@@ -351,7 +351,8 @@ async function run() {
   }
 
   {
-    const s = await makeSession(teacher);
+    const deadlineTeacher = await register("teacher", "Student drop deadline");
+    const s = await makeSession(deadlineTeacher);
     await book(student, s.id);
     setStart(s.id, Date.now() + 20 * HOUR);
     const info = await api(`/sessions/${s.id}/drop-info`, { token: student.token });
