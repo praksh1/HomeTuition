@@ -73,6 +73,13 @@ guided setup and repeat-date generation; it does not redesign the commercial con
 - Two attempted script reads used the repository scripts directory instead of the app's scripts;
   resolved from actual package scripts. PowerShell wildcard path passed to rg also failed; no edits
   resulted from either mistake.
+- First preview pipeline `34561076611` stopped in the browser harness before deployment: after
+  a clean publish then an edit, immediate browser Back did not show the leave question on Linux
+  Chromium (Windows passed). The screen unnecessarily armed history during clean publish requests,
+  creating extra push/pop transitions; guard now tracks actual dirty work only. The test now waits
+  for the observable history sentinel to be removed after save and armed after editing, rather than
+  assuming a React effect has run as soon as Playwright finishes typing. Retesting locally and CI;
+  this failure must not be presented as a successful deployment.
 
 ## Fabrications found
 

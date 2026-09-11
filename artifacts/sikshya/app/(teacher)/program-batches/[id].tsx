@@ -89,7 +89,9 @@ export default function ProgramBatchPlannerScreen() {
     setLeaveAction(() => go);
     setConfirming("leave");
   }, []);
-  const guarded = (dirty || busy !== null) && departure === null;
+  // A clean publish is not unsaved work. Arming/disarming history for its short request can
+  // race a subsequent Back; keep the guard tied to the actual draft instead.
+  const guarded = dirty && departure === null;
   useBrowserLeaveGuard({ dirty: guarded, armHistory: guarded, questionOpen: confirming === "leave", departing: departure !== null, onHistoryBack: askLeave });
   usePreventRemove(guarded, ({ data }) => askLeave(() => navigation.dispatch(data.action)));
 

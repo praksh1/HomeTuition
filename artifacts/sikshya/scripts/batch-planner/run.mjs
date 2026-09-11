@@ -73,6 +73,7 @@ try {
     await page.evaluate(() => { window.failBatchSave = false; });
     await button("Save draft").click();
     await button("Publish batch preview").waitFor();
+    await page.waitForFunction(() => window.history.state?.fadkoLeaveGuard !== true);
     const writes = await page.evaluate(() => window.batchRequests);
     check(writes.length === 2 && writes[1].input.lessons.length === 8 && writes[1].input.lessons.every((lesson) => lesson.time === "15:15"), `${width}: exact dates saved once per attempt`);
     await button("Publish batch preview").click();
@@ -82,11 +83,13 @@ try {
     await button("Previous").click();
     await button("Previous").click();
     await page.getByLabel("Full batch price (NPR)", { exact: true }).fill("4500");
+    await page.waitForFunction(() => window.history.state?.fadkoLeaveGuard === true);
     await page.goBack();
     await page.getByTestId("batch-confirmation").waitFor();
     check(await page.getByText("Leave without saving?", { exact: true }).isVisible(), `${width}: browser Back protects dirty work`);
     await page.getByTestId("warning-cancel").click();
     check(await page.getByLabel("Full batch price (NPR)", { exact: true }).inputValue() === "4500", `${width}: cancel retains typed price`);
+    await page.waitForFunction(() => window.history.state?.fadkoLeaveGuard === true);
     const reloadDialog = page.waitForEvent("dialog");
     const reloading = page.reload({ timeout: 5000 }).catch(() => null);
     const dialog = await reloadDialog;
