@@ -4,6 +4,7 @@ import {
   db,
   learningProgramModulesTable,
   learningProgramsTable,
+  teachingClassSetupsTable,
   studentTeacherSubscriptionsTable,
   teacherProfilesTable,
   usersTable,
@@ -322,6 +323,8 @@ router.get("/learning-programs", requireAuth, async (req: Request, res: Response
   }
 
   const where = [eq(learningProgramsTable.teacherId, teacherId)];
+  // New simple classes have their own editor. Do not send them through the older mandatory-path form.
+  where.push(sql`not exists (select 1 from ${teachingClassSetupsTable} where ${teachingClassSetupsTable.programId} = ${learningProgramsTable.id})`);
   if (status !== null) where.push(eq(learningProgramsTable.status, status));
   if (cursor !== null) where.push(lt(learningProgramsTable.id, cursor));
 
@@ -498,6 +501,9 @@ async function mutate(
       .limit(1);
 
     if (!row || row.teacherId !== teacherId) return notFound;
+
+    const [simpleClass] = await tx.select({ id: teachingClassSetupsTable.programId }).from(teachingClassSetupsTable).where(eq(teachingClassSetupsTable.programId, row.id)).limit(1);
+    if (simpleClass) return { status: 409, body: { error: "Open this class from My classes to edit or publish it. The older Program editor cannot change it." } };
 
     const move = transition(row.status as ProgramStatus, action, {
       /*

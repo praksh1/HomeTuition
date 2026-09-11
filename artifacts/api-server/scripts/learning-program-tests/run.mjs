@@ -1691,6 +1691,8 @@ async function simpleClasses() {
   check("one saved draft contains description, dates, price and stable tuition group", item.title === body.title && item.batch.lessons.length === 1 && item.batch.capacity === 6 && item.batch.format === "ongoing" && item.batch.tuitionGroupId > 0);
   check("no invented modules", sql(`select count(*) from learning_program_modules where program_id=${pid}`) === "0");
   check("only one idempotency mapping exists", sql(`select count(*) from teaching_class_setups where program_id=${pid}`) === "1");
+  check("older Programs list does not lead simple classes into the wrong editor", !(await api("/learning-programs", { token: teacher.token })).body.programs.some((p) => p.id === pid));
+  check("older Program editor cannot rewrite a simple class", (await api(`/learning-programs/${pid}`, { method: "PATCH", token: teacher.token, body: complete() })).status === 409);
   check("draft hidden from public", (await api(`/programs/${pid}`)).status === 404);
   check("another teacher cannot read class", (await read(id, other.token)).status === 404);
   check("student cannot list teacher's classes", (await api("/teaching-classes", { token: student.token })).status === 403);
@@ -1732,7 +1734,7 @@ async function simpleClasses() {
   check("suspended teacher cannot publish", (await publish((await read(id)).body.item)).status === 403);
   check("suspended listing hidden publicly", (await api(`/programs/${pid}`)).status === 404);
   sql(`update users set suspended_at=null where id=${teacher.user.id}`);
-  check("real checkout remains unavailable", (await api(`/programs/${pid}/enroll`, { method: "POST", token: student.token })).status !== 200);
+  check("student cannot use operator-only simulated enrolment", (await api(`/admin/program-commerce/programs/${pid}/test-enrolments`, { method: "POST", token: student.token, body: { studentId: student.user.id, totalTuitionNpr: 3000, paidLessonCount: 1 } })).status === 403);
 }
 
 await main();
