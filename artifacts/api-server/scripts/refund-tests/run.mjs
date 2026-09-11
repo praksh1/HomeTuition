@@ -69,11 +69,23 @@ async function makeAgent() {
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 
+/** Independent money scenarios need real, non-overlapping fixture timetables. */
+function fixtureStart(teacherId, target, duration, excludingId = 0) {
+  const raw = sql(`select coalesce(json_agg(json_build_object('start', extract(epoch from date)*1000, 'duration', duration)), '[]') from sessions where teacher_id=${teacherId} and id<>${excludingId} and status in ('upcoming','live')`);
+  const slots = JSON.parse(raw);
+  let at = target;
+  for (;;) {
+    const hit = slots.find((slot) => at < Number(slot.start) + slot.duration * 60000 && at + duration * 60000 > Number(slot.start));
+    if (!hit) return at;
+    at = Number(hit.start) + hit.duration * 60000 + 60000;
+  }
+}
+
 /** A class, by default far enough ahead that every rule here is satisfied. */
 async function makeSession(teacher, { inDays = 10, price = 500, duration = 60, maxStudents = 10 } = {}) {
   const res = await api("/sessions", { method: "POST", token: teacher.token, body: {
     topic: `Class ${++seq}`, subject: "Maths", description: "d",
-    date: new Date(Date.now() + inDays * DAY).toISOString(),
+    date: new Date(fixtureStart(teacher.user.id, Date.now() + inDays * DAY, duration)).toISOString(),
     duration, price, maxStudents,
   } });
   if (res.status > 201) throw new Error(`create session: ${res.status} ${JSON.stringify(res.body)}`);
@@ -88,7 +100,11 @@ async function book(student, sessionId) {
 
 /** Move a class's start without going through the rules, to set up a state. */
 function setStart(sessionId, ms) {
-  sql(`update sessions set date = to_timestamp(${Math.round(ms / 1000)}) where id = ${sessionId}`);
+  const row = JSON.parse(sql(`select json_build_object('teacher',teacher_id,'duration',duration) from sessions where id=${sessionId}`));
+  const at = fixtureStart(row.teacher, ms, Math.max(row.duration, 180), sessionId);
+  // These fixtures intentionally model the <48-hour refund cutoff. Never silently age past it.
+  if (ms - Date.now() < 48 * HOUR && at - Date.now() >= 48 * HOUR) throw new Error("refund fixture exhausted the under-48-hour timetable");
+  sql(`update sessions set date = to_timestamp(${Math.round(at / 1000)}) where id = ${sessionId}`);
 }
 
 /** Age a teacher's schedule changes out of this calendar month. */
