@@ -2,6 +2,7 @@ import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { assertDailySchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
 import { ScheduleConflictError } from "../lib/scheduleIntervals";
+import { legacyTeacherPlanSalesOpen, LEGACY_PLAN_PAUSED } from "../lib/teacherBilling";
 import {
   teacherLeaveTable,
   db,
@@ -276,6 +277,7 @@ router.post("/monthly/plan", requireAuth, async (req: Request, res: Response) =>
     return;
   }
 
+  if (!legacyTeacherPlanSalesOpen()) { res.status(409).json(LEGACY_PLAN_PAUSED); return; }
   const { paymentMethod } = req.body as { paymentMethod?: string };
   const price = TEACHER_TIER_PRICE;
 
@@ -332,7 +334,7 @@ router.get("/monthly/plan", requireAuth, async (req: Request, res: Response) => 
   // the moment those are the only things worth reading.
   const plan = await currentPlanFor(user.userId);
   if (!plan) {
-    res.json({ plan: null, class: null, tierPrice: TEACHER_TIER_PRICE });
+    res.json({ plan: null, class: null, tierPrice: TEACHER_TIER_PRICE, legacyPlanSalesOpen: legacyTeacherPlanSalesOpen() });
     return;
   }
 
@@ -380,6 +382,7 @@ router.get("/monthly/plan", requireAuth, async (req: Request, res: Response) => 
     makeups: { used: makeupsUsed, allowed: MAX_MAKEUPS_PER_CYCLE, left: Math.max(0, MAX_MAKEUPS_PER_CYCLE - makeupsUsed) },
     makeupDeadlineHours: MAKEUP_DEADLINE_HOURS,
     suspensionDays: SUSPENSION_DAYS,
+    legacyPlanSalesOpen: legacyTeacherPlanSalesOpen(),
     tierPrice: TEACHER_TIER_PRICE,
     platformShare: PLATFORM_SHARE,
   });

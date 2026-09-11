@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import NepaliDatePicker from "@/components/NepaliDatePicker";
+import { ProgramButton, ProgramNotice } from "@/components/programs/ProgramPieces";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
@@ -234,8 +235,14 @@ export default function MonthlyClassScreen() {
           />
         )}
 
-        {view && !view.plan && (
+        {view && !view.plan && view.legacyPlanSalesOpen === true && (
           <NoPlanYet tierPrice={view.tierPrice} onBuy={() => setBuying(true)} />
+        )}
+        {view && !view.plan && view.legacyPlanSalesOpen !== true && (
+          <ProgramNotice title="No new monthly plan purchase needed" tone="neutral">
+            <Text style={[t.body, { color: colors.foreground }]}>We are preparing commission-based classes. Existing monthly classes, homework and messages stay available. New class listings cannot take payments or start lessons yet.</Text>
+            <ProgramButton label="Prepare a class" onPress={() => router.push("/(teacher)/create-class")} />
+          </ProgramNotice>
         )}
 
         {view?.plan && !view.class && <CreateClass onCreated={load} />}
@@ -252,7 +259,7 @@ export default function MonthlyClassScreen() {
         )}
       </ScrollView>
 
-      {view ? (
+      {view?.legacyPlanSalesOpen === true ? (
         <PaymentSheet
           visible={buying}
           amount={view.tierPrice}

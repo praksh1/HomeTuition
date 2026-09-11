@@ -252,7 +252,7 @@ export default function TeacherProfile() {
 
       <TouchableOpacity accessibilityRole="button" style={styles.navigationRow} onPress={() => router.push("/(teacher)/subscription")} activeOpacity={0.7} testID="subscription-link">
         <Feather name="credit-card" size={18} color={colors.foreground} />
-        <Text style={[t.bodyStrong, styles.navigationText]}>My Plan</Text>
+        <Text style={[t.bodyStrong, styles.navigationText]}>Teaching & earnings</Text>
         <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
       </TouchableOpacity>
 

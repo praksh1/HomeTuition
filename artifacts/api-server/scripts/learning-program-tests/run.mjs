@@ -1473,6 +1473,7 @@ async function main() {
     await schemaParity();
     await nothingElseMoved(watched);
     await scheduleConflicts();
+    await billingTransition();
   } catch (err) {
     console.error(err);
     failed += 1;
@@ -1779,6 +1780,46 @@ async function simpleClasses() {
   sql(`update users set suspended_at=now() where id=${other.user.id}`);
   check("late joining never bypasses suspension", (await api(`/programs/${latePid}/batches`)).body.batches.length === 0);
   sql(`update users set suspended_at=null where id=${other.user.id}`);
+}
+
+async function billingTransition() {
+  console.log("\n[Billing transition] Legacy sales paused, existing access untouched");
+  const teacher = await register("teacher"), student = await register("student");
+  const profileId = Number(sql(`select id from teacher_profiles where user_id=${teacher.user.id}`));
+  const before = sql(`select row_to_json(p) from teacher_profiles p where user_id=${teacher.user.id}`);
+  const planCount = sql(`select count(*) from teacher_plans where teacher_id=${teacher.user.id}`);
+  const port = API_PORT + 3;
+  const server = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
+    cwd: repoRoot, stdio: "ignore",
+    env: { ...process.env, NODE_ENV: "test", PORT: String(port), DATABASE_URL: PGURL,
+      SESSION_SECRET: process.env.SESSION_SECRET ?? "learning-program-test-secret",
+      LEGACY_TEACHER_PLAN_SALES: "paused", PAYMENT_WEBHOOK_SECRET: "billing-refusal-test-only" },
+  });
+  const request = async (route, token = teacher.token, body) => {
+    const response = await fetch(`http://127.0.0.1:${port}/api${route}`, { method: body ? "POST" : "GET",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      try { if ((await fetch(`http://127.0.0.1:${port}/api/healthz`)).ok) { ready = true; break; } } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!ready) throw new Error("paused billing API did not start");
+    const policy = await request("/teachers/me/billing");
+    check("billing policy is authenticated, paused and not checkout", policy.status === 200 && policy.body.legacyPlanSalesOpen === false && policy.body.newClassCheckoutOpen === false);
+    check("student cannot read teacher billing endpoint", (await request("/teachers/me/billing", student.token)).status === 403);
+    for (const route of [`/teachers/${profileId}/subscribe`, "/monthly/plan"]) {
+      const response = await request(route, teacher.token, { tier: "tier4", paymentMethod: "synthetic" });
+      check(`${route}: refused before gateway or mutation`, response.status === 409 && response.body.code === "LEGACY_PLAN_SALES_PAUSED");
+    }
+    check("tier profile is byte-for-byte unchanged by refused sale", sql(`select row_to_json(p) from teacher_profiles p where user_id=${teacher.user.id}`) === before);
+    check("no monthly plan inserted by refused sale", sql(`select count(*) from teacher_plans where teacher_id=${teacher.user.id}`) === planCount);
+    const monthly = await request("/monthly/plan");
+    check("monthly no-plan screen gets authoritative sale state", monthly.status === 200 && monthly.body.legacyPlanSalesOpen === false);
+    check("existing teaching allowance remains readable", (await request("/teachers/me/allowance")).status === 200);
+  } finally { server.kill("SIGKILL"); }
 }
 
 await main();

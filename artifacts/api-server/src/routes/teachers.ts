@@ -5,6 +5,7 @@ import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { notify } from "../lib/notify";
 import { chargeForMonthly } from "../lib/payments";
 import { mayBuyTeacherPlan } from "../lib/teachingAccess";
+import { legacyTeacherPlanSalesOpen, teacherBillingPolicy, LEGACY_PLAN_PAUSED } from "../lib/teacherBilling";
 import { allowanceSummary } from "../lib/sessionAllowance";
 import { SUBSCRIPTION_TIERS, isTierKey, type SubscriptionTierKey } from "../lib/tierLimits";
 import { deleteUpload, verifyUpload } from "../lib/fileStore";
@@ -292,6 +293,7 @@ router.post("/teachers/:id/subscribe", requireAuth, async (req, res): Promise<vo
     return;
   }
 
+  if (!legacyTeacherPlanSalesOpen()) { res.status(409).json(LEGACY_PLAN_PAUSED); return; }
   const charge = await chargeForMonthly({
     purpose: "teacher-plan",
     referenceId: id,
@@ -364,6 +366,11 @@ router.get("/teachers/me/plan-eligibility", requireAuth, async (req, res): Promi
       ? { allowed: true as const }
       : { allowed: false as const, code: access.code, message: access.message },
   );
+});
+
+router.get("/teachers/me/billing", requireAuth, (req, res): void => {
+  if (req.user!.role !== "teacher") { res.status(403).json({ error: "Only teachers can view teaching billing." }); return; }
+  res.json(teacherBillingPolicy());
 });
 
 router.get("/subscription-tiers", (_req, res): void => {

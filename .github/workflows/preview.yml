@@ -229,7 +229,10 @@ jobs:
       - name: Verify simple class setup at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:class-setup
 
-      - name: Test preview verification
+      - name: Verify teacher billing transition at phone and laptop sizes
+        run: pnpm --filter @workspace/sikshya run test:teaching-billing
+
+      - name: Verify preview bundle isolation tests
         run: node --test scripts/verify-preview.test.mjs
 
       - name: Build the web app for the preview

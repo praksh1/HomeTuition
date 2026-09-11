@@ -659,7 +659,7 @@ export default function TeacherDashboard() {
               ? `All ${allowance.limit} classes on your ${allowance.tierName} plan are used.`
               : `${allowance.remaining} ${allowance.remaining === 1 ? "class" : "classes"} left on your ${allowance.tierName} plan.`}
           </Text>
-          <Text style={[t.caption, { color: colors.primary }]}>Upgrade</Text>
+          <Text style={[t.caption, { color: colors.primary }]}>Teaching access</Text>
         </TouchableOpacity>
       )}
     </ScrollView>

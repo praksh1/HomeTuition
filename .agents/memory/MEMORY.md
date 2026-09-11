@@ -1,5 +1,9 @@
 # Memory Index
 
+- [Commission transition preserves learning](commission-transition-preserves-learning.md) — 11 Sep:
+  retire new teacher-tier sales without deleting existing contracts, Monthly homework or chat;
+  new class listings still have no real checkout/live-session mapping. Never double-charge.
+
 - [Actionable conflicts and compact offers](actionable-conflicts-compact-offers.md) — 11 Sep phone
   corrections: direct affected-lesson editing, safe other-schedule links, paid commitments protected
   from conflict shortcuts; BS-first concise student offer with expandable timetable and details.
