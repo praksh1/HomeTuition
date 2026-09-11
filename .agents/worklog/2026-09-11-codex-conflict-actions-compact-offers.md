@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: c8029ea
-- Status: preview deployed and verified; owner phone acceptance pending
+- Status: preview deployed and verified; owner accepted ("Looks Good!")
 
 ## Requested
 
@@ -55,7 +55,7 @@ real enrollment and production. No new dependency or purchase.
 
 ## Remaining risks / next pickup point
 
-Deploy isolated preview and check CI real-database gates and served build before owner testing.
+Preview deployment and owner acceptance are complete. Production release remains separate.
 Future paid Batch checkout must lock purchased terms and feed this conflict resolver's edit policy.
 
 ## Release evidence
@@ -69,5 +69,7 @@ Future paid Batch checkout must lock purchased terms and feed this conflict reso
   staging `/api/healthz` returned `{ "status": "ok" }` after deployment.
 - Preview: https://hometuition-preview.praksh-dhakal.workers.dev
 - No production merge/deploy, no paid plan, no database migration, no user schedule mutation.
-- Next action belongs to the owner: test conflict editing and the compact student offer on phone.
-  No further implementation is silently pending. Real hardware behavior remains unverified here.
+- Owner subsequently replied "Looks Good!" to the preview test request. Recorded as acceptance
+  of this preview, not proof of every device scenario or permission to merge the entire branch.
+- No further implementation is silently pending for these corrections. Production remains unchanged;
+  review the full branch release scope before any future production promotion.
