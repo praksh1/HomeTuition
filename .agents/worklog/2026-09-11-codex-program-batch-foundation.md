@@ -153,3 +153,48 @@ student link. Do not merge to production before that physical test passes.
 The staging API and Cloudflare preview now run the same branch and commit. The remaining gate is the
 owner's physical teacher/student review of Batch planning and read-only display. No production
 merge/deploy, payment action, purchase, checkout, enrolment or real-money behavior has occurred.
+
+## Owner review corrections — 10 September screen recording
+
+The owner tested the teacher planner and supplied `Screen Recording 2026-09-10 221717.mp4`. The
+recording confirmed three release blockers that source-level checks had missed:
+
+- Expo Router exposed the new dynamic route as a seventh bottom-navigation item labelled
+  `program-batches/...`, accompanied by its fallback down-arrow icon.
+- Actions and unsaved-change questions were represented away from the button the teacher had just
+  pressed. In a long form this could put the answer outside the viewport, making Publish, Close or
+  Back appear to do nothing.
+- Lesson dates and times were plain text boxes. This contradicted the app's Nepali calendar work and
+  required a teacher to type Gregorian `YYYY-MM-DD` and a 24-hour clock by hand.
+
+Corrections:
+
+- Registered `program-batches/[id]` as a hidden teacher tab, matching every other detail/editor
+  route. It remains routable from a Program but can no longer appear in the navigation bar.
+- Replaced the off-screen unsaved warning with the shared centred confirmation modal. Publish and
+  Close now also ask a specific question in the same bounded modal, with the action buttons always
+  visible outside the modal's scroll area. Validation failures moved beside the Save/action area.
+- Reused `NepaliDatePicker` for every lesson date and fixed that shared picker to reset to the
+  selected lesson whenever it reopens. It shows Bikram Sambat and its Gregorian equivalent.
+- Added Expo's compatible `@react-native-community/datetimepicker@8.4.4`: Android and iPhone now
+  receive native clock controls. Web uses the browser's native `time` input. Stored API values and
+  Nepal-time server conversion are unchanged.
+- Added pure round-trip tests for the saved date/time strings. No new scheduling restriction was
+  invented; the picker supports every minute rather than forcing 5- or 15-minute increments.
+
+Verification performed before preview redeployment:
+
+- Sikshya typecheck: PASS.
+- Sikshya unit tests: 358 passed, 0 failed.
+- Full four-workspace typecheck: PASS after reinstalling the workspace links from the lockfile.
+- Design ratchet: PASS, unchanged at 94 hex literals / 282 raw font sizes.
+- Static web export against Railway staging: PASS; API target and Fadko identity checks passed.
+- `test:nav` was attempted locally but correctly stopped because no test API was running at
+  `127.0.0.1:8080`. It did not execute or fail an assertion; the preview CI run remains the real
+  navigation gate.
+- `pnpm peers check` still reports the repository's existing Radix React-19 range mismatch and
+  LiveKit's missing optional media-capture type peer. The new date/time picker is not named in either
+  warning. Build and typecheck pass.
+
+No server route, database row, Program rule, Monthly/Single Class behavior, payment behavior,
+Daily/LiveKit integration, production deployment or purchase was changed in this correction.

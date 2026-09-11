@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Modal, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { useDates } from "@/context/DatePreferenceContext";
@@ -57,6 +57,17 @@ export default function NepaliDatePicker({
   const [year, setYear] = useState(openingBs?.year ?? 2083);
   const [month, setMonth] = useState(openingBs?.month ?? 1);
   const [chosen, setChosen] = useState<number | null>(openingBs?.day ?? null);
+
+  // A single picker instance serves every lesson in the batch planner. Re-open it on that lesson's
+  // saved day instead of leaving the previous lesson highlighted.
+  useEffect(() => {
+    if (!visible) return;
+    const next = toBikramSambat(value ?? new Date());
+    if (!next) return;
+    setYear(next.year);
+    setMonth(next.month);
+    setChosen(value ? next.day : null);
+  }, [value, visible]);
 
   const num = (n: number) => (nepaliNumerals ? toNepaliDigits(n) : String(n));
   const monthNames = nepaliNumerals ? BS_MONTHS_NP : BS_MONTHS;

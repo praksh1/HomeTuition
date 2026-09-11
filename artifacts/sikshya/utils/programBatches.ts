@@ -17,6 +17,28 @@ export interface ProgramBatchSnapshot {
   lessons: Array<{ position: number; startsAt: string; durationMinutes: number }>;
 }
 
+/** A saved Nepal calendar day, opened at noon so timezone offsets cannot move it a day. */
+export function batchDateValue(value: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** The native picker needs a Date even though the server stores only a Nepal wall-clock time. */
+export function batchTimeValue(value: string): Date {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  const hours = match ? Number(match[1]) : 9;
+  const minutes = match ? Number(match[2]) : 0;
+  const safeHours = Number.isInteger(hours) && hours >= 0 && hours <= 23 ? hours : 9;
+  const safeMinutes = Number.isInteger(minutes) && minutes >= 0 && minutes <= 59 ? minutes : 0;
+  return new Date(2000, 0, 1, safeHours, safeMinutes, 0, 0);
+}
+
+export function batchTimeDraft(value: Date): string {
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${pad(value.getHours())}:${pad(value.getMinutes())}`;
+}
+
 export interface OwnerProgramBatch {
   id: number;
   programId: number;
