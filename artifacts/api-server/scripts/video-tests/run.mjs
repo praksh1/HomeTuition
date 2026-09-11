@@ -172,8 +172,13 @@ async function run() {
   {
     const over = await api("/sessions", { method: "POST", token: teacher.token, body: {
       topic: "Long over", subject: "Maths", description: "d",
-      date: new Date(Date.now() + 3600_000).toISOString(),
+      // The first lesson starts in one minute and lasts an hour. Keep this
+      // setup outside that slot before moving it into the past for the test.
+      date: new Date(Date.now() + 2 * 3600_000).toISOString(),
       duration: 60, price: 500, maxStudents: 10 } });
+    if (over.status !== 201 || !Number.isInteger(over.body?.id)) {
+      throw new Error(`Could not create past-lesson fixture: ${over.status} ${JSON.stringify(over.body)}`);
+    }
     sql(`update sessions set date = now() - interval '3 days' where id = ${over.body.id}`);
     const room = await api(`/sessions/${over.body.id}/room`, { token: teacher.token });
     check("a class that is long over gets no room, whoever the provider is",
