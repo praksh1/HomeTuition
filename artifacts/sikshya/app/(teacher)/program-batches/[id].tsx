@@ -365,7 +365,7 @@ export default function ProgramBatchPlannerScreen() {
 
         {selected ? (
           <View style={{ gap: space.lg }}>
-            {period ? <TuitionPeriodSummary period={period} provisional={!selected.periodAnchorLocked} /> : ongoing ? <ProgramNotice title="A 30-day teaching period" body="Choose Lesson 1's date and time in the next step. That sets your group's first period. No money or enrolments are created." /> : null}
+            {period ? <TuitionPeriodSummary period={period} provisional={!selected.periodAnchorLocked} allowLateJoining={selected.allowLateJoining} /> : ongoing ? <ProgramNotice title="A 30-day teaching period" body="Choose Lesson 1's date and time in the next step. That sets your group's first period. No money or enrolments are created." /> : null}
             {step === 0 ? <ProgramCardShell>
               <Field disabled={locked} label="Maximum students" example="How many students can you teach well together? Example: 6. Choose 1 to 10." value={form.capacity} onChangeText={(capacity) => setForm({ ...form, capacity })} keyboardType="number-pad" />
               <Field disabled={locked} label={ongoing ? "Full 30-day price (NPR)" : "Full batch price (NPR)"} example={ongoing ? "One advance price per student for every listed lesson in this period. Example: 3000 for the period, not per lesson. This is an example, not a suggested price." : "One price per student for every lesson together, not per lesson. Example: 3000 for an eight-lesson guitar course. This is only an example, not a suggested price."} value={form.totalTuitionNpr} onChangeText={(totalTuitionNpr) => setForm({ ...form, totalTuitionNpr })} keyboardType="number-pad" />
