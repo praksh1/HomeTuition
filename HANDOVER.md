@@ -718,6 +718,9 @@ retain its accepted Batch version, price and lesson schedule; material edits mus
 rewrite that agreement. Enrollment vs editing must be serialized server-side. Exact reschedule,
 cancellation, notification and student-remedy policy remains to be agreed before activation.
 Current repeat-publish prevention and template review are NOT that paid-student safeguard.
+Owner also approved blocking students from buying overlapping live lessons when Batch checkout
+is implemented. Teacher-side conflict checks now protect publication/scheduling, not purchases;
+the student check must be inside the future atomic enrollment transaction, not just the UI.
 See `.agents/worklog/2026-09-11-codex-batch-publication-templates.md` for implementation status.
 
 **Do not start any of these without an answer.** They are pricing and fairness questions before

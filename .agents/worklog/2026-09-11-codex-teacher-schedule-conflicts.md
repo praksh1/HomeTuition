@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/program-batch-foundation
 - Base commit: 832d632
-- Status: in progress
+- Status: complete — deployed to preview, awaiting owner physical review before production
 
 ## Requested
 
@@ -43,6 +43,25 @@ First application commit `d62e3e0`, preview workflow `34566341975`: real Postgre
 schedule checks and attendance checks passed before the rendered stage. Review then added a
 cancelled-class reactivation guard plus Monthly time-change and reactivation route assertions;
 these require a fresh final workflow run before owner handoff.
+Final application commit `b275344`; workflow `34566526299` has passed its real DB tests,
+including the new Monthly-change and reactivation checks. Earlier workflow was superseded and
+cancelled after its checks (503 Programs/schedule, 74 attendance, 160 discovery, 87 planner passed),
+not represented as a completed release. Final deployment outcome remains to be recorded.
+
+Final release: workflow `34566526299` SUCCESS in 4m52s, application `b275344`. Gates: full
+typecheck; real DB Programs/schedule 506/0; attendance 74/0; rendered discovery 160/0; planner
+87/87; preview verifier and production-host exclusion passed. CI emitted a non-blocking existing
+Node20-action deprecation warning (actions forced to Node24); dependency/workflow upgrade not
+part of this task. No failing final checks.
+
+Authenticated served-preview verification in a fresh browser tab at
+`https://hometuition-preview.praksh-dhakal.workers.dev/program-batches/1`: Batch list loaded;
+opened existing Batch 5 and saw four real conflict messages with Batches 4/6, named Mathematics,
+lesson numbers and complete Nepal-time intervals. The disabled unchanged-publication state and
+Edit details remain present. This verifies frontend/API wiring with actual staging data; this
+browser check was read-only, not a new publish attempt. No existing Batch was edited or closed.
+Owner must still physically test corrective editing on phone; automated publish refusal and
+atomicity are established by the real API/DB suite, not inferred from the warning.
 
 ## Problems and surprises
 
@@ -68,6 +87,6 @@ production deployment or automatic rescheduling of existing classes.
 
 ## Remaining risks / next pickup point
 
-Run real DB race and route tests, render warnings at phone widths, deploy preview only. Owner checks
+Real DB race/route tests, rendered checks and preview release completed. Owner checks
 overlap refusal and adjacent acceptance before production. Student purchase conflicts and immutable
 purchased terms remain checkout gates. Do not report preview ready until deployment is verified.
