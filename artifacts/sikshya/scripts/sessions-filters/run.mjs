@@ -55,10 +55,21 @@ sql(`update teacher_profiles
          max_sessions_per_month = 30, subscription_active = true
      where user_id = ${teacher.user.id}`);
 
-const soon = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
-const make = (topic) => api("/sessions", { method: "POST", token: teacher.token, body: {
-  subject: "Maths", topic, date: soon, duration: 60, maxStudents: 20, price: 500,
-} });
+// Independent days at 10:00 Nepal time, outside the 17:00 Monthly class below.
+// Seventeen copies of one instant no longer constitute a valid crowding fixture.
+const fixtureDay = new Date(Date.now() + 3 * 24 * 3600_000);
+fixtureDay.setUTCHours(4, 15, 0, 0);
+let fixtureOrdinal = 0;
+const make = async (topic) => {
+  const date = new Date(fixtureDay.getTime() + fixtureOrdinal++ * 24 * 3600_000).toISOString();
+  const made = await api("/sessions", { method: "POST", token: teacher.token, body: {
+    subject: "Maths", topic, date, duration: 60, maxStudents: 20, price: 500,
+  } });
+  if (made.status !== 201 || !Number.isInteger(made.body?.id)) {
+    throw new Error(`Could not create filter fixture: ${made.status} ${JSON.stringify(made.body)}`);
+  }
+  return made;
+};
 
 for (let i = 0; i < 10; i++) await make(`Coming up ${i}`);
 for (let i = 0; i < 6; i++) {

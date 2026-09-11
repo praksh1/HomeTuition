@@ -40,7 +40,7 @@ sql(`update teacher_profiles set approval_status = 'approved', subscription_acti
 // One class still to come, and one that came and went without being started.
 const soon = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
 await api("/sessions", { method: "POST", token: t.token, body: { subject: "Maths", topic: "Still to come", date: soon, duration: 60, maxStudents: 20, price: 500 } });
-const stale = await api("/sessions", { method: "POST", token: t.token, body: { subject: "Maths", topic: "Never started", date: soon, duration: 60, maxStudents: 20, price: 500 } });
+const stale = await api("/sessions", { method: "POST", token: t.token, body: { subject: "Maths", topic: "Never started", date: new Date(Date.parse(soon) + 2 * 3600_000).toISOString(), duration: 60, maxStudents: 20, price: 500 } });
 if (!stale.body?.id) { console.error('create failed:', stale.status, JSON.stringify(stale.body)); process.exit(1); }
 sql(`update sessions set date = now() - interval '4 days' where id = ${stale.body.id}`);
 
