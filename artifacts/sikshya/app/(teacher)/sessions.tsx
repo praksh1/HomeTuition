@@ -290,7 +290,7 @@ export default function TeacherSessions() {
                   {plan.plan.suspendedReason ?? "This plan is not currently running."}
                 </Text>
               ) : null}
-              <Text style={[styles.planLink, { color: colors.secondary }]}>Open My Plan →</Text>
+              <Text style={[styles.planLink, { color: colors.secondary }]}>Open monthly class →</Text>
             </TouchableOpacity>
           ) : null}
 
