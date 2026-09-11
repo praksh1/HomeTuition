@@ -727,6 +727,7 @@ async function schemaParity() {
       `export { LEARNING_PROGRAM_DDL } from ${JSON.stringify(path.join(serverRoot, "src", "lib", "ensureSchema.ts"))};`,
       `export { learningProgramsTable, learningProgramModulesTable, learningProgramBatchesTable, learningProgramBatchLessonsTable, learningProgramTuitionGroupsTable, learningProgramBatchPeriodsTable, learningProgramEnrollmentsTable, learningProgramAllocationsTable, learningProgramLedgerEntriesTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
       `export { getTableColumns } from "drizzle-orm";`,
+      `export { teachingClassSetupsTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
     ].join("\n"),
   );
   await (esbuild.build ?? esbuild.default.build)({
@@ -796,6 +797,7 @@ async function schemaParity() {
 
     for (const [name, table] of [
       ["learning_programs", mod.learningProgramsTable],
+      ["teaching_class_setups", mod.teachingClassSetupsTable],
       ["learning_program_modules", mod.learningProgramModulesTable],
       ["learning_program_batches", mod.learningProgramBatchesTable],
       ["learning_program_batch_lessons", mod.learningProgramBatchLessonsTable],
@@ -831,6 +833,7 @@ async function schemaParity() {
       .split("\n").map((s) => s.trim()).filter(Boolean);
     for (const wanted of [
       "learning_programs_teacher_idx",
+      "teaching_class_setups_request_idx",
       "learning_programs_public_idx",
       "learning_program_modules_program_idx",
       "learning_program_batches_program_idx",
@@ -852,7 +855,7 @@ async function schemaParity() {
     const fks = sql(`
       select count(*) from information_schema.table_constraints
        where table_schema = '${scratch}' and constraint_type = 'FOREIGN KEY'`);
-    check("all Program foreign keys are created, so an orphan row cannot exist", Number(fks) === 14, fks);
+    check("all Program foreign keys are created, so an orphan row cannot exist", Number(fks) === 17, fks);
   } finally {
     execFileSync("psql", [PGURL, "-q", "-c", `DROP SCHEMA IF EXISTS ${scratch} CASCADE`], { encoding: "utf8" });
   }
@@ -1465,6 +1468,7 @@ async function main() {
     await moderationReload();
     await batchPublication();
     await tuitionPeriods();
+    await simpleClasses();
     await schemaParity();
     await nothingElseMoved(watched);
     await scheduleConflicts();
@@ -1663,6 +1667,72 @@ async function scheduleConflicts() {
     // Only synthetic fixtures created here, never existing or production rows.
     sql(`delete from recurring_days where recurring_id in (select id from recurring_sessions where teacher_id=${tid}); delete from recurring_sessions where teacher_id=${tid}; delete from teacher_plans where teacher_id=${tid}; delete from sessions where teacher_id=${tid}`);
   }
+}
+
+async function simpleClasses() {
+  console.log("\n[Simple classes] One teacher action, atomic draft/publication, unchanged safeguards");
+  const teacher = await register("teacher"), other = await register("teacher"), student = await register("student"), pending = await register("teacher", { approved: false });
+  const day = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10);
+  const body = { requestKey: `simple-class-${Date.now()}`, format: "ongoing", title: "SEE Maths evening tuition", summary: "We solve school exercises together and make time for questions.", teachingLanguage: "Nepali", outline: "", capacity: 6, totalTuitionNpr: 3000, lessons: [{ date: day, time: "15:00", durationMinutes: 60 }] };
+  const create = (payload = body, token = teacher.token) => api("/teaching-classes", { method: "POST", token, body: payload });
+  const read = (id, token = teacher.token) => api(`/teaching-classes/${id}`, { token });
+  const versions = (item) => ({ expectedUpdatedAt: item.batch.updatedAt, expectedProgramUpdatedAt: item.programUpdatedAt });
+  const publish = (item, token = teacher.token) => api(`/teaching-classes/${item.batch.id}/publish`, { method: "POST", token, body: versions(item) });
+  const save = (item, patch = {}) => api(`/teaching-classes/${item.batch.id}`, { method: "PATCH", token: teacher.token, body: { ...body, ...versions(item), ...patch } });
+  check("student cannot create a teaching class", (await create(body, student.token)).status === 403);
+  const before = sql("select count(*) from learning_programs");
+  check("bad description rejected", (await create({ ...body, title: "a" })).status === 422);
+  check("invalid date rejected", (await create({ ...body, lessons: [{ date: "nonsense", time: "15:00", durationMinutes: 60 }] })).status === 422);
+  check("invalid requests create no parent behind the scenes", sql("select count(*) from learning_programs") === before);
+  const attempts = await Promise.all([create(), create()]);
+  check("concurrent first-save retries create one class", attempts.every((r) => [200, 201].includes(r.status)) && attempts[0].body.item.batch.id === attempts[1].body.item.batch.id);
+  let item = attempts[0].body.item;
+  const id = item.batch.id, pid = item.batch.programId;
+  check("one saved draft contains description, dates, price and stable tuition group", item.title === body.title && item.batch.lessons.length === 1 && item.batch.capacity === 6 && item.batch.format === "ongoing" && item.batch.tuitionGroupId > 0);
+  check("no invented modules", sql(`select count(*) from learning_program_modules where program_id=${pid}`) === "0");
+  check("only one idempotency mapping exists", sql(`select count(*) from teaching_class_setups where program_id=${pid}`) === "1");
+  check("draft hidden from public", (await api(`/programs/${pid}`)).status === 404);
+  check("another teacher cannot read class", (await read(id, other.token)).status === 404);
+  check("student cannot list teacher's classes", (await api("/teaching-classes", { token: student.token })).status === 403);
+  check("invalid id is not a server error", (await read("Infinity")).status === 404);
+  check("forged owner publication refused", (await publish(item, other.token)).status === 404);
+  check("stale publication refused", (await api(`/teaching-classes/${id}/publish`, { method: "POST", token: teacher.token, body: {} })).status === 409);
+  let response = await publish(item);
+  check("one publication publishes description AND offer", response.status === 200 && response.body.item.batch.status === "published", JSON.stringify(response.body));
+  item = response.body.item;
+  const publicRead = await api(`/programs/${pid}`);
+  check("simple snapshot served without required formal learning path", publicRead.status === 200 && publicRead.body.program.presentation === "class" && publicRead.body.program.modules.length === 0, JSON.stringify(publicRead.body));
+  check("offer immediately public with exact advance cutoff", (await api(`/programs/${pid}/batches`)).body.batches[0]?.enrollmentClosesAt === item.batch.tuitionPeriod.startsAt);
+  const again = await publish(item);
+  check("unchanged republish is idempotent", again.status === 200 && again.body.unchanged === true && again.body.item.batch.version === item.batch.version);
+  const changed = await save(item, { summary: "A revised explanation of how our Maths tuition supports schoolwork." });
+  check("edit saved as draft", changed.status === 200);
+  check("edit does not change published description", (await api(`/programs/${pid}`)).body.program.summary === body.summary);
+  check("old editor cannot overwrite newer shared description", (await save(item)).status === 409);
+  item = changed.body.item;
+  const revised = await publish(item);
+  check("explicit republish updates description and offer together", revised.status === 200 && revised.body.item.batch.published.programVersion === revised.body.item.publishedDescription.version);
+  item = revised.body.item;
+  const next = await api(`/learning-program-batches/${id}/next-period`, { method: "POST", token: teacher.token });
+  const nextItem = (await read(next.body.batch.id)).body.item;
+  check("next thirty days stay in simple class flow", nextItem.title === item.title && nextItem.batch.tuitionPeriod.index === 1 && nextItem.batch.lessons.length === 0);
+  const offsetDay = new Date(Date.parse(`${day}T00:00:00Z`) + 31 * 86400000).toISOString().slice(0, 10);
+  const nextSaved = await save(nextItem, { summary: item.summary, lessons: [{ date: offsetDay, time: "15:00", durationMinutes: 60 }] });
+  check("next set of dates publishes without changing description version", (await publish(nextSaved.body.item)).status === 200);
+  const siblingEdit = await save((await read(id)).body.item, { title: "Changed name would hide another listing" });
+  check("shared-description change cannot silently invalidate another published offer", (await publish(siblingEdit.body.item)).status === 409);
+  check("both offers stay publicly visible after refused shared revision", (await api(`/programs/${pid}/batches`)).body.batches.length === 2);
+  const overlap = (await create({ ...body, requestKey: body.requestKey + "-overlap", format: "fixed" })).body.item;
+  check("new class conflicts with published existing timetable", (await publish(overlap)).status === 409);
+  check("conflict does not partially publish description", (await api(`/programs/${overlap.batch.programId}`)).status === 404);
+  check("conflict leaves batch draft", (await read(overlap.batch.id)).body.item.batch.status === "draft");
+  const unapproved = (await create(body, pending.token)).body.item;
+  check("existing account approval gate preserved", (await publish(unapproved, pending.token)).status === 403);
+  sql(`update users set suspended_at=now() where id=${teacher.user.id}`);
+  check("suspended teacher cannot publish", (await publish((await read(id)).body.item)).status === 403);
+  check("suspended listing hidden publicly", (await api(`/programs/${pid}`)).status === 404);
+  sql(`update users set suspended_at=null where id=${teacher.user.id}`);
+  check("real checkout remains unavailable", (await api(`/programs/${pid}/enroll`, { method: "POST", token: student.token })).status !== 200);
 }
 
 await main();

@@ -25,6 +25,7 @@ import {
   type LearningProgramType,
   type ReferenceSource,
 } from "./learningPrograms.ts";
+import { readClassDescription, type ClassDescription } from "./simpleTeachingClass.ts";
 
 export const LEARNING_PROGRAM_STATUSES = ["draft", "published", "archived"] as const;
 export type ProgramStatus = (typeof LEARNING_PROGRAM_STATUSES)[number];
@@ -252,6 +253,8 @@ export interface PublishedModule {
  * has nowhere to put one is a shape that cannot.
  */
 export interface PublishedProgram {
+  presentation?: "class";
+  outline?: string;
   version: number;
   type: LearningProgramType;
   title: string;
@@ -329,6 +332,17 @@ export function snapshotOf(draft: LearningProgramDraft, version: number): Publis
 export function readSnapshot(raw: unknown): PublishedProgram | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
+  // An explicitly versioned lightweight listing may omit a formal learning path. Old snapshots
+  // still take the strict validator below; missing fields never silently opt into this contract.
+  if (o.presentation === "class") {
+    const description = readClassDescription(o);
+    if (!description.ok || o.type !== "custom" || !Number.isSafeInteger(o.version) || Number(o.version) < 1 ||
+        o.referenceSource !== "none" || !Array.isArray(o.modules) || o.modules.length !== 0 ||
+        o.outcome !== "" || o.intendedLearner !== "" || o.startingLevel !== "" ||
+        o.prerequisites !== null || o.equipment !== null || o.referenceName !== null) return null;
+    return simpleClassSnapshot(description.value, Number(o.version));
+  }
+  if (o.presentation !== undefined) return null;
 
   const type = readProgramType(o.type);
   const referenceSource = readReferenceSource(o.referenceSource);
@@ -433,6 +447,10 @@ export function readSnapshot(raw: unknown): PublishedProgram | null {
   if (validateLearningProgramForPublish(asDraft(snapshot)).length > 0) return null;
 
   return snapshot;
+}
+
+export function simpleClassSnapshot(value: ClassDescription, version: number): PublishedProgram {
+  return { presentation: "class", version, type: "custom", ...value, outcome: "", intendedLearner: "", startingLevel: "", prerequisites: null, equipment: null, referenceName: null, referenceSource: "none", modules: [] };
 }
 
 /** A published snapshot in the shape the publish validator reads. */

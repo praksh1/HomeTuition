@@ -121,6 +121,9 @@ function ClassicTabLayout() {
       */}
       <Tabs.Screen name="monthly" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="session-create" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="create-class" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="teaching-classes" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="teaching-class/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
       {/*
         Programs, reached from the Dashboard rather than given a seventh tab.
 

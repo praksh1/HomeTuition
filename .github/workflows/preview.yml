@@ -226,6 +226,9 @@ jobs:
       - name: Verify guided batch planning and unsaved-work protection
         run: pnpm --filter @workspace/sikshya run test:batch-planner
 
+      - name: Verify simple class setup at phone and laptop sizes
+        run: pnpm --filter @workspace/sikshya run test:class-setup
+
       - name: Test preview verification
         run: node --test scripts/verify-preview.test.mjs
 

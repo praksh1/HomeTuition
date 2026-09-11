@@ -388,7 +388,7 @@ export default function TeacherDashboard() {
               { backgroundColor: colors.primary, borderRadius: radius.sm, paddingVertical: space.sm },
               elevation.card,
             ]}
-            onPress={() => router.push("/(teacher)/session-create")}
+            onPress={() => router.push("/(teacher)/create-class")}
             activeOpacity={0.85}
             accessibilityRole="button"
           >
@@ -466,18 +466,18 @@ export default function TeacherDashboard() {
             gap: space.sm,
           },
         ]}
-        onPress={() => router.push("/(teacher)/programs")}
+        onPress={() => router.push("/(teacher)/teaching-classes")}
         activeOpacity={0.85}
         accessibilityRole="button"
-        accessibilityLabel="Learning programs. A learning journey you can offer again and again"
+        accessibilityLabel="My classes. Your teaching, timetable and price"
       >
         <View style={[styles.squareIcon, { backgroundColor: colors.actionSoft, borderRadius: radius.sm }]}>
           <Feather name="map" size={20} color={colors.primary} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[t.title3, { color: colors.foreground }]}>Programs</Text>
+          <Text style={[t.title3, { color: colors.foreground }]}>My classes</Text>
           <Text style={[t.callout, { color: colors.mutedForeground, marginTop: 2 }]}>
-            A learning journey you can offer again and again.
+            Your teaching, timetable and price — together.
           </Text>
         </View>
         <Feather name="chevron-right" size={20} color={colors.inkFaint} />

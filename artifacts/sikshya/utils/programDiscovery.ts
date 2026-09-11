@@ -26,6 +26,7 @@ import { PROGRAM_TYPE_CHOICES, programTypeLabel, type ProgramType, type ProgramT
 
 /** One row in the public list, exactly as `/programs` returns it (see the API header for shape). */
 export interface PublicProgramSummary {
+  presentation?: "class";
   id: number;
   type: ProgramType | string;
   version: number;
@@ -56,6 +57,8 @@ export interface PublicProgramModule {
 
 /** One published program in full, as `/programs/:id` returns it. */
 export interface PublicProgramDetail {
+  presentation?: "class";
+  outline?: string;
   id: number;
   type: ProgramType | string;
   version: number;
@@ -201,7 +204,7 @@ export function cardFromSummary(row: PublicProgramSummary): ProgramCardFields {
     title: row.title || "Untitled program",
     outcome: row.outcome,
     summary: row.summary,
-    typeLabel: programTypeLabel(row.type),
+    typeLabel: row.presentation === "class" ? "Class" : programTypeLabel(row.type),
     // Present when the server includes it. Never invented, never inferred from another field —
     // an older server that does not send it produces a card with no learner line rather than a
     // made-up one.
@@ -217,7 +220,7 @@ export function cardFromDetail(program: PublicProgramDetail): ProgramCardFields 
     title: program.title || "Untitled program",
     outcome: program.outcome,
     summary: program.summary,
-    typeLabel: programTypeLabel(program.type),
+    typeLabel: program.presentation === "class" ? "Class" : programTypeLabel(program.type),
     intendedLearnerLine: program.intendedLearner || null,
     teachingLanguage: program.teachingLanguage,
     teacherName: program.teacher.name,

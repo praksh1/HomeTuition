@@ -85,7 +85,7 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
           accessibilityLabel="Back to Discover"
         />
         <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, flexWrap: "wrap" }}>
-          <ProgramChip label={programTypeLabel(program.type)} tone="neutral" testID="program-view-type" />
+          <ProgramChip label={program.presentation === "class" ? "Class" : programTypeLabel(program.type)} tone="neutral" testID="program-view-type" />
         </View>
         <Text style={[t.title1, { color: colors.foreground }]} testID="program-view-title">
           {program.title || "Untitled program"}
@@ -105,11 +105,11 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
       ) : null}
 
       {/* --------------------------------------------------------------- who it is for */}
-      <Section title="Who it is for" testID="program-view-who">
+      {program.presentation !== "class" ? <Section title="Who it is for" testID="program-view-who">
         <Line label="Right for" value={program.intendedLearner} testID="program-view-intended-learner" />
         <Line label="Starting level" value={program.startingLevel} testID="program-view-starting-level" />
         <Line label="Taught in" value={program.teachingLanguage} testID="program-view-language" />
-      </Section>
+      </Section> : <Section title="Teaching language" testID="class-language"><Text style={[t.body, { color: colors.foreground }]}>{program.teachingLanguage}</Text></Section>}
 
       {/* --------------------------------------------------------------- requirements */}
       {(program.prerequisites || program.equipment) ? (
@@ -134,7 +134,7 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
       ) : null}
 
       {/* --------------------------------------------------------------- learning path */}
-      <Section title="Learning path" testID="program-view-path">
+      {program.presentation !== "class" ? <Section title="Learning path" testID="program-view-path">
         {program.modules.length === 0 ? (
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
             The teacher has not yet published any steps.
@@ -168,7 +168,7 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
             ))}
           </View>
         )}
-      </Section>
+      </Section> : program.outline ? <Section title="What we will cover" testID="class-outline"><Text style={[t.body, { color: colors.foreground }]}>{program.outline}</Text></Section> : null}
 
       {/* --------------------------------------------------------------- teacher */}
       <Section title="Taught by" testID="program-view-teacher-section">
@@ -177,7 +177,7 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
       </Section>
 
       {/* --------------------------------------------------------------- scheduled batches */}
-      <Section title="Upcoming batches" testID="program-view-batches">
+      <Section title={program.presentation === "class" ? "Dates and price" : "Upcoming batches"} testID="program-view-batches">
         {batchesUnavailable ? (
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
             Fadko could not check this Program’s upcoming dates and price. Try this page again.
@@ -216,7 +216,7 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
       </Section>
 
       {/* --------------------------------------------------------------- missing */}
-      {missing.length > 0 ? (
+      {program.presentation !== "class" && missing.length > 0 ? (
         <Text
           style={[t.caption, { color: colors.mutedForeground }]}
           testID="program-view-missing"

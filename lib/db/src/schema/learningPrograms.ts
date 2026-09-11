@@ -176,6 +176,15 @@ export const learningProgramBatchPeriodsTable = pgTable("learning_program_batch_
   periodIndex: integer("period_index").notNull(),
 }, (table) => [uniqueIndex("learning_program_batch_periods_group_idx").on(table.groupId, table.periodIndex)]);
 
+/** Links the simple teacher journey to existing editorial/schedule storage. Never a payment. */
+export const teachingClassSetupsTable = pgTable("teaching_class_setups", {
+  programId: integer("program_id").primaryKey().references(() => learningProgramsTable.id, { onDelete: "cascade" }),
+  teacherId: integer("teacher_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  initialBatchId: integer("initial_batch_id").notNull().references(() => learningProgramBatchesTable.id, { onDelete: "cascade" }),
+  requestKey: text("request_key").notNull(),
+  outline: text("outline").notNull().default(""),
+}, (table) => [uniqueIndex("teaching_class_setups_request_idx").on(table.teacherId, table.requestKey)]);
+
 export const learningProgramBatchLessonsTable = pgTable(
   "learning_program_batch_lessons",
   {

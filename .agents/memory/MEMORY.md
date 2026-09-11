@@ -1,5 +1,9 @@
 # Memory Index
 
+- [Create a class, not a hierarchy](create-a-class-not-a-hierarchy.md) — 11 Sep: owner rejected
+  Program → Batch setup; default teacher flow is one guided class setup, with an optional outline.
+  Existing contracts and old classes remain; preview is listing-only, not checkout or live lessons.
+
 - [Tuition periods are shared](tuition-periods-are-shared.md) — approved 11 Sep: ongoing groups
   use shared 30-day advance-paid periods, exact lessons, BS + AD dates; fixed courses remain
   separate. No mid-period proration or automatic debit. Planning preview is not Batch checkout.

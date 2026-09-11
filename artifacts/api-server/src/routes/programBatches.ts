@@ -34,7 +34,7 @@ function teacherId(req: Request, res: Response): number | null {
   return req.user!.userId;
 }
 
-async function lessonsFor(batchId: number, reader: { select: typeof db.select } = db) {
+export async function lessonsFor(batchId: number, reader: { select: typeof db.select } = db) {
   return reader
     .select()
     .from(learningProgramBatchLessonsTable)
@@ -42,7 +42,7 @@ async function lessonsFor(batchId: number, reader: { select: typeof db.select } 
     .orderBy(asc(learningProgramBatchLessonsTable.position));
 }
 
-async function periodFor(batchId: number, reader: { select: typeof db.select } = db) {
+export async function periodFor(batchId: number, reader: { select: typeof db.select } = db) {
   const [row] = await reader.select({ group: learningProgramTuitionGroupsTable, link: learningProgramBatchPeriodsTable })
     .from(learningProgramBatchPeriodsTable)
     .innerJoin(learningProgramTuitionGroupsTable, eq(learningProgramTuitionGroupsTable.id, learningProgramBatchPeriodsTable.groupId))
@@ -50,7 +50,7 @@ async function periodFor(batchId: number, reader: { select: typeof db.select } =
   return row ?? null;
 }
 
-async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
+export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
   const lessons = await lessonsFor(row.id, reader);
   const linked = await periodFor(row.id, reader);
   const anchor = linked?.group.anchorAt ?? lessons[0]?.startsAt;

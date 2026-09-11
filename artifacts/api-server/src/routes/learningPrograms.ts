@@ -988,6 +988,7 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
         publishedAt: row.publishedAt,
         teacher: { id: row.teacherId, name: row.teacherName },
         title: snapshot.title,
+        presentation: snapshot.presentation,
         summary: snapshot.summary,
         outcome: snapshot.outcome,
         /*
