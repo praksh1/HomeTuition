@@ -29,6 +29,12 @@ Flexible beta decisions are preserved, not renegotiated or silently applied to l
 Read existing managed-marketplace decisions and checked clean working tree before documentation.
 No code tests needed or claimed for this documentation-only discussion.
 
+Follow-up: owner asked for a recommendation against other Nepali app standards. Browsed first-party
+MiDas eCLASS, mySecondTeacher and Khalti pages. Evidence supports multiple package formats, not a
+verified uniform calendar anchor. Recorded sources and a pending recommendation in
+`.agents/backlog/2026-09-11-teaching-period-recommendation.md`. No competitor price copied into Fadko;
+no proposed 30-day period, proration, calendar policy or recurring debit treated as owner-approved.
+
 ## Problems and surprises
 
 Current Batch planner fits a fixed scheduled run. It does not by itself implement ongoing group
