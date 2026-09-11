@@ -12,6 +12,7 @@ import {
   type PublicProgramDetail,
 } from "@/utils/programDiscovery";
 import { ProgramBackControl, ProgramCardShell, ProgramChip } from "./ProgramPieces";
+import { fullBatchPrice, nepalDate, type ProgramBatchSnapshot } from "@/utils/programBatches";
 
 /**
  * What a student reads before deciding whether a program is for them.
@@ -47,9 +48,12 @@ export interface ProgramViewProps {
     allocations: Array<{ lessonNumber: number; state: string }>;
   } | null;
   testEnrollmentUnavailable?: boolean;
+  /** Published, immutable offers. Empty means the teacher has not opened a scheduled batch. */
+  batches?: ProgramBatchSnapshot[];
+  batchesUnavailable?: boolean;
 }
 
-export default function ProgramView({ program, onBack, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false }: ProgramViewProps) {
+export default function ProgramView({ program, onBack, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchesUnavailable = false }: ProgramViewProps) {
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const reference = referenceBlock(program);
@@ -169,6 +173,44 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
       <Section title="Taught by" testID="program-view-teacher-section">
         <Text style={[t.bodyStrong, { color: colors.foreground }]}>{program.teacher.name}</Text>
         <TeacherLink onPress={() => onOpenTeacher(program.teacher.id)} testID="program-view-teacher-link" />
+      </Section>
+
+      {/* --------------------------------------------------------------- scheduled batches */}
+      <Section title="Upcoming batches" testID="program-view-batches">
+        {batchesUnavailable ? (
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            Fadko could not check this Program’s upcoming dates and price. Try this page again.
+          </Text>
+        ) : batches.length === 0 ? (
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>
+            This teacher has not published dates and a price for an upcoming batch yet.
+          </Text>
+        ) : (
+          <View style={{ gap: space.sm }}>
+            {batches.map((batch) => (
+              <ProgramCardShell key={batch.batchId} testID={`program-view-batch-${batch.batchId}`}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.sm, flexWrap: "wrap" }}>
+                  <Text style={[t.title3, { color: colors.foreground }]}>Starts {nepalDate(batch.lessons[0]!.startsAt)}</Text>
+                  <ProgramChip label={`Up to ${batch.capacity} students`} tone="neutral" />
+                </View>
+                <Text style={[t.bodyStrong, { color: colors.primary }]}>{fullBatchPrice(batch.totalTuitionNpr)}</Text>
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>
+                  {batch.lessons.length} {batch.lessons.length === 1 ? "lesson" : "lessons"}. Enrollment will close when the first lesson starts.
+                </Text>
+                <View style={{ gap: space.xxs }}>
+                  {batch.lessons.map((lesson, index) => (
+                    <Text key={lesson.position} style={[t.caption, { color: colors.foreground }]}>
+                      Lesson {index + 1}: {nepalDate(lesson.startsAt)} · {lesson.durationMinutes} minutes
+                    </Text>
+                  ))}
+                </View>
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                  Preview only — joining and payment are not open yet.
+                </Text>
+              </ProgramCardShell>
+            ))}
+          </View>
+        )}
       </Section>
 
       {/* --------------------------------------------------------------- missing */}

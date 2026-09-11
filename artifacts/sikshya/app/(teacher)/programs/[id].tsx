@@ -416,6 +416,7 @@ export default function ProgramStudioScreen() {
         busyAction={busyAction}
         actionError={actionError}
         onBack={back}
+        onPlanBatches={() => router.push(`/(teacher)/program-batches/${id}`)}
         template={template}
         /*
           Locked while a lifecycle action is out, and only then.

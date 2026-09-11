@@ -128,6 +128,62 @@ export const learningProgramModulesTable = pgTable(
 );
 
 /**
+ * One scheduled run of a published Learning Program.
+ *
+ * Commercial and schedule promises live here rather than on the reusable Program. A teacher may
+ * offer the same Program at different times without rewriting what the Program teaches. Public
+ * reads use `publishedSnapshot`, so editing a later draft never silently changes an offer a
+ * student already saw. This foundation exposes no checkout or enrolment action.
+ */
+export const learningProgramBatchesTable = pgTable(
+  "learning_program_batches",
+  {
+    id: serial("id").primaryKey(),
+    programId: integer("program_id")
+      .notNull()
+      .references(() => learningProgramsTable.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("draft"),
+    capacity: integer("capacity"),
+    totalTuitionNpr: integer("total_tuition_npr"),
+    version: integer("version").notNull().default(0),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedSnapshot: jsonb("published_snapshot"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    index("learning_program_batches_program_idx").on(table.programId, table.status, table.id),
+    index("learning_program_batches_public_idx").on(table.status, table.publishedAt),
+  ],
+);
+
+/** A lesson promised by one batch, ordered by position and stored as an absolute instant. */
+export const learningProgramBatchLessonsTable = pgTable(
+  "learning_program_batch_lessons",
+  {
+    id: serial("id").primaryKey(),
+    batchId: integer("batch_id")
+      .notNull()
+      .references(() => learningProgramBatchesTable.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (table) => [
+    uniqueIndex("learning_program_batch_lessons_position_idx").on(table.batchId, table.position),
+    index("learning_program_batch_lessons_start_idx").on(table.batchId, table.startsAt),
+  ],
+);
+
+/**
  * A simulated Learning Program purchase used to prove Fadko's accounting before a gateway is
  * connected. `payment_status` is deliberately `test_confirmed`, never `paid`: no report may turn
  * test access into revenue. Commercial terms are frozen here so later edits to a Program cannot
@@ -212,6 +268,8 @@ export const learningProgramLedgerEntriesTable = pgTable(
 
 export type LearningProgramRow = typeof learningProgramsTable.$inferSelect;
 export type LearningProgramModuleRow = typeof learningProgramModulesTable.$inferSelect;
+export type LearningProgramBatchRow = typeof learningProgramBatchesTable.$inferSelect;
+export type LearningProgramBatchLessonRow = typeof learningProgramBatchLessonsTable.$inferSelect;
 export type LearningProgramEnrollmentRow = typeof learningProgramEnrollmentsTable.$inferSelect;
 export type LearningProgramAllocationRow = typeof learningProgramAllocationsTable.$inferSelect;
 export type LearningProgramLedgerEntryRow = typeof learningProgramLedgerEntriesTable.$inferSelect;

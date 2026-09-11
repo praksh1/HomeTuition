@@ -18,6 +18,7 @@ import onboardingRouter from "./onboarding";
 import sessionProofRouter from "./sessionProof";
 import learningProgramsRouter from "./learningPrograms";
 import programCommerceRouter from "./programCommerce";
+import programBatchesRouter from "./programBatches";
 
 const router: IRouter = Router();
 
@@ -38,6 +39,7 @@ router.use(onboardingRouter);
 router.use(sessionProofRouter);
 router.use(learningProgramsRouter);
 router.use(programCommerceRouter);
+router.use(programBatchesRouter);
 router.use(operatorsRouter);
 router.use(adminRouter);
 router.use(passwordResetRouter);

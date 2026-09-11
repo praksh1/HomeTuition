@@ -83,6 +83,8 @@ export interface ProgramStudioProps {
   busyAction: ProgramAction | null;
   actionError: string | null;
   onBack: () => void;
+  /** Opens the separate schedule-and-price planner after this Program is public. */
+  onPlanBatches?: () => void;
   /** Server templates for this type, for the prompts inside the sections. */
   template?: { promisePrompt?: string; learnerPrompt?: string; referencePrompt?: string | null } | null;
   /**
@@ -107,7 +109,7 @@ export interface ProgramStudioProps {
 
 export default function ProgramStudio(props: ProgramStudioProps) {
   const { program, draft, onDraftChange, saveState, saveError, onSave, approved, onAction,
-    busyAction, actionError, onBack, template, leaveAsk, onLeaveCancel,
+    busyAction, actionError, onBack, onPlanBatches, template, leaveAsk, onLeaveCancel,
     editingLocked = false } = props;
   const colors = useColors();
   const { t, gutter, space } = useLayout();
@@ -186,6 +188,16 @@ export default function ProgramStudio(props: ProgramStudioProps) {
         </View>
         {status.hint ? (
           <Text style={[t.callout, { color: colors.mutedForeground }]}>{status.hint}</Text>
+        ) : null}
+        {program.status === "published" && onPlanBatches ? (
+          <ProgramButton
+            testID="program-plan-batches"
+            label="Plan dates and price"
+            icon="calendar"
+            emphasis="secondary"
+            onPress={onPlanBatches}
+            grow
+          />
         ) : null}
       </View>
 

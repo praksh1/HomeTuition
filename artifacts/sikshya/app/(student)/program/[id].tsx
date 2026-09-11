@@ -9,6 +9,7 @@ import { space } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { apiGet, ApiError } from "@/utils/api";
 import type { PublicProgramDetail } from "@/utils/programDiscovery";
+import type { ProgramBatchSnapshot } from "@/utils/programBatches";
 
 /**
  * One published program, read by a student.
@@ -59,6 +60,8 @@ export default function StudentProgramScreen() {
     allocations: Array<{ lessonNumber: number; state: string }>;
   } | null>(null);
   const [testEnrollmentUnavailable, setTestEnrollmentUnavailable] = useState(false);
+  const [batches, setBatches] = useState<ProgramBatchSnapshot[]>([]);
+  const [batchesUnavailable, setBatchesUnavailable] = useState(false);
   const [loading, setLoading] = useState(validId);
   const [failure, setFailure] = useState<string | null>(null);
   /**
@@ -81,15 +84,20 @@ export default function StudentProgramScreen() {
     setFailure(null);
     setGone(false);
     try {
-      const [answer, rehearsal] = await Promise.all([
+      const [answer, rehearsal, batchAnswer] = await Promise.all([
         apiGet<{ program: PublicProgramDetail }>(`/programs/${id}`),
         apiGet<{ testEnrollment: { totalTuitionNpr: number; paidLessonCount: number } | null; allocations?: Array<{ lessonNumber: number; state: string }> }>(`/programs/${id}/my-test-enrolment`)
           .then((value) => ({ value, unavailable: false }))
           .catch(() => ({ value: { testEnrollment: null }, unavailable: true })),
+        apiGet<{ batches: ProgramBatchSnapshot[] }>(`/programs/${id}/batches`)
+          .then((value) => ({ value, unavailable: false }))
+          .catch(() => ({ value: { batches: [] }, unavailable: true })),
       ]);
       setProgram(answer.program);
       setTestEnrollment(rehearsal.value.testEnrollment ? { ...rehearsal.value.testEnrollment, allocations: rehearsal.value.allocations ?? [] } : null);
       setTestEnrollmentUnavailable(rehearsal.unavailable);
+      setBatches(Array.isArray(batchAnswer.value.batches) ? batchAnswer.value.batches : []);
+      setBatchesUnavailable(batchAnswer.unavailable);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
         setGone(true);
@@ -174,7 +182,7 @@ export default function StudentProgramScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
-      <ProgramView program={program} onBack={back} onOpenTeacher={openTeacher} testEnrollment={testEnrollment} testEnrollmentUnavailable={testEnrollmentUnavailable} />
+      <ProgramView program={program} onBack={back} onOpenTeacher={openTeacher} testEnrollment={testEnrollment} testEnrollmentUnavailable={testEnrollmentUnavailable} batches={batches} batchesUnavailable={batchesUnavailable} />
     </SafeAreaView>
   );
 }

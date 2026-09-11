@@ -1447,6 +1447,39 @@ export const LEARNING_PROGRAM_DDL: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS "learning_program_modules_program_idx"
      ON "learning_program_modules" ("program_id", "position")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_batches" (
+    "id" serial PRIMARY KEY,
+    "program_id" integer NOT NULL,
+    "status" text NOT NULL DEFAULT 'draft',
+    "capacity" integer,
+    "total_tuition_npr" integer,
+    "version" integer NOT NULL DEFAULT 0,
+    "published_at" timestamp with time zone,
+    "published_snapshot" jsonb,
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT "learning_program_batches_program_id_learning_programs_id_fk"
+      FOREIGN KEY ("program_id") REFERENCES "learning_programs"("id") ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_batches_program_idx"
+     ON "learning_program_batches" ("program_id", "status", "id")`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_batches_public_idx"
+     ON "learning_program_batches" ("status", "published_at")`,
+  `CREATE TABLE IF NOT EXISTS "learning_program_batch_lessons" (
+    "id" serial PRIMARY KEY,
+    "batch_id" integer NOT NULL,
+    "position" integer NOT NULL,
+    "starts_at" timestamp with time zone NOT NULL,
+    "duration_minutes" integer NOT NULL,
+    "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+    "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+    CONSTRAINT "learning_program_batch_lessons_batch_id_learning_program_batches_id_fk"
+      FOREIGN KEY ("batch_id") REFERENCES "learning_program_batches"("id") ON DELETE CASCADE
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "learning_program_batch_lessons_position_idx"
+     ON "learning_program_batch_lessons" ("batch_id", "position")`,
+  `CREATE INDEX IF NOT EXISTS "learning_program_batch_lessons_start_idx"
+     ON "learning_program_batch_lessons" ("batch_id", "starts_at")`,
   `CREATE TABLE IF NOT EXISTS "learning_program_enrollments" (
     "id" serial PRIMARY KEY,
     "program_id" integer NOT NULL,

@@ -725,7 +725,7 @@ async function schemaParity() {
     entry,
     [
       `export { LEARNING_PROGRAM_DDL } from ${JSON.stringify(path.join(serverRoot, "src", "lib", "ensureSchema.ts"))};`,
-      `export { learningProgramsTable, learningProgramModulesTable, learningProgramEnrollmentsTable, learningProgramAllocationsTable, learningProgramLedgerEntriesTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
+      `export { learningProgramsTable, learningProgramModulesTable, learningProgramBatchesTable, learningProgramBatchLessonsTable, learningProgramEnrollmentsTable, learningProgramAllocationsTable, learningProgramLedgerEntriesTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
       `export { getTableColumns } from "drizzle-orm";`,
     ].join("\n"),
   );
@@ -797,6 +797,8 @@ async function schemaParity() {
     for (const [name, table] of [
       ["learning_programs", mod.learningProgramsTable],
       ["learning_program_modules", mod.learningProgramModulesTable],
+      ["learning_program_batches", mod.learningProgramBatchesTable],
+      ["learning_program_batch_lessons", mod.learningProgramBatchLessonsTable],
       ["learning_program_enrollments", mod.learningProgramEnrollmentsTable],
       ["learning_program_allocations", mod.learningProgramAllocationsTable],
       ["learning_program_ledger_entries", mod.learningProgramLedgerEntriesTable],
@@ -829,6 +831,10 @@ async function schemaParity() {
       "learning_programs_teacher_idx",
       "learning_programs_public_idx",
       "learning_program_modules_program_idx",
+      "learning_program_batches_program_idx",
+      "learning_program_batches_public_idx",
+      "learning_program_batch_lessons_position_idx",
+      "learning_program_batch_lessons_start_idx",
       "learning_program_enrollments_student_program_idx",
       "learning_program_enrollments_teacher_statement_idx",
       "learning_program_allocations_lesson_idx",
@@ -842,7 +848,7 @@ async function schemaParity() {
     const fks = sql(`
       select count(*) from information_schema.table_constraints
        where table_schema = '${scratch}' and constraint_type = 'FOREIGN KEY'`);
-    check("all commerce foreign keys are created, so an orphan row cannot exist", Number(fks) === 9, fks);
+    check("all Program foreign keys are created, so an orphan row cannot exist", Number(fks) === 11, fks);
   } finally {
     execFileSync("psql", [PGURL, "-q", "-c", `DROP SCHEMA IF EXISTS ${scratch} CASCADE`], { encoding: "utf8" });
   }
