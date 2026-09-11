@@ -1,4 +1,4 @@
-import { index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { usersTable } from "./users";
 
@@ -184,6 +184,12 @@ export const teachingClassSetupsTable = pgTable("teaching_class_setups", {
   requestKey: text("request_key").notNull(),
   outline: text("outline").notNull().default(""),
 }, (table) => [uniqueIndex("teaching_class_setups_request_idx").on(table.teacherId, table.requestKey)]);
+
+/** Separate additive table: do not add a deployment-sensitive column to existing batches. */
+export const teachingClassJoiningTable = pgTable("teaching_class_joining", {
+  batchId: integer("batch_id").primaryKey().references(() => learningProgramBatchesTable.id, { onDelete: "cascade" }),
+  allowLateJoining: boolean("allow_late_joining").notNull().default(false),
+});
 
 export const learningProgramBatchLessonsTable = pgTable(
   "learning_program_batch_lessons",

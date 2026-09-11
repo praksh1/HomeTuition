@@ -1,5 +1,12 @@
 # Fadko — the whole project, in one document
 
+**11 September late-joining decision:** optional late joining for ongoing tuition is approved,
+charging only for not-yet-started lessons while keeping the shared end date. Fixed courses remain
+closed after start. See `.agents/memory/late-joining-and-purchased-promises.md`. The implementation
+is listing policy and server-calculated preview estimates only; real checkout, seat locking and
+paid-offer edit restrictions are still release blockers. Earlier blanket no-proration notes are
+superseded by this decision, not by a change to existing Monthly/Single Class purchases.
+
 **11 September teacher-flow correction (preview only):** the owner rejected mandatory
 Program → Batch setup. New teachers use **Create a class** (what / when / size and price / review),
 with an optional teaching outline. Backend snapshots and shared 30-day rules remain underneath.

@@ -50,6 +50,8 @@ try {
     await button("Continue").click();
     await page.getByLabel("Maximum students", { exact: true }).fill("6");
     await page.getByLabel("Price for 30 days (NPR)", { exact: true }).fill("3000");
+    check(await page.getByText(/approximately NPR .* per lesson/).isVisible(), `${width}: price shows lesson average`);
+    await page.getByLabel("Allow late joining", { exact: true }).check();
     await button("Review my class").click();
     check(await page.getByText("NPR 3,000 per student for these 30 days", { exact: true }).isVisible(), `${width}: price has full scope`);
     check((await page.evaluate(() => window.classRequests)).length === 0, `${width}: review creates no hidden parents`);
@@ -70,6 +72,7 @@ try {
     const writes = await page.evaluate(() => window.classRequests);
     check(writes.length === 2 && writes[0].input.requestKey === writes[1].input.requestKey, `${width}: retries share creation key`);
     check(writes[1].url === "/teaching-classes" && writes[1].input.outline === "" && writes[1].input.lessons.every((l) => l.time === "16:15"), `${width}: single endpoint carries description and exact Nepal timetable`);
+    check(writes[1].input.allowLateJoining === true, `${width}: explicit late joining choice is saved`);
     check((await page.evaluate(() => window.lastNavigation))?.params?.id === "1", `${width}: saved class receives stable URL`);
     await button("Publish class").click();
     check((await page.evaluate(() => window.classRequests)).length === 2, `${width}: opening confirmation is not a publish`);
@@ -104,5 +107,28 @@ try {
     await home.screenshot({ path: path.join(work, `${width}-classes.png`) });
     await home.close();
   }
+  const single = await browser.newPage({ viewport: { width: 360, height: 640 } });
+  await single.goto(`http://127.0.0.1:${server.address().port}/create-class`);
+  const singleButton = (name) => single.getByRole("button", { name, exact: true });
+  await single.getByLabel("Class name", { exact: true }).fill("SEE Maths evening tuition");
+  await single.getByLabel("Tell students about your class", { exact: true }).fill("We solve school exercises together and make time for questions.");
+  await single.getByLabel("Teaching language", { exact: true }).fill("Nepali");
+  await singleButton("Continue").click();
+  await single.getByRole("button", { name: /^Date:/ }).click();
+  await single.getByTestId("bs-next-month").click(); await single.getByTestId("bs-day-3").click(); await single.getByTestId("bs-confirm").click();
+  await single.getByTestId("class-time-0").fill("16:15");
+  await singleButton("Continue").click();
+  await single.getByLabel("Maximum students", { exact: true }).fill("6");
+  await single.getByLabel("Price for 30 days (NPR)", { exact: true }).fill("5000");
+  await singleButton("Review my class").click();
+  check(await single.getByText("Only 1 lesson in these 30 days", { exact: true }).count() === 1, "single lesson warning rendered in review");
+  await singleButton("Save draft").click(); await singleButton("Publish class").click();
+  await single.getByTestId("batch-confirmation").waitFor();
+  check(await single.getByText(/Only 1 lesson is scheduled/).isVisible(), "single lesson warning visible inside confirmation");
+  check(await single.getByText(/1 lesson for NPR 5,000 per student/).isVisible(), "confirmation names exact count and amount");
+  const singleModal = await single.getByTestId("batch-confirmation").boundingBox();
+  check(singleModal.y >= 0 && singleModal.y + singleModal.height <= 640, "single lesson confirmation fits small phone");
+  await single.screenshot({ path: path.join(work, "360-single-lesson-confirm.png") });
+  await single.close();
 } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 console.log(`${checks} checks passed. Screenshots: ${work}`);

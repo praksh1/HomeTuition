@@ -1,5 +1,9 @@
 # Program Batches are offers, not Programs
 
+11 September update: ongoing tuition can now explicitly opt into late joining, superseding the
+unconditional period-start cutoff below. See `late-joining-and-purchased-promises.md`. Old listings
+default off; fixed courses stay closed at their first lesson. Preview estimates are not checkout.
+
 Owner decision, 2026-09-10: a Learning Program is reusable editorial content. One scheduled run is
 a Batch. A Batch owns its 1–10 capacity, one all-inclusive NPR price and ordered Nepal-time lessons.
 Fixed courses close enrollment at Lesson 1. The 11 September ongoing-tuition extension closes at

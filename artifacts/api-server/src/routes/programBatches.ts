@@ -9,6 +9,7 @@ import {
   learningProgramsTable,
   teacherProfilesTable,
   usersTable,
+  teachingClassJoiningTable,
 } from "@workspace/db";
 
 import { requireAuth } from "../middlewares/requireAuth";
@@ -17,6 +18,7 @@ import { assertTeacherSchedule, lockTeacherSchedule, teacherScheduleIssues } fro
 import { publishedSnapshotFor } from "../lib/learningProgramState";
 import { batchSnapshot, readBatchSnapshot, sameBatchOffer, validateProgramBatch } from "../lib/programBatches";
 import { tuitionPeriod, tuitionPeriodIssues } from "../lib/tuitionPeriods";
+import { classJoiningPreview } from "../lib/classJoining";
 
 const router: IRouter = Router();
 
@@ -51,6 +53,7 @@ export async function periodFor(batchId: number, reader: { select: typeof db.sel
 }
 
 export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
+  const [joining] = await reader.select().from(teachingClassJoiningTable).where(eq(teachingClassJoiningTable.batchId, row.id));
   const lessons = await lessonsFor(row.id, reader);
   const linked = await periodFor(row.id, reader);
   const anchor = linked?.group.anchorAt ?? lessons[0]?.startsAt;
@@ -60,6 +63,7 @@ export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferS
     id: row.id,
     programId: row.programId,
     format: linked ? "ongoing" : "fixed",
+    allowLateJoining: linked ? joining?.allowLateJoining === true : false,
     tuitionGroupId: linked?.group.id ?? null,
     tuitionPeriod: period,
     periodAnchorLocked: !!linked?.group.anchorAt,
@@ -252,7 +256,9 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
     const periodProblems = tuitionPeriodIssues(period, validation.lessons);
     if (periodProblems.length) { res.status(422).json({ error: "Check the tuition period dates.", issues: periodProblems }); return null; }
   }
+  const [joining] = await tx.select().from(teachingClassJoiningTable).where(eq(teachingClassJoiningTable.batchId, batch.id));
   const snapshot = batchSnapshot({
+    allowLateJoining: !!period && joining?.allowLateJoining === true,
     tuitionPeriod: period,
     batchId: joined.batch.id,
     version,
@@ -331,6 +337,7 @@ router.post("/learning-program-batches/:id/close", requireAuth, async (req, res)
 });
 
 router.get("/programs/:programId/batches", async (req, res): Promise<void> => {
+  res.setHeader("Cache-Control", "no-store");
   const programId = readId(req.params.programId);
   if (programId === null) {
     res.status(400).json({ error: "That program address is not valid." });
@@ -355,12 +362,13 @@ router.get("/programs/:programId/batches", async (req, res): Promise<void> => {
       isNull(usersTable.suspendedAt),
     ))
     .orderBy(asc(learningProgramBatchesTable.publishedAt));
+  const nowMs = Date.now();
   res.json({
     batches: rows.flatMap((row) => {
       const snapshot = readBatchSnapshot(row.snapshot);
       return snapshot && snapshot.version === row.version && snapshot.programVersion === row.programVersion &&
-        Date.parse(snapshot.enrollmentClosesAt) > Date.now()
-        ? [snapshot]
+        Date.parse(snapshot.enrollmentClosesAt) > nowMs
+        ? [{ ...snapshot, joiningPreview: classJoiningPreview(snapshot, nowMs) }]
         : [];
     }),
   });

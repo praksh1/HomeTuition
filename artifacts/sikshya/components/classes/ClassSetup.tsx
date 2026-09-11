@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Platform,
   ScrollView,
+  Switch,
   Text,
   TextInput,
   View,
@@ -28,6 +29,7 @@ import {
 import { BatchConfirmation } from "@/components/programs/BatchConfirmation";
 import { NativeTimePicker } from "./NativeTimePicker";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
+import { classPriceBreakdown, classPublishSummary } from "@/utils/classPrice";
 import {
   classDescriptionIssues,
   classIsPublished,
@@ -480,7 +482,7 @@ export default function ClassSetup() {
                   label="Short course · a set finish"
                   emphasis={form.format === "fixed" ? "secondary" : "quiet"}
                   disabled={locked}
-                  onPress={() => setForm({ ...form, format: "fixed" })}
+                  onPress={() => setForm({ ...form, format: "fixed", allowLateJoining: false })}
                 />
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>
                   For exam preparation, a language course or a set of music
@@ -735,7 +737,7 @@ export default function ClassSetup() {
                   ? "Price for 30 days (NPR)"
                   : "Price for the whole course (NPR)"
               }
-              hint="One full price per student, paid before teaching begins. Example: 3000. This is an example, not a suggested price."
+              hint="One full price per student for the listed lessons. Payment is upfront. Example: 3000 (not a suggested price)."
               value={form.totalTuitionNpr}
               numeric
               disabled={locked}
@@ -743,6 +745,18 @@ export default function ClassSetup() {
                 setForm({ ...form, totalTuitionNpr })
               }
             />
+            <Text style={[t.callout, numeric, { color: colors.foreground }]}>
+              {classPriceBreakdown(Number(form.totalTuitionNpr), form.lessons.length)}
+            </Text>
+            {form.format === "ongoing" ? (
+              <ProgramCardShell>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>Allow late joining?</Text>
+                <Switch testID="class-late-joining" accessibilityLabel="Allow late joining" value={form.allowLateJoining} disabled={locked}
+                  onValueChange={(allowLateJoining) => setForm({ ...form, allowLateJoining })}
+                  trackColor={{ false: colors.border, true: colors.primary }} />
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>When joining opens, new students will pay only for lessons that have not started, if a seat is available. Everyone keeps the same end date. Past lessons and individual catch-up teaching are not included. Off by default; choose again for each new period.</Text>
+              </ProgramCardShell>
+            ) : null}
             <ProgramNotice
               title="No money moves during this preview"
               body="Students cannot join or pay for these listings yet. This step plans the price; it does not collect it."
@@ -764,6 +778,9 @@ export default function ClassSetup() {
               <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>
                 {price}
               </Text>
+              <Text style={[t.callout, numeric, { color: colors.foreground }]}>{classPriceBreakdown(Number(form.totalTuitionNpr), form.lessons.length)}</Text>
+              {form.format === "ongoing" ? <Text style={[t.callout, { color: colors.mutedForeground }]}>{form.allowLateJoining ? "Late joining planned: remaining lessons only, same end date." : "Late joining off: enrollment closes at the period start."}</Text> : null}
+              {form.format === "ongoing" && form.lessons.length === 1 ? <ProgramNotice tone="waiting" title="Only 1 lesson in these 30 days" body="The full price buys that single lesson. Check your timetable before publishing." /> : null}
               <Text style={[t.callout, { color: colors.foreground }]}>
                 {form.lessons.length} lessons · up to {form.capacity} students ·{" "}
                 {form.format === "ongoing" ? "Regular tuition" : "Short course"}
@@ -948,10 +965,7 @@ export default function ClassSetup() {
         title={confirmTitle}
         consequences={
           confirm === "publish"
-            ? [
-                "I have checked the class description, every lesson date and the full price per student.",
-                "This publishes a listing only. Joining and payment remain unavailable.",
-              ]
+            ? classPublishSummary(Number(form.totalTuitionNpr), form.lessons.length, form.format === "ongoing")
             : confirm === "replace"
               ? [
                   "This replaces the lesson dates currently in your draft. Nothing is saved until Save draft succeeds.",

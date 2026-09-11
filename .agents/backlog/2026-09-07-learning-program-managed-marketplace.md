@@ -1,5 +1,10 @@
 # Learning Programs and the managed marketplace
 
+**11 Sep late-joining update:** optional future-lessons-only late joining is approved for ongoing
+tuition. See `../memory/late-joining-and-purchased-promises.md` and the late-joining worklog. Prior
+blanket no-proration language is superseded. Preview listing policy/estimates are not paid checkout;
+first-purchase offer locking, atomic seats/quote expiry and audited rescheduling remain blockers.
+
 **Teacher UX superseded, 11 Sep:** the owner does not want a mandatory Program → Batch hierarchy.
 The approved entry is one **Create a class** flow with an optional outline; regular tuition and
 short courses use the existing contracts underneath. Renewals stay under one named class card.

@@ -15,6 +15,8 @@ export async function apiPost(url, input) {
     item = { title: input.title, summary: input.summary, teachingLanguage: input.teachingLanguage, outline: input.outline, programUpdatedAt: new Date().toISOString(), publishedDescription: null, batch: { id: 1, programId: 1, currentProgramVersion: 0, format: input.format, status: "draft", capacity: input.capacity, totalTuitionNpr: input.totalTuitionNpr, version: 0, published: null, updatedAt: new Date().toISOString(), lessons: input.lessons.map((lesson, position) => ({ position, startsAt: new Date(`${lesson.date}T${lesson.time}:00+05:45`).toISOString(), durationMinutes: lesson.durationMinutes })) } };
     if (input.format === "ongoing") { const start = item.batch.lessons[0].startsAt; item.batch.tuitionGroupId = 1; item.batch.tuitionPeriod = { groupId: 1, index: 0, startsAt: start, endsAt: new Date(Date.parse(start) + 30 * 86400000).toISOString() }; }
   }
+  if (!url.endsWith("/publish")) item.batch.allowLateJoining = input.allowLateJoining === true;
+  else item.batch.published.allowLateJoining = item.batch.allowLateJoining;
   window.savedClassFixture = structuredClone(item);
   return { item: structuredClone(item), created: true };
 }

@@ -18,6 +18,7 @@ export interface ProgramBatchLesson {
 }
 
 export interface ProgramBatchSnapshot {
+  allowLateJoining?: boolean;
   tuitionPeriod?: TuitionPeriod;
   batchId: number;
   version: number;
@@ -40,6 +41,7 @@ export function sameBatchOffer(a: ProgramBatchSnapshot | null, b: ProgramBatchSn
   return a !== null && a.batchId === b.batchId && a.programId === b.programId &&
     a.programVersion === b.programVersion && a.programTitle === b.programTitle &&
     a.capacity === b.capacity && a.totalTuitionNpr === b.totalTuitionNpr &&
+    (a.allowLateJoining ?? false) === (b.allowLateJoining ?? false) &&
     a.timeZone === b.timeZone && a.enrollmentClosesAt === b.enrollmentClosesAt &&
     a.tuitionPeriod?.groupId === b.tuitionPeriod?.groupId && a.tuitionPeriod?.index === b.tuitionPeriod?.index &&
     a.tuitionPeriod?.startsAt === b.tuitionPeriod?.startsAt && a.tuitionPeriod?.endsAt === b.tuitionPeriod?.endsAt &&
@@ -121,6 +123,7 @@ export function validateProgramBatch(
 }
 
 export function batchSnapshot(input: {
+  allowLateJoining?: boolean;
   tuitionPeriod?: TuitionPeriod;
   batchId: number;
   version: number;
@@ -137,6 +140,7 @@ export function batchSnapshot(input: {
     durationMinutes: lesson.durationMinutes,
   }));
   return {
+    ...(input.allowLateJoining ? { allowLateJoining: true } : {}),
     ...(input.tuitionPeriod ? { tuitionPeriod: input.tuitionPeriod } : {}),
     batchId: input.batchId,
     version: input.version,
@@ -146,7 +150,9 @@ export function batchSnapshot(input: {
     capacity: input.capacity,
     totalTuitionNpr: input.totalTuitionNpr,
     timeZone: PROGRAM_BATCH_TIME_ZONE,
-    enrollmentClosesAt: input.tuitionPeriod?.startsAt ?? lessons[0]!.startsAt,
+    enrollmentClosesAt: input.allowLateJoining && input.tuitionPeriod
+      ? lessons[lessons.length - 1]!.startsAt
+      : input.tuitionPeriod?.startsAt ?? lessons[0]!.startsAt,
     lessons,
   };
 }
@@ -154,6 +160,8 @@ export function batchSnapshot(input: {
 export function readBatchSnapshot(value: unknown): ProgramBatchSnapshot | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Partial<ProgramBatchSnapshot>;
+  if (row.allowLateJoining !== undefined && typeof row.allowLateJoining !== "boolean") return null;
+  if (row.allowLateJoining && !row.tuitionPeriod) return null;
   if (
     !Number.isInteger(row.batchId) || !Number.isInteger(row.version) || !Number.isInteger(row.programId) ||
     !Number.isInteger(row.programVersion) || typeof row.programTitle !== "string" ||
@@ -175,7 +183,8 @@ export function readBatchSnapshot(value: unknown): ProgramBatchSnapshot | null {
   }
   if (row.tuitionPeriod !== undefined) {
     const period = readTuitionPeriod(row.tuitionPeriod);
-    if (!period || row.enrollmentClosesAt !== period.startsAt || tuitionPeriodIssues(period, row.lessons.map((l) => ({ ...l, startsAt: new Date(l.startsAt) }))).length) return null;
+    const cutoff = row.allowLateJoining ? row.lessons[row.lessons.length - 1]!.startsAt : period?.startsAt;
+    if (!period || row.enrollmentClosesAt !== cutoff || tuitionPeriodIssues(period, row.lessons.map((l) => ({ ...l, startsAt: new Date(l.startsAt) }))).length) return null;
   } else if (row.enrollmentClosesAt !== row.lessons[0]!.startsAt) return null;
   return row as ProgramBatchSnapshot;
 }

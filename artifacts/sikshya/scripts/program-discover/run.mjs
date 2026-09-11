@@ -387,6 +387,16 @@ for (const size of SIZES) {
 
   console.log(`\n[${L}] A program in full`);
 
+  const lateLessons = Array.from({ length: 18 }, (_, position) => ({ position, startsAt: new Date(Date.UTC(2026, 9, position + 1, 10)).toISOString(), durationMinutes: 60 }));
+  const lateBatch = { batchId: 99, version: 1, programId: 12, programVersion: 1, programTitle: "Maths", capacity: 10, totalTuitionNpr: 5000, timeZone: "Asia/Kathmandu", allowLateJoining: true, enrollmentClosesAt: lateLessons[17].startsAt,
+    tuitionPeriod: { groupId: 1, index: 0, startsAt: lateLessons[0].startsAt, endsAt: "2026-10-31T10:00:00Z" }, lessons: lateLessons,
+    joiningPreview: { previewOnly: true, status: "remaining_lessons", calculatedAt: "2026-10-07T11:00:00Z", totalLessonCount: 18, remainingLessonCount: 11, startedLessonCount: 7, amountNpr: 3056, lessonPositions: Array.from({ length: 11 }, (_, n) => n + 7), validBefore: lateLessons[7].startsAt, periodEndsAt: "2026-10-31T10:00:00Z" } };
+  await show({ screen: "view", props: { program: detail(), batches: [lateBatch] } }, "view-late-joining");
+  check(`${L}: late quote is distinct from original total`, /Original full-period price:.*5,000/s.test(await body()) && /3,056 per student.*11 lessons/s.test(await body()));
+  check(`${L}: no invented delivery claim or seat reservation`, /7 scheduled lessons have already started/.test(await body()) && /does not reserve a seat/.test(await body()));
+  check(`${L}: exact remaining subset is labelled`, (await body()).match(/Not included/g)?.length === 7 && (await body()).match(/Included in estimate/g)?.length === 11);
+  check(`${L}: late breakdown fits viewport width`, (await overflow()) <= 1);
+  check(`${L}: period summary never contradicts enabled late joining`, !(await body()).includes("No automatic charge or mid-period joining"));
   await show({ screen: "view", props: { program: detail() } }, "view-full");
   check(`${L}: the title is at the top`, /Grade 10 Mathematics/i.test(await text("program-view-title")));
   check(`${L}: the outcome sits under it`, /past paper/i.test(await text("program-view-outcome")));

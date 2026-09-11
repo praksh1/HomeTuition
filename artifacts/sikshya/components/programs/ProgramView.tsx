@@ -13,6 +13,7 @@ import {
 } from "@/utils/programDiscovery";
 import { ProgramBackControl, ProgramCardShell, ProgramChip } from "./ProgramPieces";
 import { fullBatchPrice, nepalDate, type ProgramBatchSnapshot } from "@/utils/programBatches";
+import { classPriceBreakdown } from "@/utils/classPrice";
 import { TuitionPeriodSummary } from "./TuitionPeriodSummary";
 
 /**
@@ -56,7 +57,7 @@ export interface ProgramViewProps {
 
 export default function ProgramView({ program, onBack, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchesUnavailable = false }: ProgramViewProps) {
   const colors = useColors();
-  const { t, gutter, space, radius } = useLayout();
+  const { t, gutter, space, radius, numeric } = useLayout();
   const reference = referenceBlock(program);
   const missing = missingOptional(program);
 
@@ -194,15 +195,22 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
                   <Text style={[t.title3, { color: colors.foreground }]}>Starts {nepalDate(batch.lessons[0]!.startsAt)}</Text>
                   <ProgramChip label={`Up to ${batch.capacity} students`} tone="neutral" />
                 </View>
-                {batch.tuitionPeriod ? <TuitionPeriodSummary period={batch.tuitionPeriod} /> : null}
-                <Text style={[t.bodyStrong, { color: colors.primary }]}>{fullBatchPrice(batch.totalTuitionNpr, batch.tuitionPeriod)}</Text>
+                {batch.tuitionPeriod ? <TuitionPeriodSummary period={batch.tuitionPeriod} allowLateJoining={batch.allowLateJoining} /> : null}
+                <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>{batch.joiningPreview?.status === "remaining_lessons" ? "Original full-period price: " : ""}{fullBatchPrice(batch.totalTuitionNpr, batch.tuitionPeriod)}</Text>
+                <Text style={[t.callout, numeric, { color: colors.foreground }]}>{classPriceBreakdown(batch.totalTuitionNpr, batch.lessons.length)}</Text>
                 <Text style={[t.callout, { color: colors.mutedForeground }]}>
-                  {batch.lessons.length} {batch.lessons.length === 1 ? "lesson" : "lessons"}. {batch.tuitionPeriod ? "Enrollment is planned to close at the period start." : "Enrollment will close when the first lesson starts."}
+                  {batch.allowLateJoining ? "Late joining is planned for this group: future lessons only, same period end date. Past lessons and individual catch-up teaching are not included." : batch.tuitionPeriod ? "Enrollment is planned to close at the period start." : "Enrollment will close when the first lesson starts."}
                 </Text>
+                {batch.joiningPreview?.status === "remaining_lessons" ? (
+                  <View style={{ gap: space.xs }}>
+                    <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>Remaining-lessons estimate: {batch.joiningPreview.amountNpr === null ? "price unavailable" : `NPR ${batch.joiningPreview.amountNpr.toLocaleString()} per student`} for {batch.joiningPreview.remainingLessonCount} lessons</Text>
+                    <Text style={[t.caption, { color: colors.mutedForeground }]}>{batch.joiningPreview.startedLessonCount} scheduled lessons have already started; they are not included. Calculated {nepalDate(batch.joiningPreview.calculatedAt)}. Refresh before the next lesson; this estimate does not reserve a seat or enable payment.</Text>
+                  </View>
+                ) : null}
                 <View style={{ gap: space.xxs }}>
                   {batch.lessons.map((lesson, index) => (
                     <Text key={lesson.position} style={[t.caption, { color: colors.foreground }]}>
-                      Lesson {index + 1}: {nepalDate(lesson.startsAt)} · {lesson.durationMinutes} minutes
+                      Lesson {index + 1}: {nepalDate(lesson.startsAt)} · {lesson.durationMinutes} minutes{batch.joiningPreview?.status === "remaining_lessons" ? batch.joiningPreview.lessonPositions.includes(lesson.position) ? " · Included in estimate" : " · Not included" : ""}
                     </Text>
                   ))}
                 </View>

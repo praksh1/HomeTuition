@@ -6,8 +6,9 @@ Approved by the owner on 11 September 2026 ("Ok go for it").
   student's payment date. This is not a BS calendar month and not a promise of 30 lessons.
 - Fixed courses remain dated lesson bundles. Existing Monthly and Single Class rules stay intact.
 - Every period states its exact lessons, full advance price, BS + AD boundaries and next period.
-- Students pay before the purchased period begins. No silent auto-debit, unpaid access or
-  mid-period/prorated entry is authorized. Mid-period pricing needs a separate decision.
+- Students pay upfront. Later on 11 September the owner approved optional mid-period entry for
+  ongoing tuition, paying only for not-yet-started lessons: see `late-joining-and-purchased-promises.md`.
+  No silent auto-debit or unpaid access is authorized. The original group's end date stays fixed.
 - Planning a next period keeps the group identity, but is NOT buying, enrolling or charging.
 - Preview only until a real Batch checkout, frozen purchase terms and provider gates are built.
 

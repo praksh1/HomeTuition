@@ -8,6 +8,7 @@ import {
   learningProgramTuitionGroupsTable,
   learningProgramBatchPeriodsTable,
   teachingClassSetupsTable,
+  teachingClassJoiningTable,
   teacherProfilesTable,
   usersTable,
 } from "@workspace/db";
@@ -158,7 +159,7 @@ router.post("/teaching-classes", requireAuth, async (req, res) => {
   if (teacherId === null) return;
   const checked = input(req.body);
   const { description, schedule, body } = checked;
-  if (!description.ok || !schedule.ok) {
+  if (!description.ok || !schedule.ok || (body.allowLateJoining !== undefined && typeof body.allowLateJoining !== "boolean") || (body.allowLateJoining === true && body.format !== "ongoing")) {
     res
       .status(422)
       .json({ error: "Check your class details.", issues: checked.issues });
@@ -237,6 +238,7 @@ router.post("/teaching-classes", requireAuth, async (req, res) => {
         requestKey: body.requestKey as string,
         outline: description.value.outline,
       });
+    await tx.insert(teachingClassJoiningTable).values({ batchId: batch!.id, allowLateJoining: body.allowLateJoining === true });
     return {
       created: true,
       item: await view((await owned(batch!.id, teacherId, tx))!, tx),
@@ -273,8 +275,9 @@ router.patch("/teaching-classes/:id", requireAuth, async (req, res) => {
     res.status(404).json({ error: "That class was not found." });
     return;
   }
-  const { description, schedule, issues } = input(req.body);
-  if (!description.ok || !schedule.ok) {
+  const { description, schedule, issues, body } = input(req.body);
+  const linked = await periodFor(row.batch.id);
+  if (!description.ok || !schedule.ok || (body.allowLateJoining !== undefined && typeof body.allowLateJoining !== "boolean") || (body.allowLateJoining === true && !linked)) {
     res.status(422).json({ error: "Check your class details.", issues });
     return;
   }
@@ -331,6 +334,10 @@ router.patch("/teaching-classes/:id", requireAuth, async (req, res) => {
         updatedAt: new Date(),
       })
       .where(eq(learningProgramBatchesTable.id, batch.id));
+    if (body.allowLateJoining !== undefined) {
+      await tx.insert(teachingClassJoiningTable).values({ batchId: batch.id, allowLateJoining: body.allowLateJoining === true })
+        .onConflictDoUpdate({ target: teachingClassJoiningTable.batchId, set: { allowLateJoining: body.allowLateJoining === true } });
+    }
     await tx
       .delete(learningProgramBatchLessonsTable)
       .where(eq(learningProgramBatchLessonsTable.batchId, batch.id));
@@ -492,7 +499,9 @@ router.post("/teaching-classes/:id/publish", requireAuth, async (req, res) => {
       res.status(422).json({ error: "Check the class size and full price." });
       return null;
     }
+    const [joining] = await tx.select().from(teachingClassJoiningTable).where(eq(teachingClassJoiningTable.batchId, batch.id));
     const snapshot = batchSnapshot({
+      allowLateJoining: !!period && joining?.allowLateJoining === true,
       batchId: batch.id,
       version: batch.version + 1,
       programId: program.id,

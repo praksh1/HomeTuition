@@ -19,6 +19,7 @@ export interface TeachingClass {
   } | null;
 }
 export interface ClassForm {
+  allowLateJoining: boolean;
   title: string;
   summary: string;
   teachingLanguage: string;
@@ -48,6 +49,7 @@ export function groupTeachingClasses(items: TeachingClass[]) {
 }
 export function emptyClassForm(): ClassForm {
   return {
+    allowLateJoining: false,
     title: "",
     summary: "",
     teachingLanguage: "",
@@ -60,6 +62,7 @@ export function emptyClassForm(): ClassForm {
 }
 export function formFromClass(item: TeachingClass): ClassForm {
   return {
+    allowLateJoining: item.batch.allowLateJoining === true,
     title: item.title,
     summary: item.summary,
     teachingLanguage: item.teachingLanguage,

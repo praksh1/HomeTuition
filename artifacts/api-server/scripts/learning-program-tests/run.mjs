@@ -727,7 +727,7 @@ async function schemaParity() {
       `export { LEARNING_PROGRAM_DDL } from ${JSON.stringify(path.join(serverRoot, "src", "lib", "ensureSchema.ts"))};`,
       `export { learningProgramsTable, learningProgramModulesTable, learningProgramBatchesTable, learningProgramBatchLessonsTable, learningProgramTuitionGroupsTable, learningProgramBatchPeriodsTable, learningProgramEnrollmentsTable, learningProgramAllocationsTable, learningProgramLedgerEntriesTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
       `export { getTableColumns } from "drizzle-orm";`,
-      `export { teachingClassSetupsTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
+      `export { teachingClassSetupsTable, teachingClassJoiningTable } from ${JSON.stringify(path.join(repoRoot, "lib", "db", "src", "schema", "learningPrograms.ts"))};`,
     ].join("\n"),
   );
   await (esbuild.build ?? esbuild.default.build)({
@@ -798,6 +798,7 @@ async function schemaParity() {
     for (const [name, table] of [
       ["learning_programs", mod.learningProgramsTable],
       ["teaching_class_setups", mod.teachingClassSetupsTable],
+      ["teaching_class_joining", mod.teachingClassJoiningTable],
       ["learning_program_modules", mod.learningProgramModulesTable],
       ["learning_program_batches", mod.learningProgramBatchesTable],
       ["learning_program_batch_lessons", mod.learningProgramBatchLessonsTable],
@@ -855,7 +856,7 @@ async function schemaParity() {
     const fks = sql(`
       select count(*) from information_schema.table_constraints
        where table_schema = '${scratch}' and constraint_type = 'FOREIGN KEY'`);
-    check("all Program foreign keys are created, so an orphan row cannot exist", Number(fks) === 17, fks);
+    check("all Program foreign keys are created, so an orphan row cannot exist", Number(fks) === 18, fks);
   } finally {
     execFileSync("psql", [PGURL, "-q", "-c", `DROP SCHEMA IF EXISTS ${scratch} CASCADE`], { encoding: "utf8" });
   }
@@ -1683,12 +1684,15 @@ async function simpleClasses() {
   const before = sql("select count(*) from learning_programs");
   check("bad description rejected", (await create({ ...body, title: "a" })).status === 422);
   check("invalid date rejected", (await create({ ...body, lessons: [{ date: "nonsense", time: "15:00", durationMinutes: 60 }] })).status === 422);
+  check("fixed course cannot enable late joining", (await create({ ...body, format: "fixed", allowLateJoining: true })).status === 422);
+  check("late joining requires an actual boolean", (await create({ ...body, allowLateJoining: "true" })).status === 422);
   check("invalid requests create no parent behind the scenes", sql("select count(*) from learning_programs") === before);
   const attempts = await Promise.all([create(), create()]);
   check("concurrent first-save retries create one class", attempts.every((r) => [200, 201].includes(r.status)) && attempts[0].body.item.batch.id === attempts[1].body.item.batch.id);
   let item = attempts[0].body.item;
   const id = item.batch.id, pid = item.batch.programId;
   check("one saved draft contains description, dates, price and stable tuition group", item.title === body.title && item.batch.lessons.length === 1 && item.batch.capacity === 6 && item.batch.format === "ongoing" && item.batch.tuitionGroupId > 0);
+  check("existing class defaults to late joining off", item.batch.allowLateJoining === false);
   check("no invented modules", sql(`select count(*) from learning_program_modules where program_id=${pid}`) === "0");
   check("only one idempotency mapping exists", sql(`select count(*) from teaching_class_setups where program_id=${pid}`) === "1");
   check("older Programs list does not lead simple classes into the wrong editor", !(await api("/learning-programs", { token: teacher.token })).body.programs.some((p) => p.id === pid));
@@ -1735,6 +1739,39 @@ async function simpleClasses() {
   check("suspended listing hidden publicly", (await api(`/programs/${pid}`)).status === 404);
   sql(`update users set suspended_at=null where id=${teacher.user.id}`);
   check("student cannot use operator-only simulated enrolment", (await api(`/admin/program-commerce/programs/${pid}/test-enrolments`, { method: "POST", token: student.token, body: { studentId: student.user.id, totalTuitionNpr: 3000, paidLessonCount: 1 } })).status === 403);
+
+  // A separate teacher keeps this contract probe independent of conflict fixtures above.
+  const lateBody = { ...body, requestKey: body.requestKey + "-late", allowLateJoining: true, totalTuitionNpr: 5000,
+    lessons: Array.from({ length: 18 }, (_, index) => ({ date: new Date(Date.parse(day) + index * 86400000).toISOString().slice(0, 10), time: "15:00", durationMinutes: 60 })) };
+  const lateCreated = await create(lateBody, other.token);
+  let lateItem = lateCreated.body.item;
+  check("late-joining teacher choice persists", lateCreated.status === 201 && lateItem.batch.allowLateJoining === true);
+  const latePublished = await publish(lateItem, other.token);
+  check("late-joining publication passes validation", latePublished.status === 200, JSON.stringify(latePublished.body));
+  lateItem = latePublished.body.item;
+  const lateId = lateItem.batch.id, latePid = lateItem.batch.programId;
+  let latePublic = (await api(`/programs/${latePid}/batches`)).body.batches[0];
+  check("public choice is frozen and cutoff is last lesson start", latePublic.allowLateJoining === true && latePublic.enrollmentClosesAt === latePublic.lessons[17].startsAt);
+  check("advance estimate is full price without inventing seat availability", latePublic.joiningPreview.amountNpr === 5000 && latePublic.joiningPreview.previewOnly === true && !("seatsRemaining" in latePublic));
+  const policyDraft = await api(`/teaching-classes/${lateId}`, { method: "PATCH", token: other.token, body: { ...lateBody, ...versions(lateItem), allowLateJoining: false } });
+  check("policy edit saves separately from published promise", policyDraft.status === 200 && policyDraft.body.item.batch.allowLateJoining === false && (await api(`/programs/${latePid}/batches`)).body.batches[0].allowLateJoining === true);
+  check("another teacher cannot change late policy", (await api(`/teaching-classes/${lateId}`, { method: "PATCH", token: teacher.token, body: { ...lateBody, ...versions(policyDraft.body.item), allowLateJoining: false } })).status === 404);
+  // Move ONLY this synthetic published snapshot to a mid-period instant. The public API still
+  // applies its real visibility rules, validator and server clock. Never alter an existing user.
+  const snapshot = structuredClone(latePublic);
+  delete snapshot.joiningPreview;
+  const anchor = Date.now() - 6 * 86400000 - 60000;
+  snapshot.tuitionPeriod.startsAt = new Date(anchor).toISOString();
+  snapshot.tuitionPeriod.endsAt = new Date(anchor + 30 * 86400000).toISOString();
+  snapshot.lessons.forEach((lesson, index) => { lesson.startsAt = new Date(anchor + index * 86400000).toISOString(); });
+  snapshot.enrollmentClosesAt = snapshot.lessons[17].startsAt;
+  sql(`update learning_program_batches set published_snapshot='${JSON.stringify(snapshot).replaceAll("'", "''")}'::jsonb where id=${lateId}`);
+  latePublic = (await api(`/programs/${latePid}/batches`)).body.batches[0];
+  check("mid-period listing remains visible with exact 11-lesson quote", latePublic?.joiningPreview.amountNpr === 3056 && latePublic.joiningPreview.remainingLessonCount === 11);
+  check("already-started lesson excluded and period end retained", latePublic?.joiningPreview.lessonPositions[0] === 7 && latePublic.joiningPreview.periodEndsAt === snapshot.tuitionPeriod.endsAt);
+  sql(`update users set suspended_at=now() where id=${other.user.id}`);
+  check("late joining never bypasses suspension", (await api(`/programs/${latePid}/batches`)).body.batches.length === 0);
+  sql(`update users set suspended_at=null where id=${other.user.id}`);
 }
 
 await main();

@@ -1488,6 +1488,10 @@ export const LEARNING_PROGRAM_DDL: readonly string[] = [
     "outline" text NOT NULL DEFAULT ''
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "teaching_class_setups_request_idx" ON "teaching_class_setups" ("teacher_id", "request_key")`,
+  `CREATE TABLE IF NOT EXISTS "teaching_class_joining" (
+    "batch_id" integer PRIMARY KEY REFERENCES "learning_program_batches"("id") ON DELETE CASCADE,
+    "allow_late_joining" boolean NOT NULL DEFAULT false
+  )`,
   `CREATE TABLE IF NOT EXISTS "learning_program_batch_lessons" (
     "id" serial PRIMARY KEY,
     "batch_id" integer NOT NULL,

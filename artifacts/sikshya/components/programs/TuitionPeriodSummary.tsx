@@ -7,7 +7,7 @@ import { batchDateValue, lessonDraft, type TuitionPeriod } from "@/utils/program
 import { toBikramSambat } from "@/utils/nepaliDate";
 import { ProgramCardShell } from "./ProgramPieces";
 
-export function TuitionPeriodSummary({ period, provisional = false }: { period: TuitionPeriod; provisional?: boolean }) {
+export function TuitionPeriodSummary({ period, provisional = false, allowLateJoining = false }: { period: TuitionPeriod; provisional?: boolean; allowLateJoining?: boolean }) {
   const colors = useColors();
   const { t, space } = useLayout();
   const dates = useDates();
@@ -24,7 +24,7 @@ export function TuitionPeriodSummary({ period, provisional = false }: { period: 
       <Text style={[t.callout, { color: colors.foreground }]}>Ends: {label(period.endsAt)} (not included)</Text>
       <Text style={[t.caption, { color: colors.mutedForeground }]}>The next period begins at this end time, in the same group. Thirty days is not thirty lessons or a calendar month.</Text>
       <Text style={[t.caption, { color: colors.mutedForeground }]}>{provisional ? "These dates follow Lesson 1 until first publication. Publishing fixes this group's period dates." : "These group dates are fixed. Each period needs its own published lessons and price."}</Text>
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>Planned payment rule: pay before the period starts. No automatic charge or mid-period joining. Checkout is not open yet.</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>{allowLateJoining ? "Planned payment rule: pay upfront for the remaining lessons when joining late. The group end date stays the same. No automatic charge. Checkout is not open yet." : "Planned payment rule: pay before the period starts. No automatic charge or mid-period joining. Checkout is not open yet."}</Text>
     </View>
   </ProgramCardShell>;
 }

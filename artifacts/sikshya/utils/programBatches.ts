@@ -8,6 +8,19 @@ export interface ProgramBatchLessonDraft {
 }
 
 export interface ProgramBatchSnapshot {
+  allowLateJoining?: boolean;
+  joiningPreview?: {
+    previewOnly: true;
+    calculatedAt: string;
+    status: "closed" | "remaining_lessons" | "full_offer";
+    totalLessonCount: number;
+    remainingLessonCount: number;
+    startedLessonCount: number;
+    amountNpr: number | null;
+    lessonPositions: number[];
+    validBefore: string | null;
+    periodEndsAt: string | null;
+  };
   tuitionPeriod?: TuitionPeriod;
   batchId: number;
   version: number;
@@ -45,6 +58,7 @@ export function batchTimeDraft(value: Date): string {
 }
 
 export interface OwnerProgramBatch {
+  allowLateJoining?: boolean;
   format?: "fixed" | "ongoing";
   tuitionGroupId?: number | null;
   tuitionPeriod?: TuitionPeriod | null;
@@ -69,6 +83,7 @@ export function batchMatchesPublication(batch: OwnerProgramBatch): boolean {
     batch.version === published.version && batch.id === published.batchId && batch.programId === published.programId &&
     batch.currentProgramVersion === published.programVersion &&
     batch.capacity === published.capacity && batch.totalTuitionNpr === published.totalTuitionNpr &&
+    (batch.allowLateJoining ?? false) === (published.allowLateJoining ?? false) &&
     batch.lessons.length === published.lessons.length && batch.lessons.every((lesson, index) => {
       const other = published.lessons[index]!;
       return lesson.position === other.position && Date.parse(lesson.startsAt) === Date.parse(other.startsAt) && lesson.durationMinutes === other.durationMinutes;
