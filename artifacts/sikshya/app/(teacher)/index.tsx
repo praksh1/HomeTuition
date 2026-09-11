@@ -320,21 +320,21 @@ export default function TeacherDashboard() {
         >
           <View style={styles.statsHead}>
             <Text style={[t.overline, onNavyMuted]}>This month</Text>
-            {allowance && (
+            {allowance && teacher.subscriptionActive && (
               <Text style={[t.caption, onNavyMuted]}>
-                {allowance.tierName} · NPR {allowance.price.toLocaleString()}
+                Existing single-class access
               </Text>
             )}
           </View>
 
           <View style={styles.statsRow}>
-            <Stat label="Classes" labelStyle={[t.caption, onNavyMuted]}>
+            <Stat label="Single classes" labelStyle={[t.caption, onNavyMuted]}>
               {allowanceLoading ? (
                 <Skeleton width={54} height={22} tint={colors.onInverseMuted} />
               ) : allowance ? (
                 <Text style={[t.title1, numeric, onNavy]}>
                   {allowance.used}
-                  <Text style={[t.title3, onNavyMuted]}>/{allowance.limit}</Text>
+                  {teacher.subscriptionActive ? <Text style={[t.title3, onNavyMuted]}>/{allowance.limit}</Text> : null}
                 </Text>
               ) : (
                 <Text style={[t.title3, onNavyMuted]}>Unavailable</Text>
@@ -363,11 +363,11 @@ export default function TeacherDashboard() {
             </Stat>
           </View>
 
-          {allowance && allowance.remaining > 0 && (
+          {teacher.subscriptionActive && allowance && allowance.remaining > 0 && (
             <View style={styles.planBadge}>
               <Feather name="shield" size={13} color={colors.onInverseMuted} />
               <Text style={[t.caption, onNavyMuted]}>
-                {allowance.remaining} more {allowance.remaining === 1 ? "class" : "classes"} on this plan
+                {allowance.remaining} more single {allowance.remaining === 1 ? "class" : "classes"} on existing access
               </Text>
             </View>
           )}
@@ -628,7 +628,7 @@ export default function TeacherDashboard() {
         Amber while there is room to act, rust once the plan is spent: running out is a
         different message from running low, and they should not look the same.
       */}
-      {teacher.approvalStatus === "approved" && allowance !== null && allowance.remaining <= 2 && (
+      {teacher.subscriptionActive && teacher.approvalStatus === "approved" && allowance !== null && allowance.remaining <= 2 && (
         <TouchableOpacity
           style={[
             styles.banner,
@@ -656,8 +656,8 @@ export default function TeacherDashboard() {
             ]}
           >
             {allowance.remaining === 0
-              ? `All ${allowance.limit} classes on your ${allowance.tierName} plan are used.`
-              : `${allowance.remaining} ${allowance.remaining === 1 ? "class" : "classes"} left on your ${allowance.tierName} plan.`}
+              ? `All ${allowance.limit} single classes on your existing access are used.`
+              : `${allowance.remaining} single ${allowance.remaining === 1 ? "class" : "classes"} left on your existing access.`}
           </Text>
           <Text style={[t.caption, { color: colors.primary }]}>Teaching access</Text>
         </TouchableOpacity>
