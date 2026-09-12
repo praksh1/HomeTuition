@@ -381,3 +381,15 @@ the older Program test-enrolment form below to test this new batch-specific chec
 - Production, `main`, Postgres data, simulated/real payments, Daily and LiveKit remain untouched at
   this checkpoint. Code still needs commit, push, disposable-database CI, preview deployment and
   the owner's signed-in student verification before any production release.
+- Code commit `dc36c30` was pushed to `codex/batch-simulated-checkout`. Disposable-database safety
+  workflow `34696296204` passed every application, API, booking, video, proof and browser gate in
+  3m01s. The preview source branch was then fast-forwarded to the exact commit; preview workflow
+  `34696465438` passed its isolated API/database, rendered-flow, bundle-destination and served-site
+  checks and deployed in 5m26s.
+- A fresh reload of the deployed signed-in student preview confirmed Classes is the first selected
+  catalogue and Tuition & short courses is its selected sub-catalogue. The exact title
+  `Example: SEE Maths evening tuition` appeared in the first result page, an exact submitted search
+  returned that one class, and opening it rendered program id 11 with NPR 6,500 per student, eight
+  lessons, Nepali-calendar start time and the private test-checkout action. A live screenshot also
+  confirmed the cards, search controls and fixed navigation fit without overlap. The owner now has
+  the preview for manual device review; production and `main` are still untouched.
