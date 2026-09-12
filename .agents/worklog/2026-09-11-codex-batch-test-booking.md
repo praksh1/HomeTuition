@@ -70,6 +70,15 @@ Full rerun 34666967951 for f5c9718 PASSED: program API 601, batch booking 40, te
 26, student test access 108, class setup UI 75, booking UI 24; units and typecheck also green.
 Real media, real phones and deployed signup/booking journey not yet proven.
 
+Preview workflow 34667178274 stopped before upload: ProgramView's newly imported pilot panel
+pulled Expo Router into the older esbuild discovery fixture. Added the existing navigation stub
+and a fail-on-request API stub for these no-pilot fixtures. First local correction used the wrong
+export name; corrected apiGet/apiPost. Local Discover render now 182/0. No deployment gate skipped.
+Staging API 57c2bcd deployed successfully (d0a06d96-050d-4934-ae14-8615d8a95107); completed additive
+guard confirmed in logs at 02:17:51Z. Set ONLY staging TEST_ACCESS_UNTIL=2027-01-10T00:00:00Z.
+Existing staging payment mode logs SIMULATED; this was not changed. The new batch path remains
+explicit test status regardless. Frontend retry pending; no user test readiness claimed yet.
+
 ## Problems and surprises
 
 - The initial late-joining fixture used the period end as enrollment cutoff. Canonical snapshots

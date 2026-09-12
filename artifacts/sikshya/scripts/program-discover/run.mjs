@@ -133,7 +133,13 @@ writeFileSync(
 );
 
 const bundle = path.join(work, "bundle.js");
-const built = await bundleForBrowser({ entry, outfile: bundle, alias: { "expo-font": fontStub } });
+const built = await bundleForBrowser({ entry, outfile: bundle, alias: {
+  "expo-font": fontStub,
+  // ProgramView imports the optional pilot booking panel. This component-only suite
+  // has no Router root; real navigation belongs to the journey/export tests.
+  "expo-router": path.resolve(here, "../class-setup/router.js"),
+  "@/utils/api": path.join(here, "api.js"),
+} });
 if (!built.ok) {
   console.error(built.error);
   rmSync(work, { recursive: true, force: true });
