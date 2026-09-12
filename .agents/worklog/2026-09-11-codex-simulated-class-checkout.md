@@ -255,4 +255,14 @@ the older Program test-enrolment form below to test this new batch-specific chec
   with normal workspace access passed. A side-by-side image viewer cropped the teacher capture;
   inspection of the original 390px image confirmed the rendered page itself was intact.
 - No real payment, payout, refund, production deploy, purchase or Daily change occurred in this
-  correction. Disposable-database CI, preview deployment and manual review are still required.
+  correction. Commit `962e906` was pushed to `codex/batch-simulated-checkout` and the preview
+  source branch was advanced to the same commit.
+- GitHub safety workflow `34687839500` passed every gate, including the disposable PostgreSQL
+  participant-response privacy assertions. Preview workflow `34687992383` passed and deployed
+  the exact commit. Railway staging deployment `d0bba418-bbfa-424e-a6d1-003755c5da3f` became
+  ACTIVE / successful with message `Move participant payment history into profiles`.
+- Browser verification against the deployed preview confirmed Teacher > My classes has no money
+  summary, while Profile > Teaching & earnings shows expected, pending and test-paid earnings plus
+  receipt history. `Held by Fadko`, Fadko fee and Fadko earnings were absent after a fresh reload.
+  Student Profile > Payments & receipts is covered by the rendered route suite and remains for the
+  owner's signed-in student walkthrough. Production and `main` remain untouched.
