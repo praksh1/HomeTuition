@@ -1,6 +1,6 @@
 # Profile account details and refund contact
 
-Status: approved product backlog, not part of the class-home deployment.
+Status: implemented on `codex/profile-account-details`; awaiting preview verification.
 
 ## Account details
 
@@ -26,3 +26,12 @@ Status: approved product backlog, not part of the class-home deployment.
 - Progressive enforcement date for existing accounts.
 - Agent review rules for manually entered municipalities and institutions.
 
+## Implemented in the first safe slice
+
+- Both Profile pages use one Account details card with a clear Edit/Add details action.
+- Login email is shown but remains protected; it cannot be silently replaced without a future verified-email-change flow.
+- Phone, Province, District, Municipality/local level, locality and school/affiliation are editable through the existing private onboarding record.
+- Province and District are now validated against the canonical Nepal hierarchy on the server.
+- Municipality and school have explicit not-listed/manual choices; teachers may choose Independent teacher and students may choose Not applicable.
+- Existing legacy accounts remain usable and receive a gentle Needs your attention prompt instead of a new login block.
+- The refund-request screen states that an approved refund returns to the original payment method and directs changed-account cases to Support.

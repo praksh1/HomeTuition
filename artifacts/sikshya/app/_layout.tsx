@@ -106,9 +106,9 @@ function AuthGuard() {
     } else if ((user.role === "teacher" || user.role === "student") && !user.onboardingComplete) {
       if (!onOnboarding) router.replace("/onboarding" as never);
     } else if (user.role === "teacher") {
-      if (!inTeacherGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen) router.replace("/(teacher)");
+      if (!inTeacherGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen && !onOnboarding) router.replace("/(teacher)");
     } else if (user.role === "student") {
-      if (!inStudentGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen) router.replace("/(student)");
+      if (!inStudentGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen && !onOnboarding) router.replace("/(student)");
     } else if (user.role === "admin") {
       // An agent has one place to be. They are not a teacher or a student, and the screens for
       // those roles would show them somebody else's empty dashboard.

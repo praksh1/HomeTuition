@@ -398,6 +398,19 @@ export default function SupportScreen() {
         </View>
       )}
 
+      {reason === "Refund Request" && (
+        <View
+          testID="refund-original-payment-notice"
+          style={[styles.notice, { backgroundColor: colors.actionSoft, borderColor: colors.border }]}
+        >
+          <Feather name="credit-card" size={16} color={colors.primary} />
+          <Text style={[styles.noticeText, { color: colors.foreground }]}>
+            If approved, the refund is returned to the original payment method. If that account
+            or phone number has changed, contact Support before the refund is processed.
+          </Text>
+        </View>
+      )}
+
       <View style={styles.field}>
         <Text style={[styles.label, { color: colors.foreground }]}>Reason</Text>
         <TouchableOpacity

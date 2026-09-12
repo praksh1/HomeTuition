@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -16,19 +16,20 @@ type District = { name: string; localLevels: string[] };
 type Province = { name: string; districts: District[] };
 type Facility = { name: string; nepaliName: string | null; type: string | null; localLevel: string };
 
-const NOT_SPECIFIED = "Not specified";
-
 export default function Onboarding() {
   const { user, refreshUser } = useAuth();
+  const params = useLocalSearchParams<{ edit?: string }>();
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const insets = useSafeAreaInsets();
   const isTeacher = user?.role === "teacher";
+  const editing = params.edit === "1";
   const [provinces, setProvinces] = useState<Province[]>([]);
   const [phone, setPhone] = useState("");
   const [province, setProvince] = useState("");
   const [district, setDistrict] = useState("");
   const [localLevel, setLocalLevel] = useState("");
+  const [manualLocalLevel, setManualLocalLevel] = useState(false);
   const [locality, setLocality] = useState("");
   const [affiliationStatus, setAffiliationStatus] = useState<"affiliated" | "independent" | "not_specified">("affiliated");
   const [institutionName, setInstitutionName] = useState("");
@@ -50,6 +51,11 @@ export default function Onboarding() {
       setProvince(row.province ?? "");
       setDistrict(row.district ?? "");
       setLocalLevel(row.localLevel ?? "");
+      const listed = locations.provinces
+        ?.find((item) => item.name === row.province)
+        ?.districts.find((item) => item.name === row.district)
+        ?.localLevels.includes(row.localLevel ?? "") === true;
+      setManualLocalLevel(Boolean(row.localLevel) && !listed);
       setLocality(row.locality ?? "");
       setInstitutionName(row.institutionName ?? "");
       if (row.affiliationStatus === "independent" || row.affiliationStatus === "not_specified") setAffiliationStatus(row.affiliationStatus);
@@ -61,7 +67,7 @@ export default function Onboarding() {
   const localLevels = useMemo(() => districts.find((item) => item.name === district)?.localLevels ?? [], [districts, district]);
 
   const searchSchools = async () => {
-    if (schoolQuery.trim().length < 2 || !province || !district || province === NOT_SPECIFIED) return;
+    if (schoolQuery.trim().length < 2 || !province || !district) return;
     try {
       const result = await apiGet<{ facilities: Facility[] }>(
         `/locations/nepal/facilities?province=${encodeURIComponent(province)}&district=${encodeURIComponent(district)}` +
@@ -97,7 +103,7 @@ export default function Onboarding() {
   };
 
   const finish = async () => {
-    if (isTeacher && !photoUploaded) { notify("Profile photo needed", "Upload a clear face photo before finishing."); return; }
+    if (!editing && isTeacher && !photoUploaded) { notify("Profile photo needed", "Upload a clear face photo before finishing."); return; }
     setSaving(true);
     try {
       await apiPatch("/onboarding/me", {
@@ -110,7 +116,8 @@ export default function Onboarding() {
         institutionName,
       });
       await refreshUser();
-      router.replace("/");
+      if (editing) router.replace(isTeacher ? "/(teacher)/profile" : "/(student)/profile");
+      else router.replace("/");
     } catch (error) {
       notify("Please check the form", error instanceof Error ? error.message : "Your details could not be saved.");
     } finally {
@@ -123,39 +130,45 @@ export default function Onboarding() {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ paddingHorizontal: gutter, paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.huge, gap: space.lg }} keyboardShouldPersistTaps="handled">
       <View style={{ gap: space.xs }}>
-        <Text style={[t.title1, { color: colors.foreground }]}>Complete your profile</Text>
-        <Text style={[t.body, { color: colors.mutedForeground }]}>{isTeacher ? "These details help students trust who they are booking. Your phone and documents are never shown publicly." : "Your teacher sees the student's display name. Guardian and phone details stay private."}</Text>
+        {editing && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to profile" onPress={() => router.replace(isTeacher ? "/(teacher)/profile" : "/(student)/profile")} style={{ minHeight: 44, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: space.xs }}><Feather name="arrow-left" size={20} color={colors.primary} /><Text style={[t.bodyStrong, { color: colors.primary }]}>Profile</Text></TouchableOpacity>}
+        <Text style={[t.title1, { color: colors.foreground }]}>{editing ? "Account details" : "Complete your profile"}</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>{isTeacher ? "These details help students find and trust you. Your phone stays private." : "Your teacher sees the student's display name. School and phone details stay private."}</Text>
+      </View>
+
+      <View style={{ gap: space.xs }}>
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>Login email</Text>
+        <View style={{ minHeight: 48, justifyContent: "center", paddingHorizontal: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.muted }}>
+          <Text style={[t.body, { color: colors.foreground }]}>{user.email}</Text>
+        </View>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>Your verified login email is protected. Contact Support if it needs to change.</Text>
       </View>
 
       <Field label="Phone number *" value={phone} onChange={setPhone} placeholder="+977…" colors={colors} t={t} radius={radius} space={space} keyboardType="phone-pad" />
       <Text style={[t.caption, { color: colors.mutedForeground }]}>Fadko may use this for login, class, and other important SMS notifications.</Text>
 
-      <Choice label="Province *" value={province} options={[...provinces.map((item) => item.name), NOT_SPECIFIED]} onChoose={(value: string) => { setProvince(value); setDistrict(""); setLocalLevel(""); }} colors={colors} t={t} radius={radius} space={space} />
-      {province === NOT_SPECIFIED ? (
-        <>
-          <Field label="District or area *" value={district} onChange={setDistrict} placeholder="Type district or area" colors={colors} t={t} radius={radius} space={space} />
-          <Field label="Municipality / local level *" value={localLevel} onChange={setLocalLevel} placeholder="Type municipality or local level" colors={colors} t={t} radius={radius} space={space} />
-        </>
-      ) : (
-        <>
-          <Choice label="District *" value={district} options={districts.map((item) => item.name)} onChoose={(value: string) => { setDistrict(value); setLocalLevel(""); }} colors={colors} t={t} radius={radius} space={space} />
-          <Choice label="Metropolitan / Municipality / Local level *" value={localLevel} options={localLevels} onChoose={setLocalLevel} colors={colors} t={t} radius={radius} space={space} />
-        </>
-      )}
+      <Choice label="Province *" value={province} options={provinces.map((item) => item.name)} onChoose={(value: string) => { setProvince(value); setDistrict(""); setLocalLevel(""); setManualLocalLevel(false); }} colors={colors} t={t} radius={radius} space={space} />
+      <Choice label="District *" value={district} options={districts.map((item) => item.name)} onChoose={(value: string) => { setDistrict(value); setLocalLevel(""); setManualLocalLevel(false); }} colors={colors} t={t} radius={radius} space={space} />
+      {manualLocalLevel ? <>
+        <Field label="Municipality / local level *" value={localLevel} onChange={setLocalLevel} placeholder="Type the municipality or local level" colors={colors} t={t} radius={radius} space={space} />
+        {localLevels.length > 0 && <TouchableOpacity accessibilityRole="button" onPress={() => { setManualLocalLevel(false); setLocalLevel(""); }} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.bodyStrong, { color: colors.primary }]}>Choose from the list instead</Text></TouchableOpacity>}
+      </> : <>
+        <Choice label="Metropolitan / Municipality / Local level *" value={localLevel} options={localLevels} onChoose={setLocalLevel} colors={colors} t={t} radius={radius} space={space} />
+        {!!district && <TouchableOpacity accessibilityRole="button" onPress={() => { setManualLocalLevel(true); setLocalLevel(""); }} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.bodyStrong, { color: colors.primary }]}>My municipality is not listed</Text></TouchableOpacity>}
+      </>}
       <Field label="Town, city, or locality" value={locality} onChange={setLocality} placeholder="Optional local area" colors={colors} t={t} radius={radius} space={space} />
 
       <View style={{ gap: space.sm }}>
         <Text style={[t.bodyStrong, { color: colors.foreground }]}>{isTeacher ? "School affiliation *" : "School or college *"}</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
           <Chip label="Affiliated" active={affiliationStatus === "affiliated"} onPress={() => setAffiliationStatus("affiliated")} colors={colors} t={t} radius={radius} space={space} />
-          {isTeacher && <Chip label="Independent teacher" active={affiliationStatus === "independent"} onPress={() => { setAffiliationStatus("independent"); setInstitutionName(""); }} colors={colors} t={t} radius={radius} space={space} />}
-          <Chip label="Not specified" active={affiliationStatus === "not_specified"} onPress={() => setAffiliationStatus("not_specified")} colors={colors} t={t} radius={radius} space={space} />
+          <Chip label={isTeacher ? "Independent teacher" : "Not applicable"} active={affiliationStatus === "independent"} onPress={() => { setAffiliationStatus("independent"); setInstitutionName(""); }} colors={colors} t={t} radius={radius} space={space} />
+          <Chip label="School not listed" active={affiliationStatus === "not_specified"} onPress={() => setAffiliationStatus("not_specified")} colors={colors} t={t} radius={radius} space={space} />
         </View>
       </View>
 
       {affiliationStatus !== "independent" && (
         <View style={{ gap: space.sm }}>
-          {affiliationStatus === "affiliated" && province !== NOT_SPECIFIED && (
+          {affiliationStatus === "affiliated" && (
             <View style={{ flexDirection: "row", gap: space.xs }}>
               <View style={{ flex: 1 }}><Field label="Find institution" value={schoolQuery} onChange={setSchoolQuery} placeholder="Type at least 2 letters" colors={colors} t={t} radius={radius} space={space} /></View>
               <TouchableOpacity onPress={() => void searchSchools()} activeOpacity={0.8} style={{ alignSelf: "flex-end", minHeight: 48, justifyContent: "center", paddingHorizontal: space.md, borderRadius: radius.sm, backgroundColor: colors.primary }}><Feather name="search" size={18} color={colors.primaryForeground} /></TouchableOpacity>
@@ -171,7 +184,7 @@ export default function Onboarding() {
         </View>
       )}
 
-      {isTeacher && (
+      {isTeacher && !editing && (
         <View style={{ padding: space.md, gap: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card }}>
           <Text style={[t.bodyStrong, { color: colors.foreground }]}>Clear face profile photo *</Text>
           <Text style={[t.caption, { color: colors.mutedForeground }]}>Use a professional, LinkedIn-style photo. Students should know who they will meet before booking.</Text>
@@ -183,7 +196,7 @@ export default function Onboarding() {
       )}
 
       <TouchableOpacity onPress={() => void finish()} disabled={saving} activeOpacity={0.85} style={{ minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary }}>
-        {saving ? <ActivityIndicator color={colors.primaryForeground} /> : <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Save and continue</Text>}
+        {saving ? <ActivityIndicator color={colors.primaryForeground} /> : <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{editing ? "Save account details" : "Save and continue"}</Text>}
       </TouchableOpacity>
     </ScrollView>
   );

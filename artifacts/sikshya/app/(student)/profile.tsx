@@ -6,6 +6,7 @@ import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View }
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SocialSignIn } from "@/components/SocialSignIn";
+import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth, type Student } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
@@ -68,17 +69,7 @@ export default function StudentProfile() {
         </View>
       </LinearGradient>
 
-      <View style={styles.card}>
-        <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Account details</Text>
-        <View style={styles.infoRow}>
-          <Feather name="mail" size={16} color={colors.mutedForeground} />
-          <Text style={[t.callout, styles.secondaryText]} numberOfLines={2}>{student.email}</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <Feather name="book" size={16} color={colors.mutedForeground} />
-          <Text style={[t.callout, styles.secondaryText]}>{student.grade || "Grade not added yet"}</Text>
-        </View>
-      </View>
+      <AccountDetailsCard email={student.email} role="student" />
 
       <View style={styles.card}>
         <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Payment methods</Text>
