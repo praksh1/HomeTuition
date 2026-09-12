@@ -36,6 +36,14 @@ Initial local receipt tests 3/3; full named-workspace typecheck passed after bui
 declarations; design ratchet unchanged 94/282; checkout rendered tests 30/30 at390/1440.
 Inspected generated390px booked screenshot. Additional operator panel and CI checks pending.
 
+Continuation: full safety CI34669036220 passed at d7ca3d5, including disposable PostgreSQL,
+both unit suites, program/batch booking, provider contract, proof, teacher/student grants and UI.
+Extended local UI suite34/34 includes operator receipt view at390/1440; inspected390px operator
+screenshot, no clipping. New allocation tests cover tiny prices and maximum safe-integer totals.
+Teacher staging user1 test grant renewed through2027-01-10 via operator UI, success dialog
+confirmed. Student user2 already active through2026-09-17; attempted renewal dialog stalled the
+browser. Asked owner to Cancel, owner confirmed done; do not assume revocation occurred.
+
 ## Problems and surprises
 
 Direct API typecheck before building shared libraries could not see new schema export. Full

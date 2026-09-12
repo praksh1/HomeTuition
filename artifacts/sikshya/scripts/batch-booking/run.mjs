@@ -64,6 +64,12 @@ try {
     await page.getByText("Test booking unavailable", { exact: true }).waitFor();
     check(`${width}: failed booking never claims success`, !(await page.locator("body").innerText()).includes("Test place booked"));
     check(`${width}: stale quote cannot be resubmitted without refresh`, await page.getByRole("button", { name: "Simulate successful payment", exact: true }).count() === 0);
+    await page.goto(base + "?operator");
+    await page.getByRole("button", { name: "Show test receipts", exact: true }).click();
+    await page.getByText("Synthetic SEE Maths", { exact: true }).waitFor();
+    check(`${width}: operator sees student and test allocations`, (await page.locator("body").innerText()).includes("Synthetic Student") && (await page.locator("body").innerText()).includes("4,200 / Fadko 1,800"));
+    check(`${width}: operator ledger fits screen`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.screenshot({ path: path.join(work, `${width}-operator.png`), fullPage: true });
     check(`${width}: no browser exceptions`, errors.length === 0);
     await page.close();
   }

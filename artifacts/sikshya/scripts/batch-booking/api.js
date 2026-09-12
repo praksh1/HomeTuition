@@ -1,7 +1,8 @@
 const teacher = () => location.search.includes("teacher");
 const result = () => ({ testOnly: true, paymentCollectedNpr: 0, isTeacher: teacher(), booked: false,
   quoteKey: "a".repeat(64), quote: { status: "full_offer", remainingLessonCount: 2, amountNpr: 6000 }, offerLessons: [{ position: 0, startsAt: "2026-10-01T10:15:00Z", durationMinutes: 60 }], lessons: [], receipts: [] });
-export async function apiGet() {
+export async function apiGet(path) {
+  if (path === "/admin/batch-test-payments") return { receipts: [{ reference: "TEST-BATCH-1", classTitle: "Synthetic SEE Maths", studentName: "Synthetic Student", recordedAt: "2026-10-01T10:15:00Z", grossNpr: 6000, teacherNpr: 4200, fadkoNpr: 1800 }] };
   if (location.search.includes("unavailable")) throw new Error("An operator must enable your student test access first.");
   return result();
 }

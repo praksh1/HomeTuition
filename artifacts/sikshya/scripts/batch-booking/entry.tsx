@@ -1,4 +1,5 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { BatchTestPanel } from "../../components/classes/BatchTestPanel";
-createRoot(document.getElementById("root")!).render(<BatchTestPanel batchId={12} teacher={location.search.includes("teacher")} />);
+import { BatchTestLedger } from "../../components/classes/BatchTestLedger";
+createRoot(document.getElementById("root")!).render(location.search.includes("operator") ? <BatchTestLedger /> : <BatchTestPanel batchId={12} teacher={location.search.includes("teacher")} />);
