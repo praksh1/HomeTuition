@@ -1,10 +1,10 @@
 import React, { useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
+import { router } from "expo-router";
 
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import { ApiError, apiGet, apiPost } from "@/utils/api";
-import { PROGRAM_COMMERCE_NEXT } from "@/utils/programCommerceActions";
+import { apiGet } from "@/utils/api";
 import {
   PROGRAM_ALLOCATION_STATE_LABELS,
   orderedProgramCommerceHistory,
@@ -31,6 +31,7 @@ interface Receipt {
   grossNpr: number;
   teacherNpr: number;
   fadkoNpr: number;
+  needsAttention: boolean;
   allocations: TestAllocation[];
   history: TestHistory[];
   accounting: {
@@ -47,7 +48,6 @@ export function BatchTestLedger() {
   const { t, space, radius, numeric } = useLayout();
   const [rows, setRows] = useState<Receipt[] | null>(null);
   const [open, setOpen] = useState<number | null>(null);
-  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -58,26 +58,11 @@ export function BatchTestLedger() {
     finally { setBusy(false); }
   }
 
-  async function apply(receipt: Receipt, allocation: TestAllocation, event: string, needsReason: boolean) {
-    if (needsReason && !note.trim()) {
-      setError("Write the decision reason before applying that complaint or refund action.");
-      return;
-    }
-    setBusy(true); setError("");
-    try {
-      await apiPost(`/admin/batch-test-payments/${receipt.bookingId}/allocations/${allocation.position}/events`, { event, note });
-      setNote("");
-      await load();
-    } catch (reason) {
-      setError(reason instanceof ApiError ? reason.message : "The simulated ledger could not be updated. No money moved.");
-    } finally { setBusy(false); }
-  }
-
   return <View style={{ gap: space.sm }}>
-    <Text accessibilityRole="header" style={[t.bodyStrong, { color: colors.foreground }]}>Class checkout · test ledger</Text>
-    <Text style={[t.caption, { color: colors.mutedForeground }]}>Student test purchases, lesson holds, refunds and payouts. Every rupee here is pretend.</Text>
-    <ProgramButton label={busy ? "Loading…" : rows ? "Refresh test receipts" : "Show test receipts"} disabled={busy} onPress={() => void load()} />
-    {error ? <ProgramNotice title="Could not complete that rehearsal" body={error} tone="stopped" /> : null}
+    <Text accessibilityRole="header" style={[t.bodyStrong, { color: colors.foreground }]}>Test payment overview</Text>
+    <Text style={[t.caption, { color: colors.mutedForeground }]}>Fadko updates these lesson states from the classroom record, server time and student support cases. Operators do not mark ordinary lessons delivered or open and close review windows.</Text>
+    <ProgramButton label={busy ? "Checking…" : rows ? "Refresh overview" : "View test payments"} disabled={busy} onPress={() => void load()} />
+    {error ? <ProgramNotice title="Could not refresh test payments" body={error} tone="stopped" /> : null}
     {rows?.length === 0 ? <Text style={[t.callout, { color: colors.mutedForeground }]}>No simulated class payments recorded yet.</Text> : null}
     {rows?.map((receipt) => {
       const expanded = open === receipt.bookingId;
@@ -85,6 +70,10 @@ export function BatchTestLedger() {
         <Text style={[t.bodyStrong, { color: colors.foreground }]}>{receipt.classTitle}</Text>
         <Text style={[t.callout, { color: colors.foreground }]}>{receipt.studentName} · {programCommerceNepalTime(receipt.recordedAt)}</Text>
         <Text style={[t.callout, numeric, { color: colors.foreground }]}>Pretend purchase: NPR {receipt.grossNpr.toLocaleString("en-NP")}</Text>
+        <View style={{ gap: space.xxs, padding: space.sm, borderRadius: radius.sm, backgroundColor: receipt.needsAttention ? colors.warnSoft : colors.successSoft }}>
+          <Text style={[t.bodyStrong, { color: receipt.needsAttention ? colors.warn : colors.success }]}>{receipt.needsAttention ? "Needs customer-service attention" : "No operator action needed"}</Text>
+          <Text style={[t.caption, { color: colors.foreground }]}>{receipt.needsAttention ? "A cancellation or student complaint needs a person to review the support case." : "The system is waiting for the lesson, review window or provider confirmation."}</Text>
+        </View>
         <View style={{ gap: space.xxs, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceSunk }}>
           <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Still held · NPR {receipt.accounting.heldGrossNpr.toLocaleString("en-NP")}</Text>
           <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Test-paid to teacher · NPR {receipt.accounting.teacherPaidOutNpr.toLocaleString("en-NP")}</Text>
@@ -92,29 +81,13 @@ export function BatchTestLedger() {
           <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Test-refunded to student · NPR {receipt.accounting.refundedGrossNpr.toLocaleString("en-NP")}</Text>
         </View>
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Actual money moved: NPR {receipt.accounting.actualMoneyMovedNpr}. This ledger cannot trigger a real payout or refund.</Text>
-        <ProgramButton emphasis="quiet" label={expanded ? "Hide lesson decisions" : "Review lesson decisions"} onPress={() => { setOpen(expanded ? null : receipt.bookingId); setError(""); }} />
+        {receipt.needsAttention ? <ProgramButton emphasis="primary" label="Open support cases" onPress={() => router.push("/(admin)")} /> : null}
+        <ProgramButton emphasis="quiet" label={expanded ? "Hide lesson details" : "View lesson details"} onPress={() => { setOpen(expanded ? null : receipt.bookingId); setError(""); }} />
         {expanded ? <View style={{ gap: space.md }}>
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            multiline
-            placeholder="Decision reason (required when approving or declining a complaint/refund)"
-            placeholderTextColor={colors.inkFaint}
-            style={[t.body, { minHeight: space.huge * 2, padding: space.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, color: colors.foreground, backgroundColor: colors.card, textAlignVertical: "top" }]}
-          />
           {receipt.allocations.map((allocation) => <View key={allocation.position} style={{ gap: space.xs, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: colors.border }}>
             <Text style={[t.bodyStrong, { color: colors.foreground }]}>Lesson {allocation.position + 1} · NPR {allocation.grossNpr.toLocaleString("en-NP")}</Text>
             <Text style={[t.caption, { color: colors.mutedForeground }]}>{PROGRAM_ALLOCATION_STATE_LABELS[allocation.state] ?? "Recorded state unavailable"}</Text>
             <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Teacher NPR {allocation.teacherNpr.toLocaleString("en-NP")} · Fadko NPR {allocation.fadkoNpr.toLocaleString("en-NP")}</Text>
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
-              {(PROGRAM_COMMERCE_NEXT[allocation.state] ?? []).map((action) => <ProgramButton
-                key={action.event}
-                label={action.label}
-                emphasis={action.event.includes("refund") || action.event.includes("upheld") ? "danger" : "secondary"}
-                disabled={busy}
-                onPress={() => void apply(receipt, allocation, action.event, Boolean(action.reason))}
-              />)}
-            </View>
           </View>)}
           {receipt.history.length ? <View style={{ gap: space.xs }}>
             <Text style={[t.bodyStrong, { color: colors.foreground }]}>Decision history</Text>

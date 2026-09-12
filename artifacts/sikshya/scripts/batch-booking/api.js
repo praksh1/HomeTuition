@@ -16,7 +16,7 @@ function operatorReceipt() {
   const held = allocations.filter((allocation) => !["paid_out", "refunded"].includes(allocation.state));
   const sum = (values, key) => values.reduce((total, row) => total + row[key], 0);
   return { bookingId: 1, reference: "TEST-BATCH-1", classTitle: "Synthetic SEE Maths", studentName: "Synthetic Student",
-    recordedAt: "2026-10-01T10:15:00Z", grossNpr: 6000, teacherNpr: 4200, fadkoNpr: 1800, allocations,
+    recordedAt: "2026-10-01T10:15:00Z", grossNpr: 6000, teacherNpr: 4200, fadkoNpr: 1800, needsAttention: operatorStates.some((state) => ["disputed", "replacement_pending"].includes(state)), allocations,
     history: operatorHistory, accounting: { heldGrossNpr: sum(held, "grossNpr"), teacherPaidOutNpr: sum(rows("paid_out"), "teacherNpr"),
       fadkoEarnedNpr: sum(rows("paid_out"), "fadkoNpr"), refundedGrossNpr: sum(rows("refunded"), "grossNpr"), actualMoneyMovedNpr: 0 } };
 }

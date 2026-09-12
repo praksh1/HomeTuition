@@ -4,7 +4,7 @@ import { Router } from "express";
 import { db, learningProgramsTable, learningProgramBatchesTable, teacherProfilesTable, usersTable,
   userOnboardingTable, testTeachingGrantsTable, testStudentGrantsTable, batchTestContractsTable,
   batchTestBookingsTable, batchTestPaymentsTable, batchTestLedgerEntriesTable, batchTestSessionsTable,
-  sessionsTable, sessionEnrollmentsTable, testClassesTable } from "@workspace/db";
+  sessionsTable, sessionEnrollmentsTable, sessionParticipationTable, disputesTable, testClassesTable } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { emailVerifiedFor } from "../lib/accountSecurity";
 import { testPilotDeadline } from "../lib/testPilot";
@@ -18,6 +18,7 @@ import { notifyInApp } from "../lib/notify";
 import { simulatedBatchReceipt, type SimulatedBatchReceipt } from "../lib/batchTestPayment";
 import { PROGRAM_ALLOCATION_EVENTS, ProgramCommerceInputError, transitionProgramAllocation,
   type ProgramAllocationEvent, type ProgramAllocationState } from "../lib/programCommerce";
+import { automaticBatchTestEvents, batchTestNeedsHumanAttention } from "../lib/batchTestSettlement";
 
 const router = Router();
 const EVENTS_REQUIRING_NOTE = new Set<ProgramAllocationEvent>([
@@ -39,6 +40,7 @@ function receiptView(receipt: SimulatedBatchReceipt, entries: BatchLedgerRow[]) 
   return {
     ...receipt,
     allocations,
+    needsAttention: allocations.some((allocation) => batchTestNeedsHumanAttention(allocation.state)),
     history: entries.map((entry) => ({ ...entry, createdAt: entry.createdAt.toISOString() })),
     accounting: {
       heldGrossNpr: sum(held, "grossNpr"),
@@ -50,9 +52,90 @@ function receiptView(receipt: SimulatedBatchReceipt, entries: BatchLedgerRow[]) 
   };
 }
 
+const ACTIVE_COMPLAINT_STATUSES = ["open", "opened", "assigned", "processing", "in_review"] as const;
+
+/**
+ * Bring the rehearsal ledger up to date from session evidence and student-created cases.
+ *
+ * This never decides a complaint and never confirms a payout/refund. Its only inputs are the
+ * session row, recorded teacher participation, the server clock and an actual support case.
+ */
+async function synchronizeBatchTestSettlements(batchId?: number): Promise<void> {
+  const bookings = await db.select({ bookingId: batchTestPaymentsTable.bookingId, batchId: batchTestBookingsTable.batchId, studentId: batchTestBookingsTable.studentId })
+    .from(batchTestPaymentsTable)
+    .innerJoin(batchTestBookingsTable, eq(batchTestBookingsTable.id, batchTestPaymentsTable.bookingId))
+    .where(batchId === undefined ? undefined : eq(batchTestBookingsTable.batchId, batchId))
+    .orderBy(asc(batchTestPaymentsTable.bookingId))
+    .limit(50);
+
+  for (const target of bookings) {
+    await db.transaction(async (tx) => {
+      const [payment] = await tx.select().from(batchTestPaymentsTable)
+        .where(eq(batchTestPaymentsTable.bookingId, target.bookingId)).for("update").limit(1);
+      if (!payment) return;
+      const receipt = payment.receipt as SimulatedBatchReceipt;
+      const lessons = await tx.select({
+        position: batchTestSessionsTable.position,
+        sessionId: sessionsTable.id,
+        status: sessionsTable.status,
+        startsAt: sessionsTable.date,
+        durationMinutes: sessionsTable.duration,
+      }).from(batchTestSessionsTable)
+        .innerJoin(sessionsTable, eq(sessionsTable.id, batchTestSessionsTable.sessionId))
+        .where(eq(batchTestSessionsTable.batchId, target.batchId));
+      if (!lessons.length) return;
+      const sessionIds = lessons.map((lesson) => lesson.sessionId);
+      const [history, teacherPresence, complaints] = await Promise.all([
+        tx.select().from(batchTestLedgerEntriesTable)
+          .where(eq(batchTestLedgerEntriesTable.bookingId, target.bookingId))
+          .orderBy(asc(batchTestLedgerEntriesTable.id)),
+        tx.select({ sessionId: sessionParticipationTable.sessionId })
+          .from(sessionParticipationTable)
+          .where(and(inArray(sessionParticipationTable.sessionId, sessionIds), eq(sessionParticipationTable.role, "teacher"), gt(sessionParticipationTable.presentMs, 0))),
+        tx.select({ sessionId: disputesTable.sessionId }).from(disputesTable)
+          .where(and(eq(disputesTable.userId, target.studentId), inArray(disputesTable.sessionId, sessionIds), inArray(disputesTable.status, [...ACTIVE_COMPLAINT_STATUSES]))),
+      ]);
+      const present = new Set(teacherPresence.map((row) => row.sessionId));
+      const complained = new Set(complaints.map((row) => row.sessionId));
+
+      for (const allocation of receipt.allocations) {
+        const lesson = lessons.find((row) => row.position === allocation.position);
+        if (!lesson) continue;
+        let state = (history.filter((entry) => entry.position === allocation.position).at(-1)?.toState ?? "future") as ProgramAllocationState;
+        const events = automaticBatchTestEvents({
+          state,
+          sessionStatus: lesson.status,
+          scheduledStartMs: lesson.startsAt.getTime(),
+          durationMinutes: lesson.durationMinutes,
+          teacherPresenceRecorded: present.has(lesson.sessionId),
+          activeComplaint: complained.has(lesson.sessionId),
+          nowMs: Date.now(),
+        });
+        for (const event of events) {
+          const toState = transitionProgramAllocation(state, event);
+          await tx.insert(batchTestLedgerEntriesTable).values({
+            bookingId: target.bookingId,
+            position: allocation.position,
+            actorId: null,
+            event,
+            fromState: state,
+            toState,
+            grossNpr: allocation.grossNpr,
+            teacherNpr: allocation.teacherNpr,
+            fadkoNpr: allocation.fadkoNpr,
+            detail: { automated: true, paymentMoved: false, basis: event === "complaint_opened" ? "student_support_case" : "classroom_record_and_server_time" },
+          });
+          state = toState;
+        }
+      }
+    });
+  }
+}
+
 // Reading history remains possible after the pilot closes; this never grants classroom access.
-router.get("/admin/batch-test-payments", requireAuth, requireAdmin, async (_req, res, next) => {
+router.get("/admin/batch-test-payments", requireAuth, requireAdmin, async (req, res, next) => {
   try {
+    await synchronizeBatchTestSettlements().catch((error) => req.log.warn({ error }, "could not refresh simulated settlement evidence"));
     const rows = await db.select({ bookingId: batchTestPaymentsTable.bookingId, receipt: batchTestPaymentsTable.receipt,
       recordedAt: batchTestPaymentsTable.createdAt, batchId: batchTestBookingsTable.batchId,
       studentName: usersTable.name, snapshot: batchTestContractsTable.snapshot })
@@ -244,6 +327,7 @@ router.all("/batch-tests/:id", requireAuth, async (req, res, next) => {
     res.status(400).json({ error: "Open test checkout and choose a simulated payment result. No real payment details are needed." }); return;
   }
   try {
+    await synchronizeBatchTestSettlements(id).catch((error) => req.log.warn({ error }, "could not refresh simulated settlement evidence"));
     const result = await run(id, req.user!.userId, req.method === "POST" ? req.body.quoteKey : undefined, req.body?.outcome);
     if (result.created) {
       recordActivity({ userId: req.user!.userId, action: "batch.test_booked", subjectType: "learning_program_batch", subjectId: id, detail: { testOnly: true, moneyCollected: false } });
