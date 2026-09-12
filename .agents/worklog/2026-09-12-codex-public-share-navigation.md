@@ -97,3 +97,12 @@ Production remains unchanged until the owner explicitly approves it after this t
   redesigned input is `teacher-search`; the visible control and route worked in the owner's test.
 - The navigation assertion now follows the current input identifier. This is a test-only release
   correction; no user interface, API, database, payment, or deployment configuration changed.
+- The next production run passed the navigation journey and 38 preceding gates, then stopped
+  before deployment because the legacy monthly browser journey still expected the removed
+  `student-monthly-entry` sales card in Discover. That card was intentionally retired when
+  Discover became “Find a class / Find my teacher”; restoring it would contradict the product
+  decision to stop advertising teacher-plan tiers.
+- The compatibility journey now opens the existing student monthly-class screen directly and
+  proves the old arrangement remains usable. This changes only the test path: existing enrolled
+  students still reach the same screen from Sessions, and no legacy monthly plan is put back in
+  Discover. No application, API, database, payment, or commercial rule changed.

@@ -217,19 +217,16 @@ async function main() {
     check("setup: the month is part-way through, so the two prices differ",
       quotedNow > 0 && quotedNow !== monthly, `owed ${quotedNow}, a month is ${monthly}`);
 
-    const { ctx, page } = await open(browser, student.token, "/(student)");
     /*
-     * Programs is now the intentional first Discover view. Monthly classes still live beside
-     * the teacher marketplace, so follow the same visible Teachers tab a student uses instead
-     * of asserting against a screen that is no longer open. This is navigation, not a wait:
-     * waiting longer on Programs can never make the monthly entry appear.
+     * The former paid teacher-plan marketplace is intentionally no longer advertised in
+     * Discover. Existing monthly arrangements still need to remain usable while Fadko moves
+     * to commission-based classes, so exercise that compatibility screen directly instead of
+     * reviving the removed "Monthly classes" sales card in the redesigned marketplace.
      */
-    await page.locator('[data-testid="discover-subtab-teachers"]').click({ timeout: 15000 });
-    check("Discover offers monthly classes",
-      (await page.locator('[data-testid="student-monthly-entry"]').count()) > 0,
+    const { ctx, page } = await open(browser, student.token, "/monthly");
+    check("the existing monthly-class screen remains available",
+      (await page.locator(`[data-testid="monthly-join-${classId}"]`).count()) > 0,
       (await text(page)).slice(0, 260).replace(/\n/g, " | "));
-
-    await page.locator('[data-testid="student-monthly-entry"]').click({ timeout: 15000 });
 
     /*
      * Waited for, not slept through.
