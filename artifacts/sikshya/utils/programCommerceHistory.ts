@@ -6,6 +6,17 @@ export interface ProgramCommerceHistoryEntry {
   createdAt: string;
 }
 
+export const PROGRAM_ALLOCATION_STATE_LABELS: Record<string, string> = {
+  future: "Held for a future lesson",
+  replacement_pending: "Waiting for a replacement or refund decision",
+  delivered_pending: "Lesson delivered · 48-hour review window",
+  disputed: "Complaint under review",
+  eligible: "Cleared for the next test payout",
+  paid_out: "Test payout completed",
+  refund_owed: "Test refund approved",
+  refunded: "Test refund completed",
+};
+
 const EVENT_LABELS: Record<string, string> = {
   test_enrolment_created: "Test enrolment created",
   lesson_delivered: "Lesson marked delivered",

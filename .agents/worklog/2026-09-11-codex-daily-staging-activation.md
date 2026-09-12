@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/batch-simulated-checkout
 - Base commit: 586a803; deployed application6da5489
-- Status: complete (configuration); owner real-call verification pending
+- Status: failed real-call experiment; preview rolled back to echo
 
 ## Requested
 
@@ -64,3 +64,16 @@ Next action belongs to owner: sign into preview teacher/student on two devices, 
 simulated-booked class during its join window, confirm real audio/video and shared drawing.
 No real Daily room/token/media request was made by Codex in this turn; API-key validity and
 provider-side defaults remain unproven until that first authorized classroom request.
+
+## Manual result and rollback
+
+Owner tested the configured preview and reported the exact visible result: **“Could not load
+video room.”** This is a failed real-call result. Do not describe the activation as working merely
+because Railway health stayed online or the configuration deployment succeeded. Root cause was
+not diagnosed in this pass; owner explicitly chose to defer Daily and continue other work.
+
+Changed only staging `VIDEO_PROVIDER` from `daily` back to `echo`. Railway deployment
+`026ae593-d3e3-4592-900b-abc92cac759c` is ACTIVE / Deployment successful. Production was never
+changed. The shared Daily reference and isolated namespace remain attached but inactive; no room
+request is made while echo is selected. A future retry must begin from the visible room-load error
+and provider logs, not from the assumption that credentials or room creation were already proven.

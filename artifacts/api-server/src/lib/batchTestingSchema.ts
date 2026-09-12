@@ -18,6 +18,20 @@ export const BATCH_TEST_DDL = [
   `CREATE TABLE IF NOT EXISTS batch_test_payments (
     booking_id integer PRIMARY KEY REFERENCES batch_test_bookings(id) ON DELETE RESTRICT,
     receipt jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE TABLE IF NOT EXISTS batch_test_ledger_entries (
+    id serial PRIMARY KEY,
+    booking_id integer NOT NULL REFERENCES batch_test_bookings(id) ON DELETE RESTRICT,
+    position integer NOT NULL,
+    actor_id integer REFERENCES users(id) ON DELETE SET NULL,
+    event text NOT NULL, from_state text NOT NULL, to_state text NOT NULL,
+    gross_npr integer NOT NULL, teacher_npr integer NOT NULL, fadko_npr integer NOT NULL,
+    detail jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE INDEX IF NOT EXISTS batch_test_ledger_booking_idx ON batch_test_ledger_entries(booking_id, id)`,
+  `CREATE OR REPLACE FUNCTION protect_batch_test_ledger_entry() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'SIMULATED_LEDGER_IMMUTABLE' USING ERRCODE='P0001'; END $$`,
+  `DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='batch_test_ledger_immutable' AND tgrelid='batch_test_ledger_entries'::regclass) THEN
+    CREATE TRIGGER batch_test_ledger_immutable BEFORE UPDATE OR DELETE ON batch_test_ledger_entries
+    FOR EACH ROW EXECUTE FUNCTION protect_batch_test_ledger_entry(); END IF; END $$`,
   `CREATE OR REPLACE FUNCTION protect_batch_test_payment() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'SIMULATED_RECEIPT_IMMUTABLE' USING ERRCODE='P0001'; END $$`,
   `DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='batch_test_payment_immutable' AND tgrelid='batch_test_payments'::regclass) THEN

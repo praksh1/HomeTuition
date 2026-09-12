@@ -4,7 +4,8 @@ Owner clarified there are no established paying users: this is private prelaunch
 Latest clarification: the trial must use a pretend checkout, not simply free enrollment.
 `codex/batch-simulated-checkout` adds separate immutable TEST captures and frozen70/30 lesson
 allocations, never real paid enrollments or earnings. See Sep11 simulated-class-checkout worklog
-for exact deployment state. Refund simulation remains future; do not backfill old free bookings.
+for exact deployment state. The next branch work adds append-only refund/payout rehearsal events
+for these genuine test-checkout receipts; never edit the capture or backfill old free bookings.
 Do not repeat earlier memory claims that the site is taking real payments as a verified fact.
 Keep financial/security boundaries anyway; a public URL is not a license to invent paid receipts.
 
@@ -13,8 +14,10 @@ grant renewed to that date; student user2 still active through17Sep2026 (renewal
 Owner approved credential attachment after testing checkout. Staging configuration now deployed
 at88a6d07b-2a78-42cc-a124-afd972ebd84b: VIDEO_PROVIDER=daily,
 VIDEO_ROOM_NAMESPACE=fadko-preview, DAILY_API_KEY referenced from shared Railway storage.
-No production change or key disclosure. Owner screenshots showed42/10000minutes used,
-estimated$0; this is not a hard cap. Real room/token/media verification still pending owner call.
+The owner's real call returned “Could not load video room.” Staging was rolled back to echo in
+active deployment026ae593-d3e3-4592-900b-abc92cac759c. Production never changed. Treat Daily as
+failed/deferred, not verified; diagnose provider logs before another activation. Owner screenshots
+showed42/10000minutes used and estimated$0; this is not a hard cap.
 See Sep11 simulated-class-checkout worklog for CI/deployment/actual operator browser verification.
 
 `codex/batch-test-booking` adds explicit batch test contracts/bookings/session mappings.

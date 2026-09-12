@@ -98,3 +98,19 @@ Manual Android/iPhone and real media remain unverified. Production main untouche
 Use preview student account to open published class -> Try test checkout -> Simulate successful
 payment, then review TEST receipt and lesson links. Operator reloads the new ledger; do not use
 the older Program test-enrolment form below to test this new batch-specific checkout.
+
+### Append-only settlement continuation
+
+- Added `batch_test_ledger_entries`: one immutable event per operator decision and purchased
+  lesson position. It never mutates the captured quote or receipt.
+- Reused the approved Program allocation state machine: future to delivered review or replacement;
+  complaint decisions; payout/refund only from their eligible states. A reason is required for
+  refund and complaint verdicts. Impossible transitions return conflict instead of succeeding.
+- Operator test ledger now shows held gross, simulated teacher payout, simulated Fadko earning,
+  simulated student refund and actual money moved (always NPR0). Student and teacher read the same
+  derived settlement through their existing scoped class endpoint.
+- No provider/gateway call, no real payment row, no ordinary earnings, no real refund/payout.
+- Local verification: root typecheck pass; API unit537 and app unit373 pass; receipt/state unit24;
+  design ratchet unchanged94/282; browser checkout/operator settlement40/40 at390/1440. Disposable
+  PostgreSQL integration cannot run on this Windows checkout (no local Postgres); its extended
+  checks are wired into `batch-test-checks.yml` and must pass in CI before preview deployment.

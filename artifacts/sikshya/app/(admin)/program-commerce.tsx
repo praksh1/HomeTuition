@@ -9,6 +9,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
 import { BatchTestLedger } from "@/components/classes/BatchTestLedger";
+import { PROGRAM_COMMERCE_NEXT } from "@/utils/programCommerceActions";
 import {
   orderedProgramCommerceHistory,
   programCommerceEventLabel,
@@ -29,15 +30,6 @@ interface ReconciliationEnrollment {
   history: ProgramCommerceHistoryEntry[];
 }
 interface Reconciliation { notice: string; enrollments: ReconciliationEnrollment[] }
-
-const NEXT: Record<string, Array<{ event: string; label: string; reason?: boolean }>> = {
-  future: [{ event: "lesson_delivered", label: "Mark delivered" }, { event: "lesson_cancelled", label: "Teacher cancelled" }],
-  replacement_pending: [{ event: "replacement_scheduled", label: "Replacement agreed" }, { event: "refund_approved", label: "Approve lesson refund", reason: true }],
-  delivered_pending: [{ event: "complaint_opened", label: "Open complaint" }, { event: "complaint_window_closed", label: "Close 48-hour window" }],
-  disputed: [{ event: "complaint_upheld", label: "Uphold complaint", reason: true }, { event: "complaint_denied", label: "Decline complaint", reason: true }],
-  eligible: [{ event: "complaint_opened", label: "Open late complaint" }, { event: "payout_confirmed", label: "Rehearse payout" }],
-  refund_owed: [{ event: "refund_confirmed", label: "Rehearse refund" }],
-};
 
 export default function ProgramCommerceDesk() {
   const colors = useColors();
@@ -168,7 +160,7 @@ export default function ProgramCommerceDesk() {
                     </View>
                     <Text style={[t.caption, { color: colors.mutedForeground }]}>Teacher NPR {allocation.teacherAmountNpr.toLocaleString()} · Fadko NPR {allocation.platformAmountNpr.toLocaleString()}</Text>
                     <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
-                      {(NEXT[allocation.state] ?? []).map((action) => (
+                      {(PROGRAM_COMMERCE_NEXT[allocation.state] ?? []).map((action) => (
                         <TouchableOpacity key={action.event} disabled={busy} onPress={() => void apply(allocation.id, action.event, Boolean(action.reason))} style={{ minHeight: space.huge, paddingHorizontal: space.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary, justifyContent: "center", opacity: busy ? 0.5 : 1 }}>
                           <Text style={[t.bodyStrong, { color: colors.primary }]}>{action.label}</Text>
                         </TouchableOpacity>

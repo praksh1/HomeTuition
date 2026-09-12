@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, serial, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { learningProgramBatchesTable } from "./learningPrograms";
 import { sessionsTable } from "./sessions";
 import { usersTable } from "./users";
@@ -34,3 +34,20 @@ export const batchTestPaymentsTable = pgTable("batch_test_payments", {
   receipt: jsonb("receipt").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Append-only decisions for the simulated money held against each purchased lesson. */
+export const batchTestLedgerEntriesTable = pgTable("batch_test_ledger_entries", {
+  id: serial("id").primaryKey(),
+  bookingId: integer("booking_id").notNull().references(() => batchTestBookingsTable.id, { onDelete: "restrict" }),
+  /** Zero-based position from the frozen batch snapshot and immutable receipt. */
+  position: integer("position").notNull(),
+  actorId: integer("actor_id").references(() => usersTable.id, { onDelete: "set null" }),
+  event: text("event").notNull(),
+  fromState: text("from_state").notNull(),
+  toState: text("to_state").notNull(),
+  grossNpr: integer("gross_npr").notNull(),
+  teacherNpr: integer("teacher_npr").notNull(),
+  fadkoNpr: integer("fadko_npr").notNull(),
+  detail: jsonb("detail").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("batch_test_ledger_booking_idx").on(t.bookingId, t.id)]);
