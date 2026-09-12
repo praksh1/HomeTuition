@@ -492,3 +492,15 @@ the older Program test-enrolment form below to test this new batch-specific chec
   assertion correctly rejected an ad-hoc same-origin value; the preview workflow remains the
   authoritative build because it injects the allowlisted Railway staging API URL. No production,
   database, payment, Daily or LiveKit state changed at this checkpoint.
+- Code commit `ef0b7cf` was pushed to `codex/batch-simulated-checkout`. Disposable-database safety
+  workflow `34706744858` passed every type, unit, fresh-schema, Programs, booking, media, proof,
+  test-access, student and browser gate in 2m55s. The exact commit was then fast-forwarded to the
+  preview source branch; preview workflow `34706923612` passed its isolated API/database, rendered
+  flows, destination checks, production-target refusal and served-bundle verification in 5m51s.
+- A normal refresh in the already-open preview tab initially retained the previous cached bundle;
+  a hard refresh loaded the deployed one. The live signed-in teacher page then showed one correct
+  Mathematics subject and no paid-booking or dash-placeholder statistics. The available browser
+  session was authenticated, so the signed-out account doorway was not falsely claimed as a live
+  incognito observation; it is proven by the two-width browser suite and the workflow's exact served
+  bundle check, and remains the owner's short incognito verification. Production and `main` are
+  still untouched.
