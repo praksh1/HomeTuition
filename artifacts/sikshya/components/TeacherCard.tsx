@@ -5,23 +5,16 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { numeric } from "@/constants/typography";
 import StarRating from "./StarRating";
+import type { PublicTeacher } from "@/utils/teacherDiscovery";
 import type { Teacher } from "@/context/AuthContext";
 
 interface TeacherCardProps {
-  teacher: Teacher;
+  teacher: PublicTeacher | Teacher;
   onPress?: () => void;
   compact?: boolean;
-  /**
-   * This teacher also runs a monthly class, taken from `GET /monthly/classes`.
-   *
-   * Passed in rather than read here: the card cannot know it, and asking per card would be one
-   * request per row. Undefined means "we have not checked", which is why the badge only appears
-   * when it is explicitly true — a missing badge must never imply a missing class.
-   */
-  hasMonthlyClass?: boolean;
 }
 
-export default function TeacherCard({ teacher, onPress, compact, hasMonthlyClass }: TeacherCardProps) {
+export default function TeacherCard({ teacher, onPress, compact }: TeacherCardProps) {
   const colors = useColors();
   const { t, space, radius, elevation } = useLayout();
 
@@ -95,21 +88,6 @@ export default function TeacherCard({ teacher, onPress, compact, hasMonthlyClass
           )}
         </View>
 
-        {/*
-          The price always carries its unit.
-
-          "NPR 500" on a storefront that sells both single classes and whole months is
-          ambiguous in the most expensive possible way. It said "/session"; it now says the
-          billing model in words.
-        */}
-        {teacher.pricePerSession != null && (
-          <View style={[styles.priceBadge, { backgroundColor: colors.actionSoft, borderRadius: radius.sm, paddingHorizontal: space.xs }]}>
-            <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>
-              NPR {teacher.pricePerSession.toLocaleString()}
-            </Text>
-            <Text style={[t.overline, { color: colors.primary }]}>per class</Text>
-          </View>
-        )}
       </View>
 
       {!compact && !!teacher.bio && (
@@ -143,13 +121,6 @@ export default function TeacherCard({ teacher, onPress, compact, hasMonthlyClass
           whether somebody can teach you right now, made from no data at all, on the screen
           where a student is choosing. It is gone rather than restyled.
         */}
-        <View style={styles.stat}>
-          <Feather name="users" size={12} color={colors.inkFaint} />
-          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
-            {teacher.totalStudents} paid {teacher.totalStudents === 1 ? "booking" : "bookings"}
-          </Text>
-        </View>
-
         {teacher.experienceYears != null && (
           <View style={styles.stat}>
             <Feather name="award" size={12} color={colors.inkFaint} />
@@ -168,19 +139,12 @@ export default function TeacherCard({ teacher, onPress, compact, hasMonthlyClass
           </View>
         )}
 
-        {/*
-          Crimson, because this is a different *kind* of thing rather than a better one: it is
-          the other billing model. A student must be able to tell before they tap.
-        */}
-        {hasMonthlyClass === true && (
-          <View
-            style={[
-              styles.monthlyTag,
-              { backgroundColor: colors.brandSoft, borderRadius: radius.pill, paddingHorizontal: space.xs },
-            ]}
-          >
-            <Feather name="repeat" size={11} color={colors.brand} />
-            <Text style={[t.overline, { color: colors.brand }]}>Monthly too</Text>
+        {"institutionName" in teacher && !!teacher.institutionName && (
+          <View style={[styles.stat, { flexShrink: 1 }]}>
+            <Feather name="home" size={12} color={colors.inkFaint} />
+            <Text style={[t.caption, { color: colors.mutedForeground }]} numberOfLines={1}>
+              {teacher.institutionName}
+            </Text>
           </View>
         )}
       </View>
@@ -195,10 +159,8 @@ const styles = StyleSheet.create({
   avatar: { width: 52, height: 52, justifyContent: "center", alignItems: "center" },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   ratingRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-  priceBadge: { alignItems: "center", justifyContent: "center", minHeight: 44, paddingVertical: 6 },
   chips: { flexDirection: "row", flexWrap: "wrap" },
   chip: { borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 8, paddingVertical: 3 },
   footer: { flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
   stat: { flexDirection: "row", alignItems: "center", gap: 4 },
-  monthlyTag: { marginLeft: "auto", flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 3 },
 });

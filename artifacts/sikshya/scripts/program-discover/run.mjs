@@ -50,8 +50,10 @@ import { createRoot } from "react-dom/client";
 import ProgramDiscoverList from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramDiscoverList.tsx"))};
 import ProgramView from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramView.tsx"))};
 import { TeacherProgramsPanel } from ${JSON.stringify(path.join(appRoot, "components", "programs", "TeacherProgramsPanel.tsx"))};
+import TeacherFinder from ${JSON.stringify(path.join(appRoot, "components", "discovery", "TeacherFinder.tsx"))};
 
 window.__sent = [];
+window.__apiPaths = [];
 const record = (name) => (...args) => { window.__sent.push({ name, args }); };
 
 class Boundary extends React.Component {
@@ -83,7 +85,7 @@ function ListHost(props) {
 function Harness() {
   const [scene, set] = React.useState({ screen: "list", props: { programs: [], initialLoad: false, initialError: null, paginationError: null, loadingMore: false, hasMore: false } });
   setScene = set;
-  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onOpenTeacher: record("onOpenTeacher") };
+  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher") };
   const sceneKey = JSON.stringify([scene.screen, Object.keys(scene.props ?? {})]) + String(renders);
   let element = null;
   if (scene.screen === "list") element = React.createElement(ListHost, { ...common, ...scene.props });
@@ -94,6 +96,7 @@ function Harness() {
     onLoadMore: record("onLoadMore"),
     onOpen: record("onOpen"),
   });
+  if (scene.screen === "finder") element = React.createElement(TeacherFinder, { onOpen: record("onOpenTeacher") });
   return React.createElement(
     "div",
     { style: { width: "100vw", minHeight: "100vh", background: "#FBFAF8" } },
@@ -135,6 +138,7 @@ writeFileSync(
 const bundle = path.join(work, "bundle.js");
 const built = await bundleForBrowser({ entry, outfile: bundle, alias: {
   "expo-font": fontStub,
+  "react-native-safe-area-context": path.join(here, "safe-area.js"),
   // ProgramView imports the optional pilot booking panel. This component-only suite
   // has no Router root; real navigation belongs to the journey/export tests.
   "expo-router": path.resolve(here, "../class-setup/router.js"),
@@ -319,6 +323,33 @@ for (const size of SIZES) {
   check(`${L}: every class-catalogue control reaches the touch floor`,
     (await smallTargets()).length === 0, (await smallTargets()).join(", "));
 
+  /* ----------------------------------------------------- find a known teacher */
+
+  console.log(`\n[${L}] Discover: Find my teacher`);
+  await p.evaluate(() => { window.__apiPaths = []; });
+  await show({ screen: "finder", props: {} }, "teacher-finder");
+  await p.waitForSelector('[data-testid="teacher-results"]');
+  check(`${L}: a known teacher is shown without downloading the directory`,
+    /Anjali Rai/i.test(await body()) && /37 matches/i.test(await body()));
+  const teacherPaths = await p.evaluate(() => window.__apiPaths);
+  check(`${L}: the directory asks the server for only twelve teachers`,
+    teacherPaths.some((path) => /\/teachers\?.*limit=12/.test(path)), JSON.stringify(teacherPaths));
+  check(`${L}: school and location filters are visible without scrolling through teachers`,
+    await seen("teacher-location-filter"));
+  check(`${L}: independent teachers have a direct filter`, await seen("teacher-independent-filter"));
+  check(`${L}: the retired Monthly classes promotion is absent`,
+    !/Monthly classes|Pay monthly/i.test(await body()));
+  check(`${L}: legacy booking counts do not rank a teacher in the new directory`,
+    !/paid bookings?/i.test(await body()));
+  await p.locator('[data-testid="teacher-location-filter"]').click();
+  await p.waitForTimeout(100);
+  check(`${L}: the Nepal hierarchy opens with Province, District and local level`,
+    /Province/i.test(await body()) && /District/i.test(await body()) && /Municipality \/ local level/i.test(await body()));
+  check(`${L}: the teacher finder does not scroll sideways`, (await overflow()) <= 1);
+  check(`${L}: every teacher-finder control reaches the touch floor`,
+    (await smallTargets()).length === 0, (await smallTargets()).join(", "));
+  await p.getByLabel("Close filters").click({ position: { x: 5, y: 5 } });
+
   /* --------------------------------------------- programs on a teacher profile */
 
   console.log(`\n[${L}] Published programs on a teacher profile`);
@@ -335,7 +366,7 @@ for (const size of SIZES) {
     props: { list: { rows: [], nextCursor: null }, state: "failed", loadingMore: false },
   }, "profile-failed");
   check(`${L}: a failed request is not presented as no programs`,
-    /Programs couldn't load/i.test(await body()));
+    /Classes and courses couldn't load/i.test(await body()));
 
   await show({
     screen: "profile",
@@ -485,6 +516,11 @@ for (const size of SIZES) {
   check(`${L}: an honest "not open yet" notice is on the page`,
     await seen("program-view-not-open"));
   check(`${L}: the Back to Discover control is drawn`, await seen("program-view-back"));
+  check(`${L}: a published class or course can be shared`, await seen("program-view-share"));
+  await p.evaluate(() => { window.__sent = []; });
+  await p.locator('[data-testid="program-view-share"]').click();
+  check(`${L}: the share control calls the public-link action`,
+    (await p.evaluate(() => window.__sent)).some((event) => event.name === "onShare"));
 
   const wholeView = await body();
   for (const invented of ["NPR", "Rs.", "rating", "star rating", "5 stars", "students enrolled", "seats", "spots", "reviews", "Popular", "Available now", "earned", "%"]) {

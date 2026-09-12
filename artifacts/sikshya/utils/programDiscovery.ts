@@ -3,7 +3,9 @@
  *
  * ## Why this is a file and not branches inside two screens
  *
- * Discover has three views a student can switch between (Programs, Single classes, Teachers), one
+ * Discover has two student intentions (find learning, or find a known teacher). The learning
+ * surface may then show scheduled classes, longer courses or one-time lessons; those are choices
+ * inside one journey rather than three competing databases at the top of the page.
  * shared search prompt, a set of type filters that must map onto the server's authoritative codes,
  * and pagination that must not skip results. The program details page holds a snapshot with several
  * conditionally-shown blocks. Written inline that is a hundred conditions across two screens; here
@@ -78,7 +80,7 @@ export interface PublicProgramDetail {
 }
 
 /* ========================================================================== *
- * Discover: the three views and the filters that belong to Programs           *
+ * Discover: two student intentions and the filters inside learning            *
  * ========================================================================== */
 
 export type DiscoverView = "programs" | "classes" | "teachers";
@@ -95,12 +97,11 @@ export interface DiscoverTab {
 }
 
 /**
- * The three primary product views, in the order Discover shows them.
+ * The two primary student intentions, in the order Discover shows them.
  *
- * Classes first — that is the product a student can actually compare and join. Courses remain a
- * separate catalogue for the older, teacher-authored learning paths, and Teachers remains the
- * browse-by-person view. Following is nested inside Teachers because a follow is a relationship
- * with a person rather than a fourth kind of product.
+ * Finding learning comes first; tuition groups, longer courses and one-time lessons are choices
+ * inside it rather than three competing storefronts. Finding a known teacher is the other clear
+ * path. Following is nested there because a follow is a relationship with a person, not a product.
  *
  * `label` is the word on the pill; `accessibilityLabel` is the full phrase a screen reader hears,
  * because "Classes" alone does not say which kind. The page title and the subtitle also come from
@@ -109,16 +110,12 @@ export interface DiscoverTab {
  */
 export const DISCOVER_TABS: readonly DiscoverTab[] = [
   {
-    view: "classes", label: "Classes", accessibilityLabel: "Classes",
-    heading: "Find a class", subtitle: "Compare tuition, short courses and one-time lessons.",
+    view: "classes", label: "Find a class", accessibilityLabel: "Find a class or course",
+    heading: "What do you want to learn?", subtitle: "Search tuition, exam preparation, languages and skills.",
   },
   {
-    view: "programs", label: "Courses", accessibilityLabel: "Courses",
-    heading: "Find a course", subtitle: "Learn toward a clear goal with a teacher and a planned path.",
-  },
-  {
-    view: "teachers", label: "Teachers", accessibilityLabel: "Teachers",
-    heading: "Find a teacher", subtitle: "Browse teachers across Nepal.",
+    view: "teachers", label: "Find my teacher", accessibilityLabel: "Find a teacher I know",
+    heading: "Find my teacher", subtitle: "Search by name, school, subject or place.",
   },
 ];
 
@@ -137,7 +134,7 @@ export interface TeachersTab {
 }
 
 export const TEACHERS_TABS: readonly TeachersTab[] = [
-  { view: "all", label: "All teachers" },
+  { view: "all", label: "Search teachers" },
   { view: "following", label: "Following" },
 ];
 

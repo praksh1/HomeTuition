@@ -38,7 +38,6 @@ export default function TeacherProgramsSection({ teacherProfileId }: { teacherPr
       const query = new URLSearchParams({
         teacherProfileId,
         limit: String(PROFILE_PAGE_SIZE),
-        presentation: "program",
         ...(cursor ? { cursor } : {}),
       });
       const page = await apiGet<{ programs: PublicProgramSummary[]; nextCursor: string | null }>(

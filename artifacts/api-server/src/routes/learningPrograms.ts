@@ -982,6 +982,7 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
       publishedAt: learningProgramsTable.publishedAt,
       snapshot: learningProgramsTable.publishedSnapshot,
       teacherId: learningProgramsTable.teacherId,
+      teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
     })
     .from(learningProgramsTable)
@@ -1010,7 +1011,7 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
         type: row.type,
         version: row.version,
         publishedAt: row.publishedAt,
-        teacher: { id: row.teacherId, name: row.teacherName },
+        teacher: { id: row.teacherProfileId, name: row.teacherName },
         title: snapshot.title,
         presentation: snapshot.presentation,
         summary: snapshot.summary,
@@ -1056,6 +1057,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
       publishedAt: learningProgramsTable.publishedAt,
       snapshot: learningProgramsTable.publishedSnapshot,
       teacherId: learningProgramsTable.teacherId,
+      teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
     })
     .from(learningProgramsTable)
@@ -1084,7 +1086,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
     program: {
       id: row.id,
       publishedAt: row.publishedAt,
-      teacher: { id: row.teacherId, name: row.teacherName },
+      teacher: { id: row.teacherProfileId, name: row.teacherName },
       ...snapshot,
     },
   });

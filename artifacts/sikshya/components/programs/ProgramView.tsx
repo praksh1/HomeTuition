@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import React from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
 import { HIT_SLOP_MIN, space as staticSpace } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
@@ -42,6 +42,7 @@ import { ClassOfferCard } from "./ClassOfferCard";
 export interface ProgramViewProps {
   program: PublicProgramDetail;
   onBack: () => void;
+  onShare?: () => void;
   onOpenTeacher: (teacherId: number) => void;
   testEnrollment?: {
     totalTuitionNpr: number;
@@ -54,7 +55,7 @@ export interface ProgramViewProps {
   batchesUnavailable?: boolean;
 }
 
-export default function ProgramView({ program, onBack, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchesUnavailable = false }: ProgramViewProps) {
+export default function ProgramView({ program, onBack, onShare, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchesUnavailable = false }: ProgramViewProps) {
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const reference = referenceBlock(program);
@@ -78,12 +79,38 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
       }}
     >
       <View style={{ gap: space.sm }}>
-        <ProgramBackControl
-          onPress={onBack}
-          testID="program-view-back"
-          label="Back to Discover"
-          accessibilityLabel="Back to Discover"
-        />
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm }}>
+          <ProgramBackControl
+            onPress={onBack}
+            testID="program-view-back"
+            label="Back to Discover"
+            accessibilityLabel="Back to Discover"
+          />
+          {onShare ? (
+            <Pressable
+              testID="program-view-share"
+              accessibilityRole="button"
+              accessibilityLabel={`Share ${program.title || "this class"}`}
+              onPress={onShare}
+              style={{
+                minWidth: HIT_SLOP_MIN,
+                minHeight: HIT_SLOP_MIN,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: space.xxs,
+                paddingHorizontal: space.sm,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: radius.pill,
+                backgroundColor: colors.card,
+              }}
+            >
+              <Feather name="share-2" size={16} color={colors.primary} />
+              <Text style={[t.bodyStrong, { color: colors.primary }]}>Share</Text>
+            </Pressable>
+          ) : null}
+        </View>
         <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, flexWrap: "wrap" }}>
           <ProgramChip label={program.presentation === "class" ? "Class" : programTypeLabel(program.type)} tone="neutral" testID="program-view-type" />
         </View>

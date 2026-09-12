@@ -393,3 +393,55 @@ the older Program test-enrolment form below to test this new batch-specific chec
   lessons, Nepali-calendar start time and the private test-checkout action. A live screenshot also
   confirmed the cards, search controls and fixed navigation fit without overlap. The owner now has
   the preview for manual device review; production and `main` are still untouched.
+
+### Student Discover rebuilt around intent and Nepal's education directory
+
+- The owner rejected the tab-heavy catalogue as unsuitable for a marketplace with thousands of
+  teachers. The new first decision is the student's real one: **Find a class** when they need help
+  with a subject, exam, language or skill, or **Find my teacher** when they already know a name,
+  school or place. Courses are retained under the class journey instead of competing as a third
+  top-level product word.
+- Replaced the teacher directory's unbounded client-side download/filter/sort path with a bounded
+  12-row server page. Search, subject, province, district, local level, institution and affiliation
+  choices are sent to PostgreSQL; later pages deduplicate by teacher id. Subject matching covers a
+  teacher's primary subject and their declared subject list. This is the scaling correction for a
+  5,000-teacher catalogue and avoids holding the whole directory on a low-memory phone.
+- Added an explicit **School or location** finder backed by the same `/locations/nepal` and
+  `/locations/nepal/facilities` hierarchy used in onboarding: Province -> District -> local level
+  -> institution. Added a direct **Independent teachers** path for tutors who are not affiliated
+  with a school or centre. No unnamed institution is invented and no geolocation permission is
+  requested.
+- Removed the legacy red `Monthly classes / PAY MONTHLY` promotion and the old paid-booking count
+  from teacher results. Those belonged to the retired teacher-plan/legacy-session presentation and
+  were not valid marketplace ranking signals. Current Tuition classes remain discoverable through
+  the class catalogue built in the prior checkpoint.
+- Tightened the public teacher-list projection while changing its search contract: email,
+  subscription/tier internals, online state, earnings, session limit, raw price and historical
+  booking count are no longer sent to every directory browser. The list exposes only the approved
+  public profile and professional location/affiliation fields needed to find a teacher. Direct
+  profiles also require an approved, unsuspended teacher.
+- Corrected a pre-existing identifier mismatch in public program results: `teacher.id` now carries
+  the teacher-profile id expected by `/teacher/[id]`, rather than the account user id. This makes a
+  course's `Open teacher` action reliable instead of working only when two unrelated database ids
+  happen to be equal.
+- Teacher profiles and published class/course pages can now produce public share links using the
+  native share sheet where available and clipboard fallback on the web. Their read-only public
+  routes are allowed without signing in; follow, message and enrolment/payment remain authenticated
+  actions. Signed-out pages also stop making unread-message and test-enrolment requests.
+- Added pure pagination/query tests and expanded the rendered Discover suite at 390px and 1440px.
+  The suite proves the two intentions, server page size, Nepal hierarchy, independent-teacher path,
+  absence of the Monthly promotion and legacy booking counts, public share action, touch floors and
+  no horizontal overflow. Final results: app units **387/0**, API units **544/0**, rendered Discover
+  **218/0**, both app and API typechecks clean, design ratchet unchanged at **94 hex / 282 sizes**,
+  `git diff --check` clean, and a full staging-targeted Expo web export completed successfully.
+- Two local verification problems were environmental and were not hidden: running the screenshot
+  suite alongside several compilers caused one 30-second screenshot timeout; running junctioned
+  dependency reads inside the restricted Windows sandbox produced false module-not-found errors.
+  The locked dependencies were verified, then the gates were rerun sequentially with normal
+  filesystem access and passed. The API's PostgreSQL integration suite was not run locally because
+  this Windows environment has no `psql`; disposable Linux CI remains the integration authority.
+- Deliberately not added: paid placement, opaque recommendations, ratings, popularity, fabricated
+  availability, automatic location tracking, or one request per teacher card. No schema, checkout,
+  booking, refund, payout, classroom, Daily or LiveKit behavior changed. Production and `main`
+  remain untouched; commit/push, disposable-database CI, preview deployment and owner device review
+  are still required at this checkpoint.

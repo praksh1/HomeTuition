@@ -44,21 +44,18 @@ const full = (over: Partial<PublicProgramDetail> = {}): PublicProgramDetail => (
 
 /* --- tabs and filters ------------------------------------------------------- */
 
-test("Discover has exactly three views, with joinable Classes first", () => {
-  assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["classes", "programs", "teachers"]);
+test("Discover starts with the two questions a student actually arrives with", () => {
+  assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["classes", "teachers"]);
 });
 
-test("each view has an accurate heading, subtitle and accessible label", () => {
-  const p = DISCOVER_TABS.find((t) => t.view === "programs")!;
+test("each student intention has an accurate heading, subtitle and accessible label", () => {
   const c = DISCOVER_TABS.find((t) => t.view === "classes")!;
   const tc = DISCOVER_TABS.find((t) => t.view === "teachers")!;
-  assert.match(p.heading, /course/i);
-  assert.match(c.heading, /class/i);
+  assert.match(c.heading, /learn/i);
   assert.match(tc.heading, /teacher/i);
-  assert.equal(p.label, "Courses");
-  assert.equal(p.accessibilityLabel, "Courses");
-  assert.equal(c.label, "Classes");
-  assert.equal(c.accessibilityLabel, "Classes");
+  assert.equal(c.label, "Find a class");
+  assert.match(c.accessibilityLabel, /class or course/i);
+  assert.equal(tc.label, "Find my teacher");
 });
 
 test("Following is a sub-choice of Teachers, not a primary product view", () => {

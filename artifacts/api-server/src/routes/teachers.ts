@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, gte, lte, or, sql, type AnyColumn } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lte, or, sql, type AnyColumn } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { db, studentTeacherSubscriptionsTable, teacherCredentialsTable, teacherProfilesTable, usersTable } from "@workspace/db";
+import { db, studentTeacherSubscriptionsTable, teacherCredentialsTable, teacherProfilesTable, userOnboardingTable, usersTable } from "@workspace/db";
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { notify } from "../lib/notify";
 import { chargeForMonthly } from "../lib/payments";
@@ -23,28 +23,45 @@ const router: IRouter = Router();
 export { SUBSCRIPTION_TIERS, type SubscriptionTierKey } from "../lib/tierLimits";
 
 router.get("/teachers", async (req, res): Promise<void> => {
-  const { search, subject, district, minRating, maxPrice, onlineOnly, sort, page = "1", limit = "20" } = req.query as Record<string, string>;
+  const {
+    search, subject, province, district, localLevel, institution, affiliation,
+    minRating, maxPrice, sort, page = "1", limit = "20",
+  } = req.query as Record<string, string>;
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const offset = (pageNum - 1) * limitNum;
 
-  const conditions = [eq(teacherProfilesTable.approvalStatus, "approved")];
+  const conditions = [
+    eq(teacherProfilesTable.approvalStatus, "approved"),
+    isNull(usersTable.suspendedAt),
+  ];
 
   if (subject && subject !== "All") {
-    conditions.push(eq(teacherProfilesTable.subject, subject));
+    // A teacher chooses one primary subject and may add several more. Searching only the
+    // primary column made an English teacher who also teaches Korean invisible under Korean.
+    conditions.push(or(
+      eq(teacherProfilesTable.subject, subject),
+      sql`${subject} = any(coalesce(${teacherProfilesTable.subjects}, ARRAY[]::text[]))`,
+    )!);
   }
   if (district && district !== "All Districts") {
     conditions.push(eq(teacherProfilesTable.district, district));
+  }
+  if (province?.trim()) conditions.push(eq(userOnboardingTable.province, province.trim()));
+  if (localLevel?.trim()) conditions.push(eq(userOnboardingTable.localLevel, localLevel.trim()));
+  if (institution?.trim()) {
+    const escaped = institution.trim().slice(0, 120).replace(/[\\%_]/g, "\\$&");
+    conditions.push(sql`${userOnboardingTable.institutionName} ilike ${`%${escaped}%`} escape '\\'`);
+  }
+  if (affiliation === "affiliated" || affiliation === "independent" || affiliation === "not_specified") {
+    conditions.push(eq(userOnboardingTable.affiliationStatus, affiliation));
   }
   if (minRating) {
     conditions.push(gte(teacherProfilesTable.rating, parseFloat(minRating)));
   }
   if (maxPrice) {
     conditions.push(lte(teacherProfilesTable.pricePerSession, parseInt(maxPrice, 10)));
-  }
-  if (onlineOnly === "true") {
-    conditions.push(eq(teacherProfilesTable.isOnline, true));
   }
   if (search && search.trim()) {
     /**
@@ -56,7 +73,10 @@ router.get("/teachers", async (req, res): Promise<void> => {
      * app applies the same rule in utils/search.ts — they have to agree, or a search that
      * finds someone on one screen misses them on the next.
      */
-    const squashed = search.trim().toLowerCase().replace(/[^a-z0-9]/gi, "");
+    const rawSearch = search.trim().slice(0, 120);
+    const escapedSearch = rawSearch.replace(/[\\%_]/g, "\\$&");
+    const readablePattern = `%${escapedSearch}%`;
+    const squashed = rawSearch.toLowerCase().replace(/[^a-z0-9]/gi, "");
     if (squashed.length > 0) {
       const pattern = `%${squashed}%`;
       const bare = (column: AnyColumn) =>
@@ -68,8 +88,22 @@ router.get("/teachers", async (req, res): Promise<void> => {
           bare(teacherProfilesTable.bio),
           bare(teacherProfilesTable.location),
           bare(teacherProfilesTable.district),
+          bare(userOnboardingTable.institutionName),
+          sql`regexp_replace(lower(array_to_string(coalesce(${teacherProfilesTable.subjects}, ARRAY[]::text[]), ' ')), '[^a-z0-9]', '', 'g') LIKE ${pattern}`,
+          sql`${usersTable.name} ilike ${readablePattern} escape '\\'`,
+          sql`${userOnboardingTable.institutionName} ilike ${readablePattern} escape '\\'`,
         )!,
       );
+    } else {
+      // Nepali and other non-Latin names must remain searchable. The compact ASCII comparison
+      // above is a convenience for spacing variants, not permission to discard every other script.
+      conditions.push(or(
+        sql`${usersTable.name} ilike ${readablePattern} escape '\\'`,
+        sql`${teacherProfilesTable.subject} ilike ${readablePattern} escape '\\'`,
+        sql`${teacherProfilesTable.bio} ilike ${readablePattern} escape '\\'`,
+        sql`${userOnboardingTable.institutionName} ilike ${readablePattern} escape '\\'`,
+        sql`array_to_string(coalesce(${teacherProfilesTable.subjects}, ARRAY[]::text[]), ' ') ilike ${readablePattern} escape '\\'`,
+      )!);
     }
   }
 
@@ -79,6 +113,7 @@ router.get("/teachers", async (req, res): Promise<void> => {
       case "price_asc": return asc(teacherProfilesTable.pricePerSession);
       case "price_desc": return desc(teacherProfilesTable.pricePerSession);
       case "experience": return desc(teacherProfilesTable.experienceYears);
+      case "name": return asc(usersTable.name);
       default: return desc(teacherProfilesTable.rating);
     }
   })();
@@ -91,7 +126,6 @@ router.get("/teachers", async (req, res): Promise<void> => {
         id: teacherProfilesTable.id,
         userId: teacherProfilesTable.userId,
         name: usersTable.name,
-        email: usersTable.email,
         subject: teacherProfilesTable.subject,
         subjects: teacherProfilesTable.subjects,
         bio: teacherProfilesTable.bio,
@@ -99,29 +133,27 @@ router.get("/teachers", async (req, res): Promise<void> => {
         location: teacherProfilesTable.location,
         district: teacherProfilesTable.district,
         experienceYears: teacherProfilesTable.experienceYears,
-        pricePerSession: teacherProfilesTable.pricePerSession,
         languages: teacherProfilesTable.languages,
-        isOnline: teacherProfilesTable.isOnline,
-        subscriptionActive: teacherProfilesTable.subscriptionActive,
-        subscriptionTier: teacherProfilesTable.subscriptionTier,
-        maxSessionsPerMonth: teacherProfilesTable.maxSessionsPerMonth,
-        sessionsThisMonth: teacherProfilesTable.sessionsThisMonth,
-        totalStudents: teacherProfilesTable.totalStudents,
-        monthlyEarnings: teacherProfilesTable.monthlyEarnings,
         rating: teacherProfilesTable.rating,
         reviewCount: teacherProfilesTable.reviewCount,
         avatarUrl: teacherProfilesTable.avatarUrl,
+        province: userOnboardingTable.province,
+        localLevel: userOnboardingTable.localLevel,
+        institutionName: userOnboardingTable.institutionName,
+        affiliationStatus: userOnboardingTable.affiliationStatus,
       })
       .from(teacherProfilesTable)
       .innerJoin(usersTable, eq(teacherProfilesTable.userId, usersTable.id))
+      .leftJoin(userOnboardingTable, eq(userOnboardingTable.userId, usersTable.id))
       .where(where)
-      .orderBy(orderByCol)
+      .orderBy(orderByCol, asc(teacherProfilesTable.id))
       .limit(limitNum)
       .offset(offset),
     db
       .select({ total: sql<number>`count(*)::int` })
       .from(teacherProfilesTable)
       .innerJoin(usersTable, eq(teacherProfilesTable.userId, usersTable.id))
+      .leftJoin(userOnboardingTable, eq(userOnboardingTable.userId, usersTable.id))
       .where(where),
   ]);
 
@@ -138,7 +170,6 @@ router.get("/teachers/:id", attachUserIfPresent, async (req, res): Promise<void>
       id: teacherProfilesTable.id,
       userId: teacherProfilesTable.userId,
       name: usersTable.name,
-      email: usersTable.email,
       subject: teacherProfilesTable.subject,
       subjects: teacherProfilesTable.subjects,
       bio: teacherProfilesTable.bio,
@@ -148,20 +179,23 @@ router.get("/teachers/:id", attachUserIfPresent, async (req, res): Promise<void>
       experienceYears: teacherProfilesTable.experienceYears,
       pricePerSession: teacherProfilesTable.pricePerSession,
       languages: teacherProfilesTable.languages,
-      isOnline: teacherProfilesTable.isOnline,
-      subscriptionActive: teacherProfilesTable.subscriptionActive,
-      subscriptionTier: teacherProfilesTable.subscriptionTier,
-      maxSessionsPerMonth: teacherProfilesTable.maxSessionsPerMonth,
-      sessionsThisMonth: teacherProfilesTable.sessionsThisMonth,
       totalStudents: teacherProfilesTable.totalStudents,
-      monthlyEarnings: teacherProfilesTable.monthlyEarnings,
       rating: teacherProfilesTable.rating,
       reviewCount: teacherProfilesTable.reviewCount,
       avatarUrl: teacherProfilesTable.avatarUrl,
+      province: userOnboardingTable.province,
+      localLevel: userOnboardingTable.localLevel,
+      institutionName: userOnboardingTable.institutionName,
+      affiliationStatus: userOnboardingTable.affiliationStatus,
     })
     .from(teacherProfilesTable)
     .innerJoin(usersTable, eq(teacherProfilesTable.userId, usersTable.id))
-    .where(eq(teacherProfilesTable.id, id));
+    .leftJoin(userOnboardingTable, eq(userOnboardingTable.userId, usersTable.id))
+    .where(and(
+      eq(teacherProfilesTable.id, id),
+      eq(teacherProfilesTable.approvalStatus, "approved"),
+      isNull(usersTable.suspendedAt),
+    ));
 
   if (!row) { res.status(404).json({ error: "Teacher not found" }); return; }
 

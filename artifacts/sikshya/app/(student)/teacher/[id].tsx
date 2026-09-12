@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   findNodeHandle,
   Platform,
+  Share,
   ScrollView,
   StyleSheet,
   Text,
@@ -596,7 +597,36 @@ You can join from your Sessions tab — the class opens a few minutes before it 
 
   const goBack = () => {
     if (router.canGoBack()) router.back();
-    else router.replace("/(student)");
+    else router.replace(user?.role === "student" ? "/(student)" : "/welcome");
+  };
+
+  const shareProfile = async () => {
+    if (!teacher) return;
+    const url = Platform.OS === "web" && typeof window !== "undefined"
+      ? `${window.location.origin}/teacher/${teacher.id}`
+      : `https://hometuition.praksh-dhakal.workers.dev/teacher/${teacher.id}`;
+    const message = `${teacher.name} teaches ${teacher.subject} on Fadko. ${url}`;
+    try {
+      if (Platform.OS === "web") {
+        const webNavigator = navigator as Navigator & {
+          share?: (data: { title: string; text: string; url: string }) => Promise<void>;
+          clipboard?: { writeText: (text: string) => Promise<void> };
+        };
+        if (webNavigator.share) {
+          await webNavigator.share({ title: `${teacher.name} on Fadko`, text: message, url });
+        } else if (webNavigator.clipboard) {
+          await webNavigator.clipboard.writeText(url);
+          notify("Profile link copied", "You can paste it into Facebook, Instagram or a message.");
+        } else {
+          notify("Share this teacher", url);
+        }
+      } else {
+        await Share.share({ title: `${teacher.name} on Fadko`, message, url });
+      }
+    } catch {
+      // Closing the system share sheet is not a product failure. A genuine clipboard/share error
+      // still leaves the address visible so the teacher or student is never trapped.
+    }
   };
 
   if (!teacher) {
@@ -751,6 +781,25 @@ You can join from your Sessions tab — the class opens a few minutes before it 
             <Feather name="arrow-left" size={20} color={colors.onInverse} />
           </TouchableOpacity>
           <View style={[styles.heroTopActions, { gap: space.xs }]}>
+            <TouchableOpacity
+              style={[
+                styles.heroAction,
+                {
+                  borderColor: colors.onInverseMuted,
+                  borderRadius: radius.pill,
+                  paddingHorizontal: space.sm,
+                  gap: space.xxs,
+                },
+              ]}
+              onPress={() => void shareProfile()}
+              activeOpacity={0.8}
+              testID="share-teacher-profile"
+              accessibilityRole="button"
+              accessibilityLabel={`Share ${teacher.name}'s Fadko profile`}
+            >
+              <Feather name="share-2" size={14} color={colors.onInverse} />
+              <Text style={[t.caption, onNavy]}>Share</Text>
+            </TouchableOpacity>
             {studentId && (
               <TouchableOpacity
                 style={[
