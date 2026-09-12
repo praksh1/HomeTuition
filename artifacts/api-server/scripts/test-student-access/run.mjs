@@ -151,10 +151,13 @@ async function paidTeacher(api, name) {
 
 const MIN = 60_000;
 /** Two minutes out: inside the ten-minute door, so the room tests can actually open one. */
-const makeClass = (api, token, topic, atMs = Date.now() + 2 * MIN) =>
-  api("/sessions", { method: "POST", token, body: {
+const makeClass = async (api, token, topic, atMs = Date.now() + 2 * MIN) => {
+  const result = await api("/sessions", { method: "POST", token, body: {
     subject: "Maths", topic, date: new Date(atMs).toISOString(),
     duration: 60, maxStudents: 20, price: 500 } });
+  if (result.status !== 201) throw new Error(`Create fixture "${topic}" failed: ${result.status} ${JSON.stringify(result.body)}`);
+  return result;
+};
 
 const grantStudent = (api, agentToken, id, days = 7) =>
   api(`/admin/students/${id}/test-access`, { method: "POST", token: agentToken,
@@ -540,7 +543,9 @@ await withServer(8105, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
   await grantStudent(api, agentToken, revoked.id);
 
   const one = (await makeClass(api, teacher.token, "Before")).body.id;
-  const two = (await makeClass(api, teacher.token, "After")).body.id;
+  // These test grant expiry, not overlapping teaching. Two simultaneous lessons are
+  // correctly refused by the shared timetable rule; don't dereference a refused creation.
+  const two = (await makeClass(api, teacher.token, "After", Date.now() + 120 * MIN)).body.id;
 
   check("both students can book while their grants are live",
     (await book(api, expiring.token, one)).status === 201 &&

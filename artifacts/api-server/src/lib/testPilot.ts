@@ -7,10 +7,10 @@ export function testPilotDeadline(env: Record<string, string | undefined> = proc
   return Number.isFinite(until) && new Date(until).toISOString() === canonical && until > now && until - now <= 124 * 86400_000 ? until : null;
 }
 
-export function batchTestPilotEndsAt(): string | null {
+export function batchTestPilotEndsAt(env: Record<string, string | undefined> = process.env, now = Date.now()): string | null {
   const enabled = (value: string | undefined) => ["true", "1"].includes((value ?? "").trim().toLowerCase());
-  const until = testPilotDeadline();
-  return until && enabled(process.env.ALLOW_TEST_TEACHING_ACCESS) && enabled(process.env.ALLOW_TEST_STUDENT_ACCESS) ? new Date(until).toISOString() : null;
+  const until = testPilotDeadline(env, now);
+  return until && enabled(env.ALLOW_TEST_TEACHING_ACCESS) && enabled(env.ALLOW_TEST_STUDENT_ACCESS) ? new Date(until).toISOString() : null;
 }
 
 /** Existing test installations without a pilot date retain their two explicit kill switches. */

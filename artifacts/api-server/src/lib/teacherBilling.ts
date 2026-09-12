@@ -1,4 +1,5 @@
 import { PROGRAM_BETA_TEACHER_SHARE_BPS, PROGRAM_BETA_PLATFORM_SHARE_BPS, PROGRAM_BETA_STUDENT_FEE_NPR } from "./programCommerce.ts";
+import { batchTestPilotEndsAt } from "./testPilot.ts";
 
 /** Sale controls never grant teaching, membership, or money permissions. */
 export function legacyTeacherPlanSalesOpen(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -12,6 +13,7 @@ export function teacherBillingPolicy(env: NodeJS.ProcessEnv = process.env) {
   return {
     legacyPlanSalesOpen: legacyTeacherPlanSalesOpen(env),
     newClassCheckoutOpen: false,
+    testPilotEndsAt: batchTestPilotEndsAt(env),
     teacherShareBps: PROGRAM_BETA_TEACHER_SHARE_BPS,
     platformShareBps: PROGRAM_BETA_PLATFORM_SHARE_BPS,
     studentFeeNpr: PROGRAM_BETA_STUDENT_FEE_NPR,

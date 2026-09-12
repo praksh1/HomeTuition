@@ -12,6 +12,7 @@ import LegacyTeacherPlans from "@/components/legacy/LegacyTeacherPlans";
 export interface TeachingBillingPolicy {
   legacyPlanSalesOpen: boolean;
   newClassCheckoutOpen: false;
+  testPilotEndsAt?: string | null;
   teacherShareBps: number;
   platformShareBps: number;
   studentFeeNpr: number;
@@ -41,8 +42,8 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
         <Text style={[t.callout, numeric, { color: colors.foreground }]}>Separate student fee during beta: NPR {policy.studentFeeNpr}.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
       </ProgramCardShell>
-      <ProgramNotice title="Listings only for now" tone="waiting">
-        <Text style={[t.body, { color: colors.foreground }]}>Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms.</Text>
+      <ProgramNotice title={policy.testPilotEndsAt ? "Private test bookings are open" : "Listings only for now"} tone="waiting">
+        <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "Approved test students can book published classes without payment. Lesson links appear after the first test booking. Test activity creates no earnings or payouts." : "Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms."}</Text>
       </ProgramNotice>
       <ProgramCardShell>
         <Text style={[t.title3, { color: colors.foreground }]}>Your existing teaching continues</Text>
