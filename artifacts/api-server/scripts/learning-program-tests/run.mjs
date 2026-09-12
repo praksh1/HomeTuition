@@ -50,6 +50,16 @@ const check = (n, ok, d = "") => {
 
 const sql = (s) => execFileSync("psql", [PGURL, "-v", "ON_ERROR_STOP=1", "-tAc", s], { encoding: "utf8" }).trim();
 
+async function eventuallySqlNumber(statement, predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  let value = Number(sql(statement));
+  while (!predicate(value) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    value = Number(sql(statement));
+  }
+  return value;
+}
+
 async function api(p, { method = "GET", token, body } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -1375,7 +1385,12 @@ async function moderationReload() {
       { title: "A step that says something", outcome: `Practise saying ${flagged} out loud.` },
     ],
   }) });
-  const first = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
+  // The response is deliberately sent before the non-blocking moderation write finishes.
+  // Observe that eventual side effect with a bound instead of racing the server process.
+  const first = await eventuallySqlNumber(
+    `select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`,
+    (value) => value > 0,
+  );
   check("a step's own words are read when the steps are sent", first > 0, String(first));
 
   /*
