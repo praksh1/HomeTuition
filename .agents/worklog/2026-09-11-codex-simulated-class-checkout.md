@@ -291,3 +291,12 @@ the older Program test-enrolment form below to test this new batch-specific chec
 - No real payment, payout or refund occurred. No production, Daily, membership, booking authority,
   complaint decision or operator ledger behavior changed. Preview CI/deployment and owner device
   review are still required at this checkpoint.
+- Code commit `05821bf` was pushed to `codex/batch-simulated-checkout`. Disposable-database safety
+  workflow `34689421702` passed all gates in 2m24s. The preview branch was advanced to the same
+  commit; preview workflow `34689563024` passed and deployed it in 5m35s. Railway staging deployment
+  `6c6a4cd3-995b-4357-84d1-96c69295ccea` is ACTIVE / successful with the matching commit message.
+- Final browser verification used the owner's signed-in student preview at `/payments`. The two
+  existing purchases rendered as right-aligned posted debits, newest first, with receipt and Nepal
+  time; the account has no refund, so no refund transaction was invented. The rendered fixture
+  separately proves that a real refunded allocation becomes its own dated class/lesson credit.
+  Production and `main` remain untouched; owner device review is the only remaining gate.
