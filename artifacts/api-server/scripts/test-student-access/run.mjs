@@ -79,7 +79,9 @@ async function withServer(port, extraEnv, run) {
   if (!up) { stop(); throw new Error(`server on ${port} never came up`); }
 
   const api = async (p, { method = "GET", token, body } = {}) => {
-    const headers = { "Content-Type": "application/json" };
+    // Match the web app. Without this header the compatibility path intentionally
+    // selects Daily for old/unknown clients, regardless of the configured web pilot.
+    const headers = { "Content-Type": "application/json", "X-Fadko-Platform": "web" };
     if (token) headers.Authorization = `Bearer ${token}`;
     const res = await fetch(`${base}/api${p}`, { method, headers, body: body && JSON.stringify(body) });
     const text = await res.text();
