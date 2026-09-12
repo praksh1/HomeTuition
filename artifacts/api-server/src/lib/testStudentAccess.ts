@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { db, testClassesTable, testStudentGrantsTable } from "@workspace/db";
+import { testPilotAllowsExistingAccess } from "./testPilot";
 
 /**
  * Temporary operator-granted permission to book a **test class** without paying.
@@ -27,7 +28,7 @@ import { db, testClassesTable, testStudentGrantsTable } from "@workspace/db";
  */
 export function testStudentAllowed(): boolean {
   const raw = (process.env.ALLOW_TEST_STUDENT_ACCESS ?? "").trim().toLowerCase();
-  return raw === "true" || raw === "1";
+  return (raw === "true" || raw === "1") && testPilotAllowsExistingAccess();
 }
 
 export interface TestStudentGrant {

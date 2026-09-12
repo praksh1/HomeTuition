@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
+import { BATCH_TEST_DDL } from "./batchTestingSchema";
 import {
   markProviderEvidenceSchemaInvalid,
   markProviderEvidenceSchemaReady,
@@ -1594,7 +1595,8 @@ export async function ensureLearningProgramTables(): Promise<void> {
     for (const statement of LEARNING_PROGRAM_DDL) {
       await db.execute(sql.raw(statement));
     }
-    logger.info("learning program tables are present");
+    for (const statement of BATCH_TEST_DDL) await db.execute(sql.raw(statement));
+    logger.info("learning program and test-booking tables are present");
   } catch (err) {
     logger.warn(
       { err },

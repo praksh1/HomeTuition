@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { db, sessionsTable, sessionEnrollmentsTable, recurringDaysTable, recurringSessionsTable, learningProgramBatchesTable, learningProgramsTable, teachingClassSetupsTable } from "@workspace/db";
+import { db, sessionsTable, sessionEnrollmentsTable, recurringDaysTable, recurringSessionsTable, learningProgramBatchesTable, learningProgramsTable, teachingClassSetupsTable, batchTestSessionsTable, batchTestContractsTable } from "@workspace/db";
 import { readBatchSnapshot } from "./programBatches";
 import { classInstants, localDayKey } from "./monthlySchedule";
 import { lockScheduleQuota } from "./scheduleChanges";
@@ -27,6 +27,11 @@ async function recordedSchedule(reader: Reader, teacherId: number, exclude: Excl
     .leftJoin(teachingClassSetupsTable, eq(teachingClassSetupsTable.programId, learningProgramsTable.id))
     .where(and(eq(learningProgramsTable.teacherId, teacherId), eq(learningProgramBatchesTable.status, "published")));
   const ignoredSessions = new Set(days.filter(({ day }) => day.recurringId === exclude.recurringId).map(({ day }) => day.sessionId));
+  // A published batch already reserves these exact instants. Do not list each materialised
+  // lesson a second time, especially when reviewing the batch against its own timetable.
+  const mapped = sessions.length ? await reader.select().from(batchTestSessionsTable).where(inArray(batchTestSessionsTable.sessionId, sessions.map((s) => s.id))) : [];
+  for (const row of mapped) if (batches.some((b) => b.id === row.batchId)) ignoredSessions.add(row.sessionId);
+  const contracts = batches.length ? await reader.select({ batchId: batchTestContractsTable.batchId }).from(batchTestContractsTable).where(inArray(batchTestContractsTable.batchId, batches.map((b) => b.id))) : [];
   const slots: TeachingSlot[] = sessions.filter((row) => row.id !== exclude.sessionId && !ignoredSessions.has(row.id))
     .map((row) => ({ startsAt: row.date, durationMinutes: row.duration, label: `class “${row.topic}”`, source: { kind: "session", id: row.id, title: row.topic, locked: paidIds.has(row.id) ? "paid" : "review" } }));
   for (const { day, course } of days) {
@@ -41,7 +46,7 @@ async function recordedSchedule(reader: Reader, teacherId: number, exclude: Excl
     if (!snapshot) throw new Error("Published Batch schedule is unreadable");
     for (const lesson of snapshot.lessons) slots.push({ startsAt: new Date(lesson.startsAt), durationMinutes: lesson.durationMinutes, label: `“${snapshot.programTitle}”, Batch ${row.id}, lesson ${lesson.position + 1}`, source: { kind: row.simpleId ? "class" : "batch", id: row.id, title: snapshot.programTitle,
       // Batch checkout is still disabled. Do not reuse this allowance once paid Batch enrollment exists.
-      locked: Date.parse(snapshot.tuitionPeriod?.startsAt ?? snapshot.lessons[0]!.startsAt) <= Date.now() ? "review" : null } });
+      locked: contracts.some((c) => c.batchId === row.id) || Date.parse(snapshot.tuitionPeriod?.startsAt ?? snapshot.lessons[0]!.startsAt) <= Date.now() ? "review" : null } });
   }
   return { slots, courses, days };
 }

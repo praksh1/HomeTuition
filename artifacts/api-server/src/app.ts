@@ -67,6 +67,13 @@ app.use("/api", router);
  * The other is simply that a stack trace is not for the public.
  */
 app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  const databaseError = (err as { cause?: { message?: string } })?.cause ?? err as { message?: string };
+  if (["BATCH_TEST_LOCKED", "BATCH_TEST_BOOKING_REQUIRED"].includes(databaseError?.message ?? "")) {
+    res.status(409).json({ error: databaseError?.message === "BATCH_TEST_LOCKED"
+      ? "This class has test bookings. Its promised details and dates are locked; create another class to try different details."
+      : "Book this test class from its class page. No payment has been collected.", code: databaseError.message });
+    return;
+  }
   if (err instanceof ScheduleConflictError) {
     res.status(409).json({ error: err.message, issues: err.issues });
     return;

@@ -231,8 +231,8 @@ export default function ProgramView({ program, onBack, onOpenTeacher, testEnroll
           </>
         ) : (
           <>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{program.presentation === "class" ? "Preview only" : "Joining a program is not open yet"}</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>Joining and payment are not open yet.</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Private test bookings" : program.presentation === "class" ? "Preview only" : "Joining a program is not open yet"}</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Approved test accounts can book the classes above without payment. Real checkout is not open." : "Joining and payment are not open yet."}</Text>
           </>
         )}
       </View>

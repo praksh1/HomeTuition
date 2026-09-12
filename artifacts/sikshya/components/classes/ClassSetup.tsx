@@ -29,6 +29,7 @@ import {
 import { BatchConfirmation } from "@/components/programs/BatchConfirmation";
 import { NativeTimePicker } from "./NativeTimePicker";
 import { ScheduleConflictPanel } from "./ScheduleConflictPanel";
+import { BatchTestPanel } from "./BatchTestPanel";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 import { classPriceBreakdown, classPublishSummary } from "@/utils/classPrice";
 import {
@@ -106,7 +107,7 @@ export default function ClassSetup() {
   const scheduleFresh = !!item && JSON.stringify(form.lessons) === JSON.stringify(item.batch.lessons.map(lessonDraft));
   const conflicts = scheduleFresh ? item?.batch.scheduleConflicts ?? [] : [];
   const conflictIndices = new Set(conflicts.flatMap((c) => [c.lessonIndex, ...(c.otherLessonIndex === null ? [] : [c.otherLessonIndex])]));
-  const locked = busy || !editing || item?.batch.status === "closed";
+  const locked = busy || !editing || item?.batch.status === "closed" || item?.batch.bookingLocked === true;
   const published = !!item && classIsPublished(item) && !dirty;
   const askLeave = useCallback((go: () => void) => {
     if (!op.current) {
@@ -848,18 +849,19 @@ export default function ClassSetup() {
                 ))}
               </ProgramNotice>
             ) : null}
-            <ProgramNotice
+            {item?.batch.testPilotEndsAt && item.batch.status === "published" ? <BatchTestPanel batchId={item.batch.id} teacher /> : <ProgramNotice
               title="Listing preview"
               body="Publishing shows the description, dates and price. Student joining, payments and live lessons for this listing are not available yet."
-            />
-            {item?.batch.status === "published" && form.format === "ongoing" ? (
+            />}
+            {item?.batch.bookingLocked ? <ProgramNotice title="Booked details are locked" body="A student has a test place. Keep these dates and details as promised. Use a copy for another test class." /> : null}
+            {item?.batch.status === "published" && form.format === "ongoing" && !item.batch.bookingLocked ? (
               <ProgramButton
                 label="Prepare the next 30 days"
                 disabled={busy || dirty}
                 onPress={() => void nextPeriod()}
               />
             ) : null}
-            {item?.batch.status === "published" ? (
+            {item?.batch.status === "published" && !item.batch.bookingLocked ? (
               <ProgramButton
                 label="Close this listing"
                 emphasis="danger"
@@ -912,7 +914,7 @@ export default function ClassSetup() {
                 <>
                   <ProgramButton
                     label="Edit details"
-                    disabled={busy}
+                    disabled={busy || item?.batch.bookingLocked === true}
                     onPress={() => {
                       setEditing(true);
                       move(0);
@@ -933,7 +935,7 @@ export default function ClassSetup() {
                         published ? "Published — up to date" : "Publish class"
                       }
                       emphasis="primary"
-                      disabled={busy || published}
+                      disabled={busy || published || item?.batch.bookingLocked === true}
                       onPress={() => setConfirm("publish")}
                       grow
                     />

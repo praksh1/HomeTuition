@@ -47,6 +47,7 @@ import {
 import { refundsTable, scheduleChangesTable } from "@workspace/db";
 import { isRecurringDay, notARecurringDay } from "../lib/monthlyStore";
 import { mayCreateClassAt } from "../lib/sessionAllowance";
+import { batchTestForSession } from "../lib/batchTestStore";
 import {
   TEST_BOOKING_LABEL,
   TEST_CLASS_LABEL,
@@ -1505,6 +1506,11 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         "Join the monthly class to get every class in it.",
       monthly: true,
     });
+    return;
+  }
+  const testBatchId = await batchTestForSession(id);
+  if (testBatchId !== null) {
+    res.status(409).json({ error: "Book this test class from its class listing, not one lesson at a time. No payment will be taken.", batchId: testBatchId });
     return;
   }
   if (session.status === "completed" || session.status === "cancelled") {

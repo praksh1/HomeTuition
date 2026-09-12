@@ -1,5 +1,6 @@
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { db, testTeachingGrantsTable } from "@workspace/db";
+import { testPilotAllowsExistingAccess } from "./testPilot";
 
 /**
  * Temporary operator-granted permission to teach without paying.
@@ -26,7 +27,7 @@ import { db, testTeachingGrantsTable } from "@workspace/db";
  */
 export function testTeachingAllowed(): boolean {
   const raw = (process.env.ALLOW_TEST_TEACHING_ACCESS ?? "").trim().toLowerCase();
-  return raw === "true" || raw === "1";
+  return (raw === "true" || raw === "1") && testPilotAllowsExistingAccess();
 }
 
 export interface TestTeachingGrant {

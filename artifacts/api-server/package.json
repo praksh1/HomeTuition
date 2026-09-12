@@ -28,6 +28,7 @@
     "test:video": "node scripts/video-tests/run.mjs",
     "test:monthly": "node scripts/monthly-tests/run.mjs",
     "test:programs": "node scripts/learning-program-tests/run.mjs",
+    "test:batch-booking": "node scripts/batch-test-booking/run.mjs",
     "test:public-classes": "node scripts/public-classes-tests/run.mjs",
     "test:portal": "node scripts/portal-tests/run.mjs",
     "test:tickets": "node scripts/ticket-tests/run.mjs",

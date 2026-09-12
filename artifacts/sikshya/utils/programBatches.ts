@@ -8,6 +8,7 @@ export interface ProgramBatchLessonDraft {
 }
 
 export interface ProgramBatchSnapshot {
+  testPilotEndsAt?: string | null;
   allowLateJoining?: boolean;
   joiningPreview?: {
     previewOnly: true;
@@ -58,6 +59,8 @@ export function batchTimeDraft(value: Date): string {
 }
 
 export interface OwnerProgramBatch {
+  bookingLocked?: boolean;
+  testPilotEndsAt?: string | null;
   scheduleConflicts?: ScheduleConflict[];
   allowLateJoining?: boolean;
   format?: "fixed" | "ongoing";
