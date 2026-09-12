@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/batch-simulated-checkout
 - Base commit: 5b1e157
-- Status: complete in code; preview release pending CI
+- Status: complete; isolated preview deployed; owner verification pending
 
 ## Requested
 
@@ -46,8 +46,17 @@ bookable.
 - Full four-workspace typecheck passed.
 - App unit suite: 390 passed, 0 failed. API unit suite: 544 passed, 0 failed.
 - `git diff --check` passed.
-- Disposable-Postgres CI, commit, preview deployment and owner browser verification remain to be
-  recorded below.
+- Safety workflow `34709986232` passed on commit `b2df2ac`, including disposable Postgres,
+  `test:programs`, `test:batch-booking`, both test-access suites, video/proof checks, rendered class
+  setup and the full workspace gates.
+- Preview workflow `34710226019` passed in 5m39s after the preview source branch was advanced to
+  exactly `b2df2ac`. It proved the built bundle contains no production API host, deployed only the
+  preview Cloudflare Worker, and verified the served HTML and initial bundles.
+- Live post-deploy checks returned `health=ok`, HTTP 200 from the preview, `open` with one bookable
+  batch for program 10, and `closed` with zero bookable batches for program 11.
+- The browser journey test was not run locally because it requires a local API listening on 8080.
+  The focused rendered navigation contracts and the deployed Incognito journey remain the relevant
+  verification for this correction.
 
 ## Problems and surprises
 
@@ -73,6 +82,7 @@ and post-registration return routing are outside this navigation correction.
 
 ## Remaining risks / next pickup point
 
-Run remaining local gates, commit and push the isolated branch, require disposable-database safety
-CI, fast-forward the preview source only after success, wait for Railway and Cloudflare preview,
-then ask the owner to repeat the incognito Teacher → Class → Back and Fadko → browser Back paths.
+The owner should repeat the Incognito Teacher → Class → named teacher return and Fadko →
+browser Back paths. Program 10 is the known-open test offer and should show the account doorway;
+program 11 is closed and must show a truthful closed notice with no unusable checkout action.
+Production remains unchanged until the owner explicitly approves it after this test.
