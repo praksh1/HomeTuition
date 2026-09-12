@@ -6,6 +6,7 @@ import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet, apiPost } from "@/utils/api";
 import { batchDateValue, lessonDraft, type ProgramBatchSnapshot } from "@/utils/programBatches";
+import { PROGRAM_ALLOCATION_STATE_LABELS } from "@/utils/programCommerceHistory";
 import { ProgramButton, ProgramNotice } from "../programs/ProgramPieces";
 
 interface TestBooking {
@@ -18,7 +19,8 @@ interface TestBooking {
   offerLessons: Array<{ position: number; startsAt: string; durationMinutes: number }>;
   lessons: Array<{ position: number; sessionId: number; startsAt: string; durationMinutes: number }>;
   receipts: Array<{ reference: string; grossNpr: number; teacherNpr: number; fadkoNpr: number;
-    allocations: Array<{ position: number; grossNpr: number; teacherNpr: number; fadkoNpr: number }> }>;
+    accounting?: { heldGrossNpr: number; teacherPaidOutNpr: number; fadkoEarnedNpr: number; refundedGrossNpr: number; actualMoneyMovedNpr: number };
+    allocations: Array<{ position: number; grossNpr: number; teacherNpr: number; fadkoNpr: number; state?: string }> }>;
 }
 
 /** This deliberately never imports PaymentSheet: rehearsal must not ask for a wallet/PIN. */
@@ -67,11 +69,16 @@ export function BatchTestPanel({ batchId, teacher = false, onBooked }: { batchId
     </ProgramNotice> : null}
     {result?.booked ? <Text accessibilityLiveRegion="polite" style={[t.bodyStrong, { color: colors.foreground }]}>Test place booked — no payment taken.</Text> : null}
     {result?.receipts?.map(receipt => <ProgramNotice key={receipt.reference} title={`TEST receipt · ${receipt.reference}`}>
-      <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>Simulated payment: NPR {receipt.grossNpr.toLocaleString("en-NP")}</Text>
+      <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>{result.isTeacher ? "Class test payment" : "Your test payment"}: NPR {receipt.grossNpr.toLocaleString("en-NP")}</Text>
       <Text style={[t.callout, numeric, { color: colors.foreground }]}>Teacher allocation: NPR {receipt.teacherNpr.toLocaleString("en-NP")} · Fadko allocation: NPR {receipt.fadkoNpr.toLocaleString("en-NP")}</Text>
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>Held in the test ledger. Not earned or paid out. Real payment: NPR 0. Refund and payout rehearsal will be added separately.</Text>
+      <Text style={[t.callout, numeric, { color: colors.foreground }]}>Still held: NPR {(receipt.accounting?.heldGrossNpr ?? receipt.grossNpr).toLocaleString("en-NP")} · Teacher test-paid: NPR {(receipt.accounting?.teacherPaidOutNpr ?? 0).toLocaleString("en-NP")}</Text>
+      <Text style={[t.callout, numeric, { color: colors.foreground }]}>Fadko test-earned: NPR {(receipt.accounting?.fadkoEarnedNpr ?? 0).toLocaleString("en-NP")} · Student test-refunded: NPR {(receipt.accounting?.refundedGrossNpr ?? 0).toLocaleString("en-NP")}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>Actual money moved: NPR {(receipt.accounting?.actualMoneyMovedNpr ?? 0).toLocaleString("en-NP")}. These are rehearsal records only.</Text>
       <ProgramButton emphasis="quiet" label={allocationOpen === receipt.reference ? "Hide lesson breakdown" : "Show lesson breakdown"} onPress={() => setAllocationOpen(allocationOpen === receipt.reference ? null : receipt.reference)} />
-      {allocationOpen === receipt.reference ? receipt.allocations.map(a => <Text key={a.position} style={[t.caption, numeric, { color: colors.mutedForeground }]}>Lesson {a.position + 1}: NPR {a.grossNpr} · teacher {a.teacherNpr} / Fadko {a.fadkoNpr}</Text>) : null}
+      {allocationOpen === receipt.reference ? receipt.allocations.map(a => <View key={a.position} style={{ gap: space.xxs }}>
+        <Text style={[t.caption, { color: colors.foreground }]}>Lesson {a.position + 1} · {PROGRAM_ALLOCATION_STATE_LABELS[a.state ?? "future"] ?? "Recorded in the test ledger"}</Text>
+        <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>NPR {a.grossNpr.toLocaleString("en-NP")} · teacher {a.teacherNpr.toLocaleString("en-NP")} / Fadko {a.fadkoNpr.toLocaleString("en-NP")}</Text>
+      </View>) : null}
     </ProgramNotice>)}
     {result?.lessons.length ? <>
       <Text style={[t.caption, { color: colors.mutedForeground }]}>Open a lesson to see its join time. Doors open 10 minutes before the scheduled start.</Text>

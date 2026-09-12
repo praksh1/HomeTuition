@@ -49,7 +49,7 @@ try {
     check(`${width}: explicit test confirmation`, (await page.locator("body").innerText()).includes("Test place booked — no payment taken."));
     check(`${width}: Nepal calendar and timezone`, (await page.locator("body").innerText()).includes("2083") && (await page.locator("body").innerText()).includes("16:00 Nepal time"));
     check(`${width}: only quote and simulated outcome submitted, never client price`, await page.evaluate(() => JSON.stringify(window.bookingPayload.body)) === JSON.stringify({ quoteKey: "a".repeat(64), gateway: "fadko_test", outcome: "success" }));
-    check(`${width}: receipt shows allocated money, not earnings`, (await page.locator("body").innerText()).includes("Teacher allocation: NPR 4,200") && (await page.locator("body").innerText()).includes("Not earned or paid out"));
+    check(`${width}: receipt separates allocations, held funds and actual money`, (await page.locator("body").innerText()).includes("Teacher allocation: NPR 4,200") && (await page.locator("body").innerText()).includes("Still held: NPR 6,000") && (await page.locator("body").innerText()).includes("Actual money moved: NPR 0"));
     await page.getByRole("button", { name: "Open lesson 1", exact: true }).click();
     check(`${width}: existing session page, no time bypass`, await page.evaluate(() => JSON.stringify(window.lastNavigation)) === JSON.stringify({ pathname: "/session/[id]", params: { id: "125" } }));
     check(`${width}: no horizontal overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

@@ -42,5 +42,7 @@ export async function apiPost(path, body) {
   }
   if (location.search.includes("stale")) throw new Error("The dates or price changed. Review the current details before confirming.");
   if (body.outcome === "declined") throw new Error("Test payment declined. No money moved and no place was booked. You can try again.");
-  return { ...result(), booked: true, receipts: [{ reference: "TEST-BATCH-1", grossNpr: 6000, teacherNpr: 4200, fadkoNpr: 1800, allocations: [{ position: 0, grossNpr: 3000, teacherNpr: 2100, fadkoNpr: 900 }, { position: 1, grossNpr: 3000, teacherNpr: 2100, fadkoNpr: 900 }] }], lessons: [{ position: 0, sessionId: 125, startsAt: "2026-10-01T10:15:00Z", durationMinutes: 60 }] };
+  return { ...result(), booked: true, receipts: [{ reference: "TEST-BATCH-1", grossNpr: 6000, teacherNpr: 4200, fadkoNpr: 1800,
+    accounting: { heldGrossNpr: 6000, teacherPaidOutNpr: 0, fadkoEarnedNpr: 0, refundedGrossNpr: 0, actualMoneyMovedNpr: 0 },
+    allocations: [{ position: 0, state: "future", grossNpr: 3000, teacherNpr: 2100, fadkoNpr: 900 }, { position: 1, state: "future", grossNpr: 3000, teacherNpr: 2100, fadkoNpr: 900 }] }], lessons: [{ position: 0, sessionId: 125, startsAt: "2026-10-01T10:15:00Z", durationMinutes: 60 }] };
 }
