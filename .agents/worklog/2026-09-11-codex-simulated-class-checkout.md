@@ -143,3 +143,36 @@ the older Program test-enrolment form below to test this new batch-specific chec
   `5d8f257b-ebe0-4c96-baaf-b13dc9b3ee00` is ACTIVE / successful on the same commit.
 - Staging video remains `echo` after the unsuccessful Daily room attempt. Daily credentials and
   namespace remain inactive; production video, production API and `main` were not changed.
+
+### System-owned settlement and operator exception desk
+
+- Owner's real walkthrough exposed a product-design failure: the operator screen asked a human to
+  manufacture ordinary facts with buttons such as delivered, cancelled, complaint opened and
+  complaint window closed. The owner could not tell what they were supposed to do. Those controls
+  are removed from the normal operator UI. The page now explains that Fadko updates routine test
+  accounting from recorded classroom/session facts and student-created support cases. Ordinary
+  receipts say `No operator action needed`; cancellation/dispute states link to support cases.
+- Added a pure automatic transition policy and tests. A scheduled lesson does not count as
+  delivered merely because its status says completed: recorded teacher presence is also required.
+  A qualifying completed lesson opens its review period; the 48-hour window closes automatically
+  from the scheduled end; a complaint created by that booking's student freezes only that
+  student's allocation; a teacher-cancelled session becomes a replacement/refund exception.
+- Automatic synchronization appends immutable system events with no actor and never confirms a
+  real payout or refund. It runs before participant and operator test-ledger reads. If evidence
+  synchronization fails, the API logs a warning and preserves the readable last-known ledger.
+- This does **not** yet decide the outcome of a dispute, execute a payout/refund, or connect a case
+  resolution to a settlement verdict. The internal rehearsal event API remains for automated tests
+  and compatibility, but no longer appears as routine operator work.
+- Commit `ea686d5` contains the product change. CI first failed because the booking journey tested
+  a timetable clash only after intentionally completing the conflicting lesson. Commit `79a5c90`
+  moved that proof to when both lessons are upcoming; no product logic changed. The next CI run
+  exposed an existing timing race: the Programs API deliberately answers before a non-blocking
+  moderation insert finishes, while the test queried immediately. Commit `37e1c2a` added a bounded
+  two-second eventual assertion; it still fails if the promised moderation record never appears.
+- Final safety workflow `34676572202` passed all steps: four-workspace typecheck, API/app units,
+  design ratchet, disposable schema, Programs, batch booking and automatic settlement, video,
+  evidence, teacher/student test access, and browser checks. Preview workflow `34676722500` passed
+  and deployed commit `37e1c2a`. Railway staging deployment
+  `3741cdd4-72f4-449f-a9fd-38762224c788` is ACTIVE / successful on the same commit.
+- Production and `main` remain untouched. Staging video remains echo. No payment, purchase, Daily
+  action, real payout/refund, or shared production-data mutation occurred.
