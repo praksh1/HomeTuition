@@ -445,3 +445,23 @@ the older Program test-enrolment form below to test this new batch-specific chec
   booking, refund, payout, classroom, Daily or LiveKit behavior changed. Production and `main`
   remain untouched; commit/push, disposable-database CI, preview deployment and owner device review
   are still required at this checkpoint.
+- Code commit `c738d14` and the follow-up selection-state commit `bd6a8f3` were pushed to
+  `codex/batch-simulated-checkout`. The follow-up came from visual review: opening **Exam, language
+  & skills** correctly changed the catalogue but initially left its parent **Find a class** intent
+  visually unselected. `discoverIntentFor` now makes that hierarchy explicit and unit-tested.
+- Disposable-database safety workflow `34702972399` passed for the final commit, including all
+  application/API/type/design, fresh-schema, Programs, booking, media, proof, test-access, student
+  and browser gates. Railway staging then returned the new public teacher contract with Province,
+  local level and institution and without email, plan, earnings or legacy booking fields.
+- Final preview workflow `34704416368` stopped before deployment when two moderation-flag checks
+  missed a swallowed insert in its disposable database; the other 602 Programs checks passed. The
+  same final commit had passed that exact suite in the broader safety workflow. A single diagnostic
+  rerun, `34704603692`, passed all preview gates and deployed in 5m57s. Nothing was bypassed and no
+  product code was changed to conceal the intermittent test-storage miss; it is recorded here for
+  the next agent if it recurs.
+- Live preview verification reloaded the deployed Worker, opened **Find my teacher**, waited for the
+  bounded staging result, and opened **School or location**. The page showed the two intentions,
+  all three class catalogues, one teacher result with its institution, the Independent shortcut,
+  and the complete Province list; the retired Monthly promotion and booking count were absent.
+  Production and `main` remain untouched. The owner now has the final preview for physical device
+  review.
