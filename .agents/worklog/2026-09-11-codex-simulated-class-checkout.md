@@ -127,3 +127,19 @@ the older Program test-enrolment form below to test this new batch-specific chec
 - Cloudflare preview run `34672831042` passed and deployed commit `1837160`, including its own
   typecheck, disposable database/API checks, rendered class/program flows and production-isolation
   proof. Preview URL unchanged. Owner still needs to perform the operator settlement walkthrough.
+
+### Participant settlement view
+
+- Commit `269b661` adds the same derived, read-only settlement totals to the booked student's and
+  class teacher's existing test-class panel. It shows gross TEST payment, original teacher/Fadko
+  allocation, gross still held, teacher test-paid, Fadko test-earned, student test-refunded and
+  actual money moved (always NPR 0). Lesson rows use human-readable settlement state labels.
+- No participant can make a settlement decision. Operator authority and the append-only event route
+  are unchanged. Older API responses remain readable through honest zero/fully-held fallbacks.
+- Local gates: full four-workspace typecheck; app unit 373; design ratchet unchanged 94/282; browser
+  checkout/ledger 40/40 at 390 and 1440; diff check clean.
+- GitHub safety run `34673306726` passed against disposable PostgreSQL. Cloudflare preview run
+  `34673450705` passed and deployed commit `269b661`. Railway staging deployment
+  `5d8f257b-ebe0-4c96-baaf-b13dc9b3ee00` is ACTIVE / successful on the same commit.
+- Staging video remains `echo` after the unsuccessful Daily room attempt. Daily credentials and
+  namespace remain inactive; production video, production API and `main` were not changed.
