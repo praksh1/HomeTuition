@@ -239,7 +239,7 @@ async function main() {
   check("and published tuition is the first class category", (await page3.locator('[data-testid="class-catalog-tuition"]').count()) > 0);
 
   // The teacher search box only lives inside the Teachers > All view.
-  const searchBox = '[data-testid="discover-search"]';
+  const searchBox = '[data-testid="teacher-search"]';
   check("and the teacher search is not on screen until you switch to Teachers",
     (await page3.locator(searchBox).count()) === 0);
 

@@ -86,3 +86,14 @@ The owner should repeat the Incognito Teacher → Class → named teacher return
 browser Back paths. Program 10 is the known-open test offer and should show the account doorway;
 program 11 is closed and must show a truthful closed notice with no unusable checkout action.
 Production remains unchanged until the owner explicitly approves it after this test.
+
+## Production release follow-up
+
+- The owner passed the Incognito preview journey and approved the production release.
+- Exact reviewed application code was merged at `94b7d0d`; the dedicated disposable-database
+  safety workflow passed before `main` was advanced.
+- The production workflow then stopped before any Cloudflare deployment because the navigation
+  journey still searched for the teacher input's former `discover-search` test identifier. The
+  redesigned input is `teacher-search`; the visible control and route worked in the owner's test.
+- The navigation assertion now follows the current input identifier. This is a test-only release
+  correction; no user interface, API, database, payment, or deployment configuration changed.
