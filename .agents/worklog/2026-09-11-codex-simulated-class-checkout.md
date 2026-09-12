@@ -330,3 +330,10 @@ the older Program test-enrolment form below to test this new batch-specific chec
   completed lesson, without a percentage split or horizontal overflow.
 - Production and `main` remain untouched. Preview deployment and owner review are required before
   release.
+- Code commit `8eae62b` was pushed to `codex/batch-simulated-checkout`. Disposable-database safety
+  workflow `34693525350` passed every gate in 2m46s. The isolated preview branch was advanced to
+  that exact commit; preview workflow `34693684363` passed and deployed it in 5m30s.
+- A fresh reload of the deployed teacher `Teaching & earnings` page confirmed the `70%` and
+  separate-fee-zero presentation is gone and the price-specific, before-tax explanation is live.
+  The exact class-price estimate remains for the owner's create-class walkthrough. Production and
+  `main` are still untouched.
