@@ -1,13 +1,15 @@
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, View } from "react-native";
+import { ActivityIndicator, Platform, Share, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import ProgramView from "@/components/programs/ProgramView";
 import { ProgramFailure } from "@/components/programs/ProgramPieces";
 import { space } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
+import { useAuth } from "@/context/AuthContext";
 import { apiGet, ApiError } from "@/utils/api";
+import { notify } from "@/utils/alerts";
 import type { PublicProgramDetail } from "@/utils/programDiscovery";
 import type { ProgramBatchSnapshot } from "@/utils/programBatches";
 
@@ -41,6 +43,7 @@ import type { ProgramBatchSnapshot } from "@/utils/programBatches";
  */
 export default function StudentProgramScreen() {
   const colors = useColors();
+  const { user } = useAuth();
   const params = useLocalSearchParams<{ id?: string }>();
   const id = typeof params.id === "string" ? params.id : "";
   /**
@@ -61,6 +64,7 @@ export default function StudentProgramScreen() {
   } | null>(null);
   const [testEnrollmentUnavailable, setTestEnrollmentUnavailable] = useState(false);
   const [batches, setBatches] = useState<ProgramBatchSnapshot[]>([]);
+  const [batchAvailability, setBatchAvailability] = useState<"open" | "closed" | "not_scheduled">("not_scheduled");
   const [batchesUnavailable, setBatchesUnavailable] = useState(false);
   const [loading, setLoading] = useState(validId);
   const [failure, setFailure] = useState<string | null>(null);
@@ -84,19 +88,23 @@ export default function StudentProgramScreen() {
     setFailure(null);
     setGone(false);
     try {
+      const rehearsalRequest = user?.role === "student"
+        ? apiGet<{ testEnrollment: { totalTuitionNpr: number; paidLessonCount: number } | null; allocations?: Array<{ lessonNumber: number; state: string }> }>(`/programs/${id}/my-test-enrolment`)
+          .then((value) => ({ value, unavailable: false }))
+          .catch(() => ({ value: { testEnrollment: null, allocations: [] }, unavailable: true }))
+        : Promise.resolve({ value: { testEnrollment: null, allocations: [] }, unavailable: false });
       const [answer, rehearsal, batchAnswer] = await Promise.all([
         apiGet<{ program: PublicProgramDetail }>(`/programs/${id}`),
-        apiGet<{ testEnrollment: { totalTuitionNpr: number; paidLessonCount: number } | null; allocations?: Array<{ lessonNumber: number; state: string }> }>(`/programs/${id}/my-test-enrolment`)
+        rehearsalRequest,
+        apiGet<{ batches: ProgramBatchSnapshot[]; availability?: "open" | "closed" | "not_scheduled" }>(`/programs/${id}/batches`)
           .then((value) => ({ value, unavailable: false }))
-          .catch(() => ({ value: { testEnrollment: null }, unavailable: true })),
-        apiGet<{ batches: ProgramBatchSnapshot[] }>(`/programs/${id}/batches`)
-          .then((value) => ({ value, unavailable: false }))
-          .catch(() => ({ value: { batches: [] }, unavailable: true })),
+          .catch(() => ({ value: { batches: [], availability: "not_scheduled" as const }, unavailable: true })),
       ]);
       setProgram(answer.program);
       setTestEnrollment(rehearsal.value.testEnrollment ? { ...rehearsal.value.testEnrollment, allocations: rehearsal.value.allocations ?? [] } : null);
       setTestEnrollmentUnavailable(rehearsal.unavailable);
       setBatches(Array.isArray(batchAnswer.value.batches) ? batchAnswer.value.batches : []);
+      setBatchAvailability(batchAnswer.value.availability ?? (batchAnswer.value.batches.length > 0 ? "open" : "not_scheduled"));
       setBatchesUnavailable(batchAnswer.unavailable);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
@@ -111,7 +119,7 @@ export default function StudentProgramScreen() {
     } finally {
       setLoading(false);
     }
-  }, [id, validId]);
+  }, [id, user?.role, validId]);
 
   useEffect(() => {
     void load();
@@ -129,9 +137,34 @@ export default function StudentProgramScreen() {
    */
   const back = () => {
     if (router.canGoBack()) router.back();
-    else router.replace("/(student)");
+    else router.replace(user?.role === "student" ? "/(student)" : "/welcome");
   };
   const openTeacher = (teacherId: number) => router.push(`/(student)/teacher/${teacherId}`);
+  const backToTeacher = (teacherId: number) => router.replace(`/(student)/teacher/${teacherId}`);
+  const shareProgram = async () => {
+    if (!program) return;
+    const url = Platform.OS === "web" && typeof window !== "undefined"
+      ? `${window.location.origin}/program/${program.id}`
+      : `https://hometuition.praksh-dhakal.workers.dev/program/${program.id}`;
+    const message = `${program.title} — taught by ${program.teacher.name} on Fadko. ${url}`;
+    try {
+      if (Platform.OS === "web") {
+        const webNavigator = navigator as Navigator & {
+          share?: (data: { title: string; text: string; url: string }) => Promise<void>;
+          clipboard?: { writeText: (text: string) => Promise<void> };
+        };
+        if (webNavigator.share) await webNavigator.share({ title: program.title, text: message, url });
+        else if (webNavigator.clipboard) {
+          await webNavigator.clipboard.writeText(url);
+          notify("Class link copied", "You can paste it into Facebook, Instagram or a message.");
+        } else notify("Share this class", url);
+      } else {
+        await Share.share({ title: program.title, message, url });
+      }
+    } catch {
+      // Dismissing the device share sheet is not an error the student needs to resolve.
+    }
+  };
 
   if (loading) {
     return (
@@ -182,7 +215,20 @@ export default function StudentProgramScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
-      <ProgramView program={program} onBack={back} onOpenTeacher={openTeacher} testEnrollment={testEnrollment} testEnrollmentUnavailable={testEnrollmentUnavailable} batches={batches} batchesUnavailable={batchesUnavailable} />
+      <ProgramView
+        program={program}
+        onBack={back}
+        onShare={() => void shareProgram()}
+        onOpenTeacher={openTeacher}
+        onOpenHome={() => router.push("/welcome")}
+        onBackToTeacher={() => backToTeacher(program.teacher.id)}
+        publicVisitor={!user}
+        testEnrollment={testEnrollment}
+        testEnrollmentUnavailable={testEnrollmentUnavailable}
+        batches={batches}
+        batchAvailability={batchAvailability}
+        batchesUnavailable={batchesUnavailable}
+      />
     </SafeAreaView>
   );
 }

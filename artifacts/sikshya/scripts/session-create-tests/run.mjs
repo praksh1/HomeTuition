@@ -182,7 +182,7 @@ async function openLockedAt(browser, width, label) {
   await page.waitForTimeout(500);
   const bodyAfter = await page.locator("body").innerText();
   check(`${label}: exactly one create request`, traffic.sessionWrites.length === 1, `calls=${traffic.sessionWrites.length}`);
-  check(`${label}: 402 becomes an in-screen locked state`, /This class does not fit your plan/.test(bodyAfter) && /View teaching-plan options/.test(bodyAfter));
+  check(`${label}: 402 becomes an in-screen locked state`, /This class does not fit your plan/.test(bodyAfter) && /View teaching access/.test(bodyAfter));
   check(`${label}: 402 does not open an alert`, dialogs.length === 0, dialogs.join(" | "));
   check(`${label}: create actions are replaced while locked`, !/Create & Go Live Now/.test(bodyAfter) && !/Schedule for Later/.test(bodyAfter));
   const dimensions = await page.evaluate(() => ({

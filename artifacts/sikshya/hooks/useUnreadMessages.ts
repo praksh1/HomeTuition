@@ -12,7 +12,7 @@ const POLL_MS = 20000;
  * open the tab and look. Polls only while the screen is focused, so a backgrounded app is
  * not calling the API on a timer.
  */
-export function useUnreadMessages(): { unread: number; refresh: () => void } {
+export function useUnreadMessages(enabled = true): { unread: number; refresh: () => void } {
   const [unread, setUnread] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -27,12 +27,13 @@ export function useUnreadMessages(): { unread: number; refresh: () => void } {
 
   useFocusEffect(
     useCallback(() => {
+      if (!enabled) return undefined;
       refresh();
       timer.current = setInterval(refresh, POLL_MS);
       return () => {
         if (timer.current) clearInterval(timer.current);
       };
-    }, [refresh]),
+    }, [enabled, refresh]),
   );
 
   useEffect(() => () => {

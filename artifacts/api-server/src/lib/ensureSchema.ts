@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
+import { BATCH_TEST_DDL } from "./batchTestingSchema";
 import {
   markProviderEvidenceSchemaInvalid,
   markProviderEvidenceSchemaReady,
@@ -1594,13 +1595,14 @@ export async function ensureLearningProgramTables(): Promise<void> {
     for (const statement of LEARNING_PROGRAM_DDL) {
       await db.execute(sql.raw(statement));
     }
-    logger.info("learning program tables are present");
+    for (const statement of BATCH_TEST_DDL) await db.execute(sql.raw(statement));
+    logger.info("learning program and test-booking tables are present");
   } catch (err) {
     logger.warn(
       { err },
-      "could not ensure the learning program tables; run `pnpm run db:push`. " +
-        "Everything else works — classes, booking and the classroom are untouched, and only the " +
-        "program builder and the public program pages are affected.",
+      "could not ensure class-planning/test-booking storage. Do not activate the booking pilot; " +
+        "inspect the schema error and repair the additive boot guard before release. " +
+        "Class planning, schedule checks and booking may be unavailable until storage is ready.",
     );
   }
 }

@@ -2,6 +2,11 @@
 
 **Decided 4 Sep 2026, building the production-test release candidate.**
 
+**11 Sep correction:** the owner confirmed this is private prelaunch testing, not a site currently
+taking real customer payments. The historical paragraph below is the prior design assumption,
+not verified business activity. Keep the safety rules; see prelaunch-batch-test-pilot.md for the
+new fixed testing period and batch-specific bridge.
+
 The owner has to walk the whole journey — find a class, book it, enter the real Daily classroom —
 on the live site, while that site is taking real money from real students.
 

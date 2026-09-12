@@ -78,9 +78,11 @@ function AuthGuard() {
     const onAccountScreen = ACCOUNT_SCREENS.some((segment) => firstSegment === segment);
     const onOnboarding = firstSegment === "onboarding";
     const inProtectedGroup = inTeacherGroup || inStudentGroup || inAdminGroup;
+    const onPublicStudentProfile = inStudentGroup
+      && (segments[1] === "teacher" || segments[1] === "program");
 
     if (!user) {
-      if (inProtectedGroup || onSharedScreen || onOnboarding) router.replace("/welcome");
+      if ((inProtectedGroup && !onPublicStudentProfile) || onSharedScreen || onOnboarding) router.replace("/welcome");
     } else if ((user.role === "teacher" || user.role === "student") && !user.emailVerified) {
       /*
         The address travels; the delivery state deliberately does not.

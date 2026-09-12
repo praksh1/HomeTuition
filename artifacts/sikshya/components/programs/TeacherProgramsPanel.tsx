@@ -34,14 +34,14 @@ export function TeacherProgramsPanel({
   return (
     <View testID="teacher-programs-section" style={{ gap: space.sm, marginBottom: space.xl }}>
       <View style={{ gap: space.xxs }}>
-        <Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Learning programs</Text>
-        <Text style={[t.callout, { color: colors.mutedForeground }]}>Structured learning paths this teacher has published.</Text>
+        <Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Classes and courses</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>What this teacher has published on Fadko.</Text>
       </View>
 
       {state === "loading" ? (
         <View style={{ alignItems: "center", paddingVertical: space.lg, gap: space.sm }}>
           <ActivityIndicator color={colors.primary} />
-          <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading programs…</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading classes and courses…</Text>
         </View>
       ) : null}
 
@@ -49,7 +49,7 @@ export function TeacherProgramsPanel({
         <View style={{ flexDirection: "row", alignItems: "center", backgroundColor: colors.muted, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: space.md, gap: space.sm }}>
           <Feather name="wifi-off" size={18} color={colors.mutedForeground} />
           <View style={{ flex: 1, gap: space.xxs }}>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Programs couldn&apos;t load</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Classes and courses couldn&apos;t load</Text>
             <Text style={[t.callout, { color: colors.mutedForeground }]}>The teacher&apos;s profile is still available.</Text>
           </View>
           <TouchableOpacity accessibilityRole="button" onPress={onRetry} activeOpacity={0.7}>
@@ -59,7 +59,13 @@ export function TeacherProgramsPanel({
       ) : null}
 
       {list.rows.map((program) => (
-        <ProgramCard key={program.id} fields={cardFromSummary(program)} testID={`teacher-program-${program.id}`} onPress={() => onOpen(program.id)} />
+        <ProgramCard
+          key={program.id}
+          fields={cardFromSummary(program)}
+          actionLabel={program.presentation === "class" ? "View class" : "View course"}
+          testID={`teacher-program-${program.id}`}
+          onPress={() => onOpen(program.id)}
+        />
       ))}
 
       {state === "failed" && list.rows.length > 0 ? (
@@ -77,7 +83,7 @@ export function TeacherProgramsPanel({
           activeOpacity={0.7}
           style={{ minHeight: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" }}
         >
-          {loadingMore ? <ActivityIndicator color={colors.primary} /> : <Text style={[t.bodyStrong, { color: colors.primary }]}>Show more programs</Text>}
+          {loadingMore ? <ActivityIndicator color={colors.primary} /> : <Text style={[t.bodyStrong, { color: colors.primary }]}>Show more</Text>}
         </TouchableOpacity>
       ) : null}
     </View>

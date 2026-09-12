@@ -624,7 +624,7 @@ export default function SessionCreate() {
             >
               <Feather name={limitDetails.upgradeTo ? "arrow-up-circle" : "calendar"} size={20} color={colors.primaryForeground} />
               <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>
-                {limitDetails.upgradeTo ? "View teaching-plan options" : "Review scheduled classes"}
+                {limitDetails.upgradeTo ? "View teaching access" : "Review scheduled classes"}
               </Text>
             </TouchableOpacity>
 

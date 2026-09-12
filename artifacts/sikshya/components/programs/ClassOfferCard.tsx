@@ -6,9 +6,10 @@ import { useDates } from "@/context/DatePreferenceContext";
 import { batchDateValue, lessonDraft, type ProgramBatchSnapshot } from "@/utils/programBatches";
 import { toBikramSambat } from "@/utils/nepaliDate";
 import { ProgramButton, ProgramCardShell, ProgramChip } from "./ProgramPieces";
+import { BatchTestPanel } from "../classes/BatchTestPanel";
 
 /** Decision first; full timetable and commercial explanations remain one tap away. */
-export function ClassOfferCard({ batch }: { batch: ProgramBatchSnapshot }) {
+export function ClassOfferCard({ batch, accountRequired = false, returnPath }: { batch: ProgramBatchSnapshot; accountRequired?: boolean; returnPath?: string }) {
   const colors = useColors();
   const { t, space, numeric } = useLayout();
   const dates = useDates();
@@ -36,7 +37,8 @@ export function ClassOfferCard({ batch }: { batch: ProgramBatchSnapshot }) {
     <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>{included.length} {late ? "remaining " : ""}{included.length === 1 ? "lesson" : "lessons"}{durations.length === 1 ? ` · ${durations[0]} min each` : ""}{average ? ` · ≈ NPR ${average} / lesson` : ""}</Text>
     {first ? <Text style={[t.callout, { color: colors.foreground }]}>{late ? "Next lesson" : "Starts"}: {date(first.startsAt)} · {time(first.startsAt)} Nepal time</Text> : null}
     {batch.tuitionPeriod ? <Text style={[t.callout, { color: colors.mutedForeground }]}>Period ends: {date(batch.tuitionPeriod.endsAt)} · {time(batch.tuitionPeriod.endsAt)} Nepal time</Text> : null}
-    <Text style={[t.caption, { color: colors.mutedForeground }]}>{late ? "Remaining lessons only · upfront payment" : "Full listed price · upfront payment"}</Text>
+    <Text style={[t.caption, { color: colors.mutedForeground }]}>{batch.testPilotEndsAt ? accountRequired ? "Sign in to continue · no booking is made on this page" : "Listed price for planning · test booking takes no payment" : late ? "Remaining lessons only · upfront payment" : "Full listed price · upfront payment"}</Text>
+    {batch.testPilotEndsAt ? <BatchTestPanel batchId={batch.batchId} accountRequired={accountRequired} returnPath={returnPath} /> : null}
     <ProgramButton label={scheduleOpen ? "Hide lesson dates" : `View all ${batch.lessons.length} lesson dates`} emphasis="secondary" onPress={() => setScheduleOpen(!scheduleOpen)} />
     {scheduleOpen ? <View style={{ gap: space.sm }} testID={`offer-schedule-${batch.batchId}`}>
       {batch.lessons.map((lesson, index) => <Text key={lesson.position} style={[t.callout, numeric, { color: late && !quote!.lessonPositions.includes(lesson.position) ? colors.mutedForeground : colors.foreground }]}>

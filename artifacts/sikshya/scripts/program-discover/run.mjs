@@ -50,8 +50,10 @@ import { createRoot } from "react-dom/client";
 import ProgramDiscoverList from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramDiscoverList.tsx"))};
 import ProgramView from ${JSON.stringify(path.join(appRoot, "components", "programs", "ProgramView.tsx"))};
 import { TeacherProgramsPanel } from ${JSON.stringify(path.join(appRoot, "components", "programs", "TeacherProgramsPanel.tsx"))};
+import TeacherFinder from ${JSON.stringify(path.join(appRoot, "components", "discovery", "TeacherFinder.tsx"))};
 
 window.__sent = [];
+window.__apiPaths = [];
 const record = (name) => (...args) => { window.__sent.push({ name, args }); };
 
 class Boundary extends React.Component {
@@ -83,7 +85,7 @@ function ListHost(props) {
 function Harness() {
   const [scene, set] = React.useState({ screen: "list", props: { programs: [], initialLoad: false, initialError: null, paginationError: null, loadingMore: false, hasMore: false } });
   setScene = set;
-  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onOpenTeacher: record("onOpenTeacher") };
+  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher"), onOpenHome: record("onOpenHome"), onBackToTeacher: record("onBackToTeacher") };
   const sceneKey = JSON.stringify([scene.screen, Object.keys(scene.props ?? {})]) + String(renders);
   let element = null;
   if (scene.screen === "list") element = React.createElement(ListHost, { ...common, ...scene.props });
@@ -94,6 +96,7 @@ function Harness() {
     onLoadMore: record("onLoadMore"),
     onOpen: record("onOpen"),
   });
+  if (scene.screen === "finder") element = React.createElement(TeacherFinder, { onOpen: record("onOpenTeacher") });
   return React.createElement(
     "div",
     { style: { width: "100vw", minHeight: "100vh", background: "#FBFAF8" } },
@@ -132,8 +135,26 @@ writeFileSync(
   ].join("\n"),
 );
 
+const logoStub = path.join(work, "fadko-home-stub.jsx");
+writeFileSync(
+  logoStub,
+  `import React from "react";
+import { Pressable, Text } from "react-native";
+export function PublicFadkoHome({ onPress }) {
+  return React.createElement(Pressable, { testID: "public-fadko-home", accessibilityRole: "link", accessibilityLabel: "Fadko home", onPress }, React.createElement(Text, null, "Fadko"));
+}`,
+);
+
 const bundle = path.join(work, "bundle.js");
-const built = await bundleForBrowser({ entry, outfile: bundle, alias: { "expo-font": fontStub } });
+const built = await bundleForBrowser({ entry, outfile: bundle, alias: {
+  "expo-font": fontStub,
+  "react-native-safe-area-context": path.join(here, "safe-area.js"),
+  // ProgramView imports the optional pilot booking panel. This component-only suite
+  // has no Router root; real navigation belongs to the journey/export tests.
+  "expo-router": path.resolve(here, "../class-setup/router.js"),
+  "@/utils/api": path.join(here, "api.js"),
+  "@/components/PublicFadkoHome": logoStub,
+} });
 if (!built.ok) {
   console.error(built.error);
   rmSync(work, { recursive: true, force: true });
@@ -240,10 +261,10 @@ for (const size of SIZES) {
   check(`${L}: and never the empty state`, !(await seen("program-discover-empty")));
 
   await show({ screen: "list", props: listState() }, "list-empty");
-  check(`${L}: no programs at all reads as "no programs yet"`, await seen("program-discover-empty"));
+  check(`${L}: no courses at all reads as "no courses yet"`, await seen("program-discover-empty"));
   const emptyText = await text("program-discover-empty");
-  check(`${L}: and says a program is different from a single class`,
-    /different from a single class/i.test(emptyText), emptyText.slice(0, 160));
+  check(`${L}: and points to the two useful alternatives`,
+    /Classes/i.test(emptyText) && /Teachers/i.test(emptyText), emptyText.slice(0, 160));
 
   await show({
     screen: "list",
@@ -259,6 +280,15 @@ for (const size of SIZES) {
   }, "list-populated");
   check(`${L}: every published program is on screen`,
     (await seen("program-card-12")) && (await seen("program-card-13")) && (await seen("program-card-14")));
+  const cardBoxes = await p.evaluate(() => [12, 13].map((id) => {
+    const box = document.querySelector(`[data-testid="program-card-${id}"]`)?.getBoundingClientRect();
+    return box ? { x: box.x, y: box.y, width: box.width } : null;
+  }));
+  check(`${L}: course cards use the available width without becoming a long wall`,
+    size.width >= 600
+      ? cardBoxes.every(Boolean) && Math.abs(cardBoxes[0].y - cardBoxes[1].y) < 2 && cardBoxes[0].x !== cardBoxes[1].x
+      : cardBoxes.every(Boolean) && cardBoxes[1].y > cardBoxes[0].y,
+    JSON.stringify(cardBoxes));
   check(`${L}: with the teacher name on each card`,
     /Anjali Rai/i.test(await body()) && /Dipendra Shrestha/i.test(await body()));
   check(`${L}: and the type is shown as a chip`,
@@ -274,6 +304,62 @@ for (const size of SIZES) {
   check(`${L}: the list does not scroll sideways`, (await overflow()) <= 1, `overflow ${await overflow()}px`);
   check(`${L}: no control on the list is below the touch floor`,
     (await smallTargets()).length === 0, (await smallTargets()).join(", "));
+
+  /* ---------------------------------------- published Teaching Classes catalogue */
+
+  console.log(`\n[${L}] Discover: Classes`);
+  const publishedClass = summary({
+    id: 91,
+    presentation: "class",
+    type: "custom",
+    title: "Example: SEE Maths evening tuition",
+    summary: "Class 10 algebra and geometry practice with time for questions.",
+    outcome: "",
+    intendedLearner: "",
+    moduleCount: 0,
+  });
+  await show({
+    screen: "list",
+    props: listState({ catalog: "class", programs: [publishedClass] }),
+  }, "class-catalog");
+  check(`${L}: a published Teaching Class is visible in the Classes catalogue`,
+    await seen("class-card-91"));
+  check(`${L}: it is offered as dates and price rather than as an abstract program`,
+    /View dates & price/i.test(await text("class-card-91")));
+  check(`${L}: internal Program type filters are not shown for simple classes`,
+    !(await seen("class-discover-chips")));
+  check(`${L}: the class catalogue remains searchable`,
+    (await seen("class-discover-search")) && (await seen("class-discover-search-submit")));
+  check(`${L}: the class catalogue does not scroll sideways`, (await overflow()) <= 1);
+  check(`${L}: every class-catalogue control reaches the touch floor`,
+    (await smallTargets()).length === 0, (await smallTargets()).join(", "));
+
+  /* ----------------------------------------------------- find a known teacher */
+
+  console.log(`\n[${L}] Discover: Find my teacher`);
+  await p.evaluate(() => { window.__apiPaths = []; });
+  await show({ screen: "finder", props: {} }, "teacher-finder");
+  await p.waitForSelector('[data-testid="teacher-results"]');
+  check(`${L}: a known teacher is shown without downloading the directory`,
+    /Anjali Rai/i.test(await body()) && /37 matches/i.test(await body()));
+  const teacherPaths = await p.evaluate(() => window.__apiPaths);
+  check(`${L}: the directory asks the server for only twelve teachers`,
+    teacherPaths.some((path) => /\/teachers\?.*limit=12/.test(path)), JSON.stringify(teacherPaths));
+  check(`${L}: school and location filters are visible without scrolling through teachers`,
+    await seen("teacher-location-filter"));
+  check(`${L}: independent teachers have a direct filter`, await seen("teacher-independent-filter"));
+  check(`${L}: the retired Monthly classes promotion is absent`,
+    !/Monthly classes|Pay monthly/i.test(await body()));
+  check(`${L}: legacy booking counts do not rank a teacher in the new directory`,
+    !/paid bookings?/i.test(await body()));
+  await p.locator('[data-testid="teacher-location-filter"]').click();
+  await p.waitForTimeout(100);
+  check(`${L}: the Nepal hierarchy opens with Province, District and local level`,
+    /Province/i.test(await body()) && /District/i.test(await body()) && /Municipality \/ local level/i.test(await body()));
+  check(`${L}: the teacher finder does not scroll sideways`, (await overflow()) <= 1);
+  check(`${L}: every teacher-finder control reaches the touch floor`,
+    (await smallTargets()).length === 0, (await smallTargets()).join(", "));
+  await p.getByLabel("Close filters").click({ position: { x: 5, y: 5 } });
 
   /* --------------------------------------------- programs on a teacher profile */
 
@@ -291,7 +377,7 @@ for (const size of SIZES) {
     props: { list: { rows: [], nextCursor: null }, state: "failed", loadingMore: false },
   }, "profile-failed");
   check(`${L}: a failed request is not presented as no programs`,
-    /Programs couldn't load/i.test(await body()));
+    /Classes and courses couldn't load/i.test(await body()));
 
   await show({
     screen: "profile",
@@ -406,6 +492,67 @@ for (const size of SIZES) {
   check(`${L}: exact remaining subset is labelled`, (await body()).match(/Not included/g)?.length === 7 && (await p.getByTestId("offer-schedule-99").innerText()).match(/· Included/g)?.length === 11);
   check(`${L}: late breakdown fits viewport width`, (await overflow()) <= 1);
   check(`${L}: period summary never contradicts enabled late joining`, !(await body()).includes("No automatic charge or mid-period joining"));
+
+  const publicTestBatch = { ...lateBatch, testPilotEndsAt: "2026-12-31T23:59:59Z" };
+  await p.evaluate(() => { window.__apiPaths = []; window.lastNavigation = null; });
+  await show({
+    screen: "view",
+    props: {
+      program: detail({ presentation: "class", title: "SEE Maths evening tuition" }),
+      batches: [publicTestBatch],
+      publicVisitor: true,
+    },
+  }, "view-public-visitor");
+  check(`${L}: a shared public class is visibly branded as Fadko`, await seen("public-fadko-home"));
+  check(`${L}: a shared class has a visible route back to its teacher`,
+    (await p.getByRole("button", { name: "Back to Anjali Rai's page", exact: true }).count()) === 1);
+  check(`${L}: a signed-out visitor is invited to sign in or create an account`,
+    (await p.getByRole("button", { name: "Sign in to join", exact: true }).count()) === 1
+      && (await p.getByRole("button", { name: "Create a student account", exact: true }).count()) === 1);
+  check(`${L}: the private test-checkout control is not exposed to a signed-out visitor`,
+    (await p.getByRole("button", { name: "Try test checkout", exact: true }).count()) === 0);
+  check(`${L}: no protected booking request is made while the public class renders`,
+    (await p.evaluate(() => window.__apiPaths)).every((path) => !path.startsWith("/batch-tests/")));
+  await p.getByRole("button", { name: "Sign in to join", exact: true }).click();
+  check(`${L}: sign in goes through the student door`,
+    JSON.stringify(await p.evaluate(() => window.lastNavigation)) === JSON.stringify({ pathname: "/(auth)/login", params: { role: "student", next: "/program/12" } }));
+  await p.getByRole("button", { name: "Create a student account", exact: true }).click();
+  check(`${L}: account creation goes through the student door`,
+    (await p.evaluate(() => window.lastNavigation)) === "/(auth)/register?role=student");
+  await p.locator('[data-testid="public-fadko-home"]').click();
+  check(`${L}: the Fadko mark is a working home link`,
+    (await p.evaluate(() => window.__sent)).some((event) => event.name === "onOpenHome"));
+  await p.getByRole("button", { name: "Back to Anjali Rai's page", exact: true }).click();
+  check(`${L}: the teacher return control is wired`,
+    (await p.evaluate(() => window.__sent)).some((event) => event.name === "onBackToTeacher"));
+
+  await show({
+    screen: "view",
+    props: {
+      program: detail({ presentation: "class" }),
+      batches: [],
+      batchAvailability: "closed",
+      publicVisitor: true,
+    },
+  }, "view-public-closed");
+  check(`${L}: an ended booking window is named rather than mistaken for missing dates`,
+    /Joining has closed for these dates/.test(await text("program-view-closed")));
+  check(`${L}: a closed class never offers an account flow that cannot book it`,
+    (await p.getByRole("button", { name: "Sign in to join", exact: true }).count()) === 0
+      && (await p.getByRole("button", { name: "Create a student account", exact: true }).count()) === 0);
+
+  await show({
+    screen: "view",
+    props: {
+      program: detail({ presentation: "class" }),
+      batches: [],
+      batchAvailability: "not_scheduled",
+      publicVisitor: true,
+    },
+  }, "view-public-unscheduled");
+  check(`${L}: a class description with no offer says what is missing`,
+    /has not opened a schedule and price/.test(await text("program-view-not_scheduled")));
+
   await show({ screen: "view", props: { program: detail() } }, "view-full");
   check(`${L}: the title is at the top`, /Grade 10 Mathematics/i.test(await text("program-view-title")));
   check(`${L}: the outcome sits under it`, /past paper/i.test(await text("program-view-outcome")));
@@ -441,6 +588,11 @@ for (const size of SIZES) {
   check(`${L}: an honest "not open yet" notice is on the page`,
     await seen("program-view-not-open"));
   check(`${L}: the Back to Discover control is drawn`, await seen("program-view-back"));
+  check(`${L}: a published class or course can be shared`, await seen("program-view-share"));
+  await p.evaluate(() => { window.__sent = []; });
+  await p.locator('[data-testid="program-view-share"]').click();
+  check(`${L}: the share control calls the public-link action`,
+    (await p.evaluate(() => window.__sent)).some((event) => event.name === "onShare"));
 
   const wholeView = await body();
   for (const invented of ["NPR", "Rs.", "rating", "star rating", "5 stars", "students enrolled", "seats", "spots", "reviews", "Popular", "Available now", "earned", "%"]) {

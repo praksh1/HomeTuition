@@ -96,6 +96,7 @@ export interface MonthlyStanding {
 }
 
 export interface MonthlyPlanView {
+  legacyPlanSalesOpen?: boolean;
   plan: {
     id: number;
     price: number;

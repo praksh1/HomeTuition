@@ -1,11 +1,12 @@
 import { logger } from "./logger";
 import { ROOM_PROPERTIES, propertiesToRepair, roomExpiry } from "./dailyRoom";
 import { providerUserId } from "./video/participantIdentity";
+import { roomNameForSession, videoRoomPrefix } from "./video/roomName";
 
 const DAILY_API_BASE = "https://api.daily.co/v1";
 
 export function sanitizeRoomName(rawId: string): string {
-  return "sikshya" + rawId.replace(/[^a-zA-Z0-9]/g, "");
+  return roomNameForSession(rawId);
 }
 
 export interface MeetingTokenOptions {
@@ -35,14 +36,19 @@ export interface MeetingTokenOptions {
  * The token is created server-side precisely so a student cannot mint themselves one.
  *
  * Returns null when no API key is configured, or if minting fails; the caller then joins
- * without a token, which still works but without moderator powers.
+ * without a token on the legacy public-room path. Isolated preview rooms are private and
+ * require a valid token: missing configuration or mint failure throws instead.
  */
 export async function createMeetingToken(
   sessionId: string | number,
   { isOwner, userName, userId }: MeetingTokenOptions,
 ): Promise<string | null> {
   const apiKey = process.env.DAILY_API_KEY;
-  if (!apiKey) return null;
+  const isolated = videoRoomPrefix() !== "sikshya";
+  if (!apiKey) {
+    if (isolated) throw new Error("Preview video is not configured");
+    return null;
+  }
 
   const claimedUserId = providerUserId(userId);
 
@@ -69,12 +75,15 @@ export async function createMeetingToken(
       }),
     });
     if (!res.ok) {
+      if (isolated) throw new Error("Preview video token could not be issued");
       logger.error({ status: res.status, body: await res.text() }, "Failed to mint Daily meeting token");
       return null;
     }
     const data = (await res.json()) as { token?: string };
+    if (isolated && (typeof data.token !== "string" || !data.token)) throw new Error("Preview video token could not be issued");
     return data.token ?? null;
   } catch (err) {
+    if (isolated) throw new Error("Preview video token could not be issued");
     logger.error({ err }, "Error minting Daily meeting token");
     return null;
   }
@@ -94,8 +103,10 @@ export async function createMeetingToken(
 export async function ensureDailyRoom(sessionId: string | number): Promise<string> {
   const roomName = sanitizeRoomName(String(sessionId));
   const apiKey = process.env.DAILY_API_KEY;
+  const isolated = videoRoomPrefix() !== "sikshya";
 
   if (!apiKey) {
+    if (isolated) throw new Error("Preview video is not configured");
     logger.warn({ roomName }, "DAILY_API_KEY not set; skipping Daily room creation");
     const domain = process.env.EXPO_PUBLIC_DAILY_DOMAIN || "sikshya.daily.co";
     return `https://${domain}/${roomName}`;
@@ -108,8 +119,10 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
 
   const getRes = await fetch(`${DAILY_API_BASE}/rooms/${roomName}`, { headers });
   if (getRes.ok) {
-    const room = (await getRes.json()) as { url: string; config?: Record<string, unknown> };
+    const room = (await getRes.json()) as { url: string; privacy?: string; config?: Record<string, unknown> };
+    if (isolated && room.privacy !== "private") throw new Error("Preview video room is not private");
     const repairs = propertiesToRepair(room.config);
+    if (isolated && room.config?.enable_knocking !== false) repairs.enable_knocking = false;
     if (Object.keys(repairs).length > 0) {
       // Costs one extra call, and only when something is actually wrong. A room that is already
       // right — which is every room made since it was created — goes straight through.
@@ -120,6 +133,7 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
         body: JSON.stringify({ properties: repairs }),
       });
       if (!patch.ok) {
+        if (isolated) throw new Error("Preview video room settings could not be confirmed");
         // Not fatal. A call with the wrong settings is worth far more than no call at all, and
         // the room URL is still good — so this is logged and the lesson goes ahead.
         logger.warn(
@@ -142,8 +156,8 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
     headers,
     body: JSON.stringify({
       name: roomName,
-      privacy: "public",
-      properties: { ...ROOM_PROPERTIES, exp: roomExpiry() },
+      privacy: isolated ? "private" : "public",
+      properties: { ...ROOM_PROPERTIES, exp: roomExpiry(), ...(isolated ? { enable_knocking: false } : {}) },
     }),
   });
 
@@ -153,6 +167,8 @@ export async function ensureDailyRoom(sessionId: string | number): Promise<strin
     if (createRes.status === 400) {
       const body = await createRes.text();
       if (body.includes("already exists")) {
+        // A retry is safer than returning an unverified public URL after a collision.
+        if (isolated) throw new Error("Preview video room is being created; try again");
         const domain = process.env.EXPO_PUBLIC_DAILY_DOMAIN || "sikshya.daily.co";
         return `https://${domain}/${roomName}`;
       }

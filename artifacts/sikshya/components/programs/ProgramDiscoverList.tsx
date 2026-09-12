@@ -48,6 +48,7 @@ import { ProgramFailure } from "./ProgramPieces";
  * on screen. A pagination failure never replaces successful results with a failure card.
  */
 export interface ProgramDiscoverListProps {
+  catalog?: "course" | "class";
   query: string;
   onQueryChange: (next: string) => void;
   chosenType: ProgramType | "all";
@@ -74,11 +75,13 @@ export interface ProgramDiscoverListProps {
 
 export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
   const {
+    catalog = "course",
     query, onQueryChange, chosenType, onTypeChange, programs, initialLoad, loadingMore, hasMore,
     initialError, paginationError, onLoadMore, onRetry, onOpen, onSubmit,
   } = props;
   const colors = useColors();
-  const { t, space, radius } = useLayout();
+  const { t, space, radius, isWide } = useLayout();
+  const testPrefix = catalog === "class" ? "class-discover" : "program-discover";
 
   // The one place the five states are decided from what happened, so every screen and every test
   // reads the same answer.
@@ -93,7 +96,7 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
   });
 
   return (
-    <View style={{ gap: space.md }} testID="program-discover-list">
+    <View style={{ gap: space.md }} testID={`${testPrefix}-list`}>
       {/* Search input plus a visible Search button. The button is a real control, not a
           decoration — a non-technical student is not expected to know that the keyboard's return
           key runs a search. Both submit the same query. */}
@@ -108,7 +111,7 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
         >
           <Feather name="search" size={16} color={colors.mutedForeground} />
           <TextInput
-            testID="program-discover-search"
+            testID={`${testPrefix}-search`}
             value={query}
             onChangeText={onQueryChange}
             placeholder={DISCOVER_SEARCH_PROMPT}
@@ -126,7 +129,7 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
           />
           {query.length > 0 ? (
             <Pressable
-              testID="program-discover-clear"
+              testID={`${testPrefix}-clear`}
               onPress={() => { onQueryChange(""); onSubmit(""); }}
               accessibilityRole="button"
               accessibilityLabel="Clear search"
@@ -140,10 +143,10 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
           ) : null}
         </View>
         <Pressable
-          testID="program-discover-search-submit"
+          testID={`${testPrefix}-search-submit`}
           onPress={() => onSubmit(query)}
           accessibilityRole="button"
-          accessibilityLabel="Search programs"
+          accessibilityLabel={catalog === "class" ? "Search classes" : "Search courses"}
           style={{
             minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN,
             alignItems: "center", justifyContent: "center",
@@ -156,18 +159,18 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
         </Pressable>
       </View>
 
-      <ScrollView
+      {catalog === "course" ? <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ gap: space.xxs, paddingVertical: space.xxs }}
-        testID="program-discover-chips"
+        testID={`${testPrefix}-chips`}
       >
         {programTypeFilters().map((filter) => {
           const active = filter.type === chosenType;
           return (
             <Pressable
               key={filter.type}
-              testID={`program-discover-chip-${filter.type}`}
+              testID={`${testPrefix}-chip-${filter.type}`}
               onPress={() => onTypeChange(filter.type)}
               accessibilityRole="button"
               accessibilityLabel={filter.label}
@@ -188,10 +191,10 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
             </Pressable>
           );
         })}
-      </ScrollView>
+      </ScrollView> : null}
 
       {state.kind === "loading" ? (
-        <View testID="program-discover-loading" style={{ gap: space.sm }}>
+        <View testID={`${testPrefix}-loading`} style={{ gap: space.sm }}>
           {[0, 1, 2].map((i) => (
             <View
               key={i}
@@ -207,58 +210,64 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
         </View>
       ) : state.kind === "error" ? (
         <ProgramFailure
-          testID="program-discover-failure"
+          testID={`${testPrefix}-failure`}
           message={state.message}
           onRetry={onRetry}
         />
       ) : state.kind === "empty" ? (
         <View
-          testID="program-discover-empty"
+          testID={`${testPrefix}-empty`}
           style={{
             padding: space.lg, backgroundColor: colors.card, borderRadius: radius.md,
             borderWidth: 1, borderColor: colors.border, gap: space.xs,
           }}
         >
-          <Text style={[t.title3, { color: colors.foreground }]}>No programs yet</Text>
+          <Text style={[t.title3, { color: colors.foreground }]}>{catalog === "class" ? "No classes yet" : "No courses yet"}</Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            Teachers on Fadko are still setting up their programs. A Learning Program is a full course
-            with an outcome, a path and a teacher — different from a single class.
+            {catalog === "class"
+              ? "Teachers on Fadko have not published tuition or short courses yet. Try one-time lessons, or browse Teachers."
+              : "Teachers on Fadko are still setting up their courses. Try Classes, or browse Teachers."}
           </Text>
         </View>
       ) : state.kind === "noMatch" ? (
         <View
-          testID="program-discover-nomatch"
+          testID={`${testPrefix}-nomatch`}
           style={{
             padding: space.lg, backgroundColor: colors.card, borderRadius: radius.md,
             borderWidth: 1, borderColor: colors.border, gap: space.xs,
           }}
         >
-          <Text style={[t.title3, { color: colors.foreground }]}>No matching programs</Text>
+          <Text style={[t.title3, { color: colors.foreground }]}>{catalog === "class" ? "No matching classes" : "No matching courses"}</Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
             {state.query.length > 0 && state.filterActive
-              ? `No published program on Fadko matches “${state.query}” with the filter you chose. Try different words, or clear the filter.`
+              ? `No published ${catalog === "class" ? "class" : "course"} on Fadko matches “${state.query}” with the filter you chose. Try different words, or clear the filter.`
               : state.query.length > 0
-                ? `No published program on Fadko matches “${state.query}”. Try different words.`
-                : "No published program matches the filter you chose. Try All."}
+                ? `No published ${catalog === "class" ? "class" : "course"} on Fadko matches “${state.query}”. Try different words.`
+                : `No published ${catalog === "class" ? "class" : "course"} matches the filter you chose. Try All.`}
           </Text>
         </View>
       ) : (
-        <View style={{ gap: space.md }}>
+        <View
+          testID={`${testPrefix}-results`}
+          style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", gap: space.md }}
+        >
           {state.rows.map((row) => (
-            <ProgramCard
-              key={row.id}
-              testID={`program-card-${row.id}`}
-              fields={cardFromSummary(row)}
-              onPress={() => onOpen(row.id)}
-            />
+            <View key={row.id} style={{ width: isWide ? "48%" : "100%" }}>
+              <ProgramCard
+                testID={`${catalog === "class" ? "class-card" : "program-card"}-${row.id}`}
+                fields={cardFromSummary(row)}
+                onPress={() => onOpen(row.id)}
+                actionLabel={catalog === "class" ? "View dates & price" : "View course"}
+              />
+            </View>
           ))}
           {state.hasMore ? (
-            <View style={{ gap: space.xs }}>
+            <View style={{ gap: space.xs, width: "100%" }}>
               <Pressable
-                testID="program-discover-more"
+                testID={`${testPrefix}-more`}
                 onPress={onLoadMore}
                 accessibilityRole="button"
-                accessibilityLabel="Show more programs"
+                accessibilityLabel={catalog === "class" ? "Show more classes" : "Show more courses"}
                 disabled={loadingMore}
                 aria-busy={loadingMore}
                 aria-disabled={loadingMore}
@@ -274,12 +283,12 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
                 {loadingMore ? (
                   <ActivityIndicator size="small" color={colors.primary} />
                 ) : (
-                  <Text style={[t.bodyStrong, { color: colors.primary }]}>Show more programs</Text>
+                  <Text style={[t.bodyStrong, { color: colors.primary }]}>{catalog === "class" ? "Show more classes" : "Show more courses"}</Text>
                 )}
               </Pressable>
               {state.paginationError !== null ? (
                 <View
-                  testID="program-discover-more-error"
+                  testID={`${testPrefix}-more-error`}
                   accessibilityRole="alert"
                   style={{
                     flexDirection: "row", alignItems: "center", gap: space.xs,
@@ -293,7 +302,7 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
                     {state.paginationError}
                   </Text>
                   <Pressable
-                    testID="program-discover-more-retry"
+                    testID={`${testPrefix}-more-retry`}
                     onPress={onLoadMore}
                     accessibilityRole="button"
                     accessibilityLabel="Try loading more programs again"

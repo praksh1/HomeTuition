@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { roomNameForSession } from "./roomName.ts";
+import { roomNameForSession, sessionIdForRoom, videoRoomPrefix } from "./roomName.ts";
 
 test("a class's room is named for the class", () => {
   assert.equal(roomNameForSession(42), "sikshya42");
@@ -32,20 +32,33 @@ test("LiveKit and Daily name the same class the same way", () => {
   /*
     Checked against the *source* of `lib/daily.ts` rather than by importing it.
 
-    Two reasons. Daily is deliberately not being edited during this trial, so the rule could not
-    be moved into a shared module without touching it. And `daily.ts` reaches for a logger and the
-    network, so it cannot be imported under `--experimental-strip-types` at all.
-
-    A source check is cruder than a behavioural one and it does the job that matters: if somebody
-    changes Daily's rule, this fails and names the file, instead of one class quietly getting two
-    different room names on two providers and its evidence trail going dark.
+    This is only a structural guard against duplicating the shared naming rule again.
+    dailyIsolation.test.ts additionally bundles and executes the actual Daily code with a
+    recording HTTP boundary, checking names in room creation, tokens and evidence correlation.
   */
   const here = path.dirname(fileURLToPath(import.meta.url));
   const daily = fs.readFileSync(path.resolve(here, "..", "daily.ts"), "utf8");
-  const rule = /return\s+"sikshya"\s*\+\s*\w+\.replace\(\/\[\^a-zA-Z0-9\]\/g,\s*""\);/;
+  const rule = /export function sanitizeRoomName\(rawId: string\): string \{\s*return roomNameForSession\(rawId\);\s*\}/;
   assert.match(
     daily,
     rule,
     "sanitizeRoomName in lib/daily.ts no longer matches roomNameForSession — update lib/video/roomName.ts to agree",
   );
+});
+
+test("preview rooms and their evidence cannot cross database boundaries", () => {
+  const preview = roomNameForSession(42, "fadko-preview");
+  assert.equal(preview, "fadko-preview-sikshya42");
+  assert.equal(sessionIdForRoom(preview, "fadko-preview"), 42);
+  assert.equal(sessionIdForRoom(preview, ""), null);
+  assert.equal(sessionIdForRoom("sikshya42", "fadko-preview"), null);
+  assert.equal(sessionIdForRoom(preview, "other-preview"), null);
+  for (const bad of ["fadko-preview-sikshya042", "fadko-preview-sikshya0", "fadko-preview-sikshya42x", "fadko-preview-sikshya9007199254740992"])
+    assert.equal(sessionIdForRoom(bad, "fadko-preview"), null);
+});
+
+test("invalid namespaces refuse instead of silently using production", () => {
+  for (const bad of [" ", "Preview", "../../prod", "a", "x".repeat(33), "a.b", "a_b"])
+    assert.throws(() => videoRoomPrefix(bad), /Invalid video room namespace/);
+  assert.equal(videoRoomPrefix(""), "sikshya");
 });

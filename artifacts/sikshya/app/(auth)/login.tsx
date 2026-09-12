@@ -28,8 +28,14 @@ function showAccessDenied(message: string) {
 }
 
 export default function Login() {
-  const { role } = useLocalSearchParams<{ role: "teacher" | "student" }>();
+  const { role, next: rawNext } = useLocalSearchParams<{ role: "teacher" | "student"; next?: string | string[] }>();
   const resolvedRole = (role === "teacher" || role === "student") ? role : "student";
+  const requestedNext = Array.isArray(rawNext) ? rawNext[0] : rawNext;
+  // Only a local, public class path may override the ordinary signed-in home. This keeps a
+  // shared class convenient without turning the login page into an open redirect.
+  const safeNext = resolvedRole === "student" && typeof requestedNext === "string" && /^\/program\/[1-9]\d*$/.test(requestedNext)
+    ? requestedNext
+    : null;
   const { login, logout } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -87,7 +93,7 @@ export default function Login() {
         router.replace({ pathname: "/check-email" as never, params: { email: loggedInUser.email } });
         return;
       }
-      router.replace("/");
+      router.replace((safeNext ?? "/") as never);
     } catch (e) {
       setLoading(false);
       setError(e instanceof ApiError ? e.message : "Login failed. Please try again.");

@@ -906,6 +906,16 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
 
   const search = readSearch(req.query.q);
 
+  let presentation: "all" | "program" | "class" = "all";
+  if (req.query.presentation !== undefined) {
+    const asked = String(req.query.presentation);
+    if (asked !== "program" && asked !== "class") {
+      res.status(400).json({ error: "That is not a public catalog this app knows." });
+      return;
+    }
+    presentation = asked;
+  }
+
   let teacherProfileId: number | null = null;
   if (req.query.teacherProfileId !== undefined) {
     teacherProfileId = readId(String(req.query.teacherProfileId));
@@ -916,6 +926,14 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
   }
 
   const where = [publiclyVisible()];
+  // Simple Classes reuse an immutable Program snapshot internally, but they are a different
+  // product to a student. Keep the endpoint backward compatible by default; explicit catalog
+  // readers can prevent the same class appearing in both Discover tabs.
+  if (presentation === "program") {
+    where.push(sql`coalesce(${learningProgramsTable.publishedSnapshot} ->> 'presentation', 'program') <> 'class'`);
+  } else if (presentation === "class") {
+    where.push(sql`${learningProgramsTable.publishedSnapshot} ->> 'presentation' = 'class'`);
+  }
   if (teacherProfileId !== null) where.push(eq(teacherProfilesTable.id, teacherProfileId));
   if (types !== null) where.push(inArray(learningProgramsTable.type, types));
   if (cursor !== null) {
@@ -964,6 +982,7 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
       publishedAt: learningProgramsTable.publishedAt,
       snapshot: learningProgramsTable.publishedSnapshot,
       teacherId: learningProgramsTable.teacherId,
+      teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
     })
     .from(learningProgramsTable)
@@ -992,7 +1011,7 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
         type: row.type,
         version: row.version,
         publishedAt: row.publishedAt,
-        teacher: { id: row.teacherId, name: row.teacherName },
+        teacher: { id: row.teacherProfileId, name: row.teacherName },
         title: snapshot.title,
         presentation: snapshot.presentation,
         summary: snapshot.summary,
@@ -1038,6 +1057,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
       publishedAt: learningProgramsTable.publishedAt,
       snapshot: learningProgramsTable.publishedSnapshot,
       teacherId: learningProgramsTable.teacherId,
+      teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
     })
     .from(learningProgramsTable)
@@ -1066,7 +1086,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
     program: {
       id: row.id,
       publishedAt: row.publishedAt,
-      teacher: { id: row.teacherId, name: row.teacherName },
+      teacher: { id: row.teacherProfileId, name: row.teacherName },
       ...snapshot,
     },
   });

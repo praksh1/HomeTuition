@@ -1,5 +1,21 @@
 # Memory Index
 
+- [Public share history and bookability](public-share-history-and-bookability.md) — shared-page
+  Fadko links must preserve browser history; public classes have an explicit teacher return;
+  sign-in/create-account appears only for an open immutable offer, while closed and unscheduled
+  descriptions say why they cannot be booked.
+
+- [Prelaunch batch test pilot](prelaunch-batch-test-pilot.md) — owner clarified private testing,
+  not established paid customers. Batch-specific no-charge booking bridge built on isolated branch;
+  fixed deadline, two grants/switches, immutable promises, existing session membership. See worklog
+  for deployment status. Echo is NOT real video; isolate preview rooms before sharing provider keys.
+
+- [Test fixtures must respect schedules](test-fixtures-must-respect-schedules.md) — independent slots,
+  exact cancellation boundaries, and call-context cleanup; never weaken conflict checks for CI.
+- [Commission transition preserves learning](commission-transition-preserves-learning.md) — 11 Sep:
+  retire new teacher-tier sales without deleting existing contracts, Monthly homework or chat;
+  new class listings still have no real checkout/live-session mapping. Never double-charge.
+
 - [Actionable conflicts and compact offers](actionable-conflicts-compact-offers.md) — 11 Sep phone
   corrections: direct affected-lesson editing, safe other-schedule links, paid commitments protected
   from conflict shortcuts; BS-first concise student offer with expandable timetable and details.

@@ -29,8 +29,10 @@ import {
 import { BatchConfirmation } from "@/components/programs/BatchConfirmation";
 import { NativeTimePicker } from "./NativeTimePicker";
 import { ScheduleConflictPanel } from "./ScheduleConflictPanel";
+import { BatchTestPanel } from "./BatchTestPanel";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
-import { classPriceBreakdown, classPublishSummary } from "@/utils/classPrice";
+import { classEarningsEstimate, classPriceBreakdown, classPublishSummary } from "@/utils/classPrice";
+import type { ClassEarningsEstimate as EarningsEstimate } from "@/utils/classPrice";
 import {
   classDescriptionIssues,
   classIsPublished,
@@ -62,6 +64,31 @@ const titles = [
   "Class size and price",
   "Ready for students?",
 ];
+
+function ClassEarningsEstimateCard({ estimate }: { estimate: EarningsEstimate | null }) {
+  const colors = useColors();
+  const { t, space, numeric } = useLayout();
+  if (!estimate) return null;
+  const amount = (value: number, fractionDigits = 0) => value.toLocaleString("en-NP", {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+  return <ProgramCardShell>
+    <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Your estimated earnings</Text>
+    <View style={{ gap: space.sm }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md }}>
+        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>For each enrolled student</Text>
+        <Text style={[t.bodyStrong, numeric, { color: colors.foreground, textAlign: "right" }]}>NPR {amount(estimate.totalNpr)}</Text>
+      </View>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md }}>
+        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Approx. per completed lesson</Text>
+        <Text style={[t.bodyStrong, numeric, { color: colors.foreground, textAlign: "right" }]}>NPR {amount(estimate.averagePerLessonNpr, 2)}</Text>
+      </View>
+    </View>
+    <Text style={[t.caption, { color: colors.mutedForeground }]}>Before applicable taxes. This estimate uses the current teaching terms; approved refunds or adjustments may reduce the final payout.</Text>
+  </ProgramCardShell>;
+}
+
 export default function ClassSetup() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const { user } = useAuth();
@@ -70,6 +97,7 @@ export default function ClassSetup() {
   const { t, space, radius, gutter, numeric } = useLayout();
   const dates = useDates();
   const [item, setItem] = useState<TeachingClass | null>(null);
+  const [teacherShareBps, setTeacherShareBps] = useState<number | null>(null);
   const [form, setFormState] = useState<ClassForm>(emptyClassForm);
   const formRef = useRef(form);
   const setForm = (next: ClassForm) => {
@@ -106,7 +134,7 @@ export default function ClassSetup() {
   const scheduleFresh = !!item && JSON.stringify(form.lessons) === JSON.stringify(item.batch.lessons.map(lessonDraft));
   const conflicts = scheduleFresh ? item?.batch.scheduleConflicts ?? [] : [];
   const conflictIndices = new Set(conflicts.flatMap((c) => [c.lessonIndex, ...(c.otherLessonIndex === null ? [] : [c.otherLessonIndex])]));
-  const locked = busy || !editing || item?.batch.status === "closed";
+  const locked = busy || !editing || item?.batch.status === "closed" || item?.batch.bookingLocked === true;
   const published = !!item && classIsPublished(item) && !dirty;
   const askLeave = useCallback((go: () => void) => {
     if (!op.current) {
@@ -174,6 +202,17 @@ export default function ClassSetup() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    let alive = true;
+    apiGet<{ teacherShareBps?: number }>("/teachers/me/billing")
+      .then((policy) => {
+        if (!alive) return;
+        const share = policy.teacherShareBps;
+        setTeacherShareBps(Number.isInteger(share) && (share ?? 0) > 0 && (share ?? 0) <= 10_000 ? share! : null);
+      })
+      .catch(() => { if (alive) setTeacherShareBps(null); });
+    return () => { alive = false; };
+  }, []);
   const move = (next: number) => {
     setStep(next);
     setIssues([]);
@@ -404,6 +443,9 @@ export default function ClassSetup() {
     Number(form.totalTuitionNpr) > 0
       ? `NPR ${Number(form.totalTuitionNpr).toLocaleString()} per student ${form.format === "ongoing" ? "for these 30 days" : "for the whole course"}`
       : "Set the full price before publishing";
+  const earningsEstimate = teacherShareBps === null
+    ? null
+    : classEarningsEstimate(Number(form.totalTuitionNpr), form.lessons.length, teacherShareBps);
   if (loading)
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -764,6 +806,7 @@ export default function ClassSetup() {
             <Text style={[t.callout, numeric, { color: colors.foreground }]}>
               {classPriceBreakdown(Number(form.totalTuitionNpr), form.lessons.length)}
             </Text>
+            <ClassEarningsEstimateCard estimate={earningsEstimate} />
             {form.format === "ongoing" ? (
               <ProgramCardShell>
                 <Text style={[t.bodyStrong, { color: colors.foreground }]}>Allow late joining?</Text>
@@ -809,6 +852,7 @@ export default function ClassSetup() {
                 </Text>
               ) : null}
             </ProgramCardShell>
+            <ClassEarningsEstimateCard estimate={earningsEstimate} />
             <ProgramCardShell>
               <Text style={[t.title3, { color: colors.foreground }]}>
                 Timetable · Nepal time
@@ -848,18 +892,19 @@ export default function ClassSetup() {
                 ))}
               </ProgramNotice>
             ) : null}
-            <ProgramNotice
+            {item?.batch.testPilotEndsAt && item.batch.status === "published" ? <BatchTestPanel batchId={item.batch.id} teacher /> : <ProgramNotice
               title="Listing preview"
               body="Publishing shows the description, dates and price. Student joining, payments and live lessons for this listing are not available yet."
-            />
-            {item?.batch.status === "published" && form.format === "ongoing" ? (
+            />}
+            {item?.batch.bookingLocked ? <ProgramNotice title="Booked details are locked" body="A student has a test place. Keep these dates and details as promised. Use a copy for another test class." /> : null}
+            {item?.batch.status === "published" && form.format === "ongoing" && !item.batch.bookingLocked ? (
               <ProgramButton
                 label="Prepare the next 30 days"
                 disabled={busy || dirty}
                 onPress={() => void nextPeriod()}
               />
             ) : null}
-            {item?.batch.status === "published" ? (
+            {item?.batch.status === "published" && !item.batch.bookingLocked ? (
               <ProgramButton
                 label="Close this listing"
                 emphasis="danger"
@@ -912,7 +957,7 @@ export default function ClassSetup() {
                 <>
                   <ProgramButton
                     label="Edit details"
-                    disabled={busy}
+                    disabled={busy || item?.batch.bookingLocked === true}
                     onPress={() => {
                       setEditing(true);
                       move(0);
@@ -933,7 +978,7 @@ export default function ClassSetup() {
                         published ? "Published — up to date" : "Publish class"
                       }
                       emphasis="primary"
-                      disabled={busy || published}
+                      disabled={busy || published || item?.batch.bookingLocked === true}
                       onPress={() => setConfirm("publish")}
                       grow
                     />

@@ -9,6 +9,14 @@ const teacherProfileSource = readFileSync(
   path.resolve(here, "..", "app", "(teacher)", "profile.tsx"),
   "utf8",
 );
+const studentProfileSource = readFileSync(
+  path.resolve(here, "..", "app", "(student)", "profile.tsx"),
+  "utf8",
+);
+const studentPaymentsSource = readFileSync(
+  path.resolve(here, "..", "app", "(student)", "payments.tsx"),
+  "utf8",
+);
 
 test("a successful credential upload refreshes the server-owned teaching status", () => {
   assert.match(teacherProfileSource, /const \{ user, logout, refreshUser \} = useAuth\(\)/);
@@ -23,4 +31,11 @@ test("credential actions name their document type to assistive technology", () =
   assert.match(teacherProfileSource, /`Choose another \$\{type\.label\} file`/);
   assert.match(teacherProfileSource, /`Upload selected \$\{type\.label\}`/);
   assert.match(teacherProfileSource, /`Delete submitted \$\{type\.label\}`/);
+});
+
+test("students reach their receipt history from Profile", () => {
+  assert.match(studentProfileSource, /student-payments-link/);
+  assert.match(studentProfileSource, /Payments & receipts/);
+  assert.match(studentPaymentsSource, /BatchTestMoneySummary role="student"/);
+  assert.doesNotMatch(studentPaymentsSource, /Held by Fadko|Fadko fee|Fadko earned/);
 });

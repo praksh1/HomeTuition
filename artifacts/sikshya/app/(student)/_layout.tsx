@@ -5,9 +5,11 @@ import React from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
+import { useAuth } from "@/context/AuthContext";
 
 function ClassicStudentTabLayout() {
-  const { unread: unreadMessages } = useUnreadMessages();
+  const { user } = useAuth();
+  const { unread: unreadMessages } = useUnreadMessages(user?.role === "student");
   const colors = useColors();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
@@ -80,6 +82,7 @@ function ClassicStudentTabLayout() {
       <Tabs.Screen name="teacher/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="program/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="classroom/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="payments" options={{ href: null, tabBarStyle: { display: "none" } }} />
     </Tabs>
   );
 }

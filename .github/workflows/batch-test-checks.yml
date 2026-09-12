@@ -1,0 +1,56 @@
+name: Test booking safety
+on:
+  push:
+    branches: [codex/batch-test-booking]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: batch-test-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fadko_test_booking
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fadko_test_booking
+      PGURL: postgres://postgres:postgres@127.0.0.1:5432/fadko_test_booking
+      NODE_ENV: test
+      SESSION_SECRET: synthetic-ci-session-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm --filter @workspace/api-server run test
+      - run: pnpm --filter @workspace/sikshya run test
+      - run: pnpm --filter @workspace/sikshya run lint:design
+      - run: pnpm run db:push
+      - run: pnpm --filter @workspace/api-server run build
+      - run: pnpm --filter @workspace/api-server run test:programs
+      - run: pnpm --filter @workspace/api-server run test:batch-booking
+      - run: pnpm --filter @workspace/api-server run test:video
+      - run: pnpm --filter @workspace/api-server run test:proof
+      - run: pnpm --filter @workspace/api-server run test:test-access
+      - run: pnpm --filter @workspace/api-server run test:test-student
+      - name: Browser checks
+        run: |
+          npm i -g playwright
+          npx playwright install --with-deps chromium
+          pnpm --filter @workspace/sikshya run test:class-setup
+          pnpm --filter @workspace/sikshya run test:batch-booking-ui
+      # This workflow intentionally has no deployment or credentials.

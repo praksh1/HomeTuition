@@ -10,6 +10,7 @@ import {
   teacherProfilesTable,
   usersTable,
   teachingClassJoiningTable,
+  batchTestContractsTable,
 } from "@workspace/db";
 
 import { requireAuth } from "../middlewares/requireAuth";
@@ -19,6 +20,7 @@ import { publishedSnapshotFor } from "../lib/learningProgramState";
 import { batchSnapshot, readBatchSnapshot, sameBatchOffer, validateProgramBatch } from "../lib/programBatches";
 import { tuitionPeriod, tuitionPeriodIssues } from "../lib/tuitionPeriods";
 import { classJoiningPreview } from "../lib/classJoining";
+import { batchTestPilotEndsAt } from "../lib/testPilot";
 
 const router: IRouter = Router();
 
@@ -53,6 +55,9 @@ export async function periodFor(batchId: number, reader: { select: typeof db.sel
 }
 
 export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
+  const [testContract] = await reader.select({ batchId: batchTestContractsTable.batchId }).from(batchTestContractsTable)
+    .innerJoin(learningProgramBatchesTable, eq(learningProgramBatchesTable.id, batchTestContractsTable.batchId))
+    .where(eq(learningProgramBatchesTable.programId, row.programId)).limit(1);
   const [joining] = await reader.select().from(teachingClassJoiningTable).where(eq(teachingClassJoiningTable.batchId, row.id));
   const lessons = await lessonsFor(row.id, reader);
   const linked = await periodFor(row.id, reader);
@@ -62,6 +67,8 @@ export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferS
   const review = program ? await teacherScheduleReview(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : { issues: [], conflicts: [] };
   return {
     id: row.id,
+    bookingLocked: !!testContract,
+    testPilotEndsAt: batchTestPilotEndsAt(),
     programId: row.programId,
     format: linked ? "ongoing" : "fixed",
     allowLateJoining: linked ? joining?.allowLateJoining === true : false,
@@ -365,14 +372,23 @@ router.get("/programs/:programId/batches", async (req, res): Promise<void> => {
     ))
     .orderBy(asc(learningProgramBatchesTable.publishedAt));
   const nowMs = Date.now();
+  const published = rows.flatMap((row) => {
+    const snapshot = readBatchSnapshot(row.snapshot);
+    return snapshot && snapshot.version === row.version && snapshot.programVersion === row.programVersion
+      ? [snapshot]
+      : [];
+  });
+  const open = published.filter((snapshot) => Date.parse(snapshot.enrollmentClosesAt) > nowMs);
   res.json({
-    batches: rows.flatMap((row) => {
-      const snapshot = readBatchSnapshot(row.snapshot);
-      return snapshot && snapshot.version === row.version && snapshot.programVersion === row.programVersion &&
-        Date.parse(snapshot.enrollmentClosesAt) > nowMs
-        ? [{ ...snapshot, joiningPreview: classJoiningPreview(snapshot, nowMs) }]
-        : [];
-    }),
+    batches: open.map((snapshot) => ({
+      ...snapshot,
+      joiningPreview: classJoiningPreview(snapshot, nowMs),
+      testPilotEndsAt: batchTestPilotEndsAt(),
+    })),
+    // A published class and a bookable class are different facts. Returning the reason lets the
+    // public page explain why no checkout is present instead of falsely saying every empty result
+    // means the teacher never scheduled it.
+    availability: open.length > 0 ? "open" : published.length > 0 ? "closed" : "not_scheduled",
   });
 });
 

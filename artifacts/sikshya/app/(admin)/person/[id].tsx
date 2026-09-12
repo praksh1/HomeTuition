@@ -36,6 +36,7 @@ interface PersonDetail {
    */
   testAccess?: {
     enabled: boolean;
+    pilotEndsAt?: string | null;
     grant: { id: number; tier: string; reason: string; grantedAt: string; validUntil: string } | null;
   };
   /**
@@ -46,6 +47,7 @@ interface PersonDetail {
    */
   testStudentAccess?: {
     enabled: boolean;
+    pilotEndsAt?: string | null;
     grant: { id: number; reason: string; grantedAt: string; validUntil: string } | null;
   };
 }
@@ -156,19 +158,19 @@ export default function AdminPerson() {
       return;
     }
     try {
-      await apiPost(`/admin/teachers/${id}/test-access`, {
-        tier: "base", reason: grantReason.trim(), days: 7,
+      const result = await apiPost<{ grant: { validUntil: string } }>(`/admin/teachers/${id}/test-access`, {
+        tier: "base", reason: grantReason.trim(), ...(data?.testAccess?.pilotEndsAt ? { throughPilot: true } : { days: 7 }),
       });
       setGrantReason("");
       await load();
-      notify("Test access granted.", "Seven days, Base allowance. No payment was processed.");
+      notify("Test access granted.", `Until ${new Date(result.grant.validUntil).toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu" })} Nepal time. No payment was processed.`);
     } catch (e) {
       notify("Could not grant test access", e instanceof Error ? e.message : "Please try again.");
     }
   };
 
   const revokeTestAccess = async () => {
-    if (!(await confirm("End test access?", "They will need a paid plan to create classes again.", "End it"))) return;
+    if (!(await confirm("End test access?", "They can no longer create new test lessons using this grant.", "End it"))) return;
     try {
       await apiPost(`/admin/teachers/${id}/test-access/revoke`, {});
       await load();
@@ -184,17 +186,17 @@ export default function AdminPerson() {
       return;
     }
     try {
-      await apiPost(`/admin/students/${id}/test-access`, { reason: studentGrantReason.trim(), days: 7 });
+      const result = await apiPost<{ grant: { validUntil: string } }>(`/admin/students/${id}/test-access`, { reason: studentGrantReason.trim(), ...(data?.testStudentAccess?.pilotEndsAt ? { throughPilot: true } : { days: 7 }) });
       setStudentGrantReason("");
       await load();
-      notify("Test booking access granted.", "Seven days. No payment will be processed for test classes.");
+      notify("Test booking access granted.", `Until ${new Date(result.grant.validUntil).toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu" })} Nepal time. No payment will be processed for test classes.`);
     } catch (e) {
       notify("Could not grant test booking access", e instanceof Error ? e.message : "Please try again.");
     }
   };
 
   const revokeStudentTestAccess = async () => {
-    if (!(await confirm("End test booking access?", "They will pay for every class from now on.", "End it"))) return;
+    if (!(await confirm("End test booking access?", "They can no longer make new no-charge test bookings using this grant. Existing places still follow the test-period rules.", "End it"))) return;
     try {
       await apiPost(`/admin/students/${id}/test-access/revoke`, {});
       await load();
@@ -388,7 +390,7 @@ export default function AdminPerson() {
                 activeOpacity={0.8}
               >
                 <Text style={[styles.actionText, { color: colors.foreground }]}>
-                  Give 7 days of test access (Base allowance)
+                  {data.testAccess?.pilotEndsAt ? `Give test access until ${new Date(data.testAccess.pilotEndsAt).toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu" })} (Nepal time)` : "Give 7 days of test access (Base allowance)"}
                 </Text>
               </TouchableOpacity>
             </>
@@ -463,11 +465,11 @@ export default function AdminPerson() {
                 style={[styles.action, { borderColor: colors.border }]}
                 onPress={() => void grantStudentTestAccess()}
                 accessibilityRole="button"
-                accessibilityLabel="Give this student seven days of test booking access"
+                accessibilityLabel={data.testStudentAccess?.pilotEndsAt ? "Give this student access through the configured test period" : "Give this student seven days of test booking access"}
                 activeOpacity={0.8}
               >
                 <Text style={[styles.actionText, { color: colors.foreground }]}>
-                  Give 7 days of test booking access
+                  {data.testStudentAccess?.pilotEndsAt ? `Give test access until ${new Date(data.testStudentAccess.pilotEndsAt).toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu" })} (Nepal time)` : "Give 7 days of test booking access"}
                 </Text>
               </TouchableOpacity>
               <Text style={[styles.caveat, { color: colors.mutedForeground }]}>

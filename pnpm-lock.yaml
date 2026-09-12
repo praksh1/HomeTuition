@@ -485,6 +485,9 @@ importers:
       '@babel/core':
         specifier: ^7.25.2
         version: 7.29.0(supports-color@8.1.1)
+      '@babel/traverse':
+        specifier: 7.29.0
+        version: 7.29.0(supports-color@8.1.1)
       '@config-plugins/react-native-webrtc':
         specifier: ^13.0.0
         version: 13.0.0(expo@54.0.36)

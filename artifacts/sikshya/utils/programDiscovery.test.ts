@@ -11,6 +11,7 @@ import {
   appendPage,
   cardFromDetail,
   cardFromSummary,
+  discoverIntentFor,
   localMatches,
   localTypeMatches,
   missingOptional,
@@ -44,21 +45,24 @@ const full = (over: Partial<PublicProgramDetail> = {}): PublicProgramDetail => (
 
 /* --- tabs and filters ------------------------------------------------------- */
 
-test("Discover has exactly three views, in the order Programs, Single classes, Teachers", () => {
-  assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["programs", "classes", "teachers"]);
+test("Discover starts with the two questions a student actually arrives with", () => {
+  assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["classes", "teachers"]);
 });
 
-test("each view has an accurate heading, subtitle and accessible label", () => {
-  const p = DISCOVER_TABS.find((t) => t.view === "programs")!;
+test("courses keep Find a class selected because they are not a third intention", () => {
+  assert.equal(discoverIntentFor("classes"), "classes");
+  assert.equal(discoverIntentFor("programs"), "classes");
+  assert.equal(discoverIntentFor("teachers"), "teachers");
+});
+
+test("each student intention has an accurate heading, subtitle and accessible label", () => {
   const c = DISCOVER_TABS.find((t) => t.view === "classes")!;
   const tc = DISCOVER_TABS.find((t) => t.view === "teachers")!;
-  assert.match(p.heading, /learning program/i);
-  assert.match(c.heading, /class/i);
+  assert.match(c.heading, /learn/i);
   assert.match(tc.heading, /teacher/i);
-  // The Classes pill is deliberately short for a 390pt row, so the screen-reader label carries
-  // the full phrase.
-  assert.equal(c.label, "Classes");
-  assert.equal(c.accessibilityLabel, "Single classes");
+  assert.equal(c.label, "Find a class");
+  assert.match(c.accessibilityLabel, /class or course/i);
+  assert.equal(tc.label, "Find my teacher");
 });
 
 test("Following is a sub-choice of Teachers, not a primary product view", () => {

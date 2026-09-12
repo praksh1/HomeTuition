@@ -2,7 +2,10 @@
 export class ApiError extends Error {}
 let item;
 window.classRequests = [];
-export async function apiGet(url) { return url === "/teaching-classes" ? { classes: window.classHomeFixtures ?? [], nextCursor: null } : { item: structuredClone(item) }; }
+export async function apiGet(url) {
+  if (url === "/teachers/me/billing") return { teacherShareBps: 7000 };
+  return url === "/teaching-classes" ? { classes: window.classHomeFixtures ?? [], nextCursor: null } : { item: structuredClone(item) };
+}
 export async function apiPost(url, input) {
   window.classRequests.push({ url, input });
   await new Promise((r) => setTimeout(r, 100));

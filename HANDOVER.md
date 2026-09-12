@@ -1,5 +1,13 @@
 # Fadko — the whole project, in one document
 
+**11 September commission transition:** the owner approved retiring new teacher-tier sales for
+commission-based classes while keeping existing Monthly homework/chat and purchased contracts.
+Implementation is a separate preview, not part of the approved planning production release.
+See `.agents/memory/commission-transition-preserves-learning.md` and
+`.agents/backlog/2026-09-11-commission-classroom-learning-migration.md` for the exact sequence.
+The new class listings still have NO real paid enrollment or joinable-session mapping. Do not
+confuse the Program test ledger with actual collection, or impose legacy tier fees plus commission.
+
 **11 September late-joining decision:** optional late joining for ongoing tuition is approved,
 charging only for not-yet-started lessons while keeping the shared end date. Fixed courses remain
 closed after start. See `.agents/memory/late-joining-and-purchased-promises.md`. The implementation

@@ -50,6 +50,16 @@ const check = (n, ok, d = "") => {
 
 const sql = (s) => execFileSync("psql", [PGURL, "-v", "ON_ERROR_STOP=1", "-tAc", s], { encoding: "utf8" }).trim();
 
+async function eventuallySqlNumber(statement, predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  let value = Number(sql(statement));
+  while (!predicate(value) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    value = Number(sql(statement));
+  }
+  return value;
+}
+
 async function api(p, { method = "GET", token, body } = {}) {
   const headers = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -1375,7 +1385,12 @@ async function moderationReload() {
       { title: "A step that says something", outcome: `Practise saying ${flagged} out loud.` },
     ],
   }) });
-  const first = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
+  // The response is deliberately sent before the non-blocking moderation write finishes.
+  // Observe that eventual side effect with a bound instead of racing the server process.
+  const first = await eventuallySqlNumber(
+    `select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`,
+    (value) => value > 0,
+  );
   check("a step's own words are read when the steps are sent", first > 0, String(first));
 
   /*
@@ -1473,6 +1488,7 @@ async function main() {
     await schemaParity();
     await nothingElseMoved(watched);
     await scheduleConflicts();
+    await billingTransition();
   } catch (err) {
     console.error(err);
     failed += 1;
@@ -1523,6 +1539,8 @@ async function tuitionPeriods() {
   console.log("\n[Tuition periods] Shared anchor, advance cutoff, repeated next-period requests and unchanged old contracts");
   const teacher = await register("teacher"), other = await register("teacher"), student = await register("student");
   const program = await publishOne(teacher.token, "custom");
+  const noSchedule = await api(`/programs/${program}/batches`);
+  check("published description without a scheduled offer is named", noSchedule.status === 200 && noSchedule.body.availability === "not_scheduled" && noSchedule.body.batches.length === 0);
   const start = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
   const offsetDay = (n) => new Date(Date.parse(`${start}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
   const make = (format, token = teacher.token) => api(`/learning-programs/${program}/batches`, { method: "POST", token, body: { format } });
@@ -1544,7 +1562,9 @@ async function tuitionPeriods() {
   check("five weekly lessons publish as one 30-day period", first.status === 200 && first.body.batch.published.lessons.length === 5 && first.body.batch.periodAnchorLocked);
   const p = first.body.batch.published.tuitionPeriod;
   check("server ignores client group and index; derives thirty days", p.index === 0 && p.groupId === made.body.batch.tuitionGroupId && Date.parse(p.endsAt) - Date.parse(p.startsAt) === 30 * 86400000);
-  check("public snapshot exposes advance payment boundary", (await api(`/programs/${program}/batches`)).body.batches[0].enrollmentClosesAt === p.startsAt);
+  const publicFirst = await api(`/programs/${program}/batches`);
+  check("public snapshot exposes advance payment boundary", publicFirst.body.batches[0].enrollmentClosesAt === p.startsAt);
+  check("published offer inside its booking window is named open", publicFirst.body.availability === "open");
   check("unchanged ongoing publish is a no-op", (await publish(id)).body.unchanged === true);
   // A draft is not a new published price, and preparation must not silently use it.
   await patch(id, [1, 7, 14], 4000);
@@ -1715,6 +1735,9 @@ async function simpleClasses() {
   item = response.body.item;
   const publicRead = await api(`/programs/${pid}`);
   check("simple snapshot served without required formal learning path", publicRead.status === 200 && publicRead.body.program.presentation === "class" && publicRead.body.program.modules.length === 0, JSON.stringify(publicRead.body));
+  check("course catalog does not duplicate a simple class", !(await api("/programs?presentation=program&limit=50")).body.programs.some((program) => program.id === pid));
+  check("class catalog can select the simple-class snapshot", (await api("/programs?presentation=class&limit=50")).body.programs.some((program) => program.id === pid));
+  check("unknown public catalog is refused", (await api("/programs?presentation=everything")).status === 400);
   check("offer immediately public with exact advance cutoff", (await api(`/programs/${pid}/batches`)).body.batches[0]?.enrollmentClosesAt === item.batch.tuitionPeriod.startsAt);
   const again = await publish(item);
   check("unchanged republish is idempotent", again.status === 200 && again.body.unchanged === true && again.body.item.batch.version === item.batch.version);
@@ -1776,9 +1799,58 @@ async function simpleClasses() {
   latePublic = (await api(`/programs/${latePid}/batches`)).body.batches[0];
   check("mid-period listing remains visible with exact 11-lesson quote", latePublic?.joiningPreview.amountNpr === 3056 && latePublic.joiningPreview.remainingLessonCount === 11);
   check("already-started lesson excluded and period end retained", latePublic?.joiningPreview.lessonPositions[0] === 7 && latePublic.joiningPreview.periodEndsAt === snapshot.tuitionPeriod.endsAt);
+  const ended = structuredClone(snapshot);
+  const endedAnchor = Date.now() - 40 * 86400000;
+  ended.tuitionPeriod.startsAt = new Date(endedAnchor).toISOString();
+  ended.tuitionPeriod.endsAt = new Date(endedAnchor + 30 * 86400000).toISOString();
+  ended.lessons.forEach((lesson, index) => { lesson.startsAt = new Date(endedAnchor + index * 86400000).toISOString(); });
+  ended.enrollmentClosesAt = ended.lessons[17].startsAt;
+  sql(`update learning_program_batches set published_snapshot='${JSON.stringify(ended).replaceAll("'", "''")}'::jsonb where id=${lateId}`);
+  const endedPublic = await api(`/programs/${latePid}/batches`);
+  check("ended published offer is named closed and cannot be booked", endedPublic.body.availability === "closed" && endedPublic.body.batches.length === 0);
   sql(`update users set suspended_at=now() where id=${other.user.id}`);
   check("late joining never bypasses suspension", (await api(`/programs/${latePid}/batches`)).body.batches.length === 0);
   sql(`update users set suspended_at=null where id=${other.user.id}`);
+}
+
+async function billingTransition() {
+  console.log("\n[Billing transition] Legacy sales paused, existing access untouched");
+  const teacher = await register("teacher"), student = await register("student");
+  const profileId = Number(sql(`select id from teacher_profiles where user_id=${teacher.user.id}`));
+  const before = sql(`select row_to_json(p) from teacher_profiles p where user_id=${teacher.user.id}`);
+  const planCount = sql(`select count(*) from teacher_plans where teacher_id=${teacher.user.id}`);
+  const port = API_PORT + 3;
+  const server = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
+    cwd: repoRoot, stdio: "ignore",
+    env: { ...process.env, NODE_ENV: "test", PORT: String(port), DATABASE_URL: PGURL,
+      SESSION_SECRET: process.env.SESSION_SECRET ?? "learning-program-test-secret",
+      LEGACY_TEACHER_PLAN_SALES: "paused", PAYMENT_WEBHOOK_SECRET: "billing-refusal-test-only" },
+  });
+  const request = async (route, token = teacher.token, body) => {
+    const response = await fetch(`http://127.0.0.1:${port}/api${route}`, { method: body ? "POST" : "GET",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      try { if ((await fetch(`http://127.0.0.1:${port}/api/healthz`)).ok) { ready = true; break; } } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!ready) throw new Error("paused billing API did not start");
+    const policy = await request("/teachers/me/billing");
+    check("billing policy is authenticated, paused and not checkout", policy.status === 200 && policy.body.legacyPlanSalesOpen === false && policy.body.newClassCheckoutOpen === false);
+    check("student cannot read teacher billing endpoint", (await request("/teachers/me/billing", student.token)).status === 403);
+    for (const route of [`/teachers/${profileId}/subscribe`, "/monthly/plan"]) {
+      const response = await request(route, teacher.token, { tier: "tier4", paymentMethod: "synthetic" });
+      check(`${route}: refused before gateway or mutation`, response.status === 409 && response.body.code === "LEGACY_PLAN_SALES_PAUSED");
+    }
+    check("tier profile is byte-for-byte unchanged by refused sale", sql(`select row_to_json(p) from teacher_profiles p where user_id=${teacher.user.id}`) === before);
+    check("no monthly plan inserted by refused sale", sql(`select count(*) from teacher_plans where teacher_id=${teacher.user.id}`) === planCount);
+    const monthly = await request("/monthly/plan");
+    check("monthly no-plan screen gets authoritative sale state", monthly.status === 200 && monthly.body.legacyPlanSalesOpen === false);
+    check("existing teaching allowance remains readable", (await request("/teachers/me/allowance")).status === 200);
+  } finally { server.kill("SIGKILL"); }
 }
 
 await main();
