@@ -61,3 +61,20 @@ safe receipt said `replacement_pending`. The stale assertion also expected the o
 The journey now verifies the student-visible state through the student response and verifies the
 support-attention flag through the operator ledger. No settlement, cancellation or API behaviour
 was changed by this correction.
+
+## Production release completion
+
+- The first two production runs stopped before deployment on stale browser assertions left behind
+  by the redesigned Discover experience: the renamed teacher search control, then the intentionally
+  removed legacy Monthly sales card. Both failures were in release tests, not in the owner-reviewed
+  public sharing behavior.
+- The Monthly compatibility journey was corrected without restoring that old sales card: it opens
+  the existing monthly-class screen directly and proves legacy arrangements remain usable while
+  Discover stays focused on “Find a class / Find my teacher”.
+- Dedicated safety run `34713165905` passed on release commit `ea46547` before `main` advanced.
+- Full production run `34713334425` passed all application, disposable-database, browser,
+  whiteboard, mobile, chat, Cloudflare deploy, and served-bundle verification steps.
+- Direct post-deploy checks returned HTTP 200 for the live site and HTTP 200 with `{ "status":
+  "ok" }` for the production API.
+- Premium phase 1 remains preview-only. The preview site and staging API each returned HTTP 200;
+  no production payment, schema, or participant-accounting behavior was changed by that phase.
