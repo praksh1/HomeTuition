@@ -51,3 +51,13 @@ Local dependency-backed typechecks initially failed inside the restricted filesy
 - No schema change, migration, production-data edit, purchase, real payment or video-provider change.
 - This is the first premium learning-home slice, not the full learning portal.
 - After owner review, the next slice should introduce a typed class-group home that can reuse the proven Monthly homework and class-message capabilities without ever treating a new batch ID as a legacy recurring-class ID. The intended hierarchy is: Next lesson, Homework, Class messages, Materials, Help.
+
+## Safety-workflow correction
+
+The first dedicated safety run reached the real batch-booking API journey and stopped on its final
+automatic-cancellation assertion. The product transition had succeeded: the student's participant-
+safe receipt said `replacement_pending`. The stale assertion also expected the operator-only
+`needsAttention` flag in that student response, contradicting the privacy boundary this phase adds.
+The journey now verifies the student-visible state through the student response and verifies the
+support-attention flag through the operator ledger. No settlement, cancellation or API behaviour
+was changed by this correction.

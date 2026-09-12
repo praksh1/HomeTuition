@@ -175,7 +175,8 @@ try {
   const secondSid = booked.lessons[1].sessionId;
   check("teacher cancellation is recorded by the session, not an operator button", (await api(`/sessions/${secondSid}`, teacher.token, { status: "cancelled" }, "PATCH")).status === 200);
   const automaticCancellation = await quote(c.id, b);
-  check("cancelled lesson automatically waits for replacement or refund", automaticCancellation.receipts.find(r => r.bookingId === secondBookingId).allocations[1].state === "replacement_pending" && automaticCancellation.receipts.find(r => r.bookingId === secondBookingId).needsAttention);
+  const operatorCancellation = (await api("/admin/batch-test-payments", operatorToken)).body.receipts.find(r => r.bookingId === secondBookingId);
+  check("cancelled lesson automatically waits for replacement or refund", automaticCancellation.receipts.find(r => r.bookingId === secondBookingId).allocations[1].state === "replacement_pending" && operatorCancellation.allocations[1].state === "replacement_pending" && operatorCancellation.needsAttention);
   await grantAccount(outsider, "student");
   const qo = await quote(c.id, outsider);
   check("capacity remains enforced", (await book(c.id, outsider, qo.quoteKey)).status === 409);
