@@ -155,6 +155,70 @@ router.get("/admin/batch-test-payments", requireAuth, requireAdmin, async (req, 
   } catch (error) { next(error); }
 });
 
+/**
+ * The signed-in participant's own simulated money view.
+ *
+ * This is intentionally read-only and role-scoped in SQL. A student sees only their bookings;
+ * a teacher sees only bookings for classes they teach. It does not expose the operator event
+ * route and cannot move money.
+ */
+router.get("/batch-tests/me/payments", requireAuth, async (req, res, next) => {
+  const role = req.user!.role;
+  if (role !== "student" && role !== "teacher") {
+    res.status(403).json({ error: "This payment view belongs to students and teachers." });
+    return;
+  }
+  try {
+    const rows = await db.select({
+      bookingId: batchTestPaymentsTable.bookingId,
+      receipt: batchTestPaymentsTable.receipt,
+      recordedAt: batchTestPaymentsTable.createdAt,
+      batchId: batchTestBookingsTable.batchId,
+      studentName: usersTable.name,
+      snapshot: batchTestContractsTable.snapshot,
+    })
+      .from(batchTestPaymentsTable)
+      .innerJoin(batchTestBookingsTable, eq(batchTestBookingsTable.id, batchTestPaymentsTable.bookingId))
+      .innerJoin(batchTestContractsTable, eq(batchTestContractsTable.batchId, batchTestBookingsTable.batchId))
+      .innerJoin(learningProgramBatchesTable, eq(learningProgramBatchesTable.id, batchTestBookingsTable.batchId))
+      .innerJoin(learningProgramsTable, eq(learningProgramsTable.id, learningProgramBatchesTable.programId))
+      .innerJoin(usersTable, eq(usersTable.id, batchTestBookingsTable.studentId))
+      .where(role === "student"
+        ? eq(batchTestBookingsTable.studentId, req.user!.userId)
+        : eq(learningProgramsTable.teacherId, req.user!.userId))
+      .orderBy(desc(batchTestPaymentsTable.bookingId))
+      .limit(50);
+    // Refresh only this participant's classes. Refreshing the global rehearsal ledger every time
+    // any student opened Sessions would turn a read-only convenience into avoidable database work.
+    for (const batchId of new Set(rows.map((row) => row.batchId))) {
+      await synchronizeBatchTestSettlements(batchId).catch((error) =>
+        req.log.warn({ error, batchId }, "could not refresh participant simulated settlement evidence"),
+      );
+    }
+    const bookingIds = rows.map((row) => row.bookingId);
+    const history = bookingIds.length
+      ? await db.select().from(batchTestLedgerEntriesTable)
+        .where(inArray(batchTestLedgerEntriesTable.bookingId, bookingIds))
+        .orderBy(asc(batchTestLedgerEntriesTable.id))
+      : [];
+    res.setHeader("Cache-Control", "no-store").json({
+      testOnly: true,
+      role,
+      receipts: rows.map((row) => ({
+        ...receiptView(
+          row.receipt as SimulatedBatchReceipt,
+          history.filter((entry) => entry.bookingId === row.bookingId),
+        ),
+        bookingId: row.bookingId,
+        batchId: row.batchId,
+        recordedAt: row.recordedAt.toISOString(),
+        studentName: row.studentName,
+        classTitle: readBatchSnapshot(row.snapshot)?.programTitle ?? "Class title unavailable",
+      })),
+    });
+  } catch (error) { next(error); }
+});
+
 /** Rehearse one held lesson through complaint, refund and payout without moving money. */
 router.post("/admin/batch-test-payments/:bookingId/allocations/:position/events", requireAuth, requireAdmin, async (req, res) => {
   const bookingId = Number(req.params.bookingId);

@@ -75,6 +75,26 @@ try {
     check(`${width}: simulation never claims money moved`, settlement.includes("Actual money moved: NPR 0") && settlement.includes("This ledger cannot trigger a real payout or refund"));
     check(`${width}: operator ledger fits screen`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: path.join(work, `${width}-operator.png`), fullPage: true });
+    await page.goto(base + "?money-student");
+    await page.getByText("Test payment summary", { exact: true }).waitFor();
+    const studentMoney = await page.locator("body").innerText();
+    check(`${width}: student gets one concise simulated money summary`, studentMoney.includes("Test payment total") && studentMoney.includes("Held by Fadko") && studentMoney.includes("Test refunded") && studentMoney.includes("Actual money charged: NPR 0"));
+    const studentSummaryBox = await page.getByTestId("participant-test-money-student").boundingBox();
+    check(`${width}: student summary stays inside the viewport`, studentSummaryBox && studentSummaryBox.x >= 0 && studentSummaryBox.y >= 0 && studentSummaryBox.x + studentSummaryBox.width <= width);
+    check(`${width}: student summary does not expose teacher payout controls`, !studentMoney.includes("Mark lesson delivered") && !studentMoney.includes("payout_confirmed"));
+    await page.getByRole("button", { name: "View 1 test receipt", exact: true }).click();
+    check(`${width}: student can reveal their receipt`, (await page.locator("body").innerText()).includes("TEST receipt TEST-BATCH-1"));
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.screenshot({ path: path.join(work, `${width}-student-money.png`), fullPage: true });
+    await page.goto(base + "?money-teacher");
+    await page.getByText("Test earnings summary", { exact: true }).waitFor();
+    const teacherMoney = await page.locator("body").innerText();
+    check(`${width}: teacher sees held and test-paid shares without a fake earning`, teacherMoney.includes("Your share still held") && teacherMoney.includes("Test-paid to you") && teacherMoney.includes("Actual money received: NPR 0"));
+    const teacherSummaryBox = await page.getByTestId("participant-test-money-teacher").boundingBox();
+    check(`${width}: teacher summary stays inside the viewport`, teacherSummaryBox && teacherSummaryBox.x >= 0 && teacherSummaryBox.y >= 0 && teacherSummaryBox.x + teacherSummaryBox.width <= width, JSON.stringify(teacherSummaryBox));
+    check(`${width}: participant summaries fit screen`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await page.evaluate(() => scrollTo(0, 0));
+    await page.screenshot({ path: path.join(work, `${width}-teacher-money.png`), fullPage: true });
     check(`${width}: no browser exceptions`, errors.length === 0);
     await page.close();
   }

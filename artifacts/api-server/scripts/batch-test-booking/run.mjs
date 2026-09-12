@@ -104,6 +104,12 @@ try {
   check("success returns frozen simulated 70/30 receipt", booked.receipts.length === 1 && booked.receipts[0].grossNpr === 6000 && booked.receipts[0].teacherNpr === 4200 && booked.receipts[0].fadkoNpr === 1800 && booked.receipts[0].actualMoneyCollectedNpr === 0);
   check("concurrent retry creates only one capture", Number((await q("SELECT count(*) n FROM batch_test_payments p JOIN batch_test_bookings b ON b.id=p.booking_id WHERE b.batch_id=$1", [c.id])).rows[0].n) === 1);
   check("teacher can read simulated ledger for own class", (await quote(c.id, teacher)).receipts.length === 1);
+  const studentMoney = await api("/batch-tests/me/payments", a.token);
+  check("student money summary contains only their own receipt", studentMoney.status === 200 && studentMoney.body.role === "student" && studentMoney.body.receipts.length === 1 && studentMoney.body.receipts[0].reference === booked.receipts[0].reference);
+  const teacherMoney = await api("/batch-tests/me/payments", teacher.token);
+  check("teacher money summary contains the receipt for their class", teacherMoney.status === 200 && teacherMoney.body.role === "teacher" && teacherMoney.body.receipts.length === 1 && teacherMoney.body.receipts[0].studentName === a.user.name);
+  check("another student cannot discover the receipt in their summary", (await api("/batch-tests/me/payments", b.token)).body.receipts.length === 0);
+  check("operator cannot use a participant money summary", (await api("/batch-tests/me/payments", operatorToken)).status === 403);
   check("operator sees simulated capture", (await api("/admin/batch-test-payments", operatorToken)).body.receipts.some(r => r.reference === booked.receipts[0].reference && r.grossNpr === 6000));
   check("student cannot read operator ledger", (await api("/admin/batch-test-payments", a.token)).status === 403);
   check("teacher cannot read operator ledger", (await api("/admin/batch-test-payments", teacher.token)).status === 403);

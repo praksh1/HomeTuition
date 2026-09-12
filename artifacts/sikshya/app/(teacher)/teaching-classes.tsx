@@ -15,6 +15,7 @@ import {
 } from "@/components/programs/ProgramPieces";
 import { apiGet } from "@/utils/api";
 import { BatchTestPanel } from "@/components/classes/BatchTestPanel";
+import { BatchTestMoneySummary } from "@/components/classes/BatchTestMoneySummary";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import {
   classIsPublished,
@@ -106,6 +107,7 @@ export default function TeachingClasses() {
           icon="plus"
           onPress={() => router.push("/(teacher)/create-class")}
         />
+        <BatchTestMoneySummary role="teacher" />
         {loading ? (
           <ActivityIndicator color={colors.primary} />
         ) : error ? (
