@@ -28,11 +28,12 @@ import { ProgramChip } from "./ProgramPieces";
 export interface ProgramCardProps {
   fields: ProgramCardFields;
   onPress: () => void;
+  actionLabel?: string;
   /** For lists, so each card gets a stable id. */
   testID?: string;
 }
 
-export default function ProgramCard({ fields, onPress, testID }: ProgramCardProps) {
+export default function ProgramCard({ fields, onPress, actionLabel = "View program", testID }: ProgramCardProps) {
   const colors = useColors();
   const { t, space, radius } = useLayout();
 
@@ -40,7 +41,7 @@ export default function ProgramCard({ fields, onPress, testID }: ProgramCardProp
     <Pressable
       testID={testID}
       accessibilityRole="link"
-      accessibilityLabel={`${fields.title}, by ${fields.teacherName}. ${fields.typeLabel}. View program.`}
+      accessibilityLabel={`${fields.title}, by ${fields.teacherName}. ${fields.typeLabel}. ${actionLabel}.`}
       onPress={onPress}
       style={{
         backgroundColor: colors.card,
@@ -109,7 +110,7 @@ export default function ProgramCard({ fields, onPress, testID }: ProgramCardProp
           minHeight: HIT_SLOP_MIN,
         }}
       >
-        <Text style={[t.bodyStrong, { color: colors.primary }]}>View program</Text>
+        <Text style={[t.bodyStrong, { color: colors.primary }]}>{actionLabel}</Text>
         <Feather name="chevron-right" size={16} color={colors.primary} />
       </View>
     </Pressable>

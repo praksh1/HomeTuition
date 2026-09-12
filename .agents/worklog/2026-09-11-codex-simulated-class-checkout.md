@@ -337,3 +337,47 @@ the older Program test-enrolment form below to test this new batch-specific chec
   separate-fee-zero presentation is gone and the price-specific, before-tax explanation is live.
   The exact class-price estimate remains for the owner's create-class walkthrough. Production and
   `main` are still untouched.
+
+### Student Discover class-catalog repair
+
+- The owner published `Example: SEE Maths evening tuition` and could not find it from the student
+  account. This was a real catalogue disconnect, not failed publication. A read-only staging query
+  proved `/programs?presentation=class&q=Example%3A%20SEE%20Maths` returned published program id 11,
+  while the legacy `/public/classes` endpoint returned no matching row. New Teaching Classes live
+  in published learning-program snapshots plus batches; Student Discover's `Live classes` surface
+  still read only the older one-off `sessions` product, and its default Courses query explicitly
+  requested `presentation=program`.
+- Reworked Discover's primary order to **Classes, Courses, Teachers**, with Classes as the default.
+  Classes now has two explicit sub-catalogues: **Tuition & short courses**, backed by the published
+  class snapshots, and **One-time lessons**, which preserves the legacy session product unchanged.
+  A student can therefore find the teacher's new class without mixing it into curriculum-style
+  Courses or removing older bookable lessons.
+- The new class catalogue uses the existing server-side text search, 20-row keyset cursor pages,
+  an explicit `Show more classes` action, stale-request suppression, and separate initial versus
+  pagination failures. This avoids downloading an unbounded teacher/class list on a budget phone
+  and avoids making one network request per typed character. Cards say `View dates & price` and
+  open the existing detail surface, where batch dates, lesson count, remaining-price policy and
+  test checkout are loaded.
+- Deliberately not added: 20 extra per-card batch requests. The public program summary does not
+  contain batch price or next-lesson data; doing an N+1 request fan-out would be the wrong scaling
+  fix on 3G. A later premium marketplace endpoint can join currently open batch snapshots into a
+  single class-card response with date, price and availability filters. The teacher-directory tab
+  also still accumulates its older pages client-side and remains a separate 10,000-teacher scaling
+  follow-up. No schema, payment, booking, publication or database rule changed here.
+- Added rendered coverage for the exact owner-reported class title at phone and laptop widths,
+  including search, class-specific copy, touch targets, no irrelevant Course-type filter chips and
+  no horizontal overflow. Updated the navigation contract to require Classes and Tuition & short
+  courses as the defaults while retaining One-time lessons.
+- A clean Expo export initially failed because `react-native-worklets/plugin` requires
+  `@babel/traverse`, but the app had not declared it while this workspace disables automatic peer
+  installation. Added the already-resolved package as a direct dev dependency. The computer's
+  newer global pnpm first rewrote unrelated optional-peer metadata across the lockfile; that noisy
+  rewrite was discarded. The final lockfile has only the three-line importer entry and was
+  validated offline with the repository-pinned pnpm 11.11.0.
+- Final local gates: full four-workspace typecheck clean; app units **383/0**; rendered Discover
+  **196/0**; staging-targeted Expo web export successful; design ratchet unchanged at **94 hex / 282
+  raw sizes**; `git diff --check` clean. The 390px class-catalog capture was visually inspected and
+  showed the exact class, its teacher and the `View dates & price` action without clipping.
+- Production, `main`, Postgres data, simulated/real payments, Daily and LiveKit remain untouched at
+  this checkpoint. Code still needs commit, push, disposable-database CI, preview deployment and
+  the owner's signed-in student verification before any production release.

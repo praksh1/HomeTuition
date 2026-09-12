@@ -44,8 +44,8 @@ const full = (over: Partial<PublicProgramDetail> = {}): PublicProgramDetail => (
 
 /* --- tabs and filters ------------------------------------------------------- */
 
-test("Discover has exactly three views, in the order Courses, Live classes, Teachers", () => {
-  assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["programs", "classes", "teachers"]);
+test("Discover has exactly three views, with joinable Classes first", () => {
+  assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["classes", "programs", "teachers"]);
 });
 
 test("each view has an accurate heading, subtitle and accessible label", () => {
@@ -57,8 +57,8 @@ test("each view has an accurate heading, subtitle and accessible label", () => {
   assert.match(tc.heading, /teacher/i);
   assert.equal(p.label, "Courses");
   assert.equal(p.accessibilityLabel, "Courses");
-  assert.equal(c.label, "Live classes");
-  assert.equal(c.accessibilityLabel, "Live classes");
+  assert.equal(c.label, "Classes");
+  assert.equal(c.accessibilityLabel, "Classes");
 });
 
 test("Following is a sub-choice of Teachers, not a primary product view", () => {

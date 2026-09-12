@@ -97,11 +97,10 @@ export interface DiscoverTab {
 /**
  * The three primary product views, in the order Discover shows them.
  *
- * Programs first — this phase makes them the featured learning surface. Then Single classes,
- * which are individual bookable sessions from `GET /sessions`, distinct from monthly and from a
- * teacher's own list. Then Teachers, which is the existing browse-by-person view, with the
- * "Following" list nested inside it as a sub-choice — Codex was clear that Following is not a
- * third product category and belongs where a teacher relationship lives.
+ * Classes first — that is the product a student can actually compare and join. Courses remain a
+ * separate catalogue for the older, teacher-authored learning paths, and Teachers remains the
+ * browse-by-person view. Following is nested inside Teachers because a follow is a relationship
+ * with a person rather than a fourth kind of product.
  *
  * `label` is the word on the pill; `accessibilityLabel` is the full phrase a screen reader hears,
  * because "Classes" alone does not say which kind. The page title and the subtitle also come from
@@ -110,12 +109,12 @@ export interface DiscoverTab {
  */
 export const DISCOVER_TABS: readonly DiscoverTab[] = [
   {
-    view: "programs", label: "Courses", accessibilityLabel: "Courses",
-    heading: "Find a course", subtitle: "Learn toward a clear goal with a teacher and a planned path.",
+    view: "classes", label: "Classes", accessibilityLabel: "Classes",
+    heading: "Find a class", subtitle: "Compare tuition, short courses and one-time lessons.",
   },
   {
-    view: "classes", label: "Live classes", accessibilityLabel: "Live classes",
-    heading: "Find a live class", subtitle: "Book one scheduled class at a time.",
+    view: "programs", label: "Courses", accessibilityLabel: "Courses",
+    heading: "Find a course", subtitle: "Learn toward a clear goal with a teacher and a planned path.",
   },
   {
     view: "teachers", label: "Teachers", accessibilityLabel: "Teachers",

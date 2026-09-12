@@ -249,7 +249,7 @@ for (const size of SIZES) {
   check(`${L}: no courses at all reads as "no courses yet"`, await seen("program-discover-empty"));
   const emptyText = await text("program-discover-empty");
   check(`${L}: and points to the two useful alternatives`,
-    /Live classes/i.test(emptyText) && /Teachers/i.test(emptyText), emptyText.slice(0, 160));
+    /Classes/i.test(emptyText) && /Teachers/i.test(emptyText), emptyText.slice(0, 160));
 
   await show({
     screen: "list",
@@ -288,6 +288,35 @@ for (const size of SIZES) {
   }
   check(`${L}: the list does not scroll sideways`, (await overflow()) <= 1, `overflow ${await overflow()}px`);
   check(`${L}: no control on the list is below the touch floor`,
+    (await smallTargets()).length === 0, (await smallTargets()).join(", "));
+
+  /* ---------------------------------------- published Teaching Classes catalogue */
+
+  console.log(`\n[${L}] Discover: Classes`);
+  const publishedClass = summary({
+    id: 91,
+    presentation: "class",
+    type: "custom",
+    title: "Example: SEE Maths evening tuition",
+    summary: "Class 10 algebra and geometry practice with time for questions.",
+    outcome: "",
+    intendedLearner: "",
+    moduleCount: 0,
+  });
+  await show({
+    screen: "list",
+    props: listState({ catalog: "class", programs: [publishedClass] }),
+  }, "class-catalog");
+  check(`${L}: a published Teaching Class is visible in the Classes catalogue`,
+    await seen("class-card-91"));
+  check(`${L}: it is offered as dates and price rather than as an abstract program`,
+    /View dates & price/i.test(await text("class-card-91")));
+  check(`${L}: internal Program type filters are not shown for simple classes`,
+    !(await seen("class-discover-chips")));
+  check(`${L}: the class catalogue remains searchable`,
+    (await seen("class-discover-search")) && (await seen("class-discover-search-submit")));
+  check(`${L}: the class catalogue does not scroll sideways`, (await overflow()) <= 1);
+  check(`${L}: every class-catalogue control reaches the touch floor`,
     (await smallTargets()).length === 0, (await smallTargets()).join(", "));
 
   /* --------------------------------------------- programs on a teacher profile */

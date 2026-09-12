@@ -54,6 +54,13 @@ const SUBJECTS = ["All", "Mathematics", "Science", "English", "Nepali", "Compute
 
 const DISTRICTS = ["All Districts", "Kathmandu", "Lalitpur", "Bhaktapur", "Kaski", "Chitwan", "Morang", "Sunsari", "Rupandehi"];
 
+type ClassCatalogMode = "tuition" | "single";
+
+const CLASS_CATALOG_TABS: readonly { mode: ClassCatalogMode; label: string }[] = [
+  { mode: "tuition", label: "Tuition & short courses" },
+  { mode: "single", label: "One-time lessons" },
+];
+
 /**
  * "Most Students" is kept and "Online Now" is not.
  *
@@ -103,7 +110,7 @@ export default function Discover() {
    * to be one of the top-level tabs; it has moved back inside Teachers as a sub-choice, because a
    * follow is a relationship with a teacher and not a product category of its own.
    */
-  const [view, setView] = useState<DiscoverView>("programs");
+  const [view, setView] = useState<DiscoverView>("classes");
 
   /**
    * When Teachers is the primary view, which of its two sub-lists to show.
@@ -205,9 +212,83 @@ export default function Discover() {
   // on Enter or on the visible Search button, so a Nepali bus connection is not billed one call
   // per letter.
   React.useEffect(() => {
-    void loadPrograms({ type: programType, query: programQuery });
+    if (view === "programs") void loadPrograms({ type: programType, query: programQuery });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [programType]);
+  }, [view, programType]);
+
+  /* ----------------------------------------------------- tuition / short classes --- */
+
+  const [classCatalogMode, setClassCatalogMode] = useState<ClassCatalogMode>("tuition");
+  const [listedClasses, setListedClasses] = useState<PublicProgramSummary[]>([]);
+  const [listedClassesCursor, setListedClassesCursor] = useState<string | null>(null);
+  const [listedClassesLoading, setListedClassesLoading] = useState(true);
+  const [listedClassesLoadingMore, setListedClassesLoadingMore] = useState(false);
+  const [listedClassesInitialError, setListedClassesInitialError] = useState<string | null>(null);
+  const [listedClassesMoreError, setListedClassesMoreError] = useState<string | null>(null);
+  const [listedClassQuery, setListedClassQuery] = useState("");
+  const [listedClassesLoadedOnce, setListedClassesLoadedOnce] = useState(false);
+  const listedClassRequestRef = useRef(0);
+
+  const loadListedClasses = useCallback(
+    async (opts: { append?: boolean; query?: string } = {}) => {
+      const append = opts.append === true;
+      const q = opts.query !== undefined ? opts.query : listedClassQuery;
+      const cursor = append ? listedClassesCursor : null;
+
+      if (append) {
+        setListedClassesLoadingMore(true);
+        setListedClassesMoreError(null);
+      } else {
+        setListedClassesLoading(true);
+        setListedClassesInitialError(null);
+        setListedClassesMoreError(null);
+      }
+      const mine = ++listedClassRequestRef.current;
+      try {
+        const params = new URLSearchParams();
+        params.set("limit", "20");
+        params.set("presentation", "class");
+        if (q.trim().length > 0) params.set("q", q.trim());
+        if (cursor) params.set("cursor", cursor);
+        const answer = await apiGet<{ programs: PublicProgramSummary[]; nextCursor: string | null }>(
+          `/programs?${params.toString()}`,
+        );
+        if (mine !== listedClassRequestRef.current) return;
+        if (append) {
+          setListedClasses((current) => appendPage(
+            { rows: current, nextCursor: listedClassesCursor },
+            { rows: answer.programs, nextCursor: answer.nextCursor },
+          ).rows);
+        } else {
+          setListedClasses(answer.programs);
+        }
+        setListedClassesCursor(answer.nextCursor);
+        setListedClassesLoadedOnce(true);
+      } catch (err) {
+        if (mine !== listedClassRequestRef.current) return;
+        const message = err instanceof ApiError
+          ? err.message
+          : "Fadko could not reach the server. Check your connection and try again.";
+        if (append) setListedClassesMoreError(message);
+        else {
+          setListedClasses([]);
+          setListedClassesInitialError(message);
+        }
+      } finally {
+        if (mine !== listedClassRequestRef.current) return;
+        if (append) setListedClassesLoadingMore(false);
+        else setListedClassesLoading(false);
+      }
+    },
+    [listedClassQuery, listedClassesCursor],
+  );
+
+  React.useEffect(() => {
+    if (view === "classes" && classCatalogMode === "tuition" && !listedClassesLoadedOnce) {
+      void loadListedClasses();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, classCatalogMode]);
 
   /* ---------------------------------------------------------- single classes --- */
 
@@ -342,9 +423,9 @@ export default function Discover() {
    * tab and returns.
    */
   React.useEffect(() => {
-    if (view === "classes" && !classesLoadedOnce && !classesLoading) void loadClasses();
+    if (view === "classes" && classCatalogMode === "single" && !classesLoadedOnce && !classesLoading) void loadClasses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view]);
+  }, [view, classCatalogMode]);
   React.useEffect(() => {
     if (view === "teachers") {
       if (!teachersLoadedOnce && !loadingTeachers) void loadTeachers();
@@ -523,6 +604,43 @@ export default function Discover() {
           })}
         </View>
 
+        {view === "classes" ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: space.xs }}
+            testID="class-catalog-tabs"
+          >
+            {CLASS_CATALOG_TABS.map((tab) => {
+              const active = classCatalogMode === tab.mode;
+              return (
+                <TouchableOpacity
+                  key={tab.mode}
+                  testID={`class-catalog-${tab.mode}`}
+                  onPress={() => setClassCatalogMode(tab.mode)}
+                  activeOpacity={0.75}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: active }}
+                  aria-selected={active}
+                  style={{
+                    minHeight: HIT_SLOP_MIN,
+                    justifyContent: "center",
+                    paddingHorizontal: space.sm,
+                    borderWidth: 1,
+                    borderColor: active ? colors.primary : colors.border,
+                    backgroundColor: active ? colors.actionSoft : colors.surface,
+                    borderRadius: radius.pill,
+                  }}
+                >
+                  <Text style={[t.bodyStrong, { color: active ? colors.primary : colors.mutedForeground }]}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        ) : null}
+
         {view === "teachers" ? (
           <View style={[styles.subTabs, { gap: space.xs }]}>
             {TEACHERS_TABS.map((tab) => {
@@ -692,6 +810,36 @@ export default function Discover() {
             onRetry={() => void loadPrograms({ query: programQuery, type: programType })}
             onOpen={(id) => router.push(`/(student)/program/${id}`)}
             onSubmit={(text) => { setProgramQuery(text); void loadPrograms({ query: text, type: programType }); }}
+          />
+        </ScrollView>
+      ) : view === "classes" && classCatalogMode === "tuition" ? (
+        <ScrollView
+          testID="teaching-classes-scroll"
+          contentContainerStyle={{
+            paddingHorizontal: gutter, paddingTop: space.md,
+            paddingBottom: insets.bottom + bottomNavClearance, gap: space.md,
+            width: "100%",
+            maxWidth: marketplaceColumnMax,
+            alignSelf: "center",
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <ProgramDiscoverList
+            catalog="class"
+            query={listedClassQuery}
+            onQueryChange={setListedClassQuery}
+            chosenType="all"
+            onTypeChange={() => undefined}
+            programs={listedClasses}
+            initialLoad={listedClassesLoading}
+            loadingMore={listedClassesLoadingMore}
+            hasMore={listedClassesCursor !== null}
+            initialError={listedClassesInitialError}
+            paginationError={listedClassesMoreError}
+            onLoadMore={() => void loadListedClasses({ append: true })}
+            onRetry={() => void loadListedClasses({ query: listedClassQuery })}
+            onOpen={(id) => router.push(`/(student)/program/${id}`)}
+            onSubmit={(text) => { setListedClassQuery(text); void loadListedClasses({ query: text }); }}
           />
         </ScrollView>
       ) : view === "classes" ? (
