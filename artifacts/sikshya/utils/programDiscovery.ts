@@ -119,6 +119,11 @@ export const DISCOVER_TABS: readonly DiscoverTab[] = [
   },
 ];
 
+/** Courses remain inside the class-finding intention when the secondary catalogue is open. */
+export function discoverIntentFor(view: DiscoverView): "classes" | "teachers" {
+  return view === "teachers" ? "teachers" : "classes";
+}
+
 /**
  * Teachers has its own two sub-views: everyone, and the ones this student follows.
  *

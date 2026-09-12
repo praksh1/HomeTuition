@@ -28,6 +28,7 @@ import PublicClassCard from "@/components/programs/PublicClassCard";
 import {
   appendPage,
   DISCOVER_TABS,
+  discoverIntentFor,
   TEACHERS_TABS,
   type DiscoverView,
   type ProgramType,
@@ -72,7 +73,7 @@ export default function Discover() {
   const [teachersView, setTeachersView] = useState<TeachersView>("all");
 
   const currentTab = useMemo(
-    () => DISCOVER_TABS.find((tab) => tab.view === (view === "programs" ? "classes" : view)) ?? DISCOVER_TABS[0],
+    () => DISCOVER_TABS.find((tab) => tab.view === discoverIntentFor(view)) ?? DISCOVER_TABS[0],
     [view],
   );
 
@@ -388,7 +389,9 @@ export default function Discover() {
 
         <View style={[styles.subTabs, { gap: space.xs }]} accessibilityRole="tablist">
           {DISCOVER_TABS.map((tab) => {
-            const active = view === tab.view;
+            // Courses are one class-finding catalogue, not a third top-level intention.
+            // Keep the parent intention selected while that catalogue is open.
+            const active = discoverIntentFor(view) === tab.view;
             const icon = tab.view === "teachers" ? "user-check" : "book-open";
             return (
               <TouchableOpacity

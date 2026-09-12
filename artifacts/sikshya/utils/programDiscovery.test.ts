@@ -11,6 +11,7 @@ import {
   appendPage,
   cardFromDetail,
   cardFromSummary,
+  discoverIntentFor,
   localMatches,
   localTypeMatches,
   missingOptional,
@@ -46,6 +47,12 @@ const full = (over: Partial<PublicProgramDetail> = {}): PublicProgramDetail => (
 
 test("Discover starts with the two questions a student actually arrives with", () => {
   assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["classes", "teachers"]);
+});
+
+test("courses keep Find a class selected because they are not a third intention", () => {
+  assert.equal(discoverIntentFor("classes"), "classes");
+  assert.equal(discoverIntentFor("programs"), "classes");
+  assert.equal(discoverIntentFor("teachers"), "teachers");
 });
 
 test("each student intention has an accurate heading, subtitle and accessible label", () => {
