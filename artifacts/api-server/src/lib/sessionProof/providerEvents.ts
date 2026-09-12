@@ -16,7 +16,7 @@
  *
  * ## What this file is, and is not
  *
- * Pure and import-free, like `sessionEvidence.ts` and for the same reason: these are the rules a
+ * Normalization plus the shared deployment-aware room identity rule: these are the rules a
  * refund will be argued over, and a rule that needs a database and a live webhook to exercise is a
  * rule nobody tests.
  *
@@ -37,6 +37,8 @@
  */
 
 /** The only provider this file knows how to read. Others get their own normalizer. */
+import { sessionIdForRoom } from "../video/roomName.ts";
+
 export const PROVIDER_DAILY = "daily";
 
 /**
@@ -191,7 +193,7 @@ function pickBoolean(source: Record<string, unknown>, paths: string[]): boolean 
 /**
  * The session id a Daily room name belongs to, or null.
  *
- * The exact inverse of `sanitizeRoomName` in `lib/daily.ts`, which builds `"sikshya" + id` with
+ * The exact inverse of `sanitizeRoomName` in `lib/daily.ts`, which builds its namespace prefix + id with
  * every non-alphanumeric character stripped. Session ids are integers, so for this product the
  * mapping is one-to-one and reversible.
  *
@@ -202,13 +204,7 @@ function pickBoolean(source: Record<string, unknown>, paths: string[]): boolean 
  * attached to whichever class happens to share a prefix.
  */
 export function sessionIdFromRoomName(roomName: string | null | undefined): number | null {
-  if (typeof roomName !== "string") return null;
-  const match = /^sikshya(\d+)$/.exec(roomName.trim());
-  if (!match) return null;
-  const id = Number(match[1]);
-  // A leading zero would make two different room names map to one session.
-  if (!Number.isSafeInteger(id) || id <= 0 || String(id) !== match[1]) return null;
-  return id;
+  return sessionIdForRoom(roomName);
 }
 
 /* ------------------------------------------------------------------------------ timestamps */

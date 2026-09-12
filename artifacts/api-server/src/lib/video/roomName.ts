@@ -1,24 +1,10 @@
 /**
  * What a class's room is called, whoever is carrying the call.
  *
- * ## Why this is copied rather than imported
- *
- * `lib/daily.ts` has had this exact rule since the Daily integration was written, and Daily is
- * deliberately not being edited during the LiveKit trial — the whole point is that Daily keeps
- * working untouched so the owner can switch back with one environment variable. Importing this
- * out of `daily.ts` would mean editing it; leaving LiveKit to invent its own naming would mean
- * two conventions.
- *
- * So the rule lives here in provider-neutral form, and `roomName.test.ts` asserts that it and
- * `sanitizeRoomName` in `lib/daily.ts` agree on every input tried. If somebody changes one, the
- * test says so rather than a class quietly getting two different room names on two providers.
- *
- * ## Why the name has to match across providers
- *
- * `sikshya42` is how a provider event finds its way back to session 42 — see
- * `lib/sessionProof/providerEvents.ts`, which parses exactly this shape. A LiveKit room named
- * anything else would correlate to no class at all, and the evidence for a refund would silently
- * be about nothing.
+ * Daily, LiveKit and the evidence parser now share this rule. Without a namespace it retains
+ * the original `sikshya42` identity. Preview can opt into a distinct server-only namespace so
+ * equal session IDs in separate databases never send people into the same provider room.
+ * This does not select or enable a video provider, nor change membership.
  */
 
 /**
@@ -28,6 +14,23 @@
  * inverse in `providerEvents.ts` is strict and refuses anything that is not `sikshya` followed
  * by digits. Session ids are integers, so for this product the mapping is one to one.
  */
-export function roomNameForSession(rawId: string | number): string {
-  return "sikshya" + String(rawId).replace(/[^a-zA-Z0-9]/g, "");
+export function roomNameForSession(rawId: string | number, namespace?: string): string {
+  return videoRoomPrefix(namespace) + String(rawId).replace(/[^a-zA-Z0-9]/g, "");
+}
+
+/** Default stays unchanged. Invalid preview configuration must never select a production room. */
+export function videoRoomPrefix(namespace: string | undefined = process.env.VIDEO_ROOM_NAMESPACE): string {
+  if (namespace === undefined || namespace === "") return "sikshya";
+  if (!/^[a-z][a-z0-9-]{2,31}$/.test(namespace)) throw new Error("Invalid video room namespace");
+  return `${namespace}-sikshya`;
+}
+
+/** Strict inverse: another deployment's rooms cannot become this database's evidence. */
+export function sessionIdForRoom(room: string | null | undefined, namespace?: string): number | null {
+  const prefix = videoRoomPrefix(namespace);
+  if (typeof room !== "string" || !room.trim().startsWith(prefix)) return null;
+  const digits = room.trim().slice(prefix.length);
+  if (!/^[1-9][0-9]*$/.test(digits)) return null;
+  const id = Number(digits);
+  return Number.isSafeInteger(id) && String(id) === digits ? id : null;
 }

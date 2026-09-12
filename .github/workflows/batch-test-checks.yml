@@ -43,6 +43,8 @@ jobs:
       - run: pnpm --filter @workspace/api-server run build
       - run: pnpm --filter @workspace/api-server run test:programs
       - run: pnpm --filter @workspace/api-server run test:batch-booking
+      - run: pnpm --filter @workspace/api-server run test:video
+      - run: pnpm --filter @workspace/api-server run test:proof
       - run: pnpm --filter @workspace/api-server run test:test-access
       - run: pnpm --filter @workspace/api-server run test:test-student
       - name: Browser checks
