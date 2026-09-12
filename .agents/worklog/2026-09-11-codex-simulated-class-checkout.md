@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/batch-simulated-checkout
 - Base commit: 3b58906 (includes tested, inactive preview-video isolation)
-- Status: in progress
+- Status: complete (simulated checkout preview); real media activation pending
 
 ## Requested
 
@@ -71,3 +71,30 @@ Run disposable DB safety CI, deploy matched preview frontend/API only after pass
 synthetic test grants through fixed pilot deadline. Real Daily testing remains separate: namespace
 and private-token code must be deployed before attaching credentials; action-time credential
 authorization required. Owner has now signed in as operator; no new account needed.
+
+### Release progress
+
+- Code d7ca3d5; extra rendered operator checks/documentation6da5489, both pushed to
+  codex/batch-simulated-checkout. Fast-forwarded staging source codex/program-batch-foundation
+  to6da5489; main untouched.
+- Safety CI34669036220 SUCCESS: API537, app373, Programs601, batch50, video42, proof125,
+  teacher grants26, student grants108, class setup75, checkout30. Local extended checkout/operator34.
+- Railway staging deployment486424b6-ba04-453b-807b-0a6e3afd81b0 ACTIVE; startup log confirmed
+  learning program/test-booking tables present. Existing stage payment mode remains SIMULATED.
+- Preview web run34669241451 in progress at this checkpoint; do not claim website released yet.
+- Owner cancelled the blocked student-grant dialog; re-read showed same active grant through
+  17Sep2026. No revocation or renewal occurred for student. Teacher renewal succeeded.
+- Asked action-time permission to attach stored Daily credential to staging/private namespaces;
+  awaiting answer. VIDEO_PROVIDER remains echo. Do not call any automated echo proof real media.
+
+### Verified preview handoff
+
+Preview run34669241451 SUCCESS at6da5489. Worker30a77f51-f2bc-46df-b4d6-4f54acc0f12c.
+Workflow verified served HTML and3 exact bundles against the staging API. Operator's real signed-in
+preview at /program-commerce shows new Class checkout test ledger; Show test receipts returned
+the honest empty state, proving new authenticated endpoint and table work together on deployment.
+No synthetic purchase was made in shared staging by this turn; owner performs student checkout.
+Manual Android/iPhone and real media remain unverified. Production main untouched, no purchases.
+Use preview student account to open published class -> Try test checkout -> Simulate successful
+payment, then review TEST receipt and lesson links. Operator reloads the new ledger; do not use
+the older Program test-enrolment form below to test this new batch-specific checkout.
