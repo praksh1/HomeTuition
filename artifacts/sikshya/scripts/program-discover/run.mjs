@@ -85,7 +85,7 @@ function ListHost(props) {
 function Harness() {
   const [scene, set] = React.useState({ screen: "list", props: { programs: [], initialLoad: false, initialError: null, paginationError: null, loadingMore: false, hasMore: false } });
   setScene = set;
-  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher"), onOpenHome: record("onOpenHome") };
+  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher"), onOpenHome: record("onOpenHome"), onBackToTeacher: record("onBackToTeacher") };
   const sceneKey = JSON.stringify([scene.screen, Object.keys(scene.props ?? {})]) + String(renders);
   let element = null;
   if (scene.screen === "list") element = React.createElement(ListHost, { ...common, ...scene.props });
@@ -504,6 +504,8 @@ for (const size of SIZES) {
     },
   }, "view-public-visitor");
   check(`${L}: a shared public class is visibly branded as Fadko`, await seen("public-fadko-home"));
+  check(`${L}: a shared class has a visible route back to its teacher`,
+    (await p.getByRole("button", { name: "Back to Anjali Rai's page", exact: true }).count()) === 1);
   check(`${L}: a signed-out visitor is invited to sign in or create an account`,
     (await p.getByRole("button", { name: "Sign in to join", exact: true }).count()) === 1
       && (await p.getByRole("button", { name: "Create a student account", exact: true }).count()) === 1);
@@ -520,6 +522,36 @@ for (const size of SIZES) {
   await p.locator('[data-testid="public-fadko-home"]').click();
   check(`${L}: the Fadko mark is a working home link`,
     (await p.evaluate(() => window.__sent)).some((event) => event.name === "onOpenHome"));
+  await p.getByRole("button", { name: "Back to Anjali Rai's page", exact: true }).click();
+  check(`${L}: the teacher return control is wired`,
+    (await p.evaluate(() => window.__sent)).some((event) => event.name === "onBackToTeacher"));
+
+  await show({
+    screen: "view",
+    props: {
+      program: detail({ presentation: "class" }),
+      batches: [],
+      batchAvailability: "closed",
+      publicVisitor: true,
+    },
+  }, "view-public-closed");
+  check(`${L}: an ended booking window is named rather than mistaken for missing dates`,
+    /Joining has closed for these dates/.test(await text("program-view-closed")));
+  check(`${L}: a closed class never offers an account flow that cannot book it`,
+    (await p.getByRole("button", { name: "Sign in to join", exact: true }).count()) === 0
+      && (await p.getByRole("button", { name: "Create a student account", exact: true }).count()) === 0);
+
+  await show({
+    screen: "view",
+    props: {
+      program: detail({ presentation: "class" }),
+      batches: [],
+      batchAvailability: "not_scheduled",
+      publicVisitor: true,
+    },
+  }, "view-public-unscheduled");
+  check(`${L}: a class description with no offer says what is missing`,
+    /has not opened a schedule and price/.test(await text("program-view-not_scheduled")));
 
   await show({ screen: "view", props: { program: detail() } }, "view-full");
   check(`${L}: the title is at the top`, /Grade 10 Mathematics/i.test(await text("program-view-title")));

@@ -59,7 +59,13 @@ export function TeacherProgramsPanel({
       ) : null}
 
       {list.rows.map((program) => (
-        <ProgramCard key={program.id} fields={cardFromSummary(program)} testID={`teacher-program-${program.id}`} onPress={() => onOpen(program.id)} />
+        <ProgramCard
+          key={program.id}
+          fields={cardFromSummary(program)}
+          actionLabel={program.presentation === "class" ? "View class" : "View course"}
+          testID={`teacher-program-${program.id}`}
+          onPress={() => onOpen(program.id)}
+        />
       ))}
 
       {state === "failed" && list.rows.length > 0 ? (

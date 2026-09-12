@@ -658,7 +658,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
             <Feather name="arrow-left" size={20} color={colors.foreground} />
           </TouchableOpacity>
         ) : (
-          <PublicFadkoHome onPress={() => router.replace("/welcome")} />
+          <PublicFadkoHome onPress={() => router.push("/welcome")} />
         )}
 
         {profileLoadFailed ? (
@@ -790,7 +790,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
               <Feather name="arrow-left" size={20} color={colors.onInverse} />
             </TouchableOpacity>
           ) : (
-            <PublicFadkoHome inverse onPress={() => router.replace("/welcome")} />
+            <PublicFadkoHome inverse onPress={() => router.push("/welcome")} />
           )}
           <View style={[styles.heroTopActions, { gap: space.xs }]}>
             <TouchableOpacity

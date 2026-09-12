@@ -1539,6 +1539,8 @@ async function tuitionPeriods() {
   console.log("\n[Tuition periods] Shared anchor, advance cutoff, repeated next-period requests and unchanged old contracts");
   const teacher = await register("teacher"), other = await register("teacher"), student = await register("student");
   const program = await publishOne(teacher.token, "custom");
+  const noSchedule = await api(`/programs/${program}/batches`);
+  check("published description without a scheduled offer is named", noSchedule.status === 200 && noSchedule.body.availability === "not_scheduled" && noSchedule.body.batches.length === 0);
   const start = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
   const offsetDay = (n) => new Date(Date.parse(`${start}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
   const make = (format, token = teacher.token) => api(`/learning-programs/${program}/batches`, { method: "POST", token, body: { format } });
@@ -1560,7 +1562,9 @@ async function tuitionPeriods() {
   check("five weekly lessons publish as one 30-day period", first.status === 200 && first.body.batch.published.lessons.length === 5 && first.body.batch.periodAnchorLocked);
   const p = first.body.batch.published.tuitionPeriod;
   check("server ignores client group and index; derives thirty days", p.index === 0 && p.groupId === made.body.batch.tuitionGroupId && Date.parse(p.endsAt) - Date.parse(p.startsAt) === 30 * 86400000);
-  check("public snapshot exposes advance payment boundary", (await api(`/programs/${program}/batches`)).body.batches[0].enrollmentClosesAt === p.startsAt);
+  const publicFirst = await api(`/programs/${program}/batches`);
+  check("public snapshot exposes advance payment boundary", publicFirst.body.batches[0].enrollmentClosesAt === p.startsAt);
+  check("published offer inside its booking window is named open", publicFirst.body.availability === "open");
   check("unchanged ongoing publish is a no-op", (await publish(id)).body.unchanged === true);
   // A draft is not a new published price, and preparation must not silently use it.
   await patch(id, [1, 7, 14], 4000);
@@ -1795,6 +1799,15 @@ async function simpleClasses() {
   latePublic = (await api(`/programs/${latePid}/batches`)).body.batches[0];
   check("mid-period listing remains visible with exact 11-lesson quote", latePublic?.joiningPreview.amountNpr === 3056 && latePublic.joiningPreview.remainingLessonCount === 11);
   check("already-started lesson excluded and period end retained", latePublic?.joiningPreview.lessonPositions[0] === 7 && latePublic.joiningPreview.periodEndsAt === snapshot.tuitionPeriod.endsAt);
+  const ended = structuredClone(snapshot);
+  const endedAnchor = Date.now() - 40 * 86400000;
+  ended.tuitionPeriod.startsAt = new Date(endedAnchor).toISOString();
+  ended.tuitionPeriod.endsAt = new Date(endedAnchor + 30 * 86400000).toISOString();
+  ended.lessons.forEach((lesson, index) => { lesson.startsAt = new Date(endedAnchor + index * 86400000).toISOString(); });
+  ended.enrollmentClosesAt = ended.lessons[17].startsAt;
+  sql(`update learning_program_batches set published_snapshot='${JSON.stringify(ended).replaceAll("'", "''")}'::jsonb where id=${lateId}`);
+  const endedPublic = await api(`/programs/${latePid}/batches`);
+  check("ended published offer is named closed and cannot be booked", endedPublic.body.availability === "closed" && endedPublic.body.batches.length === 0);
   sql(`update users set suspended_at=now() where id=${other.user.id}`);
   check("late joining never bypasses suspension", (await api(`/programs/${latePid}/batches`)).body.batches.length === 0);
   sql(`update users set suspended_at=null where id=${other.user.id}`);

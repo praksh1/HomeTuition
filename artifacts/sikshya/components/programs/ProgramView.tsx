@@ -51,14 +51,16 @@ export interface ProgramViewProps {
     allocations: Array<{ lessonNumber: number; state: string }>;
   } | null;
   testEnrollmentUnavailable?: boolean;
-  /** Published, immutable offers. Empty means the teacher has not opened a scheduled batch. */
+  /** Published, immutable offers whose booking window is still open. */
   batches?: ProgramBatchSnapshot[];
+  batchAvailability?: "open" | "closed" | "not_scheduled";
   batchesUnavailable?: boolean;
   publicVisitor?: boolean;
   onOpenHome?: () => void;
+  onBackToTeacher?: () => void;
 }
 
-export default function ProgramView({ program, onBack, onShare, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchesUnavailable = false, publicVisitor = false, onOpenHome }: ProgramViewProps) {
+export default function ProgramView({ program, onBack, onShare, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchAvailability = "not_scheduled", batchesUnavailable = false, publicVisitor = false, onOpenHome, onBackToTeacher }: ProgramViewProps) {
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const reference = referenceBlock(program);
@@ -118,6 +120,14 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
             </Pressable>
           ) : null}
         </View>
+        {publicVisitor && onBackToTeacher ? (
+          <ProgramBackControl
+            onPress={onBackToTeacher}
+            testID="program-view-back-to-teacher"
+            label={`Back to ${program.teacher.name}`}
+            accessibilityLabel={`Back to ${program.teacher.name}'s page`}
+          />
+        ) : null}
         <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, flexWrap: "wrap" }}>
           <ProgramChip label={program.presentation === "class" ? "Class" : programTypeLabel(program.type)} tone="neutral" testID="program-view-type" />
         </View>
@@ -217,9 +227,16 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
             Fadko could not check this Program’s upcoming dates and price. Try this page again.
           </Text>
         ) : batches.length === 0 ? (
-          <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            This teacher has not published dates and a price for an upcoming batch yet.
-          </Text>
+          <View style={{ gap: space.xxs }} testID={`program-view-${batchAvailability}`}>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>
+              {batchAvailability === "closed" ? "Joining has closed for these dates" : "Dates and price are not open yet"}
+            </Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>
+              {batchAvailability === "closed"
+                ? "This class was published, but its booking time has ended. See the teacher’s page for another class."
+                : "The teacher has published this class description but has not opened a schedule and price yet."}
+            </Text>
+          </View>
         ) : (
           <View style={{ gap: space.sm }}>
             {batches.map((batch) => <ClassOfferCard key={batch.batchId} batch={batch} accountRequired={publicVisitor} returnPath={`/program/${program.id}`} />)}
@@ -245,7 +262,7 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
         this page are told what is true: they can read the program, they can see the teacher, and
         joining is not open.
       */}
-      {!(publicVisitor && batches.some((batch) => batch.testPilotEndsAt)) ? <View
+      {(!publicVisitor || (batches.length > 0 && !batches.some((batch) => batch.testPilotEndsAt))) ? <View
         testID={testEnrollment ? "program-view-test-enrolled" : testEnrollmentUnavailable ? "program-view-test-unknown" : "program-view-not-open"}
         style={{
           padding: space.md, backgroundColor: colors.surfaceSunk, borderRadius: radius.md,

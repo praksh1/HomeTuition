@@ -1,5 +1,10 @@
 # Memory Index
 
+- [Public share history and bookability](public-share-history-and-bookability.md) — shared-page
+  Fadko links must preserve browser history; public classes have an explicit teacher return;
+  sign-in/create-account appears only for an open immutable offer, while closed and unscheduled
+  descriptions say why they cannot be booked.
+
 - [Prelaunch batch test pilot](prelaunch-batch-test-pilot.md) — owner clarified private testing,
   not established paid customers. Batch-specific no-charge booking bridge built on isolated branch;
   fixed deadline, two grants/switches, immutable promises, existing session membership. See worklog

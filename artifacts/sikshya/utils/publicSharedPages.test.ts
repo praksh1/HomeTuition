@@ -12,6 +12,8 @@ const loginPage = readFileSync(path.join(appRoot, "app", "(auth)", "login.tsx"),
 
 test("shared teacher pages show Fadko and do not advertise legacy booking totals", () => {
   assert.match(teacherPage, /<PublicFadkoHome inverse/);
+  assert.equal((teacherPage.match(/PublicFadkoHome(?: inverse)? onPress=\{\(\) => router\.push\("\/welcome"\)\}/g) ?? []).length, 2);
+  assert.doesNotMatch(teacherPage, /PublicFadkoHome(?: inverse)? onPress=\{\(\) => router\.replace\("\/welcome"\)\}/);
   assert.doesNotMatch(teacherPage, /teacher\.totalStudents|Paid bookings/);
   assert.match(teacherPage, /new Set\(\[teacher\.subject, \.\.\.teacher\.subjects\]/);
   assert.match(teacherPage, /Subjects taught \(\{declaredSubjects\.length\}\)/);
@@ -19,7 +21,8 @@ test("shared teacher pages show Fadko and do not advertise legacy booking totals
 
 test("shared class pages identify signed-out visitors before checkout", () => {
   assert.match(programPage, /publicVisitor=\{!user\}/);
-  assert.match(programPage, /onOpenHome=\{\(\) => router\.replace\("\/welcome"\)\}/);
+  assert.match(programPage, /onOpenHome=\{\(\) => router\.push\("\/welcome"\)\}/);
+  assert.match(programPage, /onBackToTeacher=\{\(\) => backToTeacher\(program\.teacher\.id\)\}/);
   const guard = bookingPanel.indexOf("if (accountRequired)");
   const requestButton = bookingPanel.indexOf("Try test checkout");
   assert.ok(guard >= 0 && guard < requestButton, `${appRoot}: account guard must precede checkout`);

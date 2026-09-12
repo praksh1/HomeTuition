@@ -64,6 +64,7 @@ export default function StudentProgramScreen() {
   } | null>(null);
   const [testEnrollmentUnavailable, setTestEnrollmentUnavailable] = useState(false);
   const [batches, setBatches] = useState<ProgramBatchSnapshot[]>([]);
+  const [batchAvailability, setBatchAvailability] = useState<"open" | "closed" | "not_scheduled">("not_scheduled");
   const [batchesUnavailable, setBatchesUnavailable] = useState(false);
   const [loading, setLoading] = useState(validId);
   const [failure, setFailure] = useState<string | null>(null);
@@ -95,14 +96,15 @@ export default function StudentProgramScreen() {
       const [answer, rehearsal, batchAnswer] = await Promise.all([
         apiGet<{ program: PublicProgramDetail }>(`/programs/${id}`),
         rehearsalRequest,
-        apiGet<{ batches: ProgramBatchSnapshot[] }>(`/programs/${id}/batches`)
+        apiGet<{ batches: ProgramBatchSnapshot[]; availability?: "open" | "closed" | "not_scheduled" }>(`/programs/${id}/batches`)
           .then((value) => ({ value, unavailable: false }))
-          .catch(() => ({ value: { batches: [] }, unavailable: true })),
+          .catch(() => ({ value: { batches: [], availability: "not_scheduled" as const }, unavailable: true })),
       ]);
       setProgram(answer.program);
       setTestEnrollment(rehearsal.value.testEnrollment ? { ...rehearsal.value.testEnrollment, allocations: rehearsal.value.allocations ?? [] } : null);
       setTestEnrollmentUnavailable(rehearsal.unavailable);
       setBatches(Array.isArray(batchAnswer.value.batches) ? batchAnswer.value.batches : []);
+      setBatchAvailability(batchAnswer.value.availability ?? (batchAnswer.value.batches.length > 0 ? "open" : "not_scheduled"));
       setBatchesUnavailable(batchAnswer.unavailable);
     } catch (err) {
       if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
@@ -138,6 +140,7 @@ export default function StudentProgramScreen() {
     else router.replace(user?.role === "student" ? "/(student)" : "/welcome");
   };
   const openTeacher = (teacherId: number) => router.push(`/(student)/teacher/${teacherId}`);
+  const backToTeacher = (teacherId: number) => router.replace(`/(student)/teacher/${teacherId}`);
   const shareProgram = async () => {
     if (!program) return;
     const url = Platform.OS === "web" && typeof window !== "undefined"
@@ -217,11 +220,13 @@ export default function StudentProgramScreen() {
         onBack={back}
         onShare={() => void shareProgram()}
         onOpenTeacher={openTeacher}
-        onOpenHome={() => router.replace("/welcome")}
+        onOpenHome={() => router.push("/welcome")}
+        onBackToTeacher={() => backToTeacher(program.teacher.id)}
         publicVisitor={!user}
         testEnrollment={testEnrollment}
         testEnrollmentUnavailable={testEnrollmentUnavailable}
         batches={batches}
+        batchAvailability={batchAvailability}
         batchesUnavailable={batchesUnavailable}
       />
     </SafeAreaView>
