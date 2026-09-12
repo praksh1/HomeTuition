@@ -24,7 +24,10 @@ or transcription enabled. This is room isolation, NOT complete cost controls or 
 28 focused checks passed, including actual Daily source bundled and executed in an isolated VM
 with recorded HTTP responses. Covers production defaults, isolated private creation/token/evidence,
 bad namespace, missing key, public room, failed repair, collision, empty/failed token. No real HTTP.
-API typecheck and all 534 API unit tests passed. Full CI and real provider checks still pending.
+API typecheck and all 534 API unit tests passed. Full CI 34667743528 SUCCESS at 388ad4e:
+4-workspace typecheck, API/app units, ratchet, program API 601, batch bookings 40, video contract 42,
+provider evidence 125, teacher grants 26, student access 108, class setup UI 75, booking UI 24.
+Actual Daily media, account allowance and real-device checks remain unverified. Not deployed.
 An initial apply_patch attempt used delete/add on the same file and was rejected atomically;
 reissued as normal updates. No user file was lost.
 

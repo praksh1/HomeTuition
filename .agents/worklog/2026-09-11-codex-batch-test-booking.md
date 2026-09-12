@@ -4,7 +4,8 @@
 - Agent: Codex
 - Branch: codex/batch-test-booking
 - Base commit: 94719a7
-- Status: in progress — isolated on `codex/batch-test-booking`; not deployed or activated
+- Status: booking code deployed to preview at 8b704a6; fixed window configured. Individual
+  teacher/student grants still need activation. Actual video not enabled. Production unchanged.
 
 ## Requested
 
@@ -116,3 +117,22 @@ operator grants, then verify the actual preview journey. Real video requires iso
 confirmed account allowance/credentials; do not buy or promise free unlimited calls. New-batch
 homework/group chat adapter, real checkout, receipt reconciliation, commission and payouts remain
 unbuilt. Existing Monthly homework/chat untouched. No automatic paid conversion at pilot expiry.
+
+## Final preview deployment and required user action
+
+- Retry workflow 34667435528 SUCCESS; preview Worker d11cddf5-a9d9-42d8-ba22-1582b4831b7e.
+  Entry entry-b2076903cdceb57105406eea20f063ae.js. First cache-verification attempt saw the
+  previous bundle; workflow retried successfully, not an unverified upload.
+- Staging API active deployment f4e4e281-dbc2-419e-b6c9-5ce35b999b08 corresponds to 8b704a6;
+  only test harness/docs changed from the successfully boot-verified 57c2bcd.
+- Refreshed the actual signed-in teacher's /teaching-classes page: earlier-test-tools collapsed,
+  each published class shows no-charge test lesson controls. Clicked IELTS Open test lessons:
+  server correctly refused because teacher test grant is inactive. No booking was made.
+- Asked owner to sign in as preview operator so both known synthetic test accounts can receive
+  grants through Jan 10. Do not ask for passwords, reset them, change approval status, or pretend
+  account access is ready before the grant succeeds. Stage teacher is user1, Staging Review Teacher.
+- Separately prepared video isolation at codex/preview-video-isolation (388ad4e), NOT deployed or
+  enabled. Owner asked to sign into Daily dashboard to verify allowance. See separate worklog.
+- Next: operator sign-in -> extend the two grants -> actual browser student booking/teacher lesson
+  walkthrough. Daily account confirmation + isolated deployment required before real call proof.
+  No paid commerce/commission payouts/new group-homework adapter is represented as complete.
