@@ -29,10 +29,17 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = []; page.on("pageerror", (e) => errors.push(String(e)));
     await page.goto(base);
-    await page.getByRole("button", { name: "Book for testing", exact: true }).click();
-    const confirm = page.getByRole("button", { name: "Confirm test booking — no charge", exact: true });
+    await page.getByRole("button", { name: "Try test checkout", exact: true }).click();
+    await page.getByRole("button", { name: "Cancel checkout", exact: true }).click();
+    check(`${width}: cancel writes nothing`, await page.evaluate(() => !window.bookingRequests));
+    await page.getByRole("button", { name: "Try test checkout", exact: true }).click();
+    await page.getByRole("button", { name: "Try declined payment", exact: true }).click();
+    await page.getByText("Test payment declined. No money moved and no place was booked. You can try again.", { exact: true }).waitFor();
+    check(`${width}: decline has no booked message`, !(await page.locator("body").innerText()).includes("Test place booked"));
+    await page.getByRole("button", { name: "Try test checkout", exact: true }).click();
+    const confirm = page.getByRole("button", { name: "Simulate successful payment", exact: true });
     await confirm.waitFor();
-    check(`${width}: quote says no charge and listed value`, (await page.locator("body").innerText()).includes("2 lessons · No charge") && (await page.locator("body").innerText()).includes("NPR 6,000"));
+    check(`${width}: checkout clearly says pretend and quoted value`, (await page.locator("body").innerText()).includes("Pretend payment only") && (await page.locator("body").innerText()).includes("NPR 6,000"));
     check(`${width}: no wallet or password fields`, await page.locator("input").count() === 0);
     const box = await confirm.boundingBox();
     check(`${width}: confirmation is thumb sized`, box.height >= 44 && box.width >= 44);
@@ -41,7 +48,8 @@ try {
     await page.getByRole("button", { name: "Open lesson 1", exact: true }).waitFor();
     check(`${width}: explicit test confirmation`, (await page.locator("body").innerText()).includes("Test place booked — no payment taken."));
     check(`${width}: Nepal calendar and timezone`, (await page.locator("body").innerText()).includes("2083") && (await page.locator("body").innerText()).includes("16:00 Nepal time"));
-    check(`${width}: only quote key is submitted`, await page.evaluate(() => JSON.stringify(window.bookingPayload.body)) === JSON.stringify({ quoteKey: "a".repeat(64) }));
+    check(`${width}: only quote and simulated outcome submitted, never client price`, await page.evaluate(() => JSON.stringify(window.bookingPayload.body)) === JSON.stringify({ quoteKey: "a".repeat(64), gateway: "fadko_test", outcome: "success" }));
+    check(`${width}: receipt shows allocated money, not earnings`, (await page.locator("body").innerText()).includes("Teacher allocation: NPR 4,200") && (await page.locator("body").innerText()).includes("Not earned or paid out"));
     await page.getByRole("button", { name: "Open lesson 1", exact: true }).click();
     check(`${width}: existing session page, no time bypass`, await page.evaluate(() => JSON.stringify(window.lastNavigation)) === JSON.stringify({ pathname: "/session/[id]", params: { id: "125" } }));
     check(`${width}: no horizontal overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -49,13 +57,13 @@ try {
     await page.goto(base + "?teacher");
     await page.getByRole("button", { name: "Open test lessons", exact: true }).click();
     await page.getByText("Waiting for a test student", { exact: true }).waitFor();
-    check(`${width}: teacher never gets student confirm control`, await page.getByRole("button", { name: "Confirm test booking — no charge", exact: true }).count() === 0);
+    check(`${width}: teacher never gets student confirm control`, await page.getByRole("button", { name: "Simulate successful payment", exact: true }).count() === 0);
     await page.goto(base + "?stale");
-    await page.getByRole("button", { name: "Book for testing", exact: true }).click();
-    await page.getByRole("button", { name: "Confirm test booking — no charge", exact: true }).click();
+    await page.getByRole("button", { name: "Try test checkout", exact: true }).click();
+    await page.getByRole("button", { name: "Simulate successful payment", exact: true }).click();
     await page.getByText("Test booking unavailable", { exact: true }).waitFor();
     check(`${width}: failed booking never claims success`, !(await page.locator("body").innerText()).includes("Test place booked"));
-    check(`${width}: stale quote cannot be resubmitted without refresh`, await page.getByRole("button", { name: "Confirm test booking — no charge", exact: true }).count() === 0);
+    check(`${width}: stale quote cannot be resubmitted without refresh`, await page.getByRole("button", { name: "Simulate successful payment", exact: true }).count() === 0);
     check(`${width}: no browser exceptions`, errors.length === 0);
     await page.close();
   }

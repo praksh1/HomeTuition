@@ -17,6 +17,8 @@ interface TestBooking {
   quoteKey: string;
   offerLessons: Array<{ position: number; startsAt: string; durationMinutes: number }>;
   lessons: Array<{ position: number; sessionId: number; startsAt: string; durationMinutes: number }>;
+  receipts: Array<{ reference: string; grossNpr: number; teacherNpr: number; fadkoNpr: number;
+    allocations: Array<{ position: number; grossNpr: number; teacherNpr: number; fadkoNpr: number }> }>;
 }
 
 /** This deliberately never imports PaymentSheet: rehearsal must not ask for a wallet/PIN. */
@@ -28,12 +30,13 @@ export function BatchTestPanel({ batchId, teacher = false, onBooked }: { batchId
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [datesOpen, setDatesOpen] = useState(false);
+  const [allocationOpen, setAllocationOpen] = useState<string | null>(null);
   const gate = useRef(false);
-  async function request(confirm = false) {
+  async function request(confirm = false, outcome: "success" | "declined" = "success") {
     if (gate.current || (confirm && !result)) return;
     gate.current = true; setBusy(true); setError("");
     try {
-      const next = confirm ? await apiPost<TestBooking>(`/batch-tests/${batchId}`, { quoteKey: result!.quoteKey }) : await apiGet<TestBooking>(`/batch-tests/${batchId}`);
+      const next = confirm ? await apiPost<TestBooking>(`/batch-tests/${batchId}`, { quoteKey: result!.quoteKey, gateway: "fadko_test", outcome }) : await apiGet<TestBooking>(`/batch-tests/${batchId}`);
       setResult(next);
       if (confirm && next.booked) onBooked?.();
     } catch (e) {
@@ -48,19 +51,28 @@ export function BatchTestPanel({ batchId, teacher = false, onBooked }: { batchId
   };
   return <View testID={`batch-test-${batchId}`} style={{ gap: space.sm }}>
     <Text style={[t.caption, { color: colors.mutedForeground }]}>Private testing · no money collected</Text>
-    <ProgramButton label={busy ? "Checking…" : result ? "Refresh test access" : teacher ? "Open test lessons" : "Book for testing"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />
+    <ProgramButton label={busy ? "Checking…" : result ? "Refresh test access" : teacher ? "Open test lessons" : "Try test checkout"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />
     {error ? <ProgramNotice title="Test booking unavailable" body={error} tone="stopped" /> : null}
     {result?.isTeacher && !result.lessons.length ? <ProgramNotice title="Waiting for a test student" body="A student with test access must book this class first. Its lesson links will then appear here. Refresh after they book." /> : null}
-    {result && !result.isTeacher && !result.booked ? <ProgramNotice title="Confirm your test place">
-      <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>{result.quote.remainingLessonCount} lessons · No charge</Text>
-      {result.quote.amountNpr !== null ? <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Listed value: NPR {result.quote.amountNpr.toLocaleString("en-NP")}. This is not a payment or receipt.</Text> : null}
+    {result && !result.isTeacher && !result.booked ? <ProgramNotice title="Fadko test checkout">
+      <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>{result.quote.remainingLessonCount} lessons · NPR {result.quote.amountNpr?.toLocaleString("en-NP") ?? "—"}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>Pretend payment only. No wallet, card or PIN needed. No real money moves.</Text>
       {result.offerLessons[0] ? <Text style={[t.callout, numeric, { color: colors.foreground }]}>First included lesson: {dateLabel(result.offerLessons[0].startsAt)}</Text> : null}
       <ProgramButton emphasis="quiet" label={datesOpen ? "Hide included dates" : "Check included dates"} onPress={() => setDatesOpen(!datesOpen)} />
       {datesOpen ? result.offerLessons.map((lesson) => <Text key={lesson.position} style={[t.caption, numeric, { color: colors.foreground }]}>Lesson {lesson.position + 1} · {dateLabel(lesson.startsAt)} · {lesson.durationMinutes} min</Text>) : null}
       <Text style={[t.callout, { color: colors.foreground }]}>Confirming reserves your test place and locks these class details. Past lessons are not included.</Text>
-      <ProgramButton emphasis="primary" label="Confirm test booking — no charge" disabled={busy || result.quote.status === "closed" || result.quote.amountNpr === null} onPress={() => void request(true)} />
+      <ProgramButton emphasis="primary" label="Simulate successful payment" disabled={busy || result.quote.status === "closed" || result.quote.amountNpr === null} onPress={() => void request(true)} />
+      <ProgramButton emphasis="quiet" label="Try declined payment" disabled={busy || result.quote.status === "closed" || result.quote.amountNpr === null} onPress={() => void request(true, "declined")} />
+      <ProgramButton emphasis="quiet" label="Cancel checkout" disabled={busy} onPress={() => { setResult(null); setDatesOpen(false); }} />
     </ProgramNotice> : null}
     {result?.booked ? <Text accessibilityLiveRegion="polite" style={[t.bodyStrong, { color: colors.foreground }]}>Test place booked — no payment taken.</Text> : null}
+    {result?.receipts?.map(receipt => <ProgramNotice key={receipt.reference} title={`TEST receipt · ${receipt.reference}`}>
+      <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>Simulated payment: NPR {receipt.grossNpr.toLocaleString("en-NP")}</Text>
+      <Text style={[t.callout, numeric, { color: colors.foreground }]}>Teacher allocation: NPR {receipt.teacherNpr.toLocaleString("en-NP")} · Fadko allocation: NPR {receipt.fadkoNpr.toLocaleString("en-NP")}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>Held in the test ledger. Not earned or paid out. Real payment: NPR 0. Refund and payout rehearsal will be added separately.</Text>
+      <ProgramButton emphasis="quiet" label={allocationOpen === receipt.reference ? "Hide lesson breakdown" : "Show lesson breakdown"} onPress={() => setAllocationOpen(allocationOpen === receipt.reference ? null : receipt.reference)} />
+      {allocationOpen === receipt.reference ? receipt.allocations.map(a => <Text key={a.position} style={[t.caption, numeric, { color: colors.mutedForeground }]}>Lesson {a.position + 1}: NPR {a.grossNpr} · teacher {a.teacherNpr} / Fadko {a.fadkoNpr}</Text>) : null}
+    </ProgramNotice>)}
     {result?.lessons.length ? <>
       <Text style={[t.caption, { color: colors.mutedForeground }]}>Open a lesson to see its join time. Doors open 10 minutes before the scheduled start.</Text>
       {result.lessons.map((lesson) => <View key={lesson.sessionId} style={{ gap: space.xxs }}>

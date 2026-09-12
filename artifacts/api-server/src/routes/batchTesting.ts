@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { Router } from "express";
 import { db, learningProgramsTable, learningProgramBatchesTable, teacherProfilesTable, usersTable,
   userOnboardingTable, testTeachingGrantsTable, testStudentGrantsTable, batchTestContractsTable,
-  batchTestBookingsTable, batchTestSessionsTable, sessionsTable, sessionEnrollmentsTable, testClassesTable } from "@workspace/db";
-import { requireAuth } from "../middlewares/requireAuth";
+  batchTestBookingsTable, batchTestPaymentsTable, batchTestSessionsTable, sessionsTable, sessionEnrollmentsTable, testClassesTable } from "@workspace/db";
+import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { emailVerifiedFor } from "../lib/accountSecurity";
 import { testPilotDeadline } from "../lib/testPilot";
 import { testTeachingAllowed } from "../lib/testTeachingAccess";
@@ -14,8 +14,24 @@ import { classJoiningPreview } from "../lib/classJoining";
 import { assertTeacherSchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
 import { recordActivity } from "../lib/activityLog";
 import { notifyInApp } from "../lib/notify";
+import { simulatedBatchReceipt, type SimulatedBatchReceipt } from "../lib/batchTestPayment";
 
 const router = Router();
+// Reading history remains possible after the pilot closes; this never grants classroom access.
+router.get("/admin/batch-test-payments", requireAuth, requireAdmin, async (_req, res, next) => {
+  try {
+    const rows = await db.select({ receipt: batchTestPaymentsTable.receipt, recordedAt: batchTestPaymentsTable.createdAt,
+      batchId: batchTestBookingsTable.batchId, studentName: usersTable.name, snapshot: batchTestContractsTable.snapshot })
+      .from(batchTestPaymentsTable).innerJoin(batchTestBookingsTable, eq(batchTestBookingsTable.id, batchTestPaymentsTable.bookingId))
+      .innerJoin(batchTestContractsTable, eq(batchTestContractsTable.batchId, batchTestBookingsTable.batchId))
+      .innerJoin(usersTable, eq(usersTable.id, batchTestBookingsTable.studentId))
+      .orderBy(desc(batchTestPaymentsTable.bookingId)).limit(50);
+    res.setHeader("Cache-Control", "no-store").json({ testOnly: true, receipts: rows.map(r => ({
+      ...r.receipt as SimulatedBatchReceipt, recordedAt: r.recordedAt.toISOString(), batchId: r.batchId,
+      studentName: r.studentName, classTitle: readBatchSnapshot(r.snapshot)?.programTitle ?? "Class title unavailable",
+    })) });
+  } catch (error) { next(error); }
+});
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 class Refusal extends Error { constructor(readonly status: number, message: string) { super(message); } }
 function pilot() {
@@ -57,7 +73,7 @@ async function lessonLinks(tx: Tx, batchId: number, viewerId: number, isTeacher:
   return rows.filter((r) => isTeacher || enrolled.some((e) => e.sessionId === r.session.id)).map((r) => ({ position: r.position, sessionId: r.session.id, startsAt: r.session.date.toISOString(), durationMinutes: r.session.duration }));
 }
 
-async function run(batchId: number, viewerId: number, confirm?: string) {
+async function run(batchId: number, viewerId: number, confirm?: string, outcome?: "success" | "declined") {
   const until = pilot();
   const initial = await readOffer(batchId);
   return db.transaction(async (tx) => {
@@ -77,6 +93,7 @@ async function run(batchId: number, viewerId: number, confirm?: string) {
     if (confirm !== undefined && !already) {
       if (quote.status === "closed" || quote.amountNpr === null || Date.now() >= Date.parse(snapshot.enrollmentClosesAt)) throw new Refusal(409, "Joining has closed for these dates.");
       if (confirm !== quoteKey) throw new Refusal(409, "The dates or price changed. Review the current details before confirming.");
+      if (outcome === "declined") throw new Refusal(402, "Test payment declined. No money moved and no place was booked. You can try again.");
       const seats = await tx.select({ id: batchTestBookingsTable.id }).from(batchTestBookingsTable).where(eq(batchTestBookingsTable.batchId, batchId));
       if (seats.length >= snapshot.capacity) throw new Refusal(409, "This test class is full.");
       const selected = snapshot.lessons.filter((l) => quote.lessonPositions.includes(l.position));
@@ -93,7 +110,9 @@ async function run(batchId: number, viewerId: number, confirm?: string) {
         await assertTeacherSchedule(tx, program.teacherId, selected.map((l) => ({ startsAt: new Date(l.startsAt), durationMinutes: l.durationMinutes, label: `Lesson ${l.position + 1}` })), { batchId });
         await tx.insert(batchTestContractsTable).values({ batchId, snapshot, teacherGrantId: access.teacherGrant.id });
       }
-      await tx.insert(batchTestBookingsTable).values({ batchId, studentId: viewerId, studentGrantId: access.studentGrant!.id, quote });
+      const [booking] = await tx.insert(batchTestBookingsTable).values({ batchId, studentId: viewerId, studentGrantId: access.studentGrant!.id, quote }).returning();
+      await tx.insert(batchTestPaymentsTable).values({ bookingId: booking!.id,
+        receipt: simulatedBatchReceipt(booking!.id, quote.amountNpr, quote.lessonPositions) });
       for (const lesson of selected) {
         const [mapped] = await tx.select().from(batchTestSessionsTable).where(and(eq(batchTestSessionsTable.batchId, batchId), eq(batchTestSessionsTable.position, lesson.position)));
         let sessionId = mapped?.sessionId;
@@ -115,7 +134,12 @@ async function run(batchId: number, viewerId: number, confirm?: string) {
       }
       pilot();
     }
+    const paymentRows = await tx.select({ receipt: batchTestPaymentsTable.receipt, recordedAt: batchTestPaymentsTable.createdAt })
+      .from(batchTestPaymentsTable).innerJoin(batchTestBookingsTable, eq(batchTestBookingsTable.id, batchTestPaymentsTable.bookingId))
+      .where(and(eq(batchTestBookingsTable.batchId, batchId), ...(isTeacher ? [] : [eq(batchTestBookingsTable.studentId, viewerId)])))
+      .orderBy(asc(batchTestPaymentsTable.createdAt));
     return { testOnly: true, paymentCollectedNpr: 0, pilotEndsAt: new Date(until).toISOString(), isTeacher,
+      receipts: paymentRows.map(r => ({ ...r.receipt as SimulatedBatchReceipt, recordedAt: r.recordedAt.toISOString() })),
       teacherId: program.teacherId, classTitle: snapshot.programTitle, studentName: access.viewerName,
       offerLessons: snapshot.lessons.filter((l) => quote.lessonPositions.includes(l.position)),
       created: !already && confirm !== undefined, booked: !!already || confirm !== undefined, quote, quoteKey, lessons: await lessonLinks(tx, batchId, viewerId, isTeacher) };
@@ -127,8 +151,11 @@ router.all("/batch-tests/:id", requireAuth, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid class address." }); return; }
   if (req.method === "POST" && (typeof req.body?.quoteKey !== "string" || !/^[a-f0-9]{64}$/.test(req.body.quoteKey))) { res.status(400).json({ error: "Review the test booking before confirming." }); return; }
+  if (req.method === "POST" && (req.body?.gateway !== "fadko_test" || !["success", "declined"].includes(req.body?.outcome))) {
+    res.status(400).json({ error: "Open test checkout and choose a simulated payment result. No real payment details are needed." }); return;
+  }
   try {
-    const result = await run(id, req.user!.userId, req.method === "POST" ? req.body.quoteKey : undefined);
+    const result = await run(id, req.user!.userId, req.method === "POST" ? req.body.quoteKey : undefined, req.body?.outcome);
     if (result.created) {
       recordActivity({ userId: req.user!.userId, action: "batch.test_booked", subjectType: "learning_program_batch", subjectId: id, detail: { testOnly: true, moneyCollected: false } });
       notifyInApp(result.teacherId, { kind: "session_booked", sessionId: result.lessons[0]!.sessionId,

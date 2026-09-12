@@ -65,7 +65,7 @@ async function offer(teacher, { capacity = 2, at = Math.ceil(Date.now() / 60000)
   return { item: pub.body.item, body, id: pub.body.item.batch.id };
 }
 async function quote(id, a) { const result = await api(`/batch-tests/${id}`, a.token); assert.equal(result.status, 200, JSON.stringify(result)); return result.body; }
-const book = (id, a, key) => api(`/batch-tests/${id}`, a.token, { quoteKey: key });
+const book = (id, a, key, outcome = "success") => api(`/batch-tests/${id}`, a.token, { quoteKey: key, gateway: "fadko_test", outcome });
 async function socketAccepted(token, id) {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws?sessionId=${id}&token=${encodeURIComponent(token)}&name=Test`);
@@ -93,12 +93,22 @@ try {
   check("anonymous cannot quote", (await api(`/batch-tests/${c.id}`)).status === 401);
   check("no student grant refused", (await api(`/batch-tests/${c.id}`, outsider.token)).status === 403);
   const proposal = await quote(c.id, a);
+  check("old free-booking shortcut refused", (await api(`/batch-tests/${c.id}`, a.token, { quoteKey: proposal.quoteKey })).status === 400);
+  check("declined test payment leaves no place or financial record", (await book(c.id, a, proposal.quoteKey, "declined")).status === 402 && Number((await q("SELECT count(*) n FROM batch_test_bookings WHERE batch_id=$1", [c.id])).rows[0].n) === 0);
   check("quote is a price illustration, never a receipt", proposal.testOnly && proposal.paymentCollectedNpr === 0 && proposal.quote.amountNpr === 6000 && proposal.lessons.length === 0);
   check("invented quote refused", (await book(c.id, a, "0".repeat(64))).status === 409);
   check("teacher cannot book own class", (await book(c.id, teacher, proposal.quoteKey)).status === 403);
   const replies = await Promise.all([book(c.id, a, proposal.quoteKey), book(c.id, a, proposal.quoteKey)]);
   check("concurrent retry books exactly once", replies.every((r) => r.status === 200) && replies.filter((r) => r.body.created).length === 1);
   const booked = replies[0].body;
+  check("success returns frozen simulated 70/30 receipt", booked.receipts.length === 1 && booked.receipts[0].grossNpr === 6000 && booked.receipts[0].teacherNpr === 4200 && booked.receipts[0].fadkoNpr === 1800 && booked.receipts[0].actualMoneyCollectedNpr === 0);
+  check("concurrent retry creates only one capture", Number((await q("SELECT count(*) n FROM batch_test_payments p JOIN batch_test_bookings b ON b.id=p.booking_id WHERE b.batch_id=$1", [c.id])).rows[0].n) === 1);
+  check("teacher can read simulated ledger for own class", (await quote(c.id, teacher)).receipts.length === 1);
+  check("operator sees simulated capture", (await api("/admin/batch-test-payments", operatorToken)).body.receipts.some(r => r.reference === booked.receipts[0].reference && r.grossNpr === 6000));
+  check("student cannot read operator ledger", (await api("/admin/batch-test-payments", a.token)).status === 403);
+  check("teacher cannot read operator ledger", (await api("/admin/batch-test-payments", teacher.token)).status === 403);
+  check("another student cannot read first student's receipt", (await quote(c.id, b)).receipts.length === 0);
+  await assert.rejects(q("UPDATE batch_test_payments SET receipt='{}' WHERE booking_id=(SELECT id FROM batch_test_bookings WHERE batch_id=$1 AND student_id=$2)", [c.id, a.user.id]), /SIMULATED_RECEIPT_IMMUTABLE/); passed++; console.log("PASS simulated capture cannot be rewritten");
   check("real lesson IDs materialised", booked.booked && booked.lessons.length === 2 && booked.lessons.every((l) => Number.isInteger(l.sessionId)));
   let rows = (await q("SELECT e.*,s.enrolled_count,s.price FROM session_enrollments e JOIN sessions s ON s.id=e.session_id JOIN batch_test_sessions bt ON bt.session_id=s.id WHERE bt.batch_id=$1", [c.id])).rows;
   check("no charged/paid/reference rows or duplicate enrolments", rows.length === 2 && rows.every((r) => r.payment_status === "test" && r.payment_method === "test_access" && r.payment_reference === null && r.enrolled_count === 1 && r.price === 0));

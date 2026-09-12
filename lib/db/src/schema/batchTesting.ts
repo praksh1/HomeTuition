@@ -27,3 +27,10 @@ export const batchTestBookingsTable = pgTable("batch_test_bookings", {
   quote: jsonb("quote").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("batch_test_bookings_student_idx").on(t.batchId, t.studentId)]);
+
+/** Immutable simulated capture. Never included in real receipts, revenue or payouts. */
+export const batchTestPaymentsTable = pgTable("batch_test_payments", {
+  bookingId: integer("booking_id").primaryKey().references(() => batchTestBookingsTable.id, { onDelete: "restrict" }),
+  receipt: jsonb("receipt").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

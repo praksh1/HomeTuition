@@ -8,6 +8,7 @@ import { readingWidth } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
+import { BatchTestLedger } from "@/components/classes/BatchTestLedger";
 import {
   orderedProgramCommerceHistory,
   programCommerceEventLabel,
@@ -113,6 +114,7 @@ export default function ProgramCommerceDesk() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
       <ScrollView contentContainerStyle={{ width: "100%", maxWidth: readingWidth, alignSelf: "center", padding: gutter, paddingBottom: space.huge * 2, gap: space.xl }}>
+        <BatchTestLedger />
         <View style={{ gap: space.xxs }}>
           <Text style={[t.title1, { color: colors.foreground }]}>Program rehearsal</Text>
           <Text style={[t.body, { color: colors.mutedForeground }]}>Practise enrolment, lesson holds and settlement before a payment provider is connected.</Text>

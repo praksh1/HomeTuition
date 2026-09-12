@@ -1,6 +1,10 @@
 # Prelaunch batch test pilot (11 Sep2026)
 
 Owner clarified there are no established paying users: this is private prelaunch testing.
+Latest clarification: the trial must use a pretend checkout, not simply free enrollment.
+`codex/batch-simulated-checkout` adds separate immutable TEST captures and frozen70/30 lesson
+allocations, never real paid enrollments or earnings. See Sep11 simulated-class-checkout worklog
+for exact deployment state. Refund simulation remains future; do not backfill old free bookings.
 Do not repeat earlier memory claims that the site is taking real payments as a verified fact.
 Keep financial/security boundaries anyway; a public URL is not a license to invent paid receipts.
 

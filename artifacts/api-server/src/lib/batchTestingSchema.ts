@@ -15,6 +15,14 @@ export const BATCH_TEST_DDL = [
     student_grant_id integer NOT NULL, quote jsonb NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE UNIQUE INDEX IF NOT EXISTS batch_test_bookings_student_idx ON batch_test_bookings(batch_id, student_id)`,
+  `CREATE TABLE IF NOT EXISTS batch_test_payments (
+    booking_id integer PRIMARY KEY REFERENCES batch_test_bookings(id) ON DELETE RESTRICT,
+    receipt jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE OR REPLACE FUNCTION protect_batch_test_payment() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'SIMULATED_RECEIPT_IMMUTABLE' USING ERRCODE='P0001'; END $$`,
+  `DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='batch_test_payment_immutable' AND tgrelid='batch_test_payments'::regclass) THEN
+    CREATE TRIGGER batch_test_payment_immutable BEFORE UPDATE OR DELETE ON batch_test_payments
+    FOR EACH ROW EXECUTE FUNCTION protect_batch_test_payment(); END IF; END $$`,
   // Trigger checks are the backstop for older editors and concurrent lifecycle routes. No
   // existing row is changed. Without a test contract, these functions return immediately.
   `CREATE OR REPLACE FUNCTION protect_batch_test_promise() RETURNS trigger LANGUAGE plpgsql AS $$
