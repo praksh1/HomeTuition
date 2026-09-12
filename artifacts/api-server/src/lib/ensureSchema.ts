@@ -1600,9 +1600,9 @@ export async function ensureLearningProgramTables(): Promise<void> {
   } catch (err) {
     logger.warn(
       { err },
-      "could not ensure the learning program tables; run `pnpm run db:push`. " +
-        "Everything else works — classes, booking and the classroom are untouched, and only the " +
-        "program builder and the public program pages are affected.",
+      "could not ensure class-planning/test-booking storage. Do not activate the booking pilot; " +
+        "inspect the schema error and repair the additive boot guard before release. " +
+        "Class planning, schedule checks and booking may be unavailable until storage is ready.",
     );
   }
 }

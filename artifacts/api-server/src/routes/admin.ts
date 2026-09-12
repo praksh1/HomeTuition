@@ -47,6 +47,7 @@ import {
 import { emailVerifiedFor } from "../lib/accountSecurity";
 import { isTierKey } from "../lib/tierLimits";
 import { DEFAULT_GRANT_DAYS, MAX_GRANT_DAYS, liveTestGrant, testTeachingAllowed } from "../lib/testTeachingAccess";
+import { testPilotDeadline, batchTestPilotEndsAt } from "../lib/testPilot";
 import {
   DEFAULT_STUDENT_GRANT_DAYS,
   MAX_STUDENT_GRANT_DAYS,
@@ -864,6 +865,7 @@ router.get("/admin/users/:id", async (req, res): Promise<void> => {
     */
     testAccess: {
       enabled: testTeachingAllowed(),
+      pilotEndsAt: batchTestPilotEndsAt(),
       grant: profile ? await liveTestGrant(id) : null,
     },
     /*
@@ -875,6 +877,7 @@ router.get("/admin/users/:id", async (req, res): Promise<void> => {
     */
     testStudentAccess: {
       enabled: testStudentAllowed(),
+      pilotEndsAt: batchTestPilotEndsAt(),
       grant: user.role === "student" ? await liveTestStudentGrant(id) : null,
     },
   });
@@ -904,6 +907,10 @@ router.post("/admin/teachers/:userId/test-access", async (req, res): Promise<voi
   }
 
   const { tier, reason, days } = req.body as { tier?: string; reason?: string; days?: number };
+  const pilotUntil = req.body.throughPilot === true ? testPilotDeadline() : null;
+  if (req.body.throughPilot !== undefined && (req.body.throughPilot !== true || !pilotUntil)) {
+    res.status(400).json({ error: "A fixed test period must be configured before granting access through it." }); return;
+  }
   const text = typeof reason === "string" ? reason.trim() : "";
   if (!text) {
     res.status(400).json({ error: "Say why this account needs test access. An unexplained grant cannot be audited." });
@@ -938,7 +945,7 @@ router.post("/admin/teachers/:userId/test-access", async (req, res): Promise<voi
     return;
   }
 
-  const validUntil = new Date(Date.now() + length * 24 * 60 * 60_000);
+  const validUntil = new Date(pilotUntil ?? Math.min(Date.now() + length * 24 * 60 * 60_000, testPilotDeadline() ?? Infinity));
   // Any grant still running is closed first, so a teacher never holds two and "revoke" always
   // means one row rather than however many happen to exist.
   await db
@@ -956,7 +963,7 @@ router.post("/admin/teachers/:userId/test-access", async (req, res): Promise<voi
     action: "admin.test_teaching.granted",
     subjectType: "user",
     subjectId: userId,
-    detail: { tier, reason: text, validUntil: validUntil.toISOString(), days: length },
+    detail: { tier, reason: text, validUntil: validUntil.toISOString(), days: pilotUntil ? null : length, throughPilot: !!pilotUntil },
     ip: callerIp(req),
   });
 
@@ -1016,6 +1023,10 @@ router.post("/admin/students/:userId/test-access", async (req, res): Promise<voi
   }
 
   const { reason, days } = req.body as { reason?: string; days?: number };
+  const pilotUntil = req.body.throughPilot === true ? testPilotDeadline() : null;
+  if (req.body.throughPilot !== undefined && (req.body.throughPilot !== true || !pilotUntil)) {
+    res.status(400).json({ error: "A fixed test period must be configured before granting access through it." }); return;
+  }
   const text = typeof reason === "string" ? reason.trim() : "";
   if (!text) {
     res.status(400).json({ error: "Say why this account needs test access. An unexplained grant cannot be audited." });
@@ -1065,7 +1076,7 @@ router.post("/admin/students/:userId/test-access", async (req, res): Promise<voi
     return;
   }
 
-  const validUntil = new Date(Date.now() + length * 24 * 60 * 60_000);
+  const validUntil = new Date(pilotUntil ?? Math.min(Date.now() + length * 24 * 60 * 60_000, testPilotDeadline() ?? Infinity));
   // Any grant still running is closed first, so a student never holds two and "revoke" always
   // means one row rather than however many happen to exist.
   await db
@@ -1083,7 +1094,7 @@ router.post("/admin/students/:userId/test-access", async (req, res): Promise<voi
     action: "admin.test_student.granted",
     subjectType: "user",
     subjectId: userId,
-    detail: { reason: text, validUntil: validUntil.toISOString(), days: length },
+    detail: { reason: text, validUntil: validUntil.toISOString(), days: pilotUntil ? null : length, throughPilot: !!pilotUntil },
     ip: callerIp(req),
   });
 

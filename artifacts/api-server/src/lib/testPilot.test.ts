@@ -10,6 +10,7 @@ test("new pilot needs a fixed, bounded UTC end date", () => {
   const deadline = "2027-01-09T00:00:00Z";
   assert.equal(testPilotDeadline({ TEST_ACCESS_UNTIL: deadline }, now), Date.parse(deadline));
   assert.equal(testPilotDeadline({ TEST_ACCESS_UNTIL: deadline }, Date.parse(deadline)), null);
+  assert.equal(testPilotDeadline({ TEST_ACCESS_UNTIL: "2027-02-30T00:00:00Z" }, Date.parse("2027-02-01T00:00:00Z")), null);
 });
 test("optional deadline does not silently open or extend existing test access", () => {
   assert.equal(testPilotAllowsExistingAccess({}, now), true);

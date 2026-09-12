@@ -13,6 +13,7 @@ import { readBatchSnapshot } from "../lib/programBatches";
 import { classJoiningPreview } from "../lib/classJoining";
 import { assertTeacherSchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
 import { recordActivity } from "../lib/activityLog";
+import { notifyInApp } from "../lib/notify";
 
 const router = Router();
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -37,7 +38,7 @@ async function eligibility(tx: Tx, teacherId: number, viewerId: number) {
   }
   const [teacherGrant] = await tx.select().from(testTeachingGrantsTable).where(and(eq(testTeachingGrantsTable.teacherId, teacherId), isNull(testTeachingGrantsTable.revokedAt), gt(testTeachingGrantsTable.validUntil, sql`now()`))).for("share");
   if (!teacherGrant) throw new Refusal(403, "An operator must enable this teacher's test access first.");
-  if (viewerId === teacherId) return { teacher, teacherGrant, studentGrant: null };
+  if (viewerId === teacherId) return { teacher, teacherGrant, studentGrant: null, viewerName: teacher.name };
   // Serializes two different batch bookings by the same student before checking their timetable.
   const [viewer] = await tx.select().from(usersTable).where(eq(usersTable.id, viewerId)).for("update");
   const [onboarding] = await tx.select().from(userOnboardingTable).where(eq(userOnboardingTable.userId, viewerId));
@@ -46,7 +47,7 @@ async function eligibility(tx: Tx, teacherId: number, viewerId: number) {
   }
   const [studentGrant] = await tx.select().from(testStudentGrantsTable).where(and(eq(testStudentGrantsTable.studentId, viewerId), isNull(testStudentGrantsTable.revokedAt), gt(testStudentGrantsTable.validUntil, sql`now()`))).for("share");
   if (!studentGrant) throw new Refusal(403, "An operator must enable your student test access first.");
-  return { teacher, teacherGrant, studentGrant };
+  return { teacher, teacherGrant, studentGrant, viewerName: viewer.name };
 }
 async function lessonLinks(tx: Tx, batchId: number, viewerId: number, isTeacher: boolean) {
   const rows = await tx.select({ position: batchTestSessionsTable.position, session: sessionsTable }).from(batchTestSessionsTable)
@@ -115,6 +116,7 @@ async function run(batchId: number, viewerId: number, confirm?: string) {
       pilot();
     }
     return { testOnly: true, paymentCollectedNpr: 0, pilotEndsAt: new Date(until).toISOString(), isTeacher,
+      teacherId: program.teacherId, classTitle: snapshot.programTitle, studentName: access.viewerName,
       offerLessons: snapshot.lessons.filter((l) => quote.lessonPositions.includes(l.position)),
       created: !already && confirm !== undefined, booked: !!already || confirm !== undefined, quote, quoteKey, lessons: await lessonLinks(tx, batchId, viewerId, isTeacher) };
   });
@@ -127,7 +129,12 @@ router.all("/batch-tests/:id", requireAuth, async (req, res, next) => {
   if (req.method === "POST" && (typeof req.body?.quoteKey !== "string" || !/^[a-f0-9]{64}$/.test(req.body.quoteKey))) { res.status(400).json({ error: "Review the test booking before confirming." }); return; }
   try {
     const result = await run(id, req.user!.userId, req.method === "POST" ? req.body.quoteKey : undefined);
-    if (result.created) recordActivity({ userId: req.user!.userId, action: "batch.test_booked", subjectType: "learning_program_batch", subjectId: id, detail: { testOnly: true, moneyCollected: false } });
+    if (result.created) {
+      recordActivity({ userId: req.user!.userId, action: "batch.test_booked", subjectType: "learning_program_batch", subjectId: id, detail: { testOnly: true, moneyCollected: false } });
+      notifyInApp(result.teacherId, { kind: "session_booked", sessionId: result.lessons[0]!.sessionId,
+        topic: result.classTitle, fromUserId: req.user!.userId, fromName: result.studentName,
+        amount: 0, testBooking: true, at: new Date().toISOString() });
+    }
     res.setHeader("Cache-Control", "no-store").json(result);
   } catch (err) {
     if (err instanceof Refusal) { res.status(err.status).json({ error: err.message }); return; }
