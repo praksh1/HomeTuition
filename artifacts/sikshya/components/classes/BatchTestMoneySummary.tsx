@@ -5,12 +5,13 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
 import {
-  participantReceiptStatus,
+  participantMoneyStatement,
   participantTestTotals,
   testReceiptNepalTime,
+  type ParticipantMoneyStatementRow,
   type ParticipantTestReceipt,
 } from "@/utils/batchTestMoney";
-import { ProgramButton, ProgramCardShell, ProgramChip, ProgramNotice } from "../programs/ProgramPieces";
+import { ProgramButton, ProgramCardShell, ProgramNotice } from "../programs/ProgramPieces";
 
 function Money({ value }: { value: number }) {
   const colors = useColors();
@@ -27,10 +28,52 @@ function Metric({ label, value }: { label: string; value: number }) {
   </View>;
 }
 
+function StatementRow({ row }: { row: ParticipantMoneyStatementRow }) {
+  const colors = useColors();
+  const { t, space, numeric } = useLayout();
+  const sign = row.direction === "credit" ? "+ " : row.direction === "debit" ? "− " : "";
+  return <View
+    testID={`money-transaction-${row.id}`}
+    accessibilityRole="summary"
+    style={{ flexDirection: "row", alignItems: "flex-start", gap: space.md, paddingVertical: space.sm, borderTopWidth: 1, borderTopColor: colors.border }}
+  >
+    <View style={{ flex: 1, minWidth: 0, gap: space.xxs }}>
+      <Text style={[t.bodyStrong, { color: colors.foreground }]}>{row.title}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>{row.detail}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>{testReceiptNepalTime(row.occurredAt)}</Text>
+    </View>
+    <View style={{ flexShrink: 0, alignItems: "flex-end", gap: space.xxs }}>
+      <Text
+        testID={`money-amount-${row.id}`}
+        style={[
+          t.bodyStrong,
+          numeric,
+          {
+            color: row.direction === "credit" ? colors.success : row.section === "pending" ? colors.mutedForeground : colors.foreground,
+            fontStyle: row.section === "pending" ? "italic" : "normal",
+            textAlign: "right",
+          },
+        ]}
+      >{sign}NPR {row.amountNpr.toLocaleString("en-NP")}</Text>
+      <Text style={[t.caption, { color: row.section === "pending" ? colors.mutedForeground : colors.foreground, fontStyle: row.section === "pending" ? "italic" : "normal", textAlign: "right" }]}>{row.status}</Text>
+    </View>
+  </View>;
+}
+
+function StatementSection({ title, rows, empty }: { title: string; rows: ParticipantMoneyStatementRow[]; empty?: string }) {
+  const colors = useColors();
+  const { t, space } = useLayout();
+  if (!rows.length && !empty) return null;
+  return <View testID={`money-statement-${title.toLowerCase()}`} style={{ gap: space.xs }}>
+    <Text accessibilityRole="header" style={[t.bodyStrong, { color: colors.foreground }]}>{title}</Text>
+    {rows.length ? rows.map((row) => <StatementRow key={row.id} row={row} />) : <Text style={[t.caption, { color: colors.mutedForeground }]}>{empty}</Text>}
+  </View>;
+}
+
 /** A read-only, participant-scoped summary of simulated payments. */
 export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" }) {
   const colors = useColors();
-  const { t, space, radius, numeric } = useLayout();
+  const { t, space, radius } = useLayout();
   const [receipts, setReceipts] = useState<ParticipantTestReceipt[] | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -50,6 +93,7 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
 
   useEffect(() => { void load(); }, []);
   const totals = useMemo(() => participantTestTotals(receipts ?? []), [receipts]);
+  const statement = useMemo(() => participantMoneyStatement(receipts ?? [], role), [receipts, role]);
   if (!busy && !error && receipts?.length === 0) return null;
 
   return <ProgramCardShell testID={`participant-test-money-${role}`}>
@@ -62,34 +106,25 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
     </ProgramNotice> : null}
     {receipts?.length ? <>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.md, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceSunk }}>
-        <Metric label={role === "teacher" ? "Expected test earnings" : "Test payments"} value={role === "teacher" ? totals.teacherShareNpr : totals.grossNpr} />
         {role === "teacher" ? <>
           <Metric label="Pending test earnings" value={totals.teacherHeldNpr} />
           <Metric label="Test-paid to you" value={totals.teacherPaidOutNpr} />
           {totals.teacherRefundedNpr > 0 ? <Metric label="Reversed after test refund" value={totals.teacherRefundedNpr} /> : null}
         </> : <>
-          <Metric label="Test refunded" value={totals.refundedGrossNpr} />
           <Metric label="Net test payments" value={Math.max(0, totals.grossNpr - totals.refundedGrossNpr)} />
+          <Metric label="Test payments" value={totals.grossNpr} />
+          <Metric label="Test refunded" value={totals.refundedGrossNpr} />
         </>}
       </View>
       <ProgramNotice title="Testing only" body={`These records show how payments and earnings will look. No real money was ${role === "teacher" ? "paid to you" : "charged"}.`} tone="neutral" />
       <View style={{ gap: space.sm }}>
-        <Text accessibilityRole="header" style={[t.bodyStrong, { color: colors.foreground }]}>History</Text>
-        {receipts.map((receipt) => <View key={receipt.bookingId} accessibilityRole="summary" style={{ gap: space.xxs, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: colors.border }}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.xs }}>
-            <Text style={[t.bodyStrong, { color: colors.foreground, flexGrow: 1, flexShrink: 1 }]}>{receipt.classTitle}</Text>
-            <ProgramChip label={participantReceiptStatus(receipt, role)} />
-          </View>
-          {role === "teacher" ? <Text style={[t.caption, { color: colors.mutedForeground }]}>Student: {receipt.studentName ?? "Name unavailable"}</Text> : null}
-          <Text style={[t.caption, { color: colors.mutedForeground }]}>{testReceiptNepalTime(receipt.recordedAt)}</Text>
-          <Text style={[t.callout, numeric, { color: colors.foreground }]}>
-            {role === "teacher" ? "Your expected test earnings" : "Test payment"}: NPR {(role === "teacher"
-              ? receipt.allocations.reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0)
-              : receipt.grossNpr ?? 0).toLocaleString("en-NP")}
-          </Text>
-          {role === "student" && (receipt.accounting.refundedGrossNpr ?? 0) > 0 ? <Text style={[t.caption, numeric, { color: colors.foreground }]}>Test refunded: NPR {(receipt.accounting.refundedGrossNpr ?? 0).toLocaleString("en-NP")}</Text> : null}
-          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Test receipt {receipt.reference}</Text>
-        </View>)}
+        <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Transaction history</Text>
+        <StatementSection title="Pending" rows={statement.pending} />
+        <StatementSection
+          title="Posted"
+          rows={statement.posted}
+          empty={role === "teacher" ? "No test earnings have been posted yet." : "No test payments have been posted yet."}
+        />
       </View>
     </> : busy ? <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading test totals…</Text> : null}
   </ProgramCardShell>;

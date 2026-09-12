@@ -266,3 +266,28 @@ the older Program test-enrolment form below to test this new batch-specific chec
   receipt history. `Held by Fadko`, Fadko fee and Fadko earnings were absent after a fresh reload.
   Student Profile > Payments & receipts is covered by the rendered route suite and remains for the
   owner's signed-in student walkthrough. Production and `main` remain untouched.
+
+### Bank-style participant statements
+
+- After passing the Profile move, the owner asked for money history to read like a bank app:
+  pending teacher earnings first, posted transactions below, and amounts in one clean right-hand
+  column. Rebuilt the shared participant history into `Pending` and `Posted` sections. Pending
+  amounts and labels are italic; credits use a leading plus, student payments use a leading minus,
+  and every amount stays in a non-wrapping right-aligned column on phone and laptop layouts.
+- Student purchases and refunds are separate transactions rather than a refund silently changing
+  the old purchase. A refund row names the class, exact lesson, receipt, refund event date in Nepal
+  time and credited amount. Teacher rows distinguish pending, under-review, reversal-pending,
+  test-paid and reversed earnings. The summary no longer double-counts an approved/refunded
+  allocation as pending earnings.
+- Extended the participant-safe API projection with only the fields these statements need: a
+  student receives their own gross per-lesson amount; a teacher receives their own share; both may
+  receive the latest state-change timestamp. No participant receives Fadko's allocation, custody or
+  earnings, and no teacher receives the student's gross payment.
+- Added pure ordering/refund/no-fabricated-zero tests and rendered statement checks at 390px and
+  1440px. Local results before commit: app units 381/0; API units 544/0; rendered checkout and
+  statements 70/0; Teaching & earnings 30/0; full four-workspace typecheck clean; design ratchet
+  unchanged at 94 hex / 282 sizes; `git diff --check` clean. Screenshots were visually inspected;
+  both participant statements were contained, readable and aligned.
+- No real payment, payout or refund occurred. No production, Daily, membership, booking authority,
+  complaint decision or operator ledger behavior changed. Preview CI/deployment and owner device
+  review are still required at this checkpoint.

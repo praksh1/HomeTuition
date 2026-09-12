@@ -20,9 +20,22 @@ function operatorReceipt() {
     history: operatorHistory, accounting: { heldGrossNpr: sum(held, "grossNpr"), teacherPaidOutNpr: sum(rows("paid_out"), "teacherNpr"),
       fadkoEarnedNpr: sum(rows("paid_out"), "fadkoNpr"), refundedGrossNpr: sum(rows("refunded"), "grossNpr"), actualMoneyMovedNpr: 0 } };
 }
+function participantReceipt() {
+  const base = { bookingId: 1, batchId: 12, reference: "TEST-BATCH-1", classTitle: "Synthetic SEE Maths",
+    recordedAt: "2026-10-01T10:15:00Z", accounting: { actualMoneyMovedNpr: 0 } };
+  return teacher()
+    ? { ...base, studentName: "Synthetic Student", allocations: [
+      { position: 0, state: "future", teacherNpr: 2100 },
+      { position: 1, state: "paid_out", teacherNpr: 2100, stateChangedAt: "2026-10-04T10:15:00Z" },
+    ], accounting: { ...base.accounting, teacherPaidOutNpr: 2100 } }
+    : { ...base, grossNpr: 6000, allocations: [
+      { position: 0, state: "future", grossNpr: 3000 },
+      { position: 1, state: "refunded", grossNpr: 3000, stateChangedAt: "2026-10-05T10:15:00Z" },
+    ], accounting: { ...base.accounting, refundedGrossNpr: 3000 } };
+}
 export async function apiGet(path) {
   if (path === "/admin/batch-test-payments") return { receipts: [operatorReceipt()] };
-  if (path === "/batch-tests/me/payments") return { receipts: [operatorReceipt()] };
+  if (path === "/batch-tests/me/payments") return { receipts: [participantReceipt()] };
   if (location.search.includes("unavailable")) throw new Error("An operator must enable your student test access first.");
   return result();
 }

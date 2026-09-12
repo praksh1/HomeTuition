@@ -61,9 +61,13 @@ function participantReceiptView(
   const full = receiptView(receipt, entries);
   const common = {
     reference: full.reference,
-    allocations: full.allocations.map((allocation) => role === "teacher"
-      ? { position: allocation.position, state: allocation.state, teacherNpr: allocation.teacherNpr }
-      : { position: allocation.position, state: allocation.state }),
+    allocations: full.allocations.map((allocation) => {
+      const latest = entries.filter((entry) => entry.position === allocation.position).at(-1);
+      const stateChangedAt = latest?.createdAt.toISOString();
+      return role === "teacher"
+        ? { position: allocation.position, state: allocation.state, teacherNpr: allocation.teacherNpr, stateChangedAt }
+        : { position: allocation.position, state: allocation.state, grossNpr: allocation.grossNpr, stateChangedAt };
+    }),
     accounting: role === "teacher"
       ? { teacherPaidOutNpr: full.accounting.teacherPaidOutNpr, actualMoneyMovedNpr: 0 }
       : { refundedGrossNpr: full.accounting.refundedGrossNpr, actualMoneyMovedNpr: 0 },
