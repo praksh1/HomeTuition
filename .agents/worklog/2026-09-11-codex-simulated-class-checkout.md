@@ -203,3 +203,30 @@ the older Program test-enrolment form below to test this new batch-specific chec
 - Production and `main` remain untouched. This is only the first Discover scaling pass; ranking,
   better search/filter controls, student dashboard/accounting and teacher dashboard/accounting are
   still future work. Staging Daily remains unresolved and no paid service was enabled.
+
+### Participant test-money summaries
+
+- The owner's walkthrough showed that student and teacher accounting existed only inside each
+  class after pressing `Refresh test access`. Added a read-only summary to the screens people
+  already use: Student > Sessions and Teacher > My classes. Students see test payment total,
+  gross held by Fadko, test refunds and the explicit `Actual money charged: NPR 0`. Teachers see
+  student test payments, gross held, their share still held, test-paid amount and the explicit
+  `Actual money received: NPR 0`. Receipt details remain collapsible so the first view stays short.
+- Added authenticated `GET /batch-tests/me/payments`. It accepts only student and teacher tokens;
+  students can read only their bookings and teachers only bookings for programs they own. It
+  synchronizes automatic settlement only for the unique batches already present in that scoped
+  result, rather than refreshing the entire rehearsal ledger whenever Sessions opens. Operators
+  receive 403 and no settlement controls were added to either participant screen.
+- Added pure participant-total arithmetic tests, API authorization/row-scope integration checks,
+  and rendered student/teacher scenes at 390px and 1440px. The rendered suite also asserts that no
+  operator lifecycle controls leak into these summaries and that the card stays within the
+  viewport. Local results: full four-workspace typecheck; API unit 544/0; app unit 375/0; rendered
+  test-payment UI 54/0; design ratchet unchanged 94 hex / 282 sizes; diff check clean.
+- Commit `b1c7f57` pushed to `codex/batch-simulated-checkout`. Safety workflow `34678316525`
+  passed every gate, including the disposable PostgreSQL role-scope proof. Preview workflow
+  `34678455814` passed and deployed the same commit. Railway staging deployment
+  `71a78bf8-a613-402d-bf1e-2115dd524911` is ACTIVE / successful with message
+  `Show participant test payment summaries`.
+- Production and `main` remain untouched. These are test-only accounting summaries: no real
+  payment, payout or refund occurred. The summary refreshes when its screen mounts; reopening the
+  screen fetches the latest derived ledger. Staging Daily remains unresolved and was not changed.
