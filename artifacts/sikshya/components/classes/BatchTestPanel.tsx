@@ -24,7 +24,7 @@ interface TestBooking {
 }
 
 /** This deliberately never imports PaymentSheet: rehearsal must not ask for a wallet/PIN. */
-export function BatchTestPanel({ batchId, teacher = false, onBooked }: { batchId: number; teacher?: boolean; onBooked?: () => void }) {
+export function BatchTestPanel({ batchId, teacher = false, accountRequired = false, returnPath, onBooked }: { batchId: number; teacher?: boolean; accountRequired?: boolean; returnPath?: string; onBooked?: () => void }) {
   const colors = useColors();
   const { t, space, numeric } = useLayout();
   const dates = useDates();
@@ -51,6 +51,16 @@ export function BatchTestPanel({ batchId, teacher = false, onBooked }: { batchId
     const date = batchDateValue(local.date)!;
     return `${dates.format(date)} · ${local.time} Nepal time`;
   };
+  if (accountRequired) return <View testID={`batch-account-${batchId}`} style={{ gap: space.sm }}>
+    <Text style={[t.bodyStrong, { color: colors.foreground }]}>Ready to join this class?</Text>
+    <Text style={[t.callout, { color: colors.mutedForeground }]}>Sign in or create a student account to continue. No booking is made from this public page.</Text>
+    <ProgramButton
+      label="Sign in to join"
+      emphasis="primary"
+      onPress={() => router.push({ pathname: "/(auth)/login", params: { role: "student", ...(returnPath ? { next: returnPath } : {}) } })}
+    />
+    <ProgramButton label="Create a student account" emphasis="secondary" onPress={() => router.push("/(auth)/register?role=student")} />
+  </View>;
   return <View testID={`batch-test-${batchId}`} style={{ gap: space.sm }}>
     <Text style={[t.caption, { color: colors.mutedForeground }]}>Private testing · no money collected</Text>
     <ProgramButton label={busy ? "Checking…" : result ? "Refresh test access" : teacher ? "Open test lessons" : "Try test checkout"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />

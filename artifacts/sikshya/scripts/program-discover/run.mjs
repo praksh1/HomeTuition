@@ -85,7 +85,7 @@ function ListHost(props) {
 function Harness() {
   const [scene, set] = React.useState({ screen: "list", props: { programs: [], initialLoad: false, initialError: null, paginationError: null, loadingMore: false, hasMore: false } });
   setScene = set;
-  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher") };
+  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher"), onOpenHome: record("onOpenHome") };
   const sceneKey = JSON.stringify([scene.screen, Object.keys(scene.props ?? {})]) + String(renders);
   let element = null;
   if (scene.screen === "list") element = React.createElement(ListHost, { ...common, ...scene.props });
@@ -135,6 +135,16 @@ writeFileSync(
   ].join("\n"),
 );
 
+const logoStub = path.join(work, "fadko-home-stub.jsx");
+writeFileSync(
+  logoStub,
+  `import React from "react";
+import { Pressable, Text } from "react-native";
+export function PublicFadkoHome({ onPress }) {
+  return React.createElement(Pressable, { testID: "public-fadko-home", accessibilityRole: "link", accessibilityLabel: "Fadko home", onPress }, React.createElement(Text, null, "Fadko"));
+}`,
+);
+
 const bundle = path.join(work, "bundle.js");
 const built = await bundleForBrowser({ entry, outfile: bundle, alias: {
   "expo-font": fontStub,
@@ -143,6 +153,7 @@ const built = await bundleForBrowser({ entry, outfile: bundle, alias: {
   // has no Router root; real navigation belongs to the journey/export tests.
   "expo-router": path.resolve(here, "../class-setup/router.js"),
   "@/utils/api": path.join(here, "api.js"),
+  "@/components/PublicFadkoHome": logoStub,
 } });
 if (!built.ok) {
   console.error(built.error);
@@ -481,6 +492,35 @@ for (const size of SIZES) {
   check(`${L}: exact remaining subset is labelled`, (await body()).match(/Not included/g)?.length === 7 && (await p.getByTestId("offer-schedule-99").innerText()).match(/· Included/g)?.length === 11);
   check(`${L}: late breakdown fits viewport width`, (await overflow()) <= 1);
   check(`${L}: period summary never contradicts enabled late joining`, !(await body()).includes("No automatic charge or mid-period joining"));
+
+  const publicTestBatch = { ...lateBatch, testPilotEndsAt: "2026-12-31T23:59:59Z" };
+  await p.evaluate(() => { window.__apiPaths = []; window.lastNavigation = null; });
+  await show({
+    screen: "view",
+    props: {
+      program: detail({ presentation: "class", title: "SEE Maths evening tuition" }),
+      batches: [publicTestBatch],
+      publicVisitor: true,
+    },
+  }, "view-public-visitor");
+  check(`${L}: a shared public class is visibly branded as Fadko`, await seen("public-fadko-home"));
+  check(`${L}: a signed-out visitor is invited to sign in or create an account`,
+    (await p.getByRole("button", { name: "Sign in to join", exact: true }).count()) === 1
+      && (await p.getByRole("button", { name: "Create a student account", exact: true }).count()) === 1);
+  check(`${L}: the private test-checkout control is not exposed to a signed-out visitor`,
+    (await p.getByRole("button", { name: "Try test checkout", exact: true }).count()) === 0);
+  check(`${L}: no protected booking request is made while the public class renders`,
+    (await p.evaluate(() => window.__apiPaths)).every((path) => !path.startsWith("/batch-tests/")));
+  await p.getByRole("button", { name: "Sign in to join", exact: true }).click();
+  check(`${L}: sign in goes through the student door`,
+    JSON.stringify(await p.evaluate(() => window.lastNavigation)) === JSON.stringify({ pathname: "/(auth)/login", params: { role: "student", next: "/program/12" } }));
+  await p.getByRole("button", { name: "Create a student account", exact: true }).click();
+  check(`${L}: account creation goes through the student door`,
+    (await p.evaluate(() => window.lastNavigation)) === "/(auth)/register?role=student");
+  await p.locator('[data-testid="public-fadko-home"]').click();
+  check(`${L}: the Fadko mark is a working home link`,
+    (await p.evaluate(() => window.__sent)).some((event) => event.name === "onOpenHome"));
+
   await show({ screen: "view", props: { program: detail() } }, "view-full");
   check(`${L}: the title is at the top`, /Grade 10 Mathematics/i.test(await text("program-view-title")));
   check(`${L}: the outcome sits under it`, /past paper/i.test(await text("program-view-outcome")));

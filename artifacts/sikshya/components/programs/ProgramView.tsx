@@ -14,6 +14,7 @@ import {
 import { ProgramBackControl, ProgramCardShell, ProgramChip } from "./ProgramPieces";
 import { type ProgramBatchSnapshot } from "@/utils/programBatches";
 import { ClassOfferCard } from "./ClassOfferCard";
+import { PublicFadkoHome } from "@/components/PublicFadkoHome";
 
 /**
  * What a student reads before deciding whether a program is for them.
@@ -53,9 +54,11 @@ export interface ProgramViewProps {
   /** Published, immutable offers. Empty means the teacher has not opened a scheduled batch. */
   batches?: ProgramBatchSnapshot[];
   batchesUnavailable?: boolean;
+  publicVisitor?: boolean;
+  onOpenHome?: () => void;
 }
 
-export default function ProgramView({ program, onBack, onShare, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchesUnavailable = false }: ProgramViewProps) {
+export default function ProgramView({ program, onBack, onShare, onOpenTeacher, testEnrollment, testEnrollmentUnavailable = false, batches = [], batchesUnavailable = false, publicVisitor = false, onOpenHome }: ProgramViewProps) {
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const reference = referenceBlock(program);
@@ -80,12 +83,16 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
     >
       <View style={{ gap: space.sm }}>
         <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm }}>
-          <ProgramBackControl
-            onPress={onBack}
-            testID="program-view-back"
-            label="Back to Discover"
-            accessibilityLabel="Back to Discover"
-          />
+          {publicVisitor && onOpenHome ? (
+            <PublicFadkoHome onPress={onOpenHome} />
+          ) : (
+            <ProgramBackControl
+              onPress={onBack}
+              testID="program-view-back"
+              label="Back to Discover"
+              accessibilityLabel="Back to Discover"
+            />
+          )}
           {onShare ? (
             <Pressable
               testID="program-view-share"
@@ -215,7 +222,7 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
           </Text>
         ) : (
           <View style={{ gap: space.sm }}>
-            {batches.map((batch) => <ClassOfferCard key={batch.batchId} batch={batch} />)}
+            {batches.map((batch) => <ClassOfferCard key={batch.batchId} batch={batch} accountRequired={publicVisitor} returnPath={`/program/${program.id}`} />)}
           </View>
         )}
       </Section>
@@ -238,7 +245,7 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
         this page are told what is true: they can read the program, they can see the teacher, and
         joining is not open.
       */}
-      <View
+      {!(publicVisitor && batches.some((batch) => batch.testPilotEndsAt)) ? <View
         testID={testEnrollment ? "program-view-test-enrolled" : testEnrollmentUnavailable ? "program-view-test-unknown" : "program-view-not-open"}
         style={{
           padding: space.md, backgroundColor: colors.surfaceSunk, borderRadius: radius.md,
@@ -262,7 +269,7 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
             <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Approved test accounts can book the classes above without payment. Real checkout is not open." : "Joining and payment are not open yet."}</Text>
           </>
         )}
-      </View>
+      </View> : null}
     </ScrollView>
   );
 }

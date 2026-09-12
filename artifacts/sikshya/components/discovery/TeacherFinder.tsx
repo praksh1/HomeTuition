@@ -178,7 +178,9 @@ export default function TeacherFinder({ onOpen }: { onOpen: (teacher: PublicTeac
       aria-disabled={disabled}
       onPress={() => setChoice(choice === key ? null : key)}
       style={{
-        minHeight: HIT_SLOP_MIN,
+        // Four pixels above the absolute floor avoids fractional browser rounding turning a
+        // nominal 44-point selector into a 43.99-point target on narrow screens.
+        minHeight: space.huge,
         borderWidth: 1,
         borderColor: colors.border,
         backgroundColor: disabled ? colors.muted : colors.card,

@@ -26,6 +26,7 @@ import StarRating from "@/components/StarRating";
 import SessionCard from "@/components/SessionCard";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import TeacherProgramsSection from "@/components/programs/TeacherProgramsSection";
+import { PublicFadkoHome } from "@/components/PublicFadkoHome";
 import { TEST_BOOKING_LABEL } from "@/utils/testAccess";
 import type { Teacher, Student } from "@/context/AuthContext";
 
@@ -643,18 +644,22 @@ You can join from your Sessions tab — the class opens a few minutes before it 
           },
         ]}
       >
-        <TouchableOpacity
-          style={[
-            styles.loadBack,
-            { borderColor: colors.border, borderRadius: radius.sm },
-          ]}
-          onPress={goBack}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel="Back to Discover"
-        >
-          <Feather name="arrow-left" size={20} color={colors.foreground} />
-        </TouchableOpacity>
+        {user ? (
+          <TouchableOpacity
+            style={[
+              styles.loadBack,
+              { borderColor: colors.border, borderRadius: radius.sm },
+            ]}
+            onPress={goBack}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Back to Discover"
+          >
+            <Feather name="arrow-left" size={20} color={colors.foreground} />
+          </TouchableOpacity>
+        ) : (
+          <PublicFadkoHome onPress={() => router.replace("/welcome")} />
+        )}
 
         {profileLoadFailed ? (
           <View style={[styles.loadCard, { gap: space.md }]}>
@@ -735,10 +740,13 @@ You can join from your Sessions tab — the class opens a few minutes before it 
       : sessionTab === "live"
         ? liveSessions
         : pastSessions;
+  const declaredSubjects = Array.from(
+    new Set([teacher.subject, ...teacher.subjects].map((subject) => subject.trim()).filter(Boolean)),
+  );
   const visibleSubjects = subjectsExpanded
-    ? teacher.subjects
-    : teacher.subjects.slice(0, 4);
-  const hasMoreSubjects = teacher.subjects.length > 4;
+    ? declaredSubjects
+    : declaredSubjects.slice(0, 4);
+  const hasMoreSubjects = declaredSubjects.length > 4;
   const isRated = teacher.reviewCount > 0;
   const onNavy = { color: colors.onInverse };
   const onNavyMuted = { color: colors.onInverseMuted };
@@ -768,18 +776,22 @@ You can join from your Sessions tab — the class opens a few minutes before it 
         ]}
       >
         <View style={styles.heroTopRow}>
-          <TouchableOpacity
-            style={[
-              styles.backBtn,
-              { borderColor: colors.onInverseMuted, borderRadius: radius.sm },
-            ]}
-            onPress={goBack}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Back to Discover"
-          >
-            <Feather name="arrow-left" size={20} color={colors.onInverse} />
-          </TouchableOpacity>
+          {user ? (
+            <TouchableOpacity
+              style={[
+                styles.backBtn,
+                { borderColor: colors.onInverseMuted, borderRadius: radius.sm },
+              ]}
+              onPress={goBack}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Back to Discover"
+            >
+              <Feather name="arrow-left" size={20} color={colors.onInverse} />
+            </TouchableOpacity>
+          ) : (
+            <PublicFadkoHome inverse onPress={() => router.replace("/welcome")} />
+          )}
           <View style={[styles.heroTopActions, { gap: space.xs }]}>
             <TouchableOpacity
               style={[
@@ -920,40 +932,28 @@ You can join from your Sessions tab — the class opens a few minutes before it 
         )}
 
         <View style={[styles.heroStats, { paddingTop: space.xs }]}>
+          {teacher.experienceYears != null && teacher.experienceYears > 0 ? (
+            <>
+              <View style={styles.heroStat}>
+                <Text style={[t.title2, numeric, onNavy]}>
+                  {teacher.experienceYears}
+                </Text>
+                <Text style={[t.caption, onNavyMuted]}>Years teaching</Text>
+              </View>
+              <View
+                style={[
+                  styles.heroStatDivider,
+                  { backgroundColor: colors.onInverseMuted },
+                ]}
+              />
+            </>
+          ) : null}
           <View style={styles.heroStat}>
             <Text style={[t.title2, numeric, onNavy]}>
-              {teacher.totalStudents}
-            </Text>
-            <Text style={[t.caption, onNavyMuted]}>Paid bookings</Text>
-          </View>
-          <View
-            style={[
-              styles.heroStatDivider,
-              { backgroundColor: colors.onInverseMuted },
-            ]}
-          />
-          <View style={styles.heroStat}>
-            {teacher.experienceYears != null ? (
-              <Text style={[t.title2, numeric, onNavy]}>
-                {teacher.experienceYears}
-              </Text>
-            ) : (
-              <Text style={[t.title2, onNavyMuted]}>—</Text>
-            )}
-            <Text style={[t.caption, onNavyMuted]}>Years teaching</Text>
-          </View>
-          <View
-            style={[
-              styles.heroStatDivider,
-              { backgroundColor: colors.onInverseMuted },
-            ]}
-          />
-          <View style={styles.heroStat}>
-            <Text style={[t.title2, numeric, onNavy]}>
-              {teacher.subjects.length}
+              {declaredSubjects.length}
             </Text>
             <Text style={[t.caption, onNavyMuted]}>
-              {teacher.subjects.length === 1 ? "Subject" : "Subjects"}
+              {declaredSubjects.length === 1 ? "Subject" : "Subjects"}
             </Text>
           </View>
         </View>
@@ -999,7 +999,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
               <Text
                 style={[t.bodyStrong, numeric, { color: colors.foreground }]}
               >
-                Subjects taught ({teacher.subjects.length})
+                Subjects taught ({declaredSubjects.length})
               </Text>
               {hasMoreSubjects && (
                 <TouchableOpacity

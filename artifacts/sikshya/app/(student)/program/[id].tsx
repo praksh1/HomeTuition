@@ -212,7 +212,18 @@ export default function StudentProgramScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={["top"]}>
-      <ProgramView program={program} onBack={back} onShare={() => void shareProgram()} onOpenTeacher={openTeacher} testEnrollment={testEnrollment} testEnrollmentUnavailable={testEnrollmentUnavailable} batches={batches} batchesUnavailable={batchesUnavailable} />
+      <ProgramView
+        program={program}
+        onBack={back}
+        onShare={() => void shareProgram()}
+        onOpenTeacher={openTeacher}
+        onOpenHome={() => router.replace("/welcome")}
+        publicVisitor={!user}
+        testEnrollment={testEnrollment}
+        testEnrollmentUnavailable={testEnrollmentUnavailable}
+        batches={batches}
+        batchesUnavailable={batchesUnavailable}
+      />
     </SafeAreaView>
   );
 }

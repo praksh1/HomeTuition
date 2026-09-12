@@ -465,3 +465,30 @@ the older Program test-enrolment form below to test this new batch-specific chec
   and the complete Province list; the retired Monthly promotion and booking count were absent.
   Production and `main` remain untouched. The owner now has the final preview for physical device
   review.
+
+### Public shared pages now have a safe account door and visible Fadko identity
+
+- The owner opened a shared class in a signed-out private browser. Its test-checkout control still
+  called the protected endpoint and printed the API's technical `Missing or invalid Authorization
+  header` response. Signed-out visitors now see a plain **Sign in to join** / **Create a student
+  account** choice before any booking code can run. The rendered contract proves that the public
+  page sends no `/batch-tests/` request.
+- Student sign-in accepts only a local `/program/<positive integer>` return path and ignores every
+  other value. This returns a student to the class they intended to join without creating an open
+  redirect. Registration still uses the established student-account route; it does not pretend a
+  booking or payment has been made.
+- Added a compact Fadko home control to signed-out program and teacher pages. It uses the real logo
+  component and leads to `/welcome`; signed-in app users retain their ordinary Back control.
+- Removed the public profile's historical paid-booking count, which is not a meaningful quality
+  signal and should not be advertised. The subject count now combines the teacher's primary subject
+  with the declared subject list, so a Mathematics teacher no longer appears as teaching zero
+  subjects. Empty years-of-experience data is omitted rather than rendered as a dash statistic.
+- A narrow-screen rendered check exposed an unrelated fractional-browser rounding issue: one
+  location selector measured 43.99px despite a nominal 44px minimum. It now uses the existing 48px
+  spacing token. No raw design value or new token leak was introduced.
+- Final local gates: four-workspace typecheck clean; app units **390/0**; rendered public/Discover
+  checks **232/0** across 390px and 1440px; design ratchet unchanged at **94 hex / 282 sizes**; and
+  `git diff --check` clean. The local Expo export compiled all modules, but its post-build address
+  assertion correctly rejected an ad-hoc same-origin value; the preview workflow remains the
+  authoritative build because it injects the allowlisted Railway staging API URL. No production,
+  database, payment, Daily or LiveKit state changed at this checkpoint.
