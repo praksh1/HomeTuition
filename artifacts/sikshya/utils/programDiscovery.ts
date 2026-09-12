@@ -110,12 +110,12 @@ export interface DiscoverTab {
  */
 export const DISCOVER_TABS: readonly DiscoverTab[] = [
   {
-    view: "programs", label: "Programs", accessibilityLabel: "Learning programs",
-    heading: "Find a learning program", subtitle: "A full journey with an outcome and a path, offered by a teacher.",
+    view: "programs", label: "Courses", accessibilityLabel: "Courses",
+    heading: "Find a course", subtitle: "Learn toward a clear goal with a teacher and a planned path.",
   },
   {
-    view: "classes", label: "Classes", accessibilityLabel: "Single classes",
-    heading: "Find a class", subtitle: "One class you can join, paid one at a time.",
+    view: "classes", label: "Live classes", accessibilityLabel: "Live classes",
+    heading: "Find a live class", subtitle: "Book one scheduled class at a time.",
   },
   {
     view: "teachers", label: "Teachers", accessibilityLabel: "Teachers",

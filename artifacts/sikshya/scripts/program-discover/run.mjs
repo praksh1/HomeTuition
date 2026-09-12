@@ -246,10 +246,10 @@ for (const size of SIZES) {
   check(`${L}: and never the empty state`, !(await seen("program-discover-empty")));
 
   await show({ screen: "list", props: listState() }, "list-empty");
-  check(`${L}: no programs at all reads as "no programs yet"`, await seen("program-discover-empty"));
+  check(`${L}: no courses at all reads as "no courses yet"`, await seen("program-discover-empty"));
   const emptyText = await text("program-discover-empty");
-  check(`${L}: and says a program is different from a single class`,
-    /different from a single class/i.test(emptyText), emptyText.slice(0, 160));
+  check(`${L}: and points to the two useful alternatives`,
+    /Live classes/i.test(emptyText) && /Teachers/i.test(emptyText), emptyText.slice(0, 160));
 
   await show({
     screen: "list",
@@ -265,6 +265,15 @@ for (const size of SIZES) {
   }, "list-populated");
   check(`${L}: every published program is on screen`,
     (await seen("program-card-12")) && (await seen("program-card-13")) && (await seen("program-card-14")));
+  const cardBoxes = await p.evaluate(() => [12, 13].map((id) => {
+    const box = document.querySelector(`[data-testid="program-card-${id}"]`)?.getBoundingClientRect();
+    return box ? { x: box.x, y: box.y, width: box.width } : null;
+  }));
+  check(`${L}: course cards use the available width without becoming a long wall`,
+    size.width >= 600
+      ? cardBoxes.every(Boolean) && Math.abs(cardBoxes[0].y - cardBoxes[1].y) < 2 && cardBoxes[0].x !== cardBoxes[1].x
+      : cardBoxes.every(Boolean) && cardBoxes[1].y > cardBoxes[0].y,
+    JSON.stringify(cardBoxes));
   check(`${L}: with the teacher name on each card`,
     /Anjali Rai/i.test(await body()) && /Dipendra Shrestha/i.test(await body()));
   check(`${L}: and the type is shown as a chip`,

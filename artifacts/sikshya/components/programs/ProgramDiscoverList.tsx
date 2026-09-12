@@ -78,7 +78,7 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
     initialError, paginationError, onLoadMore, onRetry, onOpen, onSubmit,
   } = props;
   const colors = useColors();
-  const { t, space, radius } = useLayout();
+  const { t, space, radius, isWide } = useLayout();
 
   // The one place the five states are decided from what happened, so every screen and every test
   // reads the same answer.
@@ -219,10 +219,10 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
             borderWidth: 1, borderColor: colors.border, gap: space.xs,
           }}
         >
-          <Text style={[t.title3, { color: colors.foreground }]}>No programs yet</Text>
+          <Text style={[t.title3, { color: colors.foreground }]}>No courses yet</Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            Teachers on Fadko are still setting up their programs. A Learning Program is a full course
-            with an outcome, a path and a teacher — different from a single class.
+            Teachers on Fadko are still setting up their courses. Try Live classes for individual
+            lessons, or Teachers to browse by person.
           </Text>
         </View>
       ) : state.kind === "noMatch" ? (
@@ -233,27 +233,31 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
             borderWidth: 1, borderColor: colors.border, gap: space.xs,
           }}
         >
-          <Text style={[t.title3, { color: colors.foreground }]}>No matching programs</Text>
+          <Text style={[t.title3, { color: colors.foreground }]}>No matching courses</Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
             {state.query.length > 0 && state.filterActive
-              ? `No published program on Fadko matches “${state.query}” with the filter you chose. Try different words, or clear the filter.`
+              ? `No published course on Fadko matches “${state.query}” with the filter you chose. Try different words, or clear the filter.`
               : state.query.length > 0
-                ? `No published program on Fadko matches “${state.query}”. Try different words.`
-                : "No published program matches the filter you chose. Try All."}
+                ? `No published course on Fadko matches “${state.query}”. Try different words.`
+                : "No published course matches the filter you chose. Try All."}
           </Text>
         </View>
       ) : (
-        <View style={{ gap: space.md }}>
+        <View
+          testID="program-discover-results"
+          style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "stretch", gap: space.md }}
+        >
           {state.rows.map((row) => (
-            <ProgramCard
-              key={row.id}
-              testID={`program-card-${row.id}`}
-              fields={cardFromSummary(row)}
-              onPress={() => onOpen(row.id)}
-            />
+            <View key={row.id} style={{ width: isWide ? "48%" : "100%" }}>
+              <ProgramCard
+                testID={`program-card-${row.id}`}
+                fields={cardFromSummary(row)}
+                onPress={() => onOpen(row.id)}
+              />
+            </View>
           ))}
           {state.hasMore ? (
-            <View style={{ gap: space.xs }}>
+            <View style={{ gap: space.xs, width: "100%" }}>
               <Pressable
                 testID="program-discover-more"
                 onPress={onLoadMore}
@@ -274,7 +278,7 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
                 {loadingMore ? (
                   <ActivityIndicator size="small" color={colors.primary} />
                 ) : (
-                  <Text style={[t.bodyStrong, { color: colors.primary }]}>Show more programs</Text>
+                  <Text style={[t.bodyStrong, { color: colors.primary }]}>Show more courses</Text>
                 )}
               </Pressable>
               {state.paginationError !== null ? (

@@ -1731,6 +1731,9 @@ async function simpleClasses() {
   item = response.body.item;
   const publicRead = await api(`/programs/${pid}`);
   check("simple snapshot served without required formal learning path", publicRead.status === 200 && publicRead.body.program.presentation === "class" && publicRead.body.program.modules.length === 0, JSON.stringify(publicRead.body));
+  check("course catalog does not duplicate a simple class", !(await api("/programs?presentation=program&limit=50")).body.programs.some((program) => program.id === pid));
+  check("class catalog can select the simple-class snapshot", (await api("/programs?presentation=class&limit=50")).body.programs.some((program) => program.id === pid));
+  check("unknown public catalog is refused", (await api("/programs?presentation=everything")).status === 400);
   check("offer immediately public with exact advance cutoff", (await api(`/programs/${pid}/batches`)).body.batches[0]?.enrollmentClosesAt === item.batch.tuitionPeriod.startsAt);
   const again = await publish(item);
   check("unchanged republish is idempotent", again.status === 200 && again.body.unchanged === true && again.body.item.batch.version === item.batch.version);

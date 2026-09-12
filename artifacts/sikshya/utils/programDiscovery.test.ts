@@ -44,7 +44,7 @@ const full = (over: Partial<PublicProgramDetail> = {}): PublicProgramDetail => (
 
 /* --- tabs and filters ------------------------------------------------------- */
 
-test("Discover has exactly three views, in the order Programs, Single classes, Teachers", () => {
+test("Discover has exactly three views, in the order Courses, Live classes, Teachers", () => {
   assert.deepEqual(DISCOVER_TABS.map((t) => t.view), ["programs", "classes", "teachers"]);
 });
 
@@ -52,13 +52,13 @@ test("each view has an accurate heading, subtitle and accessible label", () => {
   const p = DISCOVER_TABS.find((t) => t.view === "programs")!;
   const c = DISCOVER_TABS.find((t) => t.view === "classes")!;
   const tc = DISCOVER_TABS.find((t) => t.view === "teachers")!;
-  assert.match(p.heading, /learning program/i);
+  assert.match(p.heading, /course/i);
   assert.match(c.heading, /class/i);
   assert.match(tc.heading, /teacher/i);
-  // The Classes pill is deliberately short for a 390pt row, so the screen-reader label carries
-  // the full phrase.
-  assert.equal(c.label, "Classes");
-  assert.equal(c.accessibilityLabel, "Single classes");
+  assert.equal(p.label, "Courses");
+  assert.equal(p.accessibilityLabel, "Courses");
+  assert.equal(c.label, "Live classes");
+  assert.equal(c.accessibilityLabel, "Live classes");
 });
 
 test("Following is a sub-choice of Teachers, not a primary product view", () => {

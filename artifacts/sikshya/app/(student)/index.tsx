@@ -163,6 +163,7 @@ export default function Discover() {
       try {
         const params = new URLSearchParams();
         params.set("limit", "20");
+        params.set("presentation", "program");
         if (q.trim().length > 0) params.set("q", q.trim());
         if (type !== "all") params.set("type", type);
         if (cursor) params.set("cursor", cursor);
