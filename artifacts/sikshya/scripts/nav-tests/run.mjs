@@ -216,6 +216,14 @@ async function main() {
     profile.slice(0, 200).replace(/\n/g, " | "));
   check("and so is the list of teachers they follow", !/Teachers you follow/i.test(profile),
     profile.slice(0, 200).replace(/\n/g, " | "));
+  check("Profile offers the student's payment history",
+    (await page3.locator('[data-testid="student-payments-link"]').count()) > 0);
+  await page3.locator('[data-testid="student-payments-link"]').click({ timeout: 10000 });
+  await page3.waitForTimeout(1500);
+  check("and it opens Payments & receipts",
+    /payments/.test(await page3.evaluate(() => location.pathname)) &&
+      (await page3.getByText("Payments & receipts", { exact: true }).count()) > 0,
+    await page3.evaluate(() => location.pathname));
 
   await page3.goto(`${siteUrl}/`, { waitUntil: "networkidle" });
   await page3.waitForTimeout(3500);

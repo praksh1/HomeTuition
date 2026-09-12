@@ -5,10 +5,12 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
 import {
+  participantReceiptStatus,
   participantTestTotals,
+  testReceiptNepalTime,
   type ParticipantTestReceipt,
 } from "@/utils/batchTestMoney";
-import { ProgramButton, ProgramCardShell, ProgramNotice } from "../programs/ProgramPieces";
+import { ProgramButton, ProgramCardShell, ProgramChip, ProgramNotice } from "../programs/ProgramPieces";
 
 function Money({ value }: { value: number }) {
   const colors = useColors();
@@ -28,9 +30,8 @@ function Metric({ label, value }: { label: string; value: number }) {
 /** A read-only, participant-scoped summary of simulated payments. */
 export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" }) {
   const colors = useColors();
-  const { t, space, radius } = useLayout();
+  const { t, space, radius, numeric } = useLayout();
   const [receipts, setReceipts] = useState<ParticipantTestReceipt[] | null>(null);
-  const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -61,22 +62,35 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
     </ProgramNotice> : null}
     {receipts?.length ? <>
       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.md, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceSunk }}>
-        <Metric label={role === "teacher" ? "Student test payments" : "Test payment total"} value={totals.grossNpr} />
-        <Metric label="Held by Fadko" value={totals.heldGrossNpr} />
+        <Metric label={role === "teacher" ? "Expected test earnings" : "Test payments"} value={role === "teacher" ? totals.teacherShareNpr : totals.grossNpr} />
         {role === "teacher" ? <>
-          <Metric label="Your share still held" value={totals.teacherHeldNpr} />
+          <Metric label="Pending test earnings" value={totals.teacherHeldNpr} />
           <Metric label="Test-paid to you" value={totals.teacherPaidOutNpr} />
-        </> : <Metric label="Test refunded" value={totals.refundedGrossNpr} />}
+          {totals.teacherRefundedNpr > 0 ? <Metric label="Reversed after test refund" value={totals.teacherRefundedNpr} /> : null}
+        </> : <>
+          <Metric label="Test refunded" value={totals.refundedGrossNpr} />
+          <Metric label="Net test payments" value={Math.max(0, totals.grossNpr - totals.refundedGrossNpr)} />
+        </>}
       </View>
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>Actual money {role === "teacher" ? "received" : "charged"}: NPR {totals.actualMoneyMovedNpr.toLocaleString("en-NP")}</Text>
-      <ProgramButton emphasis="quiet" label={open ? "Hide receipt details" : `View ${receipts.length} test ${receipts.length === 1 ? "receipt" : "receipts"}`} onPress={() => setOpen(!open)} />
-      {open ? <View style={{ gap: space.sm }}>
+      <ProgramNotice title="Testing only" body={`These records show how payments and earnings will look. No real money was ${role === "teacher" ? "paid to you" : "charged"}.`} tone="neutral" />
+      <View style={{ gap: space.sm }}>
+        <Text accessibilityRole="header" style={[t.bodyStrong, { color: colors.foreground }]}>History</Text>
         {receipts.map((receipt) => <View key={receipt.bookingId} accessibilityRole="summary" style={{ gap: space.xxs, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: colors.border }}>
-          <Text style={[t.bodyStrong, { color: colors.foreground }]}>{receipt.classTitle}</Text>
-          {role === "teacher" ? <Text style={[t.caption, { color: colors.mutedForeground }]}>Student: {receipt.studentName}</Text> : null}
-          <Text style={[t.caption, { color: colors.mutedForeground }]}>TEST receipt {receipt.reference} · NPR {receipt.grossNpr.toLocaleString("en-NP")}</Text>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.xs }}>
+            <Text style={[t.bodyStrong, { color: colors.foreground, flexGrow: 1, flexShrink: 1 }]}>{receipt.classTitle}</Text>
+            <ProgramChip label={participantReceiptStatus(receipt, role)} />
+          </View>
+          {role === "teacher" ? <Text style={[t.caption, { color: colors.mutedForeground }]}>Student: {receipt.studentName ?? "Name unavailable"}</Text> : null}
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>{testReceiptNepalTime(receipt.recordedAt)}</Text>
+          <Text style={[t.callout, numeric, { color: colors.foreground }]}>
+            {role === "teacher" ? "Your expected test earnings" : "Test payment"}: NPR {(role === "teacher"
+              ? receipt.allocations.reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0)
+              : receipt.grossNpr ?? 0).toLocaleString("en-NP")}
+          </Text>
+          {role === "student" && (receipt.accounting.refundedGrossNpr ?? 0) > 0 ? <Text style={[t.caption, numeric, { color: colors.foreground }]}>Test refunded: NPR {(receipt.accounting.refundedGrossNpr ?? 0).toLocaleString("en-NP")}</Text> : null}
+          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Test receipt {receipt.reference}</Text>
         </View>)}
-      </View> : null}
+      </View>
     </> : busy ? <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading test totals…</Text> : null}
   </ProgramCardShell>;
 }

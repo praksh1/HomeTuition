@@ -8,6 +8,7 @@ import { readingWidth } from "@/constants/layout";
 import { apiGet } from "@/utils/api";
 import { ProgramBackControl, ProgramButton, ProgramCardShell, ProgramNotice } from "@/components/programs/ProgramPieces";
 import LegacyTeacherPlans from "@/components/legacy/LegacyTeacherPlans";
+import { BatchTestMoneySummary } from "@/components/classes/BatchTestMoneySummary";
 
 export interface TeachingBillingPolicy {
   legacyPlanSalesOpen: boolean;
@@ -36,15 +37,15 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
         <Text style={[t.body, { color: colors.foreground }]}>Prepare your class and set its price. New teacher-plan purchases are paused while we connect student payments.</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg }}>
           <View><Text style={[t.title1, numeric, { color: colors.primary }]}>{policy.teacherShareBps / 100}%</Text><Text style={[t.caption, { color: colors.mutedForeground }]}>Teacher share</Text></View>
-          <View><Text style={[t.title1, numeric, { color: colors.foreground }]}>{policy.platformShareBps / 100}%</Text><Text style={[t.caption, { color: colors.mutedForeground }]}>Fadko fee</Text></View>
         </View>
-        <Text style={[t.caption, { color: colors.mutedForeground }]}>Planned for new classes, not a change to existing purchases. Students pay upfront; teacher earnings are released after lesson delivery and the complaint window. No payout date is promised yet.</Text>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>Planned for new classes, not a change to existing purchases. Students pay upfront; your earnings are released after lesson delivery and the complaint window. No payout date is promised yet.</Text>
         <Text style={[t.callout, numeric, { color: colors.foreground }]}>Separate student fee during beta: NPR {policy.studentFeeNpr}.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
       </ProgramCardShell>
       <ProgramNotice title={policy.testPilotEndsAt ? "Private test bookings are open" : "Listings only for now"} tone="waiting">
         <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "Approved test students can book published classes without payment. Lesson links appear after the first test booking. Test activity creates no earnings or payouts." : "Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms."}</Text>
       </ProgramNotice>
+      <BatchTestMoneySummary role="teacher" />
       <ProgramCardShell>
         <Text style={[t.title3, { color: colors.foreground }]}>Your existing teaching continues</Text>
         <Text style={[t.body, { color: colors.foreground }]}>Monthly homework, submissions, feedback and class messages are preserved. We will not move your students or change their purchased terms automatically.</Text>

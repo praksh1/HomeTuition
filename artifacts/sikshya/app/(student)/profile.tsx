@@ -100,6 +100,18 @@ export default function StudentProfile() {
       <TouchableOpacity
         accessibilityRole="button"
         style={styles.navigationRow}
+        onPress={() => router.push("/(student)/payments")}
+        activeOpacity={0.7}
+        testID="student-payments-link"
+      >
+        <Feather name="file-text" size={18} color={colors.foreground} />
+        <Text style={[t.bodyStrong, styles.navigationText]}>Payments & receipts</Text>
+        <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        accessibilityRole="button"
+        style={styles.navigationRow}
         onPress={() => router.push("/notification-settings")}
         activeOpacity={0.7}
         testID="notification-settings-link"

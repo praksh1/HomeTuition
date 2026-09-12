@@ -52,6 +52,27 @@ function receiptView(receipt: SimulatedBatchReceipt, entries: BatchLedgerRow[]) 
   };
 }
 
+/** Remove platform/internal allocations before a participant response leaves the server. */
+function participantReceiptView(
+  role: "student" | "teacher",
+  receipt: SimulatedBatchReceipt,
+  entries: BatchLedgerRow[],
+) {
+  const full = receiptView(receipt, entries);
+  const common = {
+    reference: full.reference,
+    allocations: full.allocations.map((allocation) => role === "teacher"
+      ? { position: allocation.position, state: allocation.state, teacherNpr: allocation.teacherNpr }
+      : { position: allocation.position, state: allocation.state }),
+    accounting: role === "teacher"
+      ? { teacherPaidOutNpr: full.accounting.teacherPaidOutNpr, actualMoneyMovedNpr: 0 }
+      : { refundedGrossNpr: full.accounting.refundedGrossNpr, actualMoneyMovedNpr: 0 },
+  };
+  return role === "teacher"
+    ? { ...common }
+    : { ...common, grossNpr: full.grossNpr };
+}
+
 const ACTIVE_COMPLAINT_STATUSES = ["open", "opened", "assigned", "processing", "in_review"] as const;
 
 /**
@@ -205,14 +226,15 @@ router.get("/batch-tests/me/payments", requireAuth, async (req, res, next) => {
       testOnly: true,
       role,
       receipts: rows.map((row) => ({
-        ...receiptView(
+        ...participantReceiptView(
+          role,
           row.receipt as SimulatedBatchReceipt,
           history.filter((entry) => entry.bookingId === row.bookingId),
         ),
         bookingId: row.bookingId,
         batchId: row.batchId,
         recordedAt: row.recordedAt.toISOString(),
-        studentName: row.studentName,
+        ...(role === "teacher" ? { studentName: row.studentName } : {}),
         classTitle: readBatchSnapshot(row.snapshot)?.programTitle ?? "Class title unavailable",
       })),
     });

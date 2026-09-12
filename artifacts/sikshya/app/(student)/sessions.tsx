@@ -11,7 +11,6 @@ import { useColors } from "@/hooks/useColors";
 import type { Student } from "@/context/AuthContext";
 import { joinState } from "@/utils/sessionWindow";
 import type { MonthlyClass } from "@/utils/monthly";
-import { BatchTestMoneySummary } from "@/components/classes/BatchTestMoneySummary";
 
 interface Session {
   id: string;
@@ -233,7 +232,6 @@ export default function StudentSessions() {
         scrollEnabled={!!sessions.length || myMonthly.length > 0}
         ListHeaderComponent={
           <View>
-            <BatchTestMoneySummary role="student" />
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}

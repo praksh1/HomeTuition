@@ -80,6 +80,7 @@ function ClassicStudentTabLayout() {
       <Tabs.Screen name="teacher/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="program/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="classroom/[id]" options={{ href: null, tabBarStyle: { display: "none" } }} />
+      <Tabs.Screen name="payments" options={{ href: null, tabBarStyle: { display: "none" } }} />
     </Tabs>
   );
 }

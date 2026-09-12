@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { participantTestTotals, type ParticipantTestReceipt } from "./batchTestMoney.ts";
+import {
+  participantReceiptStatus,
+  participantTestTotals,
+  testReceiptNepalTime,
+  type ParticipantTestReceipt,
+} from "./batchTestMoney.ts";
 
 function receipt(over: Partial<ParticipantTestReceipt> = {}): ParticipantTestReceipt {
   return {
@@ -16,9 +21,7 @@ function receipt(over: Partial<ParticipantTestReceipt> = {}): ParticipantTestRec
       { position: 1, teacherNpr: 350, state: "paid_out" },
     ],
     accounting: {
-      heldGrossNpr: 500,
       teacherPaidOutNpr: 350,
-      fadkoEarnedNpr: 150,
       refundedGrossNpr: 0,
       actualMoneyMovedNpr: 0,
     },
@@ -26,7 +29,7 @@ function receipt(over: Partial<ParticipantTestReceipt> = {}): ParticipantTestRec
   };
 }
 
-test("participant summary adds captured, held, paid and refunded values", () => {
+test("participant summary adds student payments and teacher pending, paid and reversed shares", () => {
   const totals = participantTestTotals([
     receipt(),
     receipt({
@@ -34,9 +37,7 @@ test("participant summary adds captured, held, paid and refunded values", () => 
       grossNpr: 600,
       allocations: [{ position: 0, teacherNpr: 420, state: "refunded" }],
       accounting: {
-        heldGrossNpr: 0,
         teacherPaidOutNpr: 0,
-        fadkoEarnedNpr: 0,
         refundedGrossNpr: 600,
         actualMoneyMovedNpr: 0,
       },
@@ -44,10 +45,10 @@ test("participant summary adds captured, held, paid and refunded values", () => 
   ]);
   assert.deepEqual(totals, {
     grossNpr: 1_600,
-    heldGrossNpr: 500,
+    teacherShareNpr: 1_120,
     teacherHeldNpr: 350,
     teacherPaidOutNpr: 350,
-    fadkoEarnedNpr: 150,
+    teacherRefundedNpr: 420,
     refundedGrossNpr: 600,
     actualMoneyMovedNpr: 0,
   });
@@ -56,11 +57,27 @@ test("participant summary adds captured, held, paid and refunded values", () => 
 test("an empty real result stays an honest zero summary", () => {
   assert.deepEqual(participantTestTotals([]), {
     grossNpr: 0,
-    heldGrossNpr: 0,
+    teacherShareNpr: 0,
     teacherHeldNpr: 0,
     teacherPaidOutNpr: 0,
-    fadkoEarnedNpr: 0,
+    teacherRefundedNpr: 0,
     refundedGrossNpr: 0,
     actualMoneyMovedNpr: 0,
   });
+});
+
+test("participant history describes the user's outcome without exposing internal custody", () => {
+  assert.equal(participantReceiptStatus(receipt(), "student"), "Test booking confirmed");
+  assert.equal(participantReceiptStatus(receipt(), "teacher"), "Expected earnings pending");
+  assert.equal(participantReceiptStatus(receipt({
+    allocations: [{ position: 0, teacherNpr: 700, state: "disputed" }],
+  }), "student"), "Support review in progress");
+  assert.equal(participantReceiptStatus(receipt({
+    allocations: [{ position: 0, teacherNpr: 700, state: "refunded" }],
+  }), "teacher"), "Test earnings reversed");
+});
+
+test("receipt dates use the named Nepal clock", () => {
+  assert.match(testReceiptNepalTime("2026-09-12T00:00:00.000Z"), /Nepal time$/);
+  assert.equal(testReceiptNepalTime("not-a-date"), "Date unavailable");
 });

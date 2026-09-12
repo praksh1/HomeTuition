@@ -33,7 +33,9 @@ try {
     await page.goto(base);
     await page.getByRole("button", { name: "Prepare a class", exact: true }).waitFor();
     const text = await page.locator("body").innerText();
-    check(text.includes("70%") && text.includes("30%"), `${width}: approved shares visible`);
+    check(text.includes("70%") && !text.includes("30%"), `${width}: teacher share is visible without Fadko's internal share`);
+    check(text.includes("Expected test earnings") && text.includes("Pending test earnings"), `${width}: earnings history is on the Profile destination`);
+    check(!text.includes("Held by Fadko") && !text.includes("Fadko earned") && !text.includes("Fadko fee"), `${width}: participant view exposes no platform custody or earnings`);
     check(text.includes("Listings only") && text.includes("does not yet collect payment"), `${width}: no fake checkout promise`);
     check(text.includes("homework") && text.includes("messages"), `${width}: existing learning tools preserved in copy`);
     check(!text.includes("Tier 1") && !text.includes("Choose a plan"), `${width}: old tier picker hidden`);

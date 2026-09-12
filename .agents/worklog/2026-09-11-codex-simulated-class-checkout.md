@@ -230,3 +230,29 @@ the older Program test-enrolment form below to test this new batch-specific chec
 - Production and `main` remain untouched. These are test-only accounting summaries: no real
   payment, payout or refund occurred. The summary refreshes when its screen mounts; reopening the
   screen fetches the latest derived ledger. Staging Daily remains unresolved and was not changed.
+
+### Participant payment history and privacy correction
+
+- The owner passed the first summary but rejected `Held by Fadko` on participant screens. Removed
+  test-money cards from Student Sessions and Teacher My classes. Student Profile now links to a
+  dedicated `Payments & receipts` screen; Teacher Profile's existing `Teaching & earnings` screen
+  now contains the matching earnings history. This keeps class lists task-focused and gives each
+  person one predictable home for money records.
+- Student totals now show test payments, test refunds and net test payments. Teacher totals show
+  expected, pending, test-paid and (only when non-zero) reversed test earnings. Each receipt names
+  its class, Nepal-time date, plain status and the amount relevant to that person. Neither screen
+  displays Fadko custody, commission earned or a platform allocation amount. The teaching-policy
+  card retains the teacher's planned 70% share but no longer displays a separate Fadko-share metric;
+  the commercial rule itself was not changed.
+- Privacy is enforced at the API boundary, not only by hiding text. Student responses omit teacher
+  and platform allocations. Teacher responses omit student gross and platform allocations. The
+  operator ledger remains unchanged and complete. Added integration assertions that inspect the
+  serialized participant responses for forbidden internal fields.
+- Local verification before commit: full four-workspace typecheck; API unit suite pass; app unit
+  378/0; rendered test-payment/history flow 60/0 at 390px and 1440px; Teaching & earnings 30/0 at
+  both widths; design ratchet unchanged 94 hex / 282 sizes; diff check clean. The first sandboxed
+  typecheck/browser attempt could not read pnpm junctions on Windows; rerunning the same commands
+  with normal workspace access passed. A side-by-side image viewer cropped the teacher capture;
+  inspection of the original 390px image confirmed the rendered page itself was intact.
+- No real payment, payout, refund, production deploy, purchase or Daily change occurred in this
+  correction. Disposable-database CI, preview deployment and manual review are still required.
