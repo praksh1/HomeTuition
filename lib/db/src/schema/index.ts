@@ -34,3 +34,4 @@ export * from "./sessionProviderEvents";
 export * from "./sessionQualitySamples";
 export * from "./learningPrograms";
 export * from "./batchTesting";
+export * from "./classGroups";

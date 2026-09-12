@@ -55,7 +55,8 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
     return `${dates.format(date)} · ${local.time} Nepal time`;
   };
   const money = (value: number) => `NPR ${value.toLocaleString("en-NP")}`;
-  const firstLesson = result?.lessons[0];
+  const firstLesson = result?.lessons.find((lesson) => new Date(lesson.startsAt).getTime() >= Date.now())
+    ?? result?.lessons.at(-1);
   const teacherExpected = result?.receipts.reduce((total, receipt) => total
     + receipt.allocations.reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0), 0) ?? 0;
   const teacherPaid = result?.receipts.reduce((total, receipt) => total + (receipt.accounting?.teacherPaidOutNpr ?? 0), 0) ?? 0;
@@ -92,10 +93,11 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
       <Text accessibilityLiveRegion="polite" style={[t.callout, { color: colors.foreground }]}>{result.isTeacher
         ? "A student has a test place. No real payment was collected."
         : "Your test place is confirmed. No real payment was taken."}</Text>
+      <ProgramButton label="Open class home" emphasis="primary" onPress={() => router.push({ pathname: "/class-home", params: { id: String(batchId) } })} />
       {firstLesson ? <View style={{ gap: space.xxs }}>
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Next lesson</Text>
         <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>Lesson {firstLesson.position + 1} · {dateLabel(firstLesson.startsAt)}</Text>
-        <ProgramButton label="Open next lesson" emphasis="primary" onPress={() => router.push({ pathname: "/session/[id]", params: { id: String(firstLesson.sessionId) } })} />
+        <ProgramButton label="Open next lesson" emphasis="secondary" onPress={() => router.push({ pathname: "/session/[id]", params: { id: String(firstLesson.sessionId) } })} />
       </View> : null}
       <Text style={[t.callout, numeric, { color: colors.foreground }]}>{result.isTeacher
         ? `Expected test earnings: ${money(teacherExpected)}${teacherPaid ? ` · Test-paid: ${money(teacherPaid)}` : ""}`

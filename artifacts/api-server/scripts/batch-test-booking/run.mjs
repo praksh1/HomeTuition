@@ -117,6 +117,22 @@ try {
   check("student cannot read operator ledger", (await api("/admin/batch-test-payments", a.token)).status === 403);
   check("teacher cannot read operator ledger", (await api("/admin/batch-test-payments", teacher.token)).status === 403);
   check("another student cannot read first student's receipt", (await quote(c.id, b)).receipts.length === 0);
+  const classHome = await api(`/class-groups/${c.id}`, a.token);
+  check("booked student opens the class-group home", classHome.status === 200 && !classHome.body.isTeacher && classHome.body.lessons.length === 2);
+  check("unbooked student cannot open another class group", (await api(`/class-groups/${c.id}`, outsider.token)).status === 403);
+  check("teacher opens the same class-group home", (await api(`/class-groups/${c.id}`, teacher.token)).body.isTeacher === true);
+  const studentMessage = await api(`/class-groups/${c.id}/messages`, a.token, { body: "Please explain question four in our next lesson." });
+  check("student can post to the class conversation", studentMessage.status === 201 && studentMessage.body.senderRole === "student");
+  check("teacher reads the same class conversation", (await api(`/class-groups/${c.id}/messages`, teacher.token)).body.messages.some((m) => m.id === studentMessage.body.id));
+  check("student cannot set class homework", (await api(`/class-groups/${c.id}/homework`, a.token, { title: "Not allowed" })).status === 403);
+  const task = await api(`/class-groups/${c.id}/homework`, teacher.token, { title: "Algebra practice", instructions: "Complete questions 1 to 4." });
+  check("teacher can set class homework", task.status === 201 && task.body.title === "Algebra practice");
+  check("student can hand in a text-first answer", (await api(`/class-groups/${c.id}/homework/${task.body.id}/submit`, a.token, { note: "I completed all four questions." })).status === 200);
+  check("teacher sees the student's homework submission", (await api(`/class-groups/${c.id}/homework`, teacher.token)).body.tasks[0].submissions.some((s) => s.studentId === a.user.id));
+  check("student cannot add class materials", (await api(`/class-groups/${c.id}/materials`, a.token, { title: "Not allowed" })).status === 403);
+  const material = await api(`/class-groups/${c.id}/materials`, teacher.token, { title: "Revision notes", note: "Read before class.", url: "https://example.com/notes" });
+  check("teacher can share a safe class material link", material.status === 201 && material.body.url === "https://example.com/notes");
+  check("student sees the shared class material", (await api(`/class-groups/${c.id}/materials`, a.token)).body.materials.some((m) => m.id === material.body.id));
   // Prove the conflict while the original lesson is still scheduled. Later in this
   // journey that lesson is intentionally completed, at which point it should no
   // longer block a student's timetable.
