@@ -176,3 +176,30 @@ the older Program test-enrolment form below to test this new batch-specific chec
   `3741cdd4-72f4-449f-a9fd-38762224c788` is ACTIVE / successful on the same commit.
 - Production and `main` remain untouched. Staging video remains echo. No payment, purchase, Daily
   action, real payout/refund, or shared production-data mutation occurred.
+
+### Discover catalog separation and first scaling pass
+
+- The owner's walkthrough exposed that the public `/programs` feed mixed two different products:
+  formal multi-step Programs and the immutable snapshots used internally by Simple Classes. The
+  student then saw the same scheduled offer in both Programs and Classes, creating the apparent
+  wall of unrelated cards. This was a catalog-boundary defect, not missing staging data.
+- Added an optional, backward-compatible `presentation=program|class` filter to `GET /programs`.
+  The default remains the old combined feed for existing callers. Student Course discovery and the
+  teacher-profile Courses section now explicitly request only formal programs. The class catalog
+  can select only simple-class snapshots. Invalid catalog values return 400.
+- Simplified student language to `Courses`, `Live classes`, and `Teachers`. Course cards render in
+  two columns on wider screens and one column on compact screens; the empty state points directly
+  to Live classes and Teachers instead of explaining internal product architecture.
+- Added API integration assertions proving a simple class cannot leak into the Course catalog and
+  added rendered layout assertions at 390px and 1440px. Local results: app unit 373/0, Discover
+  browser 184/0, typecheck clean when run outside the Windows sandbox so pnpm junctions are
+  readable, design ratchet unchanged 94 hex / 282 sizes, diff check clean. Local real-Postgres
+  Programs could not run because this Windows host has no `psql`; CI supplied the disposable DB.
+- Commit `a3987db` pushed to `codex/batch-simulated-checkout`. Safety workflow `34677371198`
+  passed every gate, including disposable PostgreSQL Programs and browser checks. Preview workflow
+  `34677519959` passed and deployed the same commit. Railway staging deployment
+  `c6634c63-e5cd-464d-85c5-09b0a653629b` is ACTIVE / successful. Direct staging API verification:
+  1 course, 5 live classes, zero class snapshots in courses, zero non-class snapshots in classes.
+- Production and `main` remain untouched. This is only the first Discover scaling pass; ranking,
+  better search/filter controls, student dashboard/accounting and teacher dashboard/accounting are
+  still future work. Staging Daily remains unresolved and no paid service was enabled.
