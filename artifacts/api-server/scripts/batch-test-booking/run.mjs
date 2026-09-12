@@ -108,6 +108,13 @@ try {
   check("student cannot read operator ledger", (await api("/admin/batch-test-payments", a.token)).status === 403);
   check("teacher cannot read operator ledger", (await api("/admin/batch-test-payments", teacher.token)).status === 403);
   check("another student cannot read first student's receipt", (await quote(c.id, b)).receipts.length === 0);
+  // Prove the conflict while the original lesson is still scheduled. Later in this
+  // journey that lesson is intentionally completed, at which point it should no
+  // longer block a student's timetable.
+  const secondTeacher = await account("teacher");
+  const clash = await offer(secondTeacher, { at: Date.parse(booked.lessons[0].startsAt) });
+  const qc = await quote(clash.id, a);
+  check("student timetable conflict refused atomically", (await book(clash.id, a, qc.quoteKey)).status === 409 && Number((await q("SELECT count(*) n FROM batch_test_contracts WHERE batch_id=$1", [clash.id])).rows[0].n) === 0);
   const bookingId = Number((await q("SELECT id FROM batch_test_bookings WHERE batch_id=$1 AND student_id=$2", [c.id, a.user.id])).rows[0].id);
   const decide = (position, event, note = "") => api(`/admin/batch-test-payments/${bookingId}/allocations/${position}/events`, operatorToken, { event, note });
   check("student cannot make a settlement decision", (await api(`/admin/batch-test-payments/${bookingId}/allocations/0/events`, a.token, { event: "lesson_delivered" })).status === 403);
@@ -164,10 +171,6 @@ try {
   const qo = await quote(c.id, outsider);
   check("capacity remains enforced", (await book(c.id, outsider, qo.quoteKey)).status === 409);
   check("no duplicate lesson rows for second student", Number((await q("SELECT count(*) n FROM batch_test_sessions WHERE batch_id=$1", [c.id])).rows[0].n) === 2);
-  const secondTeacher = await account("teacher");
-  const clash = await offer(secondTeacher, { at: Date.parse(booked.lessons[0].startsAt) });
-  const qc = await quote(clash.id, a);
-  check("student timetable conflict refused atomically", (await book(clash.id, a, qc.quoteKey)).status === 409 && Number((await q("SELECT count(*) n FROM batch_test_contracts WHERE batch_id=$1", [clash.id])).rows[0].n) === 0);
   await q("UPDATE users SET suspended_at=now() WHERE id=$1", [a.user.id]);
   check("current suspension overrides a still-valid token", (await api(`/batch-tests/${c.id}`, a.token)).status === 403);
   await q("UPDATE users SET suspended_at=NULL WHERE id=$1", [a.user.id]);
