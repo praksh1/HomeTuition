@@ -1,6 +1,6 @@
 # Premium class-group home
 
-Status: safety workflow passed; awaiting preview review
+Status: deployed to preview; awaiting owner review
 Branch: `codex/premium-class-group-home`
 
 ## Goal
@@ -35,6 +35,9 @@ Give each newly published, test-booked class one premium home with Next lesson, 
 - `git diff --check`: clean.
 - Extended `test:batch-booking` by 12 real-API/real-Postgres checks covering teacher/student/outsider access, messages, homework, submissions and materials. This requires the disposable CI database and has not run locally.
 - GitHub disposable-database safety workflow `34717496079`: pass, including all-workspace typecheck, 547 API units, 393 app units, schema push, API build, Program suite, extended batch-booking suite, video/proof/access suites, browser checks and cleanup.
+- Staging API branch safely fast-forwarded to `1b15a7c`; the additive boot guard deployed without touching existing tables.
+- Preview workflow `34717691076`: pass. It verified rendered Program/profile/class-planning surfaces, bundle isolation, exact staging API target and the deployed Cloudflare Worker.
+- Live verification after deployment: preview HTTP 200; unauthenticated staging `GET /api/class-groups/1` returns 401, proving the protected route is present rather than missing.
 
 ## What went wrong / remains unverified
 
