@@ -398,7 +398,7 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
       .orderBy(asc(batchTestLedgerEntriesTable.id)) : [];
     return { testOnly: true, paymentCollectedNpr: 0, pilotEndsAt: new Date(until).toISOString(), isTeacher,
       receipts: paymentRows.map(r => ({
-        ...receiptView(r.receipt as SimulatedBatchReceipt,
+        ...participantReceiptView(isTeacher ? "teacher" : "student", r.receipt as SimulatedBatchReceipt,
           paymentHistory.filter((entry) => entry.bookingId === r.bookingId)),
         bookingId: r.bookingId, recordedAt: r.recordedAt.toISOString(),
       })),

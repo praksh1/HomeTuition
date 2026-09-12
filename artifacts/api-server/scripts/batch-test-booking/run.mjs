@@ -101,7 +101,8 @@ try {
   const replies = await Promise.all([book(c.id, a, proposal.quoteKey), book(c.id, a, proposal.quoteKey)]);
   check("concurrent retry books exactly once", replies.every((r) => r.status === 200) && replies.filter((r) => r.body.created).length === 1);
   const booked = replies[0].body;
-  check("success returns frozen simulated 70/30 receipt", booked.receipts.length === 1 && booked.receipts[0].grossNpr === 6000 && booked.receipts[0].teacherNpr === 4200 && booked.receipts[0].fadkoNpr === 1800 && booked.receipts[0].actualMoneyCollectedNpr === 0);
+  check("success returns the student's frozen simulated receipt", booked.receipts.length === 1 && booked.receipts[0].grossNpr === 6000 && booked.receipts[0].reference && booked.paymentCollectedNpr === 0);
+  check("booking response excludes teacher and platform accounting", !JSON.stringify(booked).includes("teacherNpr") && !JSON.stringify(booked).includes("fadkoNpr") && !JSON.stringify(booked).includes("heldGrossNpr") && !JSON.stringify(booked).includes("fadkoEarnedNpr"));
   check("concurrent retry creates only one capture", Number((await q("SELECT count(*) n FROM batch_test_payments p JOIN batch_test_bookings b ON b.id=p.booking_id WHERE b.batch_id=$1", [c.id])).rows[0].n) === 1);
   check("teacher can read simulated ledger for own class", (await quote(c.id, teacher)).receipts.length === 1);
   const studentMoney = await api("/batch-tests/me/payments", a.token);
