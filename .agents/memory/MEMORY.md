@@ -1,5 +1,10 @@
 # Memory Index
 
+- [Prelaunch batch test pilot](prelaunch-batch-test-pilot.md) — owner clarified private testing,
+  not established paid customers. Batch-specific no-charge booking bridge built on isolated branch;
+  fixed deadline, two grants/switches, immutable promises, existing session membership. See worklog
+  for deployment status. Echo is NOT real video; isolate preview rooms before sharing provider keys.
+
 - [Test fixtures must respect schedules](test-fixtures-must-respect-schedules.md) — independent slots,
   exact cancellation boundaries, and call-context cleanup; never weaken conflict checks for CI.
 - [Commission transition preserves learning](commission-transition-preserves-learning.md) — 11 Sep:

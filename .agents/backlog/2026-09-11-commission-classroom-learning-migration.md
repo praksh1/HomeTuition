@@ -4,6 +4,11 @@ Owner: 11 Sep 2026. Teaching-plan transition is a separate preview from the appr
 
 ## Current evidence, not aspirations
 
+Update11Sep: isolated `codex/batch-test-booking` now implements a test-only batch booking/session
+bridge and frozen promises. See `.agents/worklog/2026-09-11-codex-batch-test-booking.md` for gates
+and deployment status. The original bullets below describe the pre-pilot baseline. Real checkout,
+commission allocation, payouts and new group learning portal are still unbuilt.
+
 - New class setup persists Program/Batch/period snapshots, not live sessions or paid enrollments.
 - Existing Program rehearsal is unique by Program/student, so cannot represent multiple batches.
 - `membership.ts` gates sessions for BOTH socket and video. Keep that single authority.
