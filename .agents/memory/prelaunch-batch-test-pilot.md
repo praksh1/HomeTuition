@@ -10,9 +10,11 @@ Keep financial/security boundaries anyway; a public URL is not a license to inve
 
 Checkout preview now deployed at6da5489; stage deadline Jan10,2027UTC configured. Teacher user1
 grant renewed to that date; student user2 still active through17Sep2026 (renewal cancelled, verified).
-Video isolation code388ad4e is included in deployment but namespace/provider NOT activated:
-VIDEO_PROVIDER remains echo, no Daily key attached. Owner screenshots show42/10000minutes used,
-estimated$0; this is not a hard cap. Credential attachment awaits action-time approval.
+Owner approved credential attachment after testing checkout. Staging configuration now deployed
+at88a6d07b-2a78-42cc-a124-afd972ebd84b: VIDEO_PROVIDER=daily,
+VIDEO_ROOM_NAMESPACE=fadko-preview, DAILY_API_KEY referenced from shared Railway storage.
+No production change or key disclosure. Owner screenshots showed42/10000minutes used,
+estimated$0; this is not a hard cap. Real room/token/media verification still pending owner call.
 See Sep11 simulated-class-checkout worklog for CI/deployment/actual operator browser verification.
 
 `codex/batch-test-booking` adds explicit batch test contracts/bookings/session mappings.
