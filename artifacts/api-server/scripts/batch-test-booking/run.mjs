@@ -148,7 +148,7 @@ try {
   snapshot.lessons[1].startsAt = new Date(Date.now() + 9 * 86400000).toISOString();
   snapshot.tuitionPeriod.startsAt = snapshot.lessons[0].startsAt;
   snapshot.tuitionPeriod.endsAt = new Date(Date.parse(snapshot.tuitionPeriod.startsAt) + 30 * 86400000).toISOString();
-  snapshot.enrollmentClosesAt = snapshot.tuitionPeriod.endsAt;
+  snapshot.enrollmentClosesAt = snapshot.lessons.at(-1).startsAt;
   await q("UPDATE learning_program_batches SET published_snapshot=$2 WHERE id=$1", [lateClass.id, JSON.stringify(snapshot)]);
   const lateQuote = await quote(lateClass.id, outsider);
   check("mid-period quote excludes started lessons and prorates once", lateQuote.quote.status === "remaining_lessons" && lateQuote.quote.amountNpr === 3000 && lateQuote.quote.lessonPositions.length === 1 && lateQuote.quote.lessonPositions[0] === 1);
