@@ -114,3 +114,16 @@ the older Program test-enrolment form below to test this new batch-specific chec
   design ratchet unchanged94/282; browser checkout/operator settlement40/40 at390/1440. Disposable
   PostgreSQL integration cannot run on this Windows checkout (no local Postgres); its extended
   checks are wired into `batch-test-checks.yml` and must pass in CI before preview deployment.
+
+### Settlement release result
+
+- Commit `1837160` pushed to `codex/batch-simulated-checkout`; preview source
+  `codex/program-batch-foundation` fast-forwarded to the same commit. Main remains untouched.
+- GitHub safety run `34672621006` passed every step, including disposable PostgreSQL schema push,
+  extended batch booking/settlement integration, all unit suites, video/proof/access contracts and
+  the40-check phone/laptop browser flow.
+- Railway staging deployment `120bc805-bf6a-4ba0-a84f-e33516702fe2` is ACTIVE / successful.
+  HTTPS health returned200; unauthenticated ledger request returned401 (protected route exists).
+- Cloudflare preview run `34672831042` passed and deployed commit `1837160`, including its own
+  typecheck, disposable database/API checks, rendered class/program flows and production-isolation
+  proof. Preview URL unchanged. Owner still needs to perform the operator settlement walkthrough.
