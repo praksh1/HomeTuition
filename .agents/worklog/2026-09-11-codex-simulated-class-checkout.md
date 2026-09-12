@@ -300,3 +300,33 @@ the older Program test-enrolment form below to test this new batch-specific chec
   time; the account has no refund, so no refund transaction was invented. The rendered fixture
   separately proves that a real refunded allocation becomes its own dated class/lesson credit.
   Production and `main` remain untouched; owner device review is the only remaining gate.
+
+### Price-specific teacher earnings estimate
+
+- The owner passed the bank-style participant statements, then rejected the prominent `70% Teacher
+  share` presentation on Profile > Teaching & earnings. The commercial split remains the internal
+  allocation rule, but it is no longer advertised as the product or exposed as Fadko's earnings.
+- Replaced that percentage block with a short explanation that a teacher will see a price-specific
+  estimate while preparing a class. Removed the `Separate student fee during beta: NPR 0` line;
+  a zero was implementation policy, not useful teacher-facing information.
+- Added a display-only `classEarningsEstimate` derivation. It accepts the entered full price, the
+  actual scheduled lesson count and the current server-provided teacher-share basis points. It
+  refuses invalid/missing terms instead of inventing an amount. The payment ledger remains the
+  authority for every real allocation.
+- Class setup now shows a bank-like, right-aligned estimate in both `Class size and price` and the
+  final review: total earnings **for each enrolled student** and the approximate amount per
+  completed lesson. It says `Before applicable taxes` and warns that approved refunds or
+  adjustments may reduce final payout. It calculates no tax, promises no payout date and does not
+  multiply by unfilled seats.
+- The calculation fetches the existing `/teachers/me/billing` policy rather than duplicating `70%`
+  in the app. No payment, booking, refund, tax, payout, database or API behavior changed.
+- Verification before commit: focused derivation tests 5/0; full app units 383/0; class setup
+  rendered journey 93/0 at 360px, 390px and 1440px; Teaching & earnings rendered journey 32/0;
+  four-workspace typecheck clean; design ratchet unchanged at 94 hex / 282 raw sizes;
+  `git diff --check` clean. The first full typecheck found a tuple-spread type error in the new test;
+  the test was corrected to destructure an explicitly typed tuple and the full gate passed.
+- Full-page pricing captures were inspected at phone and laptop widths. The entered NPR 3,000 over
+  five actual lessons rendered NPR 2,100 for each enrolled student and approximately NPR 420.00 per
+  completed lesson, without a percentage split or horizontal overflow.
+- Production and `main` remain untouched. Preview deployment and owner review are required before
+  release.

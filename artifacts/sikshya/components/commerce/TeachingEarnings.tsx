@@ -24,7 +24,7 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
   policy: TeachingBillingPolicy | null; failed: boolean; retry: () => void;
 }) {
   const colors = useColors();
-  const { t, space, gutter, numeric } = useLayout();
+  const { t, space, gutter } = useLayout();
   const insets = useSafeAreaInsets();
   return <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={{ padding: gutter, paddingTop: insets.top + space.md, paddingBottom: insets.bottom + space.xxl, gap: space.lg, maxWidth: readingWidth, width: "100%", alignSelf: "center" }}>
     <ProgramBackControl label="Back to Profile" testID="billing-back" onPress={() => router.replace("/(teacher)/profile")} />
@@ -35,11 +35,8 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
       <ProgramCardShell>
         <Text style={[t.title2, { color: colors.foreground }]}>Teach without buying a tier</Text>
         <Text style={[t.body, { color: colors.foreground }]}>Prepare your class and set its price. New teacher-plan purchases are paused while we connect student payments.</Text>
-        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.lg }}>
-          <View><Text style={[t.title1, numeric, { color: colors.primary }]}>{policy.teacherShareBps / 100}%</Text><Text style={[t.caption, { color: colors.mutedForeground }]}>Teacher share</Text></View>
-        </View>
-        <Text style={[t.caption, { color: colors.mutedForeground }]}>Planned for new classes, not a change to existing purchases. Students pay upfront; your earnings are released after lesson delivery and the complaint window. No payout date is promised yet.</Text>
-        <Text style={[t.callout, numeric, { color: colors.foreground }]}>Separate student fee during beta: NPR {policy.studentFeeNpr}.</Text>
+        <Text style={[t.body, { color: colors.foreground }]}>When you enter a class price and lesson dates, Fadko shows your estimated earnings for each enrolled student and the approximate amount per lesson.</Text>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>Estimates are shown before applicable taxes. Final earnings can change after an approved refund or adjustment. Students pay upfront; eligible earnings are released after lesson delivery and the complaint window.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
       </ProgramCardShell>
       <ProgramNotice title={policy.testPilotEndsAt ? "Private test bookings are open" : "Listings only for now"} tone="waiting">

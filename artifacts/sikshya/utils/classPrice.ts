@@ -6,6 +6,29 @@ export function classPriceBreakdown(total: number, lessons: number): string {
   return `Includes ${lessons} live ${lessons === 1 ? "lesson" : "lessons"} · approximately NPR ${average} per lesson. Full payment upfront, not pay-per-lesson.`;
 }
 
+export interface ClassEarningsEstimate {
+  totalNpr: number;
+  averagePerLessonNpr: number;
+}
+
+/**
+ * Display-only estimate from the server-published teaching terms. The booking
+ * ledger remains the authority for every real allocation and payout.
+ */
+export function classEarningsEstimate(
+  total: number,
+  lessons: number,
+  teacherShareBps: number,
+): ClassEarningsEstimate | null {
+  if (
+    !Number.isSafeInteger(total) || total < 1 ||
+    !Number.isInteger(lessons) || lessons < 1 ||
+    !Number.isInteger(teacherShareBps) || teacherShareBps < 1 || teacherShareBps > 10_000
+  ) return null;
+  const totalNpr = Number(BigInt(total) * BigInt(teacherShareBps) / 10_000n);
+  return { totalNpr, averagePerLessonNpr: totalNpr / lessons };
+}
+
 export function classPublishSummary(total: number, lessons: number, ongoing: boolean): string[] {
   return [
     `You are publishing ${lessons} ${lessons === 1 ? "lesson" : "lessons"} for NPR ${total.toLocaleString("en-NP")} per student.`,
