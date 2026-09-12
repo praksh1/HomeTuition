@@ -1,6 +1,6 @@
 # Premium class-group home
 
-Status: implementation complete; awaiting disposable-database safety workflow and preview review
+Status: safety workflow passed; awaiting preview review
 Branch: `codex/premium-class-group-home`
 
 ## Goal
@@ -34,6 +34,7 @@ Give each newly published, test-booked class one premium home with Next lesson, 
 - Design lint: no new leaks; baseline remains 94 hex / 282 sizes.
 - `git diff --check`: clean.
 - Extended `test:batch-booking` by 12 real-API/real-Postgres checks covering teacher/student/outsider access, messages, homework, submissions and materials. This requires the disposable CI database and has not run locally.
+- GitHub disposable-database safety workflow `34717496079`: pass, including all-workspace typecheck, 547 API units, 393 app units, schema push, API build, Program suite, extended batch-booking suite, video/proof/access suites, browser checks and cleanup.
 
 ## What went wrong / remains unverified
 
