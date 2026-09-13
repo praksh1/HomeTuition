@@ -11,6 +11,14 @@ const routes = readFileSync(
   "utf8",
 );
 const schema = readFileSync(path.join(here, "classGroupSchema.ts"), "utf8");
+const materialAccess = readFileSync(
+  path.join(here, "classMaterialAccess.ts"),
+  "utf8",
+);
+const storage = readFileSync(
+  path.join(here, "..", "routes", "storage.ts"),
+  "utf8",
+);
 
 test("new class groups have one batch authority and never masquerade as old Monthly classes", () => {
   assert.match(access, /batchTestBookingsTable\.batchId/);
@@ -30,6 +38,7 @@ test("every learning tool is scoped by batch and created additively", () => {
     "class_group_homework_submissions",
     "class_group_homework_files",
     "class_group_materials",
+    "class_group_material_files",
   ]) {
     assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${name}`));
   }
@@ -66,4 +75,14 @@ test("new class homework accepts files only after storage verification and keeps
   assert.match(routes, /classGroupHomeworkFilesTable\.kind, \["submission", "feedback"\]/);
   assert.match(schema, /class_group_homework_files_key_idx/);
   assert.match(schema, /submission_id integer REFERENCES class_group_homework_submissions/);
+});
+
+test("class materials may carry one verified photo or PDF without changing existing rows", () => {
+  assert.match(routes, /classGroupMaterialFilesTable/);
+  assert.match(routes, /acceptedFile = await acceptUploadedFile\(req\.body, req\.user!\.userId\)/);
+  assert.match(schema, /class_group_material_files_material_idx/);
+  assert.match(schema, /class_group_material_files_key_idx/);
+  assert.match(materialAccess, /classGroupAccess\(file\.batchId, userId\)/);
+  assert.match(storage, /mayOpenClassMaterialFile\(key, user\.userId\)/);
+  assert.doesNotMatch(schema, /ALTER TABLE/);
 });

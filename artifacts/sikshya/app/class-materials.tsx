@@ -6,7 +6,7 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ClassGroupShell } from "@/components/classes/ClassGroupShell";
 import {
   ProgramButton,
@@ -15,11 +15,17 @@ import {
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
+import {
+  HomeworkFileButton,
+  HomeworkFilePicker,
+} from "@/components/classes/HomeworkFileControls";
+import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 interface Material {
   id: number;
   title: string;
   note: string | null;
   url: string | null;
+  file?: { fileKey: string; fileName?: string | null } | null;
 }
 interface MaterialView {
   title: string;
@@ -35,8 +41,10 @@ export default function ClassMaterialsScreen() {
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [url, setUrl] = useState("");
+  const [file, setFile] = useState<UploadableFile | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  const addInFlight = useRef(false);
   const load = useCallback(async () => {
     try {
       setView(await apiGet<MaterialView>(`/class-groups/${batchId}/materials`));
@@ -49,18 +57,29 @@ export default function ClassMaterialsScreen() {
     void load();
   }, [load]);
   const add = async () => {
+    if (addInFlight.current) return;
+    addInFlight.current = true;
     setBusy(true);
     try {
-      await apiPost(`/class-groups/${batchId}/materials`, { title, note, url });
+      const fileKey = file ? await uploadFile(file) : undefined;
+      await apiPost(`/class-groups/${batchId}/materials`, {
+        title,
+        note,
+        url,
+        fileKey,
+        fileName: file?.name,
+      });
       setTitle("");
       setNote("");
       setUrl("");
+      setFile(null);
       await load();
     } catch (e) {
       setProblem(
         e instanceof Error ? e.message : "Could not add that material.",
       );
     } finally {
+      addInFlight.current = false;
       setBusy(false);
     }
   };
@@ -146,6 +165,12 @@ export default function ClassMaterialsScreen() {
               },
             ]}
           />
+          <HomeworkFilePicker
+            file={file}
+            onPick={setFile}
+            label="Choose a handout photo or PDF (optional)"
+            testID="class-material-file"
+          />
           <ProgramButton
             label={busy ? "Adding…" : "Add material"}
             emphasis="primary"
@@ -159,7 +184,7 @@ export default function ClassMaterialsScreen() {
           title="Nothing shared yet"
           body={
             view.isTeacher
-              ? "Add a note or trusted link students will need."
+              ? "Add a note, trusted link, photo or PDF students will need."
               : "Your teacher has not shared any class materials."
           }
         />
@@ -190,6 +215,16 @@ export default function ClassMaterialsScreen() {
                 label="Open link"
                 emphasis="secondary"
                 onPress={() => void Linking.openURL(material.url!)}
+              />
+            ) : null}
+            {material.file ? (
+              <HomeworkFileButton
+                fileKey={material.file.fileKey}
+                label={
+                  material.file.fileName
+                    ? `Open ${material.file.fileName}`
+                    : "Open handout"
+                }
               />
             ) : null}
           </View>

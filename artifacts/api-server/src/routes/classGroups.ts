@@ -8,6 +8,7 @@ import {
   classGroupHomeworkFilesTable,
   classGroupHomeworkSubmissionsTable,
   classGroupHomeworkTable,
+  classGroupMaterialFilesTable,
   classGroupMaterialsTable,
   classGroupMessagesTable,
   db,
@@ -634,7 +635,25 @@ router.get("/class-groups/:id/materials", requireAuth, async (req, res) => {
     .from(classGroupMaterialsTable)
     .where(eq(classGroupMaterialsTable.batchId, access.batchId))
     .orderBy(asc(classGroupMaterialsTable.id));
-  res.json({ title: access.title, isTeacher: access.isTeacher, materials });
+  const files = materials.length
+    ? await db
+        .select()
+        .from(classGroupMaterialFilesTable)
+        .where(
+          inArray(
+            classGroupMaterialFilesTable.materialId,
+            materials.map((material) => material.id),
+          ),
+        )
+    : [];
+  res.json({
+    title: access.title,
+    isTeacher: access.isTeacher,
+    materials: materials.map((material) => ({
+      ...material,
+      file: files.find((file) => file.materialId === material.id) ?? null,
+    })),
+  });
 });
 
 router.post("/class-groups/:id/materials", requireAuth, async (req, res) => {
@@ -663,17 +682,38 @@ router.post("/class-groups/:id/materials", requireAuth, async (req, res) => {
       return;
     }
   }
-  const [material] = await db
-    .insert(classGroupMaterialsTable)
-    .values({
-      batchId: access.batchId,
-      teacherId: access.teacherId,
-      title,
-      note: note || null,
-      url: url || null,
-    })
-    .returning();
-  res.status(201).json(material);
+  const acceptedFile = await acceptUploadedFile(req.body, req.user!.userId);
+  if (acceptedFile && "error" in acceptedFile) {
+    res.status(400).json({ error: acceptedFile.error });
+    return;
+  }
+  const saved = await db.transaction(async (tx) => {
+    const [material] = await tx
+      .insert(classGroupMaterialsTable)
+      .values({
+        batchId: access.batchId,
+        teacherId: access.teacherId,
+        title,
+        note: note || null,
+        url: url || null,
+      })
+      .returning();
+    let file = null;
+    if (acceptedFile) {
+      [file] = await tx
+        .insert(classGroupMaterialFilesTable)
+        .values({
+          materialId: material.id,
+          uploaderId: req.user!.userId,
+          fileKey: acceptedFile.key,
+          fileType: acceptedFile.type,
+          fileName: acceptedFile.name,
+        })
+        .returning();
+    }
+    return { ...material, file };
+  });
+  res.status(201).json(saved);
 });
 
 export default router;

@@ -46,4 +46,11 @@ export const CLASS_GROUP_DDL = [
     teacher_id integer NOT NULL REFERENCES users(id) ON DELETE RESTRICT, title text NOT NULL,
     note text, url text, created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS class_group_materials_batch_idx ON class_group_materials(batch_id, id)`,
+  `CREATE TABLE IF NOT EXISTS class_group_material_files (
+    id serial PRIMARY KEY, material_id integer NOT NULL REFERENCES class_group_materials(id) ON DELETE CASCADE,
+    uploader_id integer NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    file_key text NOT NULL, file_type text NOT NULL, file_name text,
+    created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS class_group_material_files_material_idx ON class_group_material_files(material_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS class_group_material_files_key_idx ON class_group_material_files(file_key)`,
 ] as const;

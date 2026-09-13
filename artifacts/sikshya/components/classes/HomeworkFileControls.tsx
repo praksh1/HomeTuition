@@ -34,7 +34,7 @@ export function HomeworkFilePicker({
     const selected = result.assets[0];
     onPick({
       uri: selected.uri,
-      name: selected.name || "homework",
+      name: selected.name || "attachment",
       mimeType: selected.mimeType || "application/octet-stream",
       size: selected.size || 1,
     });

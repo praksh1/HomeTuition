@@ -188,3 +188,27 @@ export const classGroupMaterialsTable = pgTable(
   },
   (t) => [index("class_group_materials_batch_idx").on(t.batchId, t.id)],
 );
+
+/** One optional teacher-uploaded photo or PDF for a class material. */
+export const classGroupMaterialFilesTable = pgTable(
+  "class_group_material_files",
+  {
+    id: serial("id").primaryKey(),
+    materialId: integer("material_id")
+      .notNull()
+      .references(() => classGroupMaterialsTable.id, { onDelete: "cascade" }),
+    uploaderId: integer("uploader_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "restrict" }),
+    fileKey: text("file_key").notNull(),
+    fileType: text("file_type").notNull(),
+    fileName: text("file_name"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("class_group_material_files_material_idx").on(t.materialId),
+    uniqueIndex("class_group_material_files_key_idx").on(t.fileKey),
+  ],
+);
