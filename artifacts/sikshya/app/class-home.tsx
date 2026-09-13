@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
 import { ClassGroupShell } from "@/components/classes/ClassGroupShell";
@@ -7,6 +7,7 @@ import { ProgramNotice } from "@/components/programs/ProgramPieces";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
+import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 
@@ -19,7 +20,12 @@ interface Home {
     startsAt: string;
     durationMinutes: number;
   }>;
-  counts: { messages: number; homework: number; materials: number };
+  counts: {
+    messages: number;
+    unreadMessages: number;
+    homework: number;
+    materials: number;
+  };
 }
 
 export default function ClassHomeScreen() {
@@ -28,6 +34,7 @@ export default function ClassHomeScreen() {
   const colors = useColors();
   const { t, space, numeric } = useLayout();
   const dates = useDates();
+  const { lastEvent } = useNotifications();
   const [home, setHome] = useState<Home | null>(null);
   const [problem, setProblem] = useState("");
   const load = useCallback(async () => {
@@ -38,9 +45,19 @@ export default function ClassHomeScreen() {
       setProblem(e instanceof Error ? e.message : "Could not load this class.");
     }
   }, [batchId]);
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (
+      lastEvent?.kind === "class_message" &&
+      Number(lastEvent.batchId) === batchId
+    ) {
+      void load();
+    }
+  }, [batchId, lastEvent, load]);
   if (!home && !problem)
     return (
       <View
@@ -82,8 +99,11 @@ export default function ClassHomeScreen() {
       icon: "message-circle",
       label: "Class messages",
       note: home.counts.messages
-        ? `${home.counts.messages} messages`
+        ? home.counts.unreadMessages
+          ? `${home.counts.unreadMessages} unread · ${home.counts.messages} total`
+          : `${home.counts.messages} messages`
         : "Start the class conversation",
+      unread: home.counts.unreadMessages,
       path: "/class-chat",
     },
     {
@@ -95,6 +115,7 @@ export default function ClassHomeScreen() {
           ? "Set the first task"
           : "Nothing due yet",
       path: "/class-homework",
+      unread: 0,
     },
     {
       icon: "folder",
@@ -105,12 +126,14 @@ export default function ClassHomeScreen() {
           ? "Add notes or useful links"
           : "Nothing shared yet",
       path: "/class-materials",
+      unread: 0,
     },
     {
       icon: "life-buoy",
       label: "Help",
       note: "Questions, safety or technical support",
       path: "/support",
+      unread: 0,
     },
   ] as const;
   return (
@@ -202,6 +225,30 @@ export default function ClassHomeScreen() {
                 {card.note}
               </Text>
             </View>
+            {card.unread ? (
+              <View
+                accessibilityLabel={`${card.unread} unread class messages`}
+                style={{
+                  minWidth: 24,
+                  height: 24,
+                  paddingHorizontal: 6,
+                  borderRadius: 12,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: colors.brand,
+                }}
+              >
+                <Text
+                  style={[
+                    t.caption,
+                    numeric,
+                    { color: colors.brandForeground },
+                  ]}
+                >
+                  {card.unread > 99 ? "99+" : card.unread}
+                </Text>
+              </View>
+            ) : null}
             <Feather
               name="chevron-right"
               size={20}

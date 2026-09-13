@@ -24,6 +24,7 @@ test("new class groups have one batch authority and never masquerade as old Mont
 test("every learning tool is scoped by batch and created additively", () => {
   for (const name of [
     "class_group_messages",
+    "class_group_message_reads",
     "class_group_homework",
     "class_group_homework_submissions",
     "class_group_materials",
@@ -41,4 +42,11 @@ test("late students do not inherit earlier conversation", () => {
     /gte\(classGroupMessagesTable\.createdAt, access\.joinedAt\)/,
   );
   assert.match(routes, /classGroupMessagesTable\.pinnedAt/);
+});
+
+test("unread messages have a durable per-person acknowledgement", () => {
+  assert.match(schema, /PRIMARY KEY \(batch_id, user_id\)/);
+  assert.match(routes, /lastReadMessageId/);
+  assert.match(routes, /greatest/);
+  assert.match(routes, /kind: "class_message"/);
 });

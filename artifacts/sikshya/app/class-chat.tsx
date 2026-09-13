@@ -8,6 +8,7 @@ import {
 } from "@/components/programs/ProgramPieces";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
+import { useNotifications } from "@/context/NotificationContext";
 import { apiGet, apiPost } from "@/utils/api";
 
 interface Message {
@@ -28,14 +29,27 @@ export default function ClassChatScreen() {
   const batchId = Number(id);
   const colors = useColors();
   const { t, space } = useLayout();
+  const { lastEvent } = useNotifications();
   const [view, setView] = useState<ViewData | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const load = useCallback(async () => {
     try {
-      setView(await apiGet<ViewData>(`/class-groups/${batchId}/messages`));
+      const next = await apiGet<ViewData>(`/class-groups/${batchId}/messages`);
+      setView(next);
       setProblem("");
+      const lastMessageId = next.messages.at(-1)?.id;
+      if (lastMessageId) {
+        try {
+          await apiPost(`/class-groups/${batchId}/messages/read`, {
+            lastMessageId,
+          });
+        } catch {
+          // Reading the conversation succeeded. Keep it usable even if the small
+          // acknowledgement request is interrupted; its badge remains until a retry.
+        }
+      }
     } catch (e) {
       setProblem(
         e instanceof Error ? e.message : "Could not load the conversation.",
@@ -45,6 +59,14 @@ export default function ClassChatScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (
+      lastEvent?.kind === "class_message" &&
+      Number(lastEvent.batchId) === batchId
+    ) {
+      void load();
+    }
+  }, [batchId, lastEvent, load]);
   const send = async () => {
     if (!draft.trim() || busy) return;
     setBusy(true);

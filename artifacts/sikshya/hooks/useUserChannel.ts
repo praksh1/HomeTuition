@@ -20,6 +20,7 @@ export interface UserEvent {
     | "session_booked"
     | "session_dropped"
     | "session_cancelled"
+    | "class_message"
     | "session_message"
     | "session_rescheduled";
   at?: string;
@@ -27,6 +28,7 @@ export interface UserEvent {
   fromName?: string;
   preview?: string;
   sessionId?: number | string;
+  batchId?: number | string;
   topic?: string;
   programId?: number | string;
   programTitle?: string;

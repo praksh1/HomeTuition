@@ -87,6 +87,17 @@ test("nothing else's wording moved", () => {
   const at = new Date().toISOString();
   const cases: [NotificationEvent, RegExp][] = [
     [{ kind: "message", at, fromName: "Sita", preview: "hello" }, /sent you a message/],
+    [
+      {
+        kind: "class_message",
+        at,
+        fromName: "Sita",
+        preview: "Bring your geometry set.",
+        topic: "SEE Maths",
+        batchId: 3,
+      },
+      /wrote in “SEE Maths”/,
+    ],
     [{ kind: "follower", at, fromName: "Sita" }, /has started following you/],
     [{ kind: "program_published", at, fromName: "Sita", programId: 3, programTitle: "Spoken English" }, /published "Spoken English"/],
     [{ kind: "session_invite", at, fromName: "Sita", topic: "Algebra" }, /has scheduled a new class/],

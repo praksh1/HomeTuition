@@ -17,6 +17,7 @@ import {
   getNotifications,
   getUnreadCount,
   markAllRead,
+  notifyClassMessage,
   notifyNewFollower,
   notifyNewMessage,
   notifyProgramPublished,
@@ -49,7 +50,7 @@ interface NotificationContextType {
    * The last event that arrived on the socket, whatever kind it was.
    *
    * Exposed so a screen can react to something happening *while it is open* without polling —
-   * the class message thread listens for `session_message` and asks for what it has not seen.
+   * class message threads listen for their own event and ask for what they have not seen.
    * Deliberately the raw event: it is a nudge, not the data. A screen that trusted the event's
    * contents would show a message the server has not confirmed.
    */
@@ -88,9 +89,12 @@ function openTarget(data: {
   sessionId?: string | number;
   conversationWith?: string | number;
   programId?: string | number;
+  batchId?: string | number;
 }): void {
   try {
-    if (data.programId != null && data.type === "program_published") {
+    if (data.batchId != null && data.type === "class_message") {
+      router.push({ pathname: "/class-chat", params: { id: String(data.batchId) } });
+    } else if (data.programId != null && data.type === "program_published") {
       router.push(`/(student)/program/${data.programId}`);
     } else if (data.sessionId != null && data.type === "session_message") {
       // The class's own page, where the thread is and where the Join button is — not the
@@ -147,7 +151,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       // it a message that never appears.
       setLastEvent(event);
 
-      const key = `${event.kind}:${event.fromUserId ?? event.sessionId ?? ""}:${event.at ?? ""}`;
+      const key = `${event.kind}:${event.fromUserId ?? event.sessionId ?? event.batchId ?? ""}:${event.at ?? ""}`;
       if (seen.current.has(key)) return;
       seen.current.add(key);
       // Bounded so a long session cannot grow this without limit.
@@ -174,7 +178,16 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             teacherName: event.fromName,
             sessionId: event.sessionId,
           });
+        } else if (event.kind === "class_message" && event.batchId != null) {
+          if (!preferences.push.messages) return;
+          await notifyClassMessage({
+            senderName: event.fromName ?? "Someone",
+            body: event.preview ?? "",
+            batchId: event.batchId,
+            topic: event.topic,
+          });
         } else if (event.kind === "session_message") {
+          if (!preferences.push.messages) return;
           // A class's own thread, which is where a teacher says they are running late. It
           // deserves a notification for the same reason a direct message does: it is somebody
           // talking to you, and it is time-critical far more often than not.
@@ -231,7 +244,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
       await refresh();
     },
-    [refresh],
+    [preferences.push.messages, refresh],
   );
 
   // One socket for as long as someone is signed in. The classroom socket only carries one
@@ -302,7 +315,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
           await refresh();
           const data = response?.notification?.request?.content?.data as
-            | { type?: string; sessionId?: string | number; conversationWith?: string | number; programId?: string | number }
+            | { type?: string; sessionId?: string | number; conversationWith?: string | number; programId?: string | number; batchId?: string | number }
             | undefined;
           if (data) openTarget(data);
         });

@@ -155,6 +155,36 @@ export async function notifySessionMessage(msg: {
   await addInAppNotification({ title, body, type: "general", data });
 }
 
+/** A new message in the persistent conversation for a purchased class group. */
+export async function notifyClassMessage(msg: {
+  senderName: string;
+  body: string;
+  batchId: number | string;
+  topic?: string;
+}): Promise<void> {
+  const title = msg.topic
+    ? `${msg.senderName} · ${msg.topic}`
+    : `${msg.senderName} messaged your class`;
+  const body = msg.body.length > 120 ? `${msg.body.slice(0, 117)}…` : msg.body;
+  const data = { type: "class_message", batchId: String(msg.batchId) };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: { title, body, data, sound: true },
+        trigger: null,
+      });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry still lands.
+    }
+  } else if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    // Android browsers can give the short physical cue the owner asked for. iPhone Safari
+    // currently ignores this API, while the visible badge and notification entry still work.
+    navigator.vibrate(120);
+  }
+  await addInAppNotification({ title, body, type: "general", data });
+}
+
 /**
  * Raised when someone starts following a teacher.
  *

@@ -2,6 +2,7 @@ import {
   index,
   integer,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -32,6 +33,29 @@ export const classGroupMessagesTable = pgTable(
       .defaultNow(),
   },
   (t) => [index("class_group_messages_batch_idx").on(t.batchId, t.id)],
+);
+
+/** Per-person read position for one class conversation. */
+export const classGroupMessageReadsTable = pgTable(
+  "class_group_message_reads",
+  {
+    batchId: integer("batch_id")
+      .notNull()
+      .references(() => learningProgramBatchesTable.id, {
+        onDelete: "cascade",
+      }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    lastReadMessageId: integer("last_read_message_id").notNull().default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.batchId, t.userId] }),
+    index("class_group_message_reads_user_idx").on(t.userId, t.batchId),
+  ],
 );
 
 /** A teacher-set task for one batch. It is never attached to an old recurring-class id. */

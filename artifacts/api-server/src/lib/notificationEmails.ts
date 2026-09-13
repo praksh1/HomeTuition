@@ -15,6 +15,7 @@ export type NotificationKind =
   | "message"
   | "follower"
   | "program_published"
+  | "class_message"
   | "session_live"
   | "session_invite"
   | "session_booked"
@@ -32,6 +33,7 @@ export interface NotificationEvent {
   topic?: string;
   programId?: number;
   programTitle?: string;
+  batchId?: number;
   /** What was paid, for the notifications about money arriving or going back. */
   amount?: number;
   /**
@@ -75,6 +77,18 @@ export function emailFor(event: NotificationEvent, recipientName: string): { sub
           `${hello}\n\n${event.fromName ?? "Someone"} sent you a message:\n\n` +
           `  "${event.preview ?? ""}"\n` +
           (link ? `\nRead and reply: ${link}\n` : "") +
+          signoff,
+      };
+    }
+    case "class_message": {
+      const link = appUrl(`/class-chat?id=${event.batchId ?? ""}`);
+      return {
+        subject: `New class message from ${event.fromName ?? "someone"}`,
+        text:
+          `${hello}\n\n${event.fromName ?? "Someone"} wrote in ` +
+          `“${event.topic ?? "your class"}”:\n\n` +
+          `  "${event.preview ?? ""}"\n` +
+          (link ? `\nOpen the class conversation: ${link}\n` : "") +
           signoff,
       };
     }

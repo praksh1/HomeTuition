@@ -6,6 +6,13 @@ export const CLASS_GROUP_DDL = [
     sender_role text NOT NULL, body text NOT NULL, pinned_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS class_group_messages_batch_idx ON class_group_messages(batch_id, id)`,
+  `CREATE TABLE IF NOT EXISTS class_group_message_reads (
+    batch_id integer NOT NULL REFERENCES learning_program_batches(id) ON DELETE CASCADE,
+    user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_read_message_id integer NOT NULL DEFAULT 0,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (batch_id, user_id))`,
+  `CREATE INDEX IF NOT EXISTS class_group_message_reads_user_idx ON class_group_message_reads(user_id, batch_id)`,
   `CREATE TABLE IF NOT EXISTS class_group_homework (
     id serial PRIMARY KEY, batch_id integer NOT NULL REFERENCES learning_program_batches(id) ON DELETE CASCADE,
     teacher_id integer NOT NULL REFERENCES users(id) ON DELETE RESTRICT, title text NOT NULL,
