@@ -89,5 +89,6 @@ to enrolled. This was a client restoration defect, not a payment or database def
 The full real-Postgres `test:batch-booking` suite cannot run on this Windows host because no disposable
 PostgreSQL/`PGURL` is configured. Its contract was extended for restored booking, server-owned class
 grouping, feedback lock, offline inbox delivery and late-enrolment homework catch-up. Those checks must
-run against the isolated staging database after the staging API revision is deployed. Production must
+run against the preview workflow's disposable PostgreSQL database before the preview Worker is deployed;
+the workflow now gates deployment on that suite and the notification-delivery suite. Production must
 remain untouched until the owner completes the short preview test and explicitly approves release.
