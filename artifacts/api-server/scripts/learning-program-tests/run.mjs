@@ -681,7 +681,12 @@ async function moderation() {
   const term = sql(`select 1`) && "fuck";
   const res = await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: complete({ summary: `A summary that says ${term} in the middle of it.` }) });
   check("a teacher is not blocked mid-sentence by a word list", res.status === 200, `status ${res.status}`);
-  const after = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
+  // The moderation write is intentionally non-blocking, so wait briefly for the
+  // audit row instead of racing the server process immediately after the PATCH.
+  const after = await eventuallySqlNumber(
+    `select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`,
+    (value) => value > before,
+  );
   check("but an operator can see what was written", after > before, `${before} -> ${after}`);
   const surface = sql(`select surface from moderation_flags where subject_id = ${id} limit 1`);
   check("filed under its own surface, so a reviewer knows where it came from",
