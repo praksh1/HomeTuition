@@ -77,6 +77,9 @@ test("new class homework accepts files only after storage verification and keeps
   assert.match(schema, /submission_id integer REFERENCES class_group_homework_submissions/);
   assert.match(routes, /readHomeworkDeadline\(req\.body\?\.dueAt\)/);
   assert.match(routes, /dueAt: deadline\.dueAt/);
+  assert.match(routes, /row\.status === "returned"/);
+  assert.match(routes, /Feedback has already been returned/);
+  assert.match(routes, /aDone - bDone \|\| a\.studentName\.localeCompare/);
 });
 
 test("homework uses truthful dedicated events rather than booking and class-invite wording", () => {

@@ -1,5 +1,5 @@
 import { eq, inArray } from "drizzle-orm";
-import { db, usersTable, userNotificationPrefsTable } from "@workspace/db";
+import { db, usersTable, userNotificationEventsTable, userNotificationPrefsTable } from "@workspace/db";
 import { logger } from "./logger";
 import { isEmailConfigured, sendEmail } from "./mailer";
 import { readPrefs, type PrefKind } from "./notificationPrefs";
@@ -75,7 +75,19 @@ export function notify(userId: number, event: NotificationEvent): void {
  * a stale preference row silence it would put the operator screen back to guessing.
  */
 export function notifyInApp(userId: number, event: NotificationEvent): void {
-  notifyUser(userId, { ...event });
+  void (async () => {
+    try {
+      const [stored] = await db
+        .insert(userNotificationEventsTable)
+        .values({ userId, event: event as unknown as Record<string, unknown> })
+        .returning({ id: userNotificationEventsTable.id });
+      notifyUser(userId, { ...event, inboxId: stored?.id });
+    } catch (err) {
+      // Keep the live path working if the additive inbox table is unavailable during deploy.
+      logger.warn({ err, kind: event.kind }, "could not persist in-app notification");
+      notifyUser(userId, { ...event });
+    }
+  })();
 }
 
 /** Notify several people about the same thing — students in one class, for instance. */
@@ -104,7 +116,20 @@ export function notifyMany(userIds: number[], event: NotificationEvent): void {
       for (const recipient of recipients) {
         const prefs = readPrefs(recipient.notificationPrefs);
 
-        if (prefs.push[key]) notifyUser(recipient.id, { ...event });
+        if (prefs.push[key]) {
+          try {
+            const [stored] = await db
+              .insert(userNotificationEventsTable)
+              .values({ userId: recipient.id, event: event as unknown as Record<string, unknown> })
+              .returning({ id: userNotificationEventsTable.id });
+            notifyUser(recipient.id, { ...event, inboxId: stored?.id });
+          } catch (err) {
+            // An additive table can briefly be absent while a new server revision starts.
+            // One persistence failure must not silence this person, later recipients, or email.
+            logger.warn({ err, kind: event.kind, userId: recipient.id }, "could not persist notification event");
+            notifyUser(recipient.id, { ...event });
+          }
+        }
 
         if (emailOn && prefs.email[key]) {
           const mail = emailFor(event, recipient.name);

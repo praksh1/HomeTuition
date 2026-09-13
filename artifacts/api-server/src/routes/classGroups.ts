@@ -421,6 +421,11 @@ router.get("/class-groups/:id/homework", requireAuth, async (req, res) => {
         questionFile: questionFor(task.id),
         submissions: submissions
           .filter((s) => s.homeworkId === task.id)
+          .sort((a, b) => {
+            const aDone = a.status === "returned" ? 1 : 0;
+            const bDone = b.status === "returned" ? 1 : 0;
+            return aDone - bDone || a.studentName.localeCompare(b.studentName);
+          })
           .map(withFiles),
       })),
     });
@@ -648,6 +653,7 @@ router.post(
       .select({
         id: classGroupHomeworkSubmissionsTable.id,
         studentId: classGroupHomeworkSubmissionsTable.studentId,
+        status: classGroupHomeworkSubmissionsTable.status,
         homeworkTitle: classGroupHomeworkTable.title,
       })
       .from(classGroupHomeworkSubmissionsTable)
@@ -665,6 +671,12 @@ router.post(
       .limit(1);
     if (!row) {
       res.status(404).json({ error: "That submitted work was not found in this class." });
+      return;
+    }
+    if (row.status === "returned") {
+      res.status(409).json({
+        error: "Feedback has already been returned. Ask the student to hand in a new version before reviewing it again.",
+      });
       return;
     }
     const updated = await db.transaction(async (tx) => {

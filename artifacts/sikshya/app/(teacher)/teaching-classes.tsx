@@ -33,7 +33,6 @@ export default function TeachingClasses() {
   const [items, setItems] = useState<TeachingClass[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [olderToolsOpen, setOlderToolsOpen] = useState(false);
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,32 +179,6 @@ export default function TeachingClasses() {
         {nextCursor !== null && !loading && !error ? (
           <ProgramButton label="More classes" onPress={() => void more()} />
         ) : null}
-        <ProgramButton
-          label={olderToolsOpen ? "Hide earlier test tools" : "Earlier test tools"}
-          emphasis="quiet"
-          onPress={() => setOlderToolsOpen(!olderToolsOpen)}
-        />
-        {olderToolsOpen ? <ProgramNotice
-          title="Earlier test tools"
-          body="Open classes and screens used during earlier testing. Your saved test data has been kept."
-          tone="neutral"
-        >
-          <ProgramButton
-            label="Single-lesson tests"
-            emphasis="quiet"
-            onPress={() => router.push("/(teacher)/sessions")}
-          />
-          <ProgramButton
-            label="Monthly class tools"
-            emphasis="quiet"
-            onPress={() => router.push("/(teacher)/monthly")}
-          />
-          <ProgramButton
-            label="Advanced class editor"
-            emphasis="quiet"
-            onPress={() => router.push("/(teacher)/programs")}
-          />
-        </ProgramNotice> : null}
       </ScrollView>
     </SafeAreaView>
   );

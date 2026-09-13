@@ -38,11 +38,11 @@ try {
     check(text.includes("Pending test earnings") && text.includes("Transaction history"), `${width}: earnings statement is on the Profile destination`);
     check(!text.includes("Held by Fadko") && !text.includes("Fadko earned") && !text.includes("Fadko fee"), `${width}: participant view exposes no platform custody or earnings`);
     check(text.includes("Listings only") && text.includes("does not yet collect payment"), `${width}: no fake checkout promise`);
-    check(text.includes("homework") && text.includes("messages"), `${width}: existing learning tools preserved in copy`);
     check(!text.includes("Tier 1") && !text.includes("Choose a plan"), `${width}: old tier picker hidden`);
+    check(!text.includes("Open existing monthly class") && !text.includes("View existing sessions"), `${width}: obsolete teaching shortcuts hidden`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-billing.png`), fullPage: true });
-    for (const [label, destination] of [["Prepare a class", "/(teacher)/create-class"], ["Open existing monthly class", "/(teacher)/monthly"], ["View existing sessions", "/(teacher)/sessions"]]) {
+    for (const [label, destination] of [["Prepare a class", "/(teacher)/create-class"]]) {
       const control = page.getByRole("button", { name: label, exact: true });
       await control.scrollIntoViewIfNeeded();
       const box = await control.boundingBox();

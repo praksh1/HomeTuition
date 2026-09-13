@@ -157,7 +157,7 @@ export default function TeacherStudents() {
               </Text>
               <TouchableOpacity
                 style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
-                onPress={() => router.push("/(teacher)/session-create")}
+                onPress={() => router.push("/(teacher)/create-class")}
                 activeOpacity={0.85}
               >
                 <Text style={styles.emptyBtnText}>Create a session</Text>

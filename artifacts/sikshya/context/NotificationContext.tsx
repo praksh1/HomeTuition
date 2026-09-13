@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import React, {
   createContext,
@@ -269,6 +270,36 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     },
     [preferences.push.homework, preferences.push.messages, refresh],
   );
+
+  // A socket is an instant-delivery path, not a mailbox. Pull the durable cursor on sign-in
+  // and periodically while the app is open so homework or payment news sent during logout,
+  // sleep or a dropped connection still becomes a normal local notification.
+  useEffect(() => {
+    if (!user?.userId) return;
+    let alive = true;
+    const cursorKey = `@fadko_notification_cursor_${user.userId}`;
+    const pull = async () => {
+      try {
+        const saved = Number(await AsyncStorage.getItem(cursorKey) ?? 0);
+        const after = Number.isSafeInteger(saved) && saved > 0 ? saved : 0;
+        const response = await apiGet<{ events: Array<{ id: number; event: UserEvent }> }>(
+          `/notification-events?after=${after}`,
+        );
+        let cursor = after;
+        for (const row of response.events ?? []) {
+          if (!alive) return;
+          await onEvent(row.event);
+          cursor = Math.max(cursor, row.id);
+        }
+        if (cursor > after) await AsyncStorage.setItem(cursorKey, String(cursor));
+      } catch {
+        // The live socket still works. The next pull retries the same cursor.
+      }
+    };
+    void pull();
+    const timer = setInterval(() => void pull(), 30_000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [onEvent, user?.userId]);
 
   // One socket for as long as someone is signed in. The classroom socket only carries one
   // lesson, so anything happening outside a lesson had no way to reach the app at all.
