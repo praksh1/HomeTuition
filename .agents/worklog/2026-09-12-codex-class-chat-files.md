@@ -34,6 +34,16 @@ No service, credential or purchase was added.
 - Design lint: unchanged at 94 hex literals / 282 raw sizes.
 - `git diff --check`: clean.
 
+## Preview deployment
+
+- Feature commit: `d81fc0d`.
+- Safety workflow `34736601430`: passed in 2m51s.
+- Preview workflow `34736739070`: passed.
+- Railway staging API: deployment `Add secure files to class messages` is active and reports
+  successful.
+- Cumulative preview: `https://hometuition-preview.praksh-dhakal.workers.dev`.
+- Production was not changed.
+
 ## Not claimed
 
 - No production deployment or real payment.
