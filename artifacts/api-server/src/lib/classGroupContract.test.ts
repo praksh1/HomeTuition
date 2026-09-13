@@ -75,6 +75,8 @@ test("new class homework accepts files only after storage verification and keeps
   assert.match(routes, /classGroupHomeworkFilesTable\.kind, \["submission", "feedback"\]/);
   assert.match(schema, /class_group_homework_files_key_idx/);
   assert.match(schema, /submission_id integer REFERENCES class_group_homework_submissions/);
+  assert.match(routes, /readHomeworkDeadline\(req\.body\?\.dueAt\)/);
+  assert.match(routes, /dueAt: deadline\.dueAt/);
 });
 
 test("class materials may carry one verified photo or PDF without changing existing rows", () => {

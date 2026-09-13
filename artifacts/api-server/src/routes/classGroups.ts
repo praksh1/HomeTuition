@@ -17,6 +17,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { classGroupAccess } from "../lib/classGroupAccess";
+import { readHomeworkDeadline } from "../lib/classHomeworkDeadline";
 import { notifyMany } from "../lib/notify";
 import { verifyUpload } from "../lib/fileStore";
 
@@ -430,6 +431,11 @@ router.post("/class-groups/:id/homework", requireAuth, async (req, res) => {
       .json({ error: "Add a short homework title and instructions." });
     return;
   }
+  const deadline = readHomeworkDeadline(req.body?.dueAt);
+  if (!deadline.ok) {
+    res.status(400).json({ error: deadline.error });
+    return;
+  }
   const acceptedFile = await acceptUploadedFile(req.body, req.user!.userId);
   if (acceptedFile && "error" in acceptedFile) {
     res.status(400).json({ error: acceptedFile.error });
@@ -442,6 +448,7 @@ router.post("/class-groups/:id/homework", requireAuth, async (req, res) => {
       teacherId: access.teacherId,
       title,
       instructions: instructions || null,
+      dueAt: deadline.dueAt,
     })
     .returning();
   if (acceptedFile) {

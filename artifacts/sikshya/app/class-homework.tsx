@@ -1,15 +1,21 @@
 import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Text, TextInput, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Platform, Text, TextInput, View } from "react-native";
 import { ClassGroupShell } from "@/components/classes/ClassGroupShell";
+import { NativeTimePicker } from "@/components/classes/NativeTimePicker";
+import { HIT_SLOP_MIN } from "@/constants/layout";
 import {
   HomeworkFileButton,
   HomeworkFilePicker,
 } from "@/components/classes/HomeworkFileControls";
 import { ProgramButton, ProgramNotice } from "@/components/programs/ProgramPieces";
+import NepaliDatePicker from "@/components/NepaliDatePicker";
+import { useDates } from "@/context/DatePreferenceContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
+import { homeworkDeadlineIso, homeworkDeadlineParts } from "@/utils/classHomework";
+import { batchDateValue } from "@/utils/programBatches";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 interface StoredFile {
@@ -30,6 +36,7 @@ interface Task {
   id: number;
   title: string;
   instructions: string | null;
+  dueAt: string | null;
   status: string;
   questionFile?: StoredFile | null;
   submission?: Submission | null;
@@ -59,13 +66,21 @@ export default function ClassHomeworkScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const batchId = Number(id);
   const colors = useColors();
-  const { t, space } = useLayout();
+  const dates = useDates();
+  const { t, space, radius } = useLayout();
   const [view, setView] = useState<HomeworkView | null>(null);
   const [title, setTitle] = useState("");
   const [instructions, setInstructions] = useState("");
   const [questionFile, setQuestionFile] = useState<UploadableFile | null>(null);
+  const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("18:00");
+  const [pickingDate, setPickingDate] = useState(false);
+  const [pickingTime, setPickingTime] = useState(false);
   const [problem, setProblem] = useState("");
   const [busy, setBusy] = useState(false);
+  const createInFlight = useRef(false);
+  const nepalToday = batchDateValue(homeworkDeadlineParts(new Date().toISOString())?.date ?? "") ?? new Date();
+  const suggestedDeadline = batchDateValue(homeworkDeadlineParts(new Date(Date.now() + 86_400_000).toISOString())?.date ?? "") ?? nepalToday;
   const load = useCallback(async () => {
     try {
       setView(await apiGet<HomeworkView>(`/class-groups/${batchId}/homework`));
@@ -77,6 +92,13 @@ export default function ClassHomeworkScreen() {
   useEffect(() => { void load(); }, [load]);
 
   const create = async () => {
+    if (createInFlight.current) return;
+    const dueAt = dueDate ? homeworkDeadlineIso(dueDate, dueTime) : null;
+    if (dueDate && !dueAt) {
+      setProblem("Choose both a valid deadline date and time.");
+      return;
+    }
+    createInFlight.current = true;
     setBusy(true);
     setProblem("");
     try {
@@ -84,16 +106,20 @@ export default function ClassHomeworkScreen() {
       await apiPost(`/class-groups/${batchId}/homework`, {
         title,
         instructions,
+        dueAt,
         fileKey,
         fileName: questionFile?.name,
       });
       setTitle("");
       setInstructions("");
       setQuestionFile(null);
+      setDueDate("");
+      setDueTime("18:00");
       await load();
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "Could not set homework.");
     } finally {
+      createInFlight.current = false;
       setBusy(false);
     }
   };
@@ -123,6 +149,44 @@ export default function ClassHomeworkScreen() {
             placeholderTextColor={colors.mutedForeground}
             style={[t.body, fieldStyle(colors, space), { minHeight: 84, textAlignVertical: "top" }]}
           />
+          <View style={{ gap: space.xs }}>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Deadline (optional)</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>Choose a Nepali calendar date and Nepal time. Students may still hand in late work.</Text>
+            <ProgramButton
+              label={dueDate && batchDateValue(dueDate) ? `Date: ${dates.formatBoth(batchDateValue(dueDate)!)}` : "Choose a deadline date"}
+              icon="calendar"
+              disabled={busy}
+              onPress={() => setPickingDate(true)}
+            />
+            {dueDate ? Platform.OS === "web" ? (
+              <View style={{ gap: space.xs }}>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>Deadline time · Nepal</Text>
+                {React.createElement("input", {
+                  type: "time",
+                  value: dueTime,
+                  disabled: busy,
+                  "aria-label": "Homework deadline time in Nepal",
+                  "data-testid": "class-homework-due-time",
+                  onChange: (event: React.ChangeEvent<HTMLInputElement>) => setDueTime(event.target.value),
+                  style: {
+                    minHeight: HIT_SLOP_MIN,
+                    width: "100%",
+                    boxSizing: "border-box",
+                    color: colors.foreground,
+                    background: colors.card,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: radius.sm,
+                    padding: space.sm,
+                    fontSize: t.body.fontSize,
+                    fontFamily: t.body.fontFamily,
+                  },
+                })}
+              </View>
+            ) : (
+              <ProgramButton label={`Time: ${dueTime} Nepal time`} icon="clock" disabled={busy} onPress={() => setPickingTime(true)} />
+            ) : null}
+            {dueDate ? <ProgramButton label="Remove deadline" emphasis="quiet" disabled={busy} onPress={() => setDueDate("")} /> : null}
+          </View>
           <HomeworkFilePicker file={questionFile} onPick={setQuestionFile} label="Choose a question sheet (optional)" testID="class-homework-question-file" />
           <ProgramButton label={busy ? "Uploading and saving…" : "Set homework"} emphasis="primary" disabled={busy || !title.trim()} onPress={() => void create()} />
         </View>
@@ -133,17 +197,44 @@ export default function ClassHomeworkScreen() {
       {view?.tasks.map((task) => (
         <HomeworkTask key={task.id} batchId={batchId} task={task} isTeacher={view.isTeacher} onChanged={load} />
       ))}
+      <NepaliDatePicker
+        visible={pickingDate}
+        value={batchDateValue(dueDate) ?? suggestedDeadline}
+        minDate={nepalToday}
+        title="Choose homework deadline"
+        onCancel={() => setPickingDate(false)}
+        onPick={(date) => {
+          const pad = (value: number) => String(value).padStart(2, "0");
+          setDueDate(`${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`);
+          setPickingDate(false);
+        }}
+      />
+      <NativeTimePicker
+        visible={pickingTime}
+        value={dueTime}
+        title="Choose homework deadline time"
+        onCancel={() => setPickingTime(false)}
+        onPick={(time) => { setDueTime(time); setPickingTime(false); }}
+      />
     </ClassGroupShell>
   );
 }
 
 function HomeworkTask({ batchId, task, isTeacher, onChanged }: { batchId: number; task: Task; isTeacher: boolean; onChanged: () => Promise<void> }) {
   const colors = useColors();
+  const dates = useDates();
   const { t, space } = useLayout();
+  const due = task.dueAt ? homeworkDeadlineParts(task.dueAt) : null;
+  const dueLabel = due && batchDateValue(due.date)
+    ? `${dates.formatBoth(batchDateValue(due.date)!)} · ${due.time} Nepal time`
+    : null;
+  const overdue = Boolean(task.dueAt && Date.parse(task.dueAt) < Date.now());
   return (
     <View style={{ gap: space.sm, padding: space.md, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
       <Text style={[t.title3, { color: colors.foreground }]}>{task.title}</Text>
       {task.instructions ? <Text style={[t.body, { color: colors.foreground }]}>{task.instructions}</Text> : null}
+      {dueLabel ? <Text style={[t.bodyStrong, { color: overdue ? colors.destructive : colors.primary }]}>Due {dueLabel}</Text> : <Text style={[t.caption, { color: colors.mutedForeground }]}>No deadline</Text>}
+      {!isTeacher && overdue && !task.submission ? <Text style={[t.caption, { color: colors.mutedForeground }]}>The deadline has passed, but you can still hand in your work.</Text> : null}
       {task.questionFile ? <HomeworkFileButton fileKey={task.questionFile.fileKey} label="Open question sheet" /> : null}
       {isTeacher ? (
         <View style={{ gap: space.sm }}>

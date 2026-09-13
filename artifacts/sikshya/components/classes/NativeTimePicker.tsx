@@ -11,11 +11,13 @@ import { ProgramButton } from "@/components/programs/ProgramPieces";
 export function NativeTimePicker({
   visible,
   value,
+  title = "Choose a Nepal start time",
   onCancel,
   onPick,
 }: {
   visible: boolean;
   value: string;
+  title?: string;
   onCancel: () => void;
   onPick: (value: string) => void;
 }) {
@@ -56,7 +58,7 @@ export function NativeTimePicker({
           }}
         >
           <Text style={[t.title3, { color: colors.foreground }]}>
-            Choose a Nepal start time
+            {title}
           </Text>
           <DateTimePicker
             value={draft}
