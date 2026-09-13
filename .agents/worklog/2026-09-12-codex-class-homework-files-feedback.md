@@ -47,6 +47,13 @@ no purchase was made, and no credential was printed or committed.
 - The real disposable-Postgres batch journey was extended to prove teacher-only feedback and
   student-only returned feedback. It is run by the repository safety workflow because this
   Windows workspace has no disposable local PostgreSQL instance.
+- GitHub safety run `34731018484`: passed.
+- Railway staging deployed commit `da26ba9`; the new feedback endpoint changed from 404 to the
+  expected unauthenticated 401, proving the new route is live without using a real account.
+- GitHub preview run `34731289398`: passed in 5m43s, including typecheck, disposable Postgres,
+  program/attendance journeys, rendered browser checks, production-isolation checks and served
+  bundle verification.
+- Preview: `https://hometuition-preview.praksh-dhakal.workers.dev`.
 
 ## Not claimed
 
