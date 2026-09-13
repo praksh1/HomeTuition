@@ -26,6 +26,9 @@ import { notifyUser } from "../ws/userHub";
 const PREF_KEY: Record<NotificationKind, PrefKind> = {
   message: "messages",
   class_message: "messages",
+  class_homework_set: "homework",
+  class_homework_submitted: "homework",
+  class_homework_feedback: "homework",
   follower: "followers",
   program_published: "programs",
   session_live: "sessionLive",

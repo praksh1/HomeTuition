@@ -16,6 +16,9 @@ export type NotificationKind =
   | "follower"
   | "program_published"
   | "class_message"
+  | "class_homework_set"
+  | "class_homework_submitted"
+  | "class_homework_feedback"
   | "session_live"
   | "session_invite"
   | "session_booked"
@@ -34,6 +37,9 @@ export interface NotificationEvent {
   programId?: number;
   programTitle?: string;
   batchId?: number;
+  homeworkId?: number;
+  homeworkTitle?: string;
+  dueAt?: string;
   /** What was paid, for the notifications about money arriving or going back. */
   amount?: number;
   /**
@@ -89,6 +95,39 @@ export function emailFor(event: NotificationEvent, recipientName: string): { sub
           `“${event.topic ?? "your class"}”:\n\n` +
           `  "${event.preview ?? ""}"\n` +
           (link ? `\nOpen the class conversation: ${link}\n` : "") +
+          signoff,
+      };
+    }
+    case "class_homework_set": {
+      const link = appUrl(`/class-homework?id=${event.batchId ?? ""}`);
+      return {
+        subject: `New homework: ${event.homeworkTitle ?? "Class task"}`,
+        text:
+          `${hello}\n\n${event.fromName ?? "Your teacher"} set “${event.homeworkTitle ?? "a new task"}” ` +
+          `in “${event.topic ?? "your class"}”.\n` +
+          (link ? `\nOpen the homework: ${link}\n` : "") +
+          signoff,
+      };
+    }
+    case "class_homework_submitted": {
+      const link = appUrl(`/class-homework?id=${event.batchId ?? ""}`);
+      return {
+        subject: `${event.fromName ?? "A student"} handed in “${event.homeworkTitle ?? "homework"}”`,
+        text:
+          `${hello}\n\n${event.fromName ?? "A student"} handed in “${event.homeworkTitle ?? "homework"}” ` +
+          `for “${event.topic ?? "your class"}”.\n` +
+          (link ? `\nReview the work: ${link}\n` : "") +
+          signoff,
+      };
+    }
+    case "class_homework_feedback": {
+      const link = appUrl(`/class-homework?id=${event.batchId ?? ""}`);
+      return {
+        subject: `Feedback returned: ${event.homeworkTitle ?? "Homework"}`,
+        text:
+          `${hello}\n\n${event.fromName ?? "Your teacher"} returned feedback on ` +
+          `“${event.homeworkTitle ?? "your homework"}” in “${event.topic ?? "your class"}”.\n` +
+          (link ? `\nRead the feedback: ${link}\n` : "") +
           signoff,
       };
     }

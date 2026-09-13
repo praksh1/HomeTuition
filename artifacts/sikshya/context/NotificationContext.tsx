@@ -18,6 +18,7 @@ import {
   getUnreadCount,
   markAllRead,
   notifyClassMessage,
+  notifyClassHomework,
   notifyNewFollower,
   notifyNewMessage,
   notifyProgramPublished,
@@ -92,7 +93,9 @@ function openTarget(data: {
   batchId?: string | number;
 }): void {
   try {
-    if (data.batchId != null && data.type === "class_message") {
+    if (data.batchId != null && data.type?.startsWith("class_homework_")) {
+      router.push({ pathname: "/class-homework", params: { id: String(data.batchId) } });
+    } else if (data.batchId != null && data.type === "class_message") {
       router.push({ pathname: "/class-chat", params: { id: String(data.batchId) } });
     } else if (data.programId != null && data.type === "program_published") {
       router.push(`/(student)/program/${data.programId}`);
@@ -186,6 +189,26 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             batchId: event.batchId,
             topic: event.topic,
           });
+        } else if (
+          (event.kind === "class_homework_set" ||
+            event.kind === "class_homework_submitted" ||
+            event.kind === "class_homework_feedback") &&
+          event.batchId != null
+        ) {
+          if (!preferences.push.homework) return;
+          await notifyClassHomework({
+            kind:
+              event.kind === "class_homework_set"
+                ? "set"
+                : event.kind === "class_homework_submitted"
+                  ? "submitted"
+                  : "feedback",
+            batchId: event.batchId,
+            homeworkId: event.homeworkId,
+            homeworkTitle: event.homeworkTitle,
+            classTitle: event.topic,
+            personName: event.fromName,
+          });
         } else if (event.kind === "session_message") {
           if (!preferences.push.messages) return;
           // A class's own thread, which is where a teacher says they are running late. It
@@ -244,7 +267,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
       await refresh();
     },
-    [preferences.push.messages, refresh],
+    [preferences.push.homework, preferences.push.messages, refresh],
   );
 
   // One socket for as long as someone is signed in. The classroom socket only carries one

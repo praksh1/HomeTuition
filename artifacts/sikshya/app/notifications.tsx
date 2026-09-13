@@ -70,7 +70,14 @@ export default function NotificationsScreen() {
     const role = user?.role;
     const home = role === "teacher" ? "/(teacher)" : role === "student" ? "/(student)" : "/welcome";
     const programId = item.data?.programId;
-    if (role === "student" && item.data?.type === "program_published" && (typeof programId === "string" || typeof programId === "number")) {
+    const batchId = item.data?.batchId;
+    if (
+      typeof item.data?.type === "string" &&
+      item.data.type.startsWith("class_homework_") &&
+      (typeof batchId === "string" || typeof batchId === "number")
+    ) {
+      router.push({ pathname: "/class-homework", params: { id: String(batchId) } });
+    } else if (role === "student" && item.data?.type === "program_published" && (typeof programId === "string" || typeof programId === "number")) {
       router.push(`/(student)/program/${programId}`);
     } else if (item.type === "session_reminder" || item.type === "live") {
       if (role === "teacher") router.replace("/(teacher)/sessions");

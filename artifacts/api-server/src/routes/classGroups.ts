@@ -116,6 +116,14 @@ async function visibleMessageCount(
   return row?.count ?? 0;
 }
 
+async function classStudentIds(batchId: number): Promise<number[]> {
+  const rows = await db
+    .select({ studentId: batchTestBookingsTable.studentId })
+    .from(batchTestBookingsTable)
+    .where(eq(batchTestBookingsTable.batchId, batchId));
+  return rows.map((row) => row.studentId);
+}
+
 router.get("/class-groups/:id", requireAuth, async (req, res) => {
   const access = await accessOrReply(req, res);
   if (!access) return;
@@ -461,6 +469,25 @@ router.post("/class-groups/:id/homework", requireAuth, async (req, res) => {
       fileName: acceptedFile.name,
     });
   }
+  const [studentIds, [teacher]] = await Promise.all([
+    classStudentIds(access.batchId),
+    db
+      .select({ name: usersTable.name })
+      .from(usersTable)
+      .where(eq(usersTable.id, req.user!.userId))
+      .limit(1),
+  ]);
+  notifyMany(studentIds, {
+    kind: "class_homework_set",
+    at: new Date().toISOString(),
+    fromUserId: req.user!.userId,
+    fromName: teacher?.name,
+    batchId: access.batchId,
+    homeworkId: task.id,
+    homeworkTitle: task.title,
+    topic: access.title,
+    dueAt: task.dueAt?.toISOString(),
+  });
   res.status(201).json(task);
 });
 
@@ -542,11 +569,20 @@ router.post(
       }
       return saved;
     });
+    const [student] = await db
+      .select({ name: usersTable.name })
+      .from(usersTable)
+      .where(eq(usersTable.id, req.user!.userId))
+      .limit(1);
     notifyMany([access.teacherId], {
-      kind: "session_booked",
+      kind: "class_homework_submitted",
       at: new Date().toISOString(),
       fromUserId: req.user!.userId,
-      topic: `Homework handed in: ${task.title}`,
+      fromName: student?.name,
+      batchId: access.batchId,
+      homeworkId,
+      homeworkTitle: task.title,
+      topic: access.title,
     });
     res.json(submission);
   },
@@ -579,6 +615,7 @@ router.post(
       .select({
         id: classGroupHomeworkSubmissionsTable.id,
         studentId: classGroupHomeworkSubmissionsTable.studentId,
+        homeworkTitle: classGroupHomeworkTable.title,
       })
       .from(classGroupHomeworkSubmissionsTable)
       .innerJoin(
@@ -624,11 +661,20 @@ router.post(
       }
       return saved;
     });
+    const [teacher] = await db
+      .select({ name: usersTable.name })
+      .from(usersTable)
+      .where(eq(usersTable.id, req.user!.userId))
+      .limit(1);
     notifyMany([row.studentId], {
-      kind: "session_invite",
+      kind: "class_homework_feedback",
       at: new Date().toISOString(),
       fromUserId: req.user!.userId,
-      topic: `Your homework has feedback in ${access.title}`,
+      fromName: teacher?.name,
+      batchId: access.batchId,
+      homeworkId,
+      homeworkTitle: row.homeworkTitle,
+      topic: access.title,
     });
     res.json(updated);
   },

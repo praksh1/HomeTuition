@@ -11,6 +11,7 @@ import {
 import { ProgramButton, ProgramNotice } from "@/components/programs/ProgramPieces";
 import NepaliDatePicker from "@/components/NepaliDatePicker";
 import { useDates } from "@/context/DatePreferenceContext";
+import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
@@ -67,6 +68,7 @@ export default function ClassHomeworkScreen() {
   const batchId = Number(id);
   const colors = useColors();
   const dates = useDates();
+  const { lastEvent } = useNotifications();
   const { t, space, radius } = useLayout();
   const [view, setView] = useState<HomeworkView | null>(null);
   const [title, setTitle] = useState("");
@@ -90,6 +92,14 @@ export default function ClassHomeworkScreen() {
     }
   }, [batchId]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (
+      lastEvent?.kind.startsWith("class_homework_") &&
+      Number(lastEvent.batchId) === batchId
+    ) {
+      void load();
+    }
+  }, [batchId, lastEvent, load]);
 
   const create = async () => {
     if (createInFlight.current) return;

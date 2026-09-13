@@ -98,6 +98,9 @@ test("nothing else's wording moved", () => {
       },
       /wrote in “SEE Maths”/,
     ],
+    [{ kind: "class_homework_set", at, fromName: "Sita", topic: "SEE Maths", batchId: 3, homeworkTitle: "Triangles" }, /set “Triangles” in “SEE Maths”/],
+    [{ kind: "class_homework_submitted", at, fromName: "Hari", topic: "SEE Maths", batchId: 3, homeworkTitle: "Triangles" }, /handed in “Triangles” for “SEE Maths”/],
+    [{ kind: "class_homework_feedback", at, fromName: "Sita", topic: "SEE Maths", batchId: 3, homeworkTitle: "Triangles" }, /returned feedback on “Triangles” in “SEE Maths”/],
     [{ kind: "follower", at, fromName: "Sita" }, /has started following you/],
     [{ kind: "program_published", at, fromName: "Sita", programId: 3, programTitle: "Spoken English" }, /published "Spoken English"/],
     [{ kind: "session_invite", at, fromName: "Sita", topic: "Algebra" }, /has scheduled a new class/],
@@ -109,6 +112,22 @@ test("nothing else's wording moved", () => {
     assert.ok(mail, event.kind);
     assert.match(mail.text, expected, event.kind);
     assert.match(mail.text, /turn these emails off/, `${event.kind} keeps the signoff`);
+  }
+});
+
+test("homework emails open the exact class homework page", () => {
+  const previous = process.env.APP_URL;
+  process.env.APP_URL = "https://example.test";
+  try {
+    for (const kind of ["class_homework_set", "class_homework_submitted", "class_homework_feedback"] as const) {
+      const mail = emailFor({ kind, at: "", batchId: 42, homeworkTitle: "Fractions" }, "Ram");
+      assert.ok(mail);
+      assert.match(mail.text, /https:\/\/example\.test\/class-homework\?id=42/);
+      assert.doesNotMatch(mail.text, /book|pay|scheduled a new class/i);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = previous;
   }
 });
 

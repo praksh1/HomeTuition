@@ -12,9 +12,11 @@ test("a half-written value does not read as wanting nothing", () => {
   // silence followers and live-class alerts as a side effect.
   const prefs = readPrefs({ push: { messages: false } });
   assert.equal(prefs.push.messages, false);
+  assert.equal(prefs.push.homework, true);
   assert.equal(prefs.push.followers, true);
   assert.equal(prefs.push.sessionLive, true);
   assert.equal(prefs.email.messages, true);
+  assert.equal(prefs.email.homework, true);
 });
 
 test("junk in the column is ignored rather than trusted", () => {

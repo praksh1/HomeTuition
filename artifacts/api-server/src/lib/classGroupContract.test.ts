@@ -79,6 +79,14 @@ test("new class homework accepts files only after storage verification and keeps
   assert.match(routes, /dueAt: deadline\.dueAt/);
 });
 
+test("homework uses truthful dedicated events rather than booking and class-invite wording", () => {
+  assert.match(routes, /kind: "class_homework_set"/);
+  assert.match(routes, /kind: "class_homework_submitted"/);
+  assert.match(routes, /kind: "class_homework_feedback"/);
+  assert.doesNotMatch(routes, /kind: "session_booked"[\s\S]{0,180}Homework handed in/);
+  assert.doesNotMatch(routes, /kind: "session_invite"[\s\S]{0,180}homework has feedback/);
+});
+
 test("class materials may carry one verified photo or PDF without changing existing rows", () => {
   assert.match(routes, /classGroupMaterialFilesTable/);
   assert.match(routes, /acceptedFile = await acceptUploadedFile\(req\.body, req\.user!\.userId\)/);

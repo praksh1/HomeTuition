@@ -11,6 +11,9 @@ const files = readFileSync(
   path.join(root, "components", "classes", "HomeworkFileControls.tsx"),
   "utf8",
 );
+const context = readFileSync(path.join(root, "context", "NotificationContext.tsx"), "utf8");
+const notifications = readFileSync(path.join(root, "utils", "notifications.ts"), "utf8");
+const notificationList = readFileSync(path.join(root, "app", "notifications.tsx"), "utf8");
 
 test("new class homework preserves text and adds an explicit photo or PDF upload", () => {
   assert.match(screen, /Write your answer or a note for your teacher/);
@@ -48,4 +51,15 @@ test("teacher chooses an optional deadline and students can still submit after i
   assert.match(screen, /dueAt,/);
   assert.match(screen, /The deadline has passed, but you can still hand in your work/);
   assert.doesNotMatch(screen, /disabled=\{[^}]*overdue/);
+});
+
+test("homework notifications use truthful words and open the exact homework page", () => {
+  for (const kind of ["class_homework_set", "class_homework_submitted", "class_homework_feedback"]) {
+    assert.match(context, new RegExp(`"${kind}"`));
+  }
+  assert.match(context, /pathname: "\/class-homework"/);
+  assert.match(notifications, /Homework feedback is ready/);
+  assert.match(notifications, /handed in homework/);
+  assert.match(notificationList, /startsWith\("class_homework_"\)/);
+  assert.match(screen, /lastEvent\?\.kind\.startsWith\("class_homework_"\)/);
 });

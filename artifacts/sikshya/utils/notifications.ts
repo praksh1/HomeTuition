@@ -185,6 +185,50 @@ export async function notifyClassMessage(msg: {
   await addInAppNotification({ title, body, type: "general", data });
 }
 
+type ClassHomeworkNotice = {
+  kind: "set" | "submitted" | "feedback";
+  batchId: number | string;
+  homeworkId?: number | string;
+  homeworkTitle?: string;
+  classTitle?: string;
+  personName?: string;
+};
+
+/** A durable-looking local entry for one server-confirmed homework event. */
+export async function notifyClassHomework(notice: ClassHomeworkNotice): Promise<void> {
+  const homework = notice.homeworkTitle ?? "Homework";
+  const className = notice.classTitle ?? "Your class";
+  const title = notice.kind === "set"
+    ? "New homework"
+    : notice.kind === "submitted"
+      ? `${notice.personName ?? "A student"} handed in homework`
+      : "Homework feedback is ready";
+  const body = notice.kind === "set"
+    ? `“${homework}” · ${className}`
+    : notice.kind === "submitted"
+      ? `“${homework}” · ${className}`
+      : `${notice.personName ?? "Your teacher"} returned “${homework}” · ${className}`;
+  const data = {
+    type: `class_homework_${notice.kind}`,
+    batchId: String(notice.batchId),
+    homeworkId: notice.homeworkId == null ? undefined : String(notice.homeworkId),
+  };
+
+  if (Platform.OS !== "web") {
+    try {
+      await Notifications.scheduleNotificationAsync({
+        content: { title, body, data, sound: true },
+        trigger: null,
+      });
+    } catch {
+      // Permission refused or notifications unavailable — the in-app entry still lands.
+    }
+  } else if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    navigator.vibrate(120);
+  }
+  await addInAppNotification({ title, body, type: "general", data });
+}
+
 /**
  * Raised when someone starts following a teacher.
  *

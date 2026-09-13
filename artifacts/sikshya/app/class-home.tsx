@@ -52,7 +52,7 @@ export default function ClassHomeScreen() {
   );
   useEffect(() => {
     if (
-      lastEvent?.kind === "class_message" &&
+      (lastEvent?.kind === "class_message" || lastEvent?.kind.startsWith("class_homework_")) &&
       Number(lastEvent.batchId) === batchId
     ) {
       void load();

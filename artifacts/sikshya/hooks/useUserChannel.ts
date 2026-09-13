@@ -15,6 +15,9 @@ export interface UserEvent {
     | "message"
     | "follower"
     | "program_published"
+    | "class_homework_set"
+    | "class_homework_submitted"
+    | "class_homework_feedback"
     | "session_live"
     | "session_invite"
     | "session_booked"
@@ -29,6 +32,9 @@ export interface UserEvent {
   preview?: string;
   sessionId?: number | string;
   batchId?: number | string;
+  homeworkId?: number | string;
+  homeworkTitle?: string;
+  dueAt?: string;
   topic?: string;
   programId?: number | string;
   programTitle?: string;
