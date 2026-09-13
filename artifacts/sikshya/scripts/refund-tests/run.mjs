@@ -404,7 +404,7 @@ async function main() {
     const body = await text(page);
 
     check("a dropped class is still in the student's list",
-      (await page.locator(`[data-testid="dropped-session-${dropped.id}"]`).count()) > 0,
+      (await page.locator(`[data-testid="dropped-${dropped.id}"]`).count()) > 0,
       body.slice(0, 600).replace(/\n/g, " | "));
     check("under its own Dropped heading",
       /Dropped/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
@@ -416,7 +416,7 @@ async function main() {
      * Tapping a finished class used to do nothing at all — those cards had no onPress. Its
      * page is where the messages and any refund live, and both are wanted after the class.
      */
-    await page.locator(`[data-testid="dropped-session-${dropped.id}"]`).click({ timeout: 15000 });
+    await page.locator(`[data-testid="dropped-${dropped.id}"]`).click({ timeout: 15000 });
     await page.waitForTimeout(3000);
     const droppedPage = await text(page);
     check("tapping it opens the class",

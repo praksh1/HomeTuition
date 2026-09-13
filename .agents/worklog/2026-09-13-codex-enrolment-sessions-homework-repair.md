@@ -121,3 +121,6 @@ remain untouched until the owner completes the short preview test and explicitly
   Sessions design deliberately keeps dropped/refunded classes in History (and its badge count
   already included the row). The journey now opens History first, then still proves the dropped
   row, refund status, details navigation, amount and expected wait are all present.
+- The next protected run confirmed the History content and label were rendered, but the journey
+  still addressed the row by its retired `dropped-session-*` test identifier. The grouped Sessions
+  screen uses `dropped-*`; both the presence and navigation checks now address that actual row.
