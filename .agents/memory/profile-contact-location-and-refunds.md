@@ -5,4 +5,3 @@ Teachers and students will be able to edit Account details from Profile. Email a
 Approved refunds return to the original payment method. A changed payment method or account detail does not silently redirect money; the student is told to contact Fadko Support.
 
 This decision is tracked for implementation in `.agents/backlog/2026-09-12-profile-account-details-and-refund-contact.md`. It is intentionally separate from the current class-group home release.
-
