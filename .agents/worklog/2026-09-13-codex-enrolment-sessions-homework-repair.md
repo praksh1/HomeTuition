@@ -128,3 +128,7 @@ remain untouched until the owner completes the short preview test and explicitly
   monthly browser journey, which still required the dashboard promotion the owner explicitly
   removed. It now proves the promotion stays absent, then opens the preserved test-only route
   directly to retain end-to-end coverage of old records without reviving the retired live UI.
+- The archived monthly journey then passed 37/37. A later Sessions crowding journey still required
+  Monthly filters on both current role screens. It now covers the present five teacher filters and
+  three student groups, proves Monthly stays absent, and uses a normal booked class for the student
+  filtering checks. Archived Monthly machinery remains covered by its dedicated compatibility test.

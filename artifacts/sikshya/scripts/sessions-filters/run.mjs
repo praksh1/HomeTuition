@@ -3,12 +3,12 @@
  *
  * Two complaints from the owner, on the same screens. "I have only been testing for less than
  * a month and already my pages look overcrowded" — so a teacher needs to be able to ask for
- * the part they came for. And monthly classes were invisible: nothing on either Sessions
- * screen said a standing arrangement existed.
+ * the part they came for. The retired Monthly product must not leak back into either current
+ * Sessions screen while its old records and direct compatibility route remain preserved.
  *
  * Every check here is driven from a seeded account with enough on it to crowd the screen: ten
- * classes still to come, six that came and went unstarted, one finished, and a monthly class.
- * A filter tested against three rows proves nothing.
+ * classes still to come, six that came and went unstarted, and one finished. A filter tested
+ * against three rows proves nothing.
  *
  * Usage: PGURL=... node scripts/sessions-filters/run.mjs
  */
@@ -55,8 +55,8 @@ sql(`update teacher_profiles
          max_sessions_per_month = 30, subscription_active = true
      where user_id = ${teacher.user.id}`);
 
-// Independent days at 10:00 Nepal time, outside the 17:00 Monthly class below.
-// Seventeen copies of one instant no longer constitute a valid crowding fixture.
+// Independent days at 10:00 Nepal time. Seventeen copies of one instant no longer constitute
+// a valid crowding fixture.
 const fixtureDay = new Date(Date.now() + 3 * 24 * 3600_000);
 fixtureDay.setUTCHours(4, 15, 0, 0);
 let fixtureOrdinal = 0;
@@ -71,24 +71,16 @@ const make = async (topic) => {
   return made;
 };
 
-for (let i = 0; i < 10; i++) await make(`Coming up ${i}`);
+const upcomingIds = [];
+for (let i = 0; i < 10; i++) {
+  upcomingIds.push((await make(`Coming up ${i}`)).body.id);
+}
 for (let i = 0; i < 6; i++) {
   const row = (await make(`Missed it ${i}`)).body;
   sql(`update sessions set date = now() - interval '${4 + i} days' where id = ${row.id}`);
 }
 const done = (await make("All finished")).body.id;
 sql(`update sessions set status = 'completed', date = now() - interval '9 days' where id = ${done}`);
-
-await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
-const klass = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
-  subject: "Maths", topic: "Daily algebra hour", startMinute: 17 * 60, durationMinutes: 60,
-  timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20,
-} });
-const klassId = klass.body?.id ?? klass.body?.class?.id;
-if (!klassId) {
-  console.error("could not create the monthly class:", klass.status, JSON.stringify(klass.body).slice(0, 300));
-  process.exit(1);
-}
 
 const chromium = await getChromium();
 const browser = await chromium.launch();
@@ -107,7 +99,7 @@ const tap = async (label) => {
 
 let body = await text();
 check("the teacher's Sessions screen offers an Expired filter", /Expired/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
-check("and a Monthly one", /Monthly/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
+check("and does not advertise the retired Monthly product", !/Monthly/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
 
 /**
  * And they are actually on the screen, with a height, not merely in the document.
@@ -135,7 +127,7 @@ const chipBox = async (label) => {
   const box = await page.getByText(label, { exact: true }).first().boundingBox();
   return box ?? { width: 0, height: 0 };
 };
-for (const label of ["All", "Live", "Upcoming", "Completed", "Expired", "Monthly"]) {
+for (const label of ["All", "Live", "Upcoming", "Completed", "Expired"]) {
   const box = await chipBox(label);
   check(`the "${label}" filter is visible, not a zero-height ghost`,
     box.height > 10 && box.width > 10, `height=${box.height} width=${box.width}`);
@@ -164,19 +156,12 @@ await tap("Completed");
 body = await text();
 check("Completed is its own pile", /All finished/.test(body) && !/Missed it/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
 
-await tap("Monthly");
-body = await text();
-check("Monthly shows the standing arrangement", /Daily algebra hour/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
-check("with what the teacher charges for it", /2,000/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
-check("and not one of the single classes", !/Coming up|Missed it|All finished/.test(body), body.slice(0, 500).replace(/\n/g, " | "));
-check("and it opens My Plan", await page.locator('[data-testid="teacher-monthly-plan"]').count() > 0);
-
 const student = (await api("/auth/register", { method: "POST", body: {
   name: "Kiran Basnet", email: `flt_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
 prepareBrowserAccount(student.user.id);
-const joined = await api(`/monthly/classes/${klassId}/join`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
-check("a student can join the monthly class", joined.status < 300, `status=${joined.status} ${JSON.stringify(joined.body).slice(0, 200)}`);
+const joined = await api(`/sessions/${upcomingIds[0]}/book`, { method: "POST", token: student.token, body: { paymentMethod: "esewa" } });
+check("a student can book one of the upcoming classes", joined.status < 300, `status=${joined.status} ${JSON.stringify(joined.body).slice(0, 200)}`);
 
 const sCtx = await browser.newContext({ viewport: { width: 393, height: 852 }, isMobile: true, hasTouch: true });
 const sPage = await sCtx.newPage();
@@ -190,46 +175,33 @@ const sBody = await sPage.evaluate(() => document.body.innerText);
  * zero-height row is still in innerText, and that is how the teacher's row passed while being
  * invisible on a phone.
  */
-for (const id of ["all", "monthly", "live", "upcoming", "past"]) {
+for (const id of ["upcoming", "live", "history"]) {
   const box = await sPage.locator(`[data-testid="student-group-${id}"]`).first().boundingBox().catch(() => null);
   check(`the student's "${id}" filter is on screen`, !!box && box.height > 10 && box.width > 10,
     box ? `height=${box.height}` : "not found");
 }
 check("and the row holding them has a height of its own",
   await rowHeight(sPage, "student-filter-row") > 20, `height=${await rowHeight(sPage, "student-filter-row")}`);
-check("the student sees a Monthly Classes section", /Monthly Classes/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
+check("the student does not see the retired Monthly product", !/Monthly Classes|Monthly/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
 
-/* Choosing one narrows to it, and the count on the chip matches what is under it. */
-/*
- * Checked by the card, not by its topic. A monthly class generates real daily sessions under
- * the same name, so matching the words finds the day's class sitting in Past and reads it as
- * the standing arrangement — an assertion that cannot tell the two apart is not an assertion.
- */
-const monthlyCard = `[data-testid="student-monthly-${klassId}"]`;
-await sPage.locator('[data-testid="student-group-past"]').first().click();
+/* Choosing one narrows the current learning list rather than revealing a retired product. */
+const bookedCard = `[data-testid="session-${upcomingIds[0]}"]`;
+check("the booked class is in Upcoming", await sPage.locator(bookedCard).count() > 0);
+await sPage.locator('[data-testid="student-group-history"]').first().click();
 await sPage.waitForTimeout(1500);
-check("choosing Past hides the monthly arrangement",
-  await sPage.locator(monthlyCard).count() === 0,
+check("choosing History hides the upcoming class",
+  await sPage.locator(bookedCard).count() === 0,
   (await sPage.evaluate(() => document.body.innerText)).slice(0, 240).replace(/\n/g, " | "));
-await sPage.locator('[data-testid="student-group-monthly"]').first().click();
+await sPage.locator('[data-testid="student-group-upcoming"]').first().click();
 await sPage.waitForTimeout(1500);
-check("and choosing Monthly brings it back", await sPage.locator(monthlyCard).count() > 0);
-await sPage.locator('[data-testid="student-group-all"]').first().click();
-await sPage.waitForTimeout(1200);
-check("with the class they joined in it", /Daily algebra hour/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
+check("and choosing Upcoming brings it back", await sPage.locator(bookedCard).count() > 0);
+check("with the class they joined in it", /Coming up 0/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
 check("and who teaches it", /Gita Poudel/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
-/*
- * The contradiction that would otherwise sit on this screen: a monthly class listed above
- * "No sessions yet", because this student has booked no single lessons.
- */
+/* A booked class and an empty-state claim must never be shown together. */
 check("and is not told they have nothing while a class is listed above",
   !/No sessions yet/.test(sBody), sBody.slice(0, 600).replace(/\n/g, " | "));
 
-/*
- * A student who has NOT joined must not see it. `/monthly/classes` lists every class on offer,
- * so the filter that keeps it off this screen is the only thing standing between "my classes"
- * and "every class in the country".
- */
+/* A student who has not booked this teacher must not see the teacher's diary as their own. */
 const onlooker = (await api("/auth/register", { method: "POST", body: {
   name: "Nabin Rai", email: `flt_n_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
 } })).body;
@@ -241,7 +213,7 @@ await nPage.goto(`${siteUrl}/(student)/sessions`, { waitUntil: "networkidle" });
 await nPage.waitForTimeout(4000);
 const nBody = await nPage.evaluate(() => document.body.innerText);
 check("a student who has not joined does not see it under My Sessions",
-  !/Daily algebra hour/.test(nBody), nBody.slice(0, 400).replace(/\n/g, " | "));
+  !/Coming up 0/.test(nBody), nBody.slice(0, 400).replace(/\n/g, " | "));
 
 await browser.close(); stop();
 console.log(`\n${passed} passed, ${failed} failed`);
