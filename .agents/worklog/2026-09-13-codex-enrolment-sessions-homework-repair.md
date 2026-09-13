@@ -116,3 +116,8 @@ remain untouched until the owner completes the short preview test and explicitly
   labels beyond that arbitrary sample even though navigation and the switches themselves worked.
 - The journey now inspects the full rendered settings page. This changes only the test assertion; it
   does not weaken the required path or switch-label checks and does not change product behaviour.
+- The rerun passed that notification journey 12/12, then exposed a second stale assumption in the
+  refund browser journey: it looked for a dropped class on the default Upcoming tab. The approved
+  Sessions design deliberately keeps dropped/refunded classes in History (and its badge count
+  already included the row). The journey now opens History first, then still proves the dropped
+  row, refund status, details navigation, amount and expected wait are all present.

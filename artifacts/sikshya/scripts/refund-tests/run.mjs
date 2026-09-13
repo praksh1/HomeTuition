@@ -395,6 +395,12 @@ async function main() {
     sql(`update sessions set date = now() - interval '3 days', status = 'completed' where id = ${finished.id}`);
 
     const { ctx, page } = await open(browser, student.token, "/sessions");
+    const upcomingBody = await text(page);
+
+    // My learning now opens on Upcoming and keeps dropped/refunded classes in History. Exercise
+    // the screen as a student does instead of expecting an archive row in the active timetable.
+    await page.locator('[data-testid="student-group-history"]').click({ timeout: 15000 });
+    await page.waitForTimeout(500);
     const body = await text(page);
 
     check("a dropped class is still in the student's list",
@@ -403,8 +409,8 @@ async function main() {
     check("under its own Dropped heading",
       /Dropped/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
     check("and it is not sitting in Upcoming",
-      !new RegExp(`Upcoming[\\s\\S]{0,200}${dropped.topic}`).test(body),
-      body.slice(0, 800).replace(/\n/g, " | "));
+      !upcomingBody.includes(dropped.topic),
+      upcomingBody.slice(0, 800).replace(/\n/g, " | "));
 
     /**
      * Tapping a finished class used to do nothing at all — those cards had no onPress. Its
