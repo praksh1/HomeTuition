@@ -45,4 +45,17 @@ Branch: `codex/class-homework-overview`
 
 ## Preview deployment
 
-- Pending commit, safety workflow, Railway staging and Cloudflare preview details.
+- Feature and worklog commit: `85bd496` (`Summarize homework status on class home`).
+- Full safety workflow `34740628282` passed. Its disposable-Postgres booking journey proved the
+  student to-do/late transitions and the teacher awaiting-review/reviewed transitions through the
+  real API, in addition to all typecheck, unit, schema, video, proof and browser gates.
+- Railway staging deployed the exact feature commit and showed `ACTIVE` with `Deployment
+  successful` for `Summarize homework status on class home`.
+- Preview workflow `34740842908` passed all staging-API, disposable-data, rendered discovery,
+  teacher-profile, guided class setup, billing, isolation, web build and Cloudflare deploy steps.
+- The deployed preview was reloaded and navigated from the teacher dashboard through My classes,
+  a booked class's `Open class home`, and `/class-home?id=18`. The live page rendered the next
+  lesson and the Messages, Homework, Materials and Help cards; Homework correctly showed
+  `Set the first task` for this empty class.
+- Preview: `https://hometuition-preview.praksh-dhakal.workers.dev`
+- Production remains unchanged.
