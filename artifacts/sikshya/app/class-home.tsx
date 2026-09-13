@@ -9,6 +9,7 @@ import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
+import { classHomeworkOverview } from "@/utils/classHomeworkOverview";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 
 interface Home {
@@ -24,6 +25,9 @@ interface Home {
     messages: number;
     unreadMessages: number;
     homework: number;
+    homeworkToDo: number;
+    homeworkLate: number;
+    homeworkAwaitingReview: number;
     materials: number;
   };
 }
@@ -104,18 +108,20 @@ export default function ClassHomeScreen() {
           : `${home.counts.messages} messages`
         : "Start the class conversation",
       unread: home.counts.unreadMessages,
+      badgeLabel: `${home.counts.unreadMessages} unread class messages`,
       path: "/class-chat",
     },
     {
       icon: "edit-3",
       label: "Homework",
-      note: home.counts.homework
-        ? `${home.counts.homework} open`
-        : home.isTeacher
-          ? "Set the first task"
-          : "Nothing due yet",
+      note: classHomeworkOverview(home.counts, home.isTeacher),
       path: "/class-homework",
-      unread: 0,
+      unread: home.isTeacher
+        ? home.counts.homeworkAwaitingReview
+        : home.counts.homeworkLate,
+      badgeLabel: home.isTeacher
+        ? `${home.counts.homeworkAwaitingReview} homework hand-ins to review`
+        : `${home.counts.homeworkLate} late homework tasks`,
     },
     {
       icon: "folder",
@@ -127,6 +133,7 @@ export default function ClassHomeScreen() {
           : "Nothing shared yet",
       path: "/class-materials",
       unread: 0,
+      badgeLabel: "",
     },
     {
       icon: "life-buoy",
@@ -134,6 +141,7 @@ export default function ClassHomeScreen() {
       note: "Questions, safety or technical support",
       path: "/support",
       unread: 0,
+      badgeLabel: "",
     },
   ] as const;
   return (
@@ -227,7 +235,7 @@ export default function ClassHomeScreen() {
             </View>
             {card.unread ? (
               <View
-                accessibilityLabel={`${card.unread} unread class messages`}
+                accessibilityLabel={card.badgeLabel}
                 style={{
                   minWidth: 24,
                   height: 24,

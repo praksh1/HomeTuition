@@ -87,6 +87,15 @@ test("homework uses truthful dedicated events rather than booking and class-invi
   assert.doesNotMatch(routes, /kind: "session_invite"[\s\S]{0,180}homework has feedback/);
 });
 
+test("class home derives private homework status instead of making students inspect every task", () => {
+  assert.match(routes, /homeworkToDo:/);
+  assert.match(routes, /homeworkLate:/);
+  assert.match(routes, /homeworkAwaitingReview:/);
+  assert.match(routes, /submission\.student_id=\$\{req\.user!\.userId\}/);
+  assert.match(routes, /submission\.status='submitted'/);
+  assert.match(routes, /task\.due_at < now\(\)/);
+});
+
 test("class materials may carry one verified photo or PDF without changing existing rows", () => {
   assert.match(routes, /classGroupMaterialFilesTable/);
   assert.match(routes, /acceptedFile = await acceptUploadedFile\(req\.body, req\.user!\.userId\)/);

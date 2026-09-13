@@ -144,6 +144,39 @@ router.get("/class-groups/:id", requireAuth, async (req, res) => {
   const [counts] = await db
     .select({
       homework: sql<number>`(select count(*)::int from class_group_homework where batch_id=${access.batchId} and status='open')`,
+      homeworkToDo: sql<number>`(
+        select count(*)::int
+        from class_group_homework task
+        where task.batch_id=${access.batchId}
+          and task.status='open'
+          and not exists (
+            select 1
+            from class_group_homework_submissions submission
+            where submission.homework_id=task.id
+              and submission.student_id=${req.user!.userId}
+          )
+      )`,
+      homeworkLate: sql<number>`(
+        select count(*)::int
+        from class_group_homework task
+        where task.batch_id=${access.batchId}
+          and task.status='open'
+          and task.due_at is not null
+          and task.due_at < now()
+          and not exists (
+            select 1
+            from class_group_homework_submissions submission
+            where submission.homework_id=task.id
+              and submission.student_id=${req.user!.userId}
+          )
+      )`,
+      homeworkAwaitingReview: sql<number>`(
+        select count(*)::int
+        from class_group_homework_submissions submission
+        inner join class_group_homework task on task.id=submission.homework_id
+        where task.batch_id=${access.batchId}
+          and submission.status='submitted'
+      )`,
       materials: sql<number>`(select count(*)::int from class_group_materials where batch_id=${access.batchId})`,
     })
     .from(sql`(select 1) as class_group_counts`);
