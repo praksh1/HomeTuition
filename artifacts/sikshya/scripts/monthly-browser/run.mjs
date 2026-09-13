@@ -1,10 +1,10 @@
 /**
- * The monthly tier through the screens somebody actually taps.
+ * The preserved monthly tier through its hidden compatibility screen.
  *
  * Everything under it is tested — the money, the classes, the portal — and none of that says
- * whether a teacher can find the plan, or whether the price a student is shown is the price
- * they are charged. Those are the two things this exists for, and neither is visible from a
- * unit test or an API suite.
+ * whether the retired plan has leaked back into current navigation, or whether the price an
+ * existing student is shown is the price they are charged. Those are the two things this exists
+ * for, and neither is visible from a unit test or an API suite.
  *
  * Usage: API_URL=http://127.0.0.1:8080 node scripts/monthly-browser/run.mjs
  */
@@ -112,14 +112,16 @@ async function main() {
   const teacher = await register("teacher");
   sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
 
-  console.log("\nA teacher finds the monthly plan and buys it");
+  console.log("\nThe retired monthly plan stays hidden while its compatibility route still works");
   {
     const { ctx, page } = await open(browser, teacher.token, "/(teacher)");
-    check("the dashboard offers a monthly class",
-      (await page.locator('[data-testid="teacher-monthly-entry"]').count()) > 0,
+    check("the dashboard does not advertise the retired monthly plan",
+      (await page.locator('[data-testid="teacher-monthly-entry"]').count()) === 0,
       (await text(page)).slice(0, 260).replace(/\n/g, " | "));
 
-    await page.locator('[data-testid="teacher-monthly-entry"]').click({ timeout: 15000 });
+    // NODE_ENV=test keeps the archived purchase machinery exercisable without exposing a live
+    // navigation entry. Production leaves this route in its read-only compatibility state.
+    await page.goto(`${siteUrl}/(teacher)/monthly`, { waitUntil: "networkidle" });
     await page.locator('[data-testid="monthly-buy"]').waitFor({ state: "visible", timeout: 20000 });
     await page.waitForTimeout(400);
 

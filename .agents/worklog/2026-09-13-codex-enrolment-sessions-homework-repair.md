@@ -124,3 +124,7 @@ remain untouched until the owner completes the short preview test and explicitly
 - The next protected run confirmed the History content and label were rendered, but the journey
   still addressed the row by its retired `dropped-session-*` test identifier. The grouped Sessions
   screen uses `dropped-*`; both the presence and navigation checks now address that actual row.
+- That correction passed the complete refund browser journey 69/69. The next gate was the archived
+  monthly browser journey, which still required the dashboard promotion the owner explicitly
+  removed. It now proves the promotion stays absent, then opens the preserved test-only route
+  directly to retain end-to-end coverage of old records without reviving the retired live UI.
