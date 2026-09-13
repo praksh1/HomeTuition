@@ -1,6 +1,6 @@
 # Profile account details and refund destination
 
-Status: implementation complete; awaiting CI and preview review
+Status: deployed to preview for owner testing; production unchanged
 Branch: `codex/profile-account-details`
 
 ## Goal
@@ -26,6 +26,16 @@ Let teachers and students review and update their private contact/location detai
 - App unit suite: 397 passed, 0 failed, including four new Profile/refund contract tests.
 - Design lint: no new leaks; baseline remains 94 hex / 282 sizes.
 - `git diff --check`: clean.
+- GitHub safety workflow `34725544796`: passed.
+- Preview workflow `34726667600`: passed, including the rendered browser journey and deployment.
+- Preview bundle verified to contain the Account details editor, municipality fallback and refund-to-original-payment-method guidance.
+
+## Preview
+
+- Commit: `387bc67`
+- URL: `https://hometuition-preview.praksh-dhakal.workers.dev`
+- The staging API branch was fast-forwarded to the same commit so the UI and server validation are tested together.
+- Production was not changed.
 
 ## Deliberate boundaries and remaining work
 
