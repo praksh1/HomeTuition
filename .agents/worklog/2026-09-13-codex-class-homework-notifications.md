@@ -51,4 +51,16 @@ Branch: `codex/class-homework-notifications`
 
 ## Preview deployment
 
-- Pending commit, safety workflow, Railway staging and Cloudflare preview details.
+- Feature and worklog commit: `8b50979` (`Add truthful class homework notifications`).
+- Full safety workflow `34739860807` passed in 2m 50s. It included all four workspace
+  typechecks, API and app unit suites, disposable-database schema checks, program, batch booking,
+  video, session proof, staging-access and browser checks.
+- Railway staging deployed the exact feature commit and showed `ACTIVE` with `Deployment
+  successful` for `Add truthful class homework notifications`.
+- Preview workflow `34740071408` passed. It verified the staging API, disposable-data program and
+  dispute flows, program discovery and teacher-profile rendering, guided class setup, billing,
+  preview isolation, the production web build and Cloudflare deployment.
+- The deployed preview was reloaded after the workflow. It rendered the staging teacher dashboard
+  and its staging class data successfully.
+- Preview: `https://hometuition-preview.praksh-dhakal.workers.dev`
+- Production remains unchanged.
