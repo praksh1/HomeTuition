@@ -239,6 +239,8 @@ function HomeworkTask({ batchId, task, isTeacher, onChanged }: { batchId: number
     ? `${dates.formatBoth(batchDateValue(due.date)!)} · ${due.time} Nepal time`
     : null;
   const overdue = Boolean(task.dueAt && Date.parse(task.dueAt) < Date.now());
+  const returnedCount = task.submissions?.filter((submission) => submission.status === "returned").length ?? 0;
+  const reviewCount = (task.submissions?.length ?? 0) - returnedCount;
   return (
     <View style={{ gap: space.sm, padding: space.md, borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
       <Text style={[t.title3, { color: colors.foreground }]}>{task.title}</Text>
@@ -248,7 +250,9 @@ function HomeworkTask({ batchId, task, isTeacher, onChanged }: { batchId: number
       {task.questionFile ? <HomeworkFileButton fileKey={task.questionFile.fileKey} label="Open question sheet" /> : null}
       {isTeacher ? (
         <View style={{ gap: space.sm }}>
-          <Text style={[t.caption, { color: colors.mutedForeground }]}>{task.submissions?.length ?? 0} handed in</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>
+            {task.submissions?.length ?? 0} handed in · {reviewCount} to review · {returnedCount} returned
+          </Text>
           {task.submissions?.length ? task.submissions.map((submission) => (
             <TeacherSubmission key={submission.id} batchId={batchId} homeworkId={task.id} submission={submission} onChanged={onChanged} />
           )) : <Text style={[t.caption, { color: colors.mutedForeground }]}>Nobody has handed this in yet.</Text>}
@@ -311,6 +315,12 @@ function TeacherSubmission({ batchId, homeworkId, submission, onChanged }: { bat
   const [file, setFile] = useState<UploadableFile | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
+  const [reviewOpen, setReviewOpen] = useState(false);
+  useEffect(() => {
+    setFeedback(submission.feedback ?? "");
+    setFile(null);
+    setReviewOpen(false);
+  }, [submission.feedback, submission.status, submission.submittedAt]);
   const send = async () => {
     setBusy(true);
     setProblem("");
@@ -323,24 +333,45 @@ function TeacherSubmission({ batchId, homeworkId, submission, onChanged }: { bat
       setProblem(error instanceof Error ? error.message : "Could not return feedback.");
     } finally { setBusy(false); }
   };
+  const returned = submission.status === "returned";
   return (
     <View style={{ gap: space.sm, padding: space.sm, borderRadius: 10, borderWidth: 1, borderColor: colors.border }}>
-      <Text style={[t.bodyStrong, { color: colors.foreground }]}>{submission.studentName || "Student"}</Text>
-      {submission.note ? <Text style={[t.body, { color: colors.foreground }]}>“{submission.note}”</Text> : null}
-      {submission.file ? <HomeworkFileButton fileKey={submission.file.fileKey} label="Open submitted work" /> : null}
-      <TextInput
-        accessibilityLabel={`Feedback for ${submission.studentName || "student"}`}
-        value={feedback}
-        onChangeText={setFeedback}
-        multiline
-        placeholder="Write clear, encouraging feedback"
-        placeholderTextColor={colors.mutedForeground}
-        style={[t.body, fieldStyle(colors, space), { minHeight: 76, textAlignVertical: "top" }]}
-      />
-      <HomeworkFilePicker file={file} onPick={setFile} label="Choose a marked copy (optional)" />
-      {submission.status === "returned" ? <Text style={[t.caption, { color: colors.primary }]}>Feedback already returned. Sending again updates it.</Text> : null}
-      {problem ? <Text style={[t.caption, { color: colors.destructive }]}>{problem}</Text> : null}
-      <ProgramButton label={busy ? "Returning…" : "Return feedback"} emphasis="secondary" disabled={busy || (!feedback.trim() && !file)} onPress={() => void send()} />
+      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm }}>
+        <Text style={[t.bodyStrong, { color: colors.foreground, flex: 1 }]}>{submission.studentName || "Student"}</Text>
+        <Text style={[t.caption, { color: returned ? colors.primary : colors.mutedForeground }]}>{returned ? "Returned" : "Needs review"}</Text>
+      </View>
+      {returned ? (
+        <View style={{ gap: space.sm }}>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>Feedback is locked. If the student hands in a new version, it will return to your review list.</Text>
+          <ProgramButton label={reviewOpen ? "Hide returned work" : "View returned work"} emphasis="quiet" onPress={() => setReviewOpen((open) => !open)} />
+          {reviewOpen ? <View style={{ gap: space.sm }}>
+            {submission.note ? <Text style={[t.body, { color: colors.foreground }]}>Student: “{submission.note}”</Text> : null}
+            {submission.file ? <HomeworkFileButton fileKey={submission.file.fileKey} label="Open submitted work" /> : null}
+            {submission.feedback ? <Text style={[t.body, { color: colors.foreground }]}>Feedback: “{submission.feedback}”</Text> : null}
+            {submission.markedFile ? <HomeworkFileButton fileKey={submission.markedFile.fileKey} label="Open marked copy" /> : null}
+          </View> : null}
+        </View>
+      ) : !reviewOpen ? (
+        <ProgramButton label="Review work" emphasis="secondary" onPress={() => setReviewOpen(true)} />
+      ) : (
+        <View style={{ gap: space.sm }}>
+          {submission.note ? <Text style={[t.body, { color: colors.foreground }]}>“{submission.note}”</Text> : null}
+          {submission.file ? <HomeworkFileButton fileKey={submission.file.fileKey} label="Open submitted work" /> : null}
+          <TextInput
+            accessibilityLabel={`Feedback for ${submission.studentName || "student"}`}
+            value={feedback}
+            onChangeText={setFeedback}
+            multiline
+            placeholder="Write clear, encouraging feedback"
+            placeholderTextColor={colors.mutedForeground}
+            style={[t.body, fieldStyle(colors, space), { minHeight: 76, textAlignVertical: "top" }]}
+          />
+          <HomeworkFilePicker file={file} onPick={setFile} label="Choose a marked copy (optional)" />
+          {problem ? <Text style={[t.caption, { color: colors.destructive }]}>{problem}</Text> : null}
+          <ProgramButton label={busy ? "Returning…" : "Return feedback"} emphasis="secondary" disabled={busy || (!feedback.trim() && !file)} onPress={() => void send()} />
+          <ProgramButton label="Close review" emphasis="quiet" disabled={busy} onPress={() => setReviewOpen(false)} />
+        </View>
+      )}
     </View>
   );
 }

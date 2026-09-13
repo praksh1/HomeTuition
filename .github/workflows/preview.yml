@@ -215,6 +215,12 @@ jobs:
       - name: Attendance and dispute evidence
         run: pnpm --filter @workspace/api-server run test:attendance
 
+      - name: Class checkout, grouping and homework delivery
+        run: pnpm --filter @workspace/api-server run test:batch-booking
+
+      - name: Notification delivery and preferences
+        run: pnpm --filter @workspace/api-server run test:notifications
+
       - name: Install Chromium for rendered checks
         run: |
           npm i -g playwright

@@ -187,8 +187,20 @@ export default function ClassSetup() {
         setStep(result.item.batch.lessons.length ? 3 : 1);
         setEditing(!classIsPublished(result.item));
       } else {
-        key.current =
-          (await AsyncStorage.getItem(keyStorage)) ?? Crypto.randomUUID();
+        // Opening "Create a class" is a fresh setup. Expo Router may reuse this component
+        // after a teacher has just published another class; if we leave `item`, step and the
+        // idempotency key in memory, the new button reopens step 4 of the old class and every
+        // save is correctly rejected as stale. The key still survives retries during this
+        // creation attempt, but it never identifies a previous listing.
+        const fresh = emptyClassForm();
+        setItem(null);
+        formRef.current = fresh;
+        setFormState(fresh);
+        setAccepted(JSON.stringify(fresh));
+        setStep(0);
+        setEditing(true);
+        setNotice("");
+        key.current = Crypto.randomUUID();
         await AsyncStorage.setItem(keyStorage, key.current);
       }
     } catch (error) {
@@ -536,9 +548,12 @@ export default function ClassSetup() {
                 </Text>
                 <ProgramButton
                   label="Short course · a set finish"
-                  emphasis={form.format === "fixed" ? "secondary" : "quiet"}
+                  emphasis={form.format === "fixed" && count !== "1" ? "secondary" : "quiet"}
                   disabled={locked}
-                  onPress={() => setForm({ ...form, format: "fixed", allowLateJoining: false })}
+                  onPress={() => {
+                    if (count === "1") setCount("8");
+                    setForm({ ...form, format: "fixed", allowLateJoining: false });
+                  }}
                 />
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>
                   For exam preparation, a language course or a set of music
@@ -547,13 +562,14 @@ export default function ClassSetup() {
                 <ProgramButton
                   label="Just one lesson"
                   disabled={locked}
-                  emphasis="quiet"
-                  onPress={() =>
-                    leave(() => router.push("/(teacher)/session-create"))
-                  }
+                  emphasis={form.format === "fixed" && count === "1" ? "secondary" : "quiet"}
+                  onPress={() => {
+                    setCount("1");
+                    setForm({ ...form, format: "fixed", allowLateJoining: false });
+                  }}
                 />
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>
-                  Opens the existing single-lesson booking setup.
+                  Uses this same class setup with one date and one clear price.
                 </Text>
               </ProgramCardShell>
             ) : null}

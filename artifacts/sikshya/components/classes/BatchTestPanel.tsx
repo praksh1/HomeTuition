@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { router } from "expo-router";
 import { useColors } from "@/hooks/useColors";
@@ -33,7 +33,7 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
   const { t, space, numeric } = useLayout();
   const dates = useDates();
   const [result, setResult] = useState<TestBooking | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(!accountRequired);
   const [error, setError] = useState("");
   const [datesOpen, setDatesOpen] = useState(false);
   const gate = useRef(false);
@@ -49,6 +49,15 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
       setError(e instanceof Error ? e.message : "Could not check test booking. Please try again.");
     } finally { gate.current = false; setBusy(false); }
   }
+  // Re-read the server-owned booking whenever this signed-in view opens. A confirmed place
+  // survives sign-out, but the component's local `result` does not; without this GET an
+  // enrolled student was offered a new checkout again until they pressed it.
+  useEffect(() => {
+    if (!accountRequired) void request();
+    // `request` intentionally stays local to this panel. A new batch/account gate is the only
+    // reason to run this automatically; button presses own every later refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchId, accountRequired]);
   const dateLabel = (iso: string) => {
     const local = lessonDraft({ startsAt: iso, durationMinutes: 60 });
     const date = batchDateValue(local.date)!;
@@ -75,7 +84,7 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
   </View>;
   return <View testID={`batch-test-${batchId}`} style={{ gap: space.sm }}>
     <Text style={[t.caption, { color: colors.mutedForeground }]}>Private testing · no money collected</Text>
-    <ProgramButton label={busy ? "Checking…" : result ? "Refresh test access" : teacher ? "Open test lessons" : "Try test checkout"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />
+    <ProgramButton label={busy ? "Checking your place…" : result ? "Refresh test access" : teacher ? "Open test lessons" : "Try test checkout"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />
     {error ? <ProgramNotice title="Test booking unavailable" body={error} tone="stopped" /> : null}
     {result?.isTeacher && !result.lessons.length ? <ProgramNotice title="Waiting for a test student" body="A student with test access must book this class first. Its lesson links will then appear here. Refresh after they book." /> : null}
     {result && !result.isTeacher && !result.booked ? <ProgramNotice title="Fadko test checkout">

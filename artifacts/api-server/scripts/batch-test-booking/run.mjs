@@ -66,6 +66,14 @@ async function offer(teacher, { capacity = 2, at = Math.ceil(Date.now() / 60000)
 }
 async function quote(id, a) { const result = await api(`/batch-tests/${id}`, a.token); assert.equal(result.status, 200, JSON.stringify(result)); return result.body; }
 const book = (id, a, key, outcome = "success") => api(`/batch-tests/${id}`, a.token, { quoteKey: key, gateway: "fadko_test", outcome });
+async function inbox(a, predicate) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const response = await api("/notification-events?after=0", a.token);
+    if (response.status === 200 && (response.body.events ?? []).some((row) => predicate(row.event))) return response.body.events;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return [];
+}
 async function socketAccepted(token, id) {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws?sessionId=${id}&token=${encodeURIComponent(token)}&name=Test`);
@@ -102,6 +110,11 @@ try {
   check("concurrent retry books exactly once", replies.every((r) => r.status === 200) && replies.filter((r) => r.body.created).length === 1);
   const booked = replies[0].body;
   check("success returns the student's frozen simulated receipt", booked.receipts.length === 1 && booked.receipts[0].grossNpr === 6000 && booked.receipts[0].reference && booked.paymentCollectedNpr === 0);
+  const restoredBooking = await quote(c.id, a);
+  check("signing back in restores the confirmed class instead of offering checkout again", restoredBooking.booked && restoredBooking.lessons.length === 2 && restoredBooking.receipts[0].reference === booked.receipts[0].reference);
+  const studentSessions = await api(`/sessions?studentId=${a.user.id}&limit=50`, a.token);
+  const groupedLessons = studentSessions.body.sessions.filter((session) => session.classGroup?.batchId === c.id);
+  check("generated lesson rows carry one server-owned class identity", groupedLessons.length === 2 && groupedLessons.every((session) => session.classGroup.title === c.body.title && session.classGroup.lessonCount === 2));
   check("booking response excludes teacher and platform accounting", !JSON.stringify(booked).includes("teacherNpr") && !JSON.stringify(booked).includes("fadkoNpr") && !JSON.stringify(booked).includes("heldGrossNpr") && !JSON.stringify(booked).includes("fadkoEarnedNpr"));
   check("concurrent retry creates only one capture", Number((await q("SELECT count(*) n FROM batch_test_payments p JOIN batch_test_bookings b ON b.id=p.booking_id WHERE b.batch_id=$1", [c.id])).rows[0].n) === 1);
   check("teacher can read simulated ledger for own class", (await quote(c.id, teacher)).receipts.length === 1);
@@ -143,6 +156,10 @@ try {
   check("another student cannot return feedback", (await api(`/class-groups/${c.id}/homework/${task.body.id}/submissions/${handedIn.body.id}/feedback`, b.token, { feedback: "Invented feedback" })).status === 403);
   const returned = await api(`/class-groups/${c.id}/homework/${task.body.id}/submissions/${handedIn.body.id}/feedback`, teacher.token, { feedback: "Good method. Check the sign in question four." });
   check("teacher can return clear individual feedback", returned.status === 200 && returned.body.status === "returned");
+  const repeatedFeedback = await api(`/class-groups/${c.id}/homework/${task.body.id}/submissions/${handedIn.body.id}/feedback`, teacher.token, { feedback: "This must not replace the first review." });
+  check("returned feedback is locked until the student submits a new version", repeatedFeedback.status === 409 && repeatedFeedback.body.error.includes("already been returned"));
+  const feedbackInbox = await inbox(a, (event) => event.kind === "class_homework_feedback" && event.homeworkId === task.body.id);
+  check("homework feedback remains in the student's notification inbox while signed out", feedbackInbox.some((row) => row.event.kind === "class_homework_feedback" && row.event.homeworkId === task.body.id));
   check("teacher class home clears reviewed hand-ins", (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.homeworkAwaitingReview === 0);
   const studentHomework = await api(`/class-groups/${c.id}/homework`, a.token);
   check("student sees only their returned feedback", studentHomework.body.tasks[0].submission.feedback === "Good method. Check the sign in question four." && studentHomework.body.tasks[0].submission.studentId === a.user.id);
@@ -199,6 +216,8 @@ try {
   const qb = await quote(c.id, b);
   const secondBooking = await book(c.id, b, qb.quoteKey);
   check("second student shares the same lesson rooms", secondBooking.body.lessons[0].sessionId === sid);
+  const lateJoinerInbox = await inbox(b, (event) => event.kind === "class_homework_set" && event.batchId === c.id);
+  check("a student joining after homework was assigned receives each open task", lateJoinerInbox.filter((row) => row.event.kind === "class_homework_set" && row.event.batchId === c.id).length === 2);
   const secondBookingId = Number((await q("SELECT id FROM batch_test_bookings WHERE batch_id=$1 AND student_id=$2", [c.id, b.user.id])).rows[0].id);
   await q("INSERT INTO session_participation (session_id,user_id,role,present_ms,join_count) VALUES ($1,$2,'teacher',60000,1)", [sid, teacher.user.id]);
   check("teacher can finish the recorded test lesson", (await api(`/sessions/${sid}`, teacher.token, { status: "completed" }, "PATCH")).status === 200);

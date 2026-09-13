@@ -1,6 +1,17 @@
 import { and, asc, desc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, sessionsTable, sessionEnrollmentsTable, studentTeacherSubscriptionsTable, teacherProfilesTable, testClassesTable, usersTable } from "@workspace/db";
+import {
+  batchTestSessionsTable,
+  db,
+  learningProgramBatchesTable,
+  learningProgramsTable,
+  sessionsTable,
+  sessionEnrollmentsTable,
+  studentTeacherSubscriptionsTable,
+  teacherProfilesTable,
+  testClassesTable,
+  usersTable,
+} from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { assertTeacherSchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
 import {
@@ -119,6 +130,61 @@ async function tagTestClasses<T extends { id: number }>(rows: T[]): Promise<T[]>
   if (marked.size === 0) return rows;
   return rows.map((row) =>
     marked.has(row.id) ? { ...row, testClass: true, testClassLabel: TEST_CLASS_LABEL } : row);
+}
+
+/**
+ * Attach the class-group identity to generated lessons in somebody's own Sessions list.
+ *
+ * A purchase of one 30-lesson class creates 30 session rows because each lesson still needs its
+ * own classroom and evidence. That storage shape must not become 30 marketplace cards. The
+ * mapping table is the server-owned proof that the lessons are one class; clients must never
+ * infer it from a topic suffix such as "Lesson 4".
+ */
+async function tagClassGroupLessons<T extends { id: number }>(rows: T[]): Promise<T[]> {
+  if (!rows.length) return rows;
+  const mapped = await db
+    .select({
+      sessionId: batchTestSessionsTable.sessionId,
+      batchId: batchTestSessionsTable.batchId,
+      position: batchTestSessionsTable.position,
+      title: learningProgramsTable.title,
+    })
+    .from(batchTestSessionsTable)
+    .innerJoin(
+      learningProgramBatchesTable,
+      eq(learningProgramBatchesTable.id, batchTestSessionsTable.batchId),
+    )
+    .innerJoin(
+      learningProgramsTable,
+      eq(learningProgramsTable.id, learningProgramBatchesTable.programId),
+    )
+    .where(inArray(batchTestSessionsTable.sessionId, rows.map((row) => row.id)));
+  if (!mapped.length) return rows;
+  const batchIds = [...new Set(mapped.map((row) => row.batchId))];
+  const counts = await db
+    .select({
+      batchId: batchTestSessionsTable.batchId,
+      lessonCount: sql<number>`count(*)::int`,
+    })
+    .from(batchTestSessionsTable)
+    .where(inArray(batchTestSessionsTable.batchId, batchIds))
+    .groupBy(batchTestSessionsTable.batchId);
+  const countByBatch = new Map(counts.map((row) => [row.batchId, row.lessonCount]));
+  const bySession = new Map(mapped.map((row) => [row.sessionId, row]));
+  return rows.map((row) => {
+    const group = bySession.get(row.id);
+    return group
+      ? {
+          ...row,
+          classGroup: {
+            batchId: group.batchId,
+            title: group.title,
+            lessonPosition: group.position,
+            lessonCount: countByBatch.get(group.batchId) ?? 1,
+          },
+        }
+      : row;
+  });
 }
 
 const router: IRouter = Router();
@@ -420,7 +486,7 @@ router.get("/sessions", async (req, res): Promise<void> => {
     const total = sorted.length;
     const paged = sorted.slice(offset, offset + limitNum);
 
-    res.json({ sessions: await tagTestClasses(paged), total, page: pageNum, limit: limitNum });
+    res.json({ sessions: await tagClassGroupLessons(await tagTestClasses(paged)), total, page: pageNum, limit: limitNum });
     return;
   }
 
@@ -458,7 +524,7 @@ router.get("/sessions", async (req, res): Promise<void> => {
       isPastCutoff({ date: row.date, duration: row.duration, startedAt: row.startedAt, endedAt: null, status: row.status }, now),
   }));
 
-  res.json({ sessions: await tagTestClasses(withState), total, page: pageNum, limit: limitNum });
+  res.json({ sessions: await tagClassGroupLessons(await tagTestClasses(withState)), total, page: pageNum, limit: limitNum });
 });
 
 /**

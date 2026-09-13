@@ -36,16 +36,16 @@
     "size": 9
   },
   "app/(student)/sessions.tsx": {
-    "hex": 3,
-    "size": 12
+    "hex": 1,
+    "size": 6
   },
   "app/(student)/_layout.tsx": {
     "hex": 0,
     "size": 1
   },
   "app/(teacher)/sessions.tsx": {
-    "hex": 7,
-    "size": 12
+    "hex": 5,
+    "size": 6
   },
   "app/(teacher)/students.tsx": {
     "hex": 1,

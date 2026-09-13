@@ -1181,7 +1181,7 @@ export default function Classroom() {
               backgroundColor: colors.primary,
             },
           ]}
-          onPress={() => router.replace("/(teacher)/session-create")}
+          onPress={() => router.replace("/(teacher)/create-class")}
           activeOpacity={0.85}
         >
           <Feather name="plus" size={16} color={colors.primaryForeground} />

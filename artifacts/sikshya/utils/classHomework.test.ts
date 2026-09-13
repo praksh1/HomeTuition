@@ -29,6 +29,11 @@ test("teacher feedback and marked copies reach the same student submission", () 
   assert.match(screen, /Return feedback/);
   assert.match(screen, /Open marked copy/);
   assert.match(screen, /clears earlier feedback/);
+  assert.match(screen, /Feedback is locked/);
+  assert.match(screen, /View returned work/);
+  assert.match(screen, /Open submitted work/);
+  assert.match(screen, /submission\.status === "returned"/);
+  assert.doesNotMatch(screen, /Feedback already returned\. Sending again updates it/);
 });
 
 test("file controls explain their action and meet the phone touch floor", () => {
@@ -63,6 +68,16 @@ test("homework notifications use truthful words and open the exact homework page
   assert.match(notifications, /handed in homework/);
   assert.match(notificationList, /startsWith\("class_homework_"\)/);
   assert.match(screen, /lastEvent\?\.kind\.startsWith\("class_homework_"\)/);
+  assert.match(context, /\/notification-events\?after=\$\{after\}/);
+  assert.match(context, /@fadko_notification_cursor_/);
+  assert.match(context, /setInterval\(\(\) => void pull\(\), 30_000\)/);
+});
+
+test("many student submissions stay collapsed and unfinished reviews come first", () => {
+  assert.match(screen, /Review work/);
+  assert.match(screen, /reviewOpen/);
+  assert.match(screen, /to review · \{returnedCount\} returned/);
+  assert.match(screen, /returned \? "Returned" : "Needs review"/);
 });
 
 test("class home summarizes homework instead of requiring every task to be opened", () => {

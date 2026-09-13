@@ -7,7 +7,6 @@ import { useLayout } from "@/hooks/useLayout";
 import { readingWidth } from "@/constants/layout";
 import { apiGet } from "@/utils/api";
 import { ProgramBackControl, ProgramButton, ProgramCardShell, ProgramNotice } from "@/components/programs/ProgramPieces";
-import LegacyTeacherPlans from "@/components/legacy/LegacyTeacherPlans";
 import { BatchTestMoneySummary } from "@/components/classes/BatchTestMoneySummary";
 
 export interface TeachingBillingPolicy {
@@ -43,12 +42,6 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
         <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "Approved test students can book published classes without payment. Lesson links appear after the first test booking. Test activity creates no earnings or payouts." : "Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms."}</Text>
       </ProgramNotice>
       <BatchTestMoneySummary role="teacher" />
-      <ProgramCardShell>
-        <Text style={[t.title3, { color: colors.foreground }]}>Your existing teaching continues</Text>
-        <Text style={[t.body, { color: colors.foreground }]}>Monthly homework, submissions, feedback and class messages are preserved. We will not move your students or change their purchased terms automatically.</Text>
-        <ProgramButton label="Open existing monthly class" emphasis="secondary" onPress={() => router.push("/(teacher)/monthly")} />
-        <ProgramButton label="View existing sessions" emphasis="quiet" onPress={() => router.push("/(teacher)/sessions")} />
-      </ProgramCardShell>
     </>}
   </ScrollView>;
 }
@@ -63,6 +56,5 @@ export default function TeachingEarnings() {
     apiGet<TeachingBillingPolicy>("/teachers/me/billing").then((value) => { if (alive) setPolicy(value); }).catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };
   }, [attempt]);
-  if (policy?.legacyPlanSalesOpen) return <LegacyTeacherPlans />;
   return <TeachingEarningsContent policy={policy} failed={failed} retry={() => setAttempt((n) => n + 1)} />;
 }
