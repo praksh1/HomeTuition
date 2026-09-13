@@ -10,6 +10,11 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { useNotifications } from "@/context/NotificationContext";
 import { apiGet, apiPost } from "@/utils/api";
+import {
+  HomeworkFileButton,
+  HomeworkFilePicker,
+} from "@/components/classes/HomeworkFileControls";
+import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 interface Message {
   id: number;
@@ -17,6 +22,7 @@ interface Message {
   senderRole: string;
   body: string;
   createdAt: string;
+  file?: { fileKey: string; fileName?: string | null } | null;
 }
 interface ViewData {
   title: string;
@@ -32,6 +38,7 @@ export default function ClassChatScreen() {
   const { lastEvent } = useNotifications();
   const [view, setView] = useState<ViewData | null>(null);
   const [draft, setDraft] = useState("");
+  const [file, setFile] = useState<UploadableFile | null>(null);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
   const load = useCallback(async () => {
@@ -68,11 +75,17 @@ export default function ClassChatScreen() {
     }
   }, [batchId, lastEvent, load]);
   const send = async () => {
-    if (!draft.trim() || busy) return;
+    if ((!draft.trim() && !file) || busy) return;
     setBusy(true);
     try {
-      await apiPost(`/class-groups/${batchId}/messages`, { body: draft });
+      const fileKey = file ? await uploadFile(file) : undefined;
+      await apiPost(`/class-groups/${batchId}/messages`, {
+        body: draft,
+        fileKey,
+        fileName: file?.name,
+      });
       setDraft("");
+      setFile(null);
       await load();
     } catch (e) {
       setProblem(
@@ -116,11 +129,18 @@ export default function ClassChatScreen() {
                 !view.messages.some((message) => message.id === pinned.id),
             )
             .map((message) => (
-              <ProgramNotice
-                key={`pinned-${message.id}`}
-                title={message.senderName}
-                body={message.body}
-              />
+              <View key={`pinned-${message.id}`} style={{ gap: space.xs }}>
+                <ProgramNotice
+                  title={message.senderName}
+                  body={message.body || "Shared a file"}
+                />
+                {message.file ? (
+                  <HomeworkFileButton
+                    fileKey={message.file.fileKey}
+                    label={message.file.fileName ? `Open ${message.file.fileName}` : "Open attachment"}
+                  />
+                ) : null}
+              </View>
             ))}
         </View>
       ) : null}
@@ -141,9 +161,17 @@ export default function ClassChatScreen() {
               {message.senderName} ·{" "}
               {message.senderRole === "teacher" ? "Teacher" : "Student"}
             </Text>
-            <Text style={[t.body, { color: colors.foreground }]}>
-              {message.body}
-            </Text>
+            {message.body ? (
+              <Text style={[t.body, { color: colors.foreground }]}>
+                {message.body}
+              </Text>
+            ) : null}
+            {message.file ? (
+              <HomeworkFileButton
+                fileKey={message.file.fileKey}
+                label={message.file.fileName ? `Open ${message.file.fileName}` : "Open attachment"}
+              />
+            ) : null}
           </View>
         ))}
       </View>
@@ -170,10 +198,16 @@ export default function ClassChatScreen() {
               },
             ]}
           />
+          <HomeworkFilePicker
+            file={file}
+            onPick={setFile}
+            label="Choose a photo or PDF (optional)"
+            testID="class-message-file"
+          />
           <ProgramButton
             emphasis="primary"
             label={busy ? "Sending…" : "Send message"}
-            disabled={busy || !draft.trim()}
+            disabled={busy || (!draft.trim() && !file)}
             onPress={() => void send()}
           />
         </View>

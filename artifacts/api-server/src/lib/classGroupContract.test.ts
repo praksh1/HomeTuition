@@ -24,6 +24,7 @@ test("new class groups have one batch authority and never masquerade as old Mont
 test("every learning tool is scoped by batch and created additively", () => {
   for (const name of [
     "class_group_messages",
+    "class_group_message_files",
     "class_group_message_reads",
     "class_group_homework",
     "class_group_homework_submissions",
@@ -50,6 +51,13 @@ test("unread messages have a durable per-person acknowledgement", () => {
   assert.match(routes, /lastReadMessageId/);
   assert.match(routes, /greatest/);
   assert.match(routes, /kind: "class_message"/);
+});
+
+test("new class messages verify one stored file and keep late-join visibility aligned", () => {
+  assert.match(routes, /classGroupMessageFilesTable/);
+  assert.match(routes, /Write a message or attach a photo or PDF/);
+  assert.match(routes, /preview: message\.body\.slice\(0, 140\) \|\| "Sent a file"/);
+  assert.match(schema, /class_group_message_files_key_idx/);
 });
 
 test("new class homework accepts files only after storage verification and keeps answers private", () => {

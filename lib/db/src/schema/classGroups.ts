@@ -35,6 +35,27 @@ export const classGroupMessagesTable = pgTable(
   (t) => [index("class_group_messages_batch_idx").on(t.batchId, t.id)],
 );
 
+/** One optional photo or PDF carried by a new class-group message. */
+export const classGroupMessageFilesTable = pgTable(
+  "class_group_message_files",
+  {
+    id: serial("id").primaryKey(),
+    messageId: integer("message_id")
+      .notNull()
+      .references(() => classGroupMessagesTable.id, { onDelete: "cascade" }),
+    fileKey: text("file_key").notNull(),
+    fileType: text("file_type").notNull(),
+    fileName: text("file_name"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("class_group_message_files_message_idx").on(t.messageId),
+    uniqueIndex("class_group_message_files_key_idx").on(t.fileKey),
+  ],
+);
+
 /** Per-person read position for one class conversation. */
 export const classGroupMessageReadsTable = pgTable(
   "class_group_message_reads",

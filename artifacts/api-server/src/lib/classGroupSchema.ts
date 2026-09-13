@@ -6,6 +6,12 @@ export const CLASS_GROUP_DDL = [
     sender_role text NOT NULL, body text NOT NULL, pinned_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now())`,
   `CREATE INDEX IF NOT EXISTS class_group_messages_batch_idx ON class_group_messages(batch_id, id)`,
+  `CREATE TABLE IF NOT EXISTS class_group_message_files (
+    id serial PRIMARY KEY, message_id integer NOT NULL REFERENCES class_group_messages(id) ON DELETE CASCADE,
+    file_key text NOT NULL, file_type text NOT NULL, file_name text,
+    created_at timestamptz NOT NULL DEFAULT now())`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS class_group_message_files_message_idx ON class_group_message_files(message_id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS class_group_message_files_key_idx ON class_group_message_files(file_key)`,
   `CREATE TABLE IF NOT EXISTS class_group_message_reads (
     batch_id integer NOT NULL REFERENCES learning_program_batches(id) ON DELETE CASCADE,
     user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,

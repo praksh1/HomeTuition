@@ -3,6 +3,7 @@ import { Router, type Request, type Response } from "express";
 import {
   batchTestSessionsTable,
   batchTestBookingsTable,
+  classGroupMessageFilesTable,
   classGroupMessageReadsTable,
   classGroupHomeworkFilesTable,
   classGroupHomeworkSubmissionsTable,
@@ -29,7 +30,7 @@ type AcceptedFile = {
 };
 
 /** Trust the stored object, not the browser's claim about it. */
-async function acceptHomeworkFile(
+async function acceptUploadedFile(
   body: unknown,
   userId: number,
 ): Promise<AcceptedFile | null | { error: string }> {
@@ -176,11 +177,22 @@ router.get("/class-groups/:id/messages", requireAuth, async (req, res) => {
         .orderBy(asc(classGroupMessagesTable.id))
         .limit(20)
     : messages.filter((m) => m.pinnedAt);
+  const visibleIds = [...new Set([...messages, ...pinned].map((message) => message.id))];
+  const files = visibleIds.length
+    ? await db
+        .select()
+        .from(classGroupMessageFilesTable)
+        .where(inArray(classGroupMessageFilesTable.messageId, visibleIds))
+    : [];
+  const withFile = (message: (typeof messages)[number]) => ({
+    ...message,
+    file: files.find((file) => file.messageId === message.id) ?? null,
+  });
   res.json({
     title: access.title,
     isTeacher: access.isTeacher,
-    messages,
-    pinned,
+    messages: messages.map(withFile),
+    pinned: pinned.map(withFile),
   });
 });
 
@@ -188,10 +200,15 @@ router.post("/class-groups/:id/messages", requireAuth, async (req, res) => {
   const access = await accessOrReply(req, res);
   if (!access) return;
   const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
-  if (!body || body.length > MAX_BODY) {
+  const acceptedFile = await acceptUploadedFile(req.body, req.user!.userId);
+  if (acceptedFile && "error" in acceptedFile) {
+    res.status(400).json({ error: acceptedFile.error });
+    return;
+  }
+  if ((!body && !acceptedFile) || body.length > MAX_BODY) {
     res
       .status(400)
-      .json({ error: `Write a message under ${MAX_BODY} characters.` });
+      .json({ error: `Write a message or attach a photo or PDF.` });
     return;
   }
   const [user] = await db
@@ -208,6 +225,18 @@ router.post("/class-groups/:id/messages", requireAuth, async (req, res) => {
       body,
     })
     .returning();
+  let file = null;
+  if (acceptedFile) {
+    [file] = await db
+      .insert(classGroupMessageFilesTable)
+      .values({
+        messageId: message.id,
+        fileKey: acceptedFile.key,
+        fileType: acceptedFile.type,
+        fileName: acceptedFile.name,
+      })
+      .returning();
+  }
   const students = await db
     .select({ userId: batchTestBookingsTable.studentId })
     .from(batchTestBookingsTable)
@@ -224,11 +253,11 @@ router.post("/class-groups/:id/messages", requireAuth, async (req, res) => {
     batchId: access.batchId,
     fromUserId: req.user!.userId,
     fromName: message.senderName,
-    preview: message.body.slice(0, 140),
+    preview: message.body.slice(0, 140) || "Sent a file",
     topic: access.title,
     at: message.createdAt.toISOString(),
   });
-  res.status(201).json(message);
+  res.status(201).json({ ...message, file });
 });
 
 router.post("/class-groups/:id/messages/read", requireAuth, async (req, res) => {
@@ -400,7 +429,7 @@ router.post("/class-groups/:id/homework", requireAuth, async (req, res) => {
       .json({ error: "Add a short homework title and instructions." });
     return;
   }
-  const acceptedFile = await acceptHomeworkFile(req.body, req.user!.userId);
+  const acceptedFile = await acceptUploadedFile(req.body, req.user!.userId);
   if (acceptedFile && "error" in acceptedFile) {
     res.status(400).json({ error: acceptedFile.error });
     return;
@@ -441,7 +470,7 @@ router.post(
     }
     const homeworkId = idParam(req, "homeworkId");
     const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
-    const acceptedFile = await acceptHomeworkFile(req.body, req.user!.userId);
+    const acceptedFile = await acceptUploadedFile(req.body, req.user!.userId);
     if (acceptedFile && "error" in acceptedFile) {
       res.status(400).json({ error: acceptedFile.error });
       return;
@@ -529,7 +558,7 @@ router.post(
     const submissionId = idParam(req, "submissionId");
     const feedback =
       typeof req.body?.feedback === "string" ? req.body.feedback.trim() : "";
-    const acceptedFile = await acceptHomeworkFile(req.body, req.user!.userId);
+    const acceptedFile = await acceptUploadedFile(req.body, req.user!.userId);
     if (acceptedFile && "error" in acceptedFile) {
       res.status(400).json({ error: acceptedFile.error });
       return;
