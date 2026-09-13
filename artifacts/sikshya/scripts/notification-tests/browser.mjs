@@ -237,7 +237,9 @@ async function main() {
     await page.waitForTimeout(2500);
     const landed = await page.evaluate(() => ({
       path: location.pathname,
-      text: document.body.innerText.slice(0, 400),
+      // Calendar preference is intentionally above the notification switches. Inspect the full
+      // settings screen rather than assuming those switches fit in its first few hundred chars.
+      text: document.body.innerText,
     }));
     check("tapping it opens the settings screen rather than the dashboard",
       landed.path === "/notification-settings", `landed on ${landed.path}`);

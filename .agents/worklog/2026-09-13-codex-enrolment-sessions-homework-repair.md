@@ -106,3 +106,13 @@ remain untouched until the owner completes the short preview test and explicitly
   (teacher navigation release gate) and `ea46547` (historic monthly journey preservation) remain in
   history. Git merged without conflicts. Unit, typecheck, checkout, class-setup and teaching/billing
   browser gates remained green on the merged tree.
+
+## Production release gate correction
+
+- Production workflow `34786729564` stopped before the Cloudflare deployment step after 11 of 12
+  notification browser checks passed. No website files were deployed by that failed run.
+- The failed assertion sampled only the first 400 characters of the notification-settings page.
+  The newer Calendar preference correctly appears above the notification switches, moving their
+  labels beyond that arbitrary sample even though navigation and the switches themselves worked.
+- The journey now inspects the full rendered settings page. This changes only the test assertion; it
+  does not weaken the required path or switch-label checks and does not change product behaviour.
