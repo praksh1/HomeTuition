@@ -49,6 +49,10 @@ const SHARED_SCREENS = [
   // open the same conversation and the same homework, from opposite sides of it.
   { name: "monthly-chat", segment: "monthly-chat" },
   { name: "monthly-homework", segment: "monthly-homework" },
+  { name: "class-home", segment: "class-home" },
+  { name: "class-chat", segment: "class-chat" },
+  { name: "class-homework", segment: "class-homework" },
+  { name: "class-materials", segment: "class-materials" },
   // What somebody has reported, and what happened to it. Shared because both roles report
   // things and both need to follow the answer — and because without this the guard below
   // would bounce a student straight back to their dashboard.
@@ -102,9 +106,9 @@ function AuthGuard() {
     } else if ((user.role === "teacher" || user.role === "student") && !user.onboardingComplete) {
       if (!onOnboarding) router.replace("/onboarding" as never);
     } else if (user.role === "teacher") {
-      if (!inTeacherGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen) router.replace("/(teacher)");
+      if (!inTeacherGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen && !onOnboarding) router.replace("/(teacher)");
     } else if (user.role === "student") {
-      if (!inStudentGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen) router.replace("/(student)");
+      if (!inStudentGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen && !onOnboarding) router.replace("/(student)");
     } else if (user.role === "admin") {
       // An agent has one place to be. They are not a teacher or a student, and the screens for
       // those roles would show them somebody else's empty dashboard.

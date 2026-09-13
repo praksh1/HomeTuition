@@ -12,14 +12,15 @@ import locationData from "../data/nepalEducationFacilities.json";
 import { requireAuth } from "../middlewares/requireAuth";
 import { deleteUpload, signView, verifyUpload } from "../lib/fileStore";
 import { flagContent } from "../lib/moderation";
-import { ageOn } from "../lib/onboardingRules";
+import { ageOn, completedAccountAt } from "../lib/onboardingRules";
+import { NEPAL_PROVINCES, validNepalProvinceDistrict } from "../lib/nepalLocationRules";
 
 const router: IRouter = Router();
 
 type District = { name: string; localLevels: string[] };
 type Province = { name: string; districts: District[] };
 type Facility = [number, string, string, string, string, string];
-const provinces = locationData.provinces as Province[];
+const provinces = NEPAL_PROVINCES as Province[];
 const facilities = locationData.facilities as Facility[];
 
 router.get("/locations/nepal", (_req, res): void => {
@@ -77,6 +78,10 @@ router.patch("/onboarding/me", requireAuth, async (req, res): Promise<void> => {
     res.status(400).json({ error: "Enter a valid phone number." });
     return;
   }
+  if (!validNepalProvinceDistrict(province, district)) {
+    res.status(400).json({ error: "Choose a valid Nepal province and its district." });
+    return;
+  }
   if (!affiliationStatus || !["affiliated", "independent", "not_specified"].includes(affiliationStatus)) {
     res.status(400).json({ error: "Choose your school affiliation." });
     return;
@@ -113,7 +118,14 @@ router.patch("/onboarding/me", requireAuth, async (req, res): Promise<void> => {
     guardianEmail: user.role === "student" ? (guardianEmail ?? existing?.guardianEmail)?.toLocaleLowerCase() ?? null : null,
     guardianPhone: user.role === "student" ? guardianPhone ?? existing?.guardianPhone ?? null : null,
     guardianRelationship: user.role === "student" ? guardianRelationship ?? existing?.guardianRelationship ?? null : null,
-    completedAt: existing?.profilePhotoKey || user.role === "student" ? new Date() : null,
+    // Editing a legacy-but-complete account must not send it back through onboarding merely
+    // because the old row predates profile-photo storage. New teachers still need the photo;
+    // completed teachers keep the completion decision already recorded for them.
+    completedAt: completedAccountAt({
+      existingCompletedAt: existing?.completedAt,
+      hasProfilePhoto: Boolean(existing?.profilePhotoKey),
+      role: user.role,
+    }),
     updatedAt: new Date(),
   };
   const [saved] = existing

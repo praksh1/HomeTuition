@@ -1,4 +1,5 @@
 import * as Notifications from "expo-notifications";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import React, {
   createContext,
@@ -17,6 +18,8 @@ import {
   getNotifications,
   getUnreadCount,
   markAllRead,
+  notifyClassMessage,
+  notifyClassHomework,
   notifyNewFollower,
   notifyNewMessage,
   notifyProgramPublished,
@@ -49,7 +52,7 @@ interface NotificationContextType {
    * The last event that arrived on the socket, whatever kind it was.
    *
    * Exposed so a screen can react to something happening *while it is open* without polling —
-   * the class message thread listens for `session_message` and asks for what it has not seen.
+   * class message threads listen for their own event and ask for what they have not seen.
    * Deliberately the raw event: it is a nudge, not the data. A screen that trusted the event's
    * contents would show a message the server has not confirmed.
    */
@@ -88,9 +91,14 @@ function openTarget(data: {
   sessionId?: string | number;
   conversationWith?: string | number;
   programId?: string | number;
+  batchId?: string | number;
 }): void {
   try {
-    if (data.programId != null && data.type === "program_published") {
+    if (data.batchId != null && data.type?.startsWith("class_homework_")) {
+      router.push({ pathname: "/class-homework", params: { id: String(data.batchId) } });
+    } else if (data.batchId != null && data.type === "class_message") {
+      router.push({ pathname: "/class-chat", params: { id: String(data.batchId) } });
+    } else if (data.programId != null && data.type === "program_published") {
       router.push(`/(student)/program/${data.programId}`);
     } else if (data.sessionId != null && data.type === "session_message") {
       // The class's own page, where the thread is and where the Join button is — not the
@@ -147,7 +155,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       // it a message that never appears.
       setLastEvent(event);
 
-      const key = `${event.kind}:${event.fromUserId ?? event.sessionId ?? ""}:${event.at ?? ""}`;
+      const key = `${event.kind}:${event.fromUserId ?? event.sessionId ?? event.batchId ?? ""}:${event.at ?? ""}`;
       if (seen.current.has(key)) return;
       seen.current.add(key);
       // Bounded so a long session cannot grow this without limit.
@@ -174,7 +182,36 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             teacherName: event.fromName,
             sessionId: event.sessionId,
           });
+        } else if (event.kind === "class_message" && event.batchId != null) {
+          if (!preferences.push.messages) return;
+          await notifyClassMessage({
+            senderName: event.fromName ?? "Someone",
+            body: event.preview ?? "",
+            batchId: event.batchId,
+            topic: event.topic,
+          });
+        } else if (
+          (event.kind === "class_homework_set" ||
+            event.kind === "class_homework_submitted" ||
+            event.kind === "class_homework_feedback") &&
+          event.batchId != null
+        ) {
+          if (!preferences.push.homework) return;
+          await notifyClassHomework({
+            kind:
+              event.kind === "class_homework_set"
+                ? "set"
+                : event.kind === "class_homework_submitted"
+                  ? "submitted"
+                  : "feedback",
+            batchId: event.batchId,
+            homeworkId: event.homeworkId,
+            homeworkTitle: event.homeworkTitle,
+            classTitle: event.topic,
+            personName: event.fromName,
+          });
         } else if (event.kind === "session_message") {
+          if (!preferences.push.messages) return;
           // A class's own thread, which is where a teacher says they are running late. It
           // deserves a notification for the same reason a direct message does: it is somebody
           // talking to you, and it is time-critical far more often than not.
@@ -231,8 +268,38 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
       await refresh();
     },
-    [refresh],
+    [preferences.push.homework, preferences.push.messages, refresh],
   );
+
+  // A socket is an instant-delivery path, not a mailbox. Pull the durable cursor on sign-in
+  // and periodically while the app is open so homework or payment news sent during logout,
+  // sleep or a dropped connection still becomes a normal local notification.
+  useEffect(() => {
+    if (!user?.userId) return;
+    let alive = true;
+    const cursorKey = `@fadko_notification_cursor_${user.userId}`;
+    const pull = async () => {
+      try {
+        const saved = Number(await AsyncStorage.getItem(cursorKey) ?? 0);
+        const after = Number.isSafeInteger(saved) && saved > 0 ? saved : 0;
+        const response = await apiGet<{ events: Array<{ id: number; event: UserEvent }> }>(
+          `/notification-events?after=${after}`,
+        );
+        let cursor = after;
+        for (const row of response.events ?? []) {
+          if (!alive) return;
+          await onEvent(row.event);
+          cursor = Math.max(cursor, row.id);
+        }
+        if (cursor > after) await AsyncStorage.setItem(cursorKey, String(cursor));
+      } catch {
+        // The live socket still works. The next pull retries the same cursor.
+      }
+    };
+    void pull();
+    const timer = setInterval(() => void pull(), 30_000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [onEvent, user?.userId]);
 
   // One socket for as long as someone is signed in. The classroom socket only carries one
   // lesson, so anything happening outside a lesson had no way to reach the app at all.
@@ -302,7 +369,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         responseListener.current = Notifications.addNotificationResponseReceivedListener(async (response) => {
           await refresh();
           const data = response?.notification?.request?.content?.data as
-            | { type?: string; sessionId?: string | number; conversationWith?: string | number; programId?: string | number }
+            | { type?: string; sessionId?: string | number; conversationWith?: string | number; programId?: string | number; batchId?: string | number }
             | undefined;
           if (data) openTarget(data);
         });

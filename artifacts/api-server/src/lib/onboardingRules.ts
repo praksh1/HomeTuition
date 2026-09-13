@@ -12,3 +12,15 @@ export function ageOn(dateOfBirth: string, today = new Date()): number | null {
   if (beforeBirthday) age -= 1;
   return age;
 }
+
+/** Preserve an earlier completion decision while enforcing the photo rule for new teachers. */
+export function completedAccountAt(input: {
+  existingCompletedAt: Date | null | undefined;
+  hasProfilePhoto: boolean;
+  role: string;
+  now?: Date;
+}): Date | null {
+  if (input.existingCompletedAt) return input.existingCompletedAt;
+  if (input.role === "student" || input.hasProfilePhoto) return input.now ?? new Date();
+  return null;
+}

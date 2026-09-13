@@ -9,6 +9,12 @@ bridge and frozen promises. See `.agents/worklog/2026-09-11-codex-batch-test-boo
 and deployment status. The original bullets below describe the pre-pilot baseline. Real checkout,
 commission allocation, payouts and new group learning portal are still unbuilt.
 
+Update12Sep: the first new group home is now on preview, and
+`codex/class-message-notifications` adds durable per-person message acknowledgements, class-home
+unread badges, live refresh, device/browser cues and message-preference-aware notification/email
+delivery. Attachments, reactions and marking/feedback parity remain future slices. Real purchases
+remain deliberately unbuilt.
+
 - New class setup persists Program/Batch/period snapshots, not live sessions or paid enrollments.
 - Existing Program rehearsal is unique by Program/student, so cannot represent multiple batches.
 - `membership.ts` gates sessions for BOTH socket and video. Keep that single authority.

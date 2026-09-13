@@ -4,7 +4,7 @@ import { Router } from "express";
 import { db, learningProgramsTable, learningProgramBatchesTable, teacherProfilesTable, usersTable,
   userOnboardingTable, testTeachingGrantsTable, testStudentGrantsTable, batchTestContractsTable,
   batchTestBookingsTable, batchTestPaymentsTable, batchTestLedgerEntriesTable, batchTestSessionsTable,
-  sessionsTable, sessionEnrollmentsTable, sessionParticipationTable, disputesTable, testClassesTable } from "@workspace/db";
+  classGroupHomeworkTable, sessionsTable, sessionEnrollmentsTable, sessionParticipationTable, disputesTable, testClassesTable } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { emailVerifiedFor } from "../lib/accountSecurity";
 import { testPilotDeadline } from "../lib/testPilot";
@@ -14,7 +14,7 @@ import { readBatchSnapshot } from "../lib/programBatches";
 import { classJoiningPreview } from "../lib/classJoining";
 import { assertTeacherSchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
 import { recordActivity } from "../lib/activityLog";
-import { notifyInApp } from "../lib/notify";
+import { notifyInApp, notifyMany } from "../lib/notify";
 import { simulatedBatchReceipt, type SimulatedBatchReceipt } from "../lib/batchTestPayment";
 import { PROGRAM_ALLOCATION_EVENTS, ProgramCommerceInputError, transitionProgramAllocation,
   type ProgramAllocationEvent, type ProgramAllocationState } from "../lib/programCommerce";
@@ -398,11 +398,11 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
       .orderBy(asc(batchTestLedgerEntriesTable.id)) : [];
     return { testOnly: true, paymentCollectedNpr: 0, pilotEndsAt: new Date(until).toISOString(), isTeacher,
       receipts: paymentRows.map(r => ({
-        ...receiptView(r.receipt as SimulatedBatchReceipt,
+        ...participantReceiptView(isTeacher ? "teacher" : "student", r.receipt as SimulatedBatchReceipt,
           paymentHistory.filter((entry) => entry.bookingId === r.bookingId)),
         bookingId: r.bookingId, recordedAt: r.recordedAt.toISOString(),
       })),
-      teacherId: program.teacherId, classTitle: snapshot.programTitle, studentName: access.viewerName,
+      teacherId: program.teacherId, teacherName: access.teacher.name, classTitle: snapshot.programTitle, studentName: access.viewerName,
       offerLessons: snapshot.lessons.filter((l) => quote.lessonPositions.includes(l.position)),
       created: !already && confirm !== undefined, booked: !!already || confirm !== undefined, quote, quoteKey, lessons: await lessonLinks(tx, batchId, viewerId, isTeacher) };
   });
@@ -424,6 +424,27 @@ router.all("/batch-tests/:id", requireAuth, async (req, res, next) => {
       notifyInApp(result.teacherId, { kind: "session_booked", sessionId: result.lessons[0]!.sessionId,
         topic: result.classTitle, fromUserId: req.user!.userId, fromName: result.studentName,
         amount: 0, testBooking: true, at: new Date().toISOString() });
+      // A student joining after homework was set must not miss it merely because they were not
+      // in the recipient list on assignment day. These are the same homework notices, sent once
+      // at the moment their new class access begins.
+      const existingHomework = await db
+        .select({ id: classGroupHomeworkTable.id, title: classGroupHomeworkTable.title, dueAt: classGroupHomeworkTable.dueAt })
+        .from(classGroupHomeworkTable)
+        .where(and(eq(classGroupHomeworkTable.batchId, id), eq(classGroupHomeworkTable.status, "open")))
+        .orderBy(asc(classGroupHomeworkTable.id));
+      for (const task of existingHomework) {
+        notifyMany([req.user!.userId], {
+          kind: "class_homework_set",
+          at: new Date().toISOString(),
+          fromUserId: result.teacherId,
+          fromName: result.teacherName,
+          batchId: id,
+          homeworkId: task.id,
+          homeworkTitle: task.title,
+          topic: result.classTitle,
+          dueAt: task.dueAt?.toISOString(),
+        });
+      }
     }
     res.setHeader("Cache-Control", "no-store").json(result);
   } catch (err) {

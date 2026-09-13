@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { logger } from "./logger";
 import { BATCH_TEST_DDL } from "./batchTestingSchema";
+import { CLASS_GROUP_DDL } from "./classGroupSchema";
 import {
   markProviderEvidenceSchemaInvalid,
   markProviderEvidenceSchemaReady,
@@ -43,7 +44,21 @@ export async function ensureNotificationPrefsTable(): Promise<void> {
           FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
       )
     `);
-    logger.info("notification preferences table is present");
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "user_notification_events" (
+        "id" serial PRIMARY KEY,
+        "user_id" integer NOT NULL,
+        "event" jsonb NOT NULL,
+        "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "user_notification_events_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "user_notification_events_user_idx"
+        ON "user_notification_events" ("user_id", "id")
+    `);
+    logger.info("notification preferences and durable inbox tables are present");
   } catch (err) {
     logger.warn(
       { err },
@@ -1596,6 +1611,7 @@ export async function ensureLearningProgramTables(): Promise<void> {
       await db.execute(sql.raw(statement));
     }
     for (const statement of BATCH_TEST_DDL) await db.execute(sql.raw(statement));
+    for (const statement of CLASS_GROUP_DDL) await db.execute(sql.raw(statement));
     logger.info("learning program and test-booking tables are present");
   } catch (err) {
     logger.warn(

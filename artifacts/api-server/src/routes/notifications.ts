@@ -1,11 +1,27 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { db, userNotificationPrefsTable } from "@workspace/db";
+import { db, userNotificationEventsTable, userNotificationPrefsTable } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { isEmailConfigured } from "../lib/mailer";
 import { mergePrefs, readPrefs } from "../lib/notificationPrefs";
 
 const router: IRouter = Router();
+
+/** Events missed while this device was signed out or its socket was disconnected. */
+router.get("/notification-events", requireAuth, async (req, res): Promise<void> => {
+  const requested = Number(req.query.after ?? 0);
+  const after = Number.isSafeInteger(requested) && requested > 0 ? requested : 0;
+  const rows = await db
+    .select({ id: userNotificationEventsTable.id, event: userNotificationEventsTable.event })
+    .from(userNotificationEventsTable)
+    .where(and(
+      eq(userNotificationEventsTable.userId, req.user!.userId),
+      gt(userNotificationEventsTable.id, after),
+    ))
+    .orderBy(asc(userNotificationEventsTable.id))
+    .limit(200);
+  res.setHeader("Cache-Control", "no-store").json({ events: rows });
+});
 
 /**
  * What this user wants to be told about.

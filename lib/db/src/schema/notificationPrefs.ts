@@ -1,4 +1,4 @@
-import { integer, jsonb, pgTable, timestamp } from "drizzle-orm/pg-core";
+import { index, integer, jsonb, pgTable, serial, timestamp } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
 /**
@@ -29,3 +29,19 @@ export const userNotificationPrefsTable = pgTable("user_notification_prefs", {
 });
 
 export type UserNotificationPrefs = typeof userNotificationPrefsTable.$inferSelect;
+
+/**
+ * A small durable inbox for events that otherwise exist only while the user's socket is open.
+ * Presentation and read state remain on each device; this row is the delivery guarantee that
+ * lets the app catch up after sign-in or a dropped connection.
+ */
+export const userNotificationEventsTable = pgTable("user_notification_events", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  event: jsonb("event").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index("user_notification_events_user_idx").on(table.userId, table.id)]);
+
+export type UserNotificationEvent = typeof userNotificationEventsTable.$inferSelect;

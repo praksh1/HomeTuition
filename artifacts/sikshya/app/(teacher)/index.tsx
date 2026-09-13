@@ -411,41 +411,6 @@ export default function TeacherDashboard() {
       </View>
 
       {/*
-        The way in to the monthly class.
-
-        A full-width row rather than a third small button: it is a different kind of thing from
-        "New class" — a class that runs every day for a month — and a teacher who has one lives
-        in it. It reads as an offer until they have one, and as a door afterwards.
-      */}
-      <TouchableOpacity
-        testID="teacher-monthly-entry"
-        style={[
-          styles.monthlyEntry,
-          {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-            borderRadius: radius.md,
-            padding: space.md,
-            gap: space.sm,
-          },
-        ]}
-        onPress={() => router.push("/(teacher)/monthly")}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-      >
-        <View style={[styles.squareIcon, { backgroundColor: colors.actionSoft, borderRadius: radius.sm }]}>
-          <Feather name="repeat" size={20} color={colors.primary} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={[t.title3, { color: colors.foreground }]}>Monthly class</Text>
-          <Text style={[t.callout, { color: colors.mutedForeground, marginTop: 2 }]}>
-            Teach the same class every day. Students buy the month.
-          </Text>
-        </View>
-        <Feather name="chevron-right" size={20} color={colors.inkFaint} />
-      </TouchableOpacity>
-
-      {/*
         The way in to Learning Programs.
 
         Beside the monthly class rather than in the tab bar: the bar already holds six and the note

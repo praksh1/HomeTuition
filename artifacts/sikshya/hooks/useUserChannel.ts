@@ -15,11 +15,15 @@ export interface UserEvent {
     | "message"
     | "follower"
     | "program_published"
+    | "class_homework_set"
+    | "class_homework_submitted"
+    | "class_homework_feedback"
     | "session_live"
     | "session_invite"
     | "session_booked"
     | "session_dropped"
     | "session_cancelled"
+    | "class_message"
     | "session_message"
     | "session_rescheduled";
   at?: string;
@@ -27,6 +31,10 @@ export interface UserEvent {
   fromName?: string;
   preview?: string;
   sessionId?: number | string;
+  batchId?: number | string;
+  homeworkId?: number | string;
+  homeworkTitle?: string;
+  dueAt?: string;
   topic?: string;
   programId?: number | string;
   programTitle?: string;

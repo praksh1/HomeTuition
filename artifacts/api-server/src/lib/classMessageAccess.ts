@@ -1,5 +1,12 @@
 import { eq } from "drizzle-orm";
-import { db, sessionMessageAttachmentsTable, sessionMessagesTable } from "@workspace/db";
+import {
+  classGroupMessageFilesTable,
+  classGroupMessagesTable,
+  db,
+  sessionMessageAttachmentsTable,
+  sessionMessagesTable,
+} from "@workspace/db";
+import { classGroupAccess } from "./classGroupAccess";
 import { getSessionMembership } from "./membership";
 import { portalAccess } from "./portalAccess";
 
@@ -26,6 +33,31 @@ import { portalAccess } from "./portalAccess";
  * stays readable to them. So this asks whether they were ever in it, not whether they are now.
  */
 export async function mayOpenClassMessageFile(key: string, userId: number): Promise<boolean> {
+  const [groupFile] = await db
+    .select({
+      batchId: classGroupMessagesTable.batchId,
+      createdAt: classGroupMessagesTable.createdAt,
+      pinnedAt: classGroupMessagesTable.pinnedAt,
+    })
+    .from(classGroupMessageFilesTable)
+    .innerJoin(
+      classGroupMessagesTable,
+      eq(classGroupMessagesTable.id, classGroupMessageFilesTable.messageId),
+    )
+    .where(eq(classGroupMessageFilesTable.fileKey, key))
+    .limit(1);
+  if (groupFile) {
+    const access = await classGroupAccess(groupFile.batchId, userId);
+    if (!access) return false;
+    // A late-joining student inherits pinned announcements, not every earlier class upload.
+    return (
+      access.isTeacher ||
+      groupFile.pinnedAt !== null ||
+      access.joinedAt === null ||
+      groupFile.createdAt >= access.joinedAt
+    );
+  }
+
   const rows = await db
     .select({
       sessionId: sessionMessagesTable.sessionId,

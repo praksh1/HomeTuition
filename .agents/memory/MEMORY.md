@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Profile contact, location and refund destination](profile-contact-location-and-refunds.md) — owner-approved Profile account-detail and original-payment-method refund rules; implementation is separately tracked.
+
 - [Public share history and bookability](public-share-history-and-bookability.md) — shared-page
   Fadko links must preserve browser history; public classes have an explicit teacher return;
   sign-in/create-account appears only for an open immutable offer, while closed and unscheduled

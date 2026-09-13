@@ -8,6 +8,7 @@ import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, Touch
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SocialSignIn } from "@/components/SocialSignIn";
+import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
 import StarRating from "@/components/StarRating";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth, type Teacher } from "@/context/AuthContext";
@@ -189,6 +190,8 @@ export default function TeacherProfile() {
           <Text style={[t.callout, styles.secondaryText]} numberOfLines={2}>{teacher.email}</Text>
         </View>
       </View>
+
+      <AccountDetailsCard email={teacher.email} role="teacher" />
 
       <View style={styles.card}>
         <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Identity & Credentials</Text>
