@@ -1,6 +1,6 @@
 # Class-message notifications and unread acknowledgements
 
-Status: implementation complete; awaiting disposable-database CI and preview review
+Status: safety-tested and deployed to preview; awaiting owner review
 Branch: `codex/class-message-notifications`
 
 ## Goal
@@ -37,6 +37,12 @@ notification, while never calling a delivery or socket event “read”.
 - The real API/Postgres batch journey was extended with unread/read isolation checks. Local run
   correctly refused to start because no disposable local PostgreSQL URL was configured; CI is the
   authorized disposable-database gate.
+- Disposable-database safety workflow `34727662529`: passed, including schema push, API build,
+  real Program/batch journeys, video/proof/access gates and rendered browser checks.
+- Railway staging was fast-forwarded to commit `5e73017`; the protected read endpoint returned 401
+  after deployment, proving the new API route is live rather than missing.
+- Preview workflow `34727893858`: passed and deployed the matching web bundle to
+  `https://hometuition-preview.praksh-dhakal.workers.dev`.
 
 ## Deliberate boundaries
 
