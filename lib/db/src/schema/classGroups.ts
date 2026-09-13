@@ -109,6 +109,42 @@ export const classGroupHomeworkSubmissionsTable = pgTable(
   ],
 );
 
+/**
+ * Photos and PDFs attached to new-style homework.
+ *
+ * Kept in an additive table rather than adding nullable columns to the task and submission
+ * tables. That lets an already-running server create the feature safely, and each file keeps
+ * an explicit purpose so a student's answer can never be mistaken for a class handout.
+ */
+export const classGroupHomeworkFilesTable = pgTable(
+  "class_group_homework_files",
+  {
+    id: serial("id").primaryKey(),
+    homeworkId: integer("homework_id")
+      .notNull()
+      .references(() => classGroupHomeworkTable.id, { onDelete: "cascade" }),
+    submissionId: integer("submission_id").references(
+      () => classGroupHomeworkSubmissionsTable.id,
+      { onDelete: "cascade" },
+    ),
+    uploaderId: integer("uploader_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "restrict" }),
+    kind: text("kind").notNull(),
+    fileKey: text("file_key").notNull(),
+    fileType: text("file_type").notNull(),
+    fileName: text("file_name"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("class_group_homework_files_key_idx").on(t.fileKey),
+    index("class_group_homework_files_task_idx").on(t.homeworkId, t.id),
+    index("class_group_homework_files_submission_idx").on(t.submissionId, t.id),
+  ],
+);
+
 /** Teacher-curated class material. URL is optional: a useful note may stand alone. */
 export const classGroupMaterialsTable = pgTable(
   "class_group_materials",

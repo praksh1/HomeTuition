@@ -133,8 +133,14 @@ try {
   check("student cannot set class homework", (await api(`/class-groups/${c.id}/homework`, a.token, { title: "Not allowed" })).status === 403);
   const task = await api(`/class-groups/${c.id}/homework`, teacher.token, { title: "Algebra practice", instructions: "Complete questions 1 to 4." });
   check("teacher can set class homework", task.status === 201 && task.body.title === "Algebra practice");
-  check("student can hand in a text-first answer", (await api(`/class-groups/${c.id}/homework/${task.body.id}/submit`, a.token, { note: "I completed all four questions." })).status === 200);
+  const handedIn = await api(`/class-groups/${c.id}/homework/${task.body.id}/submit`, a.token, { note: "I completed all four questions." });
+  check("student can hand in a text-first answer", handedIn.status === 200);
   check("teacher sees the student's homework submission", (await api(`/class-groups/${c.id}/homework`, teacher.token)).body.tasks[0].submissions.some((s) => s.studentId === a.user.id));
+  check("another student cannot return feedback", (await api(`/class-groups/${c.id}/homework/${task.body.id}/submissions/${handedIn.body.id}/feedback`, b.token, { feedback: "Invented feedback" })).status === 403);
+  const returned = await api(`/class-groups/${c.id}/homework/${task.body.id}/submissions/${handedIn.body.id}/feedback`, teacher.token, { feedback: "Good method. Check the sign in question four." });
+  check("teacher can return clear individual feedback", returned.status === 200 && returned.body.status === "returned");
+  const studentHomework = await api(`/class-groups/${c.id}/homework`, a.token);
+  check("student sees only their returned feedback", studentHomework.body.tasks[0].submission.feedback === "Good method. Check the sign in question four." && studentHomework.body.tasks[0].submission.studentId === a.user.id);
   check("student cannot add class materials", (await api(`/class-groups/${c.id}/materials`, a.token, { title: "Not allowed" })).status === 403);
   const material = await api(`/class-groups/${c.id}/materials`, teacher.token, { title: "Revision notes", note: "Read before class.", url: "https://example.com/notes" });
   check("teacher can share a safe class material link", material.status === 201 && material.body.url === "https://example.com/notes");

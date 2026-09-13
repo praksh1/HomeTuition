@@ -27,6 +27,7 @@ test("every learning tool is scoped by batch and created additively", () => {
     "class_group_message_reads",
     "class_group_homework",
     "class_group_homework_submissions",
+    "class_group_homework_files",
     "class_group_materials",
   ]) {
     assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${name}`));
@@ -49,4 +50,12 @@ test("unread messages have a durable per-person acknowledgement", () => {
   assert.match(routes, /lastReadMessageId/);
   assert.match(routes, /greatest/);
   assert.match(routes, /kind: "class_message"/);
+});
+
+test("new class homework accepts files only after storage verification and keeps answers private", () => {
+  assert.match(routes, /verifyUpload\(key, userId\)/);
+  assert.match(routes, /Only the teacher can return feedback/);
+  assert.match(routes, /classGroupHomeworkFilesTable\.kind, \["submission", "feedback"\]/);
+  assert.match(schema, /class_group_homework_files_key_idx/);
+  assert.match(schema, /submission_id integer REFERENCES class_group_homework_submissions/);
 });

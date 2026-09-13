@@ -1,9 +1,10 @@
-import { and, asc, eq, gt, gte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, ne, sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import {
   batchTestSessionsTable,
   batchTestBookingsTable,
   classGroupMessageReadsTable,
+  classGroupHomeworkFilesTable,
   classGroupHomeworkSubmissionsTable,
   classGroupHomeworkTable,
   classGroupMaterialsTable,
@@ -15,10 +16,40 @@ import {
 import { requireAuth } from "../middlewares/requireAuth";
 import { classGroupAccess } from "../lib/classGroupAccess";
 import { notifyMany } from "../lib/notify";
+import { verifyUpload } from "../lib/fileStore";
 
 const router = Router();
 const MAX_BODY = 2_000;
 const MAX_TITLE = 160;
+
+type AcceptedFile = {
+  key: string;
+  type: string;
+  name: string | null;
+};
+
+/** Trust the stored object, not the browser's claim about it. */
+async function acceptHomeworkFile(
+  body: unknown,
+  userId: number,
+): Promise<AcceptedFile | null | { error: string }> {
+  const value = body as {
+    fileKey?: unknown;
+    fileName?: unknown;
+  } | null;
+  if (!value?.fileKey) return null;
+  if (typeof value.fileKey !== "string") {
+    return { error: "That file reference is not one of ours." };
+  }
+  const key = value.fileKey.trim();
+  const verdict = await verifyUpload(key, userId);
+  if (!verdict.ok) return { error: verdict.reason };
+  const name =
+    typeof value.fileName === "string" && value.fileName.trim()
+      ? value.fileName.trim().slice(0, 200)
+      : null;
+  return { key, type: verdict.contentType, name };
+}
 
 function idParam(req: Request, name = "id") {
   const value = Number(req.params[name]);
@@ -255,6 +286,35 @@ router.get("/class-groups/:id/homework", requireAuth, async (req, res) => {
     .from(classGroupHomeworkTable)
     .where(eq(classGroupHomeworkTable.batchId, access.batchId))
     .orderBy(asc(classGroupHomeworkTable.id));
+  const files = tasks.length
+    ? await db
+        .select()
+        .from(classGroupHomeworkFilesTable)
+        .where(
+          inArray(
+            classGroupHomeworkFilesTable.homeworkId,
+            tasks.map((task) => task.id),
+          ),
+        )
+        .orderBy(asc(classGroupHomeworkFilesTable.id))
+    : [];
+  const questionFor = (homeworkId: number) =>
+    files.find(
+      (file) => file.homeworkId === homeworkId && file.kind === "question",
+    ) ?? null;
+  const withFiles = <T extends { id: number }>(submission: T) => ({
+    ...submission,
+    file:
+      files.find(
+        (file) =>
+          file.submissionId === submission.id && file.kind === "submission",
+      ) ?? null,
+    markedFile:
+      files.find(
+        (file) =>
+          file.submissionId === submission.id && file.kind === "feedback",
+      ) ?? null,
+  });
   if (access.isTeacher) {
     const submissions = tasks.length
       ? await db
@@ -286,7 +346,10 @@ router.get("/class-groups/:id/homework", requireAuth, async (req, res) => {
       isTeacher: true,
       tasks: tasks.map((task) => ({
         ...task,
-        submissions: submissions.filter((s) => s.homeworkId === task.id),
+        questionFile: questionFor(task.id),
+        submissions: submissions
+          .filter((s) => s.homeworkId === task.id)
+          .map(withFiles),
       })),
     });
     return;
@@ -310,7 +373,10 @@ router.get("/class-groups/:id/homework", requireAuth, async (req, res) => {
     isTeacher: false,
     tasks: tasks.map((task) => ({
       ...task,
-      submission: submissions.find((s) => s.homeworkId === task.id) ?? null,
+      questionFile: questionFor(task.id),
+      submission: submissions.find((s) => s.homeworkId === task.id)
+        ? withFiles(submissions.find((s) => s.homeworkId === task.id)!)
+        : null,
     })),
   });
 });
@@ -334,6 +400,11 @@ router.post("/class-groups/:id/homework", requireAuth, async (req, res) => {
       .json({ error: "Add a short homework title and instructions." });
     return;
   }
+  const acceptedFile = await acceptHomeworkFile(req.body, req.user!.userId);
+  if (acceptedFile && "error" in acceptedFile) {
+    res.status(400).json({ error: acceptedFile.error });
+    return;
+  }
   const [task] = await db
     .insert(classGroupHomeworkTable)
     .values({
@@ -343,6 +414,16 @@ router.post("/class-groups/:id/homework", requireAuth, async (req, res) => {
       instructions: instructions || null,
     })
     .returning();
+  if (acceptedFile) {
+    await db.insert(classGroupHomeworkFilesTable).values({
+      homeworkId: task.id,
+      uploaderId: req.user!.userId,
+      kind: "question",
+      fileKey: acceptedFile.key,
+      fileType: acceptedFile.type,
+      fileName: acceptedFile.name,
+    });
+  }
   res.status(201).json(task);
 });
 
@@ -360,14 +441,20 @@ router.post(
     }
     const homeworkId = idParam(req, "homeworkId");
     const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
-    if (!homeworkId || !note || note.length > MAX_BODY) {
-      res.status(400).json({ error: "Add your answer before handing it in." });
+    const acceptedFile = await acceptHomeworkFile(req.body, req.user!.userId);
+    if (acceptedFile && "error" in acceptedFile) {
+      res.status(400).json({ error: acceptedFile.error });
+      return;
+    }
+    if (!homeworkId || (!note && !acceptedFile) || note.length > MAX_BODY) {
+      res.status(400).json({ error: "Write a note or attach your work before handing it in." });
       return;
     }
     const [task] = await db
       .select({
         id: classGroupHomeworkTable.id,
         status: classGroupHomeworkTable.status,
+        title: classGroupHomeworkTable.title,
       })
       .from(classGroupHomeworkTable)
       .where(
@@ -380,18 +467,133 @@ router.post(
       res.status(409).json({ error: "This homework is no longer open." });
       return;
     }
-    const [submission] = await db
-      .insert(classGroupHomeworkSubmissionsTable)
-      .values({ homeworkId, studentId: req.user!.userId, note })
-      .onConflictDoUpdate({
-        target: [
-          classGroupHomeworkSubmissionsTable.homeworkId,
-          classGroupHomeworkSubmissionsTable.studentId,
-        ],
-        set: { note, status: "submitted", submittedAt: new Date() },
-      })
-      .returning();
+    const submission = await db.transaction(async (tx) => {
+      const [saved] = await tx
+        .insert(classGroupHomeworkSubmissionsTable)
+        .values({ homeworkId, studentId: req.user!.userId, note })
+        .onConflictDoUpdate({
+          target: [
+            classGroupHomeworkSubmissionsTable.homeworkId,
+            classGroupHomeworkSubmissionsTable.studentId,
+          ],
+          set: {
+            note,
+            status: "submitted",
+            feedback: null,
+            submittedAt: new Date(),
+          },
+        })
+        .returning();
+      await tx
+        .delete(classGroupHomeworkFilesTable)
+        .where(
+          and(
+            eq(classGroupHomeworkFilesTable.submissionId, saved.id),
+            inArray(classGroupHomeworkFilesTable.kind, ["submission", "feedback"]),
+          ),
+        );
+      if (acceptedFile) {
+        await tx.insert(classGroupHomeworkFilesTable).values({
+          homeworkId,
+          submissionId: saved.id,
+          uploaderId: req.user!.userId,
+          kind: "submission",
+          fileKey: acceptedFile.key,
+          fileType: acceptedFile.type,
+          fileName: acceptedFile.name,
+        });
+      }
+      return saved;
+    });
+    notifyMany([access.teacherId], {
+      kind: "session_booked",
+      at: new Date().toISOString(),
+      fromUserId: req.user!.userId,
+      topic: `Homework handed in: ${task.title}`,
+    });
     res.json(submission);
+  },
+);
+
+router.post(
+  "/class-groups/:id/homework/:homeworkId/submissions/:submissionId/feedback",
+  requireAuth,
+  async (req, res) => {
+    const access = await accessOrReply(req, res);
+    if (!access) return;
+    if (!access.isTeacher) {
+      res.status(403).json({ error: "Only the teacher can return feedback." });
+      return;
+    }
+    const homeworkId = idParam(req, "homeworkId");
+    const submissionId = idParam(req, "submissionId");
+    const feedback =
+      typeof req.body?.feedback === "string" ? req.body.feedback.trim() : "";
+    const acceptedFile = await acceptHomeworkFile(req.body, req.user!.userId);
+    if (acceptedFile && "error" in acceptedFile) {
+      res.status(400).json({ error: acceptedFile.error });
+      return;
+    }
+    if (!homeworkId || !submissionId || (!feedback && !acceptedFile) || feedback.length > MAX_BODY) {
+      res.status(400).json({ error: "Add a comment or a marked copy before returning this work." });
+      return;
+    }
+    const [row] = await db
+      .select({
+        id: classGroupHomeworkSubmissionsTable.id,
+        studentId: classGroupHomeworkSubmissionsTable.studentId,
+      })
+      .from(classGroupHomeworkSubmissionsTable)
+      .innerJoin(
+        classGroupHomeworkTable,
+        eq(classGroupHomeworkTable.id, classGroupHomeworkSubmissionsTable.homeworkId),
+      )
+      .where(
+        and(
+          eq(classGroupHomeworkSubmissionsTable.id, submissionId),
+          eq(classGroupHomeworkSubmissionsTable.homeworkId, homeworkId),
+          eq(classGroupHomeworkTable.batchId, access.batchId),
+        ),
+      )
+      .limit(1);
+    if (!row) {
+      res.status(404).json({ error: "That submitted work was not found in this class." });
+      return;
+    }
+    const updated = await db.transaction(async (tx) => {
+      const [saved] = await tx
+        .update(classGroupHomeworkSubmissionsTable)
+        .set({ feedback: feedback || null, status: "returned" })
+        .where(eq(classGroupHomeworkSubmissionsTable.id, submissionId))
+        .returning();
+      if (acceptedFile) {
+        await tx
+          .delete(classGroupHomeworkFilesTable)
+          .where(
+            and(
+              eq(classGroupHomeworkFilesTable.submissionId, submissionId),
+              eq(classGroupHomeworkFilesTable.kind, "feedback"),
+            ),
+          );
+        await tx.insert(classGroupHomeworkFilesTable).values({
+          homeworkId,
+          submissionId,
+          uploaderId: req.user!.userId,
+          kind: "feedback",
+          fileKey: acceptedFile.key,
+          fileType: acceptedFile.type,
+          fileName: acceptedFile.name,
+        });
+      }
+      return saved;
+    });
+    notifyMany([row.studentId], {
+      kind: "session_invite",
+      at: new Date().toISOString(),
+      fromUserId: req.user!.userId,
+      topic: `Your homework has feedback in ${access.title}`,
+    });
+    res.json(updated);
   },
 );
 

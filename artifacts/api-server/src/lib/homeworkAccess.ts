@@ -1,11 +1,15 @@
 import { and, eq, or } from "drizzle-orm";
 import {
+  classGroupHomeworkFilesTable,
+  classGroupHomeworkSubmissionsTable,
+  classGroupHomeworkTable,
   db,
   homeworkSubmissionsTable,
   homeworkTable,
   recurringEnrollmentsTable,
   recurringSessionsTable,
 } from "@workspace/db";
+import { classGroupAccess } from "./classGroupAccess";
 
 /**
  * May this person open this homework file?
@@ -25,6 +29,35 @@ import {
  * and falls through to the caller's own refusal.
  */
 export async function mayOpenHomeworkFile(key: string, userId: number): Promise<boolean> {
+  // New-style class homework: everyone booked into the class may read the question sheet;
+  // only the submitting student and that class's teacher may read an answer or marked copy.
+  const [classFile] = await db
+    .select({
+      batchId: classGroupHomeworkTable.batchId,
+      kind: classGroupHomeworkFilesTable.kind,
+      studentId: classGroupHomeworkSubmissionsTable.studentId,
+    })
+    .from(classGroupHomeworkFilesTable)
+    .innerJoin(
+      classGroupHomeworkTable,
+      eq(classGroupHomeworkTable.id, classGroupHomeworkFilesTable.homeworkId),
+    )
+    .leftJoin(
+      classGroupHomeworkSubmissionsTable,
+      eq(
+        classGroupHomeworkSubmissionsTable.id,
+        classGroupHomeworkFilesTable.submissionId,
+      ),
+    )
+    .where(eq(classGroupHomeworkFilesTable.fileKey, key))
+    .limit(1);
+  if (classFile) {
+    const access = await classGroupAccess(classFile.batchId, userId);
+    if (!access) return false;
+    if (classFile.kind === "question") return true;
+    return access.isTeacher || classFile.studentId === userId;
+  }
+
   // The question sheet: this class's teacher, or anybody who has ever held a place in it.
   const [sheet] = await db
     .select({ teacherId: homeworkTable.teacherId, recurringId: homeworkTable.recurringId })
