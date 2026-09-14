@@ -34,6 +34,7 @@ export default function Onboarding() {
   const editing = params.edit === "1";
   const scrollRef = useRef<ScrollView>(null);
   const phoneRef = useRef<TextInput>(null);
+  const phoneTouchedRef = useRef(false);
   const sectionY = useRef({ contact: 0, location: 0, affiliation: 0 });
   const [provinces, setProvinces] = useState<Province[]>([]);
   const [phone, setPhone] = useState("");
@@ -77,6 +78,21 @@ export default function Onboarding() {
     }).catch(() => notify("Could not load locations", "Check your connection and try again."))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (loading || phoneTouchedRef.current || phone.trim()) return;
+    const inheritedSelection = Boolean(province || district || localLevel || locality || institutionName || affiliationStatus !== "unselected");
+    if (!inheritedSelection) return;
+    // A restored blank contact beside legacy fixture/location values is not a completed account.
+    // Clear only untouched initial state; once the person edits Phone, their address is preserved.
+    setProvince("");
+    setDistrict("");
+    setLocalLevel("");
+    setManualLocalLevel(false);
+    setLocality("");
+    setInstitutionName("");
+    setAffiliationStatus("unselected");
+  }, [affiliationStatus, district, institutionName, loading, localLevel, locality, phone, province]);
 
   const districts = useMemo(() => provinces.find((item) => item.name === province)?.districts ?? [], [provinces, province]);
   const localLevels = useMemo(() => districts.find((item) => item.name === district)?.localLevels ?? [], [districts, district]);
@@ -183,7 +199,7 @@ export default function Onboarding() {
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Your verified login email is protected. Contact Support if it needs to change.</Text>
         </View>
 
-      <Field label="Phone number *" value={phone} onChange={(value: string) => { setPhone(value); clearError("phone"); }} placeholder="+977…" colors={colors} t={t} radius={radius} space={space} keyboardType="phone-pad" error={fieldError?.field === "phone" ? fieldError.message : undefined} inputRef={phoneRef} testID="account-phone" />
+      <Field label="Phone number *" value={phone} onChange={(value: string) => { phoneTouchedRef.current = true; setPhone(value); clearError("phone"); }} placeholder="+977…" colors={colors} t={t} radius={radius} space={space} keyboardType="phone-pad" error={fieldError?.field === "phone" ? fieldError.message : undefined} inputRef={phoneRef} testID="account-phone" />
         <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.xs }}>
           <Feather name="lock" size={15} color={colors.mutedForeground} />
           <Text style={[t.caption, { flex: 1, color: colors.mutedForeground }]}>Your phone stays private. Fadko may use it for important login, class and account notices.</Text>

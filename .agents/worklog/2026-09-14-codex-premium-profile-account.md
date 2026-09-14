@@ -30,6 +30,7 @@ Make Profile feel like one trustworthy account home for teachers and students, a
 - Added first-error account validation: Save identifies one exact missing field, puts the error beside it, scrolls it into view and focuses Phone when Phone is the problem.
 - Errors clear while the person corrects the field; a missing phone can no longer trigger a generic list blaming Province, District and Municipality too.
 - Incomplete legacy/test rows are not trusted as user-entered addresses. If the saved row is internally incomplete, the editor and Profile status remain unconfirmed instead of presenting plausible location placeholders as the person's choices.
+- The deployed staging account exposed browser-restored blank Phone state beside legacy fixture selections. The editor now performs a second initial integrity check: an untouched blank Phone clears inherited address/affiliation state, while a person deliberately editing Phone keeps their existing address.
 
 ## Verification
 
