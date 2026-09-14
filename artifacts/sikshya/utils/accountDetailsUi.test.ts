@@ -58,6 +58,17 @@ test("long Nepal location lists open as bounded searchable selections", () => {
   assert.match(selectionField, /<Modal/);
   assert.match(selectionField, /<FlatList/);
   assert.match(selectionField, /No match found/);
+  assert.match(selectionField, /colors\.destructive/);
+  assert.match(selectionField, /accessibilityRole="alert"/);
+});
+
+test("account validation stays beside one specific field instead of showing a generic popup", () => {
+  assert.match(onboarding, /firstAccountDetailsIssue/);
+  assert.match(onboarding, /testID="account-phone"/);
+  assert.match(onboarding, /error=\{fieldError\?\.field === "phone"/);
+  assert.match(onboarding, /\$\{testID\}-error/);
+  assert.match(onboarding, /phoneRef\.current\?\.focus/);
+  assert.doesNotMatch(onboarding, /Phone, province, district, and municipality/);
 });
 
 test("a refund request explains the original-payment-method rule", () => {

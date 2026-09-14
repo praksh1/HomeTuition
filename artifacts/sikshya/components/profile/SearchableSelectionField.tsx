@@ -16,6 +16,7 @@ interface SearchableSelectionFieldProps {
   disabled?: boolean;
   onChoose: (value: string) => void;
   testID?: string;
+  error?: string;
 }
 
 /** A bounded, searchable picker so Nepal's long district/local-level lists never expand the page. */
@@ -28,6 +29,7 @@ export function SearchableSelectionField({
   disabled = false,
   onChoose,
   testID,
+  error,
 }: SearchableSelectionFieldProps) {
   const colors = useColors();
   const { t, space, radius, elevation, gutter } = useLayout();
@@ -50,6 +52,7 @@ export function SearchableSelectionField({
       accessibilityRole="button"
       accessibilityLabel={`${label}. ${value || placeholder}`}
       accessibilityState={{ disabled, expanded: open }}
+      accessibilityHint={error}
       disabled={disabled}
       onPress={() => setOpen(true)}
       testID={testID}
@@ -61,7 +64,7 @@ export function SearchableSelectionField({
         gap: space.sm,
         paddingHorizontal: space.md,
         borderWidth: 1,
-        borderColor: pressed ? colors.primary : colors.border,
+        borderColor: error ? colors.destructive : pressed ? colors.primary : colors.border,
         borderRadius: radius.sm,
         backgroundColor: disabled ? colors.muted : colors.card,
         opacity: disabled ? 0.62 : 1,
@@ -70,6 +73,7 @@ export function SearchableSelectionField({
       <Text numberOfLines={2} style={[t.body, { flex: 1, color: value ? colors.foreground : colors.inkFaint }]}>{value || placeholder}</Text>
       <Feather name="chevron-down" size={19} color={colors.mutedForeground} />
     </Pressable>
+    {error ? <Text accessibilityRole="alert" testID={testID ? `${testID}-error` : undefined} style={[t.caption, { color: colors.destructive }]}>{error}</Text> : null}
 
     <Modal visible={open} transparent animationType="fade" onRequestClose={close}>
       <Pressable accessibilityRole="button" accessibilityLabel="Close selection" onPress={close} style={{ flex: 1, justifyContent: "flex-end", backgroundColor: colors.scrim }}>

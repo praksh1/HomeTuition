@@ -7,6 +7,7 @@ import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
+import { completeAccountDetails } from "@/utils/accountDetailsForm";
 
 type AccountDetails = {
   phone: string | null;
@@ -37,12 +38,15 @@ export function AccountDetailsCard({ email, role }: { email: string; role: "teac
 
   useEffect(() => { void load(); }, [load]);
 
-  const affiliationComplete = details?.affiliationStatus === "independent" || Boolean(details?.institutionName);
-  const complete = Boolean(details?.phone && details.province && details.district && details.localLevel && affiliationComplete);
-  const institution = details?.affiliationStatus === "independent"
+  const complete = completeAccountDetails(details);
+  const institution = !complete
+    ? "Confirm in Account details"
+    : details?.affiliationStatus === "independent"
     ? role === "teacher" ? "Independent teacher" : "Not applicable"
     : details?.institutionName || "School or institution not added";
-  const place = [details?.locality, details?.localLevel, details?.district, details?.province].filter(Boolean).join(", ");
+  const place = complete
+    ? [details?.locality, details?.localLevel, details?.district, details?.province].filter(Boolean).join(", ")
+    : "Confirm your location";
 
   return <View style={{ borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: space.md, gap: space.md }} testID={`${role}-account-details`}>
     <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>

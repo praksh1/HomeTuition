@@ -1,6 +1,11 @@
-const onboarding = { phone: "+977 9800000000", province: "Bagmati Province", district: "Kathmandu", localLevel: "Kathmandu Metropolitan City", locality: "Baneshwor", institutionName: null, affiliationStatus: "independent", profilePhotoKey: null };
+const completeOnboarding = { phone: "+977 9800000000", province: "Bagmati Province", district: "Kathmandu", localLevel: "Kathmandu Metropolitan City", locality: "Baneshwor", institutionName: null, affiliationStatus: "independent", profilePhotoKey: null };
+const incompleteLegacyOnboarding = { ...completeOnboarding, phone: null };
 export async function apiGet(path) {
-  if (path === "/onboarding/me") return { onboarding };
+  if (path === "/onboarding/me") return {
+    onboarding: new URLSearchParams(window.location.search).get("profile") === "incomplete"
+      ? incompleteLegacyOnboarding
+      : completeOnboarding,
+  };
   if (path === "/teachers/me/credentials") return { credentials: [{ id: 1, documentType: "citizenship", originalName: "citizenship.pdf", fileKey: "fixture", contentType: "application/pdf", status: "approved", rejectionReason: null, createdAt: "2026-09-01" }] };
   if (path === "/locations/nepal") return { provinces: [{ name: "Bagmati Province", districts: [{ name: "Kathmandu", localLevels: ["Kathmandu Metropolitan City", "Kirtipur Municipality"] }] }, { name: "Koshi Province", districts: [{ name: "Morang", localLevels: ["Biratnagar Metropolitan City"] }] }] };
   if (path.startsWith("/locations/nepal/facilities")) return { facilities: [] };

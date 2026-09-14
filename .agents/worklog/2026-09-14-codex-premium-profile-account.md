@@ -1,6 +1,6 @@
 # Premium Profile and account editor
 
-Status: implementation complete on `codex/premium-profile-account`; awaiting preview deployment and owner testing
+Status: Profile and login fixes are on `codex/premium-profile-account`; exact account-validation correction is awaiting preview testing
 
 ## Goal
 
@@ -26,13 +26,18 @@ Make Profile feel like one trustworthy account home for teachers and students, a
 - Reworked the account editor into Contact, Location and School/teaching sections.
 - Replaced expanding Province, District and Municipality lists with a bounded searchable modal.
 - Added loading state and a readable-width cap so a failed/slow account fetch cannot masquerade as an empty form.
+- Removed the hidden teacher navigator's duplicate role guard. The root guard is now the only role-routing authority, so signing out as a teacher and then signing in as a student cannot be undone by an invisible stale tab tree.
+- Added first-error account validation: Save identifies one exact missing field, puts the error beside it, scrolls it into view and focuses Phone when Phone is the problem.
+- Errors clear while the person corrects the field; a missing phone can no longer trigger a generic list blaming Province, District and Municipality too.
+- Incomplete legacy/test rows are not trusted as user-entered addresses. If the saved row is internally incomplete, the editor and Profile status remain unconfirmed instead of presenting plausible location placeholders as the person's choices.
 
 ## Verification
 
 - Sikshya typecheck: pass.
-- App units: 441 passed, 0 failed.
-- Focused Profile contract: 7 passed, 0 failed.
-- Rendered Profile journey: 34 passed at 390 px and 1440 px, including searchable Nepal pickers, cascading choices, touch floors, no horizontal overflow and no browser exceptions.
+- App units: 455 passed, 0 failed.
+- Focused account-form and Profile contracts: 15 passed, 0 failed.
+- Rendered Profile journey: 50 passed at 390 px and 1440 px, including incomplete legacy data, exact first-field errors, live error clearing, cascading validation, searchable Nepal pickers, touch floors, no horizontal overflow and no browser exceptions.
+- Repository typecheck: all four packages clean.
 - Design lint: no new leaks; baseline remains 83 hex / 246 sizes.
 - `git diff --check`: clean.
 
