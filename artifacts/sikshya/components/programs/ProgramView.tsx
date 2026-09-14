@@ -272,18 +272,18 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
         {testEnrollment ? (
           <>
             <Text style={[t.bodyStrong, { color: colors.warn }]}>TEST enrolment — no payment was processed</Text>
-            <Text style={[t.callout, { color: colors.foreground }]}>This is a rehearsal place created by an operator so you can test the Program journey.</Text>
+            <Text style={[t.callout, { color: colors.foreground }]}>This is a rehearsal place created through simulated checkout so you can test the class journey.</Text>
             <Text style={[t.callout, { color: colors.mutedForeground }]}>Rehearsal terms: NPR {testEnrollment.totalTuitionNpr.toLocaleString()} across {testEnrollment.paidLessonCount} paid lessons. These figures are not a receipt and cannot be paid out.</Text>
           </>
         ) : testEnrollmentUnavailable ? (
           <>
             <Text style={[t.bodyStrong, { color: colors.foreground }]}>Your test place could not be checked</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>The Program is available to read, but Fadko could not confirm whether an operator created a rehearsal enrolment for you. Try this page again.</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>The class is available to read, but Fadko could not confirm your simulated enrolment. Try this page again.</Text>
           </>
         ) : (
           <>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Private test bookings" : program.presentation === "class" ? "Preview only" : "Joining a program is not open yet"}</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Approved test accounts can book the classes above without payment. Real checkout is not open." : "Joining and payment are not open yet."}</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Simulated checkout" : program.presentation === "class" ? "Preview only" : "Joining a program is not open yet"}</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Signed-in, verified students can rehearse booking the classes above. No real money moves." : "Joining and payment are not open yet."}</Text>
           </>
         )}
       </View> : null}

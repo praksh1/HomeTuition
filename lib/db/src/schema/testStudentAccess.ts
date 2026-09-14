@@ -4,7 +4,7 @@ import { sessionsTable } from "./sessions";
 import { usersTable } from "./users";
 
 /**
- * Temporary, operator-granted permission to **book** a test class without paying.
+ * Temporary, auditable permission to **book** a test class without paying.
  *
  * The companion to `test_teaching_grants`, and deliberately its mirror image rather than a second
  * security model. Read that table's comment first; everything it says about why this is a table
@@ -15,15 +15,15 @@ import { usersTable } from "./users";
  *
  * The owner has to walk the whole journey — find a class, book it, enter the real Daily classroom
  * — on the live site, while the payment gateway is configured and taking real money from real
- * students. Every quick way to do that is a way to give the public a free door: removing the
- * payment keys, a global "simulated payments" flag, running production as `NODE_ENV=test`, a
- * hardcoded owner email, or a client flag the server believes.
+ * students. The beta intentionally opens simulated checkout to verified student accounts while
+ * two server flags and one fixed deadline remain active. It never calls a real gateway.
  *
  * This is the narrow way instead. Three separate things must all be true before one booking skips
  * the gateway:
  *
  * 1. `ALLOW_TEST_STUDENT_ACCESS` is on for this server;
- * 2. this student holds a live, unexpired, unrevoked grant in this table;
+ * 2. this student holds a live, unexpired, unrevoked grant in this table (automatically created
+ *    inside a successful simulated checkout when needed);
  * 3. **this class is marked a test class** in `test_classes`.
  *
  * Any one of them missing and the booking goes to the gateway like anybody else's. That is why a
@@ -44,9 +44,9 @@ export const testStudentGrantsTable = pgTable(
     studentId: integer("student_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
-    /** The operator who granted it. `set null` only if that account is later deleted. */
+    /** The operator who granted it; null for automatic private-beta checkout. */
     grantedBy: integer("granted_by").references(() => usersTable.id, { onDelete: "set null" }),
-    /** Why, in the operator's words. Required by the route — an unexplained grant is unauditable. */
+    /** Why access exists. Required by every route — an unexplained grant is unauditable. */
     reason: text("reason").notNull(),
     grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
     /** When it stops working, with no action required from anybody. */

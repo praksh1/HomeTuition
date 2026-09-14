@@ -83,10 +83,10 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
     <ProgramButton label="Create a student account" emphasis="secondary" onPress={() => router.push("/(auth)/register?role=student")} />
   </View>;
   return <View testID={`batch-test-${batchId}`} style={{ gap: space.sm }}>
-    <Text style={[t.caption, { color: colors.mutedForeground }]}>Private testing · no money collected</Text>
+    <Text style={[t.caption, { color: colors.mutedForeground }]}>Simulated checkout · no money collected</Text>
     <ProgramButton label={busy ? "Checking your place…" : result ? "Refresh test access" : teacher ? "Open test lessons" : "Try test checkout"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />
     {error ? <ProgramNotice title="Test booking unavailable" body={error} tone="stopped" /> : null}
-    {result?.isTeacher && !result.lessons.length ? <ProgramNotice title="Waiting for a test student" body="A student with test access must book this class first. Its lesson links will then appear here. Refresh after they book." /> : null}
+    {result?.isTeacher && !result.lessons.length ? <ProgramNotice title="Waiting for a student" body="A verified student must complete the simulated checkout first. Its lesson links will then appear here. Refresh after they book." /> : null}
     {result && !result.isTeacher && !result.booked ? <ProgramNotice title="Fadko test checkout">
       <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>{result.quote.remainingLessonCount} lessons · NPR {result.quote.amountNpr?.toLocaleString("en-NP") ?? "—"}</Text>
       <Text style={[t.caption, { color: colors.mutedForeground }]}>Pretend payment only. No wallet, card or PIN needed. No real money moves.</Text>

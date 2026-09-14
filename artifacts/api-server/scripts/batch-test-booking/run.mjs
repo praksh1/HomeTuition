@@ -96,10 +96,31 @@ try {
   check("operator can grant student access through fixed deadline", longStudent.status === 201 && longStudent.body.grant.validUntil === until);
   const longTeacher = await api(`/admin/teachers/${pilotTeacher.user.id}/test-access`, operatorToken, { reason: "Owner-authorized fixed pilot", tier: "base", throughPilot: true });
   check("operator can grant teacher access through fixed deadline", longTeacher.status === 201 && longTeacher.body.grant.validUntil === until);
+  const automaticTeacher = await account("teacher", false), automaticStudent = await account("student", false);
+  const automaticClass = await offer(automaticTeacher);
+  const automaticQuote = await quote(automaticClass.id, automaticStudent);
+  check("viewing simulated checkout needs no operator grant", automaticQuote.quote.amountNpr === 6000);
+  check("viewing a price does not create beta access", Number((await q("SELECT count(*) n FROM test_teaching_grants WHERE teacher_id=$1", [automaticTeacher.user.id])).rows[0].n) === 0
+    && Number((await q("SELECT count(*) n FROM test_student_grants WHERE student_id=$1", [automaticStudent.user.id])).rows[0].n) === 0);
+  check("declined simulation creates no access or booking", (await book(automaticClass.id, automaticStudent, automaticQuote.quoteKey, "declined")).status === 402
+    && Number((await q("SELECT count(*) n FROM test_student_grants WHERE student_id=$1", [automaticStudent.user.id])).rows[0].n) === 0
+    && Number((await q("SELECT count(*) n FROM batch_test_bookings WHERE batch_id=$1", [automaticClass.id])).rows[0].n) === 0);
+  const automaticBooking = await book(automaticClass.id, automaticStudent, automaticQuote.quoteKey);
+  check("verified student can complete simulated checkout without an operator", automaticBooking.status === 200 && automaticBooking.body.created === true);
+  const automaticTeacherGrant = (await q("SELECT granted_by,reason,valid_until FROM test_teaching_grants WHERE teacher_id=$1", [automaticTeacher.user.id])).rows;
+  const automaticStudentGrant = (await q("SELECT granted_by,reason,valid_until FROM test_student_grants WHERE student_id=$1", [automaticStudent.user.id])).rows;
+  check("successful simulation records bounded automatic access", automaticTeacherGrant.length === 1 && automaticStudentGrant.length === 1
+    && automaticTeacherGrant[0].granted_by === null && automaticStudentGrant[0].granted_by === null
+    && automaticTeacherGrant[0].reason === "Automatic private beta simulated checkout"
+    && automaticStudentGrant[0].reason === "Automatic private beta simulated checkout"
+    && new Date(automaticTeacherGrant[0].valid_until).toISOString() === until
+    && new Date(automaticStudentGrant[0].valid_until).toISOString() === until);
+  const automaticRows = (await q("SELECT e.payment_status,e.payment_method,e.payment_reference,s.price FROM session_enrollments e JOIN sessions s ON s.id=e.session_id JOIN batch_test_sessions bt ON bt.session_id=s.id WHERE bt.batch_id=$1", [automaticClass.id])).rows;
+  check("automatic beta checkout remains test-only", automaticRows.length === 2 && automaticRows.every((row) => row.payment_status === "test" && row.payment_method === "test_access" && row.payment_reference === null && row.price === 0));
   const c = await offer(teacher);
   check("test button advertised only by configured server", (await api(`/programs/${c.item.batch.programId}/batches`)).body.batches[0].testPilotEndsAt === until);
   check("anonymous cannot quote", (await api(`/batch-tests/${c.id}`)).status === 401);
-  check("no student grant refused", (await api(`/batch-tests/${c.id}`, outsider.token)).status === 403);
+  check("verified student without operator grant can quote", (await api(`/batch-tests/${c.id}`, outsider.token)).status === 200);
   const proposal = await quote(c.id, a);
   check("old free-booking shortcut refused", (await api(`/batch-tests/${c.id}`, a.token, { quoteKey: proposal.quoteKey })).status === 400);
   check("declined test payment leaves no place or financial record", (await book(c.id, a, proposal.quoteKey, "declined")).status === 402 && Number((await q("SELECT count(*) n FROM batch_test_bookings WHERE batch_id=$1", [c.id])).rows[0].n) === 0);

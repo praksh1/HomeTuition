@@ -3,7 +3,7 @@ import { index, integer, pgTable, serial, text, timestamp } from "drizzle-orm/pg
 import { usersTable } from "./users";
 
 /**
- * Temporary, operator-granted permission to teach without paying for a plan.
+ * Temporary, auditable permission to teach without paying for a plan.
  *
  * The owner needs a handful of real teacher accounts to create classes and use the whiteboard
  * during testing, without a plan payment that cannot be verified. The dangerous ways to do that
@@ -11,7 +11,9 @@ import { usersTable } from "./users";
  * the client sends, hardcoding an email address, treating production as development, or letting
  * the payment mock write a receipt that looks real.
  *
- * What this is instead: a row, with a name against it, a reason, and an end date. It bypasses the
+ * What this is instead: a row, with a reason and an end date. Operators may create one directly;
+ * during the fixed private-beta window, a successful simulated checkout may create one with a
+ * null `granted_by`. It bypasses the
  * **payment** door and nothing else — not email verification, not operator approval, not class
  * ownership, not membership, not the session allowance, not booking atomicity, not refunds.
  *
@@ -44,9 +46,9 @@ export const testTeachingGrantsTable = pgTable(
      * owner sells.
      */
     tier: text("tier").notNull(),
-    /** The operator who granted it. `set null` only if that account is later deleted. */
+    /** The operator who granted it; null for automatic private-beta checkout. */
     grantedBy: integer("granted_by").references(() => usersTable.id, { onDelete: "set null" }),
-    /** Why, in the operator's words. Required by the route — an unexplained grant is unauditable. */
+    /** Why access exists. Required by every route — an unexplained grant is unauditable. */
     reason: text("reason").notNull(),
     grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
     /** When it stops working, with no action required from anybody. */

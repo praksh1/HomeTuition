@@ -38,8 +38,8 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Estimates are shown before applicable taxes. Final earnings can change after an approved refund or adjustment. Students pay upfront; eligible earnings are released after lesson delivery and the complaint window.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
       </ProgramCardShell>
-      <ProgramNotice title={policy.testPilotEndsAt ? "Private test bookings are open" : "Listings only for now"} tone="waiting">
-        <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "Approved test students can book published classes without payment. Lesson links appear after the first test booking. Test activity creates no earnings or payouts." : "Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms."}</Text>
+      <ProgramNotice title={policy.testPilotEndsAt ? "Simulated checkout is open" : "Listings only for now"} tone="waiting">
+        <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "Signed-in, verified students can rehearse booking published classes without payment. Lesson links appear after the first simulated booking. Test activity creates no real earnings or payouts." : "Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms."}</Text>
       </ProgramNotice>
       <BatchTestMoneySummary role="teacher" />
     </>}

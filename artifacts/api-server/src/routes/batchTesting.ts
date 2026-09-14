@@ -306,7 +306,6 @@ async function eligibility(tx: Tx, teacherId: number, viewerId: number) {
     throw new Refusal(403, "This teacher is not approved for testing.");
   }
   const [teacherGrant] = await tx.select().from(testTeachingGrantsTable).where(and(eq(testTeachingGrantsTable.teacherId, teacherId), isNull(testTeachingGrantsTable.revokedAt), gt(testTeachingGrantsTable.validUntil, sql`now()`))).for("share");
-  if (!teacherGrant) throw new Refusal(403, "An operator must enable this teacher's test access first.");
   if (viewerId === teacherId) return { teacher, teacherGrant, studentGrant: null, viewerName: teacher.name };
   // Serializes two different batch bookings by the same student before checking their timetable.
   const [viewer] = await tx.select().from(usersTable).where(eq(usersTable.id, viewerId)).for("update");
@@ -315,8 +314,45 @@ async function eligibility(tx: Tx, teacherId: number, viewerId: number) {
     throw new Refusal(403, "Complete and verify an active student account before testing booking.");
   }
   const [studentGrant] = await tx.select().from(testStudentGrantsTable).where(and(eq(testStudentGrantsTable.studentId, viewerId), isNull(testStudentGrantsTable.revokedAt), gt(testStudentGrantsTable.validUntil, sql`now()`))).for("share");
-  if (!studentGrant) throw new Refusal(403, "An operator must enable your student test access first.");
   return { teacher, teacherGrant, studentGrant, viewerName: viewer.name };
+}
+
+const AUTOMATIC_BETA_REASON = "Automatic private beta simulated checkout";
+
+/**
+ * Preserve the grant foreign keys that make every rehearsal booking auditable, without making
+ * the owner manually approve each tester. These rows are created only inside a successful
+ * simulated checkout transaction; merely viewing a price never writes access to the database.
+ */
+async function ensureBetaGrants(
+  tx: Tx,
+  teacherId: number,
+  studentId: number,
+  until: number,
+  currentTeacherGrant: typeof testTeachingGrantsTable.$inferSelect | undefined,
+  currentStudentGrant: typeof testStudentGrantsTable.$inferSelect | undefined | null,
+) {
+  let teacherGrant = currentTeacherGrant;
+  if (!teacherGrant) {
+    [teacherGrant] = await tx.insert(testTeachingGrantsTable).values({
+      teacherId,
+      tier: "base",
+      grantedBy: null,
+      reason: AUTOMATIC_BETA_REASON,
+      validUntil: new Date(until),
+    }).returning();
+  }
+  let studentGrant = currentStudentGrant ?? undefined;
+  if (!studentGrant) {
+    [studentGrant] = await tx.insert(testStudentGrantsTable).values({
+      studentId,
+      grantedBy: null,
+      reason: AUTOMATIC_BETA_REASON,
+      validUntil: new Date(until),
+    }).returning();
+  }
+  if (!teacherGrant || !studentGrant) throw new Refusal(503, "Test checkout could not prepare access. No money moved.");
+  return { teacherGrant, studentGrant };
 }
 async function lessonLinks(tx: Tx, batchId: number, viewerId: number, isTeacher: boolean) {
   const rows = await tx.select({ position: batchTestSessionsTable.position, session: sessionsTable }).from(batchTestSessionsTable)
@@ -358,12 +394,13 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
       if (selected.some((l) => otherLessons.some(({ session: s }) => Date.parse(l.startsAt) < s.date.getTime() + s.duration * 60000 && Date.parse(l.startsAt) + l.durationMinutes * 60000 > s.date.getTime()))) {
         throw new Refusal(409, "One of these lessons overlaps a class you have already booked.");
       }
+      const grants = await ensureBetaGrants(tx, program.teacherId, viewerId, until, access.teacherGrant, access.studentGrant);
       const [contract] = await tx.select().from(batchTestContractsTable).where(eq(batchTestContractsTable.batchId, batchId));
       if (!contract) {
         await assertTeacherSchedule(tx, program.teacherId, selected.map((l) => ({ startsAt: new Date(l.startsAt), durationMinutes: l.durationMinutes, label: `Lesson ${l.position + 1}` })), { batchId });
-        await tx.insert(batchTestContractsTable).values({ batchId, snapshot, teacherGrantId: access.teacherGrant.id });
+        await tx.insert(batchTestContractsTable).values({ batchId, snapshot, teacherGrantId: grants.teacherGrant.id });
       }
-      const [booking] = await tx.insert(batchTestBookingsTable).values({ batchId, studentId: viewerId, studentGrantId: access.studentGrant!.id, quote }).returning();
+      const [booking] = await tx.insert(batchTestBookingsTable).values({ batchId, studentId: viewerId, studentGrantId: grants.studentGrant.id, quote }).returning();
       await tx.insert(batchTestPaymentsTable).values({ bookingId: booking!.id,
         receipt: simulatedBatchReceipt(booking!.id, quote.amountNpr, quote.lessonPositions) });
       for (const lesson of selected) {
@@ -375,7 +412,7 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
             duration: lesson.durationMinutes, maxStudents: snapshot.capacity, price: 0 }).returning();
           sessionId = session!.id;
           await tx.insert(batchTestSessionsTable).values({ batchId, position: lesson.position, sessionId });
-          await tx.insert(testClassesTable).values({ sessionId, teacherId: program.teacherId, grantId: access.teacherGrant.id });
+          await tx.insert(testClassesTable).values({ sessionId, teacherId: program.teacherId, grantId: grants.teacherGrant.id });
         }
         await tx.insert(sessionEnrollmentsTable).values({ sessionId, studentId: viewerId, paymentStatus: "test", paymentMethod: "test_access", paymentReference: null });
         await tx.update(sessionsTable).set({ enrolledCount: sql`${sessionsTable.enrolledCount} + 1` }).where(eq(sessionsTable.id, sessionId));

@@ -16,9 +16,16 @@ published class pages honestly showed “Preview only” and could not offer sim
 On13Sep2026 the production API service was given the fixed deadline
 `2027-01-11T23:59:59.000Z` and redeployed successfully. The live public response for program4,
 batch3 then returned that exact `testPilotEndsAt`. This enables only the existing simulated
-checkout path; individual operator grants remain mandatory, no real gateway is called, and legacy
-Monthly/teacher-plan screens stay retired. Verify the named production student grant separately
-if their refreshed page asks for operator approval.
+checkout path; no real gateway is called, and legacy Monthly/teacher-plan screens stay retired.
+Owner then rejected individual operator grants as too much friction for the private beta. The
+checkout rule now intended for production is: while both server switches and the fixed deadline
+are active, any signed-in, verified, onboarded student may complete simulated checkout for a
+published class owned by an active, approved, verified teacher. Viewing the quote creates no row.
+Only a successful simulation creates bounded teacher/student grant rows, with `granted_by = null`,
+the fixed reason `Automatic private beta simulated checkout`, and `valid_until` equal to the global
+deadline. Existing operator grants are reused. Anonymous, suspended, unverified and incomplete
+accounts remain refused. Every resulting enrollment remains `payment_status = test`,
+`payment_method = test_access`, with no gateway reference; no real gateway is imported or called.
 Owner approved credential attachment after testing checkout. Staging configuration now deployed
 at88a6d07b-2a78-42cc-a124-afd972ebd84b: VIDEO_PROVIDER=daily,
 VIDEO_ROOM_NAMESPACE=fadko-preview, DAILY_API_KEY referenced from shared Railway storage.
@@ -30,8 +37,10 @@ See Sep11 simulated-class-checkout worklog for CI/deployment/actual operator bro
 
 `codex/batch-test-booking` adds explicit batch test contracts/bookings/session mappings.
 Follow the worklog for current commit/deployment status. Fixed TEST_ACCESS_UNTIL + both test
-switches + approved/verified teacher and onboarded verified student grants are required.
-Operators may grant through the configured date; it is not rolling120days on every request.
+switches + approved/verified teacher and onboarded verified student accounts are required.
+Operators may still grant access manually, but the successful simulated-checkout transaction
+automatically records missing grants through the configured date; it is not rolling120days on
+every request.
 
 The original no-charge bridge had no payment records. New simulated checkout stores separate TEST
 capture references and70/30 allocations; never real paid rows, refunds or earnings. Freeze the
