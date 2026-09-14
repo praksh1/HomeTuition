@@ -61,7 +61,8 @@ try {
     await page.getByText("You're enrolled", { exact: true }).waitFor();
     check(`${width}: returning after sign-in restores the confirmed place`, await page.getByRole("button", { name: "Try test checkout", exact: true }).count() === 0 && await page.getByRole("button", { name: "Open class home", exact: true }).count() === 1);
     await page.goto(base + "?teacher");
-    await page.getByText("Waiting for a test student", { exact: true }).waitFor();
+    await page.getByText("Waiting for a student", { exact: true }).waitFor();
+    check(`${width}: teacher is told checkout opens automatically for verified students`, (await page.locator("body").innerText()).includes("A verified student must complete the simulated checkout first"));
     check(`${width}: teacher never gets student confirm control`, await page.getByRole("button", { name: "Simulate successful payment", exact: true }).count() === 0);
     await page.goto(base + "?teacher-ready");
     await page.getByText("Class ready for testing", { exact: true }).waitFor();
