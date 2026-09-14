@@ -243,6 +243,9 @@ jobs:
       - name: Verify the Messages inbox and contact picker at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:messages-ui
 
+      - name: Verify Profile and Nepal account details at phone and laptop sizes
+        run: pnpm --filter @workspace/sikshya run test:profile-ui
+
       - name: Verify teacher billing transition at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:teaching-billing
 

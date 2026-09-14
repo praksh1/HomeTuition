@@ -544,6 +544,10 @@ jobs:
           # token, and has no tab bar to click. Its API-level checks passed there and only the
           # browser half failed, which is exactly how that mistake hides.
           pnpm --filter @workspace/sikshya run test:messaging
+          # Profile and the private account editor at phone and laptop widths. Nepal's long
+          # location lists must stay searchable and bounded, and teacher documents must not
+          # turn every visit to Profile into a several-screen upload form.
+          pnpm --filter @workspace/sikshya run test:profile-ui
 
       # Nothing after this point talks to the throwaway API: the remaining suites exercise
       # the already-built board/call UI, and the deploy build must point at Railway. Free the
