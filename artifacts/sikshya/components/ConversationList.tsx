@@ -103,7 +103,7 @@ export default function ConversationList({ title }: { title: string }) {
     >
       <View style={styles.titleRow}>
         <View style={styles.headingCopy}>
-          <Text style={[t.overline, { color: colors.primary }]}>Inbox</Text>
+          <Text style={[t.overline, { color: colors.primary }]}>Conversations</Text>
           <Text style={[t.title1, { color: colors.foreground }]}>{title}</Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>Class conversations, together in one place.</Text>
         </View>

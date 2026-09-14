@@ -46,7 +46,8 @@ try {
       throw new Error(`Inbox did not render: ${await page.locator("body").innerText()} | ${errors.join(" | ")}`);
     }
     const body = await page.locator("body").innerText();
-    check(body.includes("Class conversations, together in one place."), `${width}: inbox explains itself briefly`);
+    check(body.includes("Class conversations, together in one place."), `${width}: message list explains itself briefly`);
+    check(!/\bInbox\b|\bSent\b|\bDrafts\b/.test(body), `${width}: message threads are not split into email folders`);
     check(body.includes("Draft: I will send the practice sheet"), `${width}: draft stays with its conversation`);
     check(body.includes("Unread 1") && body.includes("3"), `${width}: unread conversations are counted`);
     check((await page.getByTestId("new-message-button").boundingBox()).height >= 44, `${width}: new-message action meets the touch floor`);
