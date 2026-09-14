@@ -11,6 +11,14 @@ Keep financial/security boundaries anyway; a public URL is not a license to inve
 
 Checkout preview now deployed at6da5489; stage deadline Jan10,2027UTC configured. Teacher user1
 grant renewed to that date; student user2 still active through17Sep2026 (renewal cancelled, verified).
+Production's two test-access switches were already true, but `TEST_ACCESS_UNTIL` was absent, so
+published class pages honestly showed “Preview only” and could not offer simulated checkout.
+On13Sep2026 the production API service was given the fixed deadline
+`2027-01-11T23:59:59.000Z` and redeployed successfully. The live public response for program4,
+batch3 then returned that exact `testPilotEndsAt`. This enables only the existing simulated
+checkout path; individual operator grants remain mandatory, no real gateway is called, and legacy
+Monthly/teacher-plan screens stay retired. Verify the named production student grant separately
+if their refreshed page asks for operator approval.
 Owner approved credential attachment after testing checkout. Staging configuration now deployed
 at88a6d07b-2a78-42cc-a124-afd972ebd84b: VIDEO_PROVIDER=daily,
 VIDEO_ROOM_NAMESPACE=fadko-preview, DAILY_API_KEY referenced from shared Railway storage.
