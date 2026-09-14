@@ -1408,7 +1408,13 @@ async function moderationReload() {
   const before = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
   const patch = await api(`/learning-programs/${id}`, { method: "PATCH", token: teacher.token, body: { title: "A title changed on its own" } });
   check("a title-only save succeeds", patch.status === 200, `status ${patch.status}`);
-  const after = Number(sql(`select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`));
+  // The route intentionally answers before its non-blocking moderation write finishes. Waiting
+  // here tests that contract without racing a slower CI database and mistaking "not yet" for
+  // "never".
+  const after = await eventuallySqlNumber(
+    `select count(*) from moderation_flags where surface = 'learning_program' and subject_id = ${id}`,
+    (value) => value > before,
+  );
   check("and the stored steps are read again rather than an empty list", after > before, `${before} -> ${after}`);
   const excerpt = sql(`select excerpt from moderation_flags where subject_id = ${id} order by id desc limit 1`);
   check("the excerpt describes the saved draft, including its steps",
