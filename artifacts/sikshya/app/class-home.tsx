@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
 import { ClassGroupShell } from "@/components/classes/ClassGroupShell";
 import { ProgramNotice } from "@/components/programs/ProgramPieces";
@@ -10,11 +10,14 @@ import { useDates } from "@/context/DatePreferenceContext";
 import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
 import { classHomeworkOverview } from "@/utils/classHomeworkOverview";
+import { classLessonJourney } from "@/utils/classLessonJourney";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
+import { serverNow } from "@/utils/sessionClock";
 
 interface Home {
   title: string;
   isTeacher: boolean;
+  serverNow: string;
   lessons: Array<{
     position: number;
     sessionId: number;
@@ -41,9 +44,14 @@ export default function ClassHomeScreen() {
   const { lastEvent } = useNotifications();
   const [home, setHome] = useState<Home | null>(null);
   const [problem, setProblem] = useState("");
+  const receivedAt = useRef(Date.now());
+  const [tick, setTick] = useState(Date.now());
   const load = useCallback(async () => {
     try {
-      setHome(await apiGet<Home>(`/class-groups/${batchId}`));
+      const next = await apiGet<Home>(`/class-groups/${batchId}`);
+      receivedAt.current = Date.now();
+      setTick(receivedAt.current);
+      setHome(next);
       setProblem("");
     } catch (e) {
       setProblem(e instanceof Error ? e.message : "Could not load this class.");
@@ -55,8 +63,13 @@ export default function ClassHomeScreen() {
     }, [load]),
   );
   useEffect(() => {
+    const timer = setInterval(() => setTick(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
     if (
-      (lastEvent?.kind === "class_message" || lastEvent?.kind.startsWith("class_homework_")) &&
+      (lastEvent?.kind === "class_message" ||
+        lastEvent?.kind.startsWith("class_homework_")) &&
       Number(lastEvent.batchId) === batchId
     ) {
       void load();
@@ -85,19 +98,37 @@ export default function ClassHomeScreen() {
         />
       </ClassGroupShell>
     );
-  const upcoming =
-    home.lessons.find(
-      (lesson) => new Date(lesson.startsAt).getTime() >= Date.now(),
-    ) ?? home.lessons.at(-1);
-  const when = upcoming
+  const journey = classLessonJourney(
+    home.lessons,
+    serverNow(home.serverNow, receivedAt.current, tick),
+  );
+  const focusLesson = journey.focusLesson;
+  const formatLesson = (lesson: Home["lessons"][number]) => {
+    const local = lessonDraft({
+      startsAt: lesson.startsAt,
+      durationMinutes: lesson.durationMinutes,
+    });
+    return `${dates.format(batchDateValue(local.date)!)} · ${local.time} Nepal time`;
+  };
+  const when = focusLesson
     ? (() => {
-        const local = lessonDraft({
-          startsAt: upcoming.startsAt,
-          durationMinutes: upcoming.durationMinutes,
-        });
-        return `${dates.format(batchDateValue(local.date)!)} · ${local.time} Nepal time`;
+        return formatLesson(focusLesson);
       })()
     : "No lesson scheduled";
+  const heroLabel =
+    journey.stage === "current"
+      ? "LESSON TIME NOW"
+      : journey.stage === "upcoming"
+        ? "NEXT LESSON"
+        : journey.stage === "finished"
+          ? "SCHEDULE COMPLETE"
+          : "NO LESSONS SCHEDULED";
+  const heroContext =
+    journey.focusNumber && journey.stage !== "finished"
+      ? `Lesson ${journey.focusNumber} of ${home.lessons.length}`
+      : journey.stage === "finished"
+        ? `All ${journey.passedDates} scheduled ${journey.passedDates === 1 ? "date has" : "dates have"} passed`
+        : "The teacher has not added lesson dates yet";
   const cards = [
     {
       icon: "message-circle",
@@ -110,6 +141,7 @@ export default function ClassHomeScreen() {
       unread: home.counts.unreadMessages,
       badgeLabel: `${home.counts.unreadMessages} unread class messages`,
       path: "/class-chat",
+      withBatch: true,
     },
     {
       icon: "edit-3",
@@ -122,6 +154,7 @@ export default function ClassHomeScreen() {
       badgeLabel: home.isTeacher
         ? `${home.counts.homeworkAwaitingReview} homework hand-ins to review`
         : `${home.counts.homeworkLate} late homework tasks`,
+      withBatch: true,
     },
     {
       icon: "folder",
@@ -134,6 +167,18 @@ export default function ClassHomeScreen() {
       path: "/class-materials",
       unread: 0,
       badgeLabel: "",
+      withBatch: true,
+    },
+    {
+      icon: "credit-card",
+      label: home.isTeacher ? "Earnings history" : "Payments & receipts",
+      note: home.isTeacher
+        ? "Payouts and payment records"
+        : "Charges, receipts and refunds",
+      path: home.isTeacher ? "/subscription" : "/(student)/payments",
+      unread: 0,
+      badgeLabel: "",
+      withBatch: false,
     },
     {
       icon: "life-buoy",
@@ -142,6 +187,7 @@ export default function ClassHomeScreen() {
       path: "/support",
       unread: 0,
       badgeLabel: "",
+      withBatch: false,
     },
   ] as const;
   return (
@@ -158,18 +204,21 @@ export default function ClassHomeScreen() {
         }}
       >
         <Text style={[t.caption, { color: colors.primaryForeground }]}>
-          NEXT LESSON
+          {heroLabel}
         </Text>
         <Text style={[t.title3, numeric, { color: colors.primaryForeground }]}>
           {when}
         </Text>
-        {upcoming ? (
+        <Text style={[t.caption, { color: colors.primaryForeground }]}>
+          {heroContext}
+        </Text>
+        {focusLesson && journey.stage !== "finished" ? (
           <TouchableOpacity
             accessibilityRole="button"
             onPress={() =>
               router.push({
                 pathname: "/session/[id]",
-                params: { id: String(upcoming.sessionId) },
+                params: { id: String(focusLesson.sessionId) },
               })
             }
             style={{
@@ -181,11 +230,99 @@ export default function ClassHomeScreen() {
             }}
           >
             <Text style={[t.bodyStrong, { color: colors.primary }]}>
-              Open lesson
+              {journey.stage === "current" ? "Open this lesson" : "Open lesson"}
             </Text>
           </TouchableOpacity>
         ) : null}
       </View>
+      {journey.visibleLessons.length ? (
+        <View style={{ gap: space.sm }}>
+          <View style={{ gap: space.xxs }}>
+            <Text
+              accessibilityRole="header"
+              style={[t.title3, { color: colors.foreground }]}
+            >
+              Schedule
+            </Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>
+              {journey.stage === "finished"
+                ? "Most recent scheduled dates"
+                : `${journey.remainingDates} scheduled ${journey.remainingDates === 1 ? "date" : "dates"} remaining`}
+            </Text>
+          </View>
+          <View
+            style={{
+              borderWidth: 1,
+              borderColor: colors.border,
+              borderRadius: 14,
+              backgroundColor: colors.card,
+              overflow: "hidden",
+            }}
+          >
+            {journey.visibleLessons.map((lesson, index) => {
+              const isCurrent =
+                journey.stage === "current" &&
+                lesson.sessionId === journey.focusLesson?.sessionId;
+              return (
+                <View
+                  key={lesson.sessionId}
+                  style={{
+                    minHeight: 58,
+                    paddingHorizontal: space.md,
+                    paddingVertical: space.sm,
+                    borderTopWidth: index ? 1 : 0,
+                    borderTopColor: colors.border,
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: space.sm,
+                  }}
+                >
+                  <View style={{ flex: 1, gap: space.xxs }}>
+                    <Text style={[t.bodyStrong, { color: colors.foreground }]}>
+                      Lesson {lesson.position}
+                    </Text>
+                    <Text
+                      style={[
+                        t.caption,
+                        numeric,
+                        { color: colors.mutedForeground },
+                      ]}
+                    >
+                      {formatLesson(lesson)}
+                    </Text>
+                  </View>
+                  {isCurrent ? (
+                    <View
+                      style={{
+                        paddingHorizontal: space.sm,
+                        paddingVertical: space.xxs,
+                        borderRadius: 999,
+                        backgroundColor: colors.surfaceSunk,
+                      }}
+                    >
+                      <Text style={[t.caption, { color: colors.primary }]}>
+                        Now
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            })}
+          </View>
+          {journey.hiddenDates ? (
+            <Text
+              style={[
+                t.caption,
+                numeric,
+                { color: colors.mutedForeground, textAlign: "center" },
+              ]}
+            >
+              + {journey.hiddenDates} more scheduled{" "}
+              {journey.hiddenDates === 1 ? "date" : "dates"}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       <View style={{ gap: space.sm }}>
         {cards.map((card) => (
           <TouchableOpacity
@@ -193,8 +330,8 @@ export default function ClassHomeScreen() {
             accessibilityRole="button"
             onPress={() =>
               router.push(
-                card.path === "/support"
-                  ? "/support"
+                !card.withBatch
+                  ? (card.path as never)
                   : ({
                       pathname: card.path,
                       params: { id: String(batchId) },

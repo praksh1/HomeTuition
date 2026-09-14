@@ -187,6 +187,7 @@ router.get("/class-groups/:id", requireAuth, async (req, res) => {
   res.json({
     title: access.title,
     isTeacher: access.isTeacher,
+    serverNow: new Date().toISOString(),
     lessons,
     counts: { ...counts, messages, unreadMessages },
   });

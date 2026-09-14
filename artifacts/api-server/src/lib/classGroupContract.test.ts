@@ -99,6 +99,12 @@ test("class home derives private homework status instead of making students insp
   assert.match(routes, /task\.due_at < now\(\)/);
 });
 
+test("class home publishes the server clock beside its schedule", () => {
+  assert.match(routes, /serverNow: new Date\(\)\.toISOString\(\)/);
+  assert.match(routes, /startsAt: sessionsTable\.date/);
+  assert.match(routes, /durationMinutes: sessionsTable\.duration/);
+});
+
 test("class materials may carry one verified photo or PDF without changing existing rows", () => {
   assert.match(routes, /classGroupMaterialFilesTable/);
   assert.match(routes, /acceptedFile = await acceptUploadedFile\(req\.body, req\.user!\.userId\)/);

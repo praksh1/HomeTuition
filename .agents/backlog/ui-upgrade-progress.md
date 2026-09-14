@@ -82,6 +82,7 @@ Found and fixed so far:
 | Program studio | The commit message claimed the rule "never lose typed work silently"; the leave guard was a tested function no screen called, and three lifecycle actions could overwrite unsaved text — mine |
 | Program studio | A comment said fetching templates in the chooser saved the studio a round trip. The studio fetches them again — two round trips, described as one — mine |
 | Program studio (test) | The journey claimed to prove a reload was guarded by dispatching a synthetic `beforeunload` and checking `defaultPrevented` — which proves a listener exists and nothing about whether the browser would raise a dialog. Now a real reload asserting a real dialog — mine |
+| Class Home | After every scheduled lesson had passed, the last lesson was still labelled “Next lesson” and offered as the next action. During a lesson, the page skipped it and highlighted the following date. Both claims came from a device-clock search plus a fallback to the final row; Class Home now uses server-calibrated time and explicit current/upcoming/finished states |
 
 **How to check one:** grep the column in `artifacts/api-server/src/` for a write that is not
 `auth.ts` (registration). If the only write is registration, it is dead and the UI is lying.

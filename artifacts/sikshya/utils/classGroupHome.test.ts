@@ -25,9 +25,12 @@ test("a booked class opens one coherent class home", () => {
   assert.match(panel, /pathname: "\/class-home"/);
   for (const label of [
     "Next lesson",
+    "Schedule",
     "Class messages",
     "Homework",
     "Materials",
+    "Payments & receipts",
+    "Earnings history",
     "Help",
   ]) {
     assert.match(home, new RegExp(label, "i"));
@@ -46,6 +49,20 @@ test("class home keeps a real next-lesson action and a phone-size touch floor", 
   assert.match(home, /pathname: "\/session\/\[id\]"/);
   assert.match(home, /minHeight: 48/);
   assert.match(home, /minHeight: 76/);
+});
+
+test("class home uses the server clock and never falls back to a past lesson", () => {
+  assert.match(home, /serverNow: string/);
+  assert.match(home, /serverNow\(home\.serverNow/);
+  assert.match(home, /journey\.stage !== "finished"/);
+  assert.match(home, /SCHEDULE COMPLETE/);
+  assert.doesNotMatch(home, /home\.lessons\.at\(-1\)/);
+});
+
+test("class home keeps money records one tap away without showing platform allocation", () => {
+  assert.match(home, /"\/(student\/)payments"|"\/\(student\)\/payments"/);
+  assert.match(home, /"\/subscription"/);
+  assert.doesNotMatch(home, /Held by Fadko|70%|platform fee/i);
 });
 
 test("class messages refresh live and clear only after the conversation loads", () => {
