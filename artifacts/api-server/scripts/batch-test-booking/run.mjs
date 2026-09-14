@@ -66,10 +66,10 @@ async function offer(teacher, { capacity = 2, at = Math.ceil(Date.now() / 60000)
 }
 async function quote(id, a) { const result = await api(`/batch-tests/${id}`, a.token); assert.equal(result.status, 200, JSON.stringify(result)); return result.body; }
 const book = (id, a, key, outcome = "success") => api(`/batch-tests/${id}`, a.token, { quoteKey: key, gateway: "fadko_test", outcome });
-async function inbox(a, predicate) {
+async function inbox(a, predicate, expected = 1) {
   for (let attempt = 0; attempt < 30; attempt++) {
     const response = await api("/notification-events?after=0", a.token);
-    if (response.status === 200 && (response.body.events ?? []).some((row) => predicate(row.event))) return response.body.events;
+    if (response.status === 200 && (response.body.events ?? []).filter((row) => predicate(row.event)).length >= expected) return response.body.events;
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return [];
@@ -237,7 +237,7 @@ try {
   const qb = await quote(c.id, b);
   const secondBooking = await book(c.id, b, qb.quoteKey);
   check("second student shares the same lesson rooms", secondBooking.body.lessons[0].sessionId === sid);
-  const lateJoinerInbox = await inbox(b, (event) => event.kind === "class_homework_set" && event.batchId === c.id);
+  const lateJoinerInbox = await inbox(b, (event) => event.kind === "class_homework_set" && event.batchId === c.id, 2);
   check("a student joining after homework was assigned receives each open task", lateJoinerInbox.filter((row) => row.event.kind === "class_homework_set" && row.event.batchId === c.id).length === 2);
   const secondBookingId = Number((await q("SELECT id FROM batch_test_bookings WHERE batch_id=$1 AND student_id=$2", [c.id, b.user.id])).rows[0].id);
   await q("INSERT INTO session_participation (session_id,user_id,role,present_ms,join_count) VALUES ($1,$2,'teacher',60000,1)", [sid, teacher.user.id]);

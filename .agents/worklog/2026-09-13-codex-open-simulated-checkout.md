@@ -37,3 +37,9 @@ The real-Postgres batch journey was extended to prove quote/decline write nothin
 exactly bounded automatic audit rows, and generated enrolments remain test-only. This Windows host
 has no disposable PostgreSQL service; that journey must run in the existing CI PostgreSQL job
 before release.
+
+The first CI run proved every new checkout assertion, then exposed a test-harness race later in
+the journey: the inbox helper returned after the first of two asynchronously persisted homework
+notices, while its caller immediately expected both. The helper now waits for the caller's expected
+count. This does not change product notification delivery; it makes the existing two-notice proof
+measure what its assertion says.
