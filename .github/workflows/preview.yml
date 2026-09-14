@@ -235,6 +235,11 @@ jobs:
       - name: Verify simple class setup at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:class-setup
 
+      - name: Verify the class home and teacher roster at phone and laptop sizes
+        run: |
+          pnpm --filter @workspace/sikshya run test:class-home
+          pnpm --filter @workspace/sikshya run test:class-students
+
       - name: Verify teacher billing transition at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:teaching-billing
 

@@ -29,6 +29,7 @@ export async function apiGet() {
       homeworkLate: 0,
       homeworkAwaitingReview: 1,
       materials: 3,
+      students: 2,
     },
   };
 }

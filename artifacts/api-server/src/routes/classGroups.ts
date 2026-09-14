@@ -12,6 +12,7 @@ import {
   classGroupMaterialsTable,
   classGroupMessagesTable,
   db,
+  sessionParticipationTable,
   sessionsTable,
   usersTable,
 } from "@workspace/db";
@@ -124,6 +125,66 @@ async function classStudentIds(batchId: number): Promise<number[]> {
   return rows.map((row) => row.studentId);
 }
 
+type RosterAttendance = {
+  lessonsAttended: number;
+  presentMs: number;
+  lastSeenAt: Date | null;
+};
+
+/**
+ * Presence is supporting evidence, not a verdict. A missing ledger is different from zero
+ * attendance, so the caller receives `known: false` when the optional evidence table cannot be
+ * read. This is the same safety rule used by the per-lesson attendance screen.
+ */
+async function classRosterAttendance(
+  batchId: number,
+  studentIds: number[],
+): Promise<{ known: boolean; byStudent: Map<number, RosterAttendance> }> {
+  const byStudent = new Map<number, RosterAttendance>();
+  if (!studentIds.length) return { known: true, byStudent };
+  try {
+    const lessonRows = await db
+      .select({ sessionId: batchTestSessionsTable.sessionId })
+      .from(batchTestSessionsTable)
+      .where(eq(batchTestSessionsTable.batchId, batchId));
+    if (!lessonRows.length) return { known: true, byStudent };
+    const rows = await db
+      .select({
+        userId: sessionParticipationTable.userId,
+        sessionId: sessionParticipationTable.sessionId,
+        presentMs: sessionParticipationTable.presentMs,
+        lastSeenAt: sessionParticipationTable.lastSeenAt,
+      })
+      .from(sessionParticipationTable)
+      .where(
+        and(
+          eq(sessionParticipationTable.role, "student"),
+          inArray(
+            sessionParticipationTable.sessionId,
+            lessonRows.map((row) => row.sessionId),
+          ),
+          inArray(sessionParticipationTable.userId, studentIds),
+        ),
+      );
+    for (const row of rows) {
+      const current = byStudent.get(row.userId) ?? {
+        lessonsAttended: 0,
+        presentMs: 0,
+        lastSeenAt: null,
+      };
+      current.lessonsAttended += row.presentMs > 0 ? 1 : 0;
+      current.presentMs += Math.max(0, row.presentMs);
+      if (!current.lastSeenAt || row.lastSeenAt > current.lastSeenAt) {
+        current.lastSeenAt = row.lastSeenAt;
+      }
+      byStudent.set(row.userId, current);
+    }
+    return { known: true, byStudent };
+  } catch {
+    return { known: false, byStudent: new Map() };
+  }
+}
+
 router.get("/class-groups/:id", requireAuth, async (req, res) => {
   const access = await accessOrReply(req, res);
   if (!access) return;
@@ -178,6 +239,7 @@ router.get("/class-groups/:id", requireAuth, async (req, res) => {
           and submission.status='submitted'
       )`,
       materials: sql<number>`(select count(*)::int from class_group_materials where batch_id=${access.batchId})`,
+      students: sql<number>`(select count(*)::int from batch_test_bookings where batch_id=${access.batchId})`,
     })
     .from(sql`(select 1) as class_group_counts`);
   const [messages, unreadMessages] = await Promise.all([
@@ -190,6 +252,51 @@ router.get("/class-groups/:id", requireAuth, async (req, res) => {
     serverNow: new Date().toISOString(),
     lessons,
     counts: { ...counts, messages, unreadMessages },
+  });
+});
+
+router.get("/class-groups/:id/students", requireAuth, async (req, res) => {
+  const access = await accessOrReply(req, res);
+  if (!access) return;
+  if (!access.isTeacher) {
+    res.status(403).json({ error: "Only the teacher can view this class roster." });
+    return;
+  }
+  const [bookings, lessonRows] = await Promise.all([
+    db
+      .select({
+        studentId: batchTestBookingsTable.studentId,
+        name: usersTable.name,
+        joinedAt: batchTestBookingsTable.createdAt,
+      })
+      .from(batchTestBookingsTable)
+      .innerJoin(usersTable, eq(usersTable.id, batchTestBookingsTable.studentId))
+      .where(eq(batchTestBookingsTable.batchId, access.batchId))
+      .orderBy(asc(batchTestBookingsTable.createdAt), asc(usersTable.name)),
+    db
+      .select({ sessionId: batchTestSessionsTable.sessionId })
+      .from(batchTestSessionsTable)
+      .where(eq(batchTestSessionsTable.batchId, access.batchId)),
+  ]);
+  const attendance = await classRosterAttendance(
+    access.batchId,
+    bookings.map((row) => row.studentId),
+  );
+  res.json({
+    title: access.title,
+    lessonCount: lessonRows.length,
+    attendanceKnown: attendance.known,
+    students: bookings.map((booking) => ({
+      name: booking.name,
+      joinedAt: booking.joinedAt,
+      attendance: attendance.known
+        ? (attendance.byStudent.get(booking.studentId) ?? {
+            lessonsAttended: 0,
+            presentMs: 0,
+            lastSeenAt: null,
+          })
+        : null,
+    })),
   });
 });
 

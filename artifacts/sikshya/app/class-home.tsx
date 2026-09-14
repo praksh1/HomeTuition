@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
 import { ClassGroupShell } from "@/components/classes/ClassGroupShell";
 import { ProgramNotice } from "@/components/programs/ProgramPieces";
@@ -32,7 +32,18 @@ interface Home {
     homeworkLate: number;
     homeworkAwaitingReview: number;
     materials: number;
+    students: number;
   };
+}
+
+interface HomeCard {
+  icon: ComponentProps<typeof Feather>["name"];
+  label: string;
+  note: string;
+  unread: number;
+  badgeLabel: string;
+  path: string;
+  withBatch: boolean;
 }
 
 export default function ClassHomeScreen() {
@@ -129,9 +140,24 @@ export default function ClassHomeScreen() {
       : journey.stage === "finished"
         ? `All ${journey.passedDates} scheduled ${journey.passedDates === 1 ? "date has" : "dates have"} passed`
         : "The teacher has not added lesson dates yet";
-  const cards = [
+  const cards: HomeCard[] = [
+    ...(home.isTeacher
+      ? [
+          {
+            icon: "users" as HomeCard["icon"],
+            label: "Students",
+            note: home.counts.students
+              ? `${home.counts.students} enrolled`
+              : "No students enrolled yet",
+            unread: 0,
+            badgeLabel: "",
+            path: "/class-students",
+            withBatch: true,
+          },
+        ]
+      : []),
     {
-      icon: "message-circle",
+      icon: "message-circle" as HomeCard["icon"],
       label: "Class messages",
       note: home.counts.messages
         ? home.counts.unreadMessages
@@ -144,7 +170,7 @@ export default function ClassHomeScreen() {
       withBatch: true,
     },
     {
-      icon: "edit-3",
+      icon: "edit-3" as HomeCard["icon"],
       label: "Homework",
       note: classHomeworkOverview(home.counts, home.isTeacher),
       path: "/class-homework",
@@ -157,7 +183,7 @@ export default function ClassHomeScreen() {
       withBatch: true,
     },
     {
-      icon: "folder",
+      icon: "folder" as HomeCard["icon"],
       label: "Materials",
       note: home.counts.materials
         ? `${home.counts.materials} shared`
@@ -170,7 +196,7 @@ export default function ClassHomeScreen() {
       withBatch: true,
     },
     {
-      icon: "credit-card",
+      icon: "credit-card" as HomeCard["icon"],
       label: home.isTeacher ? "Earnings history" : "Payments & receipts",
       note: home.isTeacher
         ? "Payouts and payment records"
@@ -181,7 +207,7 @@ export default function ClassHomeScreen() {
       withBatch: false,
     },
     {
-      icon: "life-buoy",
+      icon: "life-buoy" as HomeCard["icon"],
       label: "Help",
       note: "Questions, safety or technical support",
       path: "/support",
@@ -189,7 +215,7 @@ export default function ClassHomeScreen() {
       badgeLabel: "",
       withBatch: false,
     },
-  ] as const;
+  ];
   return (
     <ClassGroupShell
       title={home.title}

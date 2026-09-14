@@ -105,6 +105,15 @@ test("class home publishes the server clock beside its schedule", () => {
   assert.match(routes, /durationMinutes: sessionsTable\.duration/);
 });
 
+test("the teacher roster separates enrolment from optional attendance evidence", () => {
+  assert.match(routes, /\/class-groups\/:id\/students/);
+  assert.match(routes, /Only the teacher can view this class roster/);
+  assert.match(routes, /attendanceKnown: attendance\.known/);
+  assert.match(routes, /lessonsAttended/);
+  assert.match(routes, /presentMs/);
+  assert.doesNotMatch(routes, /students: bookings\.map[\s\S]{0,700}email:/);
+});
+
 test("class materials may carry one verified photo or PDF without changing existing rows", () => {
   assert.match(routes, /classGroupMaterialFilesTable/);
   assert.match(routes, /acceptedFile = await acceptUploadedFile\(req\.body, req\.user!\.userId\)/);

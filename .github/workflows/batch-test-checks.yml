@@ -53,4 +53,6 @@ jobs:
           npx playwright install --with-deps chromium
           pnpm --filter @workspace/sikshya run test:class-setup
           pnpm --filter @workspace/sikshya run test:batch-booking-ui
+          pnpm --filter @workspace/sikshya run test:class-home
+          pnpm --filter @workspace/sikshya run test:class-students
       # This workflow intentionally has no deployment or credentials.

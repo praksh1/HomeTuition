@@ -26,6 +26,7 @@ test("a booked class opens one coherent class home", () => {
   for (const label of [
     "Next lesson",
     "Schedule",
+    "Students",
     "Class messages",
     "Homework",
     "Materials",
@@ -43,6 +44,7 @@ test("new group tools receive the batch id and never navigate through a Monthly 
     home + panel,
     /monthly-chat|monthly-homework|recurringId/,
   );
+  assert.match(home, /path: "\/class-students"/);
 });
 
 test("class home keeps a real next-lesson action and a phone-size touch floor", () => {

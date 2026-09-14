@@ -154,7 +154,24 @@ try {
   const classHome = await api(`/class-groups/${c.id}`, a.token);
   check("booked student opens the class-group home", classHome.status === 200 && !classHome.body.isTeacher && classHome.body.lessons.length === 2 && classHome.body.counts.unreadMessages === 0);
   check("unbooked student cannot open another class group", (await api(`/class-groups/${c.id}`, outsider.token)).status === 403);
-  check("teacher opens the same class-group home", (await api(`/class-groups/${c.id}`, teacher.token)).body.isTeacher === true);
+  const teacherClassHome = await api(`/class-groups/${c.id}`, teacher.token);
+  check("teacher opens the same class-group home", teacherClassHome.body.isTeacher === true);
+  check("teacher class home counts enrolled students", teacherClassHome.body.counts.students === 1);
+  check("student cannot open the private class roster", (await api(`/class-groups/${c.id}/students`, a.token)).status === 403);
+  const rosterBeforeLesson = await api(`/class-groups/${c.id}/students`, teacher.token);
+  check("teacher sees the enrolled student's name without contact details", rosterBeforeLesson.status === 200
+    && rosterBeforeLesson.body.students.length === 1
+    && rosterBeforeLesson.body.students[0].name === a.user.name
+    && !JSON.stringify(rosterBeforeLesson.body).includes(a.user.email)
+    && !JSON.stringify(rosterBeforeLesson.body).includes("studentId"));
+  check("an empty readable presence ledger is not called a system failure", rosterBeforeLesson.body.attendanceKnown === true
+    && rosterBeforeLesson.body.students[0].attendance.lessonsAttended === 0);
+  const firstRosterSession = Number((await q("SELECT session_id FROM batch_test_sessions WHERE batch_id=$1 AND position=0", [c.id])).rows[0].session_id);
+  await q("INSERT INTO session_participation (session_id,user_id,role,present_ms,join_count) VALUES ($1,$2,'student',1800000,1) ON CONFLICT (session_id,user_id) DO UPDATE SET present_ms=EXCLUDED.present_ms,join_count=EXCLUDED.join_count,last_seen_at=now()", [firstRosterSession, a.user.id]);
+  const rosterAfterLesson = await api(`/class-groups/${c.id}/students`, teacher.token);
+  check("teacher roster summarizes recorded lesson presence", rosterAfterLesson.body.students[0].attendance.lessonsAttended === 1
+    && rosterAfterLesson.body.students[0].attendance.presentMs === 1800000
+    && rosterAfterLesson.body.lessonCount === 2);
   const studentMessage = await api(`/class-groups/${c.id}/messages`, a.token, { body: "Please explain question four in our next lesson." });
   check("student can post to the class conversation", studentMessage.status === 201 && studentMessage.body.senderRole === "student");
   check("teacher sees a durable unread class-message count", (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.unreadMessages === 1);

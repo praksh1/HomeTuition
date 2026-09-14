@@ -48,7 +48,8 @@
     "test:back-journey": "node scripts/program-back-journey/run.mjs",
     "test:batch-planner": "node scripts/batch-planner/run.mjs",
     "test:class-setup": "node scripts/class-setup/run.mjs",
-    "test:class-home": "node scripts/class-home-journey/run.mjs"
+    "test:class-home": "node scripts/class-home-journey/run.mjs",
+    "test:class-students": "node scripts/class-students-journey/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

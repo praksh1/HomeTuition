@@ -127,6 +127,11 @@ try {
     );
 
     await page.goto(`${base}?teacher`);
+    const students = page.getByRole("button", { name: /Students/ });
+    await students.waitFor();
+    check((await students.innerText()).includes("2 enrolled"), `${width}: teacher sees the class size before opening the roster`);
+    await students.click();
+    check(await page.evaluate(() => window.lastNavigation?.pathname === "/class-students"), `${width}: teacher roster destination is correct`);
     const earnings = page.getByRole("button", { name: /Earnings history/ });
     await earnings.waitFor();
     await earnings.click();
