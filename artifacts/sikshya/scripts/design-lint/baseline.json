@@ -75,10 +75,6 @@
     "hex": 3,
     "size": 1
   },
-  "app/new-message.tsx": {
-    "hex": 0,
-    "size": 6
-  },
   "app/notification-settings.tsx": {
     "hex": 1,
     "size": 7
@@ -114,10 +110,6 @@
   "components/CallTimeNotice.tsx": {
     "hex": 4,
     "size": 1
-  },
-  "components/ConversationList.tsx": {
-    "hex": 4,
-    "size": 8
   },
   "components/DateSystemSetting.tsx": {
     "hex": 0,

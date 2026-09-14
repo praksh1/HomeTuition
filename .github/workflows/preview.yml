@@ -240,6 +240,9 @@ jobs:
           pnpm --filter @workspace/sikshya run test:class-home
           pnpm --filter @workspace/sikshya run test:class-students
 
+      - name: Verify the Messages inbox and contact picker at phone and laptop sizes
+        run: pnpm --filter @workspace/sikshya run test:messages-ui
+
       - name: Verify teacher billing transition at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:teaching-billing
 

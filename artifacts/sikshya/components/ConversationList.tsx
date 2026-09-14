@@ -1,53 +1,68 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
-import { RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { bottomNavClearance, HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
+import { useDates } from "@/context/DatePreferenceContext";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
+import {
+  conversationPreview,
+  conversationTimeLabel,
+  filterConversations,
+  type ConversationFilter,
+  type ConversationSummary,
+} from "@/utils/conversationList";
 import { loadDrafts, type Drafts } from "@/utils/drafts";
 
-interface Conversation {
-  otherUserId: number;
-  otherUserName: string;
-  otherUserRole: string | null;
-  lastMessage: string;
-  lastMessageAt: string;
-  unreadCount: number;
-  lastMessageFromMe: boolean;
+function initials(name: string) {
+  return name.split(" ").map((part) => part[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
-/**
- * One list, newest first — no Inbox, Sent or Drafts.
- *
- * The owner asked for Messages to work the way the apps their users already have work. Those
- * apps have no folders, and the reason is not fashion: folders are a filing metaphor from
- * email, and a conversation is not filed. It is one thread with two people in it, and
- * splitting it by who happened to speak last means the same conversation moves between tabs as
- * it goes on — you reply, and it leaves your Inbox.
- *
- * Drafts do not need a folder either. An unsent line belongs to the conversation it was typed
- * in, shown against it, where it will be finished.
- */
+function roleLabel(role: string | null) {
+  if (role === "teacher") return "Teacher";
+  if (role === "student") return "Student";
+  return "Conversation";
+}
 
+/** A single modern inbox: conversations stay together, and drafts stay with their person. */
 export default function ConversationList({ title }: { title: string }) {
   const colors = useColors();
+  const dates = useDates();
   const insets = useSafeAreaInsets();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const { t, numeric, gutter, space, radius } = useLayout();
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [drafts, setDrafts] = useState<Drafts>({});
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<ConversationFilter>("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [problem, setProblem] = useState("");
 
   const load = useCallback(async () => {
     try {
-      const data = await apiGet<Conversation[]>("/conversations");
-      // Announcing a new message used to happen here, by diffing one poll against the last.
-      // That meant it only worked while this screen was open — which is what "notifications
-      // are not real time" meant in practice. The server now pushes it down the user channel
-      // (see hooks/useUserChannel), so doing it here as well would announce it twice.
+      const data = await apiGet<ConversationSummary[]>("/conversations");
       setConversations(data);
-      setDrafts(await loadDrafts());
-    } catch (_e) {
+      setProblem("");
+      try {
+        setDrafts(await loadDrafts());
+      } catch {
+        // A device-storage failure should not hide conversations fetched from the server.
+      }
+    } catch {
+      setProblem("Fadko could not load your conversations.");
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -55,159 +70,212 @@ export default function ConversationList({ title }: { title: string }) {
   }, []);
 
   useEffect(() => {
-    load();
-    const interval = setInterval(load, 6000);
+    void load();
+    const interval = setInterval(() => void load(), 6000);
     return () => clearInterval(interval);
   }, [load]);
 
-  const onRefresh = () => {
-    setRefreshing(true);
-    load();
-  };
-
-  /**
-   * Everything, newest first.
-   *
-   * The server already returns them in order; sorting again here is cheap insurance against
-   * that changing, and against a draft written just now sitting below a conversation from a
-   * fortnight ago.
-   */
-  const visible = [...conversations].sort(
-    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
+  const visible = useMemo(
+    () => filterConversations(conversations, query, filter),
+    [conversations, filter, query],
   );
-
-  /** A conversation that exists only as an unsent line still belongs in the list. */
+  const unread = conversations.filter((conversation) => conversation.unreadCount > 0).length;
   const draftOnly = Object.keys(drafts).filter(
-    (id) => !conversations.some((c) => String(c.otherUserId) === id),
+    (id) => !conversations.some((conversation) => String(conversation.otherUserId) === id),
   );
-
-  const initials = (name: string) =>
-    name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
+  const emptyInbox = !loading && !problem && conversations.length === 0 && draftOnly.length === 0;
 
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 100 }]}
+      contentContainerStyle={{
+        width: "100%",
+        maxWidth: marketplaceColumnMax,
+        alignSelf: "center",
+        paddingHorizontal: gutter,
+        paddingTop: insets.top + space.md,
+        paddingBottom: insets.bottom + bottomNavClearance,
+        gap: space.md,
+      }}
       showsVerticalScrollIndicator={false}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+      keyboardShouldPersistTaps="handled"
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} tintColor={colors.primary} />}
     >
       <View style={styles.titleRow}>
-        <Text style={[styles.title, { color: colors.foreground }]}>{title}</Text>
-        {/*
-          The way in. There was none: this screen listed conversations and offered no way to
-          begin one, so a teacher could only ever reply to a student who had written first.
-        */}
+        <View style={styles.headingCopy}>
+          <Text style={[t.overline, { color: colors.primary }]}>Inbox</Text>
+          <Text style={[t.title1, { color: colors.foreground }]}>{title}</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Class conversations, together in one place.</Text>
+        </View>
         <TouchableOpacity
-          style={[styles.newBtn, { backgroundColor: colors.primary }]}
+          style={[styles.newButton, { minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, backgroundColor: colors.primary }]}
           onPress={() => router.push("/new-message")}
-          activeOpacity={0.85}
+          activeOpacity={0.82}
+          accessibilityRole="button"
+          accessibilityLabel="Write a new message"
           testID="new-message-button"
         >
-          <Feather name="edit-2" size={13} color="#fff" />
-          <Text style={styles.newBtnText}>New</Text>
+          <Feather name="edit-3" size={16} color={colors.primaryForeground} />
+          <Text style={[t.caption, { color: colors.primaryForeground }]}>New</Text>
         </TouchableOpacity>
       </View>
 
-      {!loading && visible.length === 0 && draftOnly.length === 0 && (
-        <View style={[styles.empty, { backgroundColor: colors.muted }]}>
-          <Feather name="message-circle" size={26} color={colors.mutedForeground} />
-          <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-            No conversations yet.
-          </Text>
-          {/* An empty state that only describes the emptiness is no help. */}
+      {!loading && !problem && conversations.length > 0 ? (
+        <>
+          <View style={[styles.search, { minHeight: HIT_SLOP_MIN, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card }]}>
+            <Feather name="search" size={18} color={colors.mutedForeground} />
+            <TextInput
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search conversations"
+              placeholderTextColor={colors.inkFaint}
+              style={[t.body, styles.searchInput, { color: colors.foreground }]}
+              autoCorrect={false}
+              returnKeyType="search"
+              testID="conversation-search"
+            />
+            {query ? (
+              <TouchableOpacity onPress={() => setQuery("")} style={styles.clearButton} accessibilityLabel="Clear search">
+                <Feather name="x" size={18} color={colors.mutedForeground} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          <View style={styles.filters}>
+            {(["all", "unread"] as const).map((value) => {
+              const selected = filter === value;
+              const label = value === "all" ? `All ${conversations.length}` : `Unread ${unread}`;
+              return (
+                <TouchableOpacity
+                  key={value}
+                  onPress={() => setFilter(value)}
+                  style={[
+                    styles.filter,
+                    { minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.actionSoft : colors.card },
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected }}
+                  aria-selected={selected}
+                  testID={`conversation-filter-${value}`}
+                >
+                  <Text style={[t.caption, numeric, { color: selected ? colors.primary : colors.mutedForeground }]}>{label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </>
+      ) : null}
+
+      {loading ? (
+        <View style={styles.state}>
+          <ActivityIndicator color={colors.primary} />
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading conversations…</Text>
+        </View>
+      ) : null}
+
+      {!loading && problem ? (
+        <View style={[styles.stateCard, { borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }]}>
+          <View style={[styles.stateIcon, { borderRadius: radius.pill, backgroundColor: colors.warnSoft }]}>
+            <Feather name="wifi-off" size={22} color={colors.warn} />
+          </View>
+          <Text style={[t.title3, { color: colors.foreground }]}>Messages are unavailable</Text>
+          <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>{problem} Check your connection and try again.</Text>
           <TouchableOpacity
-            style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
-            onPress={() => router.push("/new-message")}
-            activeOpacity={0.85}
-            testID="empty-new-message-button"
+            onPress={() => { setLoading(true); void load(); }}
+            style={[styles.retryButton, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]}
           >
-            <Feather name="edit-2" size={13} color="#fff" />
-            <Text style={styles.newBtnText}>Write to someone</Text>
+            <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
           </TouchableOpacity>
         </View>
-      )}
+      ) : null}
 
-      {visible.map((c) => (
-        <TouchableOpacity
-          key={c.otherUserId}
-          style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
-          activeOpacity={0.7}
-          onPress={() =>
-            router.push({
-              pathname: "/conversation/[id]",
-              params: { id: String(c.otherUserId), name: c.otherUserName },
-            })
-          }
-          testID={`conversation-row-${c.otherUserId}`}
-        >
-          <View style={[styles.avatar, { backgroundColor: colors.primary + "18" }]}>
-            <Text style={[styles.avatarText, { color: colors.primary }]}>{initials(c.otherUserName)}</Text>
+      {emptyInbox ? (
+        <View style={[styles.stateCard, { borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }]}>
+          <View style={[styles.stateIcon, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
+            <Feather name="message-circle" size={24} color={colors.primary} />
           </View>
-          <View style={{ flex: 1 }}>
-            <View style={styles.rowTop}>
-              <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
-                {c.otherUserName}
-              </Text>
-              <Text style={[styles.time, { color: colors.mutedForeground }]}>
-                {new Date(c.lastMessageAt).toLocaleDateString("en-NP", { month: "short", day: "numeric" })}
-              </Text>
-            </View>
-            {/*
-              An unsent line takes the preview's place.
+          <Text style={[t.title3, { color: colors.foreground }]}>Your conversations start here</Text>
+          <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>Write to a teacher or student connected to your classes.</Text>
+          <TouchableOpacity
+            style={[styles.retryButton, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]}
+            onPress={() => router.push("/new-message")}
+            activeOpacity={0.82}
+            testID="empty-new-message-button"
+          >
+            <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Write a message</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
-              It is the thing that person needs to see about that conversation — they were
-              part-way through saying something. Marked, so it is not mistaken for a message
-              that went.
-            */}
-            {drafts[String(c.otherUserId)] ? (
-              <Text style={[styles.preview, { color: colors.mutedForeground }]} numberOfLines={1}>
-                <Text style={{ color: colors.destructive }}>Draft: </Text>
-                {drafts[String(c.otherUserId)]}
-              </Text>
-            ) : (
-              <Text
-                style={[
-                  styles.preview,
-                  { color: colors.mutedForeground },
-                  // An unread conversation reads differently at a glance, not only by its badge.
-                  c.unreadCount > 0 && { color: colors.foreground, fontFamily: "Inter_600SemiBold" },
-                ]}
-                numberOfLines={1}
+      {!loading && !problem && !emptyInbox && visible.length === 0 ? (
+        <View style={[styles.inlineState, { borderRadius: radius.md, backgroundColor: colors.muted }]}>
+          <Feather name={filter === "unread" ? "check-circle" : "search"} size={20} color={colors.mutedForeground} />
+          <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>
+            {filter === "unread" && !query ? "You are all caught up." : `No conversation matches “${query.trim()}”.`}
+          </Text>
+        </View>
+      ) : null}
+
+      {!loading && !problem && visible.length > 0 ? (
+        <View style={[styles.list, { borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }]}>
+          {visible.map((conversation, index) => {
+            const preview = conversationPreview(conversation, drafts[String(conversation.otherUserId)]);
+            const time = conversationTimeLabel(conversation.lastMessageAt, Date.now(), (date) => dates.format(date, { style: "short" }));
+            const isUnread = conversation.unreadCount > 0;
+            return (
+              <TouchableOpacity
+                key={conversation.otherUserId}
+                style={[styles.row, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }, isUnread && { backgroundColor: colors.actionSoft }]}
+                activeOpacity={0.72}
+                onPress={() => router.push({ pathname: "/conversation/[id]", params: { id: String(conversation.otherUserId), name: conversation.otherUserName } })}
+                accessibilityRole="button"
+                accessibilityLabel={`${conversation.otherUserName}, ${preview.label} ${preview.text}${isUnread ? `, ${conversation.unreadCount} unread` : ""}`}
+                testID={`conversation-row-${conversation.otherUserId}`}
               >
-                {c.lastMessage}
-              </Text>
-            )}
-          </View>
-          {c.unreadCount > 0 && (
-            <View style={[styles.badge, { backgroundColor: colors.primary }]}>
-              <Text style={styles.badgeText}>{c.unreadCount}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      ))}
+                <View style={[styles.avatar, { borderRadius: radius.pill, backgroundColor: isUnread ? colors.primary : colors.muted }]}>
+                  <Text style={[t.bodyStrong, { color: isUnread ? colors.primaryForeground : colors.primary }]}>{initials(conversation.otherUserName)}</Text>
+                </View>
+                <View style={styles.rowCopy}>
+                  <View style={styles.rowTop}>
+                    <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{conversation.otherUserName}</Text>
+                    <Text style={[t.caption, numeric, { color: isUnread ? colors.primary : colors.inkFaint }]}>{time}</Text>
+                  </View>
+                  <Text style={[t.caption, { color: colors.inkFaint }]}>{roleLabel(conversation.otherUserRole)}</Text>
+                  <Text style={[t.callout, isUnread && t.bodyStrong, { color: isUnread ? colors.foreground : colors.mutedForeground }]} numberOfLines={1}>
+                    {preview.label ? <Text style={{ color: preview.draft ? colors.destructive : colors.mutedForeground }}>{preview.label} </Text> : null}
+                    {preview.text}
+                  </Text>
+                </View>
+                {isUnread ? (
+                  <View style={[styles.badge, { borderRadius: radius.pill, backgroundColor: colors.primary }]}>
+                    <Text style={[t.overline, numeric, { color: colors.primaryForeground }]}>{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</Text>
+                  </View>
+                ) : (
+                  <Feather name="chevron-right" size={18} color={colors.inkFaint} />
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      ) : null}
 
-      {/*
-        Somebody typed to a person they have never sent to. Without this the line is kept and
-        invisible — nothing in the list says it exists, and it surfaces only if they happen to
-        open that conversation again.
-      */}
-      {draftOnly.map((id) => (
+      {!loading && !problem && filter === "all" && !query && draftOnly.map((id) => (
         <TouchableOpacity
           key={`draft-${id}`}
-          style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
-          activeOpacity={0.7}
+          style={[styles.orphanDraft, { borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card }]}
+          activeOpacity={0.72}
           onPress={() => router.push({ pathname: "/conversation/[id]", params: { id } })}
           testID={`draft-row-${id}`}
         >
-          <View style={[styles.avatar, { backgroundColor: colors.muted }]}>
-            <Feather name="edit-2" size={14} color={colors.mutedForeground} />
+          <View style={[styles.avatar, { borderRadius: radius.pill, backgroundColor: colors.muted }]}>
+            <Feather name="edit-3" size={17} color={colors.primary} />
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>Unsent message</Text>
-            <Text style={[styles.preview, { color: colors.mutedForeground }]} numberOfLines={1}>
+          <View style={styles.rowCopy}>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Unsent message</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]} numberOfLines={1}>
               <Text style={{ color: colors.destructive }}>Draft: </Text>{drafts[id]}
             </Text>
           </View>
+          <Feather name="chevron-right" size={18} color={colors.inkFaint} />
         </TouchableOpacity>
       ))}
     </ScrollView>
@@ -215,21 +283,25 @@ export default function ConversationList({ title }: { title: string }) {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 12 },
-  title: { fontSize: 24, fontFamily: "Inter_700Bold", marginBottom: 4 },
-  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-  newBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 20 },
-  newBtnText: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  emptyBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 20, marginTop: 4 },
-  empty: { borderRadius: 16, padding: 24, alignItems: "center", gap: 10, marginTop: 20 },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
-  row: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 16, borderWidth: 1, padding: 14 },
-  avatar: { width: 46, height: 46, borderRadius: 23, justifyContent: "center", alignItems: "center" },
-  avatarText: { fontSize: 16, fontFamily: "Inter_700Bold" },
-  rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  name: { fontSize: 15, fontFamily: "Inter_600SemiBold", flex: 1, marginRight: 8 },
-  time: { fontSize: 11, fontFamily: "Inter_400Regular" },
-  preview: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 2 },
-  badge: { minWidth: 22, height: 22, borderRadius: 11, justifyContent: "center", alignItems: "center", paddingHorizontal: 6 },
-  badgeText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff" },
+  titleRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 16 },
+  headingCopy: { flex: 1, gap: 2 },
+  newButton: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 16 },
+  search: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, paddingHorizontal: 14 },
+  searchInput: { flex: 1, paddingVertical: 10 },
+  clearButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
+  filters: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  filter: { alignItems: "center", justifyContent: "center", borderWidth: 1, paddingHorizontal: 16 },
+  state: { alignItems: "center", justifyContent: "center", gap: 12, paddingVertical: 48 },
+  stateCard: { alignItems: "center", borderWidth: 1, gap: 12, padding: 24 },
+  stateIcon: { width: 52, height: 52, alignItems: "center", justifyContent: "center" },
+  retryButton: { alignItems: "center", justifyContent: "center", alignSelf: "stretch", paddingHorizontal: 20 },
+  center: { textAlign: "center" },
+  inlineState: { alignItems: "center", gap: 8, padding: 20 },
+  list: { overflow: "hidden", borderWidth: 1 },
+  row: { minHeight: 84, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  avatar: { width: 48, height: 48, alignItems: "center", justifyContent: "center" },
+  rowCopy: { flex: 1, minWidth: 0 },
+  rowTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  badge: { minWidth: 26, minHeight: 26, alignItems: "center", justifyContent: "center", paddingHorizontal: 7 },
+  orphanDraft: { minHeight: 76, flexDirection: "row", alignItems: "center", gap: 12, borderWidth: 1, padding: 12 },
 });

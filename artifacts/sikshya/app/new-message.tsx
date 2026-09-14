@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   ScrollView,
@@ -12,24 +12,12 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
 import { matches } from "@/utils/search";
-
-/**
- * Choosing who to write to.
- *
- * Messaging only ever worked in one direction. A student could open a teacher's profile and
- * message them from there; a teacher had nowhere to begin, so their Messages screen listed
- * conversations they could only reply to, under an empty state reading "Messages you send or
- * receive will show up here" — true, and no help at all when there is no way to send one.
- *
- * The list is whoever the server says this person could sensibly write to: for a teacher, the
- * students who follow them and the students in their classes; for a student, the teachers they
- * follow and the ones they are learning from. It is a starting point rather than a restriction
- * — a conversation already under way is reached from the Messages list as before.
- */
 
 interface Recipient {
   userId: number;
@@ -38,14 +26,31 @@ interface Recipient {
   note: string;
 }
 
+function initials(name: string) {
+  return name.split(" ").map((part) => part[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+}
+
+/** Choose a relevant class contact, then go directly into the conversation. */
 export default function NewMessageScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { t, gutter, space, radius } = useLayout();
   const [people, setPeople] = useState<Recipient[]>([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+
+  const load = useCallback(async () => {
+    setFailed(false);
+    try {
+      setPeople(await apiGet<Recipient[]>("/message-recipients"));
+    } catch {
+      setFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -59,114 +64,146 @@ export default function NewMessageScreen() {
         if (live) setLoading(false);
       }
     })();
-    return () => {
-      live = false;
-    };
+    return () => { live = false; };
   }, []);
 
-  // The same matching the rest of the app searches names with, so "ram pra sad" finds
-  // Ram Prasad here exactly as it does everywhere else. See utils/search.ts.
   const shown = useMemo(
-    () => (query.trim() ? people.filter((p) => matches(p.name, query)) : people),
+    () => (query.trim() ? people.filter((person) => matches(`${person.name} ${person.note}`, query)) : people),
     [people, query],
   );
-
-  const initials = (name: string) =>
-    name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
-
   const teaching = user?.role === "teacher";
+  const audience = teaching ? "students" : "teachers";
 
   return (
     <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[styles.header, { borderColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.back} activeOpacity={0.7}>
-          <Feather name="chevron-left" size={22} color={colors.foreground} />
-        </TouchableOpacity>
-        <Text style={[styles.title, { color: colors.foreground }]}>New message</Text>
-      </View>
-
-      <View style={[styles.searchBox, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-        <Feather name="search" size={15} color={colors.mutedForeground} />
-        <TextInput
-          style={[styles.searchInput, { color: colors.foreground }]}
-          placeholder={teaching ? "Search your students" : "Search your teachers"}
-          placeholderTextColor={colors.mutedForeground}
-          value={query}
-          onChangeText={setQuery}
-          autoCorrect={false}
-          testID="recipient-search"
-        />
+      <View style={[styles.topBar, { borderBottomColor: colors.border, backgroundColor: colors.background }]}>
+        <View style={[styles.topBarInner, { maxWidth: marketplaceColumnMax, paddingHorizontal: gutter }]}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            style={[styles.back, { minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, borderColor: colors.border, backgroundColor: colors.card }]}
+            activeOpacity={0.72}
+            accessibilityRole="button"
+            accessibilityLabel="Back to messages"
+            testID="new-message-back"
+          >
+            <Feather name="arrow-left" size={20} color={colors.primary} />
+          </TouchableOpacity>
+          <View style={styles.topCopy}>
+            <Text style={[t.overline, { color: colors.primary }]}>Messages</Text>
+            <Text style={[t.title2, { color: colors.foreground }]}>New conversation</Text>
+          </View>
+        </View>
       </View>
 
       <ScrollView
-        contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}
+        style={styles.scroll}
+        contentContainerStyle={{
+          width: "100%",
+          maxWidth: marketplaceColumnMax,
+          alignSelf: "center",
+          paddingHorizontal: gutter,
+          paddingTop: space.lg,
+          paddingBottom: insets.bottom + space.xxxl,
+          gap: space.md,
+        }}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        {loading && <ActivityIndicator style={styles.spinner} color={colors.primary} />}
+        <View style={styles.intro}>
+          <Text style={[t.title1, { color: colors.foreground }]}>Who would you like to message?</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Choose from {audience} connected to your Fadko classes.</Text>
+        </View>
 
-        {!loading && failed && (
-          <View style={[styles.empty, { backgroundColor: colors.muted }]}>
-            <Feather name="wifi-off" size={24} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Could not load your contacts. Check your connection and try again.
-            </Text>
+        <View style={[styles.search, { minHeight: HIT_SLOP_MIN, borderRadius: radius.md, borderColor: colors.border, backgroundColor: colors.card }]}>
+          <Feather name="search" size={18} color={colors.mutedForeground} />
+          <TextInput
+            style={[t.body, styles.searchInput, { color: colors.foreground }]}
+            placeholder={`Search your ${audience}`}
+            placeholderTextColor={colors.inkFaint}
+            value={query}
+            onChangeText={setQuery}
+            autoCorrect={false}
+            returnKeyType="search"
+            testID="recipient-search"
+          />
+          {query ? (
+            <TouchableOpacity onPress={() => setQuery("")} style={styles.clear} accessibilityLabel="Clear search">
+              <Feather name="x" size={18} color={colors.mutedForeground} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        {loading ? (
+          <View style={styles.loading}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>Finding your contacts…</Text>
           </View>
-        )}
+        ) : null}
 
-        {/*
-          Two different emptinesses, said differently. Nobody to write to is a fact about the
-          account and worth explaining; nobody matching a search is a fact about the search.
-        */}
-        {!loading && !failed && people.length === 0 && (
-          <View style={[styles.empty, { backgroundColor: colors.muted }]}>
-            <Feather name="users" size={24} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+        {!loading && failed ? (
+          <View style={[styles.stateCard, { borderRadius: radius.lg, borderColor: colors.border, backgroundColor: colors.card }]}>
+            <View style={[styles.iconWell, { borderRadius: radius.pill, backgroundColor: colors.warnSoft }]}>
+              <Feather name="wifi-off" size={22} color={colors.warn} />
+            </View>
+            <Text style={[t.title3, { color: colors.foreground }]}>Contacts are unavailable</Text>
+            <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>Check your connection, then try again.</Text>
+            <TouchableOpacity
+              onPress={() => { setLoading(true); void load(); }}
+              style={[styles.retry, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]}
+              testID="recipient-retry"
+            >
+              <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {!loading && !failed && people.length === 0 ? (
+          <View style={[styles.stateCard, { borderRadius: radius.lg, borderColor: colors.border, backgroundColor: colors.card }]}>
+            <View style={[styles.iconWell, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
+              <Feather name="users" size={23} color={colors.primary} />
+            </View>
+            <Text style={[t.title3, { color: colors.foreground }]}>No contacts yet</Text>
+            <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>
               {teaching
-                ? "No students yet. Once someone follows you or books one of your classes, you can message them here."
-                : "No teachers yet. Follow a teacher or book a class, and you can message them here."}
+                ? "Students appear here after they follow you or join one of your classes."
+                : "Teachers appear here after you follow them or join one of their classes."}
             </Text>
           </View>
-        )}
+        ) : null}
 
-        {!loading && !failed && people.length > 0 && shown.length === 0 && (
-          <View style={[styles.empty, { backgroundColor: colors.muted }]}>
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Nobody matching “{query.trim()}”.
-            </Text>
+        {!loading && !failed && people.length > 0 && shown.length === 0 ? (
+          <View style={[styles.smallState, { borderRadius: radius.md, backgroundColor: colors.muted }]}>
+            <Feather name="search" size={20} color={colors.mutedForeground} />
+            <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>Nobody matches “{query.trim()}”.</Text>
           </View>
-        )}
+        ) : null}
 
-        {shown.map((p) => (
-          <TouchableOpacity
-            key={p.userId}
-            style={[styles.row, { backgroundColor: colors.card, borderColor: colors.border }]}
-            activeOpacity={0.7}
-            testID={`recipient-${p.userId}`}
-            onPress={() =>
-              // Replace rather than push: coming back from the conversation should land on
-              // Messages, not on the picker they have just finished with.
-              router.replace({
-                pathname: "/conversation/[id]",
-                params: { id: String(p.userId), name: p.name },
-              })
-            }
-          >
-            <View style={[styles.avatar, { backgroundColor: colors.primary + "18" }]}>
-              <Text style={[styles.avatarText, { color: colors.primary }]}>{initials(p.name)}</Text>
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.name, { color: colors.foreground }]} numberOfLines={1}>
-                {p.name}
-              </Text>
-              {p.note ? (
-                <Text style={[styles.note, { color: colors.mutedForeground }]} numberOfLines={1}>
-                  {p.note}
-                </Text>
-              ) : null}
-            </View>
-            <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-          </TouchableOpacity>
-        ))}
+        {!loading && !failed && shown.length > 0 ? (
+          <View style={[styles.list, { borderRadius: radius.lg, borderColor: colors.border, backgroundColor: colors.card }]}>
+            {shown.map((person, index) => (
+              <TouchableOpacity
+                key={person.userId}
+                style={[styles.row, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }]}
+                activeOpacity={0.72}
+                testID={`recipient-${person.userId}`}
+                accessibilityRole="button"
+                accessibilityLabel={`Message ${person.name}${person.note ? `, ${person.note}` : ""}`}
+                onPress={() => router.replace({ pathname: "/conversation/[id]", params: { id: String(person.userId), name: person.name } })}
+              >
+                <View style={[styles.avatar, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
+                  <Text style={[t.bodyStrong, { color: colors.primary }]}>{initials(person.name)}</Text>
+                </View>
+                <View style={styles.personCopy}>
+                  <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{person.name}</Text>
+                  {person.note ? <Text style={[t.caption, { color: colors.mutedForeground }]} numberOfLines={1}>{person.note}</Text> : null}
+                </View>
+                <View style={[styles.messageIcon, { borderRadius: radius.pill, backgroundColor: colors.primary }]}>
+                  <Feather name="message-circle" size={17} color={colors.primaryForeground} />
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -174,17 +211,24 @@ export default function NewMessageScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  header: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth },
-  back: { padding: 6 },
-  title: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
-  searchBox: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 16, marginTop: 14, marginBottom: 6, paddingHorizontal: 12, height: 42, borderRadius: 12, borderWidth: 1 },
-  searchInput: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular", paddingVertical: 0 },
-  spinner: { marginTop: 32 },
-  empty: { borderRadius: 16, padding: 24, alignItems: "center", gap: 10, margin: 16 },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
-  row: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: 16, marginTop: 10, padding: 12, borderRadius: 14, borderWidth: 1 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
-  avatarText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  name: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  note: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
+  topBar: { borderBottomWidth: StyleSheet.hairlineWidth },
+  topBarInner: { width: "100%", alignSelf: "center", minHeight: 68, flexDirection: "row", alignItems: "center", gap: 12 },
+  back: { alignItems: "center", justifyContent: "center", borderWidth: 1 },
+  topCopy: { flex: 1 },
+  scroll: { flex: 1 },
+  intro: { gap: 4 },
+  search: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, paddingHorizontal: 14 },
+  searchInput: { flex: 1, paddingVertical: 10 },
+  clear: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
+  loading: { alignItems: "center", gap: 12, paddingVertical: 48 },
+  stateCard: { alignItems: "center", gap: 12, borderWidth: 1, padding: 24 },
+  iconWell: { width: 52, height: 52, alignItems: "center", justifyContent: "center" },
+  center: { textAlign: "center" },
+  retry: { alignSelf: "stretch", alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
+  smallState: { alignItems: "center", gap: 8, padding: 20 },
+  list: { overflow: "hidden", borderWidth: 1 },
+  row: { minHeight: 74, flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 11 },
+  avatar: { width: 46, height: 46, alignItems: "center", justifyContent: "center" },
+  personCopy: { flex: 1, minWidth: 0 },
+  messageIcon: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
 });
