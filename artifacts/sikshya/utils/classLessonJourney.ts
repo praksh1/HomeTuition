@@ -5,13 +5,18 @@ export type ClassJourneyLesson = {
   durationMinutes: number;
 };
 
+export type ClassJourneyDisplayLesson = ClassJourneyLesson & {
+  /** One-based chronological number for people; database positions may start at zero. */
+  displayNumber: number;
+};
+
 export type ClassLessonJourney = {
   stage: "empty" | "current" | "upcoming" | "finished";
   focusLesson: ClassJourneyLesson | null;
   focusNumber: number | null;
   passedDates: number;
   remainingDates: number;
-  visibleLessons: ClassJourneyLesson[];
+  visibleLessons: ClassJourneyDisplayLesson[];
   hiddenDates: number;
 };
 
@@ -73,7 +78,10 @@ export function classLessonJourney(
     focusNumber,
     passedDates,
     remainingDates: ordered.length - passedDates,
-    visibleLessons: relevant,
+    visibleLessons: relevant.map((lesson) => ({
+      ...lesson,
+      displayNumber: ordered.indexOf(lesson) + 1,
+    })),
     hiddenDates: Math.max(0, relevantTotal - relevant.length),
   };
 }

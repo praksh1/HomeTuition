@@ -46,6 +46,26 @@ test("shows the first future lesson before a class begins", () => {
     [11, 12, 13],
   );
   assert.equal(result.hiddenDates, 1);
+  assert.deepEqual(
+    result.visibleLessons.map((lesson) => lesson.displayNumber),
+    [1, 2, 3],
+  );
+});
+
+test("display numbers stay one-based when stored positions start at zero", () => {
+  const zeroBased = lessons.map((lesson) => ({
+    ...lesson,
+    position: lesson.position - 1,
+  }));
+  const result = classLessonJourney(
+    zeroBased,
+    Date.parse("2026-09-13T09:00:00.000Z"),
+  );
+  assert.equal(result.focusNumber, 1);
+  assert.deepEqual(
+    result.visibleLessons.map((lesson) => lesson.displayNumber),
+    [1, 2, 3],
+  );
 });
 
 test("keeps the current lesson in focus instead of skipping to tomorrow", () => {

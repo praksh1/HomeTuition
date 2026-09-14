@@ -279,7 +279,7 @@ export default function ClassHomeScreen() {
                 >
                   <View style={{ flex: 1, gap: space.xxs }}>
                     <Text style={[t.bodyStrong, { color: colors.foreground }]}>
-                      Lesson {lesson.position}
+                      Lesson {lesson.displayNumber}
                     </Text>
                     <Text
                       style={[

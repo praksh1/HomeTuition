@@ -64,6 +64,10 @@ try {
       `${width}: schedule count is clear`,
     );
     check(
+      current.includes("Lesson 1") && !current.includes("Lesson 0"),
+      `${width}: stored zero-based positions render as human lesson numbers`,
+    );
+    check(
       current.includes("+ 1 more scheduled date"),
       `${width}: long schedule stays compact`,
     );

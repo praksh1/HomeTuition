@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: `codex/premium-student-class-journey`
 - Base commit: `560dc3b`
-- Status: in progress
+- Status: preview correction in progress
 
 ## Requested
 
@@ -17,7 +17,7 @@ Continue upgrading Fadko after universal simulated checkout reached production. 
 - Rebuilt the Class Home hero so an in-progress lesson stays in focus, a future lesson is called next, and a fully elapsed timetable says “Schedule complete” without an “Open lesson” action.
 - Added a bounded three-date schedule preview, a truthful remaining-date count, and a compact overflow count.
 - Added direct role-specific navigation to Payments & receipts for students and Earnings history for teachers. No platform allocation, held-total or percentage copy appears on Class Home.
-- Added a rendered browser journey at 390 and 1440 pixels and six pure boundary tests.
+- Added a rendered browser journey at 390 and 1440 pixels and seven pure boundary tests.
 
 ## Decisions and assumptions
 
@@ -28,11 +28,11 @@ Continue upgrading Fadko after universal simulated checkout reached production. 
 
 ## Verification
 
-- Sikshya unit suite: 428 passed, 0 failed, including six new class-journey boundaries and the updated Class Home source contract.
+- Sikshya unit suite: 429 passed, 0 failed, including seven new class-journey boundaries and the updated Class Home source contract.
 - API unit suite: 566 passed, 0 failed when run outside the restricted filesystem sandbox.
 - Workspace typecheck: 4/4 packages passed when run outside the restricted filesystem sandbox.
 - `test:batch-booking-ui`: 82 passed, 0 failed at 390 and 1440 pixels.
-- New `test:class-home`: 26 passed, 0 failed at 390 and 1440 pixels; current/upcoming/finished states, correct session navigation, role-specific records, touch floor, overflow and browser exceptions covered.
+- New `test:class-home`: 28 passed, 0 failed at 390 and 1440 pixels; current/upcoming/finished states, zero-based stored positions, correct session navigation, role-specific records, touch floor, overflow and browser exceptions covered.
 - Class Home screenshots were visually inspected at both widths. Latest temporary output: `C:\Users\missk\AppData\Local\Temp\fadko-class-home-xb2OQ2`.
 - `lint:design`: no new leaks; baseline remains 90 hex literals and 270 raw sizes.
 - `git diff --check`: clean after whitespace correction.
@@ -41,6 +41,7 @@ Continue upgrading Fadko after universal simulated checkout reached production. 
 
 - The first local typecheck and browser/API runs failed because the restricted filesystem sandbox denied pnpm junction traversal. The same gates passed outside that sandbox; no source correction was needed.
 - The first Class Home bundle reached Expo's native module loader through `@expo/vector-icons`. The harness now replaces `expo-font`, as the repository's other rendered journeys already do.
+- The first deployed preview exposed a real contract mismatch hidden by the hand-written fixture: batch lesson positions are stored from zero, so the schedule rendered “Lesson 0.” The UI now derives one-based human lesson numbers from chronological order, and both pure and rendered fixtures prove the production-shaped zero-based input.
 
 ## Fabrications found
 
@@ -58,6 +59,6 @@ Both came from `future-or-final-row` logic and are now explicit, unit-tested sta
 
 ## Remaining risks / next pickup point
 
-- Deploy the branch to preview and verify the real authenticated Class Home against staging data.
+- Redeploy the one-based numbering correction and verify the real authenticated Class Home against staging data.
 - The schedule preview does not yet offer a full-timetable route; the source listing still provides the complete lesson-date disclosure.
 - Real Android/iPhone rendering and hardware Back remain physical-device checks.
