@@ -1,8 +1,8 @@
 import { BlurView } from "expo-blur";
 import { Tabs } from "expo-router";
-import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
+import { PremiumTabIcon } from "@/components/navigation/PremiumTabIcon";
 import { useColors } from "@/hooks/useColors";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
 import { useAuth } from "@/context/AuthContext";
@@ -15,11 +15,15 @@ function ClassicStudentTabLayout() {
   const isDark = colorScheme === "dark";
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
+  const icon = (name: React.ComponentProps<typeof PremiumTabIcon>["name"]) =>
+    ({ color, focused }: { color: string; focused: boolean }) => (
+      <PremiumTabIcon name={name} color={color} focused={focused} accent={colors.primary} soft={colors.actionSoft} />
+    );
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: colors.secondary,
+        tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.mutedForeground,
         headerShown: false,
         tabBarStyle: {
@@ -43,14 +47,14 @@ function ClassicStudentTabLayout() {
         name="index"
         options={{
           title: "Discover",
-          tabBarIcon: ({ color }) => <Feather name="compass" size={22} color={color} />,
+          tabBarIcon: icon("compass"),
         }}
       />
       <Tabs.Screen
         name="sessions"
         options={{
           title: "Sessions",
-          tabBarIcon: ({ color }) => <Feather name="calendar" size={22} color={color} />,
+          tabBarIcon: icon("calendar"),
         }}
       />
       <Tabs.Screen
@@ -59,7 +63,7 @@ function ClassicStudentTabLayout() {
           title: "Messages",
           // Without a badge a new message was invisible until the user thought to look.
           tabBarBadge: unreadMessages > 0 ? (unreadMessages > 99 ? "99+" : unreadMessages) : undefined,
-          tabBarIcon: ({ color }) => <Feather name="message-circle" size={22} color={color} />,
+          tabBarIcon: icon("message-circle"),
         }}
       />
       {/* "same for students - the Customer Service needs to have a separate Tab!" */}
@@ -67,14 +71,14 @@ function ClassicStudentTabLayout() {
         name="support"
         options={{
           title: "Support",
-          tabBarIcon: ({ color }) => <Feather name="life-buoy" size={22} color={color} />,
+          tabBarIcon: icon("life-buoy"),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color }) => <Feather name="user" size={22} color={color} />,
+          tabBarIcon: icon("user"),
         }}
       />
       {/* Reached from Discover. See the note in the teacher's layout about the size of the bar. */}

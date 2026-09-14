@@ -39,12 +39,20 @@ try {
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.goto(base);
-    await page.getByText("2 students", { exact: true }).waitFor();
+    await page.getByText("40 students", { exact: true }).waitFor();
     const text = await page.locator("body").innerText();
     check(text.includes("Anisha Rai") && text.includes("Bikash Thapa"), `${width}: enrolled students are named`);
     check(text.includes("2 of 12 lessons joined · 91 min recorded"), `${width}: recorded presence is concise`);
     check(text.includes("No lesson presence recorded yet"), `${width}: no presence is not called absence`);
     check(!text.includes("email") && !text.includes("Held by Fadko") && !text.includes("70%"), `${width}: roster reveals no contact or internal money`);
+    check(text.includes("Showing 10 of 40") && !text.includes("Student 11"), `${width}: large roster opens as ten compact rows`);
+    await page.getByTestId("roster-show-more").click();
+    check((await page.locator("body").innerText()).includes("Student 11"), `${width}: teacher can reveal the next ten students`);
+    await page.getByTestId("roster-filter-not_yet").click();
+    check((await page.locator("body").innerText()).includes("No lesson presence recorded yet"), `${width}: no-activity filter shows only recorded zero-presence rows`);
+    await page.getByTestId("roster-search").fill("Student 37");
+    const searched = await page.locator("body").innerText();
+    check(searched.includes("Student 37") && !searched.includes("Anisha Rai"), `${width}: name search finds one student without scrolling`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-roster.png`), fullPage: true });
 

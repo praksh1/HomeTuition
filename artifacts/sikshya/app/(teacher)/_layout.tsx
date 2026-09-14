@@ -1,8 +1,8 @@
 import { BlurView } from "expo-blur";
 import { Tabs, router } from "expo-router";
-import { Feather } from "@expo/vector-icons";
 import React, { useEffect } from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
+import { PremiumTabIcon } from "@/components/navigation/PremiumTabIcon";
 import { useColors } from "@/hooks/useColors";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
 import { useAuth } from "@/context/AuthContext";
@@ -30,6 +30,10 @@ function ClassicTabLayout() {
   const isDark = colorScheme === "dark";
   const isIOS = Platform.OS === "ios";
   const isWeb = Platform.OS === "web";
+  const icon = (name: React.ComponentProps<typeof PremiumTabIcon>["name"]) =>
+    ({ color, focused }: { color: string; focused: boolean }) => (
+      <PremiumTabIcon name={name} color={color} focused={focused} accent={colors.primary} soft={colors.actionSoft} />
+    );
 
   return (
     <Tabs
@@ -62,21 +66,21 @@ function ClassicTabLayout() {
         name="index"
         options={{
           title: "Dashboard",
-          tabBarIcon: ({ color }) => <Feather name="home" size={22} color={color} />,
+          tabBarIcon: icon("home"),
         }}
       />
       <Tabs.Screen
         name="sessions"
         options={{
           title: "Sessions",
-          tabBarIcon: ({ color }) => <Feather name="calendar" size={22} color={color} />,
+          tabBarIcon: icon("calendar"),
         }}
       />
       <Tabs.Screen
         name="students"
         options={{
           title: "Students",
-          tabBarIcon: ({ color }) => <Feather name="users" size={22} color={color} />,
+          tabBarIcon: icon("users"),
         }}
       />
       {/*
@@ -91,7 +95,7 @@ function ClassicTabLayout() {
         name="support"
         options={{
           title: "Support",
-          tabBarIcon: ({ color }) => <Feather name="life-buoy" size={22} color={color} />,
+          tabBarIcon: icon("life-buoy"),
         }}
       />
       <Tabs.Screen
@@ -100,14 +104,14 @@ function ClassicTabLayout() {
           title: "Messages",
           // Without a badge a new message was invisible until the user thought to look.
           tabBarBadge: unreadMessages > 0 ? (unreadMessages > 99 ? "99+" : unreadMessages) : undefined,
-          tabBarIcon: ({ color }) => <Feather name="message-circle" size={22} color={color} />,
+          tabBarIcon: icon("message-circle"),
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color }) => <Feather name="user" size={22} color={color} />,
+          tabBarIcon: icon("user"),
         }}
       />
       {/* Still routable, and reached from Profile — just no longer a tab of its own. */}
