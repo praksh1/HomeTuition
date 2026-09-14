@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   accountDetailsDraft,
+  accountDetailsNeedConfirmation,
   completeAccountDetails,
   firstAccountDetailsIssue,
   type AccountDetailsDraft,
@@ -37,6 +38,25 @@ test("an inconsistent legacy row cannot masquerade as a location the person sele
   assert.equal(draft.localLevel, "");
   assert.equal(draft.affiliationStatus, "unselected");
   assert.equal(completeAccountDetails({ ...complete, phone: null }), false);
+  assert.equal(accountDetailsNeedConfirmation({ ...complete, phone: null }), true);
+});
+
+test("a phone number cannot make known staging placeholders look person-confirmed", () => {
+  const fixture = {
+    ...complete,
+    phone: "9801234567",
+    locality: "Synthetic staging fixture",
+    institutionName: "Synthetic Staging School",
+    affiliationStatus: "not_specified" as const,
+  };
+  assert.deepEqual(accountDetailsDraft(fixture), accountDetailsDraft(null));
+  assert.equal(completeAccountDetails(fixture), false);
+  assert.equal(accountDetailsNeedConfirmation(fixture), true);
+});
+
+test("a genuinely complete profile is not asked to reconfirm on every visit", () => {
+  assert.equal(accountDetailsNeedConfirmation(complete), false);
+  assert.equal(accountDetailsNeedConfirmation(null), false);
 });
 
 test("validation gives one useful next action, beginning with the missing phone", () => {

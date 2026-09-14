@@ -100,6 +100,16 @@ try {
     check(await page.getByTestId("account-province-error").isVisible(), `${width}: validation advances to the next missing choice`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: validation does not create horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-editor-errors.png`), fullPage: true });
+
+    await page.goto(`${base}?screen=editor&profile=fixture`);
+    await page.getByText("Please confirm your details", { exact: true }).waitFor();
+    check((await page.getByTestId("account-phone").inputValue()) === "", `${width}: adding a phone does not legitimise synthetic fixture details`);
+    check((await page.getByTestId("account-province").innerText()).includes("Choose province"), `${width}: known test defaults are never presented as a chosen province`);
+    check((await page.getByTestId("account-district").innerText()).includes("Choose province first"), `${width}: known test defaults do not cascade into a district`);
+    check((await page.getByTestId("account-details-confirmation").innerText()).includes("instead of guessing them"), `${width}: the person is told why the fields are unselected`);
+    check((await page.getByTestId("account-institution").count()) === 0, `${width}: institution input waits for an affiliation choice`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: confirmation guidance does not create horizontal overflow`);
+    await page.screenshot({ path: path.join(work, `${width}-editor-fixture.png`), fullPage: true });
     await page.close();
   }
 } finally {

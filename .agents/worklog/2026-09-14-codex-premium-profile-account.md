@@ -1,6 +1,6 @@
 # Premium Profile and account editor
 
-Status: Profile and login fixes are on `codex/premium-profile-account`; exact account-validation correction is awaiting preview testing
+Status: Profile and login fixes are on `codex/premium-profile-account`; latest fixture-integrity correction is awaiting preview testing
 
 ## Goal
 
@@ -31,13 +31,15 @@ Make Profile feel like one trustworthy account home for teachers and students, a
 - Errors clear while the person corrects the field; a missing phone can no longer trigger a generic list blaming Province, District and Municipality too.
 - Incomplete legacy/test rows are not trusted as user-entered addresses. If the saved row is internally incomplete, the editor and Profile status remain unconfirmed instead of presenting plausible location placeholders as the person's choices.
 - The deployed staging account exposed browser-restored blank Phone state beside legacy fixture selections. The editor now performs a second initial integrity check: an untouched blank Phone clears inherited address/affiliation state, while a person deliberately editing Phone keeps their existing address.
+- Live preview then exposed a second state: once the test phone was populated, the old synthetic locality and school made the row look technically complete. Known staging placeholders now invalidate the entire draft, and the person sees a short confirmation notice explaining why location and school are blank.
+- School/institution input no longer appears before the person chooses Affiliated or School not listed. The first decision now comes before its dependent field.
 
 ## Verification
 
 - Sikshya typecheck: pass.
-- App units: 455 passed, 0 failed.
-- Focused account-form and Profile contracts: 15 passed, 0 failed.
-- Rendered Profile journey: 50 passed at 390 px and 1440 px, including incomplete legacy data, exact first-field errors, live error clearing, cascading validation, searchable Nepal pickers, touch floors, no horizontal overflow and no browser exceptions.
+- App units: 457 passed, 0 failed.
+- Focused account-form and Profile contracts: 17 passed, 0 failed.
+- Rendered Profile journey: 62 passed at 390 px and 1440 px, including incomplete legacy data, populated-phone fixture data, exact first-field errors, live error clearing, cascading validation, searchable Nepal pickers, touch floors, no horizontal overflow and no browser exceptions.
 - Repository typecheck: all four packages clean.
 - Design lint: no new leaks; baseline remains 83 hex / 246 sizes.
 - `git diff --check`: clean.

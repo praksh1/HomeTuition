@@ -13,6 +13,7 @@ import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost } from "@/utils/api";
 import {
   accountDetailsDraft,
+  accountDetailsNeedConfirmation,
   firstAccountDetailsIssue,
   type AccountDetailsField,
   type AffiliationStatus,
@@ -51,6 +52,7 @@ export default function Onboarding() {
   const [photoUploaded, setPhotoUploaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [fieldError, setFieldError] = useState<{ field: AccountDetailsField; message: string } | null>(null);
 
   useEffect(() => {
@@ -61,6 +63,7 @@ export default function Onboarding() {
       setProvinces(locations.provinces ?? []);
       const row = current.onboarding;
       if (!row) return;
+      setNeedsConfirmation(accountDetailsNeedConfirmation(row));
       const draft = accountDetailsDraft(row);
       setPhone(draft.phone);
       setProvince(draft.province);
@@ -183,6 +186,14 @@ export default function Onboarding() {
         <Text style={[t.body, { color: colors.mutedForeground }]}>{isTeacher ? "These details help students find and trust you. Your phone stays private." : "Your teacher sees the student's display name. School and phone details stay private."}</Text>
       </View>
 
+      {!loading && needsConfirmation ? <View accessibilityRole="alert" testID="account-details-confirmation" style={{ flexDirection: "row", alignItems: "flex-start", gap: space.sm, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: colors.warn, backgroundColor: colors.warnSoft }}>
+        <Feather name="info" size={19} color={colors.warn} />
+        <View style={{ flex: 1, gap: space.xxs }}>
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Please confirm your details</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Fadko has left your location and school unselected instead of guessing them.</Text>
+        </View>
+      </View> : null}
+
       {loading ? <View accessibilityRole="progressbar" accessibilityLabel="Loading account details" style={{ minHeight: space.huge * 3, alignItems: "center", justifyContent: "center", gap: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }}>
         <ActivityIndicator color={colors.primary} />
         <Text style={[t.body, { color: colors.mutedForeground }]}>Preparing your account details…</Text>
@@ -232,7 +243,7 @@ export default function Onboarding() {
         {fieldError?.field === "affiliationStatus" ? <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{fieldError.message}</Text> : null}
       </View>
 
-      {affiliationStatus !== "independent" && (
+      {(affiliationStatus === "affiliated" || affiliationStatus === "not_specified") && (
         <View style={{ gap: space.sm }}>
           {affiliationStatus === "affiliated" && (
             <View style={{ flexDirection: "row", gap: space.xs }}>

@@ -48,6 +48,7 @@ test("the location editor keeps province and district controlled with explicit f
   assert.match(onboarding, /School not listed/);
   assert.match(onboarding, /Independent teacher/);
   assert.match(onboarding, /Not applicable/);
+  assert.match(onboarding, /affiliationStatus === "affiliated" \|\| affiliationStatus === "not_specified"/);
 });
 
 test("long Nepal location lists open as bounded searchable selections", () => {
@@ -70,6 +71,9 @@ test("account validation stays beside one specific field instead of showing a ge
   assert.match(onboarding, /phoneRef\.current\?\.focus/);
   assert.match(onboarding, /phoneTouchedRef\.current/);
   assert.match(onboarding, /const inheritedSelection/);
+  assert.match(onboarding, /accountDetailsNeedConfirmation/);
+  assert.match(onboarding, /Please confirm your details/);
+  assert.match(onboarding, /left your location and school unselected instead of guessing them/);
   assert.doesNotMatch(onboarding, /Phone, province, district, and municipality/);
 });
 

@@ -24,6 +24,13 @@ type SavedDetails = Partial<Record<keyof AccountDetailsDraft, string | null>>;
 
 const phonePattern = /^\+?[0-9][0-9 -]{6,17}$/;
 const affiliations = new Set<AffiliationStatus>(["affiliated", "independent", "not_specified"]);
+const knownFixtureValues = new Set(["synthetic staging fixture", "synthetic staging school"]);
+
+function containsKnownFixtureValue(saved: SavedDetails): boolean {
+  return [saved.locality, saved.institutionName].some((value) =>
+    knownFixtureValues.has(value?.trim().toLocaleLowerCase() ?? ""),
+  );
+}
 
 export const EMPTY_ACCOUNT_DETAILS: AccountDetailsDraft = {
   phone: "",
@@ -49,7 +56,8 @@ export function accountDetailsDraft(saved: SavedDetails | null | undefined): Acc
     ? saved.affiliationStatus as AffiliationStatus
     : "unselected";
   const coherent = Boolean(
-    saved.phone?.trim()
+    !containsKnownFixtureValue(saved)
+      && saved.phone?.trim()
       && phonePattern.test(saved.phone.trim())
       && saved.province?.trim()
       && saved.district?.trim()
@@ -67,6 +75,13 @@ export function accountDetailsDraft(saved: SavedDetails | null | undefined): Acc
     institutionName: saved.institutionName?.trim() ?? "",
     affiliationStatus: affiliation,
   };
+}
+
+/** Whether an existing row has claims that the person should explicitly review before saving. */
+export function accountDetailsNeedConfirmation(saved: SavedDetails | null | undefined): boolean {
+  if (!saved) return false;
+  const hasSavedClaim = Object.values(saved).some((value) => typeof value === "string" && value.trim());
+  return Boolean(hasSavedClaim && !completeAccountDetails(saved));
 }
 
 /** One specific next action is calmer and more useful than a generic list of every required field. */

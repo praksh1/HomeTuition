@@ -17,3 +17,5 @@ Nepal Province, District and Municipality choices open in a bounded searchable s
 Account forms must not answer a simple omission with a generic server-error list. Validate in reading order, show only the next actionable error beside its field, move that field into view, focus it when appropriate, and clear the error as soon as the person corrects it.
 
 Do not present incomplete legacy or synthetic profile rows as facts a person supplied. A plausible Province/District/Municipality beside a missing required phone or affiliation is an inconsistent row, not evidence of consent or selection; ask the person to confirm the whole set instead of silently preselecting it.
+
+Completing a different field later does not legitimise fixture data. If a saved row still carries known synthetic staging locality or institution values, leave the related form choices empty and explain that Fadko refuses to guess. Dependent institution input appears only after the person chooses an affiliation path.
