@@ -5,6 +5,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { SearchableSelectionField } from "@/components/profile/SearchableSelectionField";
+import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
@@ -38,6 +40,7 @@ export default function Onboarding() {
   const [photo, setPhoto] = useState<UploadableFile | null>(null);
   const [photoUploaded, setPhotoUploaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     void Promise.all([
@@ -60,7 +63,8 @@ export default function Onboarding() {
       setInstitutionName(row.institutionName ?? "");
       if (row.affiliationStatus === "independent" || row.affiliationStatus === "not_specified") setAffiliationStatus(row.affiliationStatus);
       setPhotoUploaded(Boolean(row.profilePhotoKey));
-    }).catch(() => notify("Could not load locations", "Check your connection and try again."));
+    }).catch(() => notify("Could not load locations", "Check your connection and try again."))
+      .finally(() => setLoading(false));
   }, []);
 
   const districts = useMemo(() => provinces.find((item) => item.name === province)?.districts ?? [], [provinces, province]);
@@ -128,36 +132,53 @@ export default function Onboarding() {
   if (!user || user.role === "admin") return null;
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ paddingHorizontal: gutter, paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.huge, gap: space.lg }} keyboardShouldPersistTaps="handled">
+    <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ width: "100%", maxWidth: readingWidth, alignSelf: "center", paddingHorizontal: gutter, paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + space.huge, gap: space.lg }} keyboardShouldPersistTaps="handled">
       <View style={{ gap: space.xs }}>
-        {editing && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to profile" onPress={() => router.replace(isTeacher ? "/(teacher)/profile" : "/(student)/profile")} style={{ minHeight: 44, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: space.xs }}><Feather name="arrow-left" size={20} color={colors.primary} /><Text style={[t.bodyStrong, { color: colors.primary }]}>Profile</Text></TouchableOpacity>}
+        {editing && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to profile" onPress={() => router.replace(isTeacher ? "/(teacher)/profile" : "/(student)/profile")} style={{ minHeight: HIT_SLOP_MIN, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: space.xs }}><Feather name="arrow-left" size={20} color={colors.primary} /><Text style={[t.bodyStrong, { color: colors.primary }]}>Profile</Text></TouchableOpacity>}
         <Text style={[t.title1, { color: colors.foreground }]}>{editing ? "Account details" : "Complete your profile"}</Text>
         <Text style={[t.body, { color: colors.mutedForeground }]}>{isTeacher ? "These details help students find and trust you. Your phone stays private." : "Your teacher sees the student's display name. School and phone details stay private."}</Text>
       </View>
 
-      <View style={{ gap: space.xs }}>
+      {loading ? <View accessibilityRole="progressbar" accessibilityLabel="Loading account details" style={{ minHeight: space.huge * 3, alignItems: "center", justifyContent: "center", gap: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }}>
+        <ActivityIndicator color={colors.primary} />
+        <Text style={[t.body, { color: colors.mutedForeground }]}>Preparing your account details…</Text>
+      </View> : null}
+
+      {!loading && <>
+      <View style={{ gap: space.md, padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }}>
+        <SectionHeading icon="phone" title="Contact" detail="How Fadko can reach you about your account and classes" colors={colors} t={t} radius={radius} space={space} />
+        <View style={{ gap: space.xs }}>
         <Text style={[t.bodyStrong, { color: colors.foreground }]}>Login email</Text>
         <View style={{ minHeight: 48, justifyContent: "center", paddingHorizontal: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.muted }}>
           <Text style={[t.body, { color: colors.foreground }]}>{user.email}</Text>
         </View>
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Your verified login email is protected. Contact Support if it needs to change.</Text>
-      </View>
+        </View>
 
       <Field label="Phone number *" value={phone} onChange={setPhone} placeholder="+977…" colors={colors} t={t} radius={radius} space={space} keyboardType="phone-pad" />
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>Fadko may use this for login, class, and other important SMS notifications.</Text>
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.xs }}>
+          <Feather name="lock" size={15} color={colors.mutedForeground} />
+          <Text style={[t.caption, { flex: 1, color: colors.mutedForeground }]}>Your phone stays private. Fadko may use it for important login, class and account notices.</Text>
+        </View>
+      </View>
 
-      <Choice label="Province *" value={province} options={provinces.map((item) => item.name)} onChoose={(value: string) => { setProvince(value); setDistrict(""); setLocalLevel(""); setManualLocalLevel(false); }} colors={colors} t={t} radius={radius} space={space} />
-      <Choice label="District *" value={district} options={districts.map((item) => item.name)} onChoose={(value: string) => { setDistrict(value); setLocalLevel(""); setManualLocalLevel(false); }} colors={colors} t={t} radius={radius} space={space} />
+      <View style={{ gap: space.md, padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }}>
+      <SectionHeading icon="map-pin" title="Location" detail="Select an official Nepal province and district" colors={colors} t={t} radius={radius} space={space} />
+      <SearchableSelectionField label="Province *" value={province} options={provinces.map((item) => item.name)} placeholder="Choose province" searchPlaceholder="Search provinces" onChoose={(value: string) => { setProvince(value); setDistrict(""); setLocalLevel(""); setManualLocalLevel(false); }} testID="account-province" />
+      <SearchableSelectionField label="District *" value={district} options={districts.map((item) => item.name)} placeholder={province ? "Choose district" : "Choose province first"} searchPlaceholder="Search districts" disabled={!province} onChoose={(value: string) => { setDistrict(value); setLocalLevel(""); setManualLocalLevel(false); }} testID="account-district" />
       {manualLocalLevel ? <>
         <Field label="Municipality / local level *" value={localLevel} onChange={setLocalLevel} placeholder="Type the municipality or local level" colors={colors} t={t} radius={radius} space={space} />
-        {localLevels.length > 0 && <TouchableOpacity accessibilityRole="button" onPress={() => { setManualLocalLevel(false); setLocalLevel(""); }} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.bodyStrong, { color: colors.primary }]}>Choose from the list instead</Text></TouchableOpacity>}
+        {localLevels.length > 0 && <TouchableOpacity accessibilityRole="button" onPress={() => { setManualLocalLevel(false); setLocalLevel(""); }} style={{ minHeight: HIT_SLOP_MIN, justifyContent: "center" }}><Text style={[t.bodyStrong, { color: colors.primary }]}>Choose from the list instead</Text></TouchableOpacity>}
       </> : <>
-        <Choice label="Metropolitan / Municipality / Local level *" value={localLevel} options={localLevels} onChoose={setLocalLevel} colors={colors} t={t} radius={radius} space={space} />
-        {!!district && <TouchableOpacity accessibilityRole="button" onPress={() => { setManualLocalLevel(true); setLocalLevel(""); }} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.bodyStrong, { color: colors.primary }]}>My municipality is not listed</Text></TouchableOpacity>}
+        <SearchableSelectionField label="Metropolitan / Municipality / Local level *" value={localLevel} options={localLevels} placeholder={district ? "Choose municipality or local level" : "Choose district first"} searchPlaceholder="Search municipalities" disabled={!district} onChoose={setLocalLevel} testID="account-local-level" />
+        {!!district && <TouchableOpacity accessibilityRole="button" onPress={() => { setManualLocalLevel(true); setLocalLevel(""); }} style={{ minHeight: HIT_SLOP_MIN, justifyContent: "center" }}><Text style={[t.bodyStrong, { color: colors.primary }]}>My municipality is not listed</Text></TouchableOpacity>}
       </>}
       <Field label="Town, city, or locality" value={locality} onChange={setLocality} placeholder="Optional local area" colors={colors} t={t} radius={radius} space={space} />
+      </View>
 
-      <View style={{ gap: space.sm }}>
+      <View style={{ gap: space.md, padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }}>
+        <SectionHeading icon="book-open" title={isTeacher ? "Teaching affiliation" : "School or college"} detail={isTeacher ? "Choose a school or continue as an independent teacher" : "Add your school, college, or choose Not applicable"} colors={colors} t={t} radius={radius} space={space} />
+        <View style={{ gap: space.sm }}>
         <Text style={[t.bodyStrong, { color: colors.foreground }]}>{isTeacher ? "School affiliation *" : "School or college *"}</Text>
         <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
           <Chip label="Affiliated" active={affiliationStatus === "affiliated"} onPress={() => setAffiliationStatus("affiliated")} colors={colors} t={t} radius={radius} space={space} />
@@ -183,6 +204,7 @@ export default function Onboarding() {
           <Field label={affiliationStatus === "not_specified" ? "Type the school or college name *" : "Selected institution *"} value={institutionName} onChange={setInstitutionName} placeholder="Institution name" colors={colors} t={t} radius={radius} space={space} />
         </View>
       )}
+      </View>
 
       {isTeacher && !editing && (
         <View style={{ padding: space.md, gap: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card }}>
@@ -198,6 +220,7 @@ export default function Onboarding() {
       <TouchableOpacity onPress={() => void finish()} disabled={saving} activeOpacity={0.85} style={{ minHeight: 52, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary }}>
         {saving ? <ActivityIndicator color={colors.primaryForeground} /> : <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{editing ? "Save account details" : "Save and continue"}</Text>}
       </TouchableOpacity>
+      </>}
     </ScrollView>
   );
 }
@@ -206,9 +229,16 @@ function Field({ label, value, onChange, placeholder, colors, t, radius, space, 
   return <View style={{ gap: space.xs }}><Text style={[t.bodyStrong, { color: colors.foreground }]}>{label}</Text><TextInput value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={colors.inkFaint} keyboardType={keyboardType} autoCapitalize="words" style={[t.body, { minHeight: 48, paddingHorizontal: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, color: colors.foreground, backgroundColor: colors.card }]} /></View>;
 }
 
-function Choice({ label, value, options, onChoose, colors, t, radius, space }: any) {
-  const [open, setOpen] = useState(false);
-  return <View style={{ gap: space.xs }}><Text style={[t.bodyStrong, { color: colors.foreground }]}>{label}</Text><TouchableOpacity onPress={() => setOpen((current) => !current)} activeOpacity={0.75} style={{ minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.card }}><Text style={[t.body, { color: value ? colors.foreground : colors.inkFaint }]}>{value || "Choose"}</Text><Feather name={open ? "chevron-up" : "chevron-down"} size={18} color={colors.mutedForeground} /></TouchableOpacity>{open && <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.card, overflow: "hidden" }}>{options.map((option: string) => <TouchableOpacity key={option} onPress={() => { onChoose(option); setOpen(false); }} style={{ padding: space.sm }}><Text style={[t.body, { color: colors.foreground }]}>{option}</Text></TouchableOpacity>)}</View>}</View>;
+function SectionHeading({ icon, title, detail, colors, t, radius, space }: any) {
+  return <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+    <View style={{ width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.sm, alignItems: "center", justifyContent: "center", backgroundColor: colors.actionSoft }}>
+      <Feather name={icon} size={19} color={colors.primary} />
+    </View>
+    <View style={{ flex: 1, gap: space.xxs }}>
+      <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>{title}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>{detail}</Text>
+    </View>
+  </View>;
 }
 
 function Chip({ label, active, onPress, colors, t, radius, space }: any) {

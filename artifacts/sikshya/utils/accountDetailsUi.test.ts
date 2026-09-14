@@ -11,12 +11,29 @@ const teacherProfile = read("app/(teacher)/profile.tsx");
 const studentProfile = read("app/(student)/profile.tsx");
 const onboarding = read("app/onboarding.tsx");
 const support = read("app/support.tsx");
+const profileHero = read("components/profile/ProfileHero.tsx");
+const selectionField = read("components/profile/SearchableSelectionField.tsx");
 
 test("teacher and student profiles share one editable account-details surface", () => {
   assert.match(teacherProfile, /AccountDetailsCard email=\{teacher\.email\} role="teacher"/);
   assert.match(studentProfile, /AccountDetailsCard email=\{student\.email\} role="student"/);
   assert.match(accountCard, /edit-account-details/);
   assert.match(accountCard, /\/onboarding/);
+});
+
+test("both roles share the premium identity hero and descriptive action rows", () => {
+  assert.match(teacherProfile, /<ProfileHero/);
+  assert.match(studentProfile, /<ProfileHero/);
+  assert.match(teacherProfile, /<ProfileActionRow/);
+  assert.match(studentProfile, /<ProfileActionRow/);
+  assert.match(profileHero, /MY FADKO PROFILE|eyebrow/);
+  assert.doesNotMatch(studentProfile, /No saved payment method/);
+});
+
+test("teacher credentials stay compact until the teacher asks to manage them", () => {
+  assert.match(teacherProfile, /showDocuments &&/);
+  assert.match(teacherProfile, /teacher-credentials-toggle/);
+  assert.match(teacherProfile, /Identity & credentials/);
 });
 
 test("the login email is visible but cannot be silently changed", () => {
@@ -31,6 +48,16 @@ test("the location editor keeps province and district controlled with explicit f
   assert.match(onboarding, /School not listed/);
   assert.match(onboarding, /Independent teacher/);
   assert.match(onboarding, /Not applicable/);
+});
+
+test("long Nepal location lists open as bounded searchable selections", () => {
+  assert.match(onboarding, /SearchableSelectionField label="Province/);
+  assert.match(onboarding, /SearchableSelectionField label="District/);
+  assert.match(onboarding, /disabled=\{!province\}/);
+  assert.match(onboarding, /disabled=\{!district\}/);
+  assert.match(selectionField, /<Modal/);
+  assert.match(selectionField, /<FlatList/);
+  assert.match(selectionField, /No match found/);
 });
 
 test("a refund request explains the original-payment-method rule", () => {

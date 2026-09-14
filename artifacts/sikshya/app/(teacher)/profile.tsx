@@ -1,7 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -9,6 +8,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SocialSignIn } from "@/components/SocialSignIn";
 import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
+import { ProfileActionRow } from "@/components/profile/ProfileActionRow";
+import { ProfileHero } from "@/components/profile/ProfileHero";
 import StarRating from "@/components/StarRating";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth, type Teacher } from "@/context/AuthContext";
@@ -42,14 +43,15 @@ type CredentialLoadState = "loading" | "ready" | "error";
 export default function TeacherProfile() {
   const { user, logout, refreshUser } = useAuth();
   const colors = useColors();
-  const { t, numeric, space, radius, elevation, gutter } = useLayout();
+  const { t, numeric, space, radius, gutter } = useLayout();
   const insets = useSafeAreaInsets();
   const teacher = user as Teacher;
-  const styles = createStyles({ colors, space, radius, elevation, gutter });
+  const styles = createStyles({ colors, space, radius, gutter });
   const [uploading, setUploading] = useState(false);
   const [credentials, setCredentials] = useState<StoredCredential[]>([]);
   const [credentialLoadState, setCredentialLoadState] = useState<CredentialLoadState>("loading");
   const [selected, setSelected] = useState<{ documentType: string; file: UploadableFile } | null>(null);
+  const [showDocuments, setShowDocuments] = useState(false);
 
   const loadCredentials = useCallback(async () => {
     setCredentialLoadState("loading");
@@ -91,6 +93,10 @@ export default function TeacherProfile() {
     : teacher.approvalStatus === "rejected" ? "Teaching review needs action" : "Teaching review pending";
   const hasReviews = teacher.reviewCount > 0;
   const initials = teacher.name.split(" ").map((name) => name[0]).slice(0, 2).join("").toUpperCase();
+  const statusIcon: React.ComponentProps<typeof Feather>["name"] = teacher.approvalStatus === "approved" ? "check-circle"
+    : teacher.approvalStatus === "rejected" ? "alert-circle" : "clock";
+  const approvedDocuments = credentials.filter((credential) => credential.status === "approved").length;
+  const needsDocumentAttention = credentials.some((credential) => credential.status === "rejected");
 
   const chooseCredential = async (documentType: string) => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -153,16 +159,13 @@ export default function TeacherProfile() {
       }]}
       showsVerticalScrollIndicator={false}
     >
-      <LinearGradient colors={[colors.secondary, colors.primary]} style={styles.profileHero}>
-        <View style={styles.avatarCircle}>
-          <Text style={[t.title1, styles.avatarText]}>{initials}</Text>
-        </View>
-        <Text style={[t.title2, styles.inverseText]}>{teacher.name}</Text>
-        <Text style={[t.callout, styles.inverseMutedText]}>{teacher.subject || "Subject not added yet"}</Text>
-        <View style={[styles.statusBadge, { backgroundColor: statusBackground, borderColor: statusColor }]}>
-          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-          <Text style={[t.caption, { color: statusColor }]}>{statusLabel}</Text>
-        </View>
+      <ProfileHero
+        eyebrow="MY TEACHING PROFILE"
+        initials={initials}
+        name={teacher.name}
+        subtitle={teacher.subject || "Subject not added yet"}
+        status={{ icon: statusIcon, label: statusLabel, color: statusColor, background: statusBackground }}
+      >
         {teacher.approvalStatus === "approved" && (
           <View style={styles.ratingRow}>
             {hasReviews ? <>
@@ -173,7 +176,7 @@ export default function TeacherProfile() {
             </> : <Text style={[t.callout, styles.inverseMutedText]}>No student reviews yet</Text>}
           </View>
         )}
-      </LinearGradient>
+      </ProfileHero>
 
       <View style={styles.card}>
         <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>About</Text>
@@ -194,24 +197,47 @@ export default function TeacherProfile() {
       <AccountDetailsCard email={teacher.email} role="teacher" />
 
       <View style={styles.card}>
-        <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Identity & Credentials</Text>
-        <Text style={[t.callout, styles.secondaryText]}>
-          Fadko Support reviews each file before it can be approved. You can replace a rejected file; a file already opened for review stays locked.
-        </Text>
-        <Text style={[t.bodyStrong, styles.primaryText]}>Documents</Text>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={`${showDocuments ? "Hide" : "Manage"} identity and credentials`}
+          accessibilityState={{ expanded: showDocuments }}
+          onPress={() => setShowDocuments((current) => !current)}
+          activeOpacity={0.72}
+          style={styles.credentialDisclosure}
+          testID="teacher-credentials-toggle"
+        >
+          <View style={styles.credentialDisclosureIcon}>
+            <Feather name={needsDocumentAttention ? "alert-circle" : "shield"} size={19} color={needsDocumentAttention ? colors.destructive : colors.primary} />
+          </View>
+          <View style={styles.credentialDisclosureCopy}>
+            <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Identity & credentials</Text>
+            <Text style={[t.caption, styles.secondaryText]}>
+              {credentialLoadState === "loading" ? "Checking your documents…"
+                : needsDocumentAttention ? "A document needs your attention"
+                  : `${approvedDocuments} approved · ${credentials.length} submitted`}
+            </Text>
+          </View>
+          <Feather name={showDocuments ? "chevron-up" : "chevron-down"} size={20} color={colors.mutedForeground} />
+        </TouchableOpacity>
 
-        {credentialLoadState === "loading" && <View style={styles.loadState} accessibilityRole="progressbar" accessibilityLabel="Loading documents">
+        {showDocuments && <>
+          <Text style={[t.callout, styles.secondaryText]}>
+            Fadko Support reviews each file before it can be approved. You can replace a rejected file; a file already opened for review stays locked.
+          </Text>
+          <Text style={[t.bodyStrong, styles.primaryText]}>Documents</Text>
+
+          {credentialLoadState === "loading" && <View style={styles.loadState} accessibilityRole="progressbar" accessibilityLabel="Loading documents">
           <ActivityIndicator color={colors.primary} />
           <Text style={[t.callout, styles.secondaryText]}>Loading your documents…</Text>
         </View>}
-        {credentialLoadState === "error" && <View style={[styles.loadState, styles.errorState]}>
+          {credentialLoadState === "error" && <View style={[styles.loadState, styles.errorState]}>
           <Feather name="alert-circle" size={20} color={colors.destructive} />
           <Text style={[t.callout, styles.secondaryText]}>We could not load your documents. Nothing has been removed.</Text>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Try loading documents again" style={styles.retryButton} onPress={() => void loadCredentials()} activeOpacity={0.7}>
             <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
           </TouchableOpacity>
         </View>}
-        {credentialLoadState === "ready" && <View style={styles.credentialGrid}>
+          {credentialLoadState === "ready" && <View style={styles.credentialGrid}>
           {CREDENTIAL_TYPES.map((type) => {
             const uploaded = credentials.find((credential) => credential.documentType === type.id);
             const selectedHere = selected?.documentType === type.id ? selected.file : null;
@@ -248,22 +274,29 @@ export default function TeacherProfile() {
               {locked && <Text style={[t.caption, styles.secondaryText]}>An operator has opened this file, so it can no longer be deleted.</Text>}
             </View>;
           })}
-        </View>}
+          </View>}
+        </>}
       </View>
 
       <View style={styles.socialRow}><SocialSignIn mode="link" /></View>
 
-      <TouchableOpacity accessibilityRole="button" style={styles.navigationRow} onPress={() => router.push("/(teacher)/subscription")} activeOpacity={0.7} testID="subscription-link">
-        <Feather name="credit-card" size={18} color={colors.foreground} />
-        <Text style={[t.bodyStrong, styles.navigationText]}>Teaching & earnings</Text>
-        <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
-      </TouchableOpacity>
-
-      <TouchableOpacity accessibilityRole="button" style={styles.navigationRow} onPress={() => router.push("/notification-settings")} activeOpacity={0.7} testID="notification-settings-link">
-        <Feather name="bell" size={18} color={colors.foreground} />
-        <Text style={[t.bodyStrong, styles.navigationText]}>Notifications</Text>
-        <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
-      </TouchableOpacity>
+      <View style={{ gap: space.sm }}>
+        <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Teaching tools</Text>
+        <ProfileActionRow
+          icon="credit-card"
+          title="Teaching & earnings"
+          detail="Payouts, pending earnings and records"
+          onPress={() => router.push("/(teacher)/subscription")}
+          testID="subscription-link"
+        />
+        <ProfileActionRow
+          icon="bell"
+          title="Notifications"
+          detail="Choose which updates reach you"
+          onPress={() => router.push("/notification-settings")}
+          testID="notification-settings-link"
+        />
+      </View>
 
       <TouchableOpacity accessibilityRole="button" style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.7}>
         <Feather name="log-out" size={18} color={colors.destructive} />
@@ -277,21 +310,14 @@ interface StyleOptions {
   colors: ReturnType<typeof useColors>;
   space: ReturnType<typeof useLayout>["space"];
   radius: ReturnType<typeof useLayout>["radius"];
-  elevation: ReturnType<typeof useLayout>["elevation"];
   gutter: number;
 }
 
-function createStyles({ colors, space, radius, elevation, gutter }: StyleOptions) {
+function createStyles({ colors, space, radius, gutter }: StyleOptions) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
     container: { width: "100%", maxWidth: readingWidth, alignSelf: "center", gap: space.md, paddingHorizontal: gutter },
-    profileHero: { paddingTop: space.xxl, paddingBottom: space.xl, paddingHorizontal: space.lg, alignItems: "center", gap: space.xs, borderRadius: radius.lg, ...elevation.card },
-    avatarCircle: { width: 80, height: 80, borderRadius: radius.pill, backgroundColor: colors.card, justifyContent: "center", alignItems: "center", marginBottom: space.xs },
-    avatarText: { color: colors.secondary, textAlign: "center" },
-    inverseText: { color: colors.onInverse, textAlign: "center" },
     inverseMutedText: { color: colors.onInverseMuted, textAlign: "center" },
-    statusBadge: { flexDirection: "row", alignItems: "center", gap: space.xxs, borderRadius: radius.pill, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: space.xxs },
-    statusDot: { width: space.xs, height: space.xs, borderRadius: radius.pill },
     ratingRow: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: space.xs },
     card: { borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, padding: space.md, gap: space.sm },
     primaryText: { color: colors.foreground },
@@ -303,6 +329,9 @@ function createStyles({ colors, space, radius, elevation, gutter }: StyleOptions
     errorState: { borderRadius: radius.sm, backgroundColor: colors.destructiveSoft },
     retryButton: { minHeight: HIT_SLOP_MIN, justifyContent: "center", paddingHorizontal: space.md, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary },
     credentialGrid: { gap: space.sm },
+    credentialDisclosure: { minHeight: HIT_SLOP_MIN + space.sm, flexDirection: "row", alignItems: "center", gap: space.sm },
+    credentialDisclosureIcon: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.sm, alignItems: "center", justifyContent: "center", backgroundColor: colors.actionSoft },
+    credentialDisclosureCopy: { flex: 1, gap: space.xxs },
     credentialBlock: { gap: space.xs, borderRadius: radius.sm, borderWidth: 1, padding: space.sm, backgroundColor: colors.muted },
     credentialTitleRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: space.xs },
     credentialName: { color: colors.foreground, flexShrink: 1 },
@@ -313,8 +342,6 @@ function createStyles({ colors, space, radius, elevation, gutter }: StyleOptions
     primaryAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primary, paddingHorizontal: space.sm },
     destructiveAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingHorizontal: space.sm },
     socialRow: { marginHorizontal: space.xxs },
-    navigationRow: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card, paddingVertical: space.sm, paddingHorizontal: space.md },
-    navigationText: { flex: 1, color: colors.foreground },
     logoutButton: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingVertical: space.sm },
   });
 }
