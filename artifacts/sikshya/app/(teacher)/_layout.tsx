@@ -1,27 +1,10 @@
 import { BlurView } from "expo-blur";
-import { Tabs, router } from "expo-router";
-import React, { useEffect } from "react";
+import { Tabs } from "expo-router";
+import React from "react";
 import { Platform, StyleSheet, View, useColorScheme } from "react-native";
 import { PremiumTabIcon } from "@/components/navigation/PremiumTabIcon";
 import { useColors } from "@/hooks/useColors";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
-import { useAuth } from "@/context/AuthContext";
-
-function TeacherRoleGuard() {
-  const { user, logout } = useAuth();
-
-  useEffect(() => {
-    if (user && user.role !== "teacher") {
-      logout();
-      const message = "This account is registered as a student. You've been signed out for security.";
-      if (Platform.OS === "web") window.alert(`Access Denied\n\n${message}`);
-      router.replace("/(student)");
-    }
-  }, [user]);
-
-  if (user && user.role !== "teacher") return null;
-  return null;
-}
 
 function ClassicTabLayout() {
   const { unread: unreadMessages } = useUnreadMessages();
@@ -147,10 +130,5 @@ function ClassicTabLayout() {
 }
 
 export default function TeacherTabLayout() {
-  return (
-    <>
-      <TeacherRoleGuard />
-      <ClassicTabLayout />
-    </>
-  );
+  return <ClassicTabLayout />;
 }
