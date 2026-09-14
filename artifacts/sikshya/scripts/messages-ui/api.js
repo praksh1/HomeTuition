@@ -35,5 +35,16 @@ const recipients = [
 
 export async function apiGet(path) {
   if (location.search.includes("failure")) throw new Error("offline");
+  if (path.startsWith("/messages/")) {
+    return [
+      { id: 101, senderId: 11, receiverId: 7, body: "Can we review question four tomorrow?", read: true, createdAt: new Date(Date.now() - 3_600_000).toISOString(), reactions: [{ emoji: "👍", count: 1, mine: false }] },
+      { id: 102, senderId: 7, receiverId: 11, body: "Yes, I added it to our lesson plan.", read: true, createdAt: new Date(Date.now() - 1_800_000).toISOString() },
+    ];
+  }
   return path === "/message-recipients" ? recipients : conversations;
+}
+
+export async function apiPost(path, body) {
+  if (path.includes("reaction")) return {};
+  return { id: 103, senderId: 7, receiverId: 11, body: body.body, read: false, createdAt: new Date().toISOString() };
 }

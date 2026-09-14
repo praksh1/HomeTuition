@@ -16,11 +16,14 @@ const built = await bundleForBrowser({
   alias: {
     "@/utils/api": path.join(here, "api.js"),
     "@/utils/drafts": path.join(here, "drafts.js"),
+    "@/utils/uploadFile": path.join(here, "upload.js"),
+    "@/components/MessageAttachment": path.join(here, "attachment.js"),
     "@/context/AuthContext": path.join(here, "auth.js"),
     "@/context/DatePreferenceContext": path.join(here, "context.js"),
     "expo-router": path.join(here, "router.js"),
     "react-native-safe-area-context": path.join(here, "context.js"),
     "expo-font": path.resolve(here, "../batch-planner/font.js"),
+    "expo-document-picker": path.join(here, "document-picker.js"),
   },
 });
 assert.ok(built.ok, built.error);
@@ -68,8 +71,25 @@ try {
     await page.getByTestId("recipient-11").click();
     check(await page.evaluate(() => window.lastNavigation?.pathname === "/conversation/[id]"), `${width}: choosing a person opens their conversation`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: picker has no horizontal overflow`);
-    check(errors.length === 0, `${width}: no browser exceptions`);
     await page.screenshot({ path: path.join(work, `${width}-picker.png`), fullPage: true });
+
+    await page.goto(`${base}?conversation`);
+    await page.getByText("Fadko conversation", { exact: true }).waitFor();
+    const chat = await page.locator("body").innerText();
+    check(chat.includes("Can we review question four tomorrow?"), `${width}: incoming message is visible`);
+    check(chat.includes("Yes, I added it to our lesson plan."), `${width}: outgoing message is visible`);
+    check(chat.includes("Seen"), `${width}: latest outgoing message shows its read state`);
+    check(chat.includes("Today"), `${width}: conversation has a quiet Nepal-day divider`);
+    check((await page.getByTestId("conversation-back-btn").boundingBox()).height >= 44, `${width}: conversation back meets the touch floor`);
+    check((await page.getByTestId("conversation-attach-btn").boundingBox()).height >= 44, `${width}: attachment action meets the touch floor`);
+    check((await page.getByTestId("conversation-send-btn").boundingBox()).height >= 44, `${width}: send action meets the touch floor`);
+    await page.getByTestId("conversation-input").fill("See you in class.");
+    await page.getByTestId("conversation-send-btn").click();
+    await page.getByText("See you in class.", { exact: true }).waitFor();
+    check((await page.locator("body").innerText()).includes("Sent"), `${width}: newly sent message shows pending read state`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: conversation has no horizontal overflow`);
+    check(errors.length === 0, `${width}: no browser exceptions`);
+    await page.screenshot({ path: path.join(work, `${width}-conversation.png`), fullPage: true });
     await page.close();
   }
 } finally {

@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -14,12 +14,21 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useColors } from "@/hooks/useColors";
+
+import MessageAttachment from "@/components/MessageAttachment";
+import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
+import { useDates } from "@/context/DatePreferenceContext";
+import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
-import MessageAttachment from "@/components/MessageAttachment";
-import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
+import {
+  latestOwnMessageId,
+  messageDayLabel,
+  messageTimeLabel,
+  shouldShowDay,
+} from "@/utils/messageTimeline";
 import {
   applyReaction,
   attachmentLabel,
@@ -27,6 +36,7 @@ import {
   type Attachment,
   type Reaction,
 } from "@/utils/reactions";
+import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 interface Message {
   id: number;
@@ -37,54 +47,59 @@ interface Message {
   createdAt: string;
   attachments?: Attachment[];
   reactions?: Reaction[];
-  /** Sent back when a file was refused. The message went; the file did not. */
+  /** Sent back when a file was refused. The words still went. */
   attachmentProblem?: string | null;
+}
+
+function initials(name: string) {
+  return name.split(" ").map((part) => part[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
 export default function ConversationScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const colors = useColors();
+  const dates = useDates();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { t, numeric, gutter, space, radius, isWide } = useLayout();
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [loadProblem, setLoadProblem] = useState(false);
   const [sending, setSending] = useState(false);
-  /** Chosen but not sent yet. It goes up when they press send, not when they pick it. */
   const [pending, setPending] = useState<UploadableFile | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  /** Which bubble's reaction picker is open, if any. */
   const [picking, setPicking] = useState<number | null>(null);
+  const listRef = useRef<FlatList<Message>>(null);
+  const displayName = name?.trim() || "Conversation";
 
-  // A half-written message survives navigating away; without this it was simply lost.
   useEffect(() => {
     let cancelled = false;
-    getDraft(String(id)).then((saved) => {
+    void getDraft(String(id)).then((saved) => {
       if (!cancelled && saved) setDraft(saved);
     });
     return () => { cancelled = true; };
   }, [id]);
-  const listRef = useRef<FlatList<Message>>(null);
 
   const load = useCallback(async () => {
     try {
-      const thread = await apiGet<Message[]>(`/messages/${id}`);
-      setMessages(thread);
-    } catch (_e) {}
+      setMessages(await apiGet<Message[]>(`/messages/${id}`));
+      setLoadProblem(false);
+    } catch {
+      setLoadProblem(true);
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
   useEffect(() => {
-    load();
-    const interval = setInterval(load, 4000);
+    void load();
+    const interval = setInterval(() => void load(), 4000);
     return () => clearInterval(interval);
   }, [load]);
 
-  /**
-   * Choose a file. Nothing is uploaded yet.
-   *
-   * Uploading on pick would put bytes in the bucket for a message that is never sent — and on
-   * a Nepali connection it would also mean a wait with no send button pressed and nothing
-   * obviously happening. It goes up when they mean it.
-   */
+  const latestMine = useMemo(() => latestOwnMessageId(messages, user?.userId), [messages, user?.userId]);
+
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
       type: ["image/*", "application/pdf"],
@@ -103,8 +118,6 @@ export default function ConversationScreen() {
 
   const send = async () => {
     const body = draft.trim();
-    // A photo with no caption is a message. Requiring words to send one would mean typing
-    // something in order to send a picture, which nobody does.
     if ((!body && !pending) || sending) return;
 
     setSending(true);
@@ -116,51 +129,33 @@ export default function ConversationScreen() {
     try {
       let fileKey: string | undefined;
       if (outgoing) fileKey = await uploadFile(outgoing);
-
       const sent = await apiPost<Message>(`/messages/${id}`, {
         body,
         ...(fileKey ? { fileKey, fileType: outgoing!.mimeType, fileName: outgoing!.name } : {}),
       });
-      await clearDraft(String(id)); // it is a sent message now, not a draft
-      setMessages((prev) => [...prev, sent]);
-      /*
-       * The message went and the file did not — the server says so rather than failing the
-       * whole send, because losing the words as well is the worse outcome.
-       */
+      await clearDraft(String(id));
+      setMessages((previous) => [...previous, sent]);
       if (sent.attachmentProblem) setProblem(sent.attachmentProblem);
       requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
-    } catch (err) {
-      /*
-       * Put it all back exactly as it was. Half-clearing after a failed send is how somebody
-       * loses a message they thought they had sent — and the upload is the step most likely
-       * to fail here, so the file has to come back too.
-       */
+    } catch (error) {
       setDraft(body);
       setPending(outgoing);
-      setProblem(err instanceof Error && err.message ? err.message : "That did not send. Try again.");
+      setProblem(error instanceof Error && error.message ? error.message : "That did not send. Try again.");
     } finally {
       setSending(false);
     }
   };
 
-  /**
-   * React, or take it back.
-   *
-   * Shown immediately and reconciled from the server afterwards: a tap that waits for a round
-   * trip on a poor connection feels broken, and the server is the authority on the count
-   * either way.
-   */
   const react = async (messageId: number, emoji: string) => {
     setPicking(null);
-    // The rule itself lives in utils/reactions.ts, unit-tested and shared with the class chat —
-    // two copies of "what one tap does" would drift the first time either was edited.
-    setMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, reactions: applyReaction(m.reactions ?? [], emoji) } : m)),
-    );
+    setMessages((previous) => previous.map((message) => (
+      message.id === messageId
+        ? { ...message, reactions: applyReaction(message.reactions ?? [], emoji) }
+        : message
+    )));
     try {
       await apiPost(`/messages/${messageId}/reaction`, { emoji });
-    } catch (_e) {
-      // The guess was wrong, so go and get the truth rather than leaving it showing.
+    } catch {
       void load();
     }
   };
@@ -171,89 +166,134 @@ export default function ConversationScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={insets.top}
     >
-      <View style={[styles.header, { paddingTop: insets.top + 12, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
-        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} testID="conversation-back-btn">
-          <Feather name="arrow-left" size={22} color={colors.foreground} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]} numberOfLines={1}>
-          {name ?? "Conversation"}
-        </Text>
-        <View style={{ width: 22 }} />
+      <View style={[styles.header, { paddingTop: insets.top, borderBottomColor: colors.border, backgroundColor: colors.card }]}>
+        <View style={[styles.headerInner, { maxWidth: marketplaceColumnMax, paddingHorizontal: gutter }]}>
+          <TouchableOpacity
+            onPress={() => router.back()}
+            activeOpacity={0.72}
+            style={[styles.headerAction, { minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, borderColor: colors.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Back to messages"
+            testID="conversation-back-btn"
+          >
+            <Feather name="arrow-left" size={20} color={colors.primary} />
+          </TouchableOpacity>
+          <View style={[styles.headerAvatar, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
+            <Text style={[t.caption, { color: colors.primary }]}>{initials(displayName)}</Text>
+          </View>
+          <View style={styles.headerCopy}>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{displayName}</Text>
+            <Text style={[t.caption, { color: colors.inkFaint }]}>Fadko conversation</Text>
+          </View>
+        </View>
       </View>
 
       <FlatList
         ref={listRef}
         data={messages}
-        keyExtractor={(m) => String(m.id)}
-        contentContainerStyle={styles.listContent}
+        keyExtractor={(message) => String(message.id)}
+        style={styles.list}
+        contentContainerStyle={{
+          width: "100%",
+          maxWidth: marketplaceColumnMax,
+          alignSelf: "center",
+          flexGrow: 1,
+          paddingHorizontal: gutter,
+          paddingTop: space.md,
+          paddingBottom: space.xl,
+          gap: space.xs,
+        }}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-        renderItem={({ item }) => {
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={loadProblem && messages.length > 0 ? (
+          <TouchableOpacity
+            onPress={() => void load()}
+            style={[styles.connectionNote, { borderRadius: radius.sm, backgroundColor: colors.warnSoft }]}
+            accessibilityRole="button"
+          >
+            <Feather name="refresh-cw" size={15} color={colors.warn} />
+            <Text style={[t.caption, { color: colors.warn }]}>New messages may be delayed. Tap to retry.</Text>
+          </TouchableOpacity>
+        ) : null}
+        renderItem={({ item, index }) => {
           const mine = item.senderId === user?.userId;
           const files = item.attachments ?? [];
           const reactions = item.reactions ?? [];
+          const showDay = shouldShowDay(messages, index);
+          const latestOwn = mine && latestMine === item.id;
           return (
-            <View style={styles.messageBlock}>
+            <View style={[styles.messageBlock, showDay && index > 0 && { marginTop: space.md }]}>
+              {showDay ? (
+                <View style={styles.dayRow}>
+                  <View style={[styles.dayLine, { backgroundColor: colors.border }]} />
+                  <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>
+                    {messageDayLabel(item.createdAt, Date.now(), (date) => dates.format(date, { style: "short" }))}
+                  </Text>
+                  <View style={[styles.dayLine, { backgroundColor: colors.border }]} />
+                </View>
+              ) : null}
+
               <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
-                {/*
-                  Long-press to react, which is the gesture these apps have taught everybody.
-                  A permanently visible row of six emoji under every bubble would be louder
-                  than the conversation.
-                */}
                 <TouchableOpacity
-                  activeOpacity={0.85}
+                  activeOpacity={0.86}
                   onLongPress={() => setPicking(picking === item.id ? null : item.id)}
                   delayLongPress={250}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${mine ? "You" : displayName}: ${item.body || (files[0] ? attachmentLabel(files[0]) : "attachment")}. Long press to react.`}
                   testID={`message-bubble-${item.id}`}
                   style={[
                     styles.bubble,
+                    { maxWidth: isWide ? "70%" : "84%", borderRadius: radius.lg },
                     mine
                       ? { backgroundColor: colors.primary }
-                      : { backgroundColor: colors.muted, borderColor: colors.border, borderWidth: 1 },
+                      : { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1 },
                   ]}
                 >
-                  {!!item.body && (
-                    <Text style={[styles.bubbleText, { color: mine ? "#fff" : colors.foreground }]}>{item.body}</Text>
-                  )}
-
-                  {files.map((f) => (
-                    <View key={f.fileKey} style={{ marginTop: item.body ? 8 : 0 }}>
-                      <MessageAttachment file={f} mine={mine} onProblem={setProblem} />
+                  {item.body ? <Text style={[t.body, { color: mine ? colors.primaryForeground : colors.foreground }]}>{item.body}</Text> : null}
+                  {files.map((file) => (
+                    <View key={file.fileKey} style={{ marginTop: item.body ? space.xs : 0 }}>
+                      <MessageAttachment file={file} mine={mine} onProblem={setProblem} />
                     </View>
                   ))}
                 </TouchableOpacity>
               </View>
 
-              {reactions.length > 0 && (
-                <View style={[styles.reactionRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
-                    {reactions.map((r) => (
-                      <TouchableOpacity
-                        key={r.emoji}
-                        onPress={() => void react(item.id, r.emoji)}
-                        activeOpacity={0.75}
-                        testID={`reaction-${item.id}-${r.emoji}`}
-                        style={[
-                          styles.reactionChip,
-                          {
-                            backgroundColor: r.mine ? colors.primary + "1F" : colors.muted,
-                            borderColor: r.mine ? colors.primary : colors.border,
-                          },
-                        ]}
-                      >
-                        <Text style={styles.reactionEmoji}>{r.emoji}</Text>
-                        {r.count > 1 && (
-                          <Text style={[styles.reactionCount, { color: colors.mutedForeground }]}>{r.count}</Text>
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                )}
+              <View style={[styles.metaRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
+                <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>{messageTimeLabel(item.createdAt)}</Text>
+                {latestOwn ? (
+                  <Text style={[t.caption, { color: item.read ? colors.success : colors.inkFaint }]}>{item.read ? "Seen" : "Sent"}</Text>
+                ) : null}
+              </View>
 
-              {picking === item.id && (
+              {reactions.length > 0 ? (
+                <View style={[styles.reactionRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
+                  {reactions.map((reaction) => (
+                    <TouchableOpacity
+                      key={reaction.emoji}
+                      onPress={() => void react(item.id, reaction.emoji)}
+                      activeOpacity={0.75}
+                      testID={`reaction-${item.id}-${reaction.emoji}`}
+                      style={[
+                        styles.reactionChip,
+                        {
+                          minHeight: HIT_SLOP_MIN,
+                          borderRadius: radius.pill,
+                          backgroundColor: reaction.mine ? colors.actionSoft : colors.card,
+                          borderColor: reaction.mine ? colors.primary : colors.border,
+                        },
+                      ]}
+                    >
+                      <Text style={t.body}>{reaction.emoji}</Text>
+                      {reaction.count > 1 ? <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>{reaction.count}</Text> : null}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
+              {picking === item.id ? (
                 <View style={[styles.bubbleRow, mine ? styles.bubbleRowMine : styles.bubbleRowTheirs]}>
-                  <View
-                    style={[styles.picker, { backgroundColor: colors.card, borderColor: colors.border }]}
-                    testID={`reaction-picker-${item.id}`}
-                  >
+                  <View style={[styles.picker, { borderRadius: radius.pill, borderColor: colors.border, backgroundColor: colors.card }]} testID={`reaction-picker-${item.id}`}>
                     {REACTIONS.map((emoji) => (
                       <TouchableOpacity
                         key={emoji}
@@ -261,143 +301,156 @@ export default function ConversationScreen() {
                         activeOpacity={0.7}
                         testID={`pick-reaction-${item.id}-${emoji}`}
                         style={styles.pickerItem}
+                        accessibilityLabel={`React ${emoji}`}
                       >
-                        <Text style={styles.pickerEmoji}>{emoji}</Text>
+                        <Text style={t.title3}>{emoji}</Text>
                       </TouchableOpacity>
                     ))}
                   </View>
                 </View>
-              )}
+              ) : null}
             </View>
           );
         }}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Feather name="message-circle" size={28} color={colors.mutedForeground} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Say hello to start the conversation.
-            </Text>
+            {loading ? (
+              <>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading conversation…</Text>
+              </>
+            ) : loadProblem ? (
+              <>
+                <View style={[styles.emptyIcon, { borderRadius: radius.pill, backgroundColor: colors.warnSoft }]}>
+                  <Feather name="wifi-off" size={22} color={colors.warn} />
+                </View>
+                <Text style={[t.title3, { color: colors.foreground }]}>Conversation unavailable</Text>
+                <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>Check your connection and try again.</Text>
+                <TouchableOpacity onPress={() => { setLoading(true); void load(); }} style={[styles.retry, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]}>
+                  <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <View style={[styles.emptyIcon, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
+                  <Feather name="message-circle" size={24} color={colors.primary} />
+                </View>
+                <Text style={[t.title3, { color: colors.foreground }]}>Start the conversation</Text>
+                <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>Write a message below. Your unfinished words stay saved on this device.</Text>
+              </>
+            )}
           </View>
         }
       />
 
-      {/*
-        The one line that says something went wrong — a file refused, a send that failed, a
-        file that would not open. Above the compose row, where the person is already looking.
-      */}
-      {!!problem && (
-        <View style={[styles.problem, { backgroundColor: colors.destructive + "14", borderTopColor: colors.border }]}>
-          <Feather name="alert-circle" size={13} color={colors.destructive} />
-          <Text style={[styles.problemText, { color: colors.destructive }]}>{problem}</Text>
-          <TouchableOpacity onPress={() => setProblem(null)} activeOpacity={0.7} testID="dismiss-problem">
-            <Feather name="x" size={13} color={colors.destructive} />
-          </TouchableOpacity>
+      {problem ? (
+        <View style={[styles.noticeShell, { borderTopColor: colors.border, backgroundColor: colors.destructiveSoft }]}>
+          <View style={[styles.notice, { maxWidth: marketplaceColumnMax, paddingHorizontal: gutter }]}>
+            <Feather name="alert-circle" size={17} color={colors.destructive} />
+            <Text style={[t.caption, styles.noticeText, { color: colors.destructive }]}>{problem}</Text>
+            <TouchableOpacity onPress={() => setProblem(null)} style={styles.noticeAction} accessibilityLabel="Dismiss message problem" testID="dismiss-problem">
+              <Feather name="x" size={18} color={colors.destructive} />
+            </TouchableOpacity>
+          </View>
         </View>
-      )}
+      ) : null}
 
-      {/* A file chosen and not yet sent, with a way to change your mind about it. */}
-      {!!pending && (
-        <View style={[styles.pendingRow, { backgroundColor: colors.muted, borderTopColor: colors.border }]}>
-          <Feather
-            name={pending.mimeType.startsWith("image/") ? "image" : "file-text"}
-            size={14}
-            color={colors.primary}
+      {pending ? (
+        <View style={[styles.noticeShell, { borderTopColor: colors.border, backgroundColor: colors.muted }]}>
+          <View style={[styles.notice, { maxWidth: marketplaceColumnMax, paddingHorizontal: gutter }]}>
+            <Feather name={pending.mimeType.startsWith("image/") ? "image" : "file-text"} size={17} color={colors.primary} />
+            <Text style={[t.caption, styles.noticeText, { color: colors.foreground }]} numberOfLines={1}>{pending.name}</Text>
+            <TouchableOpacity onPress={() => setPending(null)} style={styles.noticeAction} accessibilityLabel="Remove attachment" testID="remove-attachment">
+              <Feather name="x" size={18} color={colors.mutedForeground} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      <View style={[styles.composerShell, { paddingBottom: insets.bottom + space.xs, borderTopColor: colors.border, backgroundColor: colors.card }]}>
+        <View style={[styles.composer, { maxWidth: marketplaceColumnMax, paddingHorizontal: gutter }]}>
+          <TouchableOpacity
+            style={[styles.composeAction, { minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, backgroundColor: colors.muted }]}
+            onPress={() => void pickFile()}
+            disabled={sending}
+            accessibilityRole="button"
+            accessibilityLabel="Attach a photo or PDF"
+            accessibilityState={{ disabled: sending }}
+            aria-disabled={sending}
+            activeOpacity={0.78}
+            testID="conversation-attach-btn"
+          >
+            <Feather name="paperclip" size={19} color={colors.primary} />
+          </TouchableOpacity>
+          <TextInput
+            value={draft}
+            onChangeText={(text) => { setDraft(text); void saveDraft(String(id), text); }}
+            placeholder="Write a message…"
+            placeholderTextColor={colors.inkFaint}
+            style={[t.body, styles.input, { minHeight: HIT_SLOP_MIN, maxHeight: 112, borderRadius: radius.lg, borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
+            multiline
+            accessibilityLabel="Message"
+            testID="conversation-input"
           />
-          <Text style={[styles.pendingName, { color: colors.foreground }]} numberOfLines={1}>
-            {pending.name}
-          </Text>
-          <TouchableOpacity onPress={() => setPending(null)} activeOpacity={0.7} testID="remove-attachment">
-            <Feather name="x" size={14} color={colors.mutedForeground} />
+          <TouchableOpacity
+            style={[
+              styles.composeAction,
+              {
+                minWidth: HIT_SLOP_MIN,
+                minHeight: HIT_SLOP_MIN,
+                borderRadius: radius.pill,
+                backgroundColor: draft.trim() || pending ? colors.primary : colors.muted,
+              },
+            ]}
+            onPress={() => void send()}
+            disabled={(!draft.trim() && !pending) || sending}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            accessibilityState={{ disabled: (!draft.trim() && !pending) || sending }}
+            aria-disabled={(!draft.trim() && !pending) || sending}
+            activeOpacity={0.78}
+            testID="conversation-send-btn"
+          >
+            {sending
+              ? <ActivityIndicator size="small" color={colors.primaryForeground} />
+              : <Feather name="send" size={18} color={draft.trim() || pending ? colors.primaryForeground : colors.inkFaint} />}
           </TouchableOpacity>
         </View>
-      )}
-
-      <View style={[styles.inputRow, { borderTopColor: colors.border, paddingBottom: insets.bottom + 10, backgroundColor: colors.card }]}>
-        <TouchableOpacity
-          style={[styles.attachBtn, { backgroundColor: colors.muted }]}
-          onPress={() => void pickFile()}
-          disabled={sending}
-          activeOpacity={0.8}
-          testID="conversation-attach-btn"
-        >
-          <Feather name="paperclip" size={18} color={colors.mutedForeground} />
-        </TouchableOpacity>
-        <TextInput
-          value={draft}
-          onChangeText={(t) => {
-            setDraft(t);
-            // Persist as they type so the Drafts folder reflects reality even if the app
-            // is closed mid-sentence.
-            void saveDraft(String(id), t);
-          }}
-          placeholder="Type a message..."
-          placeholderTextColor={colors.mutedForeground}
-          style={[styles.input, { color: colors.foreground, backgroundColor: colors.muted }]}
-          multiline
-          testID="conversation-input"
-        />
-        {/* Sendable when there are words *or* a file — see `send`. */}
-        <TouchableOpacity
-          style={[styles.sendBtn, { backgroundColor: draft.trim() || pending ? colors.primary : colors.muted }]}
-          onPress={send}
-          disabled={(!draft.trim() && !pending) || sending}
-          activeOpacity={0.8}
-          testID="conversation-send-btn"
-        >
-          {sending ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Feather name="send" size={18} color={draft.trim() || pending ? "#fff" : colors.mutedForeground} />
-          )}
-        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-  },
-  headerTitle: { flex: 1, textAlign: "center", fontSize: 16, fontFamily: "Inter_600SemiBold", marginHorizontal: 8 },
-  listContent: { padding: 16, gap: 8, flexGrow: 1 },
-  /**
-   * One message: the bubble, then its reactions, then the picker — each a full-width row that
-   * pushes its contents to the sender's side.
-   *
-   * The bubble must be a direct child of a `flexDirection: row` container. Wrapping it in a
-   * column with `alignItems` instead — which looked like the tidy way to line the reactions up
-   * under it — collapses the bubble to its *minimum* content width, so "hi" renders as an "h"
-   * above an "i". The owner caught that on the live site.
-   */
+  header: { borderBottomWidth: StyleSheet.hairlineWidth },
+  headerInner: { width: "100%", alignSelf: "center", minHeight: 66, flexDirection: "row", alignItems: "center", gap: 10 },
+  headerAction: { alignItems: "center", justifyContent: "center", borderWidth: 1 },
+  headerAvatar: { width: 38, height: 38, alignItems: "center", justifyContent: "center" },
+  headerCopy: { flex: 1, minWidth: 0 },
+  list: { flex: 1 },
+  connectionNote: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingHorizontal: 12, marginBottom: 12 },
   messageBlock: { gap: 4 },
+  dayRow: { flexDirection: "row", alignItems: "center", gap: 10, marginVertical: 8 },
+  dayLine: { flex: 1, height: StyleSheet.hairlineWidth },
   bubbleRow: { flexDirection: "row" },
   bubbleRowMine: { justifyContent: "flex-end" },
   bubbleRowTheirs: { justifyContent: "flex-start" },
-  bubble: { maxWidth: "78%", borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
-  bubbleText: { fontSize: 14, fontFamily: "Inter_400Regular", lineHeight: 20 },
-  empty: { alignItems: "center", justifyContent: "center", gap: 10, paddingTop: 80 },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular" },
-  inputRow: { flexDirection: "row", alignItems: "flex-end", gap: 10, paddingHorizontal: 12, paddingTop: 10, borderTopWidth: 1 },
-  input: { flex: 1, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, fontFamily: "Inter_400Regular", maxHeight: 100 },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
-  attachBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
-  fileChip: { flexDirection: "row", alignItems: "center", gap: 7, borderRadius: 12, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 7 },
-  fileName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
+  bubble: { paddingHorizontal: 14, paddingVertical: 10 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 4 },
   reactionRow: { flexDirection: "row", gap: 4, flexWrap: "wrap" },
-  reactionChip: { flexDirection: "row", alignItems: "center", gap: 3, borderRadius: 12, borderWidth: 1, paddingHorizontal: 7, paddingVertical: 2 },
-  reactionEmoji: { fontSize: 13 },
-  reactionCount: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  picker: { flexDirection: "row", gap: 2, marginTop: 6, borderRadius: 20, borderWidth: 1, paddingHorizontal: 6, paddingVertical: 4 },
-  pickerItem: { paddingHorizontal: 5, paddingVertical: 3 },
-  pickerEmoji: { fontSize: 19 },
-  pendingRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 9, borderTopWidth: 1 },
-  pendingName: { flex: 1, fontSize: 13, fontFamily: "Inter_500Medium" },
-  problem: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 16, paddingVertical: 9, borderTopWidth: 1 },
-  problemText: { flex: 1, fontSize: 12, fontFamily: "Inter_500Medium" },
+  reactionChip: { flexDirection: "row", alignItems: "center", gap: 3, borderWidth: 1, paddingHorizontal: 10 },
+  picker: { flexDirection: "row", overflow: "hidden", borderWidth: 1, marginTop: 4, paddingHorizontal: 3 },
+  pickerItem: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  empty: { flex: 1, minHeight: 280, alignItems: "center", justifyContent: "center", gap: 12 },
+  emptyIcon: { width: 52, height: 52, alignItems: "center", justifyContent: "center" },
+  center: { textAlign: "center" },
+  retry: { alignSelf: "stretch", alignItems: "center", justifyContent: "center", paddingHorizontal: 20 },
+  noticeShell: { borderTopWidth: StyleSheet.hairlineWidth },
+  notice: { width: "100%", alignSelf: "center", minHeight: 48, flexDirection: "row", alignItems: "center", gap: 9 },
+  noticeText: { flex: 1 },
+  noticeAction: { width: 44, height: 44, alignItems: "center", justifyContent: "center" },
+  composerShell: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8 },
+  composer: { width: "100%", alignSelf: "center", flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  composeAction: { alignItems: "center", justifyContent: "center" },
+  input: { flex: 1, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
 });
