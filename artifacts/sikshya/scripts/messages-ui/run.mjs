@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,6 +12,12 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const work = mkdtempSync(path.join(tmpdir(), "fadko-messages-ui-"));
 const bundle = path.join(work, "bundle.js");
 const pdfWorker = path.resolve(here, "../../public/pdf.worker.min.js");
+
+// The worker is intentionally generated from the installed pdf.js version rather than checked
+// into git. A clean CI runner therefore needs the same preparation as a real app build; running
+// it here also proves the viewer and its worker can never drift to different versions.
+execFileSync(process.execPath, [path.resolve(here, "../copy-pdf-worker.js")], { stdio: "inherit" });
+
 const built = await bundleForBrowser({
   entry: path.join(here, "entry.tsx"),
   outfile: bundle,
