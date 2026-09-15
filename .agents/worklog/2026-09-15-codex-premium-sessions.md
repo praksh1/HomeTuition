@@ -77,3 +77,8 @@ modernizing organization and interaction.
 - The updated file passes Node syntax checking, `git diff --check`, and the rendered Sessions suite
   remains **38 passed, 0 failed** at phone and laptop widths. The database-backed classroom journey
   must be re-run in CI because this Windows checkout has no local PostgreSQL/`psql` test service.
+- Production retry `34982282853` proved the corrected completed and rejoin cases, then exposed a
+  third, later copy of the same retired `Completed` selector in the "Every class opens its own
+  page" case. That selector had also swallowed its own timeout, leaving the journey on Upcoming
+  until it failed looking for `Stress 14`. It now uses the same required
+  `teacher-group-history` control, and no `Completed` text selector remains in this journey.

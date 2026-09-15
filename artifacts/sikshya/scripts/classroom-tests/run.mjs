@@ -463,7 +463,10 @@ async function main() {
   await pagePage.waitForTimeout(3500);
   await pagePage.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
   await pagePage.waitForTimeout(2500);
-  await pagePage.click('text="Completed"', { timeout: 5000 }).catch(() => {});
+  // Finished classes live behind the Schedule screen's History view. Keep this journey on
+  // the same stable control as the earlier cases; swallowing a missing text label here made
+  // the test wait for a card on the wrong view instead of explaining what was unavailable.
+  await pagePage.click('[data-testid="teacher-group-history"]', { timeout: 5000 });
   await pagePage.waitForTimeout(2500);
 
   // The three-day-old class from the first block is in this list.
