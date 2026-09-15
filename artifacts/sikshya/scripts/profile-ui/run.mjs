@@ -91,13 +91,17 @@ try {
     check((await page.getByTestId("account-phone").inputValue()) === "", `${width}: an incomplete legacy account does not invent a phone`);
     check((await page.getByTestId("account-province").innerText()).includes("Choose province"), `${width}: an incomplete legacy account does not preselect a province`);
     check((await page.getByTestId("account-district").innerText()).includes("Choose province first"), `${width}: district waits for the person's province`);
+    await page.getByTestId("account-province").click();
+    await page.getByText("Koshi Province", { exact: true }).click();
+    check((await page.getByTestId("account-province").innerText()).includes("Koshi Province"), `${width}: Province can be chosen before Phone`);
+    check((await page.getByTestId("account-district").getAttribute("aria-disabled")) !== "true", `${width}: choosing Province unlocks District even while Phone is empty`);
     await page.getByTestId("account-save").click();
     check(await page.getByTestId("account-phone-error").isVisible(), `${width}: Save points to the missing phone beside the field`);
     check((await page.getByTestId("account-province-error").count()) === 0, `${width}: Save does not blame a valid-looking location for a missing phone`);
     await page.getByTestId("account-phone").fill("+977 9800000000");
     check((await page.getByTestId("account-phone-error").count()) === 0, `${width}: correcting the phone clears its error immediately`);
     await page.getByTestId("account-save").click();
-    check(await page.getByTestId("account-province-error").isVisible(), `${width}: validation advances to the next missing choice`);
+    check(await page.getByTestId("account-district-error").isVisible(), `${width}: validation advances to District after preserving the chosen Province`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: validation does not create horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-editor-errors.png`), fullPage: true });
 

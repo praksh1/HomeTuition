@@ -69,8 +69,7 @@ test("account validation stays beside one specific field instead of showing a ge
   assert.match(onboarding, /error=\{fieldError\?\.field === "phone"/);
   assert.match(onboarding, /\$\{testID\}-error/);
   assert.match(onboarding, /phoneRef\.current\?\.focus/);
-  assert.match(onboarding, /phoneTouchedRef\.current/);
-  assert.match(onboarding, /const inheritedSelection/);
+  assert.doesNotMatch(onboarding, /phoneTouchedRef|inheritedSelection/);
   assert.match(onboarding, /accountDetailsNeedConfirmation/);
   assert.match(onboarding, /Please confirm your details/);
   assert.match(onboarding, /left your location and school unselected instead of guessing them/);

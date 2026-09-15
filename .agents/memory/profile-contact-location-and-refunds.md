@@ -19,3 +19,5 @@ Account forms must not answer a simple omission with a generic server-error list
 Do not present incomplete legacy or synthetic profile rows as facts a person supplied. A plausible Province/District/Municipality beside a missing required phone or affiliation is an inconsistent row, not evidence of consent or selection; ask the person to confirm the whole set instead of silently preselecting it.
 
 Completing a different field later does not legitimise fixture data. If a saved row still carries known synthetic staging locality or institution values, leave the related form choices empty and explain that Fadko refuses to guess. Dependent institution input appears only after the person chooses an affiliation path.
+
+Clean saved data only once, while building the initial form draft. Never keep a cleanup effect subscribed to editable fields: Phone, Province, District and Municipality are independent inputs, and a person may complete them in any order before Save performs ordered validation.
