@@ -27,7 +27,7 @@ async function start(extra = {}) {
   log = "";
   child = spawn(process.execPath, [path.join(serverRoot, "dist/index.mjs")], { cwd: root, env: { ...process.env, DATABASE_URL: url, PORT: String(port), NODE_ENV: "test", SESSION_SECRET: "batch-test-only-secret", PAYMENT_WEBHOOK_SECRET: "synthetic-gateway-configured", VIDEO_PROVIDER: "echo", ALLOW_TEST_TEACHING_ACCESS: "true", ALLOW_TEST_STUDENT_ACCESS: "true", TEST_ACCESS_UNTIL: until, ...extra }, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout.on("data", (data) => { log += data; }); child.stderr.on("data", (data) => { log += data; });
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 300; i++) {
     try {
       const health = await api("/healthz");
       if (health.status === 200 && log.includes("learning program and test-booking tables are present")) return;
@@ -80,6 +80,28 @@ async function socketAccepted(token, id) {
     const timer = setTimeout(() => done(false), 3000);
     function done(value) { clearTimeout(timer); ws.close(); resolve(value); }
     ws.on("error", () => done(false)); ws.on("close", () => done(false)); ws.on("open", () => done(true));
+  });
+}
+async function openUserChannel(token) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws?token=${encodeURIComponent(token)}`);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("user channel did not open")), 3000);
+    ws.once("open", () => { clearTimeout(timer); resolve(); });
+    ws.once("error", (error) => { clearTimeout(timer); reject(error); });
+  });
+  return ws;
+}
+function nextSocketEvent(ws, predicate) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new Error("live class-conversation event did not arrive")); }, 3000);
+    const onMessage = (raw) => {
+      let event;
+      try { event = JSON.parse(String(raw)); } catch { return; }
+      if (!predicate(event)) return;
+      cleanup(); resolve(event);
+    };
+    const cleanup = () => { clearTimeout(timer); ws.off("message", onMessage); };
+    ws.on("message", onMessage);
   });
 }
 try {
@@ -179,8 +201,15 @@ try {
   check("teacher roster summarizes recorded lesson presence", rosterAfterLesson.body.students[0].attendance.lessonsAttended === 1
     && rosterAfterLesson.body.students[0].attendance.presentMs === 1800000
     && rosterAfterLesson.body.lessonCount === 2);
+  const teacherMessageSocket = await openUserChannel(teacher.token);
+  const studentMessageSocket = await openUserChannel(a.token);
+  await api("/notification-preferences", teacher.token, { push: { messages: false } }, "PATCH");
+  const teacherLiveUpdate = nextSocketEvent(teacherMessageSocket, (event) => event.kind === "conversation_sync" && Number(event.batchId) === c.id);
+  const senderLiveUpdate = nextSocketEvent(studentMessageSocket, (event) => event.kind === "conversation_sync" && Number(event.batchId) === c.id);
   const studentMessage = await api(`/class-groups/${c.id}/messages`, a.token, { body: "Please explain question four in our next lesson." });
   check("student can post to the class conversation", studentMessage.status === 201 && studentMessage.body.senderRole === "student");
+  check("teacher's open class conversation updates even when bell alerts are off", (await teacherLiveUpdate).type === "notification");
+  check("another device signed in as the sender updates immediately", (await senderLiveUpdate).type === "notification");
   check("teacher sees a durable unread class-message count", (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.unreadMessages === 1);
   const teacherInboxWithQuestion = await api("/message-inbox", teacher.token);
   check("teacher Messages shows the class question, sender and unread count", teacherInboxWithQuestion.body.classes.some((row) => row.batchId === c.id
@@ -191,8 +220,11 @@ try {
   check("fetching messages alone does not fabricate a read acknowledgement", (await api(`/class-groups/${c.id}/messages`, teacher.token)).body.messages.some((m) => m.id === studentMessage.body.id) && (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.unreadMessages === 1);
   check("teacher acknowledgement clears only the loaded conversation", (await api(`/class-groups/${c.id}/messages/read`, teacher.token, { lastMessageId: studentMessage.body.id })).body.unreadMessages === 0);
   check("teacher Messages clears the class badge after the discussion is read", (await api("/message-inbox", teacher.token)).body.classes.find((row) => row.batchId === c.id).unreadCount === 0);
+  const studentReplyUpdate = nextSocketEvent(studentMessageSocket, (event) => event.kind === "conversation_sync" && Number(event.batchId) === c.id);
   const teacherMessage = await api(`/class-groups/${c.id}/messages`, teacher.token, { body: "I will explain it at the start of class." });
   check("teacher message creates a student unread badge", teacherMessage.status === 201 && (await api(`/class-groups/${c.id}`, a.token)).body.counts.unreadMessages === 1);
+  check("teacher reply reaches the student's open class conversation live", (await studentReplyUpdate).type === "notification");
+  teacherMessageSocket.close(); studentMessageSocket.close();
   check("student Messages shows the teacher reply as unread", (await api("/message-inbox", a.token)).body.classes.some((row) => row.batchId === c.id
     && row.lastMessage === "I will explain it at the start of class."
     && row.lastSenderName === teacher.user.name

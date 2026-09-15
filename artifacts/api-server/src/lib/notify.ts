@@ -8,7 +8,7 @@ import { emailFor, type NotificationEvent, type NotificationKind } from "./notif
 // Re-exported so the twenty routes that already import these from here do not all have to move.
 export type { NotificationEvent, NotificationKind };
 
-import { notifyUser } from "../ws/userHub";
+import { notifyUser, notifyUsers } from "../ws/userHub";
 
 /**
  * The one place a notification is sent from.
@@ -53,6 +53,24 @@ const PREF_KEY: Record<NotificationKind, PrefKind> = {
 /** Notify one person. Returns immediately; the work happens after the response is sent. */
 export function notify(userId: number, event: NotificationEvent): void {
   notifyMany([userId], event);
+}
+
+/**
+ * Nudge open conversation screens immediately, without creating a bell item or an email.
+ *
+ * Chat delivery is part of the conversation itself and must not stop when somebody turns off
+ * message notifications. The durable `notify()` path remains responsible for the bell and
+ * email; this small live-only event is responsible for making every signed-in device refetch
+ * the server-confirmed timeline now.
+ */
+export function syncConversation(
+  userIds: number[],
+  event: { at: string; fromUserId?: number; batchId?: number },
+): void {
+  notifyUsers([...new Set(userIds)].filter((id) => Number.isFinite(id)), {
+    kind: "conversation_sync",
+    ...event,
+  });
 }
 
 /**

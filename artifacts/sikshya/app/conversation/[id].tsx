@@ -101,12 +101,15 @@ export default function ConversationScreen() {
     void load();
     // The user socket supplies the instant path. This is only a missed-event safety net; four
     // seconds kept every background conversation route needlessly busy.
-    const interval = setInterval(() => void load(), 30000);
+    const interval = setInterval(() => void load(), 8000);
     return () => clearInterval(interval);
   }, [load]);
 
   useEffect(() => {
-    if (lastEvent?.kind === "message" && Number(lastEvent.fromUserId) === Number(id)) void load();
+    if (
+      (lastEvent?.kind === "message" || lastEvent?.kind === "conversation_sync") &&
+      Number(lastEvent.fromUserId) === Number(id)
+    ) void load();
   }, [id, lastEvent, load]);
 
   useEffect(() => {

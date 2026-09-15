@@ -12,6 +12,7 @@ export interface UserEvent {
    * teacher's "class starting" switch should silence.
    */
   kind:
+    | "conversation_sync"
     | "message"
     | "follower"
     | "program_published"

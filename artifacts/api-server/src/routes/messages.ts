@@ -16,7 +16,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
-import { notify } from "../lib/notify";
+import { notify, syncConversation } from "../lib/notify";
 import { verifyUpload } from "../lib/fileStore";
 
 const router: IRouter = Router();
@@ -478,13 +478,19 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
     .from(usersTable)
     .where(eq(usersTable.id, userId));
 
+  const at = new Date(message.createdAt).toISOString();
+  // Both accounts receive a live-only nudge. On the sender's other devices the conversation
+  // partner is the recipient; on the recipient's devices it is the sender.
+  syncConversation([otherUserId], { fromUserId: userId, at });
+  syncConversation([userId], { fromUserId: otherUserId, at });
+
   notify(otherUserId, {
     kind: "message",
     fromUserId: userId,
     fromName: sender?.name ?? "Someone",
     // A photo with no caption still has to read as something in a notification.
     preview: message.body ? message.body.slice(0, 140) : attached ? "Sent a file" : "",
-    at: new Date(message.createdAt).toISOString(),
+    at,
   });
 
   res.status(201).json({

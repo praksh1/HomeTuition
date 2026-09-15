@@ -19,7 +19,7 @@ import {
 import { requireAuth } from "../middlewares/requireAuth";
 import { classGroupAccess } from "../lib/classGroupAccess";
 import { readHomeworkDeadline } from "../lib/classHomeworkDeadline";
-import { notifyMany } from "../lib/notify";
+import { notifyMany, syncConversation } from "../lib/notify";
 import { verifyUpload } from "../lib/fileStore";
 
 const router = Router();
@@ -409,6 +409,12 @@ router.post("/class-groups/:id/messages", requireAuth, async (req, res) => {
       ? students.map((row) => row.userId)
       : [access.teacherId]
   ).filter((userId) => userId !== req.user!.userId);
+  // The bell remains selective below, but every enrolled participant's open timeline must
+  // update immediately. This also reaches another device signed in as the sender.
+  syncConversation(
+    [access.teacherId, ...students.map((row) => row.userId)],
+    { batchId: access.batchId, fromUserId: req.user!.userId, at: message.createdAt.toISOString() },
+  );
   notifyMany(audience, {
     kind: "class_message",
     batchId: access.batchId,

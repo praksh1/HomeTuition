@@ -28,6 +28,7 @@ import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startFakeR2 } from "../upload-tests/fake-r2.mjs";
+import { WebSocket } from "ws";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
@@ -62,6 +63,30 @@ async function api(p, { method = "GET", token, body } = {}) {
   let parsed = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = { raw: text }; }
   return { status: res.status, body: parsed };
+}
+
+async function openUserChannel(token) {
+  const ws = new WebSocket(`ws://127.0.0.1:${API_PORT}/api/ws?token=${encodeURIComponent(token)}`);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("user channel did not open")), 3000);
+    ws.once("open", () => { clearTimeout(timer); resolve(); });
+    ws.once("error", (error) => { clearTimeout(timer); reject(error); });
+  });
+  return ws;
+}
+
+function nextEvent(ws, predicate) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new Error("live conversation event did not arrive")); }, 3000);
+    const onMessage = (raw) => {
+      let event;
+      try { event = JSON.parse(String(raw)); } catch { return; }
+      if (!predicate(event)) return;
+      cleanup(); resolve(event);
+    };
+    const cleanup = () => { clearTimeout(timer); ws.off("message", onMessage); };
+    ws.on("message", onMessage);
+  });
 }
 
 let seq = 0;
@@ -103,6 +128,7 @@ async function upload(token, bytes = PNG, contentType = "image/png", claimedSize
 async function main() {
   const r2 = await startFakeR2({ port: R2_PORT, bucket: BUCKET, secret: SECRET });
 
+  let serverLog = "";
   const server = spawn(process.execPath, [path.join(serverRoot, "dist", "index.mjs")], {
     cwd: repoRoot,
     env: {
@@ -115,18 +141,26 @@ async function main() {
       R2_BUCKET: BUCKET,
       R2_ENDPOINT: `http://127.0.0.1:${R2_PORT}`,
     },
-    stdio: "ignore",
+    stdio: ["ignore", "pipe", "pipe"],
   });
+  server.stdout.on("data", (data) => { serverLog += String(data); });
+  server.stderr.on("data", (data) => { serverLog += String(data); });
   const stop = async () => { try { server.kill("SIGKILL"); } catch { /* gone */ } await r2.close(); };
   process.on("exit", () => { try { server.kill("SIGKILL"); } catch { /* gone */ } });
 
   let up = false;
-  for (let i = 0; i < 60; i += 1) {
-    try { if ((await fetch(`${API}/api/healthz`)).ok) { up = true; break; } } catch { /* not up */ }
+  for (let i = 0; i < 120; i += 1) {
+    try {
+      if ((await fetch(`${API}/api/healthz`)).ok && serverLog.includes("account security and onboarding tables are present")) {
+        up = true;
+        break;
+      }
+    } catch { /* not up */ }
     await new Promise((r) => setTimeout(r, 250));
   }
-  if (!up) { await stop(); throw new Error("the server never came up"); }
+  if (!up) { await stop(); throw new Error(`the server never became account-ready: ${serverLog.slice(-4000)}`); }
 
+  const openSockets = [];
   try {
     const student = await register("student", "Sending Sita");
     const teacher = await register("teacher", "Receiving Ram");
@@ -134,15 +168,24 @@ async function main() {
 
     console.log("\nWhat counts as a message\n");
 
+    const recipientSocket = await openUserChannel(teacher.token);
+    const senderSocket = await openUserChannel(student.token);
+    openSockets.push(recipientSocket, senderSocket);
+    await api("/notification-preferences", { method: "PATCH", token: teacher.token, body: { push: { messages: false } } });
+
     const empty = await api(`/messages/${teacher.user.id}`, { method: "POST", token: student.token, body: { body: "   " } });
     check("nothing at all is refused", empty.status === 400, `status=${empty.status}`);
     check("and the refusal offers both ways of saying something",
       /write something/i.test(String(empty.body?.error)) && /attach/i.test(String(empty.body?.error)),
       String(empty.body?.error));
 
+    const recipientLive = nextEvent(recipientSocket, (event) => event.kind === "conversation_sync" && event.fromUserId === student.user.id);
+    const senderLive = nextEvent(senderSocket, (event) => event.kind === "conversation_sync" && event.fromUserId === teacher.user.id);
     const words = await api(`/messages/${teacher.user.id}`, { method: "POST", token: student.token, body: {
       body: "Sir, I could not finish question four." } });
     check("words alone still send", words.status === 201, `status=${words.status} ${JSON.stringify(words.body)}`);
+    check("the recipient's open conversation updates even when message alerts are off", (await recipientLive).type === "notification");
+    check("another device signed in as the sender updates too", (await senderLive).type === "notification");
 
     console.log("\nSending a photo\n");
 
@@ -349,6 +392,7 @@ async function main() {
     console.log(`\n${passed} passed, ${failed} failed\n`);
     if (failed) failures.forEach((f) => console.log(`  - ${f}`));
   } finally {
+    for (const ws of openSockets) ws.close();
     await stop();
   }
 

@@ -23,7 +23,8 @@ import { useDates } from "@/context/DatePreferenceContext";
 import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import { apiGet, apiPost } from "@/utils/api";
+import { ApiError, apiGet, apiPost } from "@/utils/api";
+import { classConversationId } from "@/utils/conversationRoute";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
 import { messageDayLabel, messageTimeLabel, shouldShowDay } from "@/utils/messageTimeline";
 import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
@@ -58,8 +59,9 @@ interface ViewData {
  * claims are absent because the server does not know those facts yet.
  */
 export default function ClassChatScreen() {
-  const { id } = useLocalSearchParams<{ id?: string }>();
-  const batchId = Number(id);
+  const params = useLocalSearchParams<{ id?: string; batchId?: string }>();
+  const routeBatchId = classConversationId(params);
+  const batchId = routeBatchId ?? 0;
   const draftKey = `class:${batchId}`;
   const colors = useColors();
   const dates = useDates();
@@ -74,6 +76,7 @@ export default function ClassChatScreen() {
   const [sending, setSending] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [loadProblem, setLoadProblem] = useState(false);
+  const [loadProblemMessage, setLoadProblemMessage] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   const scrollAfterLayout = useRef(true);
@@ -100,29 +103,41 @@ export default function ClassChatScreen() {
   }, [batchId]);
 
   const load = useCallback(async () => {
+    if (routeBatchId == null) {
+      setLoadProblemMessage("This class conversation link is incomplete. Return to Messages and open the class again.");
+      setLoadProblem(true);
+      setLoading(false);
+      return;
+    }
     try {
       const next = await apiGet<ViewData>(`/class-groups/${batchId}/messages`);
       setView(next);
       setLoadProblem(false);
+      setLoadProblemMessage("");
       void acknowledge(next.messages);
       void markTargetRead({ kind: "class_message", batchId });
-    } catch {
+    } catch (error) {
       setLoadProblem(true);
+      setLoadProblemMessage(error instanceof ApiError && error.status === 403
+        ? "This conversation is available only to the teacher and enrolled students."
+        : error instanceof ApiError && error.status === 404
+          ? "This class conversation is no longer available."
+          : "Fadko could not load this conversation. Try again.");
     } finally {
       setLoading(false);
     }
-  }, [acknowledge, batchId, markTargetRead]);
+  }, [acknowledge, batchId, markTargetRead, routeBatchId]);
 
   useEffect(() => {
     void load();
     // Live events provide the quick path; this slower pass catches a dropped socket without
     // making every mounted class screen talk to the server ten times a minute.
-    const interval = setInterval(() => void load(), 30000);
+    const interval = setInterval(() => void load(), 8000);
     return () => clearInterval(interval);
   }, [load]);
 
   useEffect(() => {
-    if (lastEvent?.kind === "class_message" && Number(lastEvent.batchId) === batchId) {
+    if ((lastEvent?.kind === "class_message" || lastEvent?.kind === "conversation_sync") && Number(lastEvent.batchId) === batchId) {
       scrollAfterLayout.current = true;
       void load();
     }
@@ -339,9 +354,9 @@ export default function ClassChatScreen() {
               <><ActivityIndicator color={colors.primary} /><Text style={[t.callout, { color: colors.mutedForeground }]}>Loading conversation…</Text></>
             ) : loadProblem ? (
               <>
-                <View style={[styles.emptyIcon, { borderRadius: radius.pill, backgroundColor: colors.warnSoft }]}><Feather name="wifi-off" size={22} color={colors.warn} /></View>
+                <View style={[styles.emptyIcon, { borderRadius: radius.pill, backgroundColor: colors.warnSoft }]}><Feather name="alert-circle" size={22} color={colors.warn} /></View>
                 <Text style={[t.title3, { color: colors.foreground }]}>Conversation unavailable</Text>
-                <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>Check your connection and try again.</Text>
+                <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>{loadProblemMessage || "Fadko could not load this conversation. Try again."}</Text>
                 <TouchableOpacity onPress={() => { setLoading(true); void load(); }} style={[styles.retry, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]} testID="class-chat-retry">
                   <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
                 </TouchableOpacity>

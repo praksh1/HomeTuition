@@ -73,7 +73,7 @@ try {
     check(body.includes("Direct messages and class discussions, together."), `${width}: message list explains itself briefly`);
     check(!/\bInbox\b|\bSent\b|\bDrafts\b/.test(body), `${width}: message threads are not split into email folders`);
     check(body.includes("Draft: I will send the practice sheet"), `${width}: draft stays with its conversation`);
-    check(body.includes("All 5") && body.includes("Unread 2") && body.includes("Classes 2"), `${width}: unified inbox counts people and class discussions`);
+    check(body.includes("All 5") && body.includes("Classes 2") && body.includes("Direct 3") && body.includes("Unread 2"), `${width}: unified inbox counts every useful message view`);
     check(await page.getByTestId("class-conversation-row-11").isVisible(), `${width}: booked class discussion appears in Messages`);
     check((await page.getByTestId("class-conversation-row-12").innerText()).includes("Start the class conversation"), `${width}: a quiet class remains discoverable before its first message`);
     check((await page.getByTestId("new-message-button").boundingBox()).height >= 44, `${width}: new-message action meets the touch floor`);
@@ -86,6 +86,9 @@ try {
     check(await page.getByTestId("class-conversation-row-11").isVisible(), `${width}: Classes filter keeps class discussions`);
     check(await page.getByTestId("class-conversation-row-12").isVisible(), `${width}: Classes filter keeps a class before its first message`);
     check((await page.getByTestId("conversation-row-11").count()) === 0, `${width}: Classes filter removes private conversations`);
+    await page.getByTestId("conversation-filter-direct").click();
+    check(await page.getByTestId("conversation-row-11").isVisible(), `${width}: Direct filter keeps private conversations`);
+    check((await page.getByTestId("class-conversation-row-11").count()) === 0, `${width}: Direct filter removes class discussions`);
     await page.getByTestId("conversation-filter-all").click();
     await page.getByTestId("conversation-search").fill("bik tha");
     check(await page.getByTestId("conversation-row-12").isVisible(), `${width}: spaced name search finds a conversation`);
@@ -93,7 +96,7 @@ try {
     check(await page.getByTestId("class-conversation-row-12").isVisible(), `${width}: search finds a class discussion by class name`);
     await page.getByTestId("conversation-search").fill("");
     await page.getByTestId("class-conversation-row-11").click();
-    check(await page.evaluate(() => window.lastNavigation?.pathname === "/class-chat" && window.lastNavigation?.params?.batchId === "11"), `${width}: class row opens its existing class conversation`);
+    check(await page.evaluate(() => window.lastNavigation?.pathname === "/class-chat" && window.lastNavigation?.params?.id === "11" && window.lastNavigation?.params?.batchId === undefined), `${width}: class row opens its existing class conversation with the canonical route`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: inbox has no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-inbox.png`), fullPage: true });
 

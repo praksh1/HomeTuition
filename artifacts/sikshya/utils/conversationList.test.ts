@@ -67,6 +67,10 @@ test("direct and class discussions share one newest-first inbox", () => {
     filterInboxThreads(threads, "", "classes").map((thread) => thread.kind === "class" ? thread.batchId : thread.otherUserId),
     [9, 10],
   );
+  assert.deepEqual(
+    filterInboxThreads(threads, "", "direct").map((thread) => thread.kind === "class" ? thread.batchId : thread.otherUserId),
+    [1],
+  );
   assert.equal(inboxPreview(threads[1]!, undefined).text, "Bring exercise book tomorrow");
   assert.equal(inboxPreview(threads[2]!, undefined).text, "Start the class conversation");
 });

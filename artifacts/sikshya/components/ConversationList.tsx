@@ -32,6 +32,7 @@ import {
   type InboxThread,
 } from "@/utils/conversationList";
 import { loadDrafts, type Drafts } from "@/utils/drafts";
+import { classConversationDestination } from "@/utils/conversationRoute";
 
 function initials(name: string) {
   return name.split(" ").map((part) => part[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -88,12 +89,12 @@ export default function ConversationList({ title }: { title: string }) {
     void load();
     // The user socket refreshes immediately below. This slower fallback covers a missed event
     // without making an idle inbox refetch ten times a minute.
-    const interval = setInterval(() => void load(), 30000);
+    const interval = setInterval(() => void load(), 12000);
     return () => clearInterval(interval);
   }, [load]);
 
   useEffect(() => {
-    if (lastEvent?.kind === "message" || lastEvent?.kind === "class_message") void load();
+    if (lastEvent?.kind === "message" || lastEvent?.kind === "class_message" || lastEvent?.kind === "conversation_sync") void load();
   }, [lastEvent, load]);
 
   const visible = useMemo(
@@ -102,6 +103,7 @@ export default function ConversationList({ title }: { title: string }) {
   );
   const unread = threads.filter((thread) => thread.unreadCount > 0).length;
   const classes = threads.filter((thread) => thread.kind === "class").length;
+  const direct = threads.filter((thread) => thread.kind === "direct").length;
   const draftOnly = Object.keys(drafts).filter(
     (id) => !threads.some((thread) => thread.kind === "direct" && String(thread.otherUserId) === id),
   );
@@ -163,13 +165,15 @@ export default function ConversationList({ title }: { title: string }) {
             ) : null}
           </View>
           <View style={styles.filters}>
-            {(["all", "unread", "classes"] as const).map((value) => {
+            {(["all", "classes", "direct", "unread"] as const).map((value) => {
               const selected = filter === value;
               const label = value === "all"
                 ? `All ${threads.length}`
-                : value === "unread"
-                  ? `Unread ${unread}`
-                  : `Classes ${classes}`;
+                : value === "classes"
+                  ? `Classes ${classes}`
+                  : value === "direct"
+                    ? `Direct ${direct}`
+                    : `Unread ${unread}`;
               return (
                 <TouchableOpacity
                   key={value}
@@ -240,6 +244,8 @@ export default function ConversationList({ title }: { title: string }) {
               ? "You are all caught up."
               : filter === "classes" && !query
                 ? "Your enrolled class discussions will appear here."
+                : filter === "direct" && !query
+                  ? "Your private conversations will appear here."
                 : `No conversation matches “${query.trim()}”.`}
           </Text>
         </View>
@@ -262,7 +268,7 @@ export default function ConversationList({ title }: { title: string }) {
                 activeOpacity={0.72}
                 onPress={() => thread.kind === "direct"
                   ? router.push({ pathname: "/conversation/[id]", params: { id: String(thread.otherUserId), name: thread.otherUserName } })
-                  : router.push({ pathname: "/class-chat", params: { batchId: String(thread.batchId) } })}
+                  : router.push(classConversationDestination(thread.batchId))}
                 accessibilityRole="button"
                 accessibilityLabel={`${title}, ${thread.kind === "class" ? "class discussion, " : ""}${preview.label} ${preview.text}${isUnread ? `, ${thread.unreadCount} unread` : ""}`}
                 testID={thread.kind === "direct" ? `conversation-row-${thread.otherUserId}` : `class-conversation-row-${thread.batchId}`}

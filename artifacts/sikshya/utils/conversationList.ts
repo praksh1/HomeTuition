@@ -24,7 +24,7 @@ export type InboxThread =
   | ({ kind: "direct" } & ConversationSummary)
   | ({ kind: "class" } & ClassConversationSummary);
 
-export type ConversationFilter = "all" | "unread" | "classes";
+export type ConversationFilter = "all" | "classes" | "direct" | "unread";
 
 export function inboxThreads(
   direct: ConversationSummary[],
@@ -94,6 +94,7 @@ export function filterInboxThreads(
     .filter((thread) => {
       if (filter === "unread" && thread.unreadCount < 1) return false;
       if (filter === "classes" && thread.kind !== "class") return false;
+      if (filter === "direct" && thread.kind !== "direct") return false;
       if (!query.trim()) return true;
       if (thread.kind === "direct") {
         return matches(`${thread.otherUserName} ${thread.lastMessage}`, query);

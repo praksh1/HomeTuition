@@ -218,6 +218,9 @@ jobs:
       - name: Class checkout, grouping and homework delivery
         run: pnpm --filter @workspace/api-server run test:batch-booking
 
+      - name: Direct and class message live delivery
+        run: pnpm --filter @workspace/api-server run test:messages
+
       - name: Notification delivery and preferences
         run: pnpm --filter @workspace/api-server run test:notifications
 
