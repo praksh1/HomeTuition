@@ -87,3 +87,8 @@ modernizing organization and interaction.
   for both roles, although it rendered the correct `Schedule` and `Classes` tabs. Its exact tab
   expectations now match the approved role-specific navigation, and its agent-isolation check
   also explicitly excludes both new tab names.
+- Production retry `34987550266` cleared classroom and navigation, plus the Discover suite
+  (**242 passed, 0 failed**), then reached the refund journey. Its dropped-class check already
+  opened the new History view and found the correct card, but still required a separate,
+  case-sensitive `Dropped` heading. It now asserts the visible
+  `Dropped · open for refund status` label instead of the retired layout.

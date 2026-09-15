@@ -406,8 +406,9 @@ async function main() {
     check("a dropped class is still in the student's list",
       (await page.locator(`[data-testid="dropped-${dropped.id}"]`).count()) > 0,
       body.slice(0, 600).replace(/\n/g, " | "));
-    check("under its own Dropped heading",
-      /Dropped/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
+    check("with a clear dropped and refund-status label",
+      /Dropped\s*·\s*open for refund status/i.test(body),
+      body.slice(0, 600).replace(/\n/g, " | "));
     check("and it is not sitting in Upcoming",
       !upcomingBody.includes(dropped.topic),
       upcomingBody.slice(0, 800).replace(/\n/g, " | "));
