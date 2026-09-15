@@ -82,3 +82,8 @@ modernizing organization and interaction.
   page" case. That selector had also swallowed its own timeout, leaving the journey on Upcoming
   until it failed looking for `Stress 14`. It now uses the same required
   `teacher-group-history` control, and no `Completed` text selector remains in this journey.
+- Production retry `34985855734` then ran that complete classroom journey **47 passed, 0
+  failed**. The following navigation suite still required the retired generic `Sessions` label
+  for both roles, although it rendered the correct `Schedule` and `Classes` tabs. Its exact tab
+  expectations now match the approved role-specific navigation, and its agent-isolation check
+  also explicitly excludes both new tab names.

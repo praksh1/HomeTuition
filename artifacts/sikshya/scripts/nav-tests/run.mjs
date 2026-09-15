@@ -123,7 +123,7 @@ async function main() {
   check("Support is a tab of its own", teacherTabs.some((t) => /support/i.test(t)), teacherTabs.join(" | "));
   check("Plan is no longer a tab", !teacherTabs.some((t) => /^plan$/i.test(t)), teacherTabs.join(" | "));
   check("nothing else was lost on the way",
-    ["Dashboard", "Sessions", "Students", "Messages", "Profile"].every((want) => teacherTabs.includes(want)),
+    ["Dashboard", "Schedule", "Students", "Messages", "Profile"].every((want) => teacherTabs.includes(want)),
     JSON.stringify(teacherTabs));
 
   // The half that a compile cannot catch: the screen that left the tab bar is still reachable.
@@ -187,7 +187,7 @@ async function main() {
   const studentTabs = await tabLabels(page2);
   check("students get a Support tab too", studentTabs.some((t) => /support/i.test(t)), studentTabs.join(" | "));
   check("their other tabs are untouched",
-    ["Discover", "Sessions", "Messages", "Profile"].every((want) => studentTabs.includes(want)),
+    ["Discover", "Classes", "Messages", "Profile"].every((want) => studentTabs.includes(want)),
     JSON.stringify(studentTabs));
 
   await page2.click('a[role="tab"][href="/support"]', { timeout: 15000 });
@@ -394,7 +394,8 @@ async function main() {
     agentTabs.includes("Tickets") && agentTabs.includes("People") && agentTabs.includes("Activity"),
     JSON.stringify(agentTabs));
   check("and gets none of the teaching or learning tabs",
-    !agentTabs.includes("Discover") && !agentTabs.includes("Sessions") && !agentTabs.includes("Dashboard"),
+    !agentTabs.includes("Discover") && !agentTabs.includes("Classes") &&
+      !agentTabs.includes("Schedule") && !agentTabs.includes("Dashboard"),
     JSON.stringify(agentTabs));
 
   const queue = await agentPage.evaluate(() => document.body.innerText);
