@@ -548,6 +548,9 @@ jobs:
           # location lists must stay searchable and bounded, and teacher documents must not
           # turn every visit to Profile into a several-screen upload form.
           pnpm --filter @workspace/sikshya run test:profile-ui
+          # One opened notification must not clear every unread item. This also renders the
+          # paged Nepal-time centre and role-specific settings at phone and laptop widths.
+          pnpm --filter @workspace/sikshya run test:notifications-ui
 
       # Nothing after this point talks to the throwaway API: the remaining suites exercise
       # the already-built board/call UI, and the deploy build must point at Railway. Free the

@@ -489,6 +489,16 @@ export async function markAllRead(): Promise<void> {
   await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(updated));
 }
 
+/** Marks exactly the notification a person opened, leaving every other unread item intact. */
+export async function markNotificationRead(id: string): Promise<void> {
+  const stored = await AsyncStorage.getItem(NOTIFICATIONS_KEY);
+  const existing: AppNotification[] = stored ? JSON.parse(stored) : [];
+  const updated = existing.map((notification) =>
+    notification.id === id ? { ...notification, read: true } : notification,
+  );
+  await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(updated));
+}
+
 export async function getUnreadCount(): Promise<number> {
   const notifications = await getNotifications();
   return notifications.filter((n) => !n.read).length;

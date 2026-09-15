@@ -13,7 +13,7 @@ const files = readFileSync(
 );
 const context = readFileSync(path.join(root, "context", "NotificationContext.tsx"), "utf8");
 const notifications = readFileSync(path.join(root, "utils", "notifications.ts"), "utf8");
-const notificationList = readFileSync(path.join(root, "app", "notifications.tsx"), "utf8");
+const notificationCenter = readFileSync(path.join(root, "utils", "notificationCenter.ts"), "utf8");
 const classHome = readFileSync(path.join(root, "app", "class-home.tsx"), "utf8");
 
 test("new class homework preserves text and adds an explicit photo or PDF upload", () => {
@@ -63,10 +63,10 @@ test("homework notifications use truthful words and open the exact homework page
   for (const kind of ["class_homework_set", "class_homework_submitted", "class_homework_feedback"]) {
     assert.match(context, new RegExp(`"${kind}"`));
   }
-  assert.match(context, /pathname: "\/class-homework"/);
+  assert.match(notificationCenter, /pathname: "\/class-homework"/);
   assert.match(notifications, /Homework feedback is ready/);
   assert.match(notifications, /handed in homework/);
-  assert.match(notificationList, /startsWith\("class_homework_"\)/);
+  assert.match(notificationCenter, /startsWith\("class_homework_"\)/);
   assert.match(screen, /lastEvent\?\.kind\.startsWith\("class_homework_"\)/);
   assert.match(context, /\/notification-events\?after=\$\{after\}/);
   assert.match(context, /@fadko_notification_cursor_/);

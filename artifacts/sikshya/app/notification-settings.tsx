@@ -15,17 +15,20 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useNotifications } from "@/context/NotificationContext";
+import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
-import { PREF_LABELS, PREF_ORDER, type PrefChannel, type PrefKind } from "@/utils/notificationPrefs";
+import { PREF_LABELS, visiblePreferenceOrder, type PrefChannel, type PrefKind } from "@/utils/notificationPrefs";
 import DateSystemSetting from "@/components/DateSystemSetting";
-
-/** Every switch, in a deliberate order. See utils/notificationPrefs.ts for why it lives there. */
-const ORDER: PrefKind[] = PREF_ORDER;
+import { HIT_SLOP_MIN, readingWidth, space as layoutSpace } from "@/constants/layout";
+import { useLayout } from "@/hooks/useLayout";
 
 export default function NotificationSettingsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { t, space, radius, gutter } = useLayout();
+  const { user } = useAuth();
   const { preferences, emailAvailable, hasPermission, setPreference } = useNotifications();
+  const order = visiblePreferenceOrder(user?.role);
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,12 +49,12 @@ export default function NotificationSettingsScreen() {
     const label = PREF_LABELS[kind];
     const busy = saving === `${channel}:${kind}`;
     return (
-      <View key={`${channel}:${kind}`} style={[styles.row, { borderBottomColor: colors.border }]}>
-        <View style={styles.rowText}>
-          <Text style={[styles.rowTitle, { color: disabled ? colors.mutedForeground : colors.foreground }]}>
+      <View key={`${channel}:${kind}`} style={[styles.row, { padding: space.md, borderBottomColor: colors.border }]}>
+        <View style={[styles.rowText, { paddingRight: space.sm }]}>
+          <Text style={[t.bodyStrong, { color: disabled ? colors.mutedForeground : colors.foreground }]}>
             {label.title}
           </Text>
-          <Text style={[styles.rowHelp, { color: colors.mutedForeground }]}>{label.help}</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground, marginTop: space.xxs }]}>{label.help}</Text>
         </View>
         {busy ? (
           <ActivityIndicator size="small" color={colors.primary} style={styles.rowControl} />
@@ -60,8 +63,8 @@ export default function NotificationSettingsScreen() {
             value={preferences[channel][kind]}
             disabled={disabled}
             onValueChange={(value) => void toggle(channel, kind, value)}
-            trackColor={{ false: colors.input, true: colors.primary + "80" }}
-            thumbColor={preferences[channel][kind] ? colors.primary : "#FFFFFF"}
+            trackColor={{ false: colors.input, true: colors.primary }}
+            thumbColor={colors.card}
             style={styles.rowControl}
           />
         )}
@@ -71,16 +74,16 @@ export default function NotificationSettingsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
+      <View style={[styles.header, { paddingTop: insets.top + space.sm, paddingHorizontal: gutter, paddingBottom: space.sm, borderBottomColor: colors.border }]}>
+        <TouchableOpacity testID="notification-settings-back" accessibilityRole="button" accessibilityLabel="Go back" onPress={() => router.back()} style={styles.backBtn} activeOpacity={0.7}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.foreground }]}>Notifications</Text>
+        <Text style={[t.title3, { color: colors.foreground }]}>Notifications & dates</Text>
         <View style={styles.backBtn} />
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 32 }]}
+        contentContainerStyle={[styles.scroll, { paddingHorizontal: gutter, paddingTop: space.xl, paddingBottom: insets.bottom + space.huge }]}
         showsVerticalScrollIndicator={false}
       >
         {/*
@@ -90,12 +93,12 @@ export default function NotificationSettingsScreen() {
           screen with one item on it is a screen nobody finds.
         */}
         <DateSystemSetting />
-        <View style={{ height: 24 }} />
+        <View style={{ height: space.xl }} />
 
         {error && (
-          <View style={[styles.notice, { backgroundColor: colors.destructive + "12", borderColor: colors.destructive + "30" }]}>
+          <View style={[styles.notice, { gap: space.xs, padding: space.sm, marginBottom: space.md, borderRadius: radius.sm, backgroundColor: colors.destructiveSoft, borderColor: colors.destructive }]}>
             <Feather name="alert-circle" size={16} color={colors.destructive} />
-            <Text style={[styles.noticeText, { color: colors.destructive }]}>{error}</Text>
+            <Text style={[t.callout, styles.noticeText, { color: colors.destructive }]}>{error}</Text>
           </View>
         )}
 
@@ -103,25 +106,25 @@ export default function NotificationSettingsScreen() {
             grant a permission the operating system has refused, so say so rather than
             leaving a switch that appears on and does nothing. */}
         {Platform.OS !== "web" && !hasPermission && (
-          <View style={[styles.notice, { backgroundColor: colors.accent + "12", borderColor: colors.accent + "30" }]}>
-            <Feather name="bell-off" size={16} color={colors.accent} />
-            <Text style={[styles.noticeText, { color: colors.foreground }]}>
+          <View style={[styles.notice, { gap: space.xs, padding: space.sm, marginBottom: space.md, borderRadius: radius.sm, backgroundColor: colors.warnSoft, borderColor: colors.warn }]}>
+            <Feather name="bell-off" size={16} color={colors.warn} />
+            <Text style={[t.callout, styles.noticeText, { color: colors.foreground }]}>
               Your phone is blocking notifications for Fadko. Turn them on in your phone&apos;s
               Settings to get alerts when the app is closed. In-app alerts still work.
             </Text>
           </View>
         )}
 
-        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>In the app</Text>
-        <Text style={[styles.sectionHelp, { color: colors.mutedForeground }]}>
+        <Text style={[t.title3, { color: colors.foreground, marginTop: space.sm }]}>In the app</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground, marginTop: space.xxs, marginBottom: space.xs }]}>
           Alerts on your phone and in your notification list.
         </Text>
-        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          {ORDER.map((kind) => renderRow("push", kind, false))}
+        <View style={[styles.card, { borderRadius: radius.md, backgroundColor: colors.card, borderColor: colors.border }]}>
+          {order.map((kind) => renderRow("push", kind, false))}
         </View>
 
-        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>By email</Text>
-        <Text style={[styles.sectionHelp, { color: colors.mutedForeground }]}>
+        <Text style={[t.title3, { color: colors.foreground, marginTop: space.xl }]}>By email</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground, marginTop: space.xxs, marginBottom: space.xs }]}>
           {emailAvailable
             ? "For the things worth knowing about when the app is closed."
             : "Email is not switched on for this server yet, so these cannot be sent."}
@@ -129,13 +132,13 @@ export default function NotificationSettingsScreen() {
         <View
           style={[
             styles.card,
-            { backgroundColor: colors.card, borderColor: colors.border, opacity: emailAvailable ? 1 : 0.55 },
+            { borderRadius: radius.md, backgroundColor: colors.card, borderColor: colors.border, opacity: emailAvailable ? 1 : 0.55 },
           ]}
         >
-          {ORDER.map((kind) => renderRow("email", kind, !emailAvailable))}
+          {order.map((kind) => renderRow("email", kind, !emailAvailable))}
         </View>
 
-        <Text style={[styles.footnote, { color: colors.mutedForeground }]}>
+        <Text style={[t.caption, { color: colors.mutedForeground, marginTop: space.lg, textAlign: "center" }]}>
           These settings apply to every device you sign in on.
         </Text>
       </ScrollView>
@@ -149,36 +152,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  headerTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
-  scroll: { padding: 16 },
-  sectionTitle: { fontSize: 15, fontFamily: "Inter_600SemiBold", marginTop: 12 },
-  sectionHelp: { fontSize: 13, fontFamily: "Inter_400Regular", marginTop: 4, marginBottom: 10, lineHeight: 18 },
-  card: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
+  backBtn: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" },
+  scroll: { width: "100%", maxWidth: readingWidth, alignSelf: "center" },
+  card: { borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
   row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  rowText: { flex: 1, paddingRight: 12 },
-  rowTitle: { fontSize: 15, fontFamily: "Inter_500Medium" },
-  rowHelp: { fontSize: 12.5, fontFamily: "Inter_400Regular", marginTop: 2, lineHeight: 17 },
-  rowControl: { width: 52, alignItems: "flex-end" },
+  rowText: { flex: 1 },
+  rowControl: { width: HIT_SLOP_MIN + layoutSpace.xs, alignItems: "flex-end" },
   notice: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 10,
-    padding: 12,
-    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: 16,
   },
-  noticeText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
-  footnote: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 18, textAlign: "center" },
+  noticeText: { flex: 1 },
 });

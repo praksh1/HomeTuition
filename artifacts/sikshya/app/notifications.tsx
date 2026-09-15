@@ -1,201 +1,334 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
+  ActivityIndicator,
   FlatList,
+  Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
+import { useDates } from "@/context/DatePreferenceContext";
 import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import {
+  filterNotifications,
+  nepalDayKey,
+  notificationClock,
+  notificationDestination,
+  notificationGroupLabel,
+  notificationPresentation,
+  type NotificationFilter,
+} from "@/utils/notificationCenter";
 import type { AppNotification } from "@/utils/notifications";
 
-const TYPE_CONFIG: Record<
-  AppNotification["type"],
-  { icon: string; bg: string; color: string; label: string }
-> = {
-  session_reminder: { icon: "clock", bg: "#3B82F615", color: "#3B82F6", label: "Reminder" },
-  payment: { icon: "credit-card", bg: "#22C55E15", color: "#22C55E", label: "Payment" },
-  credential: { icon: "shield", bg: "#F5A62315", color: "#F5A623", label: "Verification" },
-  live: { icon: "radio", bg: "#EF444415", color: "#EF4444", label: "Live" },
-  general: { icon: "bell", bg: "#6B728015", color: "#6B7280", label: "Update" },
-};
+type NotificationRow =
+  | { kind: "group"; key: string; label: string }
+  | { kind: "notification"; key: string; item: AppNotification };
 
-function timeAgo(dateStr: string): string {
-  const now = Date.now();
-  const diff = now - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  const hours = Math.floor(diff / 3600000);
-  const days = Math.floor(diff / 86400000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days === 1) return "Yesterday";
-  return `${days}d ago`;
-}
-
-function isToday(dateStr: string): boolean {
-  const d = new Date(dateStr);
-  const now = new Date();
-  return d.toDateString() === now.toDateString();
-}
+const PAGE_SIZE = 20;
 
 export default function NotificationsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { notifications, unreadCount, markRead, refresh } = useNotifications();
+  const { format: formatDate, ready: datesReady } = useDates();
+  const { t, numeric, space, radius, gutter } = useLayout();
+  const { notifications, unreadCount, markRead, markOneRead, refresh } = useNotifications();
+  const [filter, setFilter] = useState<NotificationFilter>("all");
+  const [ready, setReady] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [visibleLimit, setVisibleLimit] = useState(PAGE_SIZE);
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  const todayNotifs = notifications.filter((n) => isToday(n.createdAt));
-  const earlierNotifs = notifications.filter((n) => !isToday(n.createdAt));
-
-  const handleMarkRead = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    await markRead();
-  };
-
-  const handleNotifPress = async (item: AppNotification) => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
-    await markRead();
-    const role = user?.role;
-    const home = role === "teacher" ? "/(teacher)" : role === "student" ? "/(student)" : "/welcome";
-    const programId = item.data?.programId;
-    const batchId = item.data?.batchId;
-    if (
-      typeof item.data?.type === "string" &&
-      item.data.type.startsWith("class_homework_") &&
-      (typeof batchId === "string" || typeof batchId === "number")
-    ) {
-      router.push({ pathname: "/class-homework", params: { id: String(batchId) } });
-    } else if (role === "student" && item.data?.type === "program_published" && (typeof programId === "string" || typeof programId === "number")) {
-      router.push(`/(student)/program/${programId}`);
-    } else if (item.type === "session_reminder" || item.type === "live") {
-      if (role === "teacher") router.replace("/(teacher)/sessions");
-      else if (role === "student") router.replace("/(student)/sessions");
-      else router.replace(home);
-    } else if (item.type === "payment" && role === "teacher") {
-      router.push({ pathname: "/(teacher)/subscription", params: { from: "notif" } });
-    } else {
-      router.replace(home);
+  const load = async (showRefresh = false) => {
+    if (showRefresh) setRefreshing(true);
+    setProblem(null);
+    try {
+      await refresh();
+    } catch {
+      setProblem("Notifications could not be refreshed. Check your connection and try again.");
+    } finally {
+      setReady(true);
+      setRefreshing(false);
     }
   };
 
-  const renderItem = ({ item }: { item: AppNotification }) => {
-    const config = TYPE_CONFIG[item.type];
+  useEffect(() => {
+    void load();
+  }, [refresh]);
+
+  const rows = useMemo<NotificationRow[]>(() => {
+    if (!datesReady) return [];
+    const visible = filterNotifications(notifications, filter).slice(0, visibleLimit);
+    const result: NotificationRow[] = [];
+    let previousDay = "";
+    for (const item of visible) {
+      const day = nepalDayKey(item.createdAt);
+      if (day !== previousDay) {
+        result.push({
+          kind: "group",
+          key: `group:${day}`,
+          label: notificationGroupLabel(day, new Date(), (date) => formatDate(date, { style: "long" })),
+        });
+        previousDay = day;
+      }
+      result.push({ kind: "notification", key: `notification:${item.id}`, item });
+    }
+    return result;
+  }, [datesReady, filter, formatDate, notifications, visibleLimit]);
+
+  const filteredTotal = useMemo(
+    () => filterNotifications(notifications, filter).length,
+    [filter, notifications],
+  );
+
+  const openNotification = async (item: AppNotification) => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    if (!item.read) await markOneRead(item.id);
+    const target = notificationDestination(item.data, user?.role);
+    if (target) router.push(target as never);
+  };
+
+  const markEverythingRead = async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    await markRead();
+  };
+
+  const renderRow = ({ item: row }: { item: NotificationRow }) => {
+    if (row.kind === "group") {
+      return (
+        <Text
+          accessibilityRole="header"
+          style={[t.overline, { color: colors.inkFaint, marginTop: space.lg, marginBottom: space.xs }]}
+        >
+          {row.label}
+        </Text>
+      );
+    }
+
+    const item = row.item;
+    const presentation = notificationPresentation(item);
+    const tone = presentation.tone === "live"
+      ? { ink: colors.brand, wash: colors.brandSoft }
+      : presentation.tone === "success"
+        ? { ink: colors.success, wash: colors.successSoft }
+        : presentation.tone === "warning"
+          ? { ink: colors.warn, wash: colors.warnSoft }
+          : presentation.tone === "action"
+            ? { ink: colors.primary, wash: colors.actionSoft }
+            : { ink: colors.mutedForeground, wash: colors.muted };
+    const target = notificationDestination(item.data, user?.role);
+
     return (
-      <TouchableOpacity
-        style={[
-          styles.card,
+      <Pressable
+        testID={`notification-${item.id}`}
+        accessibilityRole="button"
+        accessibilityLabel={`${item.read ? "Read" : "Unread"}: ${item.title}`}
+        onPress={() => void openNotification(item)}
+        style={({ pressed }) => [
+          styles.notification,
           {
-            backgroundColor: item.read ? colors.card : colors.primary + "06",
-            borderColor: item.read ? colors.border : colors.primary + "20",
+            minHeight: HIT_SLOP_MIN,
+            padding: space.md,
+            marginBottom: space.xs,
+            gap: space.sm,
+            borderRadius: radius.md,
+            borderColor: colors.border,
+            backgroundColor: item.read ? colors.card : colors.actionSoft,
+            opacity: pressed ? 0.82 : 1,
           },
         ]}
-        activeOpacity={0.7}
-        onPress={() => handleNotifPress(item)}
       >
-        <View style={[styles.iconWrap, { backgroundColor: config.bg }]}>
-          <Feather name={config.icon as "clock"} size={18} color={config.color} />
+        <View
+          style={{
+            width: HIT_SLOP_MIN,
+            height: HIT_SLOP_MIN,
+            borderRadius: radius.sm,
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: tone.wash,
+          }}
+        >
+          <Feather name={presentation.icon} size={20} color={tone.ink} />
         </View>
-        <View style={styles.content}>
-          <View style={styles.contentTop}>
-            <View style={[styles.typeBadge, { backgroundColor: config.bg }]}>
-              <Text style={[styles.typeLabel, { color: config.color }]}>{config.label}</Text>
-            </View>
-            <Text style={[styles.time, { color: colors.mutedForeground }]}>
-              {timeAgo(item.createdAt)}
+        <View style={{ flex: 1, gap: space.xxs }}>
+          <View style={styles.metadataRow}>
+            <Text style={[t.overline, { flexShrink: 1, color: tone.ink }]}>{presentation.label}</Text>
+            <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>
+              {notificationClock(item.createdAt)}
             </Text>
           </View>
-          <Text style={[styles.title, { color: colors.foreground }]}>{item.title}</Text>
-          <Text style={[styles.body, { color: colors.mutedForeground }]} numberOfLines={2}>
-            {item.body}
-          </Text>
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>{item.title}</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>{item.body}</Text>
         </View>
-        {!item.read && (
-          <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
-        )}
-      </TouchableOpacity>
+        <View style={{ alignItems: "center", gap: space.xs, paddingTop: space.xxs }}>
+          {!item.read ? (
+            <View
+              accessibilityLabel="Unread"
+              style={{ width: space.xs, height: space.xs, borderRadius: radius.pill, backgroundColor: colors.primary }}
+            />
+          ) : null}
+          {target ? <Feather name="chevron-right" size={18} color={colors.inkFaint} /> : null}
+        </View>
+      </Pressable>
     );
   };
 
+  const noVisibleItems = ready && datesReady && rows.length === 0;
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
-        <TouchableOpacity
+      <View
+        style={[
+          styles.topBar,
+          {
+            paddingTop: insets.top + space.sm,
+            paddingHorizontal: gutter,
+            paddingBottom: space.sm,
+            borderBottomColor: colors.border,
+          },
+        ]}
+      >
+        <Pressable
+          testID="notifications-back"
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
           onPress={() => router.back()}
-          style={styles.backBtn}
-          activeOpacity={0.7}
+          style={{ width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" }}
         >
           <Feather name="arrow-left" size={22} color={colors.foreground} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={[styles.headerTitle, { color: colors.foreground }]}>Notifications</Text>
-          {unreadCount > 0 && (
-            <View style={[styles.unreadBadge, { backgroundColor: colors.primary }]}>
-              <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
-            </View>
-          )}
-        </View>
-        {unreadCount > 0 ? (
-          <TouchableOpacity onPress={handleMarkRead} style={styles.markReadBtn} activeOpacity={0.7}>
-            <Text style={[styles.markReadText, { color: colors.primary }]}>Mark all read</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 80 }} />
-        )}
+        </Pressable>
+        <Text style={[t.title3, { color: colors.foreground }]}>Notifications</Text>
+        <Pressable
+          testID="notification-settings"
+          accessibilityRole="button"
+          accessibilityLabel="Notification settings"
+          onPress={() => router.push("/notification-settings")}
+          style={{ width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" }}
+        >
+          <Feather name="sliders" size={21} color={colors.primary} />
+        </Pressable>
       </View>
 
       <FlatList
-        data={[]}
-        renderItem={null}
-        keyExtractor={() => ""}
-        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 24 }]}
+        data={rows}
+        renderItem={renderRow}
+        keyExtractor={(row) => row.key}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.primary} />}
+        contentContainerStyle={{
+          width: "100%",
+          maxWidth: marketplaceColumnMax,
+          alignSelf: "center",
+          paddingHorizontal: gutter,
+          paddingTop: space.xl,
+          paddingBottom: insets.bottom + space.huge,
+          flexGrow: 1,
+        }}
         ListHeaderComponent={
-          <View>
-            {notifications.length === 0 && (
-              <View style={styles.empty}>
-                <View style={[styles.emptyIcon, { backgroundColor: colors.muted }]}>
-                  <Feather name="bell-off" size={32} color={colors.mutedForeground} />
-                </View>
-                <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                  No notifications yet
-                </Text>
-                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                  Session reminders, payment alerts, and updates will appear here
-                </Text>
-              </View>
-            )}
+          <View style={{ gap: space.lg }}>
+            <View style={{ gap: space.xs }}>
+              <Text style={[t.title1, { color: colors.foreground }]}>What needs your attention</Text>
+              <Text style={[t.body, { color: colors.mutedForeground }]}>
+                {unreadCount > 0
+                  ? `${unreadCount} ${unreadCount === 1 ? "update is" : "updates are"} waiting for you.`
+                  : "You are all caught up."}
+              </Text>
+            </View>
 
-            {todayNotifs.length > 0 && (
-              <View style={styles.group}>
-                <Text style={[styles.groupLabel, { color: colors.mutedForeground }]}>Today</Text>
-                {todayNotifs.map((item) => (
-                  <View key={item.id}>{renderItem({ item })}</View>
-                ))}
-              </View>
-            )}
+            <View style={[styles.filterBar, { padding: space.xxs, borderRadius: radius.sm, backgroundColor: colors.muted }]}>
+              {(["all", "unread"] as const).map((option) => {
+                const selected = filter === option;
+                return (
+                  <Pressable
+                    key={option}
+                    testID={`notification-filter-${option}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    aria-pressed={selected}
+                    onPress={() => {
+                      setFilter(option);
+                      setVisibleLimit(PAGE_SIZE);
+                    }}
+                    style={{
+                      flex: 1,
+                      minHeight: HIT_SLOP_MIN,
+                      borderRadius: radius.xs,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      backgroundColor: selected ? colors.card : colors.muted,
+                    }}
+                  >
+                    <Text style={[t.bodyStrong, numeric, { color: selected ? colors.primary : colors.mutedForeground }]}>
+                      {option === "all" ? `All ${notifications.length}` : `Unread ${unreadCount}`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
 
-            {earlierNotifs.length > 0 && (
-              <View style={styles.group}>
-                <Text style={[styles.groupLabel, { color: colors.mutedForeground }]}>Earlier</Text>
-                {earlierNotifs.map((item) => (
-                  <View key={item.id}>{renderItem({ item })}</View>
-                ))}
+            {unreadCount > 0 ? (
+              <Pressable
+                testID="notification-mark-all-read"
+                accessibilityRole="button"
+                onPress={() => void markEverythingRead()}
+                style={{ minHeight: HIT_SLOP_MIN, alignSelf: "flex-end", justifyContent: "center" }}
+              >
+                <Text style={[t.bodyStrong, { color: colors.primary }]}>Mark all as read</Text>
+              </Pressable>
+            ) : null}
+
+            {problem ? (
+              <View style={{ padding: space.md, borderRadius: radius.md, backgroundColor: colors.destructiveSoft }}>
+                <Text style={[t.bodyStrong, { color: colors.destructive }]}>Could not refresh</Text>
+                <Text style={[t.callout, { color: colors.mutedForeground, marginTop: space.xxs }]}>{problem}</Text>
               </View>
-            )}
+            ) : null}
           </View>
         }
+        ListEmptyComponent={
+          !ready || !datesReady ? (
+            <View style={[styles.empty, { gap: space.md }]}>
+              <ActivityIndicator color={colors.primary} />
+              <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading your updates…</Text>
+            </View>
+          ) : noVisibleItems ? (
+            <View style={[styles.empty, { gap: space.md }]}>
+              <View style={{ width: 64, height: 64, borderRadius: radius.pill, backgroundColor: colors.actionSoft, alignItems: "center", justifyContent: "center" }}>
+                <Feather name={filter === "unread" ? "check-circle" : "bell"} size={28} color={colors.primary} />
+              </View>
+              <Text style={[t.title3, { color: colors.foreground }]}>
+                {filter === "unread" ? "Nothing unread" : "No notifications yet"}
+              </Text>
+              <Text style={[t.body, { color: colors.mutedForeground, textAlign: "center" }]}>
+                {filter === "unread"
+                  ? "You have read every update."
+                  : "Messages, homework, class changes and payment updates will appear here."}
+              </Text>
+            </View>
+          ) : null
+        }
+        ListFooterComponent={
+          rows.length > 0 && visibleLimit < filteredTotal ? (
+            <Pressable
+              testID="notification-show-older"
+              accessibilityRole="button"
+              onPress={() => setVisibleLimit((current) => current + PAGE_SIZE)}
+              style={{ minHeight: HIT_SLOP_MIN, marginTop: space.md, alignItems: "center", justifyContent: "center" }}
+            >
+              <Text style={[t.bodyStrong, { color: colors.primary }]}>Show older updates</Text>
+            </Pressable>
+          ) : null
+        }
+        showsVerticalScrollIndicator={false}
       />
     </View>
   );
@@ -203,81 +336,14 @@ export default function NotificationsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: {
+  topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  backBtn: { width: 36, height: 36, justifyContent: "center" },
-  headerCenter: { flexDirection: "row", alignItems: "center", gap: 8 },
-  headerTitle: { fontSize: 18, fontFamily: "Inter_700Bold" },
-  unreadBadge: {
-    borderRadius: 10,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    minWidth: 20,
-    alignItems: "center",
-  },
-  unreadBadgeText: { fontSize: 11, fontFamily: "Inter_700Bold", color: "#fff" },
-  markReadBtn: { paddingVertical: 4 },
-  markReadText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  list: { paddingTop: 16, paddingHorizontal: 20 },
-  group: { gap: 10, marginBottom: 24 },
-  groupLabel: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    marginBottom: 4,
-  },
-  card: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 14,
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 14,
-    position: "relative",
-  },
-  iconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-    flexShrink: 0,
-  },
-  content: { flex: 1, gap: 4 },
-  contentTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  typeBadge: { borderRadius: 20, paddingHorizontal: 8, paddingVertical: 2 },
-  typeLabel: { fontSize: 10, fontFamily: "Inter_600SemiBold" },
-  time: { fontSize: 11, fontFamily: "Inter_400Regular" },
-  title: { fontSize: 14, fontFamily: "Inter_600SemiBold", lineHeight: 20 },
-  body: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 18 },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    position: "absolute",
-    top: 14,
-    right: 14,
-  },
-  empty: { alignItems: "center", paddingTop: 80, gap: 16, paddingHorizontal: 40 },
-  emptyIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
-  emptyText: {
-    fontSize: 14,
-    fontFamily: "Inter_400Regular",
-    textAlign: "center",
-    lineHeight: 21,
-  },
+  filterBar: { flexDirection: "row" },
+  notification: { flexDirection: "row", alignItems: "flex-start", borderWidth: 1 },
+  metadataRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" },
+  empty: { alignItems: "center", justifyContent: "center", paddingTop: 72, paddingHorizontal: 24 },
 });

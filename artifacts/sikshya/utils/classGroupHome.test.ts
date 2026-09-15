@@ -15,6 +15,10 @@ const notifications = readFileSync(
   path.join(root, "context", "NotificationContext.tsx"),
   "utf8",
 );
+const notificationCenter = readFileSync(
+  path.join(root, "utils", "notificationCenter.ts"),
+  "utf8",
+);
 const panel = readFileSync(
   path.join(root, "components", "classes", "BatchTestPanel.tsx"),
   "utf8",
@@ -71,7 +75,7 @@ test("class messages refresh live and clear only after the conversation loads", 
   assert.match(channel, /"class_message"/);
   assert.match(channel, /batchId\?: number \| string/);
   assert.match(notifications, /notifyClassMessage/);
-  assert.match(notifications, /pathname: "\/class-chat"/);
+  assert.match(notificationCenter, /pathname: "\/class-chat"/);
   assert.match(chat, /lastEvent\?\.kind === "class_message"/);
   assert.match(chat, /\/messages\/read/);
   assert.match(chat, /next\.messages\.at\(-1\)\?\.id/);

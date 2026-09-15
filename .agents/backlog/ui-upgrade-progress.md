@@ -108,8 +108,11 @@ it the worst placeholder available.
 | `app/(student)/monthly.tsx` | 3 hex, 14 sizes | **0 / 0** | No — automated contract and design checks only |
 | `app/monthly-homework.tsx` | 4 hex, 17 sizes | **0 / 0** | No — automated contract and design checks only |
 | `app/monthly-chat.tsx` | 5 hex, 13 sizes | **0 / 0** | No — automated contract and design checks only |
+| `app/notifications.tsx` | 11 hex, 10 sizes | **0 / 0** | Yes — 390 and 1440, populated and all-read states |
+| `app/notification-settings.tsx` | 1 hex, 7 sizes | **0 / 0** | Yes — 390 and 1440, role-relevant switches |
+| `components/DateSystemSetting.tsx` | 0 hex, 4 sizes | **0 / 0** | Yes — inside notification settings at both widths |
 
-Baseline has fallen from **468 hex / 595 sizes** to **205 / 419**.
+Baseline has fallen from **468 hex / 595 sizes** to **71 / 225**.
 
 ## Next, in the order I would take them
 

@@ -18,6 +18,7 @@ import {
   getNotifications,
   getUnreadCount,
   markAllRead,
+  markNotificationRead,
   notifyClassMessage,
   notifyClassHomework,
   notifyNewFollower,
@@ -33,6 +34,7 @@ import {
   requestNotificationPermissions,
   type AppNotification,
 } from "@/utils/notifications";
+import { notificationDestination, type NotificationRole } from "@/utils/notificationCenter";
 import {
   DEFAULT_PREFS,
   type NotificationPrefs,
@@ -59,6 +61,7 @@ interface NotificationContextType {
   lastEvent: UserEvent | null;
   refresh: () => Promise<void>;
   markRead: () => Promise<void>;
+  markOneRead: (id: string) => Promise<void>;
   setPreference: (channel: PrefChannel, kind: PrefKind, value: boolean) => Promise<void>;
 }
 
@@ -71,6 +74,7 @@ const NotificationContext = createContext<NotificationContextType>({
   emailAvailable: false,
   refresh: async () => {},
   markRead: async () => {},
+  markOneRead: async () => {},
   setPreference: async () => {},
 });
 
@@ -92,25 +96,10 @@ function openTarget(data: {
   conversationWith?: string | number;
   programId?: string | number;
   batchId?: string | number;
-}): void {
+}, role?: NotificationRole): void {
   try {
-    if (data.batchId != null && data.type?.startsWith("class_homework_")) {
-      router.push({ pathname: "/class-homework", params: { id: String(data.batchId) } });
-    } else if (data.batchId != null && data.type === "class_message") {
-      router.push({ pathname: "/class-chat", params: { id: String(data.batchId) } });
-    } else if (data.programId != null && data.type === "program_published") {
-      router.push(`/(student)/program/${data.programId}`);
-    } else if (data.sessionId != null && data.type === "session_message") {
-      // The class's own page, where the thread is and where the Join button is — not the
-      // classroom, which would put a waiting student into a call to read a message.
-      router.push(`/session/${data.sessionId}`);
-    } else if (data.sessionId != null && (data.type === "session_reminder" || data.type === "live")) {
-      router.push(`/classroom/${data.sessionId}`);
-    } else if (data.conversationWith != null || data.type === "message") {
-      router.push(data.conversationWith != null ? `/conversation/${data.conversationWith}` : "/notifications");
-    } else {
-      router.push("/notifications");
-    }
+    const target = notificationDestination(data, role);
+    router.push((target ?? { pathname: "/notifications" }) as never);
   } catch {
     // A route that no longer exists must not take the app down on a tap.
   }
@@ -144,6 +133,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const markRead = useCallback(async () => {
     await markAllRead();
+    await refresh();
+  }, [refresh]);
+
+  const markOneRead = useCallback(async (id: string) => {
+    await markNotificationRead(id);
     await refresh();
   }, [refresh]);
 
@@ -371,7 +365,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           const data = response?.notification?.request?.content?.data as
             | { type?: string; sessionId?: string | number; conversationWith?: string | number; programId?: string | number; batchId?: string | number }
             | undefined;
-          if (data) openTarget(data);
+          if (data) openTarget(data, user?.role);
         });
       }
     };
@@ -382,7 +376,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       notificationListener.current?.remove();
       responseListener.current?.remove();
     };
-  }, [refresh]);
+  }, [refresh, user?.role]);
 
   return (
     <NotificationContext.Provider
@@ -395,6 +389,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         lastEvent,
         refresh,
         markRead,
+        markOneRead,
         setPreference,
       }}
     >

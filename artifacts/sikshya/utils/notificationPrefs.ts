@@ -29,6 +29,13 @@ export const DEFAULT_PREFS: NotificationPrefs = {
  */
 export const PREF_ORDER: PrefKind[] = ["messages", "homework", "bookings", "sessionLive", "programs", "followers", "reminders"];
 
+/** Only show switches that can produce an event for this account type. */
+export function visiblePreferenceOrder(role?: "teacher" | "student" | "admin"): PrefKind[] {
+  if (role === "teacher") return PREF_ORDER.filter((kind) => kind !== "programs");
+  if (role === "student") return PREF_ORDER.filter((kind) => kind !== "bookings" && kind !== "followers");
+  return PREF_ORDER;
+}
+
 /** Label and explanation for each switch, so both roles read the same wording. */
 export const PREF_LABELS: Record<PrefKind, { title: string; help: string }> = {
   messages: { title: "Messages", help: "When someone sends you a message" },

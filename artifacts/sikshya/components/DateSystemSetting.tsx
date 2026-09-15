@@ -4,6 +4,8 @@ import { StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
 import { useDates } from "@/context/DatePreferenceContext";
 import { formatDate } from "@/utils/nepaliDate";
+import { HIT_SLOP_MIN } from "@/constants/layout";
+import { useLayout } from "@/hooks/useLayout";
 
 /**
  * Choosing which calendar dates are shown in.
@@ -18,6 +20,7 @@ import { formatDate } from "@/utils/nepaliDate";
  */
 export default function DateSystemSetting() {
   const colors = useColors();
+  const { t, space, radius } = useLayout();
   const { system, nepaliNumerals, setSystem, setNepaliNumerals } = useDates();
   const today = new Date();
 
@@ -35,9 +38,9 @@ export default function DateSystemSetting() {
   ];
 
   return (
-    <View style={styles.wrap} testID="date-system-setting">
-      <Text style={[styles.title, { color: colors.foreground }]}>Calendar</Text>
-      <Text style={[styles.hint, { color: colors.mutedForeground }]}>
+    <View style={{ gap: space.xs }} testID="date-system-setting">
+      <Text style={[t.title3, { color: colors.foreground }]}>Calendar</Text>
+      <Text style={[t.callout, { color: colors.mutedForeground, marginBottom: space.xxs }]}>
         Which calendar class dates are shown in.
       </Text>
 
@@ -51,7 +54,14 @@ export default function DateSystemSetting() {
             activeOpacity={0.8}
             style={[
               styles.option,
-              { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.primary + "10" : colors.card },
+              {
+                minHeight: HIT_SLOP_MIN,
+                gap: space.sm,
+                padding: space.sm,
+                borderRadius: radius.sm,
+                borderColor: active ? colors.primary : colors.border,
+                backgroundColor: active ? colors.actionSoft : colors.card,
+              },
             ]}
           >
             <Feather
@@ -60,8 +70,8 @@ export default function DateSystemSetting() {
               color={active ? colors.primary : colors.mutedForeground}
             />
             <View style={{ flex: 1 }}>
-              <Text style={[styles.optionLabel, { color: colors.foreground }]}>{option.label}</Text>
-              <Text style={[styles.optionSample, { color: colors.mutedForeground }]}>{option.sample}</Text>
+              <Text style={[t.bodyStrong, { color: colors.foreground }]}>{option.label}</Text>
+              <Text style={[t.caption, { color: colors.mutedForeground, marginTop: space.xxs }]}>{option.sample}</Text>
             </View>
           </TouchableOpacity>
         );
@@ -69,10 +79,10 @@ export default function DateSystemSetting() {
 
       {/* Only meaningful alongside Bikram Sambat, so it is hidden rather than greyed for the other. */}
       {system === "bs" && (
-        <View style={[styles.row, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        <View style={[styles.row, { minHeight: HIT_SLOP_MIN, gap: space.sm, padding: space.sm, marginTop: space.xxs, borderRadius: radius.sm, borderColor: colors.border, backgroundColor: colors.card }]}>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.optionLabel, { color: colors.foreground }]}>Nepali numerals</Text>
-            <Text style={[styles.optionSample, { color: colors.mutedForeground }]}>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Nepali numerals</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground, marginTop: space.xxs }]}>
               {formatDate(today, { system: "bs", nepali: true })} instead of{" "}
               {formatDate(today, { system: "bs", nepali: false })}
             </Text>
@@ -90,17 +100,10 @@ export default function DateSystemSetting() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 8 },
-  title: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
-  hint: { fontSize: 12, fontFamily: "Inter_400Regular", marginBottom: 4 },
   option: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    borderWidth: 1, borderRadius: 12, padding: 14,
+    flexDirection: "row", alignItems: "center", borderWidth: 1,
   },
-  optionLabel: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
-  optionSample: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
   row: {
-    flexDirection: "row", alignItems: "center", gap: 12,
-    borderWidth: 1, borderRadius: 12, padding: 14, marginTop: 4,
+    flexDirection: "row", alignItems: "center", borderWidth: 1,
   },
 });

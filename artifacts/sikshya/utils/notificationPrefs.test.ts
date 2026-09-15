@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_PREFS, PREF_LABELS, PREF_ORDER } from "./notificationPrefs.ts";
+import { DEFAULT_PREFS, PREF_LABELS, PREF_ORDER, visiblePreferenceOrder } from "./notificationPrefs.ts";
 
 /**
  * Every switch the app knows about must be shown, and every one shown must have words.
@@ -37,4 +37,12 @@ test("the screen shows nothing that is not a real switch", () => {
 test("both channels carry the same set of switches", () => {
   // A kind present in push but not email would read as "off" for email and never be settable.
   assert.deepEqual(Object.keys(DEFAULT_PREFS.email).sort(), kinds.slice().sort());
+});
+
+test("teacher and student settings omit alerts that can never belong to them", () => {
+  assert.ok(!visiblePreferenceOrder("teacher").includes("programs"));
+  assert.ok(!visiblePreferenceOrder("student").includes("bookings"));
+  assert.ok(!visiblePreferenceOrder("student").includes("followers"));
+  assert.ok(visiblePreferenceOrder("teacher").includes("bookings"));
+  assert.ok(visiblePreferenceOrder("student").includes("programs"));
 });
