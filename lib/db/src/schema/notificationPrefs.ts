@@ -45,3 +45,21 @@ export const userNotificationEventsTable = pgTable("user_notification_events", {
 }, (table) => [index("user_notification_events_user_idx").on(table.userId, table.id)]);
 
 export type UserNotificationEvent = typeof userNotificationEventsTable.$inferSelect;
+
+/**
+ * Account-level read state for a durable notification.
+ *
+ * Kept in its own additive table so a deployment never has to alter the durable inbox while
+ * people are signing in. A read belongs to the account, not to one browser's local storage.
+ */
+export const userNotificationEventReadsTable = pgTable("user_notification_event_reads", {
+  eventId: integer("event_id")
+    .primaryKey()
+    .references(() => userNotificationEventsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => usersTable.id, { onDelete: "cascade" }),
+  readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index("user_notification_event_reads_user_idx").on(table.userId, table.eventId)]);
+
+export type UserNotificationEventRead = typeof userNotificationEventReadsTable.$inferSelect;

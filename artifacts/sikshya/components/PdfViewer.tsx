@@ -6,6 +6,8 @@ import { WebView } from "react-native-webview";
 interface Props {
   uri: string;
   style?: StyleProp<ViewStyle>;
+  /** Web reader zoom; native WebView supplies its own pinch zoom. */
+  zoom?: number;
 }
 
 /**

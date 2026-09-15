@@ -139,7 +139,28 @@ export default function AttachmentViewer({ file, visible, onClose, onProblem, in
             </View>
           ) : url && kind === "pdf" ? (
             <View style={[styles.documentFrame, { borderColor: colors.border, backgroundColor: colors.card }]}>
-              <PdfViewer uri={url} style={styles.pdf} />
+              <PdfViewer uri={url} style={styles.pdf} zoom={zoom} />
+              <View style={[styles.zoomBar, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.pill }]}>
+                <TouchableOpacity
+                  onPress={() => setZoom((value) => Math.max(0.75, Number((value - 0.25).toFixed(2))))}
+                  style={styles.zoomButton}
+                  accessibilityLabel="Zoom out"
+                  disabled={zoom <= 0.75}
+                  aria-disabled={zoom <= 0.75}
+                >
+                  <Feather name="minus" size={19} color={zoom <= 0.75 ? colors.inkFaint : colors.foreground} />
+                </TouchableOpacity>
+                <Text style={[t.caption, { color: colors.foreground, minWidth: 48, textAlign: "center" }]}>{Math.round(zoom * 100)}%</Text>
+                <TouchableOpacity
+                  onPress={() => setZoom((value) => Math.min(3, Number((value + 0.25).toFixed(2))))}
+                  style={styles.zoomButton}
+                  accessibilityLabel="Zoom in"
+                  disabled={zoom >= 3}
+                  aria-disabled={zoom >= 3}
+                >
+                  <Feather name="plus" size={19} color={zoom >= 3 ? colors.inkFaint : colors.foreground} />
+                </TouchableOpacity>
+              </View>
             </View>
           ) : url && kind === "image" ? (
             <View style={styles.imageStage}>

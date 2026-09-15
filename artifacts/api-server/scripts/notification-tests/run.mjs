@@ -218,6 +218,55 @@ async function testEveryDeviceHearsIt() {
   laptop.close();
 }
 
+async function testEveryDeviceLearnsWhatWasRead() {
+  console.log("\nReading a message notification follows the account to every device");
+  const teacher = await register("teacher");
+  const student = await register("student");
+  const stranger = await register("teacher");
+
+  await sendMessage(student.token, teacher.user.id, "Read this on the laptop");
+  let inbox = null;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    inbox = await api("/notification-events?after=0", { token: teacher.token });
+    if (inbox.body?.events?.some((row) => row.event?.kind === "message")) break;
+    await quiet(100);
+  }
+  const message = inbox?.body?.events?.find((row) => row.event?.kind === "message");
+  check("the durable notification has an account id", Number.isInteger(message?.id));
+  check("a new notification starts unread", message?.readAt == null);
+
+  const laptop = openChannel(teacher.token);
+  const phone = openChannel(teacher.token);
+  await Promise.all([laptop.open(), phone.open()]);
+  const marked = await api("/notification-events/read", {
+    method: "PATCH",
+    token: teacher.token,
+    body: { target: { kind: "direct_message", conversationWith: student.user.id } },
+  });
+  check("opening the conversation records the read", marked.status === 200 && marked.body?.marked >= 1);
+  const [onLaptop, onPhone] = await Promise.all([
+    laptop.next((event) => event.kind === "notification_read"),
+    phone.next((event) => event.kind === "notification_read"),
+  ]);
+  check("the laptop learns immediately", onLaptop?.target?.kind === "direct_message");
+  check("the phone learns immediately", onPhone?.target?.conversationWith === String(student.user.id));
+
+  const caughtUp = await api("/notification-events?after=0", { token: teacher.token });
+  check("a reopened device receives the read receipt", caughtUp.body?.readState?.eventIds?.includes(message.id));
+  check("older local notifications can reconcile by conversation", caughtUp.body?.readState?.targets?.some(
+    (target) => target.kind === "direct_message" && target.conversationWith === String(student.user.id),
+  ));
+
+  const trespass = await api("/notification-events/read", {
+    method: "PATCH",
+    token: stranger.token,
+    body: { eventIds: [message.id] },
+  });
+  check("another account cannot mark this notification", trespass.status === 200 && trespass.body?.marked === 0);
+  laptop.close();
+  phone.close();
+}
+
 async function testPreferencesAreRespected() {
   console.log("\nTurning a notification off actually stops it");
   const teacher = await register("teacher");
@@ -537,6 +586,7 @@ async function main() {
   await testSenderIsNotNotifiedOfTheirOwnMessage();
   await testFollowingTellsTheTeacher();
   await testEveryDeviceHearsIt();
+  await testEveryDeviceLearnsWhatWasRead();
   await testPreferencesAreRespected();
   await testPreferencesSurviveAnOlderClient();
   await testChannelRequiresAValidIdentity();

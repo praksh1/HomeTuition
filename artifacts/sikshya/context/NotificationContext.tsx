@@ -14,10 +14,12 @@ import { Platform } from "react-native";
 import { useAuth } from "@/context/AuthContext";
 import { useUserChannel, type UserEvent } from "@/hooks/useUserChannel";
 import { apiGet, apiPatch } from "@/utils/api";
+import { onNetworkResume } from "@/utils/networkResume";
 import {
   getNotifications,
   markAllRead,
   markNotificationRead,
+  markNotificationsForServerIds,
   markNotificationsForTarget,
   notifyClassMessage,
   notifyClassHomework,
@@ -132,24 +134,65 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     setUnreadCount(notifs.filter((notification) => !notification.read).length);
   }, []);
 
-  const markRead = useCallback(async () => {
-    await markAllRead();
+  const applyReadState = useCallback(async (state: {
+    eventIds?: number[];
+    targets?: NotificationReadTarget[];
+    all?: boolean;
+  }) => {
+    if (!state.all && (state.eventIds?.length ?? 0) === 0 && (state.targets?.length ?? 0) === 0) return;
+    if (state.all) await markAllRead();
+    else {
+      await markNotificationsForServerIds(state.eventIds ?? []);
+      for (const target of state.targets ?? []) await markNotificationsForTarget(target);
+    }
     await refresh();
   }, [refresh]);
 
+  const markRead = useCallback(async () => {
+    await markAllRead();
+    await refresh();
+    try {
+      await apiPatch("/notification-events/read", { all: true });
+    } catch {
+      // The current screen stays read; a later account sync reconciles other devices.
+    }
+  }, [refresh]);
+
   const markOneRead = useCallback(async (id: string) => {
+    const serverId = notifications.find((notification) => notification.id === id)?.serverId;
     await markNotificationRead(id);
     await refresh();
-  }, [refresh]);
+    if (serverId == null) return;
+    try {
+      await apiPatch("/notification-events/read", { eventIds: [serverId] });
+    } catch {
+      // A later account sync retries server state.
+    }
+  }, [notifications, refresh]);
 
   const markTargetRead = useCallback(async (target: NotificationReadTarget) => {
     const changed = await markNotificationsForTarget(target);
     if (changed > 0) await refresh();
+    try {
+      // Sent even if this browser has an old notification without a durable id: the server
+      // can still identify all message events belonging to the conversation.
+      await apiPatch("/notification-events/read", { target });
+    } catch {
+      // Reading the conversation must still work while receipt sync is offline.
+    }
   }, [refresh]);
 
   /** Turns one server event into a notification the user can see and act on. */
   const onEvent = useCallback(
     async (event: UserEvent) => {
+      if (event.kind === "notification_read") {
+        await applyReadState({
+          all: event.all,
+          eventIds: event.eventIds,
+          targets: event.target ? [event.target] : [],
+        });
+        return;
+      }
       // Published before the de-duplication below, because a screen listening for its own
       // updates wants every nudge — two copies cost it one extra request, a missed one costs
       // it a message that never appears.
@@ -167,21 +210,21 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             senderName: event.fromName ?? "Someone",
             body: event.preview ?? "",
             senderId: event.fromUserId,
-          });
+          }, event.inboxId);
         } else if (event.kind === "follower") {
-          await notifyNewFollower({ name: event.fromName ?? "A student", userId: event.fromUserId ?? 0 });
+          await notifyNewFollower({ name: event.fromName ?? "A student", userId: event.fromUserId ?? 0 }, event.inboxId);
         } else if (event.kind === "program_published" && event.programId != null) {
           await notifyProgramPublished({
             teacherName: event.fromName,
             title: event.programTitle,
             programId: event.programId,
-          });
+          }, event.inboxId);
         } else if (event.kind === "session_invite") {
           await notifySessionInvite({
             topic: event.topic ?? "a class",
             teacherName: event.fromName,
             sessionId: event.sessionId,
-          });
+          }, event.inboxId);
         } else if (event.kind === "class_message" && event.batchId != null) {
           if (!preferences.push.messages) return;
           await notifyClassMessage({
@@ -189,7 +232,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             body: event.preview ?? "",
             batchId: event.batchId,
             topic: event.topic,
-          });
+          }, event.inboxId);
         } else if (
           (event.kind === "class_homework_set" ||
             event.kind === "class_homework_submitted" ||
@@ -209,7 +252,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             homeworkTitle: event.homeworkTitle,
             classTitle: event.topic,
             personName: event.fromName,
-          });
+          }, event.inboxId);
         } else if (event.kind === "session_message") {
           if (!preferences.push.messages) return;
           // A class's own thread, which is where a teacher says they are running late. It
@@ -220,7 +263,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             body: event.preview ?? "",
             sessionId: event.sessionId ?? 0,
             topic: event.topic,
-          });
+          }, event.inboxId);
         } else if (event.kind === "session_booked") {
           // Money arriving. The server has always sent this and the app has always ignored it,
           // so a teacher only heard about a booking if email happened to be configured.
@@ -233,33 +276,33 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             // would call a genuinely free class a test booking, and miss a test booking that
             // carried a price.
             testBooking: event.testBooking === true,
-          });
+          }, event.inboxId);
         } else if (event.kind === "session_dropped") {
           await notifySessionDropped({
             topic: event.topic ?? "your class",
             studentName: event.fromName,
             sessionId: event.sessionId,
-          });
+          }, event.inboxId);
         } else if (event.kind === "session_cancelled") {
           await notifySessionCancelled({
             topic: event.topic ?? "Your class",
             teacherName: event.fromName,
             sessionId: event.sessionId,
             amount: event.amount,
-          });
+          }, event.inboxId);
         } else if (event.kind === "session_rescheduled") {
           await notifySessionRescheduled({
             topic: event.topic ?? "Your class",
             teacherName: event.fromName,
             sessionId: event.sessionId,
             newDate: event.newDate,
-          });
+          }, event.inboxId);
         } else if (event.kind === "session_live") {
           await notifySessionLive({
             topic: event.topic ?? "Your class",
             teacherName: event.fromName,
             sessionId: event.sessionId,
-          });
+          }, event.inboxId);
         } else {
           return;
         }
@@ -268,7 +311,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
       await refresh();
     },
-    [preferences.push.homework, preferences.push.messages, refresh],
+    [applyReadState, preferences.push.homework, preferences.push.messages, refresh],
   );
 
   // A socket is an instant-delivery path, not a mailbox. Pull the durable cursor on sign-in
@@ -282,15 +325,20 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       try {
         const saved = Number(await AsyncStorage.getItem(cursorKey) ?? 0);
         const after = Number.isSafeInteger(saved) && saved > 0 ? saved : 0;
-        const response = await apiGet<{ events: Array<{ id: number; event: UserEvent }> }>(
+        const response = await apiGet<{
+          events: Array<{ id: number; event: UserEvent; readAt?: string | null }>;
+          readState?: { eventIds?: number[]; targets?: NotificationReadTarget[] };
+        }>(
           `/notification-events?after=${after}`,
         );
         let cursor = after;
         for (const row of response.events ?? []) {
           if (!alive) return;
-          await onEvent(row.event);
+          await onEvent({ ...row.event, inboxId: row.id });
+          if (row.readAt) await markNotificationsForServerIds([row.id]);
           cursor = Math.max(cursor, row.id);
         }
+        await applyReadState(response.readState ?? {});
         if (cursor > after) await AsyncStorage.setItem(cursorKey, String(cursor));
       } catch {
         // The live socket still works. The next pull retries the same cursor.
@@ -298,8 +346,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     };
     void pull();
     const timer = setInterval(() => void pull(), 30_000);
-    return () => { alive = false; clearInterval(timer); };
-  }, [onEvent, user?.userId]);
+    const stopResume = onNetworkResume(() => void pull());
+    return () => { alive = false; clearInterval(timer); stopResume(); };
+  }, [applyReadState, onEvent, user?.userId]);
 
   // One socket for as long as someone is signed in. The classroom socket only carries one
   // lesson, so anything happening outside a lesson had no way to reach the app at all.

@@ -171,6 +171,36 @@ async function main() {
       String(stored[0]?.data?.conversationWith ?? "") === String(student.user.id),
       JSON.stringify(stored[0]?.data ?? {}));
 
+    console.log("\nReading the conversation clears the same notification on another device");
+    const phoneCtx = await browser.newContext();
+    const phonePage = await openSignedIn(phoneCtx, teacher.token);
+    let phoneStored = await phonePage.evaluate(() =>
+      JSON.parse(window.localStorage.getItem("@sikshya_notifications") ?? "[]"),
+    );
+    check("the second device catches up with the notification", phoneStored.some(
+      (item) => String(item.data?.conversationWith ?? "") === String(student.user.id) && !item.read,
+    ));
+    check("both devices retain its durable account id", Number.isInteger(phoneStored.find(
+      (item) => String(item.data?.conversationWith ?? "") === String(student.user.id),
+    )?.serverId));
+
+    await page.goto(`${siteUrl}/conversation/${student.user.id}`);
+    await page.getByText(student.user.name, { exact: true }).first().waitFor({ timeout: 10_000 });
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      phoneStored = await phonePage.evaluate(() =>
+        JSON.parse(window.localStorage.getItem("@sikshya_notifications") ?? "[]"),
+      );
+      const matching = phoneStored.filter(
+        (item) => String(item.data?.conversationWith ?? "") === String(student.user.id),
+      );
+      if (matching.length > 0 && matching.every((item) => item.read)) break;
+      await phonePage.waitForTimeout(250);
+    }
+    check("the other device clears it without a hard refresh", phoneStored.filter(
+      (item) => String(item.data?.conversationWith ?? "") === String(student.user.id),
+    ).every((item) => item.read));
+    await phoneCtx.close();
+
     console.log("\nNothing is invented: the list starts empty for a new user");
     // The old build seeded six fictional notifications on first run — a payment from
     // "Aarav Shrestha", a verification approval — which is why this is asserted explicitly.

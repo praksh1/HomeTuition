@@ -25,7 +25,14 @@ export interface UserEvent {
     | "session_cancelled"
     | "class_message"
     | "session_message"
-    | "session_rescheduled";
+    | "session_rescheduled"
+    | "notification_read";
+  /** Durable inbox id shared by every device signed in to this account. */
+  inboxId?: number;
+  /** Read-receipt synchronization payload; present only for `notification_read`. */
+  all?: boolean;
+  eventIds?: number[];
+  target?: { kind: "direct_message"; conversationWith: string } | { kind: "class_message"; batchId: string };
   at?: string;
   fromUserId?: number;
   fromName?: string;

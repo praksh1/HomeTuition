@@ -18,6 +18,12 @@ export type NotificationReadTarget =
   | { kind: "direct_message"; conversationWith: string | number }
   | { kind: "class_message"; batchId: string | number };
 
+export interface RemoteNotificationReadState {
+  all?: boolean;
+  eventIds?: number[];
+  targets?: NotificationReadTarget[];
+}
+
 const NEPAL_TIME_ZONE = "Asia/Kathmandu";
 
 function value(data: Record<string, unknown> | undefined, key: string): string | undefined {
@@ -37,6 +43,20 @@ export function notificationMatchesReadTarget(
     return kind === "message" && value(notification.data, "conversationWith") === String(target.conversationWith);
   }
   return kind === "class_message" && value(notification.data, "batchId") === String(target.batchId);
+}
+
+/** Merges account-level receipts into one device without clearing unrelated notifications. */
+export function applyRemoteNotificationReadState(
+  notifications: AppNotification[],
+  state: RemoteNotificationReadState,
+): AppNotification[] {
+  const ids = new Set(state.eventIds ?? []);
+  return notifications.map((notification) => {
+    if (notification.read) return notification;
+    const byId = notification.serverId != null && ids.has(notification.serverId);
+    const byTarget = (state.targets ?? []).some((target) => notificationMatchesReadTarget(notification, target));
+    return state.all || byId || byTarget ? { ...notification, read: true } : notification;
+  });
 }
 
 export function notificationDestination(

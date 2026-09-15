@@ -10,6 +10,7 @@ import { getChromium } from "../board-tests/harness.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const work = mkdtempSync(path.join(tmpdir(), "fadko-messages-ui-"));
 const bundle = path.join(work, "bundle.js");
+const pdfWorker = path.resolve(here, "../../public/pdf.worker.min.js");
 const built = await bundleForBrowser({
   entry: path.join(here, "entry.tsx"),
   outfile: bundle,
@@ -30,8 +31,13 @@ const built = await bundleForBrowser({
 assert.ok(built.ok, built.error);
 
 const server = createServer((req, res) => {
-  res.setHeader("Content-Type", req.url === "/bundle.js" ? "application/javascript; charset=utf-8" : "text/html; charset=utf-8");
-  res.end(req.url === "/bundle.js" ? readFileSync(bundle) : '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{height:100%;margin:0}</style><div id="root"></div><script src="/bundle.js"></script>');
+  if (req.url === "/bundle.js" || req.url === "/pdf.worker.min.js") {
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.end(readFileSync(req.url === "/bundle.js" ? bundle : pdfWorker));
+    return;
+  }
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{height:100%;margin:0}</style><div id="root"></div><script src="/bundle.js"></script>');
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const browser = await (await getChromium()).launch({ headless: true });
@@ -110,8 +116,12 @@ try {
     check(await page.getByText("Fadko conversation", { exact: true }).isVisible(), `${width}: closing a file returns to the same conversation`);
     await page.getByTestId("attachment-file-study-guide").click();
     await page.getByTestId("attachment-viewer").waitFor();
-    await page.locator('iframe[title="PDF document"]').waitFor({ state: "attached" });
-    check((await page.locator('iframe[title="PDF document"]').count()) === 1, `${width}: PDFs stay in the in-app viewer`);
+    await page.getByTestId("pdf-page-2").waitFor({ state: "attached" });
+    check((await page.locator('[data-testid^="pdf-page-"]').count()) === 2, `${width}: every PDF page stays in the in-app viewer`);
+    await page.getByTestId("pdf-page-2").scrollIntoViewIfNeeded();
+    check(await page.getByTestId("pdf-page-2").isVisible(), `${width}: later PDF pages are scrollable`);
+    await page.getByLabel("Zoom in").click();
+    check((await page.locator("body").innerText()).includes("125%"), `${width}: PDF zoom is available without leaving Fadko`);
     await page.locator('[data-testid="attachment-viewer-close"]:visible').click();
     await page.locator('[data-testid="attachment-viewer"]:visible').waitFor({ state: "hidden" });
     await page.getByTestId("attachment-file-lesson-plan").click();

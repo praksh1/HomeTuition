@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  applyRemoteNotificationReadState,
   filterNotifications,
   markOnlyNotificationRead,
   nepalDayKey,
@@ -37,6 +38,18 @@ test("opening a conversation matches only notifications for that exact conversat
   assert.equal(notificationMatchesReadTarget(other, { kind: "direct_message", conversationWith: 17 }), false);
   assert.equal(notificationMatchesReadTarget(classMessage, { kind: "direct_message", conversationWith: 17 }), false);
   assert.equal(notificationMatchesReadTarget(classMessage, { kind: "class_message", batchId: 17 }), true);
+});
+
+test("another device's receipt clears only its durable event and conversation", () => {
+  const result = applyRemoteNotificationReadState([
+    item({ id: "durable", serverId: 41 }),
+    item({ id: "legacy", data: { type: "message", conversationWith: "17" } }),
+    item({ id: "other", serverId: 42, data: { type: "message", conversationWith: "18" } }),
+  ], {
+    eventIds: [41],
+    targets: [{ kind: "direct_message", conversationWith: "17" }],
+  });
+  assert.deepEqual(result.map(({ read }) => read), [true, true, false]);
 });
 
 test("unread filtering sorts newest first and safely keeps invalid dates last", () => {

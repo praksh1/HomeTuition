@@ -2,12 +2,18 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { bookingNotice } from "./testAccess";
-import { notificationMatchesReadTarget, type NotificationReadTarget } from "./notificationCenter";
+import {
+  applyRemoteNotificationReadState,
+  notificationMatchesReadTarget,
+  type NotificationReadTarget,
+} from "./notificationCenter";
 
 const NOTIFICATIONS_KEY = "@sikshya_notifications";
 
 export interface AppNotification {
   id: string;
+  /** Durable inbox id. Present when the server, rather than this device, created the news. */
+  serverId?: number;
   title: string;
   body: string;
   type: "session_reminder" | "payment" | "credential" | "general" | "live";
@@ -97,7 +103,7 @@ export async function notifyNewMessage(msg: {
   senderName: string;
   body: string;
   senderId: string | number;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const title = `New message from ${msg.senderName}`;
   const body = msg.body.length > 120 ? `${msg.body.slice(0, 117)}…` : msg.body;
 
@@ -117,6 +123,7 @@ export async function notifyNewMessage(msg: {
     }
   }
   await addInAppNotification({
+    serverId,
     title,
     body,
     type: "general",
@@ -138,7 +145,7 @@ export async function notifySessionMessage(msg: {
   body: string;
   sessionId: number | string;
   topic?: string;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const title = msg.topic ? `${msg.senderName} · ${msg.topic}` : `${msg.senderName} messaged your class`;
   const body = msg.body.length > 120 ? `${msg.body.slice(0, 117)}…` : msg.body;
   const data = { type: "session_message", sessionId: String(msg.sessionId) };
@@ -153,7 +160,7 @@ export async function notifySessionMessage(msg: {
       // Permission refused or notifications unavailable — the in-app entry below still lands.
     }
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 /** A new message in the persistent conversation for a purchased class group. */
@@ -162,7 +169,7 @@ export async function notifyClassMessage(msg: {
   body: string;
   batchId: number | string;
   topic?: string;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const title = msg.topic
     ? `${msg.senderName} · ${msg.topic}`
     : `${msg.senderName} messaged your class`;
@@ -183,7 +190,7 @@ export async function notifyClassMessage(msg: {
     // currently ignores this API, while the visible badge and notification entry still work.
     navigator.vibrate(120);
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 type ClassHomeworkNotice = {
@@ -196,7 +203,7 @@ type ClassHomeworkNotice = {
 };
 
 /** A durable-looking local entry for one server-confirmed homework event. */
-export async function notifyClassHomework(notice: ClassHomeworkNotice): Promise<void> {
+export async function notifyClassHomework(notice: ClassHomeworkNotice, serverId?: number): Promise<void> {
   const homework = notice.homeworkTitle ?? "Homework";
   const className = notice.classTitle ?? "Your class";
   const title = notice.kind === "set"
@@ -227,7 +234,7 @@ export async function notifyClassHomework(notice: ClassHomeworkNotice): Promise<
   } else if (typeof navigator !== "undefined" && "vibrate" in navigator) {
     navigator.vibrate(120);
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 /**
@@ -236,7 +243,7 @@ export async function notifyClassHomework(notice: ClassHomeworkNotice): Promise<
  * The owner reported never hearing about a new follower. Following only ever wrote a row —
  * nothing read it on the teacher's behalf, on the server or here.
  */
-export async function notifyNewFollower(follower: { name: string; userId: number | string }): Promise<void> {
+export async function notifyNewFollower(follower: { name: string; userId: number | string }, serverId?: number): Promise<void> {
   const title = "New follower";
   const body = `${follower.name} started following you. They'll be told when you schedule a class.`;
 
@@ -251,6 +258,7 @@ export async function notifyNewFollower(follower: { name: string; userId: number
     }
   }
   await addInAppNotification({
+    serverId,
     title,
     body,
     type: "general",
@@ -263,7 +271,7 @@ export async function notifyProgramPublished(program: {
   teacherName?: string;
   title?: string;
   programId: number | string;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const title = `${program.teacherName ?? "A teacher you follow"} published a new program`;
   const body = `“${program.title ?? "New learning program"}” — tap to see the learning path.`;
   const data = { type: "program_published", programId: String(program.programId) };
@@ -275,7 +283,7 @@ export async function notifyProgramPublished(program: {
       // Permission refused or notifications unavailable — the in-app entry below still lands.
     }
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 /**
@@ -289,7 +297,7 @@ export async function notifySessionInvite(session: {
   topic: string;
   teacherName?: string;
   sessionId?: number | string;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const title = `${session.teacherName ?? "Your teacher"} scheduled a class`;
   const body = `"${session.topic}" — tap to see it and book your place.`;
   const data = { type: "invite", sessionId: session.sessionId != null ? String(session.sessionId) : undefined };
@@ -301,7 +309,7 @@ export async function notifySessionInvite(session: {
       // Permission refused or notifications unavailable — the in-app entry below still lands.
     }
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 /**
@@ -322,7 +330,7 @@ export async function notifySessionBooked(booking: {
   amount?: number;
   /** Set when *this booking* took no payment — an operator-granted one. See utils/testAccess.ts. */
   testBooking?: boolean;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   // The wording lives in `utils/testAccess.ts`, pure, so it can be tested without a phone.
   const { title, body } = bookingNotice(booking);
   const data = { type: "booked", sessionId: booking.sessionId != null ? String(booking.sessionId) : undefined };
@@ -335,7 +343,7 @@ export async function notifySessionBooked(booking: {
     }
   }
   // A test booking is not a payment, so it does not carry the payment icon in the in-app list.
-  await addInAppNotification({ title, body, type: booking.testBooking ? "general" : "payment", data });
+  await addInAppNotification({ serverId, title, body, type: booking.testBooking ? "general" : "payment", data });
 }
 
 /** And somebody leaving — the same news from the other direction, and the seat is back on sale. */
@@ -343,7 +351,7 @@ export async function notifySessionDropped(booking: {
   topic: string;
   studentName?: string;
   sessionId?: number | string;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const who = booking.studentName ?? "A student";
   const title = `${who} dropped your class`;
   const body = `"${booking.topic}" — their place is back on sale.`;
@@ -356,7 +364,7 @@ export async function notifySessionDropped(booking: {
       // Permission refused or notifications unavailable — the in-app entry below still lands.
     }
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 export async function notifyCredentialStatus(status: "approved" | "rejected", reason?: string): Promise<void> {
@@ -382,7 +390,7 @@ export async function notifySessionLive(session: {
   topic: string;
   teacherName?: string;
   sessionId?: number | string;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const title = "Class is live now";
   const body = `"${session.topic}"${session.teacherName ? ` by ${session.teacherName}` : ""} has started. Join now!`;
   // Carried so a tap opens the classroom rather than a generic list. Without it the
@@ -397,7 +405,7 @@ export async function notifySessionLive(session: {
     } catch (_e) {
     }
   }
-  await addInAppNotification({ title, body, type: "live", data });
+  await addInAppNotification({ serverId, title, body, type: "live", data });
 }
 
 /**
@@ -413,7 +421,7 @@ export async function notifySessionRescheduled(session: {
   teacherName?: string;
   sessionId?: number | string;
   newDate?: string;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const when = session.newDate ? new Date(session.newDate) : null;
   const readable = when && !Number.isNaN(when.getTime())
     ? when.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
@@ -431,7 +439,7 @@ export async function notifySessionRescheduled(session: {
       // Permission refused or notifications unavailable — the in-app entry below still lands.
     }
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 /**
@@ -446,7 +454,7 @@ export async function notifySessionCancelled(session: {
   teacherName?: string;
   sessionId?: number | string;
   amount?: number;
-}): Promise<void> {
+}, serverId?: number): Promise<void> {
   const title = `"${session.topic}" has been cancelled`;
   const body = session.amount
     ? `${session.teacherName ?? "Your teacher"} cancelled it. A full refund of NPR ` +
@@ -461,7 +469,7 @@ export async function notifySessionCancelled(session: {
       // Permission refused or notifications unavailable — the in-app entry below still lands.
     }
   }
-  await addInAppNotification({ title, body, type: "general", data });
+  await addInAppNotification({ serverId, title, body, type: "general", data });
 }
 
 export async function addInAppNotification(
@@ -471,11 +479,18 @@ export async function addInAppNotification(
   const existing: AppNotification[] = stored ? JSON.parse(stored) : [];
   const newNotif: AppNotification = {
     ...notification,
-    id: Date.now().toString() + Math.random().toString(36).slice(2, 7),
+    id: notification.serverId != null
+      ? `server-${notification.serverId}`
+      : Date.now().toString() + Math.random().toString(36).slice(2, 7),
     read: false,
     createdAt: new Date().toISOString(),
   };
-  await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify([newNotif, ...existing].slice(0, 100)));
+  const withoutDuplicate = notification.serverId == null
+    ? existing
+    : existing.filter((item) => item.serverId !== notification.serverId);
+  const previous = existing.find((item) => item.serverId === notification.serverId);
+  if (previous?.read) newNotif.read = true;
+  await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify([newNotif, ...withoutDuplicate].slice(0, 100)));
 }
 
 export async function getNotifications(): Promise<AppNotification[]> {
@@ -515,6 +530,16 @@ export async function markNotificationsForTarget(target: NotificationReadTarget)
     changed += 1;
     return { ...notification, read: true };
   });
+  if (changed > 0) await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(updated));
+  return changed;
+}
+
+/** Applies read receipts learned from another device without disturbing unrelated alerts. */
+export async function markNotificationsForServerIds(serverIds: number[]): Promise<number> {
+  if (serverIds.length === 0) return 0;
+  const existing = await getNotifications();
+  const updated = applyRemoteNotificationReadState(existing, { eventIds: serverIds });
+  const changed = updated.filter((notification, index) => notification.read && !existing[index]?.read).length;
   if (changed > 0) await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(updated));
   return changed;
 }

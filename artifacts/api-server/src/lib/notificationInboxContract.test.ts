@@ -15,8 +15,12 @@ const booking = read("..", "routes", "batchTesting.ts");
 test("notification inbox is additive and indexed per user", () => {
   assert.match(schema, /user_notification_events/);
   assert.match(schema, /index\("user_notification_events_user_idx"\)/);
+  assert.match(schema, /user_notification_event_reads/);
+  assert.match(schema, /index\("user_notification_event_reads_user_idx"\)/);
   assert.match(guard, /CREATE TABLE IF NOT EXISTS "user_notification_events"/);
   assert.match(guard, /CREATE INDEX IF NOT EXISTS "user_notification_events_user_idx"/);
+  assert.match(guard, /CREATE TABLE IF NOT EXISTS "user_notification_event_reads"/);
+  assert.match(guard, /CREATE INDEX IF NOT EXISTS "user_notification_event_reads_user_idx"/);
   assert.doesNotMatch(guard.match(/async function ensureNotificationPrefsTable[\s\S]*?\n}/)?.[0] ?? "", /ALTER TABLE|DROP TABLE|DROP COLUMN/);
 });
 
@@ -29,6 +33,8 @@ test("missed events are persisted without making live delivery depend on the new
   assert.match(routes, /gt\(userNotificationEventsTable\.id, after\)/);
   assert.match(routes, /limit\(200\)/);
   assert.match(routes, /Cache-Control", "no-store"/);
+  assert.match(routes, /router\.patch\("\/notification-events\/read", requireAuth/);
+  assert.match(routes, /kind: "notification_read"/);
 });
 
 test("late test enrolment catches the student up on open homework", () => {

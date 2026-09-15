@@ -58,6 +58,21 @@ export async function ensureNotificationPrefsTable(): Promise<void> {
       CREATE INDEX IF NOT EXISTS "user_notification_events_user_idx"
         ON "user_notification_events" ("user_id", "id")
     `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS "user_notification_event_reads" (
+        "event_id" integer PRIMARY KEY,
+        "user_id" integer NOT NULL,
+        "read_at" timestamp with time zone NOT NULL DEFAULT now(),
+        CONSTRAINT "user_notification_event_reads_event_id_user_notification_events_id_fk"
+          FOREIGN KEY ("event_id") REFERENCES "user_notification_events"("id") ON DELETE CASCADE,
+        CONSTRAINT "user_notification_event_reads_user_id_users_id_fk"
+          FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE
+      )
+    `);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS "user_notification_event_reads_user_idx"
+        ON "user_notification_event_reads" ("user_id", "event_id")
+    `);
     logger.info("notification preferences and durable inbox tables are present");
   } catch (err) {
     logger.warn(
