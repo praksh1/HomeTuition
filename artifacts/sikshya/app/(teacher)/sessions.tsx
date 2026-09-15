@@ -1,14 +1,18 @@
 import { Feather } from "@expo/vector-icons";
-import { router } from "expo-router";
-import React, { useCallback, useState } from "react";
-import { ActivityIndicator, FlatList, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
-import { useAuth } from "@/context/AuthContext";
-import { apiGet } from "@/utils/api";
-import SessionCard from "@/components/SessionCard";
-import { useColors } from "@/hooks/useColors";
+import { router } from "expo-router";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+import { HIT_SLOP_MIN, bottomNavClearance, marketplaceColumnMax } from "@/constants/layout";
 import type { Teacher } from "@/context/AuthContext";
+import { useAuth } from "@/context/AuthContext";
+import { useDates } from "@/context/DatePreferenceContext";
+import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { apiGet } from "@/utils/api";
+import { notificationClock, notificationGroupLabel, nepalDayKey } from "@/utils/notificationCenter";
 
 interface Session {
   id: string;
@@ -22,288 +26,341 @@ interface Session {
   enrolledStudents: string[];
   price: number;
   status: "upcoming" | "live" | "completed" | "cancelled";
-  /** Its start time has been and gone and nobody started it. Decided by the server. */
   expired?: boolean;
-  /**
-   * Created under a test grant, so an approved test booking may take a place in it for nothing.
-   *
-   * The server's own fact, from `test_classes`. Without it this list showed "NPR 500 per class"
-   * with nothing to say the class is open to bookings that will never pay it, and a teacher adding
-   * up their month from this screen counted income that may not arrive. It does **not** mean every
-   * booking is free — an ordinary student pays in full — which is why the wording says
-   * "test-enabled" rather than anything about payment.
-   */
   testClass?: boolean;
   testClassLabel?: string;
+  classGroup?: {
+    batchId: number;
+    title: string;
+    lessonPosition: number;
+    lessonCount: number;
+  };
 }
 
-/**
- * The tabs, and why there are now six.
- *
- * The owner's words: "I have only been testing for less than a month and already my pages look
- * overcrowded." The answer to a crowded list is not a shorter list — a teacher needs every
- * class they ever ran — it is a way to ask for the part they came for.
- *
- * "Expired" is the one they named. Classes whose time came and went unstarted used to sit in
- * Upcoming, so a teacher scrolling for tomorrow's lesson scrolled through last week's misses
- * first. They are their own tab now: still there, out of the way, and honestly labelled.
- *
- * Obsolete monthly-plan screens remain routable only for historic records. They are deliberately
- * absent here: all new teaching starts through the current class builder.
- */
-type FilterTab = "all" | "upcoming" | "live" | "completed" | "expired";
+type ViewMode = "upcoming" | "live" | "history";
+type AgendaItem =
+  | { kind: "day"; key: string; label: string }
+  | { kind: "lesson"; key: string; session: Session };
+
+const SESSION_POLL_MS = 15_000;
+
+type ApiSession = {
+  id: number;
+  teacherName: string;
+  subject: string;
+  topic: string;
+  date: string;
+  duration: number;
+  maxStudents: number;
+  enrolledCount: number;
+  price: number;
+  status: string;
+  expired?: boolean;
+  testClass?: boolean;
+  testClassLabel?: string;
+  classGroup?: Session["classGroup"];
+};
+
+function mapSession(row: ApiSession, teacherId: number): Session {
+  return {
+    id: String(row.id),
+    teacherId: String(teacherId),
+    teacherName: row.teacherName,
+    subject: row.subject,
+    topic: row.topic,
+    date: row.date,
+    duration: row.duration,
+    maxStudents: row.maxStudents,
+    enrolledStudents: Array(row.enrolledCount).fill(""),
+    price: row.price,
+    status: row.status as Session["status"],
+    expired: row.expired === true,
+    testClass: row.testClass === true,
+    testClassLabel: row.testClassLabel,
+    classGroup: row.classGroup,
+  };
+}
 
 export default function TeacherSessions() {
   const { user } = useAuth();
-  const colors = useColors();
-  const insets = useSafeAreaInsets();
   const teacher = user as Teacher;
+  const colors = useColors();
+  const dates = useDates();
+  const insets = useSafeAreaInsets();
+  const { t, numeric, radius, space, gutter } = useLayout();
+  const [mode, setMode] = useState<ViewMode>("upcoming");
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [filter, setFilter] = useState<FilterTab>("all");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const requestSequence = useRef(0);
 
-  /**
-   * Each tab asks the server for that status, rather than pulling a slice of everything and
-   * sifting it here.
-   *
-   * The old version fetched the hundred most recent sessions and filtered them in the app, so
-   * a teacher with more history than that saw tabs that were simply wrong — an Upcoming tab
-   * reporting "No sessions yet" while the dashboard, which asks the server for upcoming
-   * sessions properly, listed several. Whatever else was going on, a list that can only be
-   * right for teachers with little history is not a list worth keeping.
-   */
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (quiet = false) => {
     if (!teacher?.userId) return;
-    setLoading(true);
+    // A slow Upcoming response must not arrive after a quick tap on Live and repaint the wrong
+    // agenda beneath the selected filter. State updates alone cannot order network answers.
+    const sequence = ++requestSequence.current;
+    if (!quiet) setLoading(true);
     setLoadError(false);
-    // "Expired" is upcoming classes whose time has passed, so it asks for the same status and
-    // sifts by what the server says about each one.
-    const statusParam = filter === "all" ? ""
-      : filter === "expired" ? "&status=upcoming"
-      : `&status=${filter}`;
+    const read = (status: string) => apiGet<{ sessions: ApiSession[] }>(
+      `/sessions?teacherId=${teacher.userId}&status=${status}&limit=100`,
+    );
     try {
-      const res = await apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; expired?: boolean; testClass?: boolean; testClassLabel?: string }[] }>(
-        `/sessions?teacherId=${teacher.userId}${statusParam}&limit=100`
-      );
-      setSessions(res.sessions.map((s) => ({
-        id: String(s.id),
-        teacherId: String(teacher.userId),
-        teacherName: s.teacherName,
-        subject: s.subject,
-        topic: s.topic,
-        date: s.date,
-        duration: s.duration,
-        maxStudents: s.maxStudents,
-        enrolledStudents: Array(s.enrolledCount).fill(""),
-        price: s.price,
-        status: s.status as Session["status"],
-        expired: s.expired === true,
-        testClass: s.testClass === true,
-        testClassLabel: s.testClassLabel,
-      })));
-    } catch (_e) {
-      // An empty list and a failed request used to look identical: both showed "No sessions
-      // yet", so a teacher whose classes had not loaded was told they had none.
-      setLoadError(true);
-      setSessions([]);
+      if (mode === "history") {
+        const [completed, cancelled, pending] = await Promise.all([
+          read("completed"),
+          read("cancelled"),
+          read("upcoming"),
+        ]);
+        const history = [
+          ...completed.sessions,
+          ...cancelled.sessions,
+          ...pending.sessions.filter((row) => row.expired),
+        ];
+        if (sequence === requestSequence.current) {
+          setSessions(history.map((row) => mapSession(row, teacher.userId)));
+        }
+      } else {
+        const response = await read(mode);
+        const rows = mode === "upcoming"
+          ? response.sessions.filter((row) => !row.expired)
+          : response.sessions;
+        if (sequence === requestSequence.current) {
+          setSessions(rows.map((row) => mapSession(row, teacher.userId)));
+        }
+      }
+    } catch {
+      if (!quiet && sequence === requestSequence.current) {
+        setLoadError(true);
+        setSessions([]);
+      }
     } finally {
-      setLoading(false);
+      if (!quiet && sequence === requestSequence.current) setLoading(false);
     }
-  }, [teacher?.userId, filter]);
+  }, [mode, teacher?.userId]);
 
   useFocusEffect(
     useCallback(() => {
       void loadSessions();
+      const timer = setInterval(() => void loadSessions(true), SESSION_POLL_MS);
+      return () => clearInterval(timer);
     }, [loadSessions]),
   );
 
-  const TABS: { key: FilterTab; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "live", label: "Live" },
-    { key: "upcoming", label: "Upcoming" },
-    { key: "completed", label: "Completed" },
-    { key: "expired", label: "Expired" },
+  const agenda = useMemo<AgendaItem[]>(() => {
+    const ordered = sessions.slice().sort((left, right) => {
+      const difference = new Date(left.date).getTime() - new Date(right.date).getTime();
+      return mode === "history" ? -difference : difference;
+    });
+    const result: AgendaItem[] = [];
+    let previousDay = "";
+    for (const session of ordered) {
+      const day = nepalDayKey(session.date);
+      if (day !== previousDay) {
+        result.push({
+          kind: "day",
+          key: `day-${day}`,
+          label: notificationGroupLabel(
+            day,
+            Date.now(),
+            (value) => dates.format(value, { withWeekday: true, withTime: false }),
+          ),
+        });
+        previousDay = day;
+      }
+      result.push({ kind: "lesson", key: `lesson-${session.id}`, session });
+    }
+    return result;
+  }, [dates, mode, sessions]);
+
+  const views: Array<{ id: ViewMode; label: string }> = [
+    { id: "upcoming", label: "Upcoming" },
+    { id: "live", label: "Live" },
+    { id: "history", label: "History" },
   ];
 
-  /**
-   * The server has already filtered by status; sifting again here is what made the tab wrong.
-   *
-   * The two exceptions are the two tabs the server has no status for. Expired and Upcoming are
-   * both `status=upcoming` rows told apart by whether their time has passed — which the server
-   * decides and sends, so the two tabs cannot disagree with each other or with the dashboard.
-   */
-  const filtered =
-    filter === "expired" ? sessions.filter((s) => s.expired)
-    : filter === "upcoming" ? sessions.filter((s) => !s.expired)
-    : sessions;
-
-  /**
-   * Opening a class from this list.
-   *
-   * This used to push straight into the classroom with no check at all, which is how a class
-   * from three days ago could be tapped and start a video call: the classroom asks the server
-   * for a room the moment it mounts, the server created one, and the phone asked for camera
-   * and microphone. The refusal happens here, before any of that — decided from the date and
-   * length already in this list, so it is immediate and needs no round trip.
-   */
-  /**
-   * Tapping a class always opens the class.
-   *
-   * It used to check whether the class could be *opened* and refuse with an alert when it
-   * could not. That was right when a tap went straight into a video call; it is wrong now that
-   * a tap goes to a page, and refusing to open a page helps nobody. Reported twice: a finished
-   * class said "Session Expired" and showed nothing, and a class that had been opened and
-   * ended said "Not open yet" — and those are exactly the classes a teacher wants to look at,
-   * to see who enrolled, who attended, and what was said.
-   *
-   * The page carries the refusal instead, as a greyed-out button with the reason beside it.
-   * That is where it belongs: next to the thing it is about, not in a dialog that takes the
-   * class away with it.
-   */
-  const openSession = (item: Session) => {
-    router.push(`/session/${item.id}`);
+  const lessonStatus = (session: Session) => {
+    if (session.status === "live") return { label: "Live now", ink: colors.brand, fill: colors.brandSoft };
+    if (session.status === "cancelled") return { label: "Cancelled", ink: colors.destructive, fill: colors.destructiveSoft };
+    if (session.expired) return { label: "Not held", ink: colors.destructive, fill: colors.destructiveSoft };
+    if (session.status === "completed") return { label: "Completed", ink: colors.success, fill: colors.successSoft };
+    return { label: "Upcoming", ink: colors.primary, fill: colors.actionSoft };
   };
 
-  const FilterRow = () => (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.tabs}
-        /**
-         * `flexGrow: 0, flexShrink: 0` is load-bearing, not tidying.
-         *
-         * A horizontal ScrollView has no height of its own. As a flex child above a list that
-         * wants all the room, it gets squeezed to nothing — the chips paint for one frame and
-         * then the row collapses, which is exactly what a teacher reported: "the filters
-         * flashed for a second before disappearing completely".
-         *
-         * A test that reads document.body.innerText will not catch this. Text inside a
-         * zero-height element is still in innerText, so the suite went green while the row was
-         * invisible on a real phone; the checks measure the row's height now.
-         */
-        testID="teacher-filter-row"
-        style={styles.tabsRow}
-      >
-        {TABS.map((tab) => (
-          <TouchableOpacity
-            key={tab.key}
-            style={[styles.tab, filter === tab.key && { backgroundColor: colors.primary }]}
-            onPress={() => setFilter(tab.key)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.tabText, { color: filter === tab.key ? "#fff" : colors.mutedForeground }]}>
-              {tab.label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-  );
+  const emptyTitle = mode === "live"
+    ? "Nothing is live right now"
+    : mode === "history"
+      ? "No teaching history yet"
+      : "Your schedule is open";
+  const emptyMessage = mode === "upcoming"
+    ? "Create a class and its lesson dates will appear here."
+    : mode === "live"
+      ? "A lesson moves here automatically when you start it."
+      : "Completed, cancelled and missed lessons will stay here for your records.";
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 16, borderBottomColor: colors.border }]}>
-        <Text style={[styles.title, { color: colors.foreground }]}>My Sessions</Text>
-        <TouchableOpacity
-          style={[styles.createBtn, { backgroundColor: colors.primary }]}
-          onPress={() => router.push("/(teacher)/create-class")}
-          activeOpacity={0.85}
-        >
-          <Feather name="plus" size={18} color="#fff" />
-          <Text style={styles.createBtnText}>New</Text>
-        </TouchableOpacity>
-      </View>
-
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       <FlatList
-        data={filtered}
-        /**
-         * The filters ride inside the list rather than sitting above it.
-         *
-         * As a sibling they flashed on and then vanished on a teacher's iPhone — reported
-         * twice, from two different routes into this screen. I could not reproduce it in
-         * Chromium and my first explanation for it was wrong, so rather than patch a guess
-         * this removes the situation that produced it: a row competing for height with a list
-         * that wants all of it. Inside the list there is nothing to compete with, and it is
-         * the arrangement the student's Sessions screen has always used without trouble.
-         */
-        ListHeaderComponent={<FilterRow />}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100 }]}
-        scrollEnabled={!!filtered.length}
-        renderItem={({ item }) => (
-          <SessionCard
-            session={item}
-            onPress={() => openSession(item)}
-            // The teacher owns these classes, so this is the one list where "test-enabled"
-            // is the right thing to say: it is their income the marker is qualifying.
-            showTestClass
-          />
-        )}
-        ListEmptyComponent={
-          loading ? (
-            <View style={styles.empty}>
-              <ActivityIndicator color={colors.primary} />
-            </View>
-          ) : loadError ? (
-            <View style={styles.empty}>
-              <Feather name="wifi-off" size={44} color={colors.border} />
-              <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                Your sessions could not be loaded
-              </Text>
-              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                This is a connection problem, not an empty diary. Check your internet and try again.
-              </Text>
-              <TouchableOpacity
-                style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
-                onPress={() => void loadSessions()}
-                activeOpacity={0.85}
+        testID="teacher-schedule-list"
+        data={agenda}
+        keyExtractor={(item) => item.key}
+        contentContainerStyle={{
+          width: "100%",
+          maxWidth: marketplaceColumnMax,
+          alignSelf: "center",
+          paddingHorizontal: gutter,
+          paddingTop: insets.top + space.md,
+          paddingBottom: insets.bottom + bottomNavClearance,
+          gap: space.xs,
+        }}
+        ListHeaderComponent={(
+          <View testID="teacher-schedule-content" style={{ gap: space.lg, marginBottom: space.md }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: space.md }}>
+              <View style={{ flex: 1, gap: space.xxs }}>
+                <Text style={[t.title1, { color: colors.foreground }]}>Teaching schedule</Text>
+                <Text style={[t.callout, { color: colors.mutedForeground }]}>Each lesson, in the order you will teach it.</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Create a new class"
+                onPress={() => router.push("/(teacher)/create-class")}
+                style={{
+                  minHeight: HIT_SLOP_MIN,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: space.xs,
+                  paddingHorizontal: space.md,
+                  borderRadius: radius.pill,
+                  backgroundColor: colors.primary,
+                }}
               >
-                <Text style={styles.emptyBtnText}>Try again</Text>
-              </TouchableOpacity>
+                <Feather name="plus" size={18} color={colors.primaryForeground} />
+                <Text style={[t.caption, { color: colors.primaryForeground }]}>New class</Text>
+              </Pressable>
             </View>
-          ) : (
-          <View style={styles.empty}>
-            <Feather name="calendar" size={48} color={colors.border} />
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-              {filter === "all" ? "No sessions yet"
-                : filter === "expired" ? "Nothing has been missed"
-                : `No ${filter} sessions`}
-            </Text>
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Create your first session to start teaching
-            </Text>
-            <TouchableOpacity
-              style={[styles.emptyBtn, { backgroundColor: colors.primary }]}
-              onPress={() => router.push("/(teacher)/create-class")}
-              activeOpacity={0.85}
+
+            <View
+              testID="teacher-filter-row"
+              style={{ flexDirection: "row", gap: space.xxs, padding: space.xxs, borderRadius: radius.pill, backgroundColor: colors.muted }}
             >
-              <Text style={styles.emptyBtnText}>Create Session</Text>
-            </TouchableOpacity>
+              {views.map((view) => {
+                const selected = mode === view.id;
+                return (
+                  <Pressable
+                    key={view.id}
+                    testID={`teacher-group-${view.id}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    aria-pressed={selected}
+                    onPress={() => setMode(view.id)}
+                    style={{
+                      minHeight: HIT_SLOP_MIN,
+                      flex: 1,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: radius.pill,
+                      backgroundColor: selected ? colors.card : colors.muted,
+                    }}
+                  >
+                    <Text style={[t.caption, { color: selected ? colors.primary : colors.mutedForeground }]}>{view.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
           </View>
-          )
-        }
+        )}
+        renderItem={({ item }) => {
+          if (item.kind === "day") {
+            return (
+              <Text accessibilityRole="header" style={[t.overline, { color: colors.mutedForeground, marginTop: space.md, marginBottom: space.xxs }]}>
+                {item.label}
+              </Text>
+            );
+          }
+          const session = item.session;
+          const status = lessonStatus(session);
+          const classTitle = session.classGroup?.title ?? session.topic;
+          const lessonLabel = session.classGroup
+            ? `Lesson ${session.classGroup.lessonPosition + 1} of ${session.classGroup.lessonCount}`
+            : "One-time lesson";
+          return (
+            <Pressable
+              testID={`teacher-session-${session.id}`}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${classTitle}, ${lessonLabel}`}
+              onPress={() => router.push(`/session/${session.id}`)}
+              style={{
+                minHeight: HIT_SLOP_MIN * 2,
+                flexDirection: "row",
+                alignItems: "center",
+                gap: space.md,
+                padding: space.md,
+                borderWidth: 1,
+                borderColor: session.status === "live" ? colors.brand : colors.border,
+                borderRadius: radius.md,
+                backgroundColor: colors.card,
+              }}
+            >
+              <View style={{ minWidth: 72, gap: space.xxs }}>
+                <Text style={[t.bodyStrong, numeric, { color: session.status === "live" ? colors.brand : colors.foreground }]}>
+                  {notificationClock(session.date).replace(" Nepal time", "")}
+                </Text>
+                <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>{session.duration} min</Text>
+              </View>
+              <View style={{ flex: 1, gap: space.xxs }}>
+                <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.xs }}>
+                  <Text style={[t.title3, { flex: 1, color: colors.foreground }]} numberOfLines={2}>{classTitle}</Text>
+                  <View style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: status.fill }}>
+                    <Text style={[t.overline, { color: status.ink }]}>{status.label}</Text>
+                  </View>
+                </View>
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>{lessonLabel} · {session.subject}</Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: space.xxs }}>
+                  <Feather name="users" size={14} color={colors.inkFaint} />
+                  <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>
+                    {session.enrolledStudents.length} enrolled
+                  </Text>
+                  {session.testClass ? <Text style={[t.caption, { color: colors.warn }]}> · Test class</Text> : null}
+                </View>
+              </View>
+              <Feather name="chevron-right" size={20} color={colors.inkFaint} />
+            </Pressable>
+          );
+        }}
+        ListEmptyComponent={loading ? (
+          <View style={{ minHeight: 240, alignItems: "center", justifyContent: "center", gap: space.sm }}>
+            <ActivityIndicator color={colors.primary} />
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>Loading your schedule…</Text>
+          </View>
+        ) : loadError ? (
+          <View style={{ minHeight: 240, alignItems: "center", justifyContent: "center", gap: space.sm }}>
+            <View style={{ width: 48, height: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.destructiveSoft }}>
+              <Feather name="wifi-off" size={22} color={colors.destructive} />
+            </View>
+            <Text style={[t.title3, { color: colors.foreground }]}>Your schedule could not be loaded</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground, textAlign: "center" }]}>Nothing was removed. Check your connection and try again.</Text>
+            <Pressable accessibilityRole="button" onPress={() => void loadSessions()} style={{ minHeight: HIT_SLOP_MIN, paddingHorizontal: space.md, justifyContent: "center" }}>
+              <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={{ minHeight: 260, alignItems: "center", justifyContent: "center", gap: space.sm }}>
+            <View style={{ width: 56, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.actionSoft }}>
+              <Feather name="calendar" size={25} color={colors.primary} />
+            </View>
+            <Text style={[t.title2, { color: colors.foreground, textAlign: "center" }]}>{emptyTitle}</Text>
+            <Text style={[t.callout, { maxWidth: 360, color: colors.mutedForeground, textAlign: "center" }]}>{emptyMessage}</Text>
+            {mode === "upcoming" ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => router.push("/(teacher)/create-class")}
+                style={{ minHeight: HIT_SLOP_MIN, marginTop: space.xs, paddingHorizontal: space.lg, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary }}
+              >
+                <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Create a class</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        )}
       />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: {
-    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1,
-  },
-  title: { fontSize: 24, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
-  createBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 8 },
-  createBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold", color: "#fff" },
-  tabsRow: { flexGrow: 0, flexShrink: 0 },
-  tabs: { flexDirection: "row", alignItems: "center", paddingHorizontal: 20, paddingVertical: 12, gap: 8 },
-  tab: { borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: "#F4F4F0" },
-  tabText: { fontSize: 13, fontFamily: "Inter_500Medium" },
-  list: { paddingHorizontal: 20, paddingTop: 8 },
-  empty: { alignItems: "center", justifyContent: "center", paddingTop: 80, gap: 12 },
-  emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center", lineHeight: 20 },
-  emptyBtn: { borderRadius: 14, paddingHorizontal: 24, paddingVertical: 12, marginTop: 8 },
-  emptyBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-});

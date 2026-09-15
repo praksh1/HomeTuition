@@ -34,6 +34,7 @@
     "test:dashboard": "node scripts/dashboard-tests/run.mjs",
     "test:tickets": "node scripts/ticket-browser/run.mjs",
     "test:filters": "node scripts/sessions-filters/run.mjs",
+    "test:sessions-ui": "node scripts/sessions-ui/run.mjs",
     "test:storage-check": "node scripts/storage-check/run.mjs",
     "lint:design": "node scripts/design-lint/run.mjs",
     "lint:design:update": "node scripts/design-lint/run.mjs --update",

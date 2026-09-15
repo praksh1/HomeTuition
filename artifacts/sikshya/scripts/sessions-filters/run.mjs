@@ -7,8 +7,9 @@
  * Sessions screen while its old records and direct compatibility route remain preserved.
  *
  * Every check here is driven from a seeded account with enough on it to crowd the screen: ten
- * classes still to come, six that came and went unstarted, and one finished. A filter tested
- * against three rows proves nothing.
+ * lessons still to come, six that came and went unstarted, and one finished. A filter tested
+ * against three rows proves nothing. The same journey measures the phone and laptop layouts;
+ * readable source code cannot prove that a visible control fits a real viewport.
  *
  * Usage: PGURL=... node scripts/sessions-filters/run.mjs
  */
@@ -98,8 +99,9 @@ const tap = async (label) => {
 };
 
 let body = await text();
-check("the teacher's Sessions screen offers an Expired filter", /Expired/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
+check("the teacher's Schedule offers one calm History view", /Teaching schedule/.test(body) && /History/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
 check("and does not advertise the retired Monthly product", !/Monthly/.test(body), body.slice(0, 300).replace(/\n/g, " | "));
+check("and presents lessons as an agenda rather than a price catalogue", /One-time lesson/.test(body) && !/NPR 500 per class/.test(body), body.slice(0, 500).replace(/\n/g, " | "));
 
 /**
  * And they are actually on the screen, with a height, not merely in the document.
@@ -127,10 +129,16 @@ const chipBox = async (label) => {
   const box = await page.getByText(label, { exact: true }).first().boundingBox();
   return box ?? { width: 0, height: 0 };
 };
-for (const label of ["All", "Live", "Upcoming", "Completed", "Expired"]) {
+for (const label of ["Upcoming", "Live", "History"]) {
   const box = await chipBox(label);
   check(`the "${label}" filter is visible, not a zero-height ghost`,
     box.height > 10 && box.width > 10, `height=${box.height} width=${box.width}`);
+}
+
+for (const id of ["upcoming", "live", "history"]) {
+  const box = await page.locator(`[data-testid="teacher-group-${id}"]`).first().boundingBox().catch(() => null);
+  check(`the teacher's "${id}" filter has a 44 point touch target`, !!box && box.height >= 44,
+    box ? `height=${box.height}` : "not found");
 }
 
 check("the row holding them has a height of its own",
@@ -138,7 +146,7 @@ check("the row holding them has a height of its own",
 
 /* And it stays visible — a row that collapses one frame later is the bug being fixed. */
 await page.waitForTimeout(2500);
-const settled = await chipBox("Expired");
+const settled = await chipBox("History");
 check("and is still there once the list below has loaded",
   settled.height > 10, `height=${settled.height}`);
 
@@ -147,14 +155,28 @@ body = await text();
 check("Upcoming shows the classes still to come", /Coming up 0/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
 check("and none of the ones whose time has passed", !/Missed it/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
 
-await tap("Expired");
+await tap("History");
 body = await text();
-check("Expired shows exactly those", /Missed it/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
+check("History keeps missed lessons", /Missed it/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
 check("and none of the ones still to come", !/Coming up/.test(body), body.slice(0, 600).replace(/\n/g, " | "));
+await page.locator('[data-testid="teacher-schedule-list"]').evaluate((element) => {
+  element.scrollTop = element.scrollHeight;
+  element.dispatchEvent(new Event("scroll"));
+});
+await page.waitForTimeout(400);
+check("and completed lessons are kept in that same history",
+  await page.getByText("All finished", { exact: true }).count() === 1,
+  (await text()).slice(-600).replace(/\n/g, " | "));
 
-await tap("Completed");
-body = await text();
-check("Completed is its own pile", /All finished/.test(body) && !/Missed it/.test(body), body.slice(0, 400).replace(/\n/g, " | "));
+await page.setViewportSize({ width: 1440, height: 900 });
+await page.waitForTimeout(400);
+const teacherDesktop = await page.locator('[data-testid="teacher-schedule-content"]').first().boundingBox();
+check("the teacher schedule keeps a calm reading width on a laptop",
+  !!teacherDesktop && teacherDesktop.width <= 760 && teacherDesktop.x >= 250,
+  teacherDesktop ? `x=${teacherDesktop.x} width=${teacherDesktop.width}` : "not found");
+check("the teacher schedule never creates sideways scrolling",
+  await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  await page.evaluate(() => `scroll=${document.documentElement.scrollWidth} viewport=${window.innerWidth}`));
 
 const student = (await api("/auth/register", { method: "POST", body: {
   name: "Kiran Basnet", email: `flt_s_${stamp}@example.com`, password: "password123", role: "student", grade: "10", dateOfBirth: "2000-01-01",
@@ -183,6 +205,7 @@ for (const id of ["upcoming", "live", "history"]) {
 check("and the row holding them has a height of its own",
   await rowHeight(sPage, "student-filter-row") > 20, `height=${await rowHeight(sPage, "student-filter-row")}`);
 check("the student does not see the retired Monthly product", !/Monthly Classes|Monthly/.test(sBody), sBody.slice(0, 400).replace(/\n/g, " | "));
+check("the student sees one class library rather than a session database", /My classes/.test(sBody), sBody.slice(0, 300).replace(/\n/g, " | "));
 
 /* Choosing one narrows the current learning list rather than revealing a retired product. */
 const bookedCard = `[data-testid="session-${upcomingIds[0]}"]`;
@@ -200,6 +223,16 @@ check("and who teaches it", /Gita Poudel/.test(sBody), sBody.slice(0, 400).repla
 /* A booked class and an empty-state claim must never be shown together. */
 check("and is not told they have nothing while a class is listed above",
   !/No sessions yet/.test(sBody), sBody.slice(0, 600).replace(/\n/g, " | "));
+
+await sPage.setViewportSize({ width: 1440, height: 900 });
+await sPage.waitForTimeout(400);
+const studentDesktop = await sPage.locator('[data-testid="student-classes-content"]').first().boundingBox();
+check("the student's class library keeps a calm reading width on a laptop",
+  !!studentDesktop && studentDesktop.width <= 760 && studentDesktop.x >= 250,
+  studentDesktop ? `x=${studentDesktop.x} width=${studentDesktop.width}` : "not found");
+check("the student's class library never creates sideways scrolling",
+  await sPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  await sPage.evaluate(() => `scroll=${document.documentElement.scrollWidth} viewport=${window.innerWidth}`));
 
 /* A student who has not booked this teacher must not see the teacher's diary as their own. */
 const onlooker = (await api("/auth/register", { method: "POST", body: {

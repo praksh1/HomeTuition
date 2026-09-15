@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
@@ -12,6 +12,7 @@ import type { Student } from "@/context/AuthContext";
 import { studentClassSection, studentSessionSection } from "@/utils/studentSessionGroups";
 import { useDates } from "@/context/DatePreferenceContext";
 import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN, bottomNavClearance, marketplaceColumnMax } from "@/constants/layout";
 
 interface Session {
   id: string;
@@ -66,7 +67,7 @@ export default function StudentSessions() {
   const { user } = useAuth();
   const colors = useColors();
   const dates = useDates();
-  const { t, numeric, radius, space } = useLayout();
+  const { t, numeric, radius, space, gutter } = useLayout();
   const insets = useSafeAreaInsets();
   const student = user as Student;
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -84,6 +85,7 @@ export default function StudentSessions() {
    * not flash the list away every few seconds.
    */
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   // Sessions go live on the teacher's schedule, not the student's navigation. Loading only
   // on focus meant a class that started while this screen was open never appeared as live —
@@ -111,7 +113,7 @@ export default function StudentSessions() {
       const [myRes] = await Promise.all([
         student?.userId
           ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] }[] }>(
-              `/sessions?studentId=${student.userId}&limit=50`
+              `/sessions?studentId=${student.userId}&limit=100`
             )
           : Promise.resolve({ sessions: [] }),
       ]);
@@ -145,8 +147,10 @@ export default function StudentSessions() {
        * Classes to buy belong in Discover. This screen is the ones they own.
        */
       setSessions(myRes.sessions.map(mapSession));
+      setLoadError(false);
     } catch (_e) {
       // Offline: fall through to whatever was last known rather than emptying the list.
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -253,109 +257,154 @@ export default function StudentSessions() {
   ];
 
   const renderClass = (item: Extract<SessionListItem, { kind: "class" }>) => {
-    const status = group === "live" ? "Live now" : group === "history" ? "Completed" : "Next lesson";
+    const status = group === "live" ? "Live now" : group === "history" ? "Past class" : "Next lesson";
+    const elapsedCount = Math.max(0, item.lessonCount - item.remainingCount);
     return (
-      <TouchableOpacity
+      <Pressable
         testID={`student-class-group-${item.batchId}`}
         accessibilityRole="button"
-        activeOpacity={0.82}
         onPress={() => router.push({ pathname: "/class-home", params: { id: String(item.batchId) } })}
-        style={[styles.classCard, { backgroundColor: colors.card, borderColor: group === "live" ? colors.success : colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}
+        style={{
+          minHeight: HIT_SLOP_MIN * 3,
+          padding: space.md,
+          gap: space.sm,
+          borderWidth: 1,
+          borderColor: group === "live" ? colors.brand : colors.border,
+          borderRadius: radius.md,
+          backgroundColor: colors.card,
+        }}
       >
-        <View style={styles.classTop}>
+        <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.sm }}>
           <View style={{ flex: 1, gap: space.xxs }}>
             <Text style={[t.title3, { color: colors.foreground }]} numberOfLines={2}>{item.title}</Text>
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>{item.teacherName}</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>with {item.teacherName}</Text>
           </View>
-          <View style={[styles.statusPill, { backgroundColor: group === "live" ? colors.success + "18" : colors.muted, borderRadius: radius.pill }]}>
-            <Text style={[t.caption, { color: group === "live" ? colors.success : colors.mutedForeground }]}>{status}</Text>
+          <View style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: group === "live" ? colors.brandSoft : colors.actionSoft }}>
+            <Text style={[t.overline, { color: group === "live" ? colors.brand : colors.primary }]}>{status}</Text>
           </View>
         </View>
-        <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>
-          {dates.format(item.session.date, { withTime: true })}
-        </Text>
-        <Text style={[t.callout, { color: colors.mutedForeground }]}>
-          {group === "history"
-            ? `${item.lessonCount} lesson class · open homework, messages and records`
-            : `${item.remainingCount} of ${item.lessonCount} lessons remaining${item.testBooking ? " · test booking" : ""}`}
-        </Text>
-        <View style={styles.openRow}>
+        {group !== "history" ? (
+          <View style={{ padding: space.sm, gap: space.xxs, borderRadius: radius.sm, backgroundColor: group === "live" ? colors.brandSoft : colors.muted }}>
+            <Text style={[t.overline, { color: group === "live" ? colors.brand : colors.mutedForeground }]}>{group === "live" ? "Happening now" : "Your next lesson"}</Text>
+            <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>
+              {dates.format(item.session.date, { withWeekday: true, withTime: true })}
+            </Text>
+          </View>
+        ) : null}
+        {group !== "history" ? (
+          <View accessibilityLabel={`${elapsedCount} lessons passed, ${item.remainingCount} remaining`} style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
+            {elapsedCount > 0 ? <View style={{ flex: elapsedCount, height: 4, borderRadius: radius.pill, backgroundColor: colors.primary }} /> : null}
+            {item.remainingCount > 0 ? <View style={{ flex: item.remainingCount, height: 4, borderRadius: radius.pill, backgroundColor: colors.muted }} /> : null}
+          </View>
+        ) : null}
+        <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+          <Text style={[t.caption, numeric, { flex: 1, color: colors.mutedForeground }]}>
+            {group === "history"
+              ? `${item.lessonCount} lessons · records saved`
+              : `${item.remainingCount} of ${item.lessonCount} lessons remaining${item.testBooking ? " · test booking" : ""}`}
+          </Text>
           <Text style={[t.bodyStrong, { color: colors.primary }]}>Open class</Text>
-          <Feather name="arrow-right" size={18} color={colors.primary} />
+          <Feather name="chevron-right" size={19} color={colors.primary} />
         </View>
-      </TouchableOpacity>
+      </Pressable>
     );
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-        <Text style={[styles.title, { color: colors.foreground }]}>My learning</Text>
-        <Text style={[t.callout, { color: colors.mutedForeground }]}>Your classes, grouped by course—not one card per lesson.</Text>
-      </View>
-
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       <FlatList
+        testID="student-classes-list"
         data={group === "history"
           ? [...visibleRows, ...dropped.map((session): SessionListItem => ({ kind: "session", key: `dropped-${session.id}`, session }))]
           : visibleRows}
         keyExtractor={(item) => item.key}
-        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 100, gap: space.sm }]}
+        contentContainerStyle={{
+          width: "100%",
+          maxWidth: marketplaceColumnMax,
+          alignSelf: "center",
+          paddingHorizontal: gutter,
+          paddingTop: insets.top + space.md,
+          paddingBottom: insets.bottom + bottomNavClearance,
+          gap: space.sm,
+        }}
         ListHeaderComponent={
-          <View testID="student-filter-row" style={[styles.groups, { gap: space.xs, marginBottom: space.sm }]}>
+          <View testID="student-classes-content" style={{ gap: space.lg, marginBottom: space.md }}>
+            <View style={{ gap: space.xxs }}>
+              <Text style={[t.title1, { color: colors.foreground }]}>My classes</Text>
+              <Text style={[t.callout, { color: colors.mutedForeground }]}>Everything you joined, kept together by class.</Text>
+            </View>
+            <View testID="student-filter-row" style={{ flexDirection: "row", gap: space.xxs, padding: space.xxs, borderRadius: radius.pill, backgroundColor: colors.muted }}>
               {groups.map((g) => {
                 const active = group === g.id;
                 return (
-                  <TouchableOpacity
+                  <Pressable
                     key={g.id}
                     testID={`student-group-${g.id}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    aria-pressed={active}
                     onPress={() => setGroup(g.id)}
-                    activeOpacity={0.75}
-                    style={[styles.group, { flex: 1, borderRadius: radius.pill,
-                      borderColor: active ? colors.secondary : colors.border,
-                      backgroundColor: active ? colors.secondary + "14" : colors.card,
-                    }]}
+                    style={{ minHeight: HIT_SLOP_MIN, flex: 1, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: active ? colors.card : colors.muted }}
                   >
-                    <Text style={[styles.groupText, { color: active ? colors.secondary : colors.mutedForeground }]}>
+                    <Text style={[t.caption, { color: active ? colors.primary : colors.mutedForeground }]}>
                       {g.label}{g.count > 0 ? ` ${g.count}` : ""}
                     </Text>
-                  </TouchableOpacity>
+                  </Pressable>
                 );
               })}
+            </View>
           </View>
         }
         renderItem={({ item }) => item.kind === "class"
           ? renderClass(item)
           : <View testID={item.key}>
               <SessionCard session={item.session} showTeacher onPress={() => openSession(item.session)} />
-              {item.session.enrolment === "refunded" ? <View style={[styles.droppedFlag, { backgroundColor: colors.muted }]}>
+              {item.session.enrolment === "refunded" ? <View style={{ flexDirection: "row", alignItems: "center", gap: space.xxs, alignSelf: "flex-start", marginTop: -space.xs, marginBottom: space.sm, paddingHorizontal: space.sm, paddingVertical: space.xs, borderRadius: radius.sm, backgroundColor: colors.muted }}>
                 <Feather name="corner-up-left" size={12} color={colors.mutedForeground} />
-                <Text style={[styles.droppedFlagText, { color: colors.mutedForeground }]}>Dropped · open for refund status</Text>
+                <Text style={[t.overline, { color: colors.mutedForeground }]}>Dropped · open for refund status</Text>
               </View> : null}
             </View>}
         ListEmptyComponent={
           loading ? (
-            <View style={styles.empty}>
+            <View style={{ minHeight: 260, alignItems: "center", justifyContent: "center", gap: space.sm }}>
               <ActivityIndicator color={colors.primary} />
-              <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+              <Text style={[t.callout, { color: colors.mutedForeground }]}>
                 Loading your classes…
               </Text>
             </View>
+          ) : loadError ? (
+            <View style={{ minHeight: 280, alignItems: "center", justifyContent: "center", gap: space.sm }}>
+              <View style={{ width: 56, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.destructiveSoft }}>
+                <Feather name="wifi-off" size={24} color={colors.destructive} />
+              </View>
+              <Text style={[t.title2, { color: colors.foreground, textAlign: "center" }]}>Your classes could not be loaded</Text>
+              <Text style={[t.callout, { maxWidth: 360, color: colors.mutedForeground, textAlign: "center" }]}>Nothing was removed. Check your connection and try again.</Text>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void loadSessions()}
+                style={{ minHeight: HIT_SLOP_MIN, marginTop: space.xs, paddingHorizontal: space.lg, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary }}
+              >
+                <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
+              </Pressable>
+            </View>
           ) : (
-          <View style={styles.empty}>
-            <Feather name="calendar" size={48} color={colors.border} />
-            <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
+          <View style={{ minHeight: 280, alignItems: "center", justifyContent: "center", gap: space.sm }}>
+            <View style={{ width: 56, height: 56, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.actionSoft }}>
+              <Feather name="book-open" size={25} color={colors.primary} />
+            </View>
+            <Text style={[t.title2, { color: colors.foreground, textAlign: "center" }]}>
               {group === "history" ? "No class history yet" : group === "live" ? "Nothing live right now" : "No upcoming classes"}
             </Text>
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+            <Text style={[t.callout, { maxWidth: 360, color: colors.mutedForeground, textAlign: "center" }]}>
               {group === "upcoming" ? "Find a class or teacher and reserve your place." : "Use Upcoming to see what is next."}
             </Text>
-            <TouchableOpacity
-              style={[styles.discoverBtn, { backgroundColor: colors.secondary }]}
+            <Pressable
+              accessibilityRole="button"
+              style={{ minHeight: HIT_SLOP_MIN, marginTop: space.xs, paddingHorizontal: space.lg, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary }}
               onPress={() => router.push("/(student)")}
-              activeOpacity={0.85}
             >
-              <Text style={styles.discoverBtnText}>Explore classes</Text>
-            </TouchableOpacity>
+              <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Explore classes</Text>
+            </Pressable>
           </View>
           )
         }
@@ -363,27 +412,3 @@ export default function StudentSessions() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: { paddingHorizontal: 20, paddingBottom: 12 },
-  title: { fontSize: 24, fontFamily: "Inter_700Bold", letterSpacing: -0.5 },
-  list: { paddingHorizontal: 20, paddingTop: 8 },
-  droppedFlag: {
-    flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start",
-    borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5, marginTop: -6, marginBottom: 12,
-  },
-  droppedFlagText: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
-  groups: { flexDirection: "row", alignItems: "center" },
-  group: { borderWidth: 1, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 10, paddingVertical: 8 },
-  groupText: { fontSize: 13, fontFamily: "Inter_600SemiBold", textAlign: "center" },
-  classCard: { borderWidth: 1 },
-  classTop: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
-  statusPill: { paddingHorizontal: 10, paddingVertical: 5 },
-  openRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },
-  empty: { alignItems: "center", paddingTop: 80, gap: 12 },
-  emptyTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
-  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },
-  discoverBtn: { borderRadius: 14, paddingHorizontal: 24, paddingVertical: 12, marginTop: 8 },
-  discoverBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold", color: "#fff" },
-});

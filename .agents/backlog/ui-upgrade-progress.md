@@ -111,8 +111,10 @@ it the worst placeholder available.
 | `app/notifications.tsx` | 11 hex, 10 sizes | **0 / 0** | Yes — 390 and 1440, populated and all-read states |
 | `app/notification-settings.tsx` | 1 hex, 7 sizes | **0 / 0** | Yes — 390 and 1440, role-relevant switches |
 | `components/DateSystemSetting.tsx` | 0 hex, 4 sizes | **0 / 0** | Yes — inside notification settings at both widths |
+| `app/(teacher)/sessions.tsx` | 5 hex, 6 sizes | **0 / 0** | Yes — 390 and 1440, Upcoming and History |
+| `app/(student)/sessions.tsx` | 1 hex, 6 sizes | **0 / 0** | Yes — 390 and 1440, 30 lessons grouped into one class |
 
-Baseline has fallen from **468 hex / 595 sizes** to **71 / 225**.
+Baseline has fallen from **468 hex / 595 sizes** to **65 / 213**.
 
 ## Next, in the order I would take them
 

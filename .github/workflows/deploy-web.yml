@@ -532,6 +532,10 @@ jobs:
           # against three rows proves nothing, and monthly classes had no place on either
           # screen at all until this.
           pnpm --filter @workspace/sikshya run test:filters
+          # The real journey above proves the filters and API contract. This companion renders
+          # a thirty-lesson class at both phone and laptop widths, and proves that an outage is
+          # not presented to a student as an empty account.
+          pnpm --filter @workspace/sikshya run test:sessions-ui
           # The file-storage check, driven from the button rather than the endpoint. It
           # exists because the owner was told to open the endpoint in their phone's browser
           # and got "Missing or invalid Authorization header" — the only thing it could ever

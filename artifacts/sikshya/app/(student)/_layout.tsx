@@ -53,7 +53,7 @@ function ClassicStudentTabLayout() {
       <Tabs.Screen
         name="sessions"
         options={{
-          title: "Sessions",
+          title: "Classes",
           tabBarIcon: icon("calendar"),
         }}
       />

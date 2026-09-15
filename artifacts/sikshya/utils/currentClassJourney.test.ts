@@ -15,7 +15,7 @@ const classSetup = read("components", "classes", "ClassSetup.tsx");
 const teachingEarnings = read("components", "commerce", "TeachingEarnings.tsx");
 
 test("student Sessions is a grouped learning timetable rather than one row per generated lesson", () => {
-  assert.match(studentSessions, /My learning/);
+  assert.match(studentSessions, /My classes/);
   assert.match(studentSessions, /student-class-group-/);
   assert.match(studentSessions, /pathname: "\/class-home"/);
   assert.match(studentSessions, /lessonCount/);
@@ -24,6 +24,17 @@ test("student Sessions is a grouped learning timetable rather than one row per g
   assert.match(studentSessions, /studentClassSection/);
   assert.match(studentSessions, /studentSessionSection/);
   assert.doesNotMatch(studentSessions, /MonthlyClass|student-monthly-|student-group-monthly/);
+  assert.match(studentSessions, /Your classes could not be loaded/);
+  assert.match(studentSessions, /Nothing was removed\. Check your connection and try again\./);
+});
+
+test("teacher Schedule is a lesson agenda while the student tab remains a class library", () => {
+  assert.match(teacherSessions, /Teaching schedule/);
+  assert.match(teacherSessions, /One-time lesson/);
+  assert.match(teacherSessions, /type ViewMode = "upcoming" \| "live" \| "history"/);
+  assert.match(teacherSessions, /classGroup\.lessonPosition/);
+  assert.match(teacherSessions, /sequence === requestSequence\.current/);
+  assert.doesNotMatch(teacherSessions, /NPR \{session\.price/);
 });
 
 test("retired Monthly and test-tool entry points remain hidden from current teacher screens", () => {
