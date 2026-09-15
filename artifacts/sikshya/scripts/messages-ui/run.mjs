@@ -42,6 +42,13 @@ try {
   for (const width of [390, 1440]) {
     const base = `http://127.0.0.1:${server.address().port}`;
     const page = await browser.newPage({ viewport: { width, height: 844 } });
+    // Keep relative message fixtures away from Nepal midnight. Without a fixed
+    // clock, CI can legitimately render a message from 30 minutes ago as
+    // "Yesterday" while a daytime local run renders the same fixture as
+    // "Today", making the visual gate depend on when it happens to run.
+    await page.addInitScript(() => {
+      Date.now = () => Date.parse("2026-09-15T12:00:00.000Z");
+    });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.goto(base);
