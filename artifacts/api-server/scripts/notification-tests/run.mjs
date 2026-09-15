@@ -162,7 +162,7 @@ async function testMessageReachesAClosedScreen() {
 }
 
 async function testSenderIsNotNotifiedOfTheirOwnMessage() {
-  console.log("\nThe sender is not told about their own message");
+  console.log("\nThe sender gets no bell item, while their other open devices stay in sync");
   const teacher = await register("teacher");
   const student = await register("student");
 
@@ -172,8 +172,13 @@ async function testSenderIsNotNotifiedOfTheirOwnMessage() {
   await sendMessage(student.token, teacher.user.id, "Hello");
 
   await quiet(1200);
-  check("no notification comes back to the sender", senderChannel.events.length === 0,
-    `got ${senderChannel.events.length}`);
+  check("no durable message notification comes back to the sender",
+    senderChannel.events.filter((event) => event.kind === "message").length === 0,
+    `got ${senderChannel.events.map((event) => event.kind).join(", ")}`);
+  const sync = senderChannel.events.find((event) => event.kind === "conversation_sync");
+  check("another device signed in as the sender is told to refresh the conversation",
+    sync?.fromUserId === teacher.user.id,
+    `got ${JSON.stringify(sync)}`);
   senderChannel.close();
 }
 
