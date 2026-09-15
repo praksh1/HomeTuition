@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ageOn, completedAccountAt } from "./onboardingRules.ts";
+import { ageOn, completedAccountAt, validNepalPhone } from "./onboardingRules.ts";
 
 test("a birthday is age eighteen on the birthday and seventeen the day before", () => {
   assert.equal(ageOn("2008-08-30", new Date("2026-08-30T12:00:00Z")), 18);
@@ -23,4 +23,13 @@ test("new teachers still need a photo while students may complete without one", 
   assert.equal(completedAccountAt({ existingCompletedAt: null, hasProfilePhoto: false, role: "teacher", now }), null);
   assert.equal(completedAccountAt({ existingCompletedAt: null, hasProfilePhoto: true, role: "teacher", now }), now);
   assert.equal(completedAccountAt({ existingCompletedAt: null, hasProfilePhoto: false, role: "student", now }), now);
+});
+
+test("Nepal contact numbers accept ordinary mobile and landline formats, not eleven local digits", () => {
+  assert.equal(validNepalPhone("9801234567"), true);
+  assert.equal(validNepalPhone("+977 9801234567"), true);
+  assert.equal(validNepalPhone("01-5551234"), true);
+  assert.equal(validNepalPhone("+977 1 5551234"), true);
+  assert.equal(validNepalPhone("98023445677"), false);
+  assert.equal(validNepalPhone("12"), false);
 });

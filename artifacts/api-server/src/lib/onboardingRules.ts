@@ -24,3 +24,15 @@ export function completedAccountAt(input: {
   if (input.role === "student" || input.hasProfilePhoto) return input.now ?? new Date();
   return null;
 }
+
+/** Accept Nepal mobile and landline formats while rejecting an 11-digit local number. */
+export function validNepalPhone(value: string): boolean {
+  const compact = value.trim().replace(/[\s()-]/g, "");
+  if (!/^\+?\d+$/.test(compact)) return false;
+  const local = compact.startsWith("+977")
+    ? compact.slice(4)
+    : compact.startsWith("977") && compact.length > 10
+      ? compact.slice(3)
+      : compact;
+  return /^(?:9[6-8]\d{8}|0?[1-8]\d{7,8})$/.test(local);
+}

@@ -95,6 +95,11 @@ try {
     await page.getByText("Koshi Province", { exact: true }).click();
     check((await page.getByTestId("account-province").innerText()).includes("Koshi Province"), `${width}: Province can be chosen before Phone`);
     check((await page.getByTestId("account-district").getAttribute("aria-disabled")) !== "true", `${width}: choosing Province unlocks District even while Phone is empty`);
+    await page.getByTestId("account-phone").fill("98023445677");
+    await page.getByTestId("account-save").click();
+    check(await page.getByTestId("account-phone-error").isVisible(), `${width}: an eleven-digit local phone is rejected beside Phone`);
+    check((await page.getByTestId("account-province").innerText()).includes("Koshi Province"), `${width}: invalid Phone does not erase the selected Province`);
+    await page.getByTestId("account-phone").fill("");
     await page.getByTestId("account-save").click();
     check(await page.getByTestId("account-phone-error").isVisible(), `${width}: Save points to the missing phone beside the field`);
     check((await page.getByTestId("account-province-error").count()) === 0, `${width}: Save does not blame a valid-looking location for a missing phone`);

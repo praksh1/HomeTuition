@@ -22,7 +22,6 @@ export type AccountDetailsIssue = { field: AccountDetailsField; message: string 
 
 type SavedDetails = Partial<Record<keyof AccountDetailsDraft, string | null>>;
 
-const phonePattern = /^\+?[0-9][0-9 -]{6,17}$/;
 const affiliations = new Set<AffiliationStatus>(["affiliated", "independent", "not_specified"]);
 const knownFixtureValues = new Set(["synthetic staging fixture", "synthetic staging school"]);
 
@@ -30,6 +29,18 @@ function containsKnownFixtureValue(saved: SavedDetails): boolean {
   return [saved.locality, saved.institutionName].some((value) =>
     knownFixtureValues.has(value?.trim().toLocaleLowerCase() ?? ""),
   );
+}
+
+/** Nepal mobile numbers are 10 digits; landlines are 8–10 digits with an optional trunk 0. */
+export function validNepalPhone(value: string): boolean {
+  const compact = value.trim().replace(/[\s()-]/g, "");
+  if (!/^\+?\d+$/.test(compact)) return false;
+  const local = compact.startsWith("+977")
+    ? compact.slice(4)
+    : compact.startsWith("977") && compact.length > 10
+      ? compact.slice(3)
+      : compact;
+  return /^(?:9[6-8]\d{8}|0?[1-8]\d{7,8})$/.test(local);
 }
 
 export const EMPTY_ACCOUNT_DETAILS: AccountDetailsDraft = {
@@ -58,7 +69,7 @@ export function accountDetailsDraft(saved: SavedDetails | null | undefined): Acc
   const coherent = Boolean(
     !containsKnownFixtureValue(saved)
       && saved.phone?.trim()
-      && phonePattern.test(saved.phone.trim())
+      && validNepalPhone(saved.phone)
       && saved.province?.trim()
       && saved.district?.trim()
       && saved.localLevel?.trim()
@@ -88,7 +99,7 @@ export function accountDetailsNeedConfirmation(saved: SavedDetails | null | unde
 export function firstAccountDetailsIssue(draft: AccountDetailsDraft): AccountDetailsIssue | null {
   const phone = draft.phone.trim();
   if (!phone) return { field: "phone", message: "Enter your phone number." };
-  if (!phonePattern.test(phone)) return { field: "phone", message: "Enter a valid phone number, including the area or mobile code." };
+  if (!validNepalPhone(phone)) return { field: "phone", message: "Enter a valid Nepal mobile or landline number." };
   if (!draft.province.trim()) return { field: "province", message: "Choose your province." };
   if (!draft.district.trim()) return { field: "district", message: "Choose your district." };
   if (!draft.localLevel.trim()) return { field: "localLevel", message: "Choose or enter your municipality or local level." };

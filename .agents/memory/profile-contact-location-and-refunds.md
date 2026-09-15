@@ -21,3 +21,5 @@ Do not present incomplete legacy or synthetic profile rows as facts a person sup
 Completing a different field later does not legitimise fixture data. If a saved row still carries known synthetic staging locality or institution values, leave the related form choices empty and explain that Fadko refuses to guess. Dependent institution input appears only after the person chooses an affiliation path.
 
 Clean saved data only once, while building the initial form draft. Never keep a cleanup effect subscribed to editable fields: Phone, Province, District and Municipality are independent inputs, and a person may complete them in any order before Save performs ordered validation.
+
+Phone validation is Nepal-specific on both client and server. A local mobile number is 10 digits; supported landlines are 8–10 digits with an optional trunk zero, and `+977` is accepted. An invalid Phone must not clear or lock an independently selected location.

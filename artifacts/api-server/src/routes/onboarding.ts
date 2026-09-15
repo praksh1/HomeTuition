@@ -12,7 +12,7 @@ import locationData from "../data/nepalEducationFacilities.json";
 import { requireAuth } from "../middlewares/requireAuth";
 import { deleteUpload, signView, verifyUpload } from "../lib/fileStore";
 import { flagContent } from "../lib/moderation";
-import { ageOn, completedAccountAt } from "../lib/onboardingRules";
+import { ageOn, completedAccountAt, validNepalPhone } from "../lib/onboardingRules";
 import { NEPAL_PROVINCES, validNepalProvinceDistrict } from "../lib/nepalLocationRules";
 
 const router: IRouter = Router();
@@ -74,8 +74,8 @@ router.patch("/onboarding/me", requireAuth, async (req, res): Promise<void> => {
     res.status(400).json({ error: "Phone, province, district, and municipality/local level are required." });
     return;
   }
-  if (!/^\+?[0-9][0-9 -]{6,17}$/.test(phone)) {
-    res.status(400).json({ error: "Enter a valid phone number." });
+  if (!validNepalPhone(phone)) {
+    res.status(400).json({ error: "Enter a valid Nepal mobile or landline number." });
     return;
   }
   if (!validNepalProvinceDistrict(province, district)) {

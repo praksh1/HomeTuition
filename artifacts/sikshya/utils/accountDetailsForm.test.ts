@@ -6,6 +6,7 @@ import {
   accountDetailsNeedConfirmation,
   completeAccountDetails,
   firstAccountDetailsIssue,
+  validNepalPhone,
   type AccountDetailsDraft,
 } from "./accountDetailsForm.ts";
 
@@ -77,8 +78,16 @@ test("after the phone is fixed, validation advances to the actual next field", (
 test("an invalid phone does not blame the location", () => {
   assert.deepEqual(firstAccountDetailsIssue({ ...complete, phone: "12" }), {
     field: "phone",
-    message: "Enter a valid phone number, including the area or mobile code.",
+    message: "Enter a valid Nepal mobile or landline number.",
   });
+});
+
+test("Nepal phone validation rejects the reported eleven-digit local number", () => {
+  assert.equal(validNepalPhone("98023445677"), false);
+  assert.equal(validNepalPhone("9801234567"), true);
+  assert.equal(validNepalPhone("+977 9801234567"), true);
+  assert.equal(validNepalPhone("01-5551234"), true);
+  assert.equal(validNepalPhone("+977 1 5551234"), true);
 });
 
 test("a fully valid independent profile has nothing to correct", () => {

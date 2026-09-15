@@ -34,13 +34,14 @@ Make Profile feel like one trustworthy account home for teachers and students, a
 - Live preview then exposed a second state: once the test phone was populated, the old synthetic locality and school made the row look technically complete. Known staging placeholders now invalidate the entire draft, and the person sees a short confirmation notice explaining why location and school are blank.
 - School/institution input no longer appears before the person chooses Affiliated or School not listed. The first decision now comes before its dependent field.
 - Removed a faulty post-load cleanup effect that kept watching the live form. While Phone was empty it erased every Province a person selected, coupling two independent fields. Saved-data cleanup now happens only while the API response is converted into the initial draft; Province, District and Municipality remain freely selectable before Phone.
+- Tightened Phone on both client and server to Nepal mobile/landline shapes. The reported 11-digit local number is rejected beside Phone without erasing a Province already selected.
 
 ## Verification
 
 - Sikshya typecheck: pass.
 - App units: 457 passed, 0 failed.
 - Focused account-form and Profile contracts: 17 passed, 0 failed.
-- Rendered Profile journey: 66 passed at 390 px and 1440 px, including Province-before-Phone selection, incomplete legacy data, populated-phone fixture data, exact first-field errors, live error clearing, cascading validation, searchable Nepal pickers, touch floors, no horizontal overflow and no browser exceptions.
+- Rendered Profile journey: 70 passed at 390 px and 1440 px, including Province-before-Phone selection, invalid-phone isolation, incomplete legacy data, populated-phone fixture data, exact first-field errors, live error clearing, cascading validation, searchable Nepal pickers, touch floors, no horizontal overflow and no browser exceptions.
 - Repository typecheck: all four packages clean.
 - Design lint: no new leaks; baseline remains 83 hex / 246 sizes.
 - `git diff --check`: clean.
