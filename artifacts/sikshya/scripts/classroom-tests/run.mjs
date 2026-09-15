@@ -169,8 +169,9 @@ async function main() {
   // Get to My Sessions the way a teacher does — the tab bar, which is real links.
   await page.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
   await page.waitForTimeout(3500);
-  // The Completed filter, since that is where a finished class sits.
-  await page.click('text="Completed"', { timeout: 5000 }).catch(() => {});
+  // Finished classes now live behind the History view. Use its stable test id: the
+  // status badge also says "Completed", but it cannot exist until History is open.
+  await page.click('[data-testid="teacher-group-history"]', { timeout: 5000 });
   await page.waitForTimeout(2500);
 
   const card = page.locator('text="Stress 14"').first();
@@ -258,7 +259,7 @@ async function main() {
   await page2.waitForTimeout(3000);
   await page2.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
   await page2.waitForTimeout(2500);
-  await page2.click('text="Completed"', { timeout: 5000 }).catch(() => {});
+  await page2.click('[data-testid="teacher-group-history"]', { timeout: 5000 });
   await page2.waitForTimeout(2000);
   await page2.locator('text="Rejoin Test"').first().click({ timeout: 10000 });
   await page2.waitForTimeout(3000);

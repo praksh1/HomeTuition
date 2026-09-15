@@ -63,3 +63,17 @@ journeys: teacher Schedule across all three views, and student Classes with a pu
 lesson class. After Preview passes, request separate production approval. The next premium slice
 is the class conversation/inbox experience, preserving its existing delivery behavior while
 modernizing organization and interaction.
+
+## Production gate follow-up
+
+- Preview passed and the owner approved production for `ac4cb2b`.
+- Production workflow `34977243294` stopped before deployment in the existing classroom journey.
+  The product was correct: completed lessons moved from the old Completed filter into the new
+  History view. The journey still clicked the removed label, so it could not find either of its
+  completed fixtures.
+- The journey now opens the stable `teacher-group-history` control before selecting the finished
+  lesson. This changes only the test route through the reviewed UI; application behavior is
+  unchanged.
+- The updated file passes Node syntax checking, `git diff --check`, and the rendered Sessions suite
+  remains **38 passed, 0 failed** at phone and laptop widths. The database-backed classroom journey
+  must be re-run in CI because this Windows checkout has no local PostgreSQL/`psql` test service.
