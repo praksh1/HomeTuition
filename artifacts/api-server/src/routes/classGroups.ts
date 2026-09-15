@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import {
   batchTestSessionsTable,
@@ -303,31 +303,39 @@ router.get("/class-groups/:id/students", requireAuth, async (req, res) => {
 router.get("/class-groups/:id/messages", requireAuth, async (req, res) => {
   const access = await accessOrReply(req, res);
   if (!access) return;
-  const where = access.joinedAt
-    ? and(
-        eq(classGroupMessagesTable.batchId, access.batchId),
-        gte(classGroupMessagesTable.createdAt, access.joinedAt),
-      )
-    : eq(classGroupMessagesTable.batchId, access.batchId);
-  const messages = await db
+  const requestedLimit = Number(req.query.limit ?? 50);
+  const limit = Number.isInteger(requestedLimit) ? Math.min(100, Math.max(20, requestedLimit)) : 50;
+  const requestedBefore = Number(req.query.before);
+  const before = Number.isInteger(requestedBefore) && requestedBefore > 0 ? requestedBefore : null;
+  const visible = [eq(classGroupMessagesTable.batchId, access.batchId)];
+  if (access.joinedAt) visible.push(gte(classGroupMessagesTable.createdAt, access.joinedAt));
+  if (before) visible.push(lt(classGroupMessagesTable.id, before));
+
+  // Read from the newest end. The previous ASC/LIMIT query permanently hid every message after
+  // the first 250 in a busy class — precisely the end of the conversation people need to see.
+  // One extra row tells the client whether an earlier page exists without a second count query.
+  const newestFirst = await db
     .select()
     .from(classGroupMessagesTable)
-    .where(where)
+    .where(and(...visible))
+    .orderBy(desc(classGroupMessagesTable.id))
+    .limit(limit + 1);
+  const hasEarlier = newestFirst.length > limit;
+  const messages = newestFirst.slice(0, limit).reverse();
+  // Pins are the class noticeboard, not a side effect of whichever message page is open. Fetch
+  // them independently so an older pinned update remains visible after the room passes 50 posts.
+  // Students may see teacher-pinned context from before joining, matching the existing contract.
+  const pinned = await db
+    .select()
+    .from(classGroupMessagesTable)
+    .where(
+      and(
+        eq(classGroupMessagesTable.batchId, access.batchId),
+        sql`${classGroupMessagesTable.pinnedAt} is not null`,
+      ),
+    )
     .orderBy(asc(classGroupMessagesTable.id))
-    .limit(250);
-  const pinned = access.joinedAt
-    ? await db
-        .select()
-        .from(classGroupMessagesTable)
-        .where(
-          and(
-            eq(classGroupMessagesTable.batchId, access.batchId),
-            sql`${classGroupMessagesTable.pinnedAt} is not null`,
-          ),
-        )
-        .orderBy(asc(classGroupMessagesTable.id))
-        .limit(20)
-    : messages.filter((m) => m.pinnedAt);
+    .limit(20);
   const visibleIds = [...new Set([...messages, ...pinned].map((message) => message.id))];
   const files = visibleIds.length
     ? await db
@@ -344,6 +352,8 @@ router.get("/class-groups/:id/messages", requireAuth, async (req, res) => {
     isTeacher: access.isTeacher,
     messages: messages.map(withFile),
     pinned: pinned.map(withFile),
+    hasEarlier,
+    beforeCursor: hasEarlier ? messages[0]?.id ?? null : null,
   });
 });
 

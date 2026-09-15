@@ -35,6 +35,21 @@ const recipients = [
 
 export async function apiGet(path) {
   if (location.search.includes("failure")) throw new Error("offline");
+  if (path.startsWith("/class-groups/")) {
+    return {
+      title: "IELTS evening class",
+      isTeacher: true,
+      messages: [
+        { id: 201, senderId: 7, senderName: "Staging Review Teacher", senderRole: "teacher", body: "Welcome. I pinned tomorrow's reading below.", createdAt: new Date(Date.now() - 5_400_000).toISOString() },
+        { id: 202, senderId: 11, senderName: "Anisha Rai", senderRole: "student", body: "Can we review question four tomorrow?", createdAt: new Date(Date.now() - 3_600_000).toISOString() },
+      ],
+      pinned: [
+        { id: 199, senderId: 7, senderName: "Staging Review Teacher", senderRole: "teacher", body: "Bring the practice sheet to class.", createdAt: new Date(Date.now() - 7_200_000).toISOString() },
+      ],
+      hasEarlier: true,
+      beforeCursor: 201,
+    };
+  }
   if (path.startsWith("/messages/")) {
     return [
       { id: 101, senderId: 11, receiverId: 7, body: "Can we review question four tomorrow?", read: true, createdAt: new Date(Date.now() - 3_600_000).toISOString(), reactions: [{ emoji: "👍", count: 1, mine: false }] },
@@ -46,5 +61,9 @@ export async function apiGet(path) {
 
 export async function apiPost(path, body) {
   if (path.includes("reaction")) return {};
+  if (path.startsWith("/class-groups/")) {
+    if (path.endsWith("/read")) return {};
+    return { id: 203, senderId: 7, senderName: "Staging Review Teacher", senderRole: "teacher", body: body.body, createdAt: new Date().toISOString() };
+  }
   return { id: 103, senderId: 7, receiverId: 11, body: body.body, read: false, createdAt: new Date().toISOString() };
 }

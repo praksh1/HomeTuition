@@ -103,6 +103,9 @@ async function main() {
     date: new Date(Date.now() + 3600_000).toISOString(),
     duration: 60, price: 500, maxStudents: 20 } });
   if (old.status > 201) throw new Error(`could not create the old class: ${old.status} ${JSON.stringify(old.body)}`);
+  const staleStudent = await register("student");
+  sql(`insert into session_enrollments (session_id, student_id, payment_status, payment_reference)
+       values (${old.body.id}, ${staleStudent.user.id}, 'paid', 'classroom-expiry-ui-test')`);
   sql(`update sessions set date = now() - interval '72 hours', status = 'completed' where id = ${old.body.id}`);
 
   const chromium = await getChromium();
@@ -219,6 +222,78 @@ async function main() {
   );
 
   await ctx.close();
+
+  console.log("\nA student taps a stale live notification");
+
+  /**
+   * The reported journey: the notification was excellent until it handed the user to Daily,
+   * whose tiny provider panel said only "Session expired". Fadko now checks the class first,
+   * owns the explanation and owns the way home. The room request count is the important proof:
+   * a friendly overlay painted over a mounted provider would still leak the camera/mic path.
+   */
+  const staleCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const stalePage = await staleCtx.newPage();
+  const staleRoomRequests = [];
+  stalePage.on("request", (request) => {
+    if (/\/api\/sessions\/\d+\/room/.test(request.url())) staleRoomRequests.push(request.url());
+  });
+  await stalePage.addInitScript(({ token, notification }) => {
+    window.localStorage.setItem("@sikshya_token", token);
+    window.localStorage.setItem("@sikshya_notifications", JSON.stringify([notification]));
+    window.__mediaCalls = [];
+    if (navigator.mediaDevices) {
+      navigator.mediaDevices.getUserMedia = (...args) => {
+        window.__mediaCalls.push(JSON.stringify(args[0] ?? {}));
+        return Promise.reject(new Error("blocked"));
+      };
+    }
+  }, {
+    token: staleStudent.token,
+    notification: {
+      id: "expired-live-class",
+      title: "Class is live now",
+      body: "Stress 14 has started. Join now!",
+      type: "live",
+      read: false,
+      createdAt: new Date().toISOString(),
+      data: { type: "live", sessionId: String(old.body.id) },
+    },
+  });
+  await stalePage.goto(`${siteUrl}/notifications`, { waitUntil: "networkidle" });
+  await stalePage.getByTestId("notification-expired-live-class").click({ timeout: 15000 });
+  await stalePage.getByTestId("expired-class-redirect").waitFor({ timeout: 15000 });
+
+  const staleText = await stalePage.locator("body").innerText();
+  check("Fadko explains that the class ended", /This class has ended/i.test(staleText), staleText.slice(0, 250).replace(/\n/g, " | "));
+  check("the ending says it will return to the dashboard", /Returning to your dashboard/i.test(staleText));
+  check("the ending exposes a running countdown", Number(await stalePage.getByTestId("expired-class-countdown").innerText()) <= 10);
+  check("an immediate dashboard action is available", await stalePage.getByTestId("expired-class-dashboard").isVisible());
+  check("the stale notification never asks for a video room", staleRoomRequests.length === 0, JSON.stringify(staleRoomRequests));
+  check("the stale notification never asks for camera or microphone", (await stalePage.evaluate(() => window.__mediaCalls)).length === 0);
+
+  await stalePage.waitForTimeout(10500);
+  check("the ending returns to the dashboard after ten seconds",
+    !/classroom/.test(await stalePage.evaluate(() => location.pathname)),
+    await stalePage.evaluate(() => location.pathname));
+  await staleCtx.close();
+
+  const actionCtx = await browser.newContext({
+    viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+    permissions: [],
+  });
+  const actionPage = await actionCtx.newPage();
+  await actionPage.addInitScript((token) => window.localStorage.setItem("@sikshya_token", token), staleStudent.token);
+  await actionPage.goto(`${siteUrl}/classroom/${old.body.id}`, { waitUntil: "networkidle" });
+  await actionPage.getByTestId("expired-class-redirect").waitFor({ timeout: 15000 });
+  await actionPage.getByTestId("expired-class-dashboard").click();
+  await actionPage.waitForTimeout(500);
+  check("Go to dashboard leaves immediately",
+    !/classroom/.test(await actionPage.evaluate(() => location.pathname)),
+    await actionPage.evaluate(() => location.pathname));
+  await actionCtx.close();
 
   // ---------------------------------------------------------------------------------------
   // The other half of the same window: a teacher who hung up and comes straight back.

@@ -19,6 +19,7 @@ const built = await bundleForBrowser({
     "@/utils/uploadFile": path.join(here, "upload.js"),
     "@/components/MessageAttachment": path.join(here, "attachment.js"),
     "@/context/AuthContext": path.join(here, "auth.js"),
+    "@/context/NotificationContext": path.join(here, "notifications.js"),
     "@/context/DatePreferenceContext": path.join(here, "context.js"),
     "expo-router": path.join(here, "router.js"),
     "react-native-safe-area-context": path.join(here, "context.js"),
@@ -90,6 +91,36 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: conversation has no horizontal overflow`);
     check(errors.length === 0, `${width}: no browser exceptions`);
     await page.screenshot({ path: path.join(work, `${width}-conversation.png`), fullPage: true });
+
+    await page.goto(`${base}?class-chat`);
+    await page.getByText("IELTS evening class", { exact: true }).waitFor();
+    const classChat = await page.locator("body").innerText();
+    check(classChat.includes("Everyone enrolled in this class"), `${width}: class chat identifies its audience`);
+    check(classChat.includes("Pinned by your teacher") && classChat.includes("Bring the practice sheet"), `${width}: pinned teacher update stays above the timeline`);
+    check(classChat.includes("Anisha Rai") && classChat.includes("Can we review question four tomorrow?"), `${width}: classmate identity and message are visible`);
+    check(classChat.includes("Teacher"), `${width}: teacher messages have an honest role marker`);
+    check(classChat.includes("Today"), `${width}: class chat uses Nepal-day dividers`);
+    check(await page.getByTestId("class-chat-load-earlier").isVisible(), `${width}: busy class chats expose earlier history without one long page`);
+    check((await page.getByTestId("class-chat-back").boundingBox()).height >= 44, `${width}: class-chat back action meets the touch floor`);
+    check((await page.getByTestId("class-chat-attach").boundingBox()).height >= 44, `${width}: class-chat attachment action meets the touch floor`);
+    check((await page.getByTestId("class-chat-send").boundingBox()).height >= 44, `${width}: class-chat send action meets the touch floor`);
+    await page.getByTestId("class-chat-input").fill("I will send the worksheet now.");
+    await page.getByTestId("class-chat-send").click();
+    await page.getByText("I will send the worksheet now.", { exact: true }).waitFor();
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: class chat has no horizontal overflow`);
+    check(errors.length === 0, `${width}: class chat has no browser exceptions`);
+    await page.screenshot({ path: path.join(work, `${width}-class-chat.png`), fullPage: true });
+
+    await page.goto(`${base}?expired-class`);
+    await page.getByText("This class has ended", { exact: true }).waitFor();
+    const expired = await page.locator("body").innerText();
+    check(expired.includes("This lesson has already ended."), `${width}: Fadko explains an expired lesson before a video provider can`);
+    check(expired.includes("Returning to your dashboard") && expired.includes("10"), `${width}: expired lesson shows its ten-second destination`);
+    check((await page.getByTestId("expired-class-dashboard").boundingBox()).height >= 44, `${width}: immediate dashboard action meets the touch floor`);
+    await page.getByTestId("expired-class-dashboard").click();
+    check(await page.evaluate(() => window.lastNavigation === "/student"), `${width}: expired lesson can leave for the dashboard immediately`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: expired lesson has no horizontal overflow`);
+    await page.screenshot({ path: path.join(work, `${width}-expired-class.png`), fullPage: true });
     await page.close();
   }
 } finally {

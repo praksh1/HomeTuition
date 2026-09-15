@@ -805,7 +805,9 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
   // A class that was created under a test grant says so here too, so the class's own page and
   // anything that opens from it carry the same fact the list does.
   const [tagged] = await tagTestClasses([{ ...session, endedAt: activity.endedAt }]);
-  res.json(tagged);
+  // Entry screens use this instead of the handset clock. A wrong device clock must never open
+  // an expired room or shut a punctual student out of a live class.
+  res.json({ ...tagged, serverTime: new Date().toISOString() });
 });
 
 /**

@@ -62,6 +62,15 @@ test("unread messages have a durable per-person acknowledgement", () => {
   assert.match(routes, /kind: "class_message"/);
 });
 
+test("a busy class opens on its newest messages and pages backward", () => {
+  assert.match(routes, /orderBy\(desc\(classGroupMessagesTable\.id\)\)/);
+  assert.match(routes, /\.limit\(limit \+ 1\)/);
+  assert.match(routes, /lt\(classGroupMessagesTable\.id, before\)/);
+  assert.match(routes, /hasEarlier/);
+  assert.match(routes, /beforeCursor/);
+  assert.doesNotMatch(routes, /orderBy\(asc\(classGroupMessagesTable\.id\)\)[\s\S]{0,80}\.limit\(250\)/);
+});
+
 test("new class messages verify one stored file and keep late-join visibility aligned", () => {
   assert.match(routes, /classGroupMessageFilesTable/);
   assert.match(routes, /Write a message or attach a photo or PDF/);

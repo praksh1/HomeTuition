@@ -78,10 +78,10 @@ test("class messages refresh live and clear only after the conversation loads", 
   assert.match(notificationCenter, /pathname: "\/class-chat"/);
   assert.match(chat, /lastEvent\?\.kind === "class_message"/);
   assert.match(chat, /\/messages\/read/);
-  assert.match(chat, /next\.messages\.at\(-1\)\?\.id/);
-  assert.match(chat, /await uploadFile\(file\)/);
-  assert.match(chat, /Open attachment/);
-  assert.match(chat, /Choose a photo or PDF/);
+  assert.match(chat, /messages\.at\(-1\)\?\.id/);
+  assert.match(chat, /await uploadFile\(outgoing\)/);
+  assert.match(chat, /MessageAttachment/);
+  assert.match(chat, /Attach a photo or PDF/);
 });
 
 test("the class home shows a durable unread badge", () => {

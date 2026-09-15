@@ -40,6 +40,8 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { HIT_SLOP_MIN } from "@/constants/layout";
 import { aloneMessage } from "@/utils/aloneInCall";
+import { ExpiredClassRedirect } from "@/components/classes/ExpiredClassRedirect";
+import { canJoinSession } from "@/utils/sessionWindow";
 
 type Mode = "board" | "chat";
 type VideoWindowSize = "hidden" | "small" | "medium" | "full";
@@ -57,6 +59,9 @@ interface SessionData {
   status: string;
   /** The booked start. The whole call clock is measured from this and the duration. */
   date: string;
+  endedAt?: string | null;
+  /** The API clock used for the entry decision; a handset clock never closes the classroom. */
+  serverTime?: string;
 }
 
 type NoticeTone = "warning" | "destructive";
@@ -240,6 +245,8 @@ export default function StudentClassroom() {
    * a lesson they were about to attend.
    */
   const [roomWaiting, setRoomWaiting] = useState<RoomRefusal | null>(null);
+  /** True until Fadko has checked the lesson before asking any video provider for a room. */
+  const [checkingEntry, setCheckingEntry] = useState(true);
   /**
    * Set the moment this student leaves.
    *
@@ -410,19 +417,63 @@ export default function StudentClassroom() {
     else router.replace("/(student)/sessions");
   }, []);
 
+  const goToDashboard = useCallback(() => {
+    hasLeft.current = true;
+    setRoomUrl(null);
+    setMeetingToken(null);
+    router.replace("/(student)");
+  }, []);
+
   useEffect(() => {
-    loadSession();
-    loadRoom();
+    let cancelled = false;
+    hasLeft.current = false;
+    setCheckingEntry(true);
+    setRoomExpired(null);
+    setRoomWaiting(null);
+    setRoomError(false);
+    setRoomUrl(null);
+    setMeetingToken(null);
+
+    void (async () => {
+      const loaded = await loadSession();
+      if (cancelled || !loaded) {
+        if (!cancelled) setCheckingEntry(false);
+        return;
+      }
+
+      // The lesson details arrive first. This removes the race that mounted Daily before Fadko
+      // knew whether the lesson had ended. The server's clock travels with the response so a
+      // phone set to the wrong time cannot close (or reopen) a class.
+      const serverNow = loaded.serverTime ? Date.parse(loaded.serverTime) : Number.NaN;
+      const localGate = canJoinSession(loaded, Number.isFinite(serverNow) ? serverNow : Date.now());
+      if (!localGate.ok && localGate.code !== "too_early") {
+        setRoomExpired(localGate.message);
+        setCheckingEntry(false);
+        return;
+      }
+
+      await loadRoom();
+      if (!cancelled) setCheckingEntry(false);
+    })();
+
     timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => {
+      cancelled = true;
       if (timerRef.current) clearInterval(timerRef.current);
     };
+    // Entry is intentionally restarted only when the route points at a different lesson.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const loadSession = async () => {
     try {
-      setSession(await apiGet<SessionData>(`/sessions/${id}`));
-    } catch {}
+      const loaded = await apiGet<SessionData>(`/sessions/${id}`);
+      setSession(loaded);
+      return loaded;
+    } catch {
+      setRoomError(true);
+      return null;
+    }
   };
 
   // Daily.co rooms must be created server-side via their REST API before anyone can
@@ -650,6 +701,19 @@ export default function StudentClassroom() {
 
   // Every hook above has run. Now it is safe to render nothing for the wrong role.
   if (wrongRole) return null;
+
+  if (roomExpired) {
+    return <ExpiredClassRedirect message={roomExpired} onDashboard={goToDashboard} />;
+  }
+
+  if (checkingEntry) {
+    return (
+      <View style={[s.container, s.permissionGate, { gap: space.sm, backgroundColor: colors.background }]} testID="classroom-entry-check">
+        <ActivityIndicator color={colors.primary} />
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>Checking this class…</Text>
+      </View>
+    );
+  }
 
   return (
     <KeyboardAvoidingView
