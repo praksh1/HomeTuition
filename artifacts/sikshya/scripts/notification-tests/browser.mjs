@@ -185,7 +185,9 @@ async function main() {
     )?.serverId));
 
     await page.goto(`${siteUrl}/conversation/${student.user.id}`);
-    await page.getByText(student.user.name, { exact: true }).first().waitFor({ timeout: 10_000 });
+    // Direct notification links carry the conversation id, but need not carry a name.
+    // Wait for the actual received message to prove that the thread loaded successfully.
+    await page.getByText("Sir, is there class tomorrow?", { exact: true }).first().waitFor({ timeout: 10_000 });
     for (let attempt = 0; attempt < 40; attempt += 1) {
       phoneStored = await phonePage.evaluate(() =>
         JSON.parse(window.localStorage.getItem("@sikshya_notifications") ?? "[]"),
