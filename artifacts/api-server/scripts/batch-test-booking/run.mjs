@@ -157,6 +157,13 @@ try {
   const teacherClassHome = await api(`/class-groups/${c.id}`, teacher.token);
   check("teacher opens the same class-group home", teacherClassHome.body.isTeacher === true);
   check("teacher class home counts enrolled students", teacherClassHome.body.counts.students === 1);
+  const quietTeacherInbox = await api("/message-inbox", teacher.token);
+  check("booked class is discoverable in teacher Messages before anybody speaks", quietTeacherInbox.status === 200
+    && quietTeacherInbox.body.direct.length === 0
+    && quietTeacherInbox.body.classes.some((row) => row.batchId === c.id && row.title === c.body.title && row.lastMessage === "" && row.unreadCount === 0));
+  const quietStudentInbox = await api("/message-inbox", a.token);
+  check("booked class is discoverable in student Messages before anybody speaks", quietStudentInbox.body.classes.some((row) => row.batchId === c.id && row.lastMessageAt === null));
+  check("an unbooked student cannot discover the private class discussion", !(await api("/message-inbox", outsider.token)).body.classes.some((row) => row.batchId === c.id));
   check("student cannot open the private class roster", (await api(`/class-groups/${c.id}/students`, a.token)).status === 403);
   const rosterBeforeLesson = await api(`/class-groups/${c.id}/students`, teacher.token);
   check("teacher sees the enrolled student's name without contact details", rosterBeforeLesson.status === 200
@@ -175,10 +182,21 @@ try {
   const studentMessage = await api(`/class-groups/${c.id}/messages`, a.token, { body: "Please explain question four in our next lesson." });
   check("student can post to the class conversation", studentMessage.status === 201 && studentMessage.body.senderRole === "student");
   check("teacher sees a durable unread class-message count", (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.unreadMessages === 1);
+  const teacherInboxWithQuestion = await api("/message-inbox", teacher.token);
+  check("teacher Messages shows the class question, sender and unread count", teacherInboxWithQuestion.body.classes.some((row) => row.batchId === c.id
+    && row.lastMessage === "Please explain question four in our next lesson."
+    && row.lastSenderName === a.user.name
+    && row.unreadCount === 1
+    && row.lastMessageFromMe === false));
   check("fetching messages alone does not fabricate a read acknowledgement", (await api(`/class-groups/${c.id}/messages`, teacher.token)).body.messages.some((m) => m.id === studentMessage.body.id) && (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.unreadMessages === 1);
   check("teacher acknowledgement clears only the loaded conversation", (await api(`/class-groups/${c.id}/messages/read`, teacher.token, { lastMessageId: studentMessage.body.id })).body.unreadMessages === 0);
+  check("teacher Messages clears the class badge after the discussion is read", (await api("/message-inbox", teacher.token)).body.classes.find((row) => row.batchId === c.id).unreadCount === 0);
   const teacherMessage = await api(`/class-groups/${c.id}/messages`, teacher.token, { body: "I will explain it at the start of class." });
   check("teacher message creates a student unread badge", teacherMessage.status === 201 && (await api(`/class-groups/${c.id}`, a.token)).body.counts.unreadMessages === 1);
+  check("student Messages shows the teacher reply as unread", (await api("/message-inbox", a.token)).body.classes.some((row) => row.batchId === c.id
+    && row.lastMessage === "I will explain it at the start of class."
+    && row.lastSenderName === teacher.user.name
+    && row.unreadCount === 1));
   check("a message outside the conversation cannot clear its badge", (await api(`/class-groups/${c.id}/messages/read`, a.token, { lastMessageId: teacherMessage.body.id + 99999 })).status === 409 && (await api(`/class-groups/${c.id}`, a.token)).body.counts.unreadMessages === 1);
   check("student acknowledgement clears the loaded teacher message", (await api(`/class-groups/${c.id}/messages/read`, a.token, { lastMessageId: teacherMessage.body.id })).body.unreadMessages === 0);
   check("student cannot set class homework", (await api(`/class-groups/${c.id}/homework`, a.token, { title: "Not allowed" })).status === 403);

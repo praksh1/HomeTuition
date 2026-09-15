@@ -10,7 +10,35 @@ export interface ConversationSummary {
   lastMessageFromMe: boolean;
 }
 
-export type ConversationFilter = "all" | "unread";
+export interface ClassConversationSummary {
+  batchId: number;
+  title: string;
+  lastMessage: string;
+  lastMessageAt: string | null;
+  lastSenderName: string | null;
+  unreadCount: number;
+  lastMessageFromMe: boolean;
+}
+
+export type InboxThread =
+  | ({ kind: "direct" } & ConversationSummary)
+  | ({ kind: "class" } & ClassConversationSummary);
+
+export type ConversationFilter = "all" | "unread" | "classes";
+
+export function inboxThreads(
+  direct: ConversationSummary[],
+  classes: ClassConversationSummary[],
+): InboxThread[] {
+  return [
+    ...direct.map((conversation) => ({ kind: "direct" as const, ...conversation })),
+    ...classes.map((conversation) => ({ kind: "class" as const, ...conversation })),
+  ];
+}
+
+export function inboxThreadKey(thread: InboxThread): string {
+  return thread.kind === "direct" ? `person-${thread.otherUserId}` : `class-${thread.batchId}`;
+}
 
 export function conversationPreview(conversation: ConversationSummary, draft?: string) {
   const saved = draft?.trim();
@@ -21,6 +49,21 @@ export function conversationPreview(conversation: ConversationSummary, draft?: s
     text: body,
     draft: false,
   };
+}
+
+export function inboxPreview(thread: InboxThread, draft?: string) {
+  if (thread.kind === "direct") return conversationPreview(thread, draft);
+  const body = thread.lastMessage.trim();
+  if (!body) return { label: "", text: "Start the class conversation", draft: false };
+  return {
+    label: thread.lastMessageFromMe ? "You:" : thread.lastSenderName ? `${thread.lastSenderName}:` : "",
+    text: body || "Shared a file",
+    draft: false,
+  };
+}
+
+export function inboxThreadTitle(thread: InboxThread): string {
+  return thread.kind === "direct" ? thread.otherUserName : thread.title;
 }
 
 export function filterConversations(
@@ -34,6 +77,28 @@ export function filterConversations(
       if (filter === "unread" && conversation.unreadCount < 1) return false;
       if (!query.trim()) return true;
       return matches(`${conversation.otherUserName} ${conversation.lastMessage}`, query);
+    });
+}
+
+export function filterInboxThreads(
+  threads: InboxThread[],
+  query: string,
+  filter: ConversationFilter,
+) {
+  return [...threads]
+    .sort((a, b) => {
+      const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      return bTime - aTime;
+    })
+    .filter((thread) => {
+      if (filter === "unread" && thread.unreadCount < 1) return false;
+      if (filter === "classes" && thread.kind !== "class") return false;
+      if (!query.trim()) return true;
+      if (thread.kind === "direct") {
+        return matches(`${thread.otherUserName} ${thread.lastMessage}`, query);
+      }
+      return matches(`${thread.title} ${thread.lastSenderName ?? ""} ${thread.lastMessage}`, query);
     });
 }
 

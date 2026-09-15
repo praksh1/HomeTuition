@@ -1,9 +1,14 @@
-import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
+  batchTestBookingsTable,
+  classGroupMessageReadsTable,
+  classGroupMessagesTable,
   messageAttachmentsTable,
   messageReactionsTable,
   db,
+  learningProgramBatchesTable,
+  learningProgramsTable,
   messagesTable,
   sessionEnrollmentsTable,
   sessionsTable,
@@ -15,6 +20,232 @@ import { notify } from "../lib/notify";
 import { verifyUpload } from "../lib/fileStore";
 
 const router: IRouter = Router();
+
+type DirectConversation = {
+  otherUserId: number;
+  lastMessage: string;
+  lastMessageAt: string;
+  unreadCount: number;
+  lastMessageFromMe: boolean;
+  otherUserName: string;
+  otherUserRole: string | null;
+};
+
+async function directConversations(userId: number): Promise<DirectConversation[]> {
+  const all = await db.select().from(messagesTable)
+    .where(or(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, userId)))
+    .orderBy(asc(messagesTable.createdAt));
+
+  type Convo = Omit<DirectConversation, "otherUserName" | "otherUserRole">;
+  const byOther = new Map<number, Convo>();
+  for (const message of all) {
+    const otherUserId = message.senderId === userId ? message.receiverId : message.senderId;
+    const existing = byOther.get(otherUserId);
+    const unreadDelta = message.receiverId === userId && !message.read ? 1 : 0;
+    if (!existing) {
+      byOther.set(otherUserId, {
+        otherUserId,
+        lastMessage: message.body,
+        lastMessageAt: message.createdAt as unknown as string,
+        unreadCount: unreadDelta,
+        lastMessageFromMe: message.senderId === userId,
+      });
+      continue;
+    }
+    existing.lastMessage = message.body;
+    existing.lastMessageAt = message.createdAt as unknown as string;
+    existing.unreadCount += unreadDelta;
+    existing.lastMessageFromMe = message.senderId === userId;
+  }
+
+  const conversations = [...byOther.values()].sort((a, b) =>
+    a.lastMessageAt < b.lastMessageAt ? 1 : -1,
+  );
+  if (!conversations.length) return [];
+
+  const others = await db
+    .select({ id: usersTable.id, name: usersTable.name, role: usersTable.role })
+    .from(usersTable)
+    .where(inArray(usersTable.id, conversations.map((conversation) => conversation.otherUserId)));
+  const otherMap = new Map(others.map((other) => [other.id, other]));
+  return conversations.map((conversation) => ({
+    ...conversation,
+    otherUserName: otherMap.get(conversation.otherUserId)?.name ?? "Unknown",
+    otherUserRole: otherMap.get(conversation.otherUserId)?.role ?? null,
+  }));
+}
+
+type ClassGroupRow = {
+  batchId: number;
+  title: string | null;
+  publishedSnapshot: unknown;
+  createdAt: Date;
+};
+
+function classTitle(group: ClassGroupRow): string {
+  const snapshot = group.publishedSnapshot as { title?: unknown } | null;
+  return typeof snapshot?.title === "string" && snapshot.title.trim()
+    ? snapshot.title.trim()
+    : group.title?.trim() || "Your class";
+}
+
+/**
+ * One row for every booked class discussion the signed-in person may open.
+ *
+ * The class can appear before its first message so Messages is a real doorway into the group,
+ * not merely a history of groups somebody happened to speak in. Teacher rows are limited to
+ * classes with at least one booking; a catalogue of empty draft classes does not belong here.
+ */
+async function classConversations(userId: number, role: string) {
+  let groups: ClassGroupRow[];
+  if (role === "teacher") {
+    groups = await db
+      .selectDistinctOn([learningProgramBatchesTable.id], {
+        batchId: learningProgramBatchesTable.id,
+        title: learningProgramsTable.title,
+        publishedSnapshot: learningProgramsTable.publishedSnapshot,
+        createdAt: learningProgramBatchesTable.createdAt,
+      })
+      .from(batchTestBookingsTable)
+      .innerJoin(
+        learningProgramBatchesTable,
+        eq(learningProgramBatchesTable.id, batchTestBookingsTable.batchId),
+      )
+      .innerJoin(
+        learningProgramsTable,
+        eq(learningProgramsTable.id, learningProgramBatchesTable.programId),
+      )
+      .where(eq(learningProgramsTable.teacherId, userId))
+      .orderBy(learningProgramBatchesTable.id, desc(batchTestBookingsTable.createdAt));
+  } else if (role === "student") {
+    groups = await db
+      .select({
+        batchId: learningProgramBatchesTable.id,
+        title: learningProgramsTable.title,
+        publishedSnapshot: learningProgramsTable.publishedSnapshot,
+        createdAt: learningProgramBatchesTable.createdAt,
+      })
+      .from(batchTestBookingsTable)
+      .innerJoin(
+        learningProgramBatchesTable,
+        eq(learningProgramBatchesTable.id, batchTestBookingsTable.batchId),
+      )
+      .innerJoin(
+        learningProgramsTable,
+        eq(learningProgramsTable.id, learningProgramBatchesTable.programId),
+      )
+      .where(eq(batchTestBookingsTable.studentId, userId));
+  } else {
+    return [];
+  }
+
+  if (!groups.length) return [];
+  const batchIds = groups.map((group) => group.batchId);
+  const lastMessages = role === "student"
+    ? await db
+        .selectDistinctOn([classGroupMessagesTable.batchId], {
+          batchId: classGroupMessagesTable.batchId,
+          senderId: classGroupMessagesTable.senderId,
+          senderName: classGroupMessagesTable.senderName,
+          body: classGroupMessagesTable.body,
+          createdAt: classGroupMessagesTable.createdAt,
+        })
+        .from(classGroupMessagesTable)
+        .innerJoin(
+          batchTestBookingsTable,
+          and(
+            eq(batchTestBookingsTable.batchId, classGroupMessagesTable.batchId),
+            eq(batchTestBookingsTable.studentId, userId),
+            gte(classGroupMessagesTable.createdAt, batchTestBookingsTable.createdAt),
+          ),
+        )
+        .where(inArray(classGroupMessagesTable.batchId, batchIds))
+        .orderBy(classGroupMessagesTable.batchId, desc(classGroupMessagesTable.id))
+    : await db
+        .selectDistinctOn([classGroupMessagesTable.batchId], {
+          batchId: classGroupMessagesTable.batchId,
+          senderId: classGroupMessagesTable.senderId,
+          senderName: classGroupMessagesTable.senderName,
+          body: classGroupMessagesTable.body,
+          createdAt: classGroupMessagesTable.createdAt,
+        })
+        .from(classGroupMessagesTable)
+        .where(inArray(classGroupMessagesTable.batchId, batchIds))
+        .orderBy(classGroupMessagesTable.batchId, desc(classGroupMessagesTable.id));
+
+  const unreadRows = role === "student"
+    ? await db
+        .select({
+          batchId: classGroupMessagesTable.batchId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(classGroupMessagesTable)
+        .innerJoin(
+          batchTestBookingsTable,
+          and(
+            eq(batchTestBookingsTable.batchId, classGroupMessagesTable.batchId),
+            eq(batchTestBookingsTable.studentId, userId),
+            gte(classGroupMessagesTable.createdAt, batchTestBookingsTable.createdAt),
+          ),
+        )
+        .leftJoin(
+          classGroupMessageReadsTable,
+          and(
+            eq(classGroupMessageReadsTable.batchId, classGroupMessagesTable.batchId),
+            eq(classGroupMessageReadsTable.userId, userId),
+          ),
+        )
+        .where(
+          and(
+            inArray(classGroupMessagesTable.batchId, batchIds),
+            ne(classGroupMessagesTable.senderId, userId),
+            gt(
+              classGroupMessagesTable.id,
+              sql<number>`coalesce(${classGroupMessageReadsTable.lastReadMessageId}, 0)`,
+            ),
+          ),
+        )
+        .groupBy(classGroupMessagesTable.batchId)
+    : await db
+        .select({
+          batchId: classGroupMessagesTable.batchId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(classGroupMessagesTable)
+        .leftJoin(
+          classGroupMessageReadsTable,
+          and(
+            eq(classGroupMessageReadsTable.batchId, classGroupMessagesTable.batchId),
+            eq(classGroupMessageReadsTable.userId, userId),
+          ),
+        )
+        .where(
+          and(
+            inArray(classGroupMessagesTable.batchId, batchIds),
+            ne(classGroupMessagesTable.senderId, userId),
+            gt(
+              classGroupMessagesTable.id,
+              sql<number>`coalesce(${classGroupMessageReadsTable.lastReadMessageId}, 0)`,
+            ),
+          ),
+        )
+        .groupBy(classGroupMessagesTable.batchId);
+
+  const lastByBatch = new Map(lastMessages.map((message) => [message.batchId, message]));
+  const unreadByBatch = new Map(unreadRows.map((row) => [row.batchId, row.count]));
+  return groups.map((group) => {
+    const last = lastByBatch.get(group.batchId);
+    return {
+      batchId: group.batchId,
+      title: classTitle(group),
+      lastMessage: last?.body ?? "",
+      lastMessageAt: last?.createdAt ?? null,
+      lastSenderName: last?.senderName ?? null,
+      unreadCount: unreadByBatch.get(group.batchId) ?? 0,
+      lastMessageFromMe: last?.senderId === userId,
+    };
+  });
+}
 
 // GET /conversations — list this user's active conversations, most recent first,
 // with the other party's name/role, last message preview, and unread count.
@@ -36,51 +267,22 @@ router.get("/messages/unread-count", requireAuth, async (req, res): Promise<void
 });
 
 router.get("/conversations", requireAuth, async (req, res): Promise<void> => {
-  const userId = req.user!.userId;
+  res.json(await directConversations(req.user!.userId));
+});
 
-  const all = await db.select().from(messagesTable)
-    .where(or(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, userId)))
-    .orderBy(asc(messagesTable.createdAt));
-
-  type Convo = { otherUserId: number; lastMessage: string; lastMessageAt: string; unreadCount: number; lastMessageFromMe: boolean };
-  const byOther = new Map<number, Convo>();
-  for (const m of all) {
-    const otherUserId = m.senderId === userId ? m.receiverId : m.senderId;
-    const existing = byOther.get(otherUserId);
-    const unreadDelta = m.receiverId === userId && !m.read ? 1 : 0;
-    if (!existing) {
-      byOther.set(otherUserId, {
-        otherUserId,
-        lastMessage: m.body,
-        lastMessageAt: m.createdAt as unknown as string,
-        unreadCount: unreadDelta,
-        // Lets the client separate Inbox from Sent without refetching every message.
-        lastMessageFromMe: m.senderId === userId,
-      });
-    } else {
-      existing.lastMessage = m.body;
-      existing.lastMessageAt = m.createdAt as unknown as string;
-      existing.unreadCount += unreadDelta;
-      existing.lastMessageFromMe = m.senderId === userId;
-    }
-  }
-
-  const conversations = [...byOther.values()].sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : -1));
-  if (conversations.length === 0) {
-    res.json([]);
-    return;
-  }
-
-  const otherIds = conversations.map((c) => c.otherUserId);
-  const others = await db.select({ id: usersTable.id, name: usersTable.name, role: usersTable.role })
-    .from(usersTable);
-  const otherMap = new Map(others.map((o) => [o.id, o]));
-
-  res.json(conversations.map((c) => ({
-    ...c,
-    otherUserName: otherMap.get(c.otherUserId)?.name ?? "Unknown",
-    otherUserRole: otherMap.get(c.otherUserId)?.role ?? null,
-  })));
+/**
+ * One request for the entire Messages home.
+ *
+ * Fetching direct conversations and class discussions in the server process avoids two mobile
+ * round trips and gives the app one coherent failure/retry state. The older `/conversations`
+ * response remains available for already-installed clients during rollout.
+ */
+router.get("/message-inbox", requireAuth, async (req, res): Promise<void> => {
+  const [direct, classes] = await Promise.all([
+    directConversations(req.user!.userId),
+    classConversations(req.user!.userId, req.user!.role),
+  ]);
+  res.json({ direct, classes });
 });
 
 // GET /messages/:otherUserId — full thread with a specific user, oldest first.

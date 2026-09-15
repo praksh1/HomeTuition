@@ -18,13 +18,18 @@ import { useDates } from "@/context/DatePreferenceContext";
 import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import { apiGet } from "@/utils/api";
+import { ApiError, apiGet } from "@/utils/api";
 import {
-  conversationPreview,
   conversationTimeLabel,
-  filterConversations,
+  filterInboxThreads,
+  inboxPreview,
+  inboxThreadKey,
+  inboxThreadTitle,
+  inboxThreads,
+  type ClassConversationSummary,
   type ConversationFilter,
   type ConversationSummary,
+  type InboxThread,
 } from "@/utils/conversationList";
 import { loadDrafts, type Drafts } from "@/utils/drafts";
 
@@ -45,7 +50,7 @@ export default function ConversationList({ title }: { title: string }) {
   const insets = useSafeAreaInsets();
   const { t, numeric, gutter, space, radius } = useLayout();
   const { lastEvent } = useNotifications();
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [threads, setThreads] = useState<InboxThread[]>([]);
   const [drafts, setDrafts] = useState<Drafts>({});
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ConversationFilter>("all");
@@ -55,8 +60,16 @@ export default function ConversationList({ title }: { title: string }) {
 
   const load = useCallback(async () => {
     try {
-      const data = await apiGet<ConversationSummary[]>("/conversations");
-      setConversations(data);
+      let data: { direct: ConversationSummary[]; classes: ClassConversationSummary[] };
+      try {
+        data = await apiGet("/message-inbox");
+      } catch (error) {
+        // The website can deploy moments before its API during a release. Keep direct messages
+        // usable against that older server, but do not disguise any other server failure.
+        if (!(error instanceof ApiError) || error.status !== 404) throw error;
+        data = { direct: await apiGet<ConversationSummary[]>("/conversations"), classes: [] };
+      }
+      setThreads(inboxThreads(data.direct, data.classes));
       setProblem("");
       try {
         setDrafts(await loadDrafts());
@@ -80,18 +93,19 @@ export default function ConversationList({ title }: { title: string }) {
   }, [load]);
 
   useEffect(() => {
-    if (lastEvent?.kind === "message") void load();
+    if (lastEvent?.kind === "message" || lastEvent?.kind === "class_message") void load();
   }, [lastEvent, load]);
 
   const visible = useMemo(
-    () => filterConversations(conversations, query, filter),
-    [conversations, filter, query],
+    () => filterInboxThreads(threads, query, filter),
+    [threads, filter, query],
   );
-  const unread = conversations.filter((conversation) => conversation.unreadCount > 0).length;
+  const unread = threads.filter((thread) => thread.unreadCount > 0).length;
+  const classes = threads.filter((thread) => thread.kind === "class").length;
   const draftOnly = Object.keys(drafts).filter(
-    (id) => !conversations.some((conversation) => String(conversation.otherUserId) === id),
+    (id) => !threads.some((thread) => thread.kind === "direct" && String(thread.otherUserId) === id),
   );
-  const emptyInbox = !loading && !problem && conversations.length === 0 && draftOnly.length === 0;
+  const emptyInbox = !loading && !problem && threads.length === 0 && draftOnly.length === 0;
 
   return (
     <ScrollView
@@ -113,7 +127,7 @@ export default function ConversationList({ title }: { title: string }) {
         <View style={styles.headingCopy}>
           <Text style={[t.overline, { color: colors.primary }]}>Conversations</Text>
           <Text style={[t.title1, { color: colors.foreground }]}>{title}</Text>
-          <Text style={[t.callout, { color: colors.mutedForeground }]}>Class conversations, together in one place.</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Direct messages and class discussions, together.</Text>
         </View>
         <TouchableOpacity
           style={[styles.newButton, { minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, backgroundColor: colors.primary }]}
@@ -128,7 +142,7 @@ export default function ConversationList({ title }: { title: string }) {
         </TouchableOpacity>
       </View>
 
-      {!loading && !problem && conversations.length > 0 ? (
+      {!loading && !problem && threads.length > 0 ? (
         <>
           <View style={[styles.search, { minHeight: HIT_SLOP_MIN, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card }]}>
             <Feather name="search" size={18} color={colors.mutedForeground} />
@@ -149,9 +163,13 @@ export default function ConversationList({ title }: { title: string }) {
             ) : null}
           </View>
           <View style={styles.filters}>
-            {(["all", "unread"] as const).map((value) => {
+            {(["all", "unread", "classes"] as const).map((value) => {
               const selected = filter === value;
-              const label = value === "all" ? `All ${conversations.length}` : `Unread ${unread}`;
+              const label = value === "all"
+                ? `All ${threads.length}`
+                : value === "unread"
+                  ? `Unread ${unread}`
+                  : `Classes ${classes}`;
               return (
                 <TouchableOpacity
                   key={value}
@@ -218,36 +236,52 @@ export default function ConversationList({ title }: { title: string }) {
         <View style={[styles.inlineState, { borderRadius: radius.md, backgroundColor: colors.muted }]}>
           <Feather name={filter === "unread" ? "check-circle" : "search"} size={20} color={colors.mutedForeground} />
           <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>
-            {filter === "unread" && !query ? "You are all caught up." : `No conversation matches “${query.trim()}”.`}
+            {filter === "unread" && !query
+              ? "You are all caught up."
+              : filter === "classes" && !query
+                ? "Your enrolled class discussions will appear here."
+                : `No conversation matches “${query.trim()}”.`}
           </Text>
         </View>
       ) : null}
 
       {!loading && !problem && visible.length > 0 ? (
         <View style={[styles.list, { borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }]}>
-          {visible.map((conversation, index) => {
-            const preview = conversationPreview(conversation, drafts[String(conversation.otherUserId)]);
-            const time = conversationTimeLabel(conversation.lastMessageAt, Date.now(), (date) => dates.format(date, { style: "short" }));
-            const isUnread = conversation.unreadCount > 0;
+          {visible.map((thread, index) => {
+            const directDraft = thread.kind === "direct" ? drafts[String(thread.otherUserId)] : undefined;
+            const preview = inboxPreview(thread, directDraft);
+            const time = thread.lastMessageAt
+              ? conversationTimeLabel(thread.lastMessageAt, Date.now(), (date) => dates.format(date, { style: "short" }))
+              : "";
+            const isUnread = thread.unreadCount > 0;
+            const title = inboxThreadTitle(thread);
             return (
               <TouchableOpacity
-                key={conversation.otherUserId}
+                key={inboxThreadKey(thread)}
                 style={[styles.row, index > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }, isUnread && { backgroundColor: colors.actionSoft }]}
                 activeOpacity={0.72}
-                onPress={() => router.push({ pathname: "/conversation/[id]", params: { id: String(conversation.otherUserId), name: conversation.otherUserName } })}
+                onPress={() => thread.kind === "direct"
+                  ? router.push({ pathname: "/conversation/[id]", params: { id: String(thread.otherUserId), name: thread.otherUserName } })
+                  : router.push({ pathname: "/class-chat", params: { batchId: String(thread.batchId) } })}
                 accessibilityRole="button"
-                accessibilityLabel={`${conversation.otherUserName}, ${preview.label} ${preview.text}${isUnread ? `, ${conversation.unreadCount} unread` : ""}`}
-                testID={`conversation-row-${conversation.otherUserId}`}
+                accessibilityLabel={`${title}, ${thread.kind === "class" ? "class discussion, " : ""}${preview.label} ${preview.text}${isUnread ? `, ${thread.unreadCount} unread` : ""}`}
+                testID={thread.kind === "direct" ? `conversation-row-${thread.otherUserId}` : `class-conversation-row-${thread.batchId}`}
               >
                 <View style={[styles.avatar, { borderRadius: radius.pill, backgroundColor: isUnread ? colors.primary : colors.muted }]}>
-                  <Text style={[t.bodyStrong, { color: isUnread ? colors.primaryForeground : colors.primary }]}>{initials(conversation.otherUserName)}</Text>
+                  {thread.kind === "class" ? (
+                    <Feather name="users" size={20} color={isUnread ? colors.primaryForeground : colors.primary} />
+                  ) : (
+                    <Text style={[t.bodyStrong, { color: isUnread ? colors.primaryForeground : colors.primary }]}>{initials(thread.otherUserName)}</Text>
+                  )}
                 </View>
                 <View style={styles.rowCopy}>
                   <View style={styles.rowTop}>
-                    <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{conversation.otherUserName}</Text>
-                    <Text style={[t.caption, numeric, { color: isUnread ? colors.primary : colors.inkFaint }]}>{time}</Text>
+                    <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{title}</Text>
+                    {time ? <Text style={[t.caption, numeric, { color: isUnread ? colors.primary : colors.inkFaint }]}>{time}</Text> : null}
                   </View>
-                  <Text style={[t.caption, { color: colors.inkFaint }]}>{roleLabel(conversation.otherUserRole)}</Text>
+                  <Text style={[t.caption, { color: colors.inkFaint }]}>
+                    {thread.kind === "class" ? "Class discussion" : roleLabel(thread.otherUserRole)}
+                  </Text>
                   <Text style={[t.callout, isUnread && t.bodyStrong, { color: isUnread ? colors.foreground : colors.mutedForeground }]} numberOfLines={1}>
                     {preview.label ? <Text style={{ color: preview.draft ? colors.destructive : colors.mutedForeground }}>{preview.label} </Text> : null}
                     {preview.text}
@@ -255,7 +289,7 @@ export default function ConversationList({ title }: { title: string }) {
                 </View>
                 {isUnread ? (
                   <View style={[styles.badge, { borderRadius: radius.pill, backgroundColor: colors.primary }]}>
-                    <Text style={[t.overline, numeric, { color: colors.primaryForeground }]}>{conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}</Text>
+                    <Text style={[t.overline, numeric, { color: colors.primaryForeground }]}>{thread.unreadCount > 99 ? "99+" : thread.unreadCount}</Text>
                   </View>
                 ) : (
                   <Feather name="chevron-right" size={18} color={colors.inkFaint} />

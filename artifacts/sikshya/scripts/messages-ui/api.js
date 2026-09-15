@@ -33,6 +33,34 @@ const recipients = [
   { userId: 14, name: "Prabin Shrestha", role: "student", note: "Follows you" },
 ];
 
+export class ApiError extends Error {
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const classConversations = [
+  {
+    batchId: 11,
+    title: "IELTS evening class",
+    lastMessage: "Bring the practice sheet to class.",
+    lastMessageAt: "2026-09-14T19:00:00.000Z",
+    lastSenderName: "Staging Review Teacher",
+    unreadCount: 2,
+    lastMessageFromMe: true,
+  },
+  {
+    batchId: 12,
+    title: "SEE Maths evening tuition",
+    lastMessage: "",
+    lastMessageAt: null,
+    lastSenderName: null,
+    unreadCount: 0,
+    lastMessageFromMe: false,
+  },
+];
+
 function twoPagePdf() {
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
@@ -59,6 +87,7 @@ export async function apiGet(path) {
     if (path.includes("study-guide")) return { url: twoPagePdf() };
     return { url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" };
   }
+  if (path === "/message-inbox") return { direct: conversations, classes: classConversations };
   if (path.startsWith("/class-groups/")) {
     return {
       title: "IELTS evening class",
