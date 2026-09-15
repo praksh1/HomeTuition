@@ -72,7 +72,7 @@ router.post("/storage/uploads/request-url", requireAuth, async (req: Request, re
 
   if (!ALLOWED_UPLOAD_TYPES.includes(contentType as (typeof ALLOWED_UPLOAD_TYPES)[number])) {
     res.status(400).json({
-      error: "Only photos and PDFs can be attached.",
+      error: "Only photos, PDFs, Word and Excel files can be attached.",
       allowed: ALLOWED_UPLOAD_TYPES,
     });
     return;
@@ -137,7 +137,7 @@ router.put(
   async (req: Request, res: Response) => {
     const contentType = String(req.headers["content-type"] ?? "").split(";")[0].trim();
     if (!ALLOWED_UPLOAD_TYPES.includes(contentType as (typeof ALLOWED_UPLOAD_TYPES)[number])) {
-      res.status(400).json({ error: "Only photos and PDFs can be attached." });
+      res.status(400).json({ error: "Only photos, PDFs, Word and Excel files can be attached." });
       return;
     }
 
@@ -252,7 +252,9 @@ router.get("/storage/file", requireAuth, async (req: Request, res: Response) => 
   if (!allowed) { res.status(403).json({ error: "You cannot open this file." }); return; }
 
   try {
-    const url = await signView(key);
+    const download = String(req.query.download ?? "") === "1";
+    const requestedName = download ? String(req.query.name ?? "Fadko attachment") : undefined;
+    const url = await signView(key, requestedName);
     if (!url) { res.status(503).json({ error: "File uploads are not set up on this server yet." }); return; }
     /**
      * The link comes back as JSON, not as a 302.

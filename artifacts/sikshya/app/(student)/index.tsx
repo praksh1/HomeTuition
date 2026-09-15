@@ -21,6 +21,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import FollowedTeachers from "@/components/FollowedTeachers";
 import TeacherFinder from "@/components/discovery/TeacherFinder";
+import { useAuth } from "@/context/AuthContext";
 import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
 import ProgramDiscoverList from "@/components/programs/ProgramDiscoverList";
@@ -57,6 +58,12 @@ export default function Discover() {
   const { t, gutter, space, radius } = useLayout();
   const insets = useSafeAreaInsets();
   const { unreadCount } = useNotifications();
+  const { logout } = useAuth();
+
+  const handleLogout = async () => {
+    await logout();
+    router.replace("/welcome");
+  };
 
   /**
    * Which of the three product views is showing.
@@ -369,22 +376,34 @@ export default function Discover() {
               {currentTab.subtitle}
             </Text>
           </View>
-          <TouchableOpacity
-            style={[styles.bellBtn, { borderColor: colors.border, borderRadius: radius.sm }]}
-            onPress={() => router.push("/notifications")}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
-          >
-            <Feather name="bell" size={20} color={colors.foreground} />
-            {unreadCount > 0 && (
-              <View style={[styles.bellBadge, { backgroundColor: colors.brand, borderColor: colors.background }]}>
-                <Text style={[t.overline, styles.badgeText, { color: colors.brandForeground }]}>
-                  {unreadCount > 9 ? "9+" : unreadCount}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={[styles.bellBtn, { borderColor: colors.border, borderRadius: radius.sm }]}
+              onPress={() => router.push("/notifications")}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : "Notifications"}
+            >
+              <Feather name="bell" size={20} color={colors.foreground} />
+              {unreadCount > 0 && (
+                <View style={[styles.bellBadge, { backgroundColor: colors.brand, borderColor: colors.background }]}>
+                  <Text style={[t.overline, styles.badgeText, { color: colors.brandForeground }]}>
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              testID="student-discover-logout"
+              style={[styles.bellBtn, { borderColor: colors.border, borderRadius: radius.sm }]}
+              onPress={() => void handleLogout()}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Sign out"
+            >
+              <Feather name="log-out" size={19} color={colors.mutedForeground} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={[styles.subTabs, { gap: space.xs }]} accessibilityRole="tablist">
@@ -846,6 +865,7 @@ function ClassesView(props: {
 const styles = StyleSheet.create({
   header: { borderBottomWidth: StyleSheet.hairlineWidth },
   titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
+  headerActions: { flexDirection: "row", gap: 8 },
   bellBtn: { width: 44, height: 44, borderWidth: 1, justifyContent: "center", alignItems: "center" },
   bellBadge: {
     position: "absolute", top: -3, right: -3, minWidth: 18, height: 18, borderRadius: 9,

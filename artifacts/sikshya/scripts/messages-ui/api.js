@@ -35,6 +35,9 @@ const recipients = [
 
 export async function apiGet(path) {
   if (location.search.includes("failure")) throw new Error("offline");
+  if (path.startsWith("/storage/file")) {
+    return { url: "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" };
+  }
   if (path.startsWith("/class-groups/")) {
     return {
       title: "IELTS evening class",
@@ -53,7 +56,12 @@ export async function apiGet(path) {
   if (path.startsWith("/messages/")) {
     return [
       { id: 101, senderId: 11, receiverId: 7, body: "Can we review question four tomorrow?", read: true, createdAt: new Date(Date.now() - 3_600_000).toISOString(), reactions: [{ emoji: "👍", count: 1, mine: false }] },
-      { id: 102, senderId: 7, receiverId: 11, body: "Yes, I added it to our lesson plan.", read: true, createdAt: new Date(Date.now() - 1_800_000).toISOString() },
+      { id: 102, senderId: 7, receiverId: 11, body: "Yes, I added it to our lesson plan.", read: true, createdAt: new Date(Date.now() - 1_800_000).toISOString(), attachments: [
+        { fileKey: "message-photo", fileType: "image/png", fileName: "worked-example.png" },
+        { fileKey: "study-guide", fileType: "application/pdf", fileName: "study-guide.pdf" },
+        { fileKey: "lesson-plan", fileType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName: "lesson-plan.docx" },
+        { fileKey: "marks-sheet", fileType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName: "marks-sheet.xlsx" },
+      ] },
     ];
   }
   return path === "/message-recipients" ? recipients : conversations;

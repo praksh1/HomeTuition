@@ -30,7 +30,8 @@ test("monthly class mutations keep their established endpoint and payment payloa
 });
 
 test("homework keeps every upload policy and mutation contract", () => {
-  assert.equal((homework.match(/type: \["image\/\*", "application\/pdf"\]/g) ?? []).length, 1);
+  assert.equal((homework.match(/type: \[\.\.\.ATTACHMENT_PICKER_TYPES\]/g) ?? []).length, 1);
+  assert.match(homework, /AttachmentViewer/);
   assert.match(homework, /apiPost\(`\/monthly\/classes\/\$\{classId\}\/homework`, \{[\s\S]*title: title\.trim\(\),[\s\S]*instructions: instructions\.trim\(\) \|\| undefined,[\s\S]*fileKey,[\s\S]*fileType,/);
   assert.match(homework, /apiPost\(`\/monthly\/homework\/\$\{homework\.id\}\/submit`, \{ fileKey, fileType: file\.mimeType \}\)/);
   assert.match(homework, /apiPost\(`\/monthly\/submissions\/\$\{submission\.id\}\/return`, \{[\s\S]*feedback: feedback\.trim\(\) \|\| undefined,[\s\S]*annotatedKey,[\s\S]*annotatedType,/);

@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import { bookingNotice } from "./testAccess";
+import { notificationMatchesReadTarget, type NotificationReadTarget } from "./notificationCenter";
 
 const NOTIFICATIONS_KEY = "@sikshya_notifications";
 
@@ -497,6 +498,25 @@ export async function markNotificationRead(id: string): Promise<void> {
     notification.id === id ? { ...notification, read: true } : notification,
   );
   await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(updated));
+}
+
+/**
+ * Marks the alerts represented by a conversation the person has actually opened.
+ *
+ * One storage read and at most one write: class chat refreshes frequently, so writing the same
+ * JSON every few seconds would turn a correct read receipt into needless device work.
+ */
+export async function markNotificationsForTarget(target: NotificationReadTarget): Promise<number> {
+  const stored = await AsyncStorage.getItem(NOTIFICATIONS_KEY);
+  const existing: AppNotification[] = stored ? JSON.parse(stored) : [];
+  let changed = 0;
+  const updated = existing.map((notification) => {
+    if (notification.read || !notificationMatchesReadTarget(notification, target)) return notification;
+    changed += 1;
+    return { ...notification, read: true };
+  });
+  if (changed > 0) await AsyncStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(updated));
+  return changed;
 }
 
 export async function getUnreadCount(): Promise<number> {

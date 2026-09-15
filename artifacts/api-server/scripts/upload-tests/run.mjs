@@ -84,7 +84,10 @@ async function main() {
       R2_BUCKET: BUCKET,
       R2_ENDPOINT: `http://127.0.0.1:${R2_PORT}`,
     },
-    stdio: "ignore",
+    // Silent by default, but keep one switch for diagnosing a failed local/CI boot. Without it
+    // a registration error is reduced to a generic 500 and the actual database/configuration
+    // problem is thrown away by the harness itself.
+    stdio: process.env.UPLOAD_TEST_LOG === "1" ? "inherit" : "ignore",
   });
   const stop = async () => { try { server.kill("SIGKILL"); } catch { /* gone */ } await r2.close(); };
   process.on("exit", () => { try { server.kill("SIGKILL"); } catch { /* gone */ } });
@@ -108,7 +111,18 @@ async function main() {
       body: { name: "run.exe", size: 100, contentType: "application/x-msdownload" } });
     check("an executable is refused outright", wrongType.status === 400, `status=${wrongType.status}`);
     check("and the refusal names what is allowed",
-      /photos and PDFs/i.test(String(wrongType.body?.error)), String(wrongType.body?.error));
+      /photos, PDFs, Word and Excel/i.test(String(wrongType.body?.error)), String(wrongType.body?.error));
+
+    for (const office of [
+      { name: "lesson-plan.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", extension: ".docx" },
+      { name: "marks.xlsx", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", extension: ".xlsx" },
+    ]) {
+      const link = await api("/storage/uploads/request-url", { method: "POST", token: student.token,
+        body: { name: office.name, size: 100, contentType: office.type } });
+      check(`${office.extension} gets a private upload link`, link.status === 200, `status=${link.status}`);
+      check(`${office.extension} keeps the right safe extension`,
+        String(link.body?.objectPath ?? "").endsWith(office.extension), String(link.body?.objectPath));
+    }
 
     const tooBig = await api("/storage/uploads/request-url", { method: "POST", token: student.token,
       body: { name: "huge.png", size: 40 * 1024 * 1024, contentType: "image/png" } });
@@ -288,6 +302,15 @@ async function main() {
       check("the link actually opens the file", view.status === 200, `status=${view.status}`);
       check("and it is the file that was uploaded",
         Buffer.from(await view.arrayBuffer()).equals(PNG));
+
+      const download = await api(
+        `/storage/file?key=${encodeURIComponent(key)}&download=1&name=${encodeURIComponent("worked example.png")}`,
+        { token: student.token },
+      );
+      check("an explicit download gets its own signed link", download.status === 200,
+        `status=${download.status}`);
+      check("the download link asks the bucket for an attachment response",
+        /response-content-disposition/i.test(String(download.body?.url)), String(download.body?.url).slice(0, 180));
 
       const nosy = await api(`/storage/file?key=${encodeURIComponent(key)}`, { token: other.token });
       check("somebody else cannot", nosy.status === 403, `status=${nosy.status}`);

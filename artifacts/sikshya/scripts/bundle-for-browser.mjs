@@ -112,6 +112,10 @@ export async function bundleForBrowser({ entry, outfile, alias = {} }) {
         "react-native": "react-native-web",
         ...alias,
       },
+      // Metro/Expo picks a `.web` implementation before the native fallback. A browser test
+      // that picked `PdfViewer.tsx` instead of `PdfViewer.web.tsx` was exercising a WebView that
+      // the deployed website never ships, so its green result described the wrong product.
+      resolveExtensions: [".web.tsx", ".web.ts", ".web.jsx", ".web.js", ".tsx", ".ts", ".jsx", ".js", ".json"],
       logLevel: "error",
       absWorkingDir: appRoot,
       /*

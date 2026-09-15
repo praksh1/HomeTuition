@@ -1,9 +1,10 @@
 import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import AttachmentViewer from "@/components/AttachmentViewer";
 import { useColors } from "@/hooks/useColors";
-import { apiGet } from "@/utils/api";
-import { openAttachment } from "@/utils/openAttachment";
+import { attachmentKind } from "@/utils/attachmentTypes";
+import { attachmentUrl } from "@/utils/openAttachment";
 import { attachmentLabel, type Attachment } from "@/utils/reactions";
 
 /**
@@ -36,9 +37,10 @@ interface Props {
 
 export default function MessageAttachment({ file, mine, onProblem }: Props) {
   const colors = useColors();
-  const isImage = file.fileType.startsWith("image/");
+  const isImage = attachmentKind(file.fileType) === "image";
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const retried = useRef(false);
   const alive = useRef(true);
 
@@ -46,9 +48,7 @@ export default function MessageAttachment({ file, mine, onProblem }: Props) {
 
   const fetchLink = useCallback(async () => {
     try {
-      const { url: signed } = await apiGet<{ url: string }>(
-        `/storage/file?key=${encodeURIComponent(file.fileKey)}`,
-      );
+      const signed = await attachmentUrl(file.fileKey);
       if (alive.current) setUrl(signed);
     } catch {
       // No link, no preview. The chip below still opens it, which goes through the same
@@ -62,15 +62,21 @@ export default function MessageAttachment({ file, mine, onProblem }: Props) {
     void fetchLink();
   }, [isImage, fetchLink]);
 
-  const open = async () => {
-    const result = await openAttachment(file.fileKey);
-    if (!result.ok) onProblem?.(result.reason ?? "We could not open that file.");
-  };
+  const viewer = (
+    <AttachmentViewer
+      file={file}
+      visible={viewerOpen}
+      initialUrl={url}
+      onClose={() => setViewerOpen(false)}
+      onProblem={onProblem}
+    />
+  );
 
   if (isImage && !failed) {
     return (
+      <>
       <TouchableOpacity
-        onPress={() => void open()}
+        onPress={() => setViewerOpen(true)}
         activeOpacity={0.85}
         testID={`attachment-image-${file.fileKey}`}
         style={[styles.imageWrap, { borderColor: mine ? "rgba(255,255,255,0.28)" : colors.border }]}
@@ -98,12 +104,15 @@ export default function MessageAttachment({ file, mine, onProblem }: Props) {
           </View>
         )}
       </TouchableOpacity>
+      {viewer}
+      </>
     );
   }
 
   return (
+    <>
     <TouchableOpacity
-      onPress={() => void open()}
+      onPress={() => setViewerOpen(true)}
       activeOpacity={0.75}
       testID={`attachment-file-${file.fileKey}`}
       style={[
@@ -122,8 +131,10 @@ export default function MessageAttachment({ file, mine, onProblem }: Props) {
       <Text style={[styles.name, { color: mine ? "#fff" : colors.foreground }]} numberOfLines={1}>
         {attachmentLabel(file)}
       </Text>
-      <Feather name="external-link" size={12} color={mine ? "#ffffffCC" : colors.mutedForeground} />
+      <Feather name="maximize-2" size={12} color={mine ? "#ffffffCC" : colors.mutedForeground} />
     </TouchableOpacity>
+    {viewer}
+    </>
   );
 }
 

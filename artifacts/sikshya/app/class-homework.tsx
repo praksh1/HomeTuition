@@ -247,7 +247,7 @@ function HomeworkTask({ batchId, task, isTeacher, onChanged }: { batchId: number
       {task.instructions ? <Text style={[t.body, { color: colors.foreground }]}>{task.instructions}</Text> : null}
       {dueLabel ? <Text style={[t.bodyStrong, { color: overdue ? colors.destructive : colors.primary }]}>Due {dueLabel}</Text> : <Text style={[t.caption, { color: colors.mutedForeground }]}>No deadline</Text>}
       {!isTeacher && overdue && !task.submission ? <Text style={[t.caption, { color: colors.mutedForeground }]}>The deadline has passed, but you can still hand in your work.</Text> : null}
-      {task.questionFile ? <HomeworkFileButton fileKey={task.questionFile.fileKey} label="Open question sheet" /> : null}
+      {task.questionFile ? <HomeworkFileButton fileKey={task.questionFile.fileKey} fileName={task.questionFile.fileName} label="Open question sheet" /> : null}
       {isTeacher ? (
         <View style={{ gap: space.sm }}>
           <Text style={[t.caption, { color: colors.mutedForeground }]}>
@@ -289,8 +289,8 @@ function StudentSubmission({ batchId, task, onChanged }: { batchId: number; task
       {submission ? (
         <ProgramNotice title={submission.status === "returned" ? "Feedback returned" : "Handed in"} body={submission.status === "returned" ? (submission.feedback || "Your teacher attached a marked copy.") : "Your teacher can now review your work."} tone={submission.status === "returned" ? "live" : "neutral"} />
       ) : null}
-      {submission?.file ? <HomeworkFileButton fileKey={submission.file.fileKey} label="Open what you handed in" /> : null}
-      {submission?.markedFile ? <HomeworkFileButton fileKey={submission.markedFile.fileKey} label="Open marked copy" /> : null}
+      {submission?.file ? <HomeworkFileButton fileKey={submission.file.fileKey} fileName={submission.file.fileName} label="Open what you handed in" /> : null}
+      {submission?.markedFile ? <HomeworkFileButton fileKey={submission.markedFile.fileKey} fileName={submission.markedFile.fileName} label="Open marked copy" /> : null}
       <TextInput
         accessibilityLabel={`Answer for ${task.title}`}
         value={note}
@@ -300,7 +300,7 @@ function StudentSubmission({ batchId, task, onChanged }: { batchId: number; task
         placeholderTextColor={colors.mutedForeground}
         style={[t.body, fieldStyle(colors, space), { minHeight: 84, textAlignVertical: "top" }]}
       />
-      <HomeworkFilePicker file={file} onPick={setFile} label={submission ? "Choose a replacement photo or PDF" : "Choose a photo or PDF (optional)"} testID={`class-homework-file-${task.id}`} />
+      <HomeworkFilePicker file={file} onPick={setFile} label={submission ? "Choose a replacement file" : "Choose a photo or document (optional)"} testID={`class-homework-file-${task.id}`} />
       {submission ? <Text style={[t.caption, { color: colors.mutedForeground }]}>Handing in again replaces your earlier answer and clears earlier feedback.</Text> : null}
       {problem ? <Text style={[t.caption, { color: colors.destructive }]}>{problem}</Text> : null}
       <ProgramButton label={busy ? "Uploading…" : submission ? "Hand in again" : "Hand in"} emphasis="primary" disabled={busy || (!note.trim() && !file)} onPress={() => void handIn()} />
@@ -346,9 +346,9 @@ function TeacherSubmission({ batchId, homeworkId, submission, onChanged }: { bat
           <ProgramButton label={reviewOpen ? "Hide returned work" : "View returned work"} emphasis="quiet" onPress={() => setReviewOpen((open) => !open)} />
           {reviewOpen ? <View style={{ gap: space.sm }}>
             {submission.note ? <Text style={[t.body, { color: colors.foreground }]}>Student: “{submission.note}”</Text> : null}
-            {submission.file ? <HomeworkFileButton fileKey={submission.file.fileKey} label="Open submitted work" /> : null}
+            {submission.file ? <HomeworkFileButton fileKey={submission.file.fileKey} fileName={submission.file.fileName} label="Open submitted work" /> : null}
             {submission.feedback ? <Text style={[t.body, { color: colors.foreground }]}>Feedback: “{submission.feedback}”</Text> : null}
-            {submission.markedFile ? <HomeworkFileButton fileKey={submission.markedFile.fileKey} label="Open marked copy" /> : null}
+            {submission.markedFile ? <HomeworkFileButton fileKey={submission.markedFile.fileKey} fileName={submission.markedFile.fileName} label="Open marked copy" /> : null}
           </View> : null}
         </View>
       ) : !reviewOpen ? (
@@ -356,7 +356,7 @@ function TeacherSubmission({ batchId, homeworkId, submission, onChanged }: { bat
       ) : (
         <View style={{ gap: space.sm }}>
           {submission.note ? <Text style={[t.body, { color: colors.foreground }]}>“{submission.note}”</Text> : null}
-          {submission.file ? <HomeworkFileButton fileKey={submission.file.fileKey} label="Open submitted work" /> : null}
+          {submission.file ? <HomeworkFileButton fileKey={submission.file.fileKey} fileName={submission.file.fileName} label="Open submitted work" /> : null}
           <TextInput
             accessibilityLabel={`Feedback for ${submission.studentName || "student"}`}
             value={feedback}

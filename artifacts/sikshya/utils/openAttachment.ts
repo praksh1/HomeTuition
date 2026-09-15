@@ -1,5 +1,5 @@
 import { Linking, Platform } from "react-native";
-import { apiGet } from "./api";
+import { apiGet } from "@/utils/api";
 
 /**
  * Open a file somebody attached — a question sheet, a marked-up copy, evidence on a report.
@@ -17,7 +17,8 @@ import { apiGet } from "./api";
  * The way round it is to claim the tab *while the tap is still live*, before any awaiting, and
  * point it at the link once it arrives. If even that is refused, the current tab is used
  * instead — worse, because the person loses their place, but far better than a button that
- * does nothing.
+ * does nothing. An explicit download is different: it uses a temporary anchor and never opens
+ * another window, while the signed response's Content-Disposition supplies the filename.
  */
 export interface OpenResult {
   ok: boolean;
@@ -25,21 +26,48 @@ export interface OpenResult {
   reason?: string;
 }
 
-export async function openAttachment(fileKey: string): Promise<OpenResult> {
+export async function attachmentUrl(
+  fileKey: string,
+  options: { download?: boolean; fileName?: string } = {},
+): Promise<string> {
+  const params = new URLSearchParams({ key: fileKey });
+  if (options.download) params.set("download", "1");
+  if (options.fileName) params.set("name", options.fileName);
+  const { url } = await apiGet<{ url: string }>(`/storage/file?${params.toString()}`);
+  if (!url) throw new Error("No link came back for that file.");
+  return url;
+}
+
+export async function openAttachment(
+  fileKey: string,
+  options: { download?: boolean; fileName?: string } = {},
+): Promise<OpenResult> {
   /**
    * Claimed first, before anything is awaited. This line is the whole fix.
    *
    * `about:blank` opens instantly and is replaced the moment the real link arrives. Doing it
    * after the fetch is what Safari refuses.
    */
-  const tab = Platform.OS === "web" ? window.open("", "_blank") : null;
+  // Downloads use an invisible anchor below and therefore never need a new browser tab.
+  const tab = Platform.OS === "web" && !options.download ? window.open("", "_blank") : null;
 
   try {
-    const { url } = await apiGet<{ url: string }>(`/storage/file?key=${encodeURIComponent(fileKey)}`);
-    if (!url) throw new Error("No link came back for that file.");
+    const url = await attachmentUrl(fileKey, options);
 
     if (Platform.OS !== "web") {
       await Linking.openURL(url);
+      return { ok: true };
+    }
+
+    if (options.download) {
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = options.fileName?.trim() || "Fadko attachment";
+      link.rel = "noopener";
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
       return { ok: true };
     }
 

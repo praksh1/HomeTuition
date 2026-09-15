@@ -16,9 +16,9 @@ import { useUserChannel, type UserEvent } from "@/hooks/useUserChannel";
 import { apiGet, apiPatch } from "@/utils/api";
 import {
   getNotifications,
-  getUnreadCount,
   markAllRead,
   markNotificationRead,
+  markNotificationsForTarget,
   notifyClassMessage,
   notifyClassHomework,
   notifyNewFollower,
@@ -34,7 +34,7 @@ import {
   requestNotificationPermissions,
   type AppNotification,
 } from "@/utils/notifications";
-import { notificationDestination, type NotificationRole } from "@/utils/notificationCenter";
+import { notificationDestination, type NotificationReadTarget, type NotificationRole } from "@/utils/notificationCenter";
 import {
   DEFAULT_PREFS,
   type NotificationPrefs,
@@ -62,6 +62,7 @@ interface NotificationContextType {
   refresh: () => Promise<void>;
   markRead: () => Promise<void>;
   markOneRead: (id: string) => Promise<void>;
+  markTargetRead: (target: NotificationReadTarget) => Promise<void>;
   setPreference: (channel: PrefChannel, kind: PrefKind, value: boolean) => Promise<void>;
 }
 
@@ -75,6 +76,7 @@ const NotificationContext = createContext<NotificationContextType>({
   refresh: async () => {},
   markRead: async () => {},
   markOneRead: async () => {},
+  markTargetRead: async () => {},
   setPreference: async () => {},
 });
 
@@ -126,9 +128,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const refresh = useCallback(async () => {
     const notifs = await getNotifications();
-    const count = await getUnreadCount();
     setNotifications(notifs);
-    setUnreadCount(count);
+    setUnreadCount(notifs.filter((notification) => !notification.read).length);
   }, []);
 
   const markRead = useCallback(async () => {
@@ -139,6 +140,11 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const markOneRead = useCallback(async (id: string) => {
     await markNotificationRead(id);
     await refresh();
+  }, [refresh]);
+
+  const markTargetRead = useCallback(async (target: NotificationReadTarget) => {
+    const changed = await markNotificationsForTarget(target);
+    if (changed > 0) await refresh();
   }, [refresh]);
 
   /** Turns one server event into a notification the user can see and act on. */
@@ -390,6 +396,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
         refresh,
         markRead,
         markOneRead,
+        markTargetRead,
         setPreference,
       }}
     >

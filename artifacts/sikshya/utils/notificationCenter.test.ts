@@ -8,6 +8,7 @@ import {
   notificationClock,
   notificationDestination,
   notificationGroupLabel,
+  notificationMatchesReadTarget,
   notificationPresentation,
 } from "./notificationCenter.ts";
 import type { AppNotification } from "./notifications.ts";
@@ -26,6 +27,16 @@ test("opening one notification leaves every other unread item unread", () => {
   const result = markOnlyNotificationRead([item(), item({ id: "two" })], "one");
   assert.equal(result[0]?.read, true);
   assert.equal(result[1]?.read, false);
+});
+
+test("opening a conversation matches only notifications for that exact conversation", () => {
+  const direct = item({ data: { type: "message", conversationWith: "17" } });
+  const other = item({ data: { type: "message", conversationWith: "18" } });
+  const classMessage = item({ data: { type: "class_message", batchId: "17" } });
+  assert.equal(notificationMatchesReadTarget(direct, { kind: "direct_message", conversationWith: 17 }), true);
+  assert.equal(notificationMatchesReadTarget(other, { kind: "direct_message", conversationWith: 17 }), false);
+  assert.equal(notificationMatchesReadTarget(classMessage, { kind: "direct_message", conversationWith: 17 }), false);
+  assert.equal(notificationMatchesReadTarget(classMessage, { kind: "class_message", batchId: 17 }), true);
 });
 
 test("unread filtering sorts newest first and safely keeps invalid dates last", () => {

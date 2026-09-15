@@ -2,14 +2,15 @@ import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { useState } from "react";
 import {
-  ActivityIndicator,
   Text,
   TouchableOpacity,
   View,
 } from "react-native";
+import AttachmentViewer from "@/components/AttachmentViewer";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
-import { openAttachment } from "@/utils/openAttachment";
+import { ATTACHMENT_PICKER_TYPES, attachmentContentType } from "@/utils/attachmentTypes";
+import type { Attachment } from "@/utils/reactions";
 import type { UploadableFile } from "@/utils/uploadFile";
 
 export function HomeworkFilePicker({
@@ -27,7 +28,7 @@ export function HomeworkFilePicker({
   const { t, space } = useLayout();
   const choose = async () => {
     const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/*", "application/pdf"],
+      type: [...ATTACHMENT_PICKER_TYPES],
       copyToCacheDirectory: true,
     });
     if (result.canceled || !result.assets?.[0]) return;
@@ -83,27 +84,32 @@ export function HomeworkFilePicker({
   );
 }
 
-export function HomeworkFileButton({ fileKey, label }: { fileKey: string; label: string }) {
+export function HomeworkFileButton({
+  fileKey,
+  label,
+  fileName,
+  fileType,
+}: {
+  fileKey: string;
+  label: string;
+  fileName?: string | null;
+  fileType?: string | null;
+}) {
   const colors = useColors();
   const { t, space } = useLayout();
-  const [busy, setBusy] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [problem, setProblem] = useState("");
-  const open = async () => {
-    setBusy(true);
-    setProblem("");
-    const result = await openAttachment(fileKey);
-    if (!result.ok) setProblem(result.reason || "Could not open that file.");
-    setBusy(false);
+  const file: Attachment = {
+    fileKey,
+    fileName: fileName || label,
+    fileType: fileType || attachmentContentType(fileName || fileKey),
   };
   return (
     <View style={{ gap: space.xs }}>
       <TouchableOpacity
         accessibilityRole="button"
         accessibilityLabel={label}
-        accessibilityState={{ disabled: busy }}
-        aria-disabled={busy}
-        disabled={busy}
-        onPress={() => void open()}
+        onPress={() => { setProblem(""); setViewerOpen(true); }}
         style={{
           minHeight: 46,
           flexDirection: "row",
@@ -116,13 +122,15 @@ export function HomeworkFileButton({ fileKey, label }: { fileKey: string; label:
           borderColor: colors.primary,
         }}
       >
-        {busy ? (
-          <ActivityIndicator size="small" color={colors.primary} />
-        ) : (
-          <Feather name="download" size={16} color={colors.primary} />
-        )}
+        <Feather name="maximize-2" size={16} color={colors.primary} />
         <Text style={[t.callout, { color: colors.primary }]}>{label}</Text>
       </TouchableOpacity>
+      <AttachmentViewer
+        file={file}
+        visible={viewerOpen}
+        onClose={() => setViewerOpen(false)}
+        onProblem={setProblem}
+      />
       {problem ? <Text style={[t.caption, { color: colors.destructive }]}>{problem}</Text> : null}
     </View>
   );

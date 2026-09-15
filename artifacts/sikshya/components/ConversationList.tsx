@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { bottomNavClearance, HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
+import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
@@ -43,6 +44,7 @@ export default function ConversationList({ title }: { title: string }) {
   const dates = useDates();
   const insets = useSafeAreaInsets();
   const { t, numeric, gutter, space, radius } = useLayout();
+  const { lastEvent } = useNotifications();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [drafts, setDrafts] = useState<Drafts>({});
   const [query, setQuery] = useState("");
@@ -71,9 +73,15 @@ export default function ConversationList({ title }: { title: string }) {
 
   useEffect(() => {
     void load();
-    const interval = setInterval(() => void load(), 6000);
+    // The user socket refreshes immediately below. This slower fallback covers a missed event
+    // without making an idle inbox refetch ten times a minute.
+    const interval = setInterval(() => void load(), 30000);
     return () => clearInterval(interval);
   }, [load]);
+
+  useEffect(() => {
+    if (lastEvent?.kind === "message") void load();
+  }, [lastEvent, load]);
 
   const visible = useMemo(
     () => filterConversations(conversations, query, filter),

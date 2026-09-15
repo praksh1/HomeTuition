@@ -4,9 +4,11 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { logger } from "./logger";
 import { describeStorageFailure, type StorageFailure } from "./storageErrors";
 import { resolveEndpoint } from "./storageEndpoint";
+import { ALLOWED_UPLOAD_TYPES, downloadDisposition, extensionFor } from "./fileStoreFormats";
 
 // Re-exported so callers have one place to import storage things from.
 export { describeStorageFailure, type StorageFailure };
+export { ALLOWED_UPLOAD_TYPES, downloadDisposition } from "./fileStoreFormats";
 
 /**
  * Where uploaded files go: Cloudflare R2.
@@ -37,19 +39,10 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 /**
  * What may be uploaded.
  *
- * Deliberately short. This exists for evidence in a dispute — a photo of a page, a screenshot,
- * a PDF — and an open-ended list on a platform used by children is a liability rather than a
- * feature. HEIC is here because it is what an iPhone produces by default.
+ * Deliberately short. This exists for schoolwork and evidence — photos, PDFs and the two office
+ * formats teachers commonly exchange. An open-ended list on a platform used by children is a
+ * liability rather than a feature. HEIC is here because it is what an iPhone produces by default.
  */
-export const ALLOWED_UPLOAD_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-  "application/pdf",
-] as const;
-
 /** How long an upload link is good for. Long enough for a slow phone, short enough to be useless later. */
 const UPLOAD_URL_MINUTES = 15;
 /** How long a view link is good for. Short: it is handed out per view, not stored. */
@@ -130,19 +123,6 @@ function client(): { client: S3Client; config: FileStoreConfig } | null {
     };
   }
   return cached;
-}
-
-/** The extension for a type we accept, so a downloaded file opens in the right thing. */
-function extensionFor(contentType: string): string {
-  switch (contentType) {
-    case "image/jpeg": return ".jpg";
-    case "image/png": return ".png";
-    case "image/webp": return ".webp";
-    case "image/heic": return ".heic";
-    case "image/heif": return ".heif";
-    case "application/pdf": return ".pdf";
-    default: return "";
-  }
 }
 
 export type UploadKind = "evidence";
@@ -249,12 +229,17 @@ export async function putObject(args: {
 }
 
 /** A short-lived link to look at one file. Handed out per view, never stored. */
-export async function signView(key: string): Promise<string | null> {
+export async function signView(key: string, downloadName?: string): Promise<string | null> {
   const c = client();
   if (!c) return null;
+  const disposition = downloadDisposition(downloadName);
   return getSignedUrl(
     c.client,
-    new GetObjectCommand({ Bucket: c.config.bucket, Key: key }),
+    new GetObjectCommand({
+      Bucket: c.config.bucket,
+      Key: key,
+      ...(disposition ? { ResponseContentDisposition: disposition } : {}),
+    }),
     { expiresIn: VIEW_URL_MINUTES * 60 },
   );
 }
@@ -321,7 +306,7 @@ export async function verifyUpload(key: string, userId: number): Promise<UploadV
   }
   if (!ALLOWED_UPLOAD_TYPES.includes(facts.contentType as (typeof ALLOWED_UPLOAD_TYPES)[number])) {
     await deleteUpload(key);
-    return { ok: false, reason: "Only photos and PDFs can be attached." };
+    return { ok: false, reason: "Only photos, PDFs, Word and Excel files can be attached." };
   }
   return { ok: true, size: facts.size, contentType: facts.contentType };
 }

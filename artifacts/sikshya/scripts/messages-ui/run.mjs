@@ -17,7 +17,6 @@ const built = await bundleForBrowser({
     "@/utils/api": path.join(here, "api.js"),
     "@/utils/drafts": path.join(here, "drafts.js"),
     "@/utils/uploadFile": path.join(here, "upload.js"),
-    "@/components/MessageAttachment": path.join(here, "attachment.js"),
     "@/context/AuthContext": path.join(here, "auth.js"),
     "@/context/NotificationContext": path.join(here, "notifications.js"),
     "@/context/DatePreferenceContext": path.join(here, "context.js"),
@@ -25,6 +24,7 @@ const built = await bundleForBrowser({
     "react-native-safe-area-context": path.join(here, "context.js"),
     "expo-font": path.resolve(here, "../batch-planner/font.js"),
     "expo-document-picker": path.join(here, "document-picker.js"),
+    "@/components/PdfViewer": path.resolve(here, "../../components/PdfViewer.web.tsx"),
   },
 });
 assert.ok(built.ok, built.error);
@@ -76,6 +76,10 @@ try {
 
     await page.goto(`${base}?conversation`);
     await page.getByText("Fadko conversation", { exact: true }).waitFor();
+    await page.waitForFunction(() => globalThis.lastNotificationReadTarget?.kind === "direct_message");
+    check(await page.evaluate(() => globalThis.lastNotificationReadTarget?.kind === "direct_message"
+      && globalThis.lastNotificationReadTarget?.conversationWith === "11"),
+    `${width}: opening a conversation clears its matching notification`);
     const chat = await page.locator("body").innerText();
     check(chat.includes("Can we review question four tomorrow?"), `${width}: incoming message is visible`);
     check(chat.includes("Yes, I added it to our lesson plan."), `${width}: outgoing message is visible`);
@@ -84,6 +88,35 @@ try {
     check((await page.getByTestId("conversation-back-btn").boundingBox()).height >= 44, `${width}: conversation back meets the touch floor`);
     check((await page.getByTestId("conversation-attach-btn").boundingBox()).height >= 44, `${width}: attachment action meets the touch floor`);
     check((await page.getByTestId("conversation-send-btn").boundingBox()).height >= 44, `${width}: send action meets the touch floor`);
+    await page.locator('[data-testid="attachment-image-message-photo"], [data-testid="attachment-file-message-photo"]').click();
+    await page.getByTestId("attachment-viewer").waitFor();
+    check((await page.getByTestId("attachment-viewer-download").boundingBox()).height >= 44, `${width}: in-app file viewer keeps a clear download action`);
+    check((await page.getByTestId("attachment-viewer-close").boundingBox()).height >= 44, `${width}: in-app file viewer has a reachable close action`);
+    let attachmentOpenedPopup = false;
+    page.once("popup", () => { attachmentOpenedPopup = true; });
+    await page.getByTestId("attachment-viewer-download").click();
+    await page.waitForTimeout(100);
+    check(!attachmentOpenedPopup, `${width}: downloading from the viewer does not open another window`);
+    await page.screenshot({ path: path.join(work, `${width}-attachment-viewer.png`), fullPage: true });
+    await page.locator('[data-testid="attachment-viewer-close"]:visible').click();
+    await page.locator('[data-testid="attachment-viewer"]:visible').waitFor({ state: "hidden" });
+    check(await page.getByText("Fadko conversation", { exact: true }).isVisible(), `${width}: closing a file returns to the same conversation`);
+    await page.getByTestId("attachment-file-study-guide").click();
+    await page.getByTestId("attachment-viewer").waitFor();
+    await page.locator('iframe[title="PDF document"]').waitFor({ state: "attached" });
+    check((await page.locator('iframe[title="PDF document"]').count()) === 1, `${width}: PDFs stay in the in-app viewer`);
+    await page.locator('[data-testid="attachment-viewer-close"]:visible').click();
+    await page.locator('[data-testid="attachment-viewer"]:visible').waitFor({ state: "hidden" });
+    await page.getByTestId("attachment-file-lesson-plan").click();
+    await page.getByText("Fadko keeps this file private.", { exact: false }).waitFor();
+    check((await page.locator("body").innerText()).includes("Word"), `${width}: Word files get an honest private download view`);
+    await page.locator('[data-testid="attachment-viewer-close"]:visible').click();
+    await page.locator('[data-testid="attachment-viewer"]:visible').waitFor({ state: "hidden" });
+    await page.getByTestId("attachment-file-marks-sheet").click();
+    await page.getByText("Fadko keeps this file private.", { exact: false }).waitFor();
+    check((await page.locator("body").innerText()).includes("Excel"), `${width}: Excel files get an honest private download view`);
+    await page.locator('[data-testid="attachment-viewer-close"]:visible').click();
+    await page.locator('[data-testid="attachment-viewer"]:visible').waitFor({ state: "hidden" });
     await page.getByTestId("conversation-input").fill("See you in class.");
     await page.getByTestId("conversation-send-btn").click();
     await page.getByText("See you in class.", { exact: true }).waitFor();
@@ -94,6 +127,10 @@ try {
 
     await page.goto(`${base}?class-chat`);
     await page.getByText("IELTS evening class", { exact: true }).waitFor();
+    await page.waitForFunction(() => globalThis.lastNotificationReadTarget?.kind === "class_message");
+    check(await page.evaluate(() => globalThis.lastNotificationReadTarget?.kind === "class_message"
+      && globalThis.lastNotificationReadTarget?.batchId === 11),
+    `${width}: opening class chat clears its matching notification`);
     const classChat = await page.locator("body").innerText();
     check(classChat.includes("Everyone enrolled in this class"), `${width}: class chat identifies its audience`);
     check(classChat.includes("Pinned by your teacher") && classChat.includes("Bring the practice sheet"), `${width}: pinned teacher update stays above the timeline`);

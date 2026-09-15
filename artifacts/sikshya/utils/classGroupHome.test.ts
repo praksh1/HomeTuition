@@ -81,7 +81,8 @@ test("class messages refresh live and clear only after the conversation loads", 
   assert.match(chat, /messages\.at\(-1\)\?\.id/);
   assert.match(chat, /await uploadFile\(outgoing\)/);
   assert.match(chat, /MessageAttachment/);
-  assert.match(chat, /Attach a photo or PDF/);
+  assert.match(chat, /Attach a photo, PDF, Word or Excel file/);
+  assert.match(chat, /markTargetRead\(\{ kind: "class_message", batchId \}\)/);
 });
 
 test("the class home shows a durable unread badge", () => {

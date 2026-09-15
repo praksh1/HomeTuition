@@ -220,6 +220,7 @@ export default function ClassMaterialsScreen() {
             {material.file ? (
               <HomeworkFileButton
                 fileKey={material.file.fileKey}
+                fileName={material.file.fileName}
                 label={
                   material.file.fileName
                     ? `Open ${material.file.fileName}`

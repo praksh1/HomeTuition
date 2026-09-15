@@ -14,6 +14,10 @@ export interface NotificationPresentation {
   tone: "action" | "success" | "warning" | "live" | "neutral";
 }
 
+export type NotificationReadTarget =
+  | { kind: "direct_message"; conversationWith: string | number }
+  | { kind: "class_message"; batchId: string | number };
+
 const NEPAL_TIME_ZONE = "Asia/Kathmandu";
 
 function value(data: Record<string, unknown> | undefined, key: string): string | undefined {
@@ -21,6 +25,18 @@ function value(data: Record<string, unknown> | undefined, key: string): string |
   return typeof candidate === "string" || typeof candidate === "number"
     ? String(candidate)
     : undefined;
+}
+
+/** True only for the unread alert represented by the conversation currently on screen. */
+export function notificationMatchesReadTarget(
+  notification: AppNotification,
+  target: NotificationReadTarget,
+): boolean {
+  const kind = value(notification.data, "type");
+  if (target.kind === "direct_message") {
+    return kind === "message" && value(notification.data, "conversationWith") === String(target.conversationWith);
+  }
+  return kind === "class_message" && value(notification.data, "batchId") === String(target.batchId);
 }
 
 export function notificationDestination(

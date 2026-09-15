@@ -19,7 +19,9 @@ import { useLayout } from "@/hooks/useLayout";
 import { HIT_SLOP_MIN, radius as layoutRadius, readingWidth, space as layoutSpace } from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet, apiPost, ApiError } from "@/utils/api";
-import { openAttachment } from "@/utils/openAttachment";
+import AttachmentViewer from "@/components/AttachmentViewer";
+import { ATTACHMENT_PICKER_TYPES, attachmentContentType } from "@/utils/attachmentTypes";
+import type { Attachment } from "@/utils/reactions";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 import { submissionsLoadReducer } from "@/utils/monthlyJourneyState";
 
@@ -321,7 +323,7 @@ function HomeworkCard({
         <Text style={[t.body, styles.instructions, { color: colors.foreground }]}>{homework.instructions}</Text>
       )}
 
-      {homework.fileKey && <OpenFileButton fileKey={homework.fileKey} label="Open the question sheet" />}
+      {homework.fileKey && <OpenFileButton fileKey={homework.fileKey} fileType={homework.fileType} label="Open the question sheet" />}
 
       {asTeacher ? (
         <>
@@ -390,7 +392,7 @@ function StudentSide({
           <Text style={[t.callout, styles.subLine, { color: colors.foreground }]}>
             You handed this in on {formatBoth(submission.submittedAt)}.
           </Text>
-          <OpenFileButton fileKey={submission.fileKey} label="Open what you handed in" />
+          <OpenFileButton fileKey={submission.fileKey} fileType={submission.fileType} label="Open what you handed in" />
 
           {submission.status === "returned" ? (
             <View style={[styles.marked, { backgroundColor: colors.actionSoft, borderColor: colors.primary }]}>
@@ -561,7 +563,7 @@ function MarkOne({
       </Text>
       {submission.note && <Text style={[t.callout, styles.subLine, { color: colors.foreground }]}>“{submission.note}”</Text>}
 
-      <OpenFileButton fileKey={submission.fileKey} label="Open their work" />
+      <OpenFileButton fileKey={submission.fileKey} fileType={submission.fileType} label="Open their work" />
 
       <TextInput
         testID={`mark-feedback-${submission.id}`}
@@ -615,7 +617,7 @@ function FilePickerRow({
 
   const choose = async () => {
     const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/*", "application/pdf"],
+      type: [...ATTACHMENT_PICKER_TYPES],
       copyToCacheDirectory: true,
     });
     if (result.canceled || !result.assets?.[0]) return;
@@ -651,39 +653,26 @@ function FilePickerRow({
  * The link is asked for at the moment it is needed and dies in ten minutes, so there is nothing
  * to leak by leaving this screen open. The bytes never pass through the app.
  */
-function OpenFileButton({ fileKey, label }: { fileKey: string; label: string }) {
+function OpenFileButton({ fileKey, label, fileType }: { fileKey: string; label: string; fileType?: string | null }) {
   const colors = useColors();
   const { t } = useLayout();
-  const [busy, setBusy] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-
-  const open = async () => {
-    setBusy(true);
-    setProblem(null);
-    // See utils/openAttachment.ts: the tab has to be claimed inside the tap, before the link
-    // is fetched, or Safari refuses to open it and nothing at all happens.
-    const result = await openAttachment(fileKey);
-    if (!result.ok) setProblem(result.reason ?? "Could not open that file.");
-    setBusy(false);
-  };
+  const file: Attachment = { fileKey, fileName: label, fileType: fileType || attachmentContentType(fileKey) };
 
   return (
     <View>
       <TouchableOpacity
-        onPress={() => void open()}
-        disabled={busy}
+        onPress={() => { setProblem(null); setViewerOpen(true); }}
         style={[styles.fileBtn, { borderColor: colors.primary }]}
         activeOpacity={0.8}
         accessibilityRole="button"
         accessibilityLabel={label}
       >
-        {busy ? (
-          <ActivityIndicator size="small" color={colors.primary} />
-        ) : (
-          <Feather name="download" size={15} color={colors.primary} />
-        )}
+        <Feather name="maximize-2" size={15} color={colors.primary} />
         <Text style={[t.callout, { color: colors.primary }]}>{label}</Text>
       </TouchableOpacity>
+      <AttachmentViewer file={file} visible={viewerOpen} onClose={() => setViewerOpen(false)} onProblem={setProblem} />
       {problem && <Text style={[t.caption, styles.problemText, { color: colors.destructive }]}>{problem}</Text>}
     </View>
   );

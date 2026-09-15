@@ -16,11 +16,11 @@ const notifications = readFileSync(path.join(root, "utils", "notifications.ts"),
 const notificationCenter = readFileSync(path.join(root, "utils", "notificationCenter.ts"), "utf8");
 const classHome = readFileSync(path.join(root, "app", "class-home.tsx"), "utf8");
 
-test("new class homework preserves text and adds an explicit photo or PDF upload", () => {
+test("new class homework preserves text and accepts the bounded school-document formats", () => {
   assert.match(screen, /Write your answer or a note for your teacher/);
   assert.match(screen, /await uploadFile\(file\)/);
   assert.match(screen, /fileKey, fileName: file\?\.name/);
-  assert.match(files, /\["image\/\*", "application\/pdf"\]/);
+  assert.match(files, /ATTACHMENT_PICKER_TYPES/);
   assert.match(files, /Remove selected file/);
 });
 
@@ -40,7 +40,8 @@ test("file controls explain their action and meet the phone touch floor", () => 
   assert.match(files, /accessibilityLabel=\{file \?/);
   assert.match(files, /minHeight: 48/);
   assert.match(files, /minHeight: 44/);
-  assert.match(files, /openAttachment\(fileKey\)/);
+  assert.match(files, /AttachmentViewer/);
+  assert.match(files, /maximize-2/);
 });
 
 test("homework deadlines are pinned to Nepal time on every device", () => {

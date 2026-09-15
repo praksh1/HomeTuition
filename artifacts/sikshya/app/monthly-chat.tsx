@@ -20,6 +20,7 @@ import { HIT_SLOP_MIN, radius as layoutRadius, readingWidth, space as layoutSpac
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 
 import MessageAttachment from "@/components/MessageAttachment";
+import { ATTACHMENT_PICKER_TYPES } from "@/utils/attachmentTypes";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 import { applyReaction, REACTIONS, type Attachment, type Reaction } from "@/utils/reactions";
 import { mergeMonthlyChatCatchUp, monthlyChatCatchUpPath } from "@/utils/monthlyJourneyState";
@@ -125,7 +126,7 @@ export default function MonthlyChatScreen() {
    */
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/*", "application/pdf"],
+      type: [...ATTACHMENT_PICKER_TYPES],
       copyToCacheDirectory: true,
     });
     if (result.canceled || !result.assets?.[0]) return;

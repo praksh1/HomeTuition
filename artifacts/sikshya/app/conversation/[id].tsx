@@ -17,12 +17,15 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import MessageAttachment from "@/components/MessageAttachment";
 import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
+import { ATTACHMENT_PICKER_TYPES } from "@/utils/attachmentTypes";
 import { useAuth } from "@/context/AuthContext";
 import { useDates } from "@/context/DatePreferenceContext";
+import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
+import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
 import {
   latestOwnMessageId,
   messageDayLabel,
@@ -61,6 +64,7 @@ export default function ConversationScreen() {
   const dates = useDates();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  const { notifications, lastEvent, markTargetRead } = useNotifications();
   const { t, numeric, gutter, space, radius, isWide } = useLayout();
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
@@ -85,24 +89,38 @@ export default function ConversationScreen() {
     try {
       setMessages(await apiGet<Message[]>(`/messages/${id}`));
       setLoadProblem(false);
+      void markTargetRead({ kind: "direct_message", conversationWith: id });
     } catch {
       setLoadProblem(true);
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, markTargetRead]);
 
   useEffect(() => {
     void load();
-    const interval = setInterval(() => void load(), 4000);
+    // The user socket supplies the instant path. This is only a missed-event safety net; four
+    // seconds kept every background conversation route needlessly busy.
+    const interval = setInterval(() => void load(), 30000);
     return () => clearInterval(interval);
   }, [load]);
+
+  useEffect(() => {
+    if (lastEvent?.kind === "message" && Number(lastEvent.fromUserId) === Number(id)) void load();
+  }, [id, lastEvent, load]);
+
+  useEffect(() => {
+    const target = { kind: "direct_message" as const, conversationWith: id };
+    if (notifications.some((notification) => !notification.read && notificationMatchesReadTarget(notification, target))) {
+      void markTargetRead(target);
+    }
+  }, [id, markTargetRead, notifications]);
 
   const latestMine = useMemo(() => latestOwnMessageId(messages, user?.userId), [messages, user?.userId]);
 
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/*", "application/pdf"],
+      type: [...ATTACHMENT_PICKER_TYPES],
       copyToCacheDirectory: true,
     });
     if (result.canceled || !result.assets?.[0]) return;
@@ -374,7 +392,7 @@ export default function ConversationScreen() {
             onPress={() => void pickFile()}
             disabled={sending}
             accessibilityRole="button"
-            accessibilityLabel="Attach a photo or PDF"
+            accessibilityLabel="Attach a photo, PDF, Word or Excel file"
             accessibilityState={{ disabled: sending }}
             aria-disabled={sending}
             activeOpacity={0.78}

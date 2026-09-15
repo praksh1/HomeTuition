@@ -17,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import MessageAttachment from "@/components/MessageAttachment";
 import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
+import { ATTACHMENT_PICKER_TYPES } from "@/utils/attachmentTypes";
 import { useAuth } from "@/context/AuthContext";
 import { useDates } from "@/context/DatePreferenceContext";
 import { useNotifications } from "@/context/NotificationContext";
@@ -25,6 +26,7 @@ import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
 import { messageDayLabel, messageTimeLabel, shouldShowDay } from "@/utils/messageTimeline";
+import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
 import type { Attachment } from "@/utils/reactions";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
@@ -63,7 +65,7 @@ export default function ClassChatScreen() {
   const dates = useDates();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { lastEvent } = useNotifications();
+  const { lastEvent, notifications, markTargetRead } = useNotifications();
   const { t, numeric, gutter, space, radius, isWide } = useLayout();
   const [view, setView] = useState<ViewData | null>(null);
   const [draft, setDraft] = useState("");
@@ -75,6 +77,7 @@ export default function ClassChatScreen() {
   const [problem, setProblem] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   const scrollAfterLayout = useRef(true);
+  const acknowledgedThrough = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,9 +89,10 @@ export default function ClassChatScreen() {
 
   const acknowledge = useCallback(async (messages: Message[]) => {
     const lastMessageId = messages.at(-1)?.id;
-    if (!lastMessageId) return;
+    if (!lastMessageId || acknowledgedThrough.current === lastMessageId) return;
     try {
       await apiPost(`/class-groups/${batchId}/messages/read`, { lastMessageId });
+      acknowledgedThrough.current = lastMessageId;
     } catch {
       // A lost acknowledgement leaves the badge until the next refresh; it must not take the
       // conversation away from the person who is already reading it.
@@ -101,16 +105,19 @@ export default function ClassChatScreen() {
       setView(next);
       setLoadProblem(false);
       void acknowledge(next.messages);
+      void markTargetRead({ kind: "class_message", batchId });
     } catch {
       setLoadProblem(true);
     } finally {
       setLoading(false);
     }
-  }, [acknowledge, batchId]);
+  }, [acknowledge, batchId, markTargetRead]);
 
   useEffect(() => {
     void load();
-    const interval = setInterval(() => void load(), 6000);
+    // Live events provide the quick path; this slower pass catches a dropped socket without
+    // making every mounted class screen talk to the server ten times a minute.
+    const interval = setInterval(() => void load(), 30000);
     return () => clearInterval(interval);
   }, [load]);
 
@@ -121,6 +128,13 @@ export default function ClassChatScreen() {
     }
   }, [batchId, lastEvent, load]);
 
+  useEffect(() => {
+    const target = { kind: "class_message" as const, batchId };
+    if (notifications.some((notification) => !notification.read && notificationMatchesReadTarget(notification, target))) {
+      void markTargetRead(target);
+    }
+  }, [batchId, markTargetRead, notifications]);
+
   const messages = useMemo(() => view?.messages ?? [], [view?.messages]);
   const timeline = useMemo(() => messages.map((message) => ({ ...message, read: false })), [messages]);
   const pinned = useMemo(
@@ -130,7 +144,7 @@ export default function ClassChatScreen() {
 
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
-      type: ["image/*", "application/pdf"],
+      type: [...ATTACHMENT_PICKER_TYPES],
       copyToCacheDirectory: true,
     });
     if (result.canceled || !result.assets?.[0]) return;
@@ -371,7 +385,7 @@ export default function ClassChatScreen() {
               onPress={() => void pickFile()}
               disabled={sending}
               accessibilityRole="button"
-              accessibilityLabel="Attach a photo or PDF"
+              accessibilityLabel="Attach a photo, PDF, Word or Excel file"
               accessibilityState={{ disabled: sending }}
               aria-disabled={sending}
               testID="class-chat-attach"
