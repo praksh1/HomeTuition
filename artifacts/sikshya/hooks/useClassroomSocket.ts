@@ -587,8 +587,8 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
 
   const sendBoardClear = useCallback(() => send({ type: "board_clear" }), [send]);
   const sendSceneUpdate = useCallback(
-    (elements: unknown[], files: unknown[] = []) => {
-      if (elements.length > 0) send({ type: "scene_update", elements, files });
+    (elements: unknown[], files: unknown[] = [], pageId?: string) => {
+      if (elements.length > 0) send({ type: "scene_update", pageId, elements, files });
     },
     [send],
   );

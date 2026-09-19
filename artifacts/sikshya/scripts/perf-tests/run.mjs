@@ -142,7 +142,12 @@ async function openThrottledBoard(browser, { readOnly }) {
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: CPU_SLOWDOWN });
 
   await page.goto(`${baseUrl}/board?readOnly=${readOnly ? 1 : 0}`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(3000);
+  // The first board in a fresh browser pays the cost of loading Excalidraw. A fixed delay can
+  // expire before its message listener exists on a throttled phone, which measures a dropped
+  // test message rather than board performance. Wait for the same rendered-canvas handshake
+  // the production host relies on before delivering the catch-up scene.
+  await page.waitForSelector("canvas.excalidraw__canvas.static", { timeout: 30_000 });
+  await page.waitForTimeout(500);
   return { ctx, page, cdp };
 }
 

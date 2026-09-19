@@ -123,7 +123,8 @@ export default function BoardPage() {
   }, []);
 
   const handleSceneChange = useCallback(
-    (changed: unknown[], files: unknown[]) => postToHost({ type: "scene_out", elements: changed, files }),
+    (changed: unknown[], files: unknown[], pageId: string) =>
+      postToHost({ type: "scene_out", pageId, elements: changed, files }),
     [postToHost],
   );
 

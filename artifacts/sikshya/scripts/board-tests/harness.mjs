@@ -101,11 +101,23 @@ const stubHost = () => {
 export async function openBoard(ctx, baseUrl, { readOnly }) {
   const page = await ctx.newPage();
   const errors = [];
+  const diagnostics = [];
   page.on("pageerror", (e) => errors.push(String(e)));
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") diagnostics.push(`${message.type()}: ${message.text()}`);
+  });
+  page.on("requestfailed", (request) => diagnostics.push(`request failed: ${request.url()} — ${request.failure()?.errorText ?? "unknown"}`));
+  page.on("response", (response) => {
+    if (response.status() >= 400) diagnostics.push(`HTTP ${response.status()}: ${response.url()}`);
+  });
   page.errors = errors;
   await page.addInitScript(stubHost);
   await page.goto(`${baseUrl}/board?readOnly=${readOnly ? 1 : 0}`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(2000);
+  await page.waitForSelector("canvas.excalidraw__canvas.static", { timeout: 15_000 }).catch(async () => {
+    const body = (await page.locator("body").innerText().catch(() => "")).slice(0, 800);
+    throw new Error(`whiteboard canvas never appeared; page said: ${body || "(nothing)"}; errors: ${[...errors, ...diagnostics].join(" | ") || "none"}`);
+  });
+  await page.waitForTimeout(500);
   return page;
 }
 
@@ -114,24 +126,28 @@ export async function openBoard(ctx, baseUrl, { readOnly }) {
  * classroom hub would. Returns the message types seen, which is itself worth asserting on —
  * a deletion that produces no `scene_out` is the bug that started all this.
  */
-export async function pump(teacher, student) {
-  const msgs = await teacher.evaluate(() => {
+export async function takeMessages(page) {
+  return page.evaluate(() => {
     const out = window.__out;
     window.__out = [];
     return out;
   });
+}
+
+/** Carries messages already drained from a board to its peer. */
+export async function relayMessages(msgs, student) {
   for (const m of msgs) {
     if (m.type === "scene_out") {
       // Elements *and* the picture data that goes with them — the classroom hub relays both,
       // and a rig that quietly dropped the pictures would report a passing sync while every
       // student saw empty picture frames.
       await student.evaluate(
-        ({ els, files }) =>
+        ({ els, files, pageId }) =>
           window.postMessage(
-            JSON.stringify({ type: "scene_in", delta: { full: false, elements: els, files } }),
+            JSON.stringify({ type: "scene_in", delta: { full: false, pageId, elements: els, files } }),
             "*",
           ),
-        { els: m.elements, files: m.files ?? [] },
+        { els: m.elements, files: m.files ?? [], pageId: m.pageId },
       );
     } else if (m.type === "view_out") {
       await student.evaluate(
@@ -141,9 +157,19 @@ export async function pump(teacher, student) {
     } else if (m.type === "clear_out") {
       // What the hub does with a clear: tell everyone else to wipe.
       await student.evaluate(() => window.postMessage(JSON.stringify({ type: "clear" }), "*"));
+    } else if (m.type === "laser_out") {
+      await student.evaluate(
+        (laser) => window.postMessage(JSON.stringify({ type: "laser_in", laser }), "*"),
+        m.laser,
+      );
     }
   }
   await student.waitForTimeout(350);
+}
+
+export async function pump(teacher, student) {
+  const msgs = await takeMessages(teacher);
+  await relayMessages(msgs, student);
   return msgs.map((m) => m.type);
 }
 

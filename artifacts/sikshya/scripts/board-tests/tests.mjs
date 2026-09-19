@@ -4,7 +4,7 @@
  * Each entry is one property of a working lesson, written as the failure it guards against.
  * Every one of these has been broken in production at least once.
  */
-import { ERASER, PEN, RED_PNG, TWO_PAGE_PDF, drawPath, ink, near, openBoard, pump, roughCircle, selectTool, stroke, writingPath } from "./harness.mjs";
+import { ERASER, PEN, RED_PNG, TWO_PAGE_PDF, drawPath, ink, near, openBoard, pump, relayMessages, roughCircle, selectTool, stroke, takeMessages, writingPath } from "./harness.mjs";
 
 export const tests = [
   {
@@ -193,18 +193,128 @@ export const tests = [
 
       // Cancelling must leave the lesson alone — this is a destructive, class-wide action.
       teacher.once("dialog", (d) => d.dismiss());
-      await teacher.locator('button[aria-label="Clear the board for the whole class"]').click();
+      await teacher.locator('button[aria-label="Clear this page for the whole class"]').click();
       await teacher.waitForTimeout(400);
       assert("cancelling the confirmation changes nothing", (await ink(teacher)).n > 0);
       assert("and sends nothing", (await pump(teacher, student)).length === 0);
 
       teacher.once("dialog", (d) => d.accept());
-      await teacher.locator('button[aria-label="Clear the board for the whole class"]').click();
+      await teacher.locator('button[aria-label="Clear this page for the whole class"]').click();
       await teacher.waitForTimeout(500);
       const sent = await pump(teacher, student);
       assert("confirming tells the class", sent.includes("clear_out"));
       assert("the teacher's board is empty", (await ink(teacher)).n === 0);
       assert("and so is the student's", (await ink(student)).n === 0);
+    },
+  },
+
+  {
+    name: "board pages stay separate and the student follows the teacher",
+    why:
+      "A delayed Excalidraw update used to cross a page switch, and locking a page removed the " +
+      "teacher's only way to unlock it. A multi-page board is useful only if each page keeps " +
+      "its own lesson and the student's screen follows the same page without editing controls.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+      const post = (page, message) => page.evaluate(
+        (payload) => window.postMessage(JSON.stringify(payload), "*"),
+        message,
+      );
+      const pages = [
+        { id: "page-1", title: "Warm-up", template: "blank", locked: false },
+        { id: "page-2", title: "Worked example", template: "graph", locked: false },
+      ];
+
+      await takeMessages(teacher);
+      await selectTool(teacher, PEN);
+      await stroke(teacher, 150, 260, 330, 430);
+      const firstPageMessages = await takeMessages(teacher);
+      const firstPageScene = firstPageMessages.filter((message) => message.type === "scene_out");
+      assert("Page 1 ink names the page it belongs to", firstPageScene.length > 0 && firstPageScene.every((message) => message.pageId === "page-1"));
+      await relayMessages(firstPageMessages, student);
+      assert("the student sees Page 1", (await ink(student)).n > 0);
+
+      await teacher.getByLabel("Add board page").click();
+      await teacher.waitForTimeout(100);
+      const addMessages = await takeMessages(teacher);
+      assert("adding a page asks the server instead of inventing local state", addMessages.some((message) => message.type === "pages_out" && message.command?.op === "add"));
+
+      for (const page of [teacher, student]) {
+        await post(page, { type: "pages_in", pages, activePageId: "page-2" });
+        await post(page, { type: "scene_in", delta: { full: true, pageId: "page-2", elements: [], files: [] } });
+      }
+      await teacher.waitForTimeout(450);
+      assert("the teacher moved to Page 2", (await teacher.getByText(/Worked example/).count()) > 0);
+      assert("the student followed to Page 2", (await student.getByText(/Worked example/).count()) > 0);
+      assert("Page 1 ink did not leak onto Page 2 for the teacher", (await ink(teacher)).n === 0);
+      assert("or for the student", (await ink(student)).n === 0);
+
+      await selectTool(teacher, PEN);
+      await stroke(teacher, 570, 260, 760, 430);
+      const secondPageMessages = await takeMessages(teacher);
+      const secondPageScene = secondPageMessages.filter((message) => message.type === "scene_out");
+      assert("Page 2 ink remains labelled Page 2 even after the switch", secondPageScene.length > 0 && secondPageScene.every((message) => message.pageId === "page-2"));
+      await relayMessages(secondPageMessages, student);
+      assert("the student sees Page 2 ink", (await ink(student)).n > 0);
+
+      await teacher.getByLabel("Previous board page").click();
+      await teacher.waitForTimeout(100);
+      const selectMessages = await takeMessages(teacher);
+      assert("page navigation is a server-owned command", selectMessages.some((message) => message.type === "pages_out" && message.command?.op === "select" && message.command?.pageId === "page-1"));
+
+      const firstElements = firstPageScene.flatMap((message) => message.elements ?? []);
+      const firstFiles = firstPageScene.flatMap((message) => message.files ?? []);
+      for (const page of [teacher, student]) {
+        await post(page, { type: "pages_in", pages, activePageId: "page-1" });
+        await post(page, { type: "scene_in", delta: { full: true, pageId: "page-1", elements: firstElements, files: firstFiles } });
+      }
+      await teacher.waitForTimeout(500);
+      assert("returning to Page 1 restores its own ink", (await ink(teacher)).n > 0);
+      assert("and restores the same page for the student", (await ink(student)).n > 0);
+      assert("students never receive an Add page control", (await student.getByLabel("Add board page").count()) === 0);
+
+      const lockedPages = pages.map((page) => page.id === "page-1" ? { ...page, locked: true } : page);
+      await post(teacher, { type: "pages_in", pages: lockedPages, activePageId: "page-1" });
+      await teacher.waitForTimeout(250);
+      await teacher.getByLabel("Open board pages").click();
+      assert("a locked page still gives its teacher an Unlock control", (await teacher.getByText("Unlock", { exact: true }).count()) === 1);
+      await teacher.getByText("Unlock", { exact: true }).click();
+      const unlockMessages = await takeMessages(teacher);
+      assert("unlocking goes through the server", unlockMessages.some((message) => message.type === "pages_out" && message.command?.op === "lock" && message.command?.locked === false));
+
+      await teacher.setViewportSize({ width: 320, height: 700 });
+      await teacher.waitForTimeout(300);
+      const nav = await teacher.locator(".sikshya-board__pages").boundingBox();
+      const visibleButtons = await teacher.locator(".sikshya-board__pages button:visible").evaluateAll((buttons) => buttons.map((button) => button.getBoundingClientRect().height));
+      assert("the page controls stay inside a 320px phone", Boolean(nav && nav.x >= 0 && nav.x + nav.width <= 320));
+      assert("every visible page control keeps a 44px touch target", visibleButtons.every((height) => height >= 44));
+    },
+  },
+
+  {
+    name: "the teacher's laser is immediate and temporary",
+    why:
+      "A presenter pointer must feel live without becoming permanent board content. The class " +
+      "should see it immediately, and switching it off must remove it instead of waiting for a timeout.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+      await takeMessages(teacher);
+
+      await teacher.getByLabel("Point for the class").click();
+      await teacher.mouse.move(460, 350);
+      await teacher.waitForTimeout(100);
+      const active = await takeMessages(teacher);
+      assert("moving the pointer emits a bounded live point", active.some((message) => message.type === "laser_out" && message.laser?.active === true && message.laser.x >= 0 && message.laser.x <= 1));
+      await relayMessages(active, student);
+      assert("the student sees the teacher's pointer", (await student.getByLabel("Teacher laser pointer").count()) === 1);
+
+      await teacher.getByLabel("Point for the class").click();
+      const stopped = await takeMessages(teacher);
+      assert("turning the pointer off emits an explicit stop", stopped.some((message) => message.type === "laser_out" && message.laser?.active === false));
+      await relayMessages(stopped, student);
+      assert("the pointer disappears without becoming saved ink", (await student.getByLabel("Teacher laser pointer").count()) === 0 && (await ink(student)).n === 0);
     },
   },
 

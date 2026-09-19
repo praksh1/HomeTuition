@@ -51,6 +51,14 @@ const TEACHER_PRESENCE_INTERVAL_MS = 30_000;
 const PARTICIPATION_FLUSH_INTERVAL_MS = 30_000;
 
 interface BoardState {
+  /**
+   * In-memory mutations made while the saved board is being loaded.
+   *
+   * A page rename or switch can happen before the database read finishes without adding a
+   * scene element. Checking only `scene.size` would therefore let the older stored board win
+   * and silently undo the live action. Restoration is allowed only while this stays unchanged.
+   */
+  revision: number;
   material: { kind: "image" | "pdf"; dataUrl: string } | null;
   paths: Record<string, unknown>[];
   /**
@@ -270,11 +278,13 @@ async function restoreBoard(sessionId: string): Promise<void> {
     return;
   }
 
+  const board = getBoard(sessionId);
+  const openingRevision = board.revision;
   const work = (async () => {
     const stored = await loadBoard(numericId);
-    const board = getBoard(sessionId);
-    // Only fill an empty board. A live one is ahead of anything written down.
-    if (stored && board.scene.size === 0) {
+    // Only fill a board nobody has changed while storage was being read. A live page command
+    // can mutate metadata without adding ink, so `scene.size === 0` is not a sufficient guard.
+    if (stored && board.revision === openingRevision && board.scene.size === 0) {
       const envelope = stored.scene && typeof stored.scene === "object" && !Array.isArray(stored.scene)
         ? stored.scene as { version?: number; activePageId?: string; pages?: unknown[] }
         : null;
@@ -355,6 +365,7 @@ function getBoard(sessionId: string): BoardState {
     const scene = new Map<string, SceneElement>();
     const files = new Map<string, SceneFile>();
     board = {
+      revision: 0,
       material: null,
       paths: [],
       boardSize: null,
@@ -379,11 +390,11 @@ function getBoard(sessionId: string): BoardState {
  * tombstones go: the worst case if a very late message then arrives for one is that a stroke
  * briefly reappears, which is a far smaller problem than a lesson that leaks.
  */
-function pruneScene(board: BoardState): void {
-  if (board.scene.size <= MAX_SCENE_ELEMENTS) return;
-  for (const [id, el] of board.scene) {
-    if (board.scene.size <= MAX_SCENE_ELEMENTS) break;
-    if (el.isDeleted) board.scene.delete(id);
+function pruneScene(scene: Map<string, SceneElement>): void {
+  if (scene.size <= MAX_SCENE_ELEMENTS) return;
+  for (const [id, el] of scene) {
+    if (scene.size <= MAX_SCENE_ELEMENTS) break;
+    if (el.isDeleted) scene.delete(id);
   }
 }
 
@@ -767,15 +778,23 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           if (incoming.length === 0 || incoming.length > MAX_SCENE_ELEMENTS) break;
 
           const board = getBoard(sessionId);
-          if (board.pages.find((page) => page.id === board.activePageId)?.locked) break;
+          // New clients name the page that produced the delta. That closes the short race in
+          // which Excalidraw flushes the final stroke from Page 1 just after the teacher has
+          // selected Page 2. Legacy clients omit it and retain the original active-page rule.
+          const targetPageId = typeof msg.pageId === "string" ? msg.pageId : board.activePageId;
+          const targetPage = board.pages.find((page) => page.id === targetPageId);
+          if (!targetPage || targetPage.locked) break;
+          snapshotActivePage(board);
+          const target = board.pageScenes.get(targetPageId);
+          if (!target) break;
           const accepted: SceneElement[] = [];
           for (const el of incoming) {
             if (!el || typeof el.id !== "string" || typeof el.version !== "number") continue;
-            const existing = board.scene.get(el.id);
+            const existing = target.scene.get(el.id);
             // A lower version is a stale message that overtook a newer one. Dropping it here
             // rather than forwarding it keeps every client's copy identical to the server's.
             if (existing && existing.version >= el.version) continue;
-            board.scene.set(el.id, el);
+            target.scene.set(el.id, el);
             accepted.push(el);
           }
           // Picture data for any images in this batch. Each is stored once and replayed to
@@ -793,13 +812,13 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
               refusedFiles.add(file.id);
               continue;
             }
-            if (board.files.size >= MAX_SCENE_FILES && !board.files.has(file.id)) {
-              logger.warn({ sessionId, userId, files: board.files.size }, "ws board has too many pictures, dropped");
+            if (target.files.size >= MAX_SCENE_FILES && !target.files.has(file.id)) {
+              logger.warn({ sessionId, userId, files: target.files.size }, "ws board has too many pictures, dropped");
               sendTo(ws, { type: "material_rejected", reason: "too_many" });
               refusedFiles.add(file.id);
               continue;
             }
-            board.files.set(file.id, file);
+            target.files.set(file.id, file);
             acceptedFiles.push(file);
           }
 
@@ -819,22 +838,27 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           const deliverable = accepted.filter((el) => {
             const fileId = typeof el.fileId === "string" ? el.fileId : null;
             if (!fileId) return true;
-            if (board.files.has(fileId)) return true;
+            if (target.files.has(fileId)) return true;
             return !refusedFiles.has(fileId);
           });
 
           // Dropped from the stored board too, or a late joiner is replayed the same empty frame.
           for (const el of accepted) {
-            if (!deliverable.includes(el)) board.scene.delete(el.id);
+            if (!deliverable.includes(el)) target.scene.delete(el.id);
           }
 
-          pruneScene(board);
+          pruneScene(target.scene);
           if (deliverable.length > 0) {
             // One per accepted board-changing message, not per element: Excalidraw re-sends an
             // element on every frame of a drag. Stale/replayed versions are not teaching
             // activity and must not inflate the evidence ledger.
             ledger.draws += 1;
-            broadcast(sessionId, { type: "scene_update", pageId: board.activePageId, elements: deliverable, files: acceptedFiles }, ws);
+            board.revision += 1;
+            // Everyone follows one server-owned active page. A late flush for a background
+            // page is saved there but is not painted over the page the class is now viewing.
+            if (targetPageId === board.activePageId) {
+              broadcast(sessionId, { type: "scene_update", pageId: targetPageId, elements: deliverable, files: acceptedFiles }, ws);
+            }
             // Written down shortly, so a restart mid-lesson does not erase the board.
             rememberBoard(sessionId);
           }
@@ -847,6 +871,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
             board.paths = [];
             board.scene.clear();
             board.files.clear();
+            board.revision += 1;
             broadcast(sessionId, { type: "board_clear" }, ws);
             // Clearing applies to the page everyone is currently viewing. Persist the empty
             // active page together with the other pages; deleting the entire stored board here
@@ -860,6 +885,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           if (!isSessionTeacher) break;
           const board = getBoard(sessionId);
           if (!applyPageCommand(board, msg)) break;
+          board.revision += 1;
           broadcast(sessionId, { type: "board_pages", ...pagePayload(board) });
           // An explicit full state (including an empty scene) makes a page switch deterministic
           // for clients that were already drawing or reconnecting at the same time.

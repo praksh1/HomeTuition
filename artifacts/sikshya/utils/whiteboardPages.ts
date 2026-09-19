@@ -43,6 +43,11 @@ export type WhiteboardPageAction =
 
 const MAX_PAGES = 80;
 const MAX_TITLE_LENGTH = 80;
+const MAX_ID_LENGTH = 100;
+
+function cleanId(id: string): string {
+  return id.trim().slice(0, MAX_ID_LENGTH);
+}
 
 function cleanTitle(title: string | undefined, fallback: string): string {
   const cleaned = (title ?? "").trim().replace(/\s+/g, " ").slice(0, MAX_TITLE_LENGTH);
@@ -70,7 +75,7 @@ export function normalizeWhiteboardPages(raw: unknown): WhiteboardPagesState {
         .map((value, index) => {
           if (!value || typeof value !== "object") return null;
           const page = value as Record<string, unknown>;
-          const id = typeof page.id === "string" && page.id.trim() ? page.id.trim().slice(0, 100) : `page-${index + 1}`;
+          const id = typeof page.id === "string" && cleanId(page.id) ? cleanId(page.id) : `page-${index + 1}`;
           return {
             id,
             title: cleanTitle(typeof page.title === "string" ? page.title : undefined, `Page ${index + 1}`),
@@ -108,23 +113,24 @@ export function applyWhiteboardPageAction(
   const index = state.pages.findIndex((page) => page.id === action.id);
   switch (action.type) {
     case "add": {
-      if (state.pages.length >= MAX_PAGES || state.pages.some((page) => page.id === action.id)) return state;
+      const id = cleanId(action.id);
+      if (!id || state.pages.length >= MAX_PAGES || state.pages.some((page) => page.id === id)) return state;
       const page: WhiteboardPage = {
-        id: action.id.trim().slice(0, 100),
+        id,
         title: cleanTitle(action.title, `Page ${state.pages.length + 1}`),
         template: validTemplate(action.template),
         locked: false,
       };
-      if (!page.id) return state;
       return withActive(state, [...state.pages, page], page.id);
     }
     case "duplicate": {
-      if (index < 0 || !action.newId.trim() || state.pages.some((page) => page.id === action.newId)) return state;
+      const newId = cleanId(action.newId);
+      if (index < 0 || !newId || state.pages.some((page) => page.id === newId)) return state;
       if (state.pages.length >= MAX_PAGES) return state;
       const source = state.pages[index];
       const copy: WhiteboardPage = {
         ...source,
-        id: action.newId.trim().slice(0, 100),
+        id: newId,
         title: cleanTitle(action.title, `${source.title} copy`),
         locked: false,
       };

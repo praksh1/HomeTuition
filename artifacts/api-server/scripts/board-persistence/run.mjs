@@ -169,7 +169,15 @@ async function main() {
     check("the second page becomes active", typeof secondPageId === "string", JSON.stringify(pageList ?? {}));
     t.ws.send(JSON.stringify({
       type: "scene_update",
+      pageId: secondPageId,
       elements: [{ id: "page-2-mark", type: "freedraw", version: 1, x: 40, y: 50, width: 80, height: 30 }],
+    }));
+    // This is the real browser race: the final Page 1 flush arrives after Page 2 became active.
+    // It must be stored with the page that produced it, never painted or saved onto Page 2.
+    t.ws.send(JSON.stringify({
+      type: "scene_update",
+      pageId: "page-1",
+      elements: [{ id: "late-page-1-mark", type: "freedraw", version: 1, x: 12, y: 18, width: 30, height: 20 }],
     }));
     await wait(3500);
     t.ws.close();
@@ -184,6 +192,11 @@ async function main() {
     check(
       "the active page drawing comes back instead of an empty placeholder",
       (activeScene?.elements ?? []).some((element) => element.id === "page-2-mark"),
+      JSON.stringify(activeScene ?? {}).slice(0, 180),
+    );
+    check(
+      "a delayed Page 1 flush never leaks onto Page 2",
+      !(activeScene?.elements ?? []).some((element) => element.id === "late-page-1-mark"),
       JSON.stringify(activeScene ?? {}).slice(0, 180),
     );
     s.ws.close();
@@ -201,6 +214,11 @@ async function main() {
     check(
       "and the first page picture bytes stay with that page",
       (firstPageScene?.files ?? []).some((file) => file.id === "pic-1"),
+      JSON.stringify(firstPageScene ?? {}).slice(0, 180),
+    );
+    check(
+      "the delayed Page 1 flush is saved on Page 1",
+      (firstPageScene?.elements ?? []).some((element) => element.id === "late-page-1-mark"),
       JSON.stringify(firstPageScene ?? {}).slice(0, 180),
     );
     t2.ws.close();

@@ -28,7 +28,7 @@ interface Props {
   readOnly?: boolean;
   sceneUpdates: SceneDelta[];
   onConsumeUpdates: () => void;
-  onSceneChange: (changed: unknown[], files: unknown[]) => void;
+  onSceneChange: (changed: unknown[], files: unknown[], pageId: string) => void;
   onViewportChange?: (view: BoardViewport) => void;
   insertDocument?: { key: string; dataUrl: string; kind: "image" | "pdf" } | null;
   /**
@@ -180,7 +180,7 @@ export default function SmartBoard({
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let msg: { type?: string; key?: string; elements?: unknown[]; files?: unknown[]; view?: BoardViewport; pages?: BoardPage[]; activePageId?: string; command?: BoardPageCommand; laser?: BoardLaserPoint | null };
+      let msg: { type?: string; key?: string; elements?: unknown[]; files?: unknown[]; pageId?: string; view?: BoardViewport; pages?: BoardPage[]; activePageId?: string; command?: BoardPageCommand; laser?: BoardLaserPoint | null };
       try {
         msg = JSON.parse(event.nativeEvent.data);
       } catch {
@@ -212,7 +212,11 @@ export default function SmartBoard({
         return;
       }
       if (msg.type === "scene_out" && Array.isArray(msg.elements)) {
-        onSceneChange(msg.elements, Array.isArray(msg.files) ? msg.files : []);
+        onSceneChange(
+          msg.elements,
+          Array.isArray(msg.files) ? msg.files : [],
+          typeof msg.pageId === "string" ? msg.pageId : activePageId,
+        );
         return;
       }
       if (msg.type === "view_out" && msg.view) {
@@ -231,7 +235,7 @@ export default function SmartBoard({
         onLaser?.(msg.laser);
       }
     },
-    [post, readOnly, theme, laser, onSceneChange, onViewportChange, onClearAll, onPageCommand, onLaser],
+    [activePageId, post, readOnly, theme, laser, onSceneChange, onViewportChange, onClearAll, onPageCommand, onLaser],
   );
 
   const source = useMemo(

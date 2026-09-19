@@ -1,8 +1,8 @@
 # Fadko classroom upgrade handoff
 
 Date: 19 September 2026
-Branch: `codex/unified-messages-inbox`
-Status: implementation reviewed and corrected for this staged slice; not deployed.
+Branch: `codex/premium-classroom-pages`
+Status: implementation reviewed, corrected and browser-verified; ready for Preview, not Production.
 
 ## Codex review corrections
 
@@ -15,6 +15,16 @@ Status: implementation reviewed and corrected for this staged slice; not deploye
   modified teacher client from flooding every connected phone with pointer frames.
 - Extended the real restart suite to prove both the active page and a previously selected page,
   including image bytes, return after a restart.
+- Bound every scene delta to the page where it originated. A final Page 1 pen update arriving
+  after the teacher selected Page 2 is now stored on Page 1 and can never leak onto Page 2.
+- Protected startup restoration with a board revision. A rename, template change or page switch
+  made while storage is loading can no longer be silently overwritten by the older saved copy.
+- Kept page management available when a page is locked, so **Unlock** remains reachable while
+  drawing and document insertion are correctly disabled.
+- Made delete and clear explicitly destructive: page deletion asks for confirmation and clearing
+  consistently says it affects this page for the whole class.
+- Removed an empty-update render loop caught by the first production bundle and changed the
+  slowdown harness to wait for the real board canvas instead of guessing with a fixed delay.
 
 ## What was preserved
 
@@ -46,6 +56,8 @@ following. Nothing in this slice silently enables LiveKit or recording.
   before applying the new page's full state, so annotations cannot leak between pages.
 - Students receive the same active page and follow teacher navigation. They remain read-only, and
   a locked page is also read-only for the teacher until it is unlocked.
+- Student page status is deliberately compact and read-only; it does not draw disabled editing
+  controls that look actionable.
 - Teachers have an ephemeral laser-pointer mode. Pointer coordinates are normalized to the board,
   throttled to 50 ms, server-authorized, and auto-expire on every viewer; they never enter the
   saved Excalidraw scene.
@@ -75,21 +87,32 @@ following. Nothing in this slice silently enables LiveKit or recording.
 - `artifacts/api-server/src/ws/classroomHub.ts`
 - `artifacts/api-server/src/lib/boardStore.ts`
 - `artifacts/api-server/scripts/board-persistence/run.mjs`
+- `artifacts/sikshya/scripts/board-tests/harness.mjs`
+- `artifacts/sikshya/scripts/board-tests/tests.mjs`
+- `artifacts/sikshya/scripts/perf-tests/run.mjs`
+- `docs/FADKO-CLASSROOM-UPGRADE-HANDOFF.md`
 
 ## Verification
 
-- Sikshya unit suite: **488 passed, 0 failed**.
-- Whiteboard page and laser contracts: **9 passed, 0 failed**.
-- Design lint: **passed; no new token leaks**.
-- `git diff --check`: clean (only the repository's normal LF/CRLF warnings).
-- Sikshya typecheck: no classroom errors; it is still blocked by the existing unresolved package
-  junctions for `@react-native-community/datetimepicker`, `expo-crypto`, social auth packages and
-  `livekit-client` in this restricted checkout.
-- API typecheck: no classroom errors; it is still blocked by the existing unresolved `jose` and
-  `livekit-server-sdk` package junctions in this restricted checkout.
-- Static web export could not be run in this sandbox because the build requires the deployment
-  domain environment variable (`REPLIT_INTERNAL_APP_DOMAIN`, `REPLIT_DEV_DOMAIN` or
-  `EXPO_PUBLIC_DOMAIN`). This is an environment gate, not a page-feature failure.
+- Full workspace typecheck: **all four checked packages clean**.
+- Sikshya unit suite: **493 passed, 0 failed**.
+- API unit suite: **572 passed, 0 failed**.
+- Rendered teacher/student whiteboard suite: **65 passed, 0 failed**. It covers separate page
+  scenes, delayed updates naming their origin page, student follow, lock/unlock, laser start/stop,
+  viewport return, erasure, clear confirmation, photo sharing and a real two-page PDF.
+- Small-phone board suite: **18 passed, 0 failed** at 393px, 375px and 360px. All tools remained
+  reachable, no horizontal overflow appeared, and drawing still worked.
+- Throttled performance suite: **no blocking problems at 6x CPU slowdown**. A 500-object lesson
+  rendered in about 2.4 seconds in that run; the worst incremental stroke was 412 ms, below the
+  suite's unusable boundary.
+- Static Preview web export: **built successfully** and verified to name Fadko and target the
+  staging API.
+- Design lint: **passed; 65 hex literals / 211 raw sizes, exactly the existing baseline**.
+- `git diff --check`: clean (only the repository's normal LF/CRLF notices).
+- The database-backed classroom/lobby and restart-persistence scripts were not rerun in this
+  Windows worktree because there is no local Postgres/API on ports 55432/8080. Their new page-race
+  assertions are committed for the staging/CI gate; this is the remaining automated evidence gap,
+  not evidence that those paths passed.
 
 ## Required browser QA before Preview deployment
 
@@ -102,8 +125,9 @@ following. Nothing in this slice silently enables LiveKit or recording.
    refresh, and that the student never sees editing controls.
 5. Refresh/reconnect the teacher and confirm page names, order, templates, lock state and scenes
    return. Start a new lesson and confirm the deliberate board reset still clears all pages.
-6. Test the existing PDF/photo path on a small Android/WebView and a laptop. Do not use a large
-   textbook as the first test; the existing size cap and lazy rasterisation still apply.
+6. Test the existing PDF/photo path on a small Android/WebView and a laptop. A two-page PDF is
+   already proven in Chromium; do not use a large textbook as the first real-device test because
+   the existing size cap and lazy rasterisation still apply.
 
 ## Intentionally next, not faked here
 
@@ -133,9 +157,9 @@ The next provider task should verify, in a staging account only:
 
 ## Handoff order
 
-1. Run the browser QA above in Preview.
-2. Fix any page/bridge issues found by the real device pass.
-3. Add the permission protocol and cursor/laser utilities with pure rules first.
-4. Run the LiveKit Cloud proving session without changing the production provider.
-5. Only after those gates pass, commit and push this complete tree and deploy Preview; keep
+1. Deploy this branch to Preview and run the browser/device QA above.
+2. Fix any page/bridge issues found by the real-device pass; do not promote to Production first.
+3. Run the database-backed classroom/lobby/persistence gates in the staging environment.
+4. Add the permission protocol and collaborative cursor labels with pure authority rules first.
+5. Run the LiveKit Cloud proving session without changing the Production provider. Keep
    Production on Daily until an explicit provider decision is made.

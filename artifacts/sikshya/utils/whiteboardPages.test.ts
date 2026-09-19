@@ -79,3 +79,18 @@ test("malformed persisted metadata cannot create duplicate or invalid pages", ()
   assert.deepEqual(state.pages, [{ id: "same", title: "One", template: "blank", locked: false }]);
   assert.equal(state.activePageId, "same");
 });
+
+test("normalised ids cannot collide after validation", () => {
+  let state = applyWhiteboardPageAction(initialWhiteboardPages(), {
+    type: "add",
+    id: "  page-2  ",
+  });
+  assert.deepEqual(state.pages.map((page) => page.id), ["page-1", "page-2"]);
+
+  state = applyWhiteboardPageAction(state, {
+    type: "duplicate",
+    id: "page-1",
+    newId: " page-2 ",
+  });
+  assert.deepEqual(state.pages.map((page) => page.id), ["page-1", "page-2"]);
+});
