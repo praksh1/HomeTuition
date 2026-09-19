@@ -20,7 +20,7 @@ function ClassicStudentTabLayout() {
         <FloatingTabBar {...(props as unknown as FloatingTabBarProps)} />
       )}
       screenOptions={({ route }) => ({
-        headerShown: ["index", "sessions", "messages", "support", "profile"].includes(route.name),
+        headerShown: ["index", "sessions", "messages", "support", "requests", "profile"].includes(route.name),
         header: () => <AppShellHeader role="student" routeName={route.name} />,
         animation: "fade",
         freezeOnBlur: true,
@@ -59,6 +59,7 @@ function ClassicStudentTabLayout() {
           tabBarIcon: icon("life-buoy"),
         }}
       />
+      <Tabs.Screen name="requests" options={{ href: null }} />
       <Tabs.Screen
         name="profile"
         options={{

@@ -30,6 +30,7 @@ export function AppShellHeader({ role, routeName }: { role: ShellRole; routeName
   const go = (path: string) => router.push(path as never);
   const profilePath = role === "teacher" ? "/(teacher)/profile" : "/(student)/profile";
   const supportPath = role === "teacher" ? "/(teacher)/support" : "/(student)/support";
+  const requestsPath = role === "teacher" ? "/(teacher)/requests" : "/(student)/requests";
   const isProfile = routeName === "profile";
 
   const common: ProfileMenuItem[] = [
@@ -59,7 +60,7 @@ export function AppShellHeader({ role, routeName }: { role: ShellRole; routeName
       icon: "inbox",
       label: "My support requests",
       detail: "Follow previous questions and decisions",
-      onPress: () => go("/requests"),
+      onPress: () => go(requestsPath),
     },
     {
       section: "Help",

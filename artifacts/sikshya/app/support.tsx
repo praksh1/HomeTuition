@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, useSegments } from "expo-router";
 import React, { useEffect, useState } from "react";
 import {
   Platform,
@@ -67,6 +67,8 @@ const MAX_EVIDENCE_BYTES = 25 * 1024 * 1024;
 
 export default function SupportScreen() {
   const { user } = useAuth();
+  const segments = useSegments();
+  const insideShell = segments.some((segment) => segment === "(teacher)" || segment === "(student)");
   const colors = useColors();
   const { t } = useLayout();
   const insets = useSafeAreaInsets();
@@ -272,7 +274,7 @@ export default function SupportScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 60 }]}
+      contentContainerStyle={[styles.container, { paddingTop: (insideShell ? 0 : insets.top) + 16, paddingBottom: insets.bottom + 60 }]}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.header}>

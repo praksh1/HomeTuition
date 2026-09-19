@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
+import { router, useFocusEffect, useSegments } from "expo-router";
 import React, { useCallback, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -7,6 +7,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { HIT_SLOP_MIN, elevation, radius, space } from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
+import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
 import { STATUS_TONE, type Ticket, type Allowance } from "@/utils/tickets";
 
@@ -22,6 +23,9 @@ import { STATUS_TONE, type Ticket, type Allowance } from "@/utils/tickets";
  * state each request is in. Everything else is detail.
  */
 export default function MyRequestsScreen() {
+  const { user } = useAuth();
+  const segments = useSegments();
+  const insideShell = segments.some((segment) => segment === "(teacher)" || segment === "(student)");
   const colors = useColors();
   const { t } = useLayout();
   const dates = useDates();
@@ -95,7 +99,7 @@ export default function MyRequestsScreen() {
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 60 }]}
+      contentContainerStyle={[styles.container, { paddingTop: (insideShell ? 0 : insets.top) + 16, paddingBottom: insets.bottom + 60 }]}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.header}>
@@ -173,7 +177,7 @@ export default function MyRequestsScreen() {
           <TouchableOpacity
             testID="requests-new-btn"
             activeOpacity={0.85}
-            onPress={() => router.push("/support")}
+            onPress={() => router.push(user?.role === "teacher" ? "/(teacher)/support" : "/(student)/support")}
             style={[styles.newBtn, { backgroundColor: colors.secondary }]}
           >
             <Feather name="plus" size={16} color="#fff" />
