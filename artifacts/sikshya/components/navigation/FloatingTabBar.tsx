@@ -141,7 +141,7 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
         >
           {shellSize > 0 && activeIndex >= 0 ? (
             <Animated.View
-              testID="tab-selection-indicator"
+              testID="primary-selection-indicator"
               pointerEvents="none"
               style={[
                 styles.indicator,

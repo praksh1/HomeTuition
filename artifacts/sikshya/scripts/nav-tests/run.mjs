@@ -123,7 +123,7 @@ async function navigationGeometry(page) {
     };
     return {
       shell: box(document.querySelector('[data-testid="primary-navigation-shell"]')),
-      indicator: box(document.querySelector('[data-testid="tab-selection-indicator"]')),
+      indicator: box(document.querySelector('[data-testid="primary-selection-indicator"]')),
       active: box(document.querySelector('[data-testid^="tab-"][aria-current="page"]')),
       tabs: [...document.querySelectorAll('[data-testid^="tab-"]')].map(box),
     };
