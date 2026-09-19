@@ -88,13 +88,14 @@ async function waitForSite() {
  * substring match pretending to be an exact one.
  */
 async function tabLabels(page) {
-  return page.$$eval('[role="tab"]', (nodes) =>
+  return page.$$eval('[data-testid^="tab-"]', (nodes) =>
     nodes.map((n) => n.textContent.replace(/[\uE000-\uF8FF]/g, "").trim()),
   );
 }
 
 async function tabDestinations(page) {
-  return page.$$eval('[role="tab"]', (nodes) => nodes.map((n) => n.getAttribute("href")));
+  return page.$$eval('[data-testid^="tab-"]', (nodes) => nodes.map((n) =>
+    n.getAttribute("href") ?? n.closest("a")?.getAttribute("href") ?? null));
 }
 
 async function main() {
@@ -124,7 +125,7 @@ async function main() {
   check("the floating navigation stays inside the phone viewport",
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     `${await page.evaluate(() => document.documentElement.scrollWidth)}px > ${await page.evaluate(() => innerWidth)}px`);
-  check("one tab is visibly selected", await page.locator('[role="tab"][aria-selected="true"]').count() === 1);
+  check("one tab is visibly selected", await page.locator('[data-testid^="tab-"][aria-selected="true"]').count() === 1);
   check("Support moved into the teacher's account menu", !teacherTabs.some((t) => /support/i.test(t)), teacherTabs.join(" | "));
   check("Plan is no longer a tab", !teacherTabs.some((t) => /^plan$/i.test(t)), teacherTabs.join(" | "));
   check("nothing else was lost on the way",
@@ -148,6 +149,13 @@ async function main() {
     /subscription/.test(await page.evaluate(() => location.pathname)),
     await page.evaluate(() => location.pathname));
 
+  // Subscription is a focused child screen and deliberately covers the Profile page and its
+  // account menu. Return the way a teacher does before checking the menu; clicking through the
+  // covering scene only proved that Playwright could fight the transition layer, not that the
+  // account journey worked.
+  await page.goBack({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => location.pathname === "/profile", null, { timeout: 10000 });
+  await page.waitForTimeout(600);
   await page.locator('[data-testid="profile-overflow-trigger"]').click({ timeout: 10000 });
   check("the profile menu exposes Support", await page.locator('[data-testid="profile-menu-fadko-support"]').count() === 1);
   await page.locator('[data-testid="profile-menu-fadko-support"]').click({ timeout: 10000 });
