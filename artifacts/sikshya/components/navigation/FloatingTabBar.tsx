@@ -189,8 +189,9 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
 
             // Expo Router flattens an `asChild` style before it reaches React Native Web. A
             // Pressable style callback therefore disappears and leaves the browser anchor sized
-            // only by its icon and label. Keep this a concrete array (with press state held above)
-            // so the actual link receives the whole slot as its hit and focus surface.
+            // only by its icon and label. Keep press state above and flatten to one concrete object;
+            // Radix would otherwise spread an array into invalid numeric style keys. The actual
+            // link then receives the whole slot as its hit and focus surface.
             return (
               <View key={route.key} style={isExpanded ? styles.desktopSlot : styles.mobileSlot}>
                 <Link href={href} asChild>
@@ -204,11 +205,11 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                     onPressIn={() => setPressedRoute(route.key)}
                     onPressOut={() => setPressedRoute((current) => current === route.key ? null : current)}
                     testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
-                    style={[
+                    style={StyleSheet.flatten([
                       styles.item,
                       isExpanded && styles.desktopItem,
                       pressedRoute === route.key && styles.pressed,
-                    ]}
+                    ])}
                   >
                     <View style={styles.iconWrap}>
                       {icon}
