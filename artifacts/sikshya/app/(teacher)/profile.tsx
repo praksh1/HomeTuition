@@ -3,14 +3,13 @@ import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SocialSignIn } from "@/components/SocialSignIn";
 import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
 import { ProfileActionRow } from "@/components/profile/ProfileActionRow";
 import { ProfileHero } from "@/components/profile/ProfileHero";
-import { ProfileOverflowMenu } from "@/components/profile/ProfileOverflowMenu";
 import StarRating from "@/components/StarRating";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth, type Teacher } from "@/context/AuthContext";
@@ -42,7 +41,7 @@ interface StoredCredential {
 type CredentialLoadState = "loading" | "ready" | "error";
 
 export default function TeacherProfile() {
-  const { user, logout, refreshUser } = useAuth();
+  const { user, refreshUser } = useAuth();
   const colors = useColors();
   const { t, numeric, space, radius, gutter } = useLayout();
   const insets = useSafeAreaInsets();
@@ -66,23 +65,6 @@ export default function TeacherProfile() {
   }, []);
 
   useEffect(() => { void loadCredentials(); }, [loadCredentials]);
-
-  const doLogout = async () => {
-    await logout();
-    router.replace("/welcome");
-  };
-
-  const handleLogout = () => {
-    if (Platform.OS === "web") {
-      if (typeof window !== "undefined" && !window.confirm("Are you sure you want to log out?")) return;
-      void doLogout();
-      return;
-    }
-    Alert.alert("Log Out", "Are you sure you want to log out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: () => void doLogout() },
-    ]);
-  };
 
   if (!teacher || teacher.role !== "teacher") return null;
 
@@ -155,27 +137,11 @@ export default function TeacherProfile() {
     <ScrollView
       style={styles.screen}
       contentContainerStyle={[styles.container, {
-        paddingTop: insets.top + space.md,
+        paddingTop: space.md,
         paddingBottom: insets.bottom + space.huge + space.huge,
       }]}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.profileTopRow}>
-        <View style={styles.profileWordmark}>
-          <View style={[styles.profileWordmarkMark, { borderRadius: radius.xs, backgroundColor: colors.brand }]}>
-            <Feather name="book-open" size={13} color={colors.brandForeground} />
-          </View>
-          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Fadko</Text>
-        </View>
-        <ProfileOverflowMenu items={[
-          { icon: "edit-3", label: "Edit account details", detail: "Location, school and contact", onPress: () => router.push({ pathname: "/onboarding", params: { edit: "1", role: "teacher" } }) },
-          { icon: "credit-card", label: "Teaching & earnings", detail: "Payouts and payment records", onPress: () => router.push("/(teacher)/subscription") },
-          { icon: "bell", label: "Notifications", detail: "Choose what reaches you", onPress: () => router.push("/notification-settings") },
-          { icon: "life-buoy", label: "Fadko Support", detail: "Get help from the support team", onPress: () => router.push("/support") },
-          { icon: "zap", label: "Fadko AI assistant", detail: "Coming soon", disabled: true },
-          { icon: "log-out", label: "Log out", onPress: handleLogout, destructive: true },
-        ]} />
-      </View>
       <ProfileHero
         eyebrow="MY TEACHING PROFILE"
         initials={initials}
@@ -315,10 +281,6 @@ export default function TeacherProfile() {
         />
       </View>
 
-      <TouchableOpacity accessibilityRole="button" style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.7}>
-        <Feather name="log-out" size={18} color={colors.destructive} />
-        <Text style={[t.bodyStrong, { color: colors.destructive }]}>Log Out</Text>
-      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -359,9 +321,5 @@ function createStyles({ colors, space, radius, gutter }: StyleOptions) {
     primaryAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primary, paddingHorizontal: space.sm },
     destructiveAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingHorizontal: space.sm },
     socialRow: { marginHorizontal: space.xxs },
-    profileTopRow: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-    profileWordmark: { flexDirection: "row", alignItems: "center", gap: space.xs },
-    profileWordmarkMark: { width: space.lg, height: space.lg, alignItems: "center", justifyContent: "center" },
-    logoutButton: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingVertical: space.sm },
   });
 }

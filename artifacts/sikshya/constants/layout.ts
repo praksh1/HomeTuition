@@ -58,6 +58,25 @@ export const radius = {
 } as const;
 
 /* ================================================================
+ * MOTION — one physical language across the product
+ * ============================================================== */
+
+/**
+ * Short, restrained motion that acknowledges a touch without turning navigation into a show.
+ * Keeping this here prevents every new surface from inventing its own duration or spring.
+ */
+export const motion = {
+  fast: 140,
+  standard: 220,
+  large: 320,
+  spring: {
+    damping: 22,
+    stiffness: 260,
+    mass: 0.78,
+  },
+} as const;
+
+/* ================================================================
  * ELEVATION — three levels, all cheap
  * ============================================================== */
 

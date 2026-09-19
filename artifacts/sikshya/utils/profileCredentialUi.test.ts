@@ -19,7 +19,7 @@ const studentPaymentsSource = readFileSync(
 );
 
 test("a successful credential upload refreshes the server-owned teaching status", () => {
-  assert.match(teacherProfileSource, /const \{ user, logout, refreshUser \} = useAuth\(\)/);
+  assert.match(teacherProfileSource, /const \{ user, refreshUser \} = useAuth\(\)/);
   assert.match(
     teacherProfileSource,
     /await apiPost\([\s\S]*await loadCredentials\(\);[\s\S]*await refreshUser\(\);/,

@@ -4,6 +4,7 @@ import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
 import { HIT_SLOP_MIN } from "@/constants/layout";
+import { FadkoLogo } from "@/components/FadkoLogo";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 
@@ -43,7 +44,7 @@ export function ProfileHero({ eyebrow, initials, name, subtitle, status, childre
     >
       <View style={[styles.eyebrowRow, { gap: space.xs }]}>
         <View style={[styles.brandMark, { width: space.xxl, height: space.xxl, borderRadius: radius.sm, backgroundColor: colors.brand }]}>
-          <Feather name="book-open" size={16} color={colors.brandForeground} />
+          <FadkoLogo showWordmark={false} markHeight={14} color={colors.brandForeground} />
         </View>
         <Text style={[t.overline, { color: colors.onInverseMuted }]}>{eyebrow}</Text>
       </View>

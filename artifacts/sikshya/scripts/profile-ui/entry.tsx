@@ -4,7 +4,11 @@ import { createRoot } from "react-dom/client";
 import StudentProfile from "../../app/(student)/profile";
 import TeacherProfile from "../../app/(teacher)/profile";
 import Onboarding from "../../app/onboarding";
+import { AppShellHeader } from "../../components/navigation/AppShellHeader";
 
 const screen = new URLSearchParams(window.location.search).get("screen");
 const Component = screen === "teacher" ? TeacherProfile : screen === "editor" ? Onboarding : StudentProfile;
-createRoot(document.getElementById("root")!).render(<Component />);
+const role = screen === "teacher" ? "teacher" : "student";
+createRoot(document.getElementById("root")!).render(
+  screen === "editor" ? <Component /> : <><AppShellHeader role={role} routeName="profile" /><Component /></>,
+);

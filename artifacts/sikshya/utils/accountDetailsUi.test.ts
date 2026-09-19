@@ -13,6 +13,7 @@ const onboarding = read("app/onboarding.tsx");
 const support = read("app/support.tsx");
 const profileHero = read("components/profile/ProfileHero.tsx");
 const profileMenu = read("components/profile/ProfileOverflowMenu.tsx");
+const appShellHeader = read("components/navigation/AppShellHeader.tsx");
 const selectionField = read("components/profile/SearchableSelectionField.tsx");
 
 test("teacher and student profiles share one editable account-details surface", () => {
@@ -32,13 +33,12 @@ test("both roles share the premium identity hero and descriptive action rows", (
 });
 
 test("both roles expose the same premium profile menu without pretending an AI agent exists", () => {
-  assert.match(teacherProfile, /<ProfileOverflowMenu items=\{/);
-  assert.match(studentProfile, /<ProfileOverflowMenu items=\{/);
-  assert.match(profileMenu, /PROFILE MENU/);
-  assert.match(teacherProfile, /Fadko AI assistant/);
-  assert.match(studentProfile, /Fadko AI assistant/);
-  assert.match(teacherProfile, /Coming soon/);
-  assert.match(studentProfile, /Coming soon/);
+  assert.match(appShellHeader, /<ProfileOverflowMenu items=\{items\}/);
+  assert.match(appShellHeader, /role === "teacher"/);
+  assert.match(profileMenu, />Menu</);
+  assert.match(appShellHeader, /Fadko assistant/);
+  assert.match(appShellHeader, /disabled: true/);
+  assert.match(profileMenu, />Soon</);
 });
 
 test("teacher credentials stay compact until the teacher asks to manage them", () => {
