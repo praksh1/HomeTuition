@@ -56,7 +56,6 @@ function ClassicStudentTabLayout() {
         options={{
           title: "Support",
           href: null,
-          tabBarIcon: icon("life-buoy"),
         }}
       />
       <Tabs.Screen name="requests" options={{ href: null }} />
