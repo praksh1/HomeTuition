@@ -1,8 +1,8 @@
 import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import React from "react";
+import { AppShellHeader } from "@/components/navigation/AppShellHeader";
 import { FloatingTabBar, type FloatingTabBarProps } from "@/components/navigation/FloatingTabBar";
-import SupportAssistantLauncher from "@/components/support/SupportAssistantLauncher";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
 
 function ClassicTabLayout() {
@@ -15,19 +15,19 @@ function ClassicTabLayout() {
   return (
     <Tabs
       tabBar={(props) => (
-        <>
-          <SupportAssistantLauncher />
-          <FloatingTabBar {...(props as unknown as FloatingTabBarProps)} />
-        </>
+        <FloatingTabBar {...(props as unknown as FloatingTabBarProps)} />
       )}
-      screenOptions={{
-        headerShown: false,
-      }}
+      screenOptions={({ route }) => ({
+        headerShown: ["index", "sessions", "students", "support", "messages", "profile"].includes(route.name),
+        header: () => <AppShellHeader role="teacher" routeName={route.name} />,
+        animation: "fade",
+        freezeOnBlur: true,
+      })}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: "Dashboard",
+          title: "Home",
           tabBarIcon: icon("home"),
         }}
       />
@@ -45,18 +45,13 @@ function ClassicTabLayout() {
           tabBarIcon: icon("users"),
         }}
       />
-      {/*
-        Support takes the place Plan used to hold.
-
-        The owner's words: "the 'Plan' tab can be integrated inside the 'Profile' tab, and
-        maybe the Customer Service can be a separate tab". A subscription is something a
-        teacher sets up once and then forgets; support is what they reach for on the day
-        something goes wrong, and it was two taps deep inside Profile.
-      */}
+      {/* Support stays inside the shell but opens from the profile menu, keeping the
+          navigation rail focused on the five destinations used every day. */}
       <Tabs.Screen
         name="support"
         options={{
           title: "Support",
+          href: null,
           tabBarIcon: icon("life-buoy"),
         }}
       />
@@ -77,7 +72,7 @@ function ClassicTabLayout() {
         }}
       />
       {/* Still routable, and reached from Profile — just no longer a tab of its own. */}
-      <Tabs.Screen name="subscription" options={{ href: null }} />
+      <Tabs.Screen name="subscription" options={{ href: null, tabBarStyle: { display: "none" } }} />
       {/*
         Reached from the Dashboard rather than given a tab of its own.
 

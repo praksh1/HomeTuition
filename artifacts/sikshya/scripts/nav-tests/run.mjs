@@ -1,11 +1,7 @@
 /**
  * The tabs each role actually sees, in a real browser.
  *
- * The owner asked for two moves: "the 'Plan' tab can be integrated inside the 'Profile' tab,
- * and maybe the Customer Service can be a separate tab for teachers - same for students - the
- * Customer Service needs to have a separate Tab!"
- *
- * Worth a test rather than a look, because moving a screen out of a tab bar is exactly the
+ * Worth a test rather than a look, because moving a screen into the role-aware profile menu is exactly the
  * change that leaves it unreachable: the route still exists, everything compiles, and the only
  * way to notice is to open the app and try to get to it. So this checks both halves — that the
  * tab is gone, and that the screen it held is still one tap from Profile.
@@ -92,7 +88,7 @@ async function waitForSite() {
  * substring match pretending to be an exact one.
  */
 async function tabLabels(page) {
-  return page.$$eval('a[role="tab"]', (nodes) =>
+  return page.$$eval('[role="tab"]', (nodes) =>
     nodes.map((n) => n.textContent.replace(/[\uE000-\uF8FF]/g, "").trim()),
   );
 }
@@ -123,18 +119,18 @@ async function main() {
   check("the floating navigation stays inside the phone viewport",
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     `${await page.evaluate(() => document.documentElement.scrollWidth)}px > ${await page.evaluate(() => innerWidth)}px`);
-  check("one tab is visibly selected", await page.locator('a[role="tab"][aria-selected="true"]').count() === 1);
-  check("Support is a tab of its own", teacherTabs.some((t) => /support/i.test(t)), teacherTabs.join(" | "));
+  check("one tab is visibly selected", await page.locator('[role="tab"][aria-selected="true"]').count() === 1);
+  check("Support moved into the teacher's account menu", !teacherTabs.some((t) => /support/i.test(t)), teacherTabs.join(" | "));
   check("Plan is no longer a tab", !teacherTabs.some((t) => /^plan$/i.test(t)), teacherTabs.join(" | "));
   check("nothing else was lost on the way",
-    ["Dashboard", "Schedule", "Students", "Messages", "Profile"].every((want) => teacherTabs.includes(want)),
+    ["Home", "Schedule", "Students", "Messages", "Profile"].every((want) => teacherTabs.includes(want)),
     JSON.stringify(teacherTabs));
-  check("only the six teacher destinations are visible",
-    teacherTabs.length === 6,
+  check("only the five high-value teacher destinations are visible",
+    teacherTabs.length === 5,
     JSON.stringify(teacherTabs));
 
   // The half that a compile cannot catch: the screen that left the tab bar is still reachable.
-  await page.click('a[role="tab"][href="/profile"]', { timeout: 15000 });
+  await page.locator('[data-testid="tab-profile"]').click({ timeout: 15000 });
   await page.waitForTimeout(2500);
   check("Profile offers the plan instead", await page.locator('[data-testid="subscription-link"]').count() > 0);
   await page.locator('[data-testid="subscription-link"]').click({ timeout: 10000 });
@@ -143,7 +139,9 @@ async function main() {
     /subscription/.test(await page.evaluate(() => location.pathname)),
     await page.evaluate(() => location.pathname));
 
-  await page.click('a[role="tab"][href="/support"]', { timeout: 15000 });
+  await page.locator('[data-testid="profile-overflow-trigger"]').click({ timeout: 10000 });
+  check("the profile menu exposes Support", await page.locator('[data-testid="profile-menu-fadko-support"]').count() === 1);
+  await page.locator('[data-testid="profile-menu-fadko-support"]').click({ timeout: 10000 });
   await page.waitForTimeout(2500);
   /*
    * Matched on the form itself, not on its heading.
@@ -173,8 +171,8 @@ async function main() {
   await coldPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
   await coldPage.goto(`${siteUrl}/support`, { waitUntil: "networkidle" });
   await coldPage.waitForTimeout(3000);
-  check("opened cold as a tab, there is no back arrow to go nowhere",
-    (await coldPage.locator('[data-testid="support-back-btn"]').count()) === 0);
+  check("opened cold, Support still gives the teacher a safe way home",
+    (await coldPage.locator('[data-testid="support-back-btn"]').count()) === 1);
   check("and the form is there all the same",
     (await coldPage.locator('[data-testid="dispute-description-input"]').count()) > 0,
     (await coldPage.evaluate(() => document.body.innerText)).slice(0, 160).replace(/\n/g, " | "));
@@ -195,15 +193,18 @@ async function main() {
   check("the student's floating navigation stays inside the phone viewport",
     await page2.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     `${await page2.evaluate(() => document.documentElement.scrollWidth)}px > ${await page2.evaluate(() => innerWidth)}px`);
-  check("students get a Support tab too", studentTabs.some((t) => /support/i.test(t)), studentTabs.join(" | "));
+  check("Support moved into the student's account menu", !studentTabs.some((t) => /support/i.test(t)), studentTabs.join(" | "));
   check("their other tabs are untouched",
     ["Discover", "Classes", "Messages", "Profile"].every((want) => studentTabs.includes(want)),
     JSON.stringify(studentTabs));
-  check("only the five student destinations are visible",
-    studentTabs.length === 5,
+  check("only the four daily student destinations are visible",
+    studentTabs.length === 4,
     JSON.stringify(studentTabs));
 
-  await page2.click('a[role="tab"][href="/support"]', { timeout: 15000 });
+  await page2.locator('[data-testid="tab-profile"]').click({ timeout: 15000 });
+  await page2.locator('[data-testid="profile-overflow-trigger"]').click({ timeout: 10000 });
+  check("the student's profile menu exposes Support", await page2.locator('[data-testid="profile-menu-fadko-support"]').count() === 1);
+  await page2.locator('[data-testid="profile-menu-fadko-support"]').click({ timeout: 10000 });
   await page2.waitForTimeout(2500);
   check("and it opens the same report form",
     (await page2.locator('[data-testid="dispute-description-input"]').count()) > 0,

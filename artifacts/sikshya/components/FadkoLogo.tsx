@@ -7,6 +7,7 @@ import { useLayout } from "@/hooks/useLayout";
 interface FadkoLogoProps {
   showWordmark?: boolean;
   compact?: boolean;
+  markHeight?: number;
   color?: string;
   wordmarkColor?: string;
 }
@@ -15,12 +16,14 @@ interface FadkoLogoProps {
 export function FadkoLogo({
   showWordmark = true,
   compact = false,
+  markHeight,
   color,
   wordmarkColor,
 }: FadkoLogoProps) {
   const colors = useColors();
   const { t, space } = useLayout();
   const markColor = color ?? colors.primary;
+  const resolvedMarkHeight = markHeight ?? (compact ? space.xl : space.huge);
 
   return (
     <View
@@ -29,8 +32,8 @@ export function FadkoLogo({
       style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}
     >
       <Svg
-        width={compact ? space.huge : space.huge * 2}
-        height={compact ? space.xl : space.huge}
+        width={resolvedMarkHeight * 2}
+        height={resolvedMarkHeight}
         viewBox="0 0 192 96"
         aria-hidden
       >

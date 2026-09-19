@@ -19,6 +19,7 @@ import { useLayout } from "@/hooks/useLayout";
 import { HIT_SLOP_MIN, elevation, radius, space } from "@/constants/layout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
+import { useAuth } from "@/context/AuthContext";
 
 const REASONS = [
   "Payment Issue",
@@ -65,6 +66,7 @@ type PickedFile = UploadableFile;
 const MAX_EVIDENCE_BYTES = 25 * 1024 * 1024;
 
 export default function SupportScreen() {
+  const { user } = useAuth();
   const colors = useColors();
   const { t } = useLayout();
   const insets = useSafeAreaInsets();
@@ -259,6 +261,14 @@ export default function SupportScreen() {
   const canSubmit =
     !!reason && description.trim().length > 0 && (!needsEvidence || !!file) && !submitting;
 
+  const leaveSupport = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+    router.replace(user?.role === "teacher" ? "/(teacher)" : "/(student)");
+  };
+
   return (
     <ScrollView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -266,18 +276,16 @@ export default function SupportScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.header}>
-        {/*
-          No arrow when this is a tab. The same screen is reached three ways — from Profile,
-          from a class that went wrong, and now as a tab of its own — and a back arrow on the
-          tab would be a control that does nothing.
-        */}
-        {router.canGoBack() ? (
-          <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} testID="support-back-btn">
-            <Feather name="arrow-left" size={22} color={colors.foreground} />
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 22 }} />
-        )}
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Leave Support"
+          onPress={leaveSupport}
+          activeOpacity={0.7}
+          testID="support-back-btn"
+          style={[styles.backButton, { backgroundColor: colors.muted }]}
+        >
+          <Feather name="arrow-left" size={22} color={colors.foreground} />
+        </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.foreground, flex: 1, textAlign: "center" }]}>
           Support
         </Text>
@@ -549,6 +557,7 @@ export default function SupportScreen() {
 const styles = StyleSheet.create({
   container: { paddingHorizontal: space.md, gap: space.lg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  backButton: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
   headerTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
   myRequests: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   myRequestsText: { fontSize: 13, fontFamily: "Inter_500Medium" },

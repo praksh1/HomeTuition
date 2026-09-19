@@ -1,8 +1,19 @@
-import React from "react";
-import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AccessibilityInfo,
+  Animated,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+  type LayoutChangeEvent,
+} from "react-native";
+import * as Haptics from "expo-haptics";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { HIT_SLOP_MIN, elevation, radius, space } from "@/constants/layout";
+import { HIT_SLOP_MIN, elevation, motion, radius, space } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 
@@ -26,59 +37,119 @@ type TabNavigation = {
 };
 export type FloatingTabBarProps = { state: TabState; descriptors: Record<string, TabDescriptor>; navigation: TabNavigation };
 
-const LinkPressable = Pressable as React.ComponentType<React.ComponentProps<typeof Pressable> & { href?: string }>;
-
 /**
- * Fadko's primary navigation surface.
- *
- * The old tab bar was technically usable but visually read like a browser footer. This shared
- * bar keeps the familiar React Navigation contract while giving both mobile and web one clear
- * place in the product: a calm floating capsule, a soft active "bubble", and a tiny live badge.
- * On a laptop it grows only to a readable width instead of stretching across the whole window.
+ * A stable app control surface: compact on phones and a navigation rail on laptops.
+ * The selected surface physically moves between destinations instead of each tab blinking on.
  */
 export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBarProps) {
   const colors = useColors();
   const { t, isExpanded } = useLayout();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
+  const position = useRef(new Animated.Value(0)).current;
+  const [shellSize, setShellSize] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const currentOptions = descriptors[state.routes[state.index].key]?.options as RouteOptions | undefined;
 
-  // Hidden detail routes can still live inside the tab navigator without covering their content.
-  if (!currentOptions?.tabBarIcon || currentOptions.href === null || (currentOptions.tabBarStyle as { display?: string } | undefined)?.display === "none") {
+  const visibleRoutes = useMemo(() => state.routes.filter((route) => {
+    const options = descriptors[route.key]?.options;
+    return Boolean(options?.tabBarIcon && options.href !== null);
+  }), [descriptors, state.routes]);
+  const activeRoute = state.routes[state.index];
+  const activeIndex = visibleRoutes.findIndex((route) => route.key === activeRoute.key);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((value) => { if (mounted) setReduceMotion(value); });
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", setReduceMotion);
+    return () => { mounted = false; subscription.remove(); };
+  }, []);
+
+  useEffect(() => {
+    // Hidden destinations such as Support keep the shell available, but no
+    // visible tab should pretend to be selected while the user is there.
+    if (activeIndex < 0) return;
+    if (reduceMotion) {
+      position.setValue(activeIndex);
+      return;
+    }
+    Animated.spring(position, {
+      toValue: activeIndex,
+      useNativeDriver: true,
+      ...motion.spring,
+    }).start();
+  }, [activeIndex, position, reduceMotion]);
+
+  if ((currentOptions?.tabBarStyle as { display?: string } | undefined)?.display === "none") {
     return null;
   }
+
+  const count = Math.max(visibleRoutes.length, 1);
+  const mobileWidth = Math.min(width - space.lg, 430);
+  const railItemHeight = 64;
+  const indicatorTravel = isExpanded
+    ? Math.max(0, railItemHeight * (count - 1))
+    : Math.max(0, ((shellSize - space.xs * 2) / count) * (count - 1));
+  const indicatorTransform = position.interpolate({
+    inputRange: count === 1 ? [0, 1] : [0, count - 1],
+    outputRange: [0, indicatorTravel],
+    extrapolate: "clamp",
+  });
+
+  const captureSize = (event: LayoutChangeEvent) => {
+    setShellSize(isExpanded ? event.nativeEvent.layout.height : event.nativeEvent.layout.width);
+  };
 
   return (
     <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
       <View
         pointerEvents="box-none"
-        style={[
-          styles.dock,
-          {
-            bottom: Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs),
-            paddingHorizontal: isExpanded ? space.xl : space.sm,
-          },
-        ]}
+        style={isExpanded ? styles.desktopDock : [styles.mobileDock, { bottom: Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) }]}
       >
         <View
+          onLayout={captureSize}
           style={[
             styles.shell,
+            isExpanded ? styles.rail : styles.bar,
             {
-              width: Math.min(Math.max(width - space.sm, 280), isExpanded ? 820 : 620),
-              borderRadius: radius.lg + space.xs,
-              backgroundColor: colors.card,
+              width: isExpanded ? 92 : mobileWidth,
+              minHeight: isExpanded ? count * railItemHeight + space.xs * 2 : 66,
               borderColor: colors.border,
+              backgroundColor: colors.card,
               ...elevation.sheet,
             },
           ]}
         >
-          {state.routes.map((route, index) => {
+          {shellSize > 0 && activeIndex >= 0 ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.indicator,
+                isExpanded
+                  ? {
+                      top: space.xs,
+                      left: space.xs,
+                      right: space.xs,
+                      height: railItemHeight - 4,
+                      transform: [{ translateY: indicatorTransform }],
+                    }
+                  : {
+                      top: space.xs,
+                      bottom: space.xs,
+                      left: space.xs,
+                      width: Math.max(44, (shellSize - space.xs * 2) / count - 2),
+                      transform: [{ translateX: indicatorTransform }],
+                    },
+                { backgroundColor: colors.actionSoft, borderColor: `${colors.primary}20` },
+              ]}
+            >
+              <View style={[styles.indicatorHighlight, { backgroundColor: colors.card }]} />
+            </Animated.View>
+          ) : null}
+
+          {visibleRoutes.map((route) => {
+            const index = state.routes.findIndex((candidate) => candidate.key === route.key);
             const options = descriptors[route.key].options;
-            // Expo Router removes its `href: null` hint before custom tab bars receive the
-            // descriptor on web. A real primary tab always defines an icon; hidden detail
-            // routes deliberately do not. Requiring the icon keeps paths such as monthly,
-            // teacher/[id] and classroom/[id] out of the visible navigation.
-            if (!options.tabBarIcon || (options as RouteOptions).href === null) return null;
             const focused = state.index === index;
             const label = typeof options.tabBarLabel === "string"
               ? options.tabBarLabel
@@ -86,24 +157,30 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
             const badge = options.tabBarBadge;
             const onPress = () => {
               const event = navigation.emit({ type: "tabPress", target: route.key, canPreventDefault: true });
-              if (!focused && !event.defaultPrevented) navigation.navigate(route.name, route.params);
+              if (!focused && !event.defaultPrevented) {
+                if (Platform.OS !== "web") void Haptics.selectionAsync();
+                navigation.navigate(route.name, route.params);
+              }
             };
             const onLongPress = () => navigation.emit({ type: "tabLongPress", target: route.key });
             const icon = options.tabBarIcon?.({ focused, color: focused ? colors.primary : colors.mutedForeground, size: 21, position: "below-icon" });
 
             return (
-              <LinkPressable
+              <Pressable
                 key={route.key}
                 accessibilityRole="tab"
                 accessibilityState={focused ? { selected: true } : {}}
                 accessibilityLabel={options.tabBarAccessibilityLabel ?? label}
                 onPress={onPress}
                 onLongPress={onLongPress}
-                href={Platform.OS === "web" ? (route.name === "index" ? "/" : `/${route.name}`) : undefined}
                 testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
-                style={({ pressed }) => [styles.item, { minHeight: HIT_SLOP_MIN + space.xs }, pressed && styles.pressed]}
+                style={({ pressed }) => [
+                  styles.item,
+                  isExpanded ? { height: railItemHeight } : { minHeight: HIT_SLOP_MIN + space.sm },
+                  pressed && styles.pressed,
+                ]}
               >
-                <View style={[styles.bubble, focused && { backgroundColor: colors.actionSoft, borderColor: colors.primary }]}>
+                <View style={styles.iconWrap}>
                   {icon}
                   {badge !== undefined && badge !== null ? (
                     <View style={[styles.badge, { backgroundColor: colors.brand, borderColor: colors.card }]}>
@@ -111,11 +188,10 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                     </View>
                   ) : null}
                 </View>
-                <Text numberOfLines={1} style={[t.caption, styles.label, { color: focused ? colors.primary : colors.mutedForeground }]}>
+                <Text numberOfLines={1} style={[t.caption, styles.label, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
                   {label}
                 </Text>
-                {focused ? <View style={[styles.activeDot, { backgroundColor: colors.primary }]} /> : null}
-              </LinkPressable>
+              </Pressable>
             );
           })}
         </View>
@@ -125,13 +201,17 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
 }
 
 const styles = StyleSheet.create({
-  dock: { position: "absolute", left: 0, right: 0, alignItems: "center" },
-  shell: { flexDirection: "row", alignItems: "stretch", borderWidth: 1, padding: space.xs },
-  item: { flex: 1, minWidth: 44, alignItems: "center", justifyContent: "center", gap: 2, borderRadius: radius.md },
-  pressed: { opacity: 0.72 },
-  bubble: { width: 42, height: 30, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, borderColor: "transparent" },
-  label: { fontWeight: "500" },
-  activeDot: { width: 4, height: 4, borderRadius: radius.pill, marginTop: 1 },
-  badge: { position: "absolute", top: -6, right: -7, minWidth: 18, height: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 3, borderRadius: radius.pill, borderWidth: 2 },
+  mobileDock: { position: "absolute", left: 0, right: 0, alignItems: "center" },
+  desktopDock: { position: "absolute", left: space.xl, top: 96, alignItems: "flex-start" },
+  shell: { overflow: "hidden", borderWidth: 1 },
+  bar: { flexDirection: "row", alignItems: "stretch", borderRadius: radius.pill, padding: space.xs },
+  rail: { flexDirection: "column", borderRadius: radius.lg, padding: space.xs },
+  indicator: { position: "absolute", overflow: "hidden", borderWidth: 1, borderRadius: radius.pill },
+  indicatorHighlight: { position: "absolute", left: "22%", right: "22%", top: 2, height: 1, opacity: 0.8 },
+  item: { flex: 1, minWidth: 44, alignItems: "center", justifyContent: "center", gap: 3, borderRadius: radius.pill, zIndex: 1 },
+  pressed: { opacity: 0.72, transform: [{ scale: 0.94 }] },
+  iconWrap: { width: 28, height: 25, alignItems: "center", justifyContent: "center" },
+  label: { maxWidth: "100%" },
+  badge: { position: "absolute", top: -7, right: -8, minWidth: 18, height: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 3, borderRadius: radius.pill, borderWidth: 2 },
   badgeText: { lineHeight: 11, fontWeight: "700", transform: [{ scale: 0.82 }] },
 });
