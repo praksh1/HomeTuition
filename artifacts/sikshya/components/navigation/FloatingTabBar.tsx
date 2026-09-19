@@ -175,6 +175,7 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                 <Pressable
                   accessibilityRole="tab"
                   accessibilityState={focused ? { selected: true } : {}}
+                  aria-current={focused ? "page" : undefined}
                   accessibilityLabel={options.tabBarAccessibilityLabel ?? label}
                   onPress={onPress}
                   onLongPress={onLongPress}

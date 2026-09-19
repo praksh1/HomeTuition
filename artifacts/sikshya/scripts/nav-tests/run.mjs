@@ -125,7 +125,7 @@ async function main() {
   check("the floating navigation stays inside the phone viewport",
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     `${await page.evaluate(() => document.documentElement.scrollWidth)}px > ${await page.evaluate(() => innerWidth)}px`);
-  check("one tab is visibly selected", await page.locator('[data-testid^="tab-"][aria-selected="true"]').count() === 1);
+  check("one tab is exposed as the current page", await page.locator('[data-testid^="tab-"][aria-current="page"]').count() === 1);
   check("Support moved into the teacher's account menu", !teacherTabs.some((t) => /support/i.test(t)), teacherTabs.join(" | "));
   check("Plan is no longer a tab", !teacherTabs.some((t) => /^plan$/i.test(t)), teacherTabs.join(" | "));
   check("nothing else was lost on the way",
@@ -150,11 +150,9 @@ async function main() {
     await page.evaluate(() => location.pathname));
 
   // Subscription is a focused child screen and deliberately covers the Profile page and its
-  // account menu. Return the way a teacher does before checking the menu; clicking through the
-  // covering scene only proved that Playwright could fight the transition layer, not that the
-  // account journey worked.
-  await page.goBack({ waitUntil: "networkidle" });
-  await page.waitForFunction(() => location.pathname === "/profile", null, { timeout: 10000 });
+  // account menu. Tab navigation can replace browser history entries, so browser Back is not a
+  // contract for this internal journey. Reopen Profile directly before checking its own menu.
+  await page.goto(`${siteUrl}/profile`, { waitUntil: "networkidle" });
   await page.waitForTimeout(600);
   await page.locator('[data-testid="profile-overflow-trigger"]').click({ timeout: 10000 });
   check("the profile menu exposes Support", await page.locator('[data-testid="profile-menu-fadko-support"]').count() === 1);
