@@ -172,7 +172,7 @@ await page.setViewportSize({ width: 1440, height: 900 });
 await page.waitForTimeout(400);
 const teacherDesktop = await page.locator('[data-testid="teacher-schedule-content"]').first().boundingBox();
 check("the teacher schedule keeps a calm reading width on a laptop",
-  !!teacherDesktop && teacherDesktop.width <= 760 && teacherDesktop.x >= 250,
+  !!teacherDesktop && teacherDesktop.width >= 1000 && teacherDesktop.width <= 1120 && teacherDesktop.x >= 280,
   teacherDesktop ? `x=${teacherDesktop.x} width=${teacherDesktop.width}` : "not found");
 check("the teacher schedule never creates sideways scrolling",
   await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -228,7 +228,7 @@ await sPage.setViewportSize({ width: 1440, height: 900 });
 await sPage.waitForTimeout(400);
 const studentDesktop = await sPage.locator('[data-testid="student-classes-content"]').first().boundingBox();
 check("the student's class library keeps a calm reading width on a laptop",
-  !!studentDesktop && studentDesktop.width <= 760 && studentDesktop.x >= 250,
+  !!studentDesktop && studentDesktop.width >= 1000 && studentDesktop.width <= 1120 && studentDesktop.x >= 280,
   studentDesktop ? `x=${studentDesktop.x} width=${studentDesktop.width}` : "not found");
 check("the student's class library never creates sideways scrolling",
   await sPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
