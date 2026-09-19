@@ -170,7 +170,7 @@ async function main() {
   console.log("\nA teacher taps a class that finished three days ago");
 
   // Get to My Sessions the way a teacher does — the tab bar, which is real links.
-  await page.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
+  await page.getByTestId("tab-sessions").click({ timeout: 15000 });
   await page.waitForTimeout(3500);
   // Finished classes now live behind the History view. Use its stable test id: the
   // status badge also says "Completed", but it cannot exist until History is open.
@@ -332,7 +332,7 @@ async function main() {
 
   await page2.goto(siteUrl, { waitUntil: "networkidle" });
   await page2.waitForTimeout(3000);
-  await page2.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
+  await page2.getByTestId("tab-sessions").click({ timeout: 15000 });
   await page2.waitForTimeout(2500);
   await page2.click('[data-testid="teacher-group-history"]', { timeout: 5000 });
   await page2.waitForTimeout(2000);
@@ -536,7 +536,7 @@ async function main() {
 
   await pagePage.goto(siteUrl, { waitUntil: "networkidle" });
   await pagePage.waitForTimeout(3500);
-  await pagePage.click('a[role="tab"][href="/sessions"]', { timeout: 15000 });
+  await pagePage.getByTestId("tab-sessions").click({ timeout: 15000 });
   await pagePage.waitForTimeout(2500);
   // Finished classes live behind the Schedule screen's History view. Keep this journey on
   // the same stable control as the earlier cases; swallowing a missing text label here made

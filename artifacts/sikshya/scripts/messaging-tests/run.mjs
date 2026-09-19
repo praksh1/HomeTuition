@@ -115,7 +115,7 @@ async function main() {
   console.log("\nA teacher writes to a student who has never written to them");
   await page.goto(siteUrl, { waitUntil: "networkidle" });
   await page.waitForTimeout(3000);
-  await page.click('a[role="tab"][href="/messages"]', { timeout: 15000 });
+  await page.getByTestId("tab-messages").click({ timeout: 15000 });
   await page.waitForTimeout(2000);
 
   const newButton = page.getByTestId("new-message-button").first();
