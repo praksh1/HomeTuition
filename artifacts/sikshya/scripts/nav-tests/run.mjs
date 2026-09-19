@@ -151,10 +151,12 @@ async function main() {
 
   // Subscription is a focused child screen and deliberately covers the Profile page and its
   // account menu. Tab navigation can replace browser history entries, so browser Back is not a
-  // contract for this internal journey. Reopen Profile directly before checking its own menu.
-  await page.goto(`${siteUrl}/profile`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(600);
-  await page.locator('[data-testid="profile-overflow-trigger"]').click({ timeout: 10000 });
+  // contract for this internal journey. The public URL `/profile` is shared by the teacher and
+  // student route groups, too, so a cold browser request cannot say which grouped route it means.
+  // Return to the role-aware shell and use the same Profile tab a person uses instead.
+  await page.goto(siteUrl, { waitUntil: "networkidle" });
+  await page.locator('[data-testid="tab-profile"]').click({ timeout: 15000 });
+  await page.locator('[data-testid="profile-overflow-trigger"]').click({ timeout: 15000 });
   check("the profile menu exposes Support", await page.locator('[data-testid="profile-menu-fadko-support"]').count() === 1);
   await page.locator('[data-testid="profile-menu-fadko-support"]').click({ timeout: 10000 });
   await page.waitForTimeout(2500);
@@ -243,8 +245,8 @@ async function main() {
   const page3 = await ctx3.newPage();
   await page3.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), student.token);
 
-  await page3.goto(`${siteUrl}/profile`, { waitUntil: "networkidle" });
-  await page3.waitForTimeout(3000);
+  await page3.goto(siteUrl, { waitUntil: "networkidle" });
+  await page3.locator('[data-testid="tab-profile"]').click({ timeout: 15000 });
   const profile = await page3.evaluate(() => document.body.innerText);
   check("Support is gone from the student's Profile", !/Customer Support/i.test(profile),
     profile.slice(0, 200).replace(/\n/g, " | "));
