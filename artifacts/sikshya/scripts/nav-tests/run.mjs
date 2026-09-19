@@ -154,7 +154,7 @@ async function main() {
    * without going anywhere.
    */
   const supportText = await page.evaluate(() => document.body.innerText);
-  check("the Support tab opens the report form",
+  check("the Support menu row opens the report form",
     (await page.locator('[data-testid="dispute-description-input"]').count()) > 0,
     supportText.slice(0, 160).replace(/\n/g, " | "));
   await ctx.close();

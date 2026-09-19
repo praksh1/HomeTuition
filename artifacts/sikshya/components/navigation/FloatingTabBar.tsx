@@ -53,6 +53,9 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
 
   const visibleRoutes = useMemo(() => state.routes.filter((route) => {
     const options = descriptors[route.key]?.options;
+    // Expo Router drops `href: null` from web descriptors. The icon is the
+    // cross-platform visibility contract: primary destinations have one;
+    // shell-preserving nested destinations deliberately do not.
     return Boolean(options?.tabBarIcon && options.href !== null);
   }), [descriptors, state.routes]);
   const activeRoute = state.routes[state.index];
