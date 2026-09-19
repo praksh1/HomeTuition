@@ -249,6 +249,12 @@ jobs:
       - name: Verify Profile and Nepal account details at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:profile-ui
 
+      # Role-aware navigation is a release contract too. This used to run only in the production
+      # workflow, so a stale teacher/student/operator shell assertion could pass Preview and stop
+      # main minutes before deployment. Keep the same real-API journey on both sides of the merge.
+      - name: Verify teacher, student and operator navigation
+        run: pnpm --filter @workspace/sikshya run test:nav
+
       - name: Verify Notification centre and settings at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:notifications-ui
 

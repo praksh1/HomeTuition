@@ -425,14 +425,15 @@ async function main() {
   await agentPage.goto(siteUrl, { waitUntil: "networkidle" });
   await agentPage.waitForTimeout(4000);
 
-  const agentTabs = await tabLabels(agentPage);
+  const agentDesk = await agentPage.evaluate(() => document.body.innerText);
+  const learnerOrTeacherShellTabs = await tabLabels(agentPage);
   check("an agent lands on the support desk, not a dashboard",
-    agentTabs.includes("Tickets") && agentTabs.includes("People") && agentTabs.includes("Activity"),
-    JSON.stringify(agentTabs));
+    (await agentPage.locator('[data-testid="admin-logout"]').count()) === 1
+      && /Support/i.test(agentDesk),
+    agentDesk.slice(0, 220).replace(/\n/g, " | "));
   check("and gets none of the teaching or learning tabs",
-    !agentTabs.includes("Discover") && !agentTabs.includes("Classes") &&
-      !agentTabs.includes("Schedule") && !agentTabs.includes("Dashboard"),
-    JSON.stringify(agentTabs));
+    learnerOrTeacherShellTabs.length === 0,
+    JSON.stringify(learnerOrTeacherShellTabs));
 
   const queue = await agentPage.evaluate(() => document.body.innerText);
   check("the queue shows the open ticket", /Refund Request/i.test(queue),
