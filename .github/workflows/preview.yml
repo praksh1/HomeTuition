@@ -252,6 +252,11 @@ jobs:
       # Role-aware navigation is a release contract too. This used to run only in the production
       # workflow, so a stale teacher/student/operator shell assertion could pass Preview and stop
       # main minutes before deployment. Keep the same real-API journey on both sides of the merge.
+      - name: Build the app for role-aware navigation
+        run: pnpm --filter @workspace/sikshya run build
+        env:
+          EXPO_PUBLIC_API_URL: http://127.0.0.1:8080
+
       - name: Verify teacher, student and operator navigation
         run: pnpm --filter @workspace/sikshya run test:nav
 
