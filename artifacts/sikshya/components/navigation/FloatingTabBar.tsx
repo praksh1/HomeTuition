@@ -58,6 +58,7 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
   const position = useRef(new Animated.Value(0)).current;
   const [shellSize, setShellSize] = useState(0);
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [pressedRoute, setPressedRoute] = useState<string | null>(null);
   const currentOptions = descriptors[state.routes[state.index].key]?.options as RouteOptions | undefined;
 
   const visibleRoutes = useMemo(() => state.routes.filter((route) => {
@@ -186,9 +187,10 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
             const icon = options.tabBarIcon?.({ focused, color: focused ? colors.primary : colors.mutedForeground, size: 21, position: "below-icon" });
             const href = (route.name === "index" ? "/" : `/${route.name}`) as Href;
 
-            // Expo Router places a browser-link host around its `asChild` content on web.
-            // That host, not the visible Pressable, is the flex child of the dock. Giving the
-            // slot the geometry prevents link text from deciding every tab's width and height.
+            // Expo Router flattens an `asChild` style before it reaches React Native Web. A
+            // Pressable style callback therefore disappears and leaves the browser anchor sized
+            // only by its icon and label. Keep this a concrete array (with press state held above)
+            // so the actual link receives the whole slot as its hit and focus surface.
             return (
               <View key={route.key} style={isExpanded ? styles.desktopSlot : styles.mobileSlot}>
                 <Link href={href} asChild>
@@ -199,11 +201,13 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                     accessibilityLabel={options.tabBarAccessibilityLabel ?? label}
                     onPress={onPress}
                     onLongPress={onLongPress}
+                    onPressIn={() => setPressedRoute(route.key)}
+                    onPressOut={() => setPressedRoute((current) => current === route.key ? null : current)}
                     testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
-                    style={({ pressed }) => [
+                    style={[
                       styles.item,
                       isExpanded && styles.desktopItem,
-                      pressed && styles.pressed,
+                      pressedRoute === route.key && styles.pressed,
                     ]}
                   >
                     <View style={styles.iconWrap}>

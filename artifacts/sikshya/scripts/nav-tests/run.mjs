@@ -122,19 +122,14 @@ async function navigationGeometry(page) {
       };
     };
 
-    // Expo Router owns the outer <a>, while React Native Web applies the Pressable geometry to
-    // the link's first child. The anchor's inline line-box can report only the icon/label height
-    // even though the full child surface is clickable through that anchor. Measure the actual
-    // styled press surface so this gate protects what a finger or pointer can really target.
-    const pressSurface = (link) => link?.firstElementChild ?? link;
     const tabLinks = [...document.querySelectorAll('[data-testid^="tab-"]')];
     const activeLink = document.querySelector('[data-testid^="tab-"][aria-current="page"]');
 
     return {
       shell: box(document.querySelector('[data-testid="primary-navigation-shell"]')),
       indicator: box(document.querySelector('[data-testid="primary-selection-indicator"]')),
-      active: box(pressSurface(activeLink)),
-      tabs: tabLinks.map((link) => box(pressSurface(link))),
+      active: box(activeLink),
+      tabs: tabLinks.map(box),
     };
   });
 }
