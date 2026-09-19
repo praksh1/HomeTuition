@@ -12,7 +12,12 @@ import type { Student } from "@/context/AuthContext";
 import { studentClassSection, studentSessionSection } from "@/utils/studentSessionGroups";
 import { useDates } from "@/context/DatePreferenceContext";
 import { useLayout } from "@/hooks/useLayout";
-import { HIT_SLOP_MIN, bottomNavClearance, marketplaceColumnMax } from "@/constants/layout";
+import {
+  HIT_SLOP_MIN,
+  bottomNavClearance,
+  desktopWorkspaceMax,
+  marketplaceColumnMax,
+} from "@/constants/layout";
 
 interface Session {
   id: string;
@@ -67,7 +72,7 @@ export default function StudentSessions() {
   const { user } = useAuth();
   const colors = useColors();
   const dates = useDates();
-  const { t, numeric, radius, space, gutter } = useLayout();
+  const { t, numeric, radius, space, gutter, isExpanded } = useLayout();
   const insets = useSafeAreaInsets();
   const student = user as Student;
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -320,7 +325,7 @@ export default function StudentSessions() {
         keyExtractor={(item) => item.key}
         contentContainerStyle={{
           width: "100%",
-          maxWidth: marketplaceColumnMax,
+          maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
           alignSelf: "center",
           paddingHorizontal: gutter,
           paddingTop: insets.top + space.md,

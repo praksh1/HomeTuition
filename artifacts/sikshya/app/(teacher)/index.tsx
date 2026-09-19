@@ -10,6 +10,7 @@ import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { numeric } from "@/constants/typography";
+import { desktopWorkspaceMax, marketplaceColumnMax } from "@/constants/layout";
 import Skeleton from "@/components/Skeleton";
 import { useNotifications } from "@/context/NotificationContext";
 import { useDates } from "@/context/DatePreferenceContext";
@@ -203,6 +204,7 @@ export default function TeacherDashboard() {
 
   return (
     <ScrollView
+      testID="teacher-dashboard"
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={{
         paddingHorizontal: gutter,
@@ -212,7 +214,7 @@ export default function TeacherDashboard() {
         // Capped and centred, so a laptop gets a readable column rather than a dashboard
         // stretched across a metre of screen. A no-op on a phone.
         width: "100%",
-        maxWidth: 760,
+        maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
         alignSelf: "center",
       }}
       showsVerticalScrollIndicator={false}

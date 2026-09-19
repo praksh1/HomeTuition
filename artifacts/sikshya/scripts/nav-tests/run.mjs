@@ -98,6 +98,57 @@ async function tabDestinations(page) {
     n.getAttribute("href") ?? n.closest("a")?.getAttribute("href") ?? null));
 }
 
+/**
+ * Read the physical navigation geometry, not merely whether labels exist.
+ *
+ * The September regression left every route reachable and every label present while the phone
+ * tabs collapsed into one corner and the selection bubble travelled across a different width.
+ * Text and overflow assertions therefore stayed green. These boxes are the actual contract.
+ */
+async function navigationGeometry(page) {
+  return page.evaluate(() => {
+    const box = (element) => {
+      if (!element) return null;
+      const rect = element.getBoundingClientRect();
+      return {
+        left: rect.left,
+        right: rect.right,
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+        centerX: rect.left + rect.width / 2,
+        centerY: rect.top + rect.height / 2,
+      };
+    };
+    return {
+      shell: box(document.querySelector('[data-testid="primary-navigation-shell"]')),
+      indicator: box(document.querySelector('[data-testid="tab-selection-indicator"]')),
+      active: box(document.querySelector('[data-testid^="tab-"][aria-current="page"]')),
+      tabs: [...document.querySelectorAll('[data-testid^="tab-"]')].map(box),
+    };
+  });
+}
+
+function mobileNavigationChecks(prefix, geometry, expectedCount) {
+  check(`${prefix}: every destination receives an equal share of the dock`,
+    geometry.tabs.length === expectedCount
+      && Math.max(...geometry.tabs.map((tab) => tab.width)) - Math.min(...geometry.tabs.map((tab) => tab.width)) < 2,
+    JSON.stringify(geometry));
+  check(`${prefix}: destinations fill the dock instead of piling into its left edge`,
+    geometry.shell && geometry.tabs[0] && geometry.tabs.at(-1)
+      && geometry.tabs[0].left - geometry.shell.left < 8
+      && geometry.shell.right - geometry.tabs.at(-1).right < 8,
+    JSON.stringify(geometry));
+  check(`${prefix}: every destination keeps a usable touch target`,
+    geometry.tabs.every((tab) => tab.width >= 48 && tab.height >= 48),
+    JSON.stringify(geometry.tabs));
+  check(`${prefix}: the moving selection surface stays under the selected destination`,
+    geometry.indicator && geometry.active
+      && Math.abs(geometry.indicator.centerX - geometry.active.centerX) < 4,
+    JSON.stringify({ indicator: geometry.indicator, active: geometry.active }));
+}
+
 async function main() {
   if (!(await fetch(`${API}/api/healthz`).catch(() => null))?.ok) {
     console.error(`No API at ${API}. Start it first, or set API_URL.`);
@@ -138,6 +189,47 @@ async function main() {
     teacherDestinations.every((href) => typeof href === "string" && href.startsWith("/")) &&
       teacherDestinations.includes("/profile") && teacherDestinations.includes("/messages"),
     JSON.stringify(teacherDestinations));
+
+  mobileNavigationChecks("teacher phone", await navigationGeometry(page), 5);
+
+  // The phone in the owner's recording exposes roughly 294 CSS pixels to the app. This is the
+  // exact width at which five tabs previously shrank to their minimums and broke away from the
+  // travelling selection surface, so it remains a permanent regression viewport.
+  const narrowCtx = await browser.newContext({
+    viewport: { width: 294, height: 700 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+  });
+  const narrowPage = await narrowCtx.newPage();
+  await narrowPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+  await narrowPage.goto(siteUrl, { waitUntil: "networkidle" });
+  await narrowPage.waitForTimeout(2500);
+  mobileNavigationChecks("narrow teacher phone", await navigationGeometry(narrowPage), 5);
+  await narrowCtx.close();
+
+  // A laptop gets a genuine labelled sidebar and a broad workspace. Reachability alone cannot
+  // catch the former 92px rail or the phone-width dashboard floating in an empty desktop canvas.
+  const desktopCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const desktopPage = await desktopCtx.newPage();
+  await desktopPage.addInitScript((t) => window.localStorage.setItem("@sikshya_token", t), teacher.token);
+  await desktopPage.goto(siteUrl, { waitUntil: "networkidle" });
+  await desktopPage.waitForTimeout(2500);
+  const desktopGeometry = await navigationGeometry(desktopPage);
+  check("laptop navigation is a readable sidebar, not a miniature phone rail",
+    desktopGeometry.shell?.width >= 220
+      && desktopGeometry.tabs.length === 5
+      && desktopGeometry.tabs.every((tab) => tab.width >= 200 && tab.height >= 60),
+    JSON.stringify(desktopGeometry));
+  check("laptop navigation stacks destinations without overlap",
+    desktopGeometry.tabs.every((tab, index, tabs) => index === 0 || tab.top >= tabs[index - 1].bottom - 1),
+    JSON.stringify(desktopGeometry.tabs));
+  check("the laptop selection surface follows the active row",
+    desktopGeometry.indicator && desktopGeometry.active
+      && Math.abs(desktopGeometry.indicator.centerY - desktopGeometry.active.centerY) < 4,
+    JSON.stringify({ indicator: desktopGeometry.indicator, active: desktopGeometry.active }));
+  const desktopDashboard = await desktopPage.locator('[data-testid="teacher-dashboard"]').boundingBox();
+  check("the laptop dashboard uses a desktop workspace",
+    desktopDashboard?.width >= 1000,
+    JSON.stringify(desktopDashboard));
+  await desktopCtx.close();
 
   // The half that a compile cannot catch: the screen that left the tab bar is still reachable.
   await page.locator('[data-testid="tab-profile"]').click({ timeout: 15000 });

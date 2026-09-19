@@ -3,13 +3,14 @@ import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { AppShellHeader } from "@/components/navigation/AppShellHeader";
 import { FloatingTabBar, type FloatingTabBarProps } from "@/components/navigation/FloatingTabBar";
+import { desktopSceneInset } from "@/constants/layout";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
 import { useAuth } from "@/context/AuthContext";
 import { useLayout } from "@/hooks/useLayout";
 
 function ClassicStudentTabLayout() {
   const { user } = useAuth();
-  const { isExpanded, space } = useLayout();
+  const { isExpanded } = useLayout();
   const { unread: unreadMessages } = useUnreadMessages(user?.role === "student");
   const icon = (name: React.ComponentProps<typeof Feather>["name"]) =>
     ({ color, focused }: { color: string; focused: boolean }) => (
@@ -28,7 +29,7 @@ function ClassicStudentTabLayout() {
           header: () => <AppShellHeader role="student" routeName={route.name} />,
           animation: "fade",
           freezeOnBlur: true,
-          sceneStyle: isExpanded && shellRoute ? { paddingLeft: 92 + space.xl } : undefined,
+          sceneStyle: isExpanded && shellRoute ? { paddingLeft: desktopSceneInset } : undefined,
         };
       }}
     >

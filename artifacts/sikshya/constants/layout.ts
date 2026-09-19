@@ -141,6 +141,21 @@ export const breakpoint = {
 } as const;
 
 /**
+ * The signed-in shell becomes a real desktop workspace at the expanded breakpoint.
+ *
+ * The first premium-shell pass used a 92px rail. That was wide enough for an icon, but not
+ * for a destination name, so a laptop received what looked like a shrunken phone dock pinned
+ * to its left edge. Keep the rail and its content gutter named together so the navigation and
+ * every role-aware scene can never drift into one another again.
+ */
+export const desktopNavigationWidth = 224;
+export const desktopNavigationOffset = space.xl;
+export const desktopSceneInset = desktopNavigationOffset + desktopNavigationWidth + space.xl;
+
+/** Main app destinations use the laptop canvas; prose/settings pages may still use readingWidth. */
+export const desktopWorkspaceMax = 1120;
+
+/**
  * How wide a column of running text may get before it stops being readable.
  *
  * A line the full width of a 1440px window runs to about 180 characters, and the eye loses its

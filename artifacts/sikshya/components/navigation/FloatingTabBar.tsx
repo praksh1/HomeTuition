@@ -14,7 +14,15 @@ import * as Haptics from "expo-haptics";
 import { Link, type Href } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { HIT_SLOP_MIN, elevation, motion, radius, space } from "@/constants/layout";
+import {
+  HIT_SLOP_MIN,
+  desktopNavigationOffset,
+  desktopNavigationWidth,
+  elevation,
+  motion,
+  radius,
+  space,
+} from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 
@@ -89,11 +97,15 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
   }
 
   const count = Math.max(visibleRoutes.length, 1);
-  const mobileWidth = Math.min(width - space.lg, 430);
+  // Leave only a small edge gutter on narrow phones. Five destinations at a 294px viewport
+  // otherwise collapsed to their 44px minimum widths while the moving indicator still used
+  // the full shell width, visibly separating the bubble from its label.
+  const mobileWidth = Math.min(Math.max(0, width - space.sm), 480);
   const railItemHeight = 64;
+  const mobilePadding = space.xxs;
   const indicatorTravel = isExpanded
     ? Math.max(0, railItemHeight * (count - 1))
-    : Math.max(0, ((shellSize - space.xs * 2) / count) * (count - 1));
+    : Math.max(0, ((shellSize - mobilePadding * 2) / count) * (count - 1));
   const indicatorTransform = position.interpolate({
     inputRange: count === 1 ? [0, 1] : [0, count - 1],
     outputRange: [0, indicatorTravel],
@@ -108,15 +120,18 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
     <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
       <View
         pointerEvents="box-none"
-        style={isExpanded ? styles.desktopDock : [styles.mobileDock, { bottom: Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) }]}
+        style={isExpanded
+          ? [styles.desktopDock, { left: desktopNavigationOffset }]
+          : [styles.mobileDock, { bottom: Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) }]}
       >
         <View
+          testID="primary-navigation-shell"
           onLayout={captureSize}
           style={[
             styles.shell,
             isExpanded ? styles.rail : styles.bar,
             {
-              width: isExpanded ? 92 : mobileWidth,
+              width: isExpanded ? desktopNavigationWidth : mobileWidth,
               minHeight: isExpanded ? count * railItemHeight + space.xs * 2 : 66,
               borderColor: colors.border,
               backgroundColor: colors.card,
@@ -126,6 +141,7 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
         >
           {shellSize > 0 && activeIndex >= 0 ? (
             <Animated.View
+              testID="tab-selection-indicator"
               pointerEvents="none"
               style={[
                 styles.indicator,
@@ -138,10 +154,10 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                       transform: [{ translateY: indicatorTransform }],
                     }
                   : {
-                      top: space.xs,
-                      bottom: space.xs,
-                      left: space.xs,
-                      width: Math.max(44, (shellSize - space.xs * 2) / count - 2),
+                      top: mobilePadding,
+                      bottom: mobilePadding,
+                      left: mobilePadding,
+                      width: Math.max(44, (shellSize - mobilePadding * 2) / count - 2),
                       transform: [{ translateX: indicatorTransform }],
                     },
                 { backgroundColor: colors.actionSoft, borderColor: `${colors.primary}20` },
@@ -182,7 +198,9 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                   testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
                   style={({ pressed }) => [
                     styles.item,
-                    isExpanded ? { height: railItemHeight } : { minHeight: HIT_SLOP_MIN + space.sm },
+                    isExpanded
+                      ? styles.desktopItem
+                      : [styles.mobileItem, { minHeight: HIT_SLOP_MIN + space.sm }],
                     pressed && styles.pressed,
                   ]}
                 >
@@ -194,7 +212,7 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                       </View>
                     ) : null}
                   </View>
-                  <Text numberOfLines={1} style={[t.caption, styles.label, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
+                  <Text numberOfLines={1} style={[isExpanded ? t.bodyStrong : t.caption, styles.label, isExpanded && styles.desktopLabel, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
                     {label}
                   </Text>
                 </Pressable>
@@ -209,16 +227,19 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
 
 const styles = StyleSheet.create({
   mobileDock: { position: "absolute", left: 0, right: 0, alignItems: "center" },
-  desktopDock: { position: "absolute", left: space.xl, top: 96, alignItems: "flex-start" },
+  desktopDock: { position: "absolute", top: 88, alignItems: "flex-start" },
   shell: { overflow: "hidden", borderWidth: 1 },
-  bar: { flexDirection: "row", alignItems: "stretch", borderRadius: radius.pill, padding: space.xs },
+  bar: { flexDirection: "row", alignItems: "stretch", borderRadius: radius.pill, padding: space.xxs },
   rail: { flexDirection: "column", borderRadius: radius.lg, padding: space.xs },
   indicator: { position: "absolute", overflow: "hidden", borderWidth: 1, borderRadius: radius.pill },
   indicatorHighlight: { position: "absolute", left: "22%", right: "22%", top: 2, height: 1, opacity: 0.8 },
-  item: { flex: 1, minWidth: 44, alignItems: "center", justifyContent: "center", gap: 3, borderRadius: radius.pill, zIndex: 1 },
+  item: { alignItems: "center", justifyContent: "center", gap: 3, borderRadius: radius.pill, zIndex: 1 },
+  mobileItem: { minWidth: 0, flexBasis: 0, flexGrow: 1, flexShrink: 1 },
+  desktopItem: { width: "100%", height: 64, flexDirection: "row", justifyContent: "flex-start", gap: space.sm, paddingHorizontal: space.md },
   pressed: { opacity: 0.72, transform: [{ scale: 0.94 }] },
   iconWrap: { width: 28, height: 25, alignItems: "center", justifyContent: "center" },
-  label: { maxWidth: "100%" },
+  label: { maxWidth: "100%", textAlign: "center" },
+  desktopLabel: { flex: 1, textAlign: "left" },
   badge: { position: "absolute", top: -7, right: -8, minWidth: 18, height: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 3, borderRadius: radius.pill, borderWidth: 2 },
   badgeText: { lineHeight: 11, fontWeight: "700", transform: [{ scale: 0.82 }] },
 });

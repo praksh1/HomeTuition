@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   HIT_SLOP_MIN,
   bottomNavClearance,
+  desktopWorkspaceMax,
   marketplaceColumnMax,
 } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
@@ -55,7 +56,7 @@ const CLASS_CATALOG_TABS: readonly { mode: ClassCatalogMode; label: string }[] =
 
 export default function Discover() {
   const colors = useColors();
-  const { t, gutter, space, radius } = useLayout();
+  const { t, gutter, space, radius, isExpanded } = useLayout();
   const insets = useSafeAreaInsets();
   const { unreadCount } = useNotifications();
   const { logout } = useAuth();
@@ -533,7 +534,7 @@ export default function Discover() {
             paddingHorizontal: gutter, paddingTop: space.md,
             paddingBottom: insets.bottom + bottomNavClearance, gap: space.md,
             width: "100%",
-            maxWidth: marketplaceColumnMax,
+            maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
             alignSelf: "center",
           }}
           keyboardShouldPersistTaps="handled"
@@ -562,7 +563,7 @@ export default function Discover() {
             paddingHorizontal: gutter, paddingTop: space.md,
             paddingBottom: insets.bottom + bottomNavClearance, gap: space.md,
             width: "100%",
-            maxWidth: marketplaceColumnMax,
+            maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
             alignSelf: "center",
           }}
           keyboardShouldPersistTaps="handled"
@@ -638,7 +639,7 @@ function ClassesView(props: {
   const { rows, hasMore, initialLoad, loadingMore, initialError, paginationError,
     typedQuery, submittedQuery, onQueryChange, onSubmit, onRetry, onLoadMore, onOpen } = props;
   const colors = useColors();
-  const { t, gutter, space, radius, isCompact } = useLayout();
+  const { t, gutter, space, radius, isCompact, isExpanded } = useLayout();
   const insets = useSafeAreaInsets();
 
   const state = publicClassListState({
@@ -653,7 +654,7 @@ function ClassesView(props: {
         paddingHorizontal: gutter, paddingTop: space.md,
         paddingBottom: insets.bottom + bottomNavClearance, gap: space.md,
         width: "100%",
-        maxWidth: marketplaceColumnMax,
+        maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
         alignSelf: "center",
       }}
       keyboardShouldPersistTaps="handled"

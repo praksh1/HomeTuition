@@ -13,7 +13,12 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { bottomNavClearance, HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
+import {
+  bottomNavClearance,
+  desktopWorkspaceMax,
+  HIT_SLOP_MIN,
+  marketplaceColumnMax,
+} from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
@@ -49,7 +54,7 @@ export default function ConversationList({ title }: { title: string }) {
   const colors = useColors();
   const dates = useDates();
   const insets = useSafeAreaInsets();
-  const { t, numeric, gutter, space, radius } = useLayout();
+  const { t, numeric, gutter, space, radius, isExpanded } = useLayout();
   const { lastEvent } = useNotifications();
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [drafts, setDrafts] = useState<Drafts>({});
@@ -122,7 +127,7 @@ export default function ConversationList({ title }: { title: string }) {
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={{
         width: "100%",
-        maxWidth: marketplaceColumnMax,
+        maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
         alignSelf: "center",
         paddingHorizontal: gutter,
         paddingTop: insets.top + space.md,

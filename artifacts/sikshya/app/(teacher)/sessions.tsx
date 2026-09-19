@@ -5,7 +5,12 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { HIT_SLOP_MIN, bottomNavClearance, marketplaceColumnMax } from "@/constants/layout";
+import {
+  HIT_SLOP_MIN,
+  bottomNavClearance,
+  desktopWorkspaceMax,
+  marketplaceColumnMax,
+} from "@/constants/layout";
 import type { Teacher } from "@/context/AuthContext";
 import { useAuth } from "@/context/AuthContext";
 import { useDates } from "@/context/DatePreferenceContext";
@@ -87,7 +92,7 @@ export default function TeacherSessions() {
   const colors = useColors();
   const dates = useDates();
   const insets = useSafeAreaInsets();
-  const { t, numeric, radius, space, gutter } = useLayout();
+  const { t, numeric, radius, space, gutter, isExpanded } = useLayout();
   const [mode, setMode] = useState<ViewMode>("upcoming");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -205,7 +210,7 @@ export default function TeacherSessions() {
         keyExtractor={(item) => item.key}
         contentContainerStyle={{
           width: "100%",
-          maxWidth: marketplaceColumnMax,
+          maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
           alignSelf: "center",
           paddingHorizontal: gutter,
           paddingTop: insets.top + space.md,
