@@ -44,7 +44,7 @@ const server = createServer((req, res) => {
     return;
   }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{height:100%;margin:0}</style><div id="root"></div><script src="/bundle.js"></script>');
+  res.end('<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{height:100%;margin:0}body{overflow:hidden}#root{display:flex;flex:1}</style><div id="root"></div><script src="/bundle.js"></script>');
 });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const browser = await (await getChromium()).launch({ headless: true });
@@ -66,14 +66,17 @@ try {
     page.on("pageerror", (error) => errors.push(String(error)));
     await page.goto(base);
     await page.waitForTimeout(1000);
-    if ((await page.getByTestId("conversation-filter-all").count()) === 0) {
+    if ((await page.getByTestId("conversation-filter-trigger").count()) === 0) {
       throw new Error(`Inbox did not render: ${await page.locator("body").innerText()} | ${errors.join(" | ")}`);
     }
     const body = await page.locator("body").innerText();
     check(body.includes("Direct messages and class discussions, together."), `${width}: message list explains itself briefly`);
     check(!/\bInbox\b|\bSent\b|\bDrafts\b/.test(body), `${width}: message threads are not split into email folders`);
     check(body.includes("Draft: I will send the practice sheet"), `${width}: draft stays with its conversation`);
-    check(body.includes("All 5") && body.includes("Classes 2") && body.includes("Direct 3") && body.includes("Unread 2"), `${width}: unified inbox counts every useful message view`);
+    check(body.includes("All conversations (5)"), `${width}: the compact selector shows its count in parentheses`);
+    await page.getByTestId("conversation-filter-trigger").click();
+    const menu = await page.getByTestId("conversation-filter-menu").innerText();
+    check(menu.includes("Classes (2)") && menu.includes("Direct (3)") && menu.includes("Unread (2)"), `${width}: the dropdown keeps every useful view without four bulky pills`);
     check(await page.getByTestId("class-conversation-row-11").isVisible(), `${width}: booked class discussion appears in Messages`);
     check((await page.getByTestId("class-conversation-row-12").innerText()).includes("Start the class conversation"), `${width}: a quiet class remains discoverable before its first message`);
     check((await page.getByTestId("new-message-button").boundingBox()).height >= 44, `${width}: new-message action meets the touch floor`);
@@ -82,13 +85,16 @@ try {
     check(await page.getByTestId("class-conversation-row-11").isVisible(), `${width}: unread filter keeps unread class discussion`);
     check((await page.getByTestId("conversation-row-12").count()) === 0, `${width}: unread filter removes read conversations`);
     check((await page.getByTestId("class-conversation-row-12").count()) === 0, `${width}: unread filter removes quiet class discussions`);
+    await page.getByTestId("conversation-filter-trigger").click();
     await page.getByTestId("conversation-filter-classes").click();
     check(await page.getByTestId("class-conversation-row-11").isVisible(), `${width}: Classes filter keeps class discussions`);
     check(await page.getByTestId("class-conversation-row-12").isVisible(), `${width}: Classes filter keeps a class before its first message`);
     check((await page.getByTestId("conversation-row-11").count()) === 0, `${width}: Classes filter removes private conversations`);
+    await page.getByTestId("conversation-filter-trigger").click();
     await page.getByTestId("conversation-filter-direct").click();
     check(await page.getByTestId("conversation-row-11").isVisible(), `${width}: Direct filter keeps private conversations`);
     check((await page.getByTestId("class-conversation-row-11").count()) === 0, `${width}: Direct filter removes class discussions`);
+    await page.getByTestId("conversation-filter-trigger").click();
     await page.getByTestId("conversation-filter-all").click();
     await page.getByTestId("conversation-search").fill("bik tha");
     check(await page.getByTestId("conversation-row-12").isVisible(), `${width}: spaced name search finds a conversation`);
@@ -121,6 +127,9 @@ try {
     check(chat.includes("Yes, I added it to our lesson plan."), `${width}: outgoing message is visible`);
     check(chat.includes("Seen"), `${width}: latest outgoing message shows its read state`);
     check(chat.includes("Today"), `${width}: conversation has a quiet Nepal-day divider`);
+    await page.waitForTimeout(250);
+    const newestDirect = await page.getByText("This is the newest direct message.", { exact: true }).boundingBox();
+    check(Boolean(newestDirect) && newestDirect.y + newestDirect.height <= 844, `${width}: opening a long direct conversation lands on its newest message`);
     check((await page.getByTestId("conversation-back-btn").boundingBox()).height >= 44, `${width}: conversation back meets the touch floor`);
     check((await page.getByTestId("conversation-attach-btn").boundingBox()).height >= 44, `${width}: attachment action meets the touch floor`);
     check((await page.getByTestId("conversation-send-btn").boundingBox()).height >= 44, `${width}: send action meets the touch floor`);
@@ -157,9 +166,13 @@ try {
     check((await page.locator("body").innerText()).includes("Excel"), `${width}: Excel files get an honest private download view`);
     await page.locator('[data-testid="attachment-viewer-close"]:visible').click();
     await page.locator('[data-testid="attachment-viewer"]:visible').waitFor({ state: "hidden" });
+    await page.getByTestId("conversation-input").fill("First line");
+    await page.getByTestId("conversation-input").press("Shift+Enter");
+    check((await page.getByTestId("conversation-input").inputValue()) === "First line\n", `${width}: Shift+Enter keeps a deliberate new line`);
     await page.getByTestId("conversation-input").fill("See you in class.");
-    await page.getByTestId("conversation-send-btn").click();
+    await page.getByTestId("conversation-input").press("Enter");
     await page.getByText("See you in class.", { exact: true }).waitFor();
+    check((await page.getByTestId("conversation-input").inputValue()) === "", `${width}: Enter sends a direct message without tapping the button`);
     check((await page.locator("body").innerText()).includes("Sent"), `${width}: newly sent message shows pending read state`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: conversation has no horizontal overflow`);
     check(errors.length === 0, `${width}: no browser exceptions`);
@@ -177,13 +190,17 @@ try {
     check(classChat.includes("Anisha Rai") && classChat.includes("Can we review question four tomorrow?"), `${width}: classmate identity and message are visible`);
     check(classChat.includes("Teacher"), `${width}: teacher messages have an honest role marker`);
     check(classChat.includes("Today"), `${width}: class chat uses Nepal-day dividers`);
+    await page.waitForTimeout(250);
+    const newestClass = await page.getByText("Can we review question four tomorrow?", { exact: true }).last().boundingBox();
+    check(Boolean(newestClass) && newestClass.y + newestClass.height <= 844, `${width}: opening a long class conversation lands on its newest message`);
     check(await page.getByTestId("class-chat-load-earlier").isVisible(), `${width}: busy class chats expose earlier history without one long page`);
     check((await page.getByTestId("class-chat-back").boundingBox()).height >= 44, `${width}: class-chat back action meets the touch floor`);
     check((await page.getByTestId("class-chat-attach").boundingBox()).height >= 44, `${width}: class-chat attachment action meets the touch floor`);
     check((await page.getByTestId("class-chat-send").boundingBox()).height >= 44, `${width}: class-chat send action meets the touch floor`);
     await page.getByTestId("class-chat-input").fill("I will send the worksheet now.");
-    await page.getByTestId("class-chat-send").click();
+    await page.getByTestId("class-chat-input").press("Enter");
     await page.getByText("I will send the worksheet now.", { exact: true }).waitFor();
+    check((await page.getByTestId("class-chat-input").inputValue()) === "", `${width}: Enter sends a class message without tapping the button`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: class chat has no horizontal overflow`);
     check(errors.length === 0, `${width}: class chat has no browser exceptions`);
     await page.screenshot({ path: path.join(work, `${width}-class-chat.png`), fullPage: true });

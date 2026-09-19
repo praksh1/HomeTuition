@@ -55,6 +55,7 @@ export default function ConversationList({ title }: { title: string }) {
   const [drafts, setDrafts] = useState<Drafts>({});
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ConversationFilter>("all");
+  const [filterOpen, setFilterOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [problem, setProblem] = useState("");
@@ -104,6 +105,13 @@ export default function ConversationList({ title }: { title: string }) {
   const unread = threads.filter((thread) => thread.unreadCount > 0).length;
   const classes = threads.filter((thread) => thread.kind === "class").length;
   const direct = threads.filter((thread) => thread.kind === "direct").length;
+  const filterOptions = [
+    { value: "all" as const, label: "All conversations", count: threads.length, icon: "message-circle" as const },
+    { value: "classes" as const, label: "Classes", count: classes, icon: "users" as const },
+    { value: "direct" as const, label: "Direct", count: direct, icon: "user" as const },
+    { value: "unread" as const, label: "Unread", count: unread, icon: "circle" as const },
+  ];
+  const activeFilter = filterOptions.find((option) => option.value === filter) ?? filterOptions[0];
   const draftOnly = Object.keys(drafts).filter(
     (id) => !threads.some((thread) => thread.kind === "direct" && String(thread.otherUserId) === id),
   );
@@ -164,33 +172,46 @@ export default function ConversationList({ title }: { title: string }) {
               </TouchableOpacity>
             ) : null}
           </View>
-          <View style={styles.filters}>
-            {(["all", "classes", "direct", "unread"] as const).map((value) => {
-              const selected = filter === value;
-              const label = value === "all"
-                ? `All ${threads.length}`
-                : value === "classes"
-                  ? `Classes ${classes}`
-                  : value === "direct"
-                    ? `Direct ${direct}`
-                    : `Unread ${unread}`;
-              return (
-                <TouchableOpacity
-                  key={value}
-                  onPress={() => setFilter(value)}
-                  style={[
-                    styles.filter,
-                    { minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, borderColor: selected ? colors.primary : colors.border, backgroundColor: selected ? colors.actionSoft : colors.card },
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  aria-selected={selected}
-                  testID={`conversation-filter-${value}`}
-                >
-                  <Text style={[t.caption, numeric, { color: selected ? colors.primary : colors.mutedForeground }]}>{label}</Text>
-                </TouchableOpacity>
-              );
-            })}
+          <View style={[styles.filterShell, { borderRadius: radius.md, borderColor: colors.border, backgroundColor: colors.card }]}>
+            <TouchableOpacity
+              onPress={() => setFilterOpen((open) => !open)}
+              style={[styles.filterTrigger, { minHeight: HIT_SLOP_MIN }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Filter conversations. ${activeFilter.label}, ${activeFilter.count}`}
+              accessibilityState={{ expanded: filterOpen }}
+              testID="conversation-filter-trigger"
+            >
+              <View style={[styles.filterIcon, { borderRadius: radius.sm, backgroundColor: colors.actionSoft }]}>
+                <Feather name={activeFilter.icon} size={17} color={colors.primary} />
+              </View>
+              <View style={styles.filterCopy}>
+                <Text style={[t.overline, { color: colors.inkFaint }]}>VIEW</Text>
+                <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>{activeFilter.label} ({activeFilter.count})</Text>
+              </View>
+              <Feather name={filterOpen ? "chevron-up" : "chevron-down"} size={20} color={colors.mutedForeground} />
+            </TouchableOpacity>
+            {filterOpen ? (
+              <View style={[styles.filterMenu, { borderTopColor: colors.border }]} testID="conversation-filter-menu">
+                {filterOptions.map((option) => {
+                  const selected = option.value === filter;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      onPress={() => { setFilter(option.value); setFilterOpen(false); }}
+                      style={[styles.filterOption, { minHeight: HIT_SLOP_MIN }, selected && { backgroundColor: colors.actionSoft }]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      aria-selected={selected}
+                      testID={`conversation-filter-${option.value}`}
+                    >
+                      <Feather name={option.icon} size={17} color={selected ? colors.primary : colors.mutedForeground} />
+                      <Text style={[t.body, numeric, styles.filterOptionText, { color: selected ? colors.primary : colors.foreground }]}>{option.label} ({option.count})</Text>
+                      {selected ? <Feather name="check" size={18} color={colors.primary} /> : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            ) : null}
           </View>
         </>
       ) : null}
@@ -337,8 +358,13 @@ const styles = StyleSheet.create({
   search: { flexDirection: "row", alignItems: "center", gap: 10, borderWidth: 1, paddingHorizontal: 14 },
   searchInput: { flex: 1, paddingVertical: 10 },
   clearButton: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
-  filters: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  filter: { alignItems: "center", justifyContent: "center", borderWidth: 1, paddingHorizontal: 16 },
+  filterShell: { overflow: "hidden", borderWidth: 1 },
+  filterTrigger: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 12, paddingVertical: 8 },
+  filterIcon: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
+  filterCopy: { flex: 1, minWidth: 0 },
+  filterMenu: { borderTopWidth: StyleSheet.hairlineWidth, paddingVertical: 4 },
+  filterOption: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 9 },
+  filterOptionText: { flex: 1 },
   state: { alignItems: "center", justifyContent: "center", gap: 12, paddingVertical: 48 },
   stateCard: { alignItems: "center", borderWidth: 1, gap: 12, padding: 24 },
   stateIcon: { width: 52, height: 52, alignItems: "center", justifyContent: "center" },

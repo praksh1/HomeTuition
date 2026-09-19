@@ -93,6 +93,14 @@ export async function apiGet(path) {
       title: "IELTS evening class",
       isTeacher: true,
       messages: [
+        ...Array.from({ length: 7 }, (_, index) => ({
+          id: 180 + index,
+          senderId: index % 2 ? 11 : 7,
+          senderName: index % 2 ? "Anisha Rai" : "Staging Review Teacher",
+          senderRole: index % 2 ? "student" : "teacher",
+          body: `Earlier class message ${index + 1}`,
+          createdAt: new Date(Date.now() - (20 - index) * 300_000).toISOString(),
+        })),
         { id: 201, senderId: 7, senderName: "Staging Review Teacher", senderRole: "teacher", body: "Welcome. I pinned tomorrow's reading below.", createdAt: new Date(Date.now() - 5_400_000).toISOString() },
         { id: 202, senderId: 11, senderName: "Anisha Rai", senderRole: "student", body: "Can we review question four tomorrow?", createdAt: new Date(Date.now() - 3_600_000).toISOString() },
       ],
@@ -105,6 +113,15 @@ export async function apiGet(path) {
   }
   if (path.startsWith("/messages/")) {
     return [
+      ...Array.from({ length: 7 }, (_, index) => ({
+        id: 80 + index,
+        senderId: index % 2 ? 11 : 7,
+        receiverId: index % 2 ? 7 : 11,
+        body: `Earlier direct message ${index + 1}`,
+        read: true,
+        createdAt: new Date(Date.now() - (20 - index) * 300_000).toISOString(),
+        reactions: [],
+      })),
       { id: 101, senderId: 11, receiverId: 7, body: "Can we review question four tomorrow?", read: true, createdAt: new Date(Date.now() - 3_600_000).toISOString(), reactions: [{ emoji: "👍", count: 1, mine: false }] },
       { id: 102, senderId: 7, receiverId: 11, body: "Yes, I added it to our lesson plan.", read: true, createdAt: new Date(Date.now() - 1_800_000).toISOString(), attachments: [
         { fileKey: "message-photo", fileType: "image/png", fileName: "worked-example.png" },
@@ -112,6 +129,7 @@ export async function apiGet(path) {
         { fileKey: "lesson-plan", fileType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileName: "lesson-plan.docx" },
         { fileKey: "marks-sheet", fileType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName: "marks-sheet.xlsx" },
       ] },
+      { id: 104, senderId: 11, receiverId: 7, body: "This is the newest direct message.", read: true, createdAt: new Date(Date.now() - 60_000).toISOString(), reactions: [] },
     ];
   }
   return path === "/message-recipients" ? recipients : conversations;

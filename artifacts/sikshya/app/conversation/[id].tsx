@@ -25,6 +25,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
+import { shouldSendMessageOnKey } from "@/utils/messageComposer";
 import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
 import {
   latestOwnMessageId,
@@ -75,7 +76,20 @@ export default function ConversationScreen() {
   const [problem, setProblem] = useState<string | null>(null);
   const [picking, setPicking] = useState<number | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
+  const scrollAfterLayout = useRef(true);
+  const scrollPass = useRef(0);
+  const hasLoaded = useRef(false);
   const displayName = name?.trim() || "Conversation";
+
+  const settleAtNewest = useCallback(() => {
+    const pass = ++scrollPass.current;
+    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+    setTimeout(() => {
+      if (scrollPass.current !== pass) return;
+      listRef.current?.scrollToEnd({ animated: false });
+      scrollAfterLayout.current = false;
+    }, 120);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +101,10 @@ export default function ConversationScreen() {
 
   const load = useCallback(async () => {
     try {
-      setMessages(await apiGet<Message[]>(`/messages/${id}`));
+      const next = await apiGet<Message[]>(`/messages/${id}`);
+      if (!hasLoaded.current) scrollAfterLayout.current = true;
+      setMessages(next);
+      hasLoaded.current = true;
       setLoadProblem(false);
       void markTargetRead({ kind: "direct_message", conversationWith: id });
     } catch {
@@ -109,7 +126,10 @@ export default function ConversationScreen() {
     if (
       (lastEvent?.kind === "message" || lastEvent?.kind === "conversation_sync") &&
       Number(lastEvent.fromUserId) === Number(id)
-    ) void load();
+    ) {
+      scrollAfterLayout.current = true;
+      void load();
+    }
   }, [id, lastEvent, load]);
 
   useEffect(() => {
@@ -155,9 +175,9 @@ export default function ConversationScreen() {
         ...(fileKey ? { fileKey, fileType: outgoing!.mimeType, fileName: outgoing!.name } : {}),
       });
       await clearDraft(String(id));
+      scrollAfterLayout.current = true;
       setMessages((previous) => [...previous, sent]);
       if (sent.attachmentProblem) setProblem(sent.attachmentProblem);
-      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: true }));
     } catch (error) {
       setDraft(body);
       setPending(outgoing);
@@ -224,7 +244,11 @@ export default function ConversationScreen() {
           paddingBottom: space.xl,
           gap: space.xs,
         }}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        onContentSizeChange={() => {
+          if (!scrollAfterLayout.current) return;
+          settleAtNewest();
+        }}
+        onLayout={() => { if (scrollAfterLayout.current) settleAtNewest(); }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={loadProblem && messages.length > 0 ? (
@@ -410,6 +434,12 @@ export default function ConversationScreen() {
             placeholderTextColor={colors.inkFaint}
             style={[t.body, styles.input, { minHeight: HIT_SLOP_MIN, maxHeight: 112, borderRadius: radius.lg, borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
             multiline
+            onKeyPress={(event) => {
+              const native = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean; isComposing?: boolean };
+              if (!shouldSendMessageOnKey(Platform.OS, native.key, native.shiftKey, native.isComposing)) return;
+              event.preventDefault();
+              void send();
+            }}
             accessibilityLabel="Message"
             testID="conversation-input"
           />

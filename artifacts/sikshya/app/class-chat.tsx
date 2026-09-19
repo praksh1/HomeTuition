@@ -26,6 +26,7 @@ import { useLayout } from "@/hooks/useLayout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
 import { classConversationId } from "@/utils/conversationRoute";
 import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
+import { shouldSendMessageOnKey } from "@/utils/messageComposer";
 import { messageDayLabel, messageTimeLabel, shouldShowDay } from "@/utils/messageTimeline";
 import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
 import type { Attachment } from "@/utils/reactions";
@@ -80,7 +81,19 @@ export default function ClassChatScreen() {
   const [problem, setProblem] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   const scrollAfterLayout = useRef(true);
+  const scrollPass = useRef(0);
+  const hasLoaded = useRef(false);
   const acknowledgedThrough = useRef<number | null>(null);
+
+  const settleAtNewest = useCallback(() => {
+    const pass = ++scrollPass.current;
+    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+    setTimeout(() => {
+      if (scrollPass.current !== pass) return;
+      listRef.current?.scrollToEnd({ animated: false });
+      scrollAfterLayout.current = false;
+    }, 120);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +124,9 @@ export default function ClassChatScreen() {
     }
     try {
       const next = await apiGet<ViewData>(`/class-groups/${batchId}/messages`);
+      if (!hasLoaded.current) scrollAfterLayout.current = true;
       setView(next);
+      hasLoaded.current = true;
       setLoadProblem(false);
       setLoadProblemMessage("");
       void acknowledge(next.messages);
@@ -310,9 +325,9 @@ export default function ClassChatScreen() {
         showsVerticalScrollIndicator={false}
         onContentSizeChange={() => {
           if (!scrollAfterLayout.current) return;
-          scrollAfterLayout.current = false;
-          listRef.current?.scrollToEnd({ animated: false });
+          settleAtNewest();
         }}
+        onLayout={() => { if (scrollAfterLayout.current) settleAtNewest(); }}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
         ListHeaderComponent={(
           <>
@@ -414,6 +429,12 @@ export default function ClassChatScreen() {
               placeholderTextColor={colors.inkFaint}
               style={[t.body, styles.input, { minHeight: HIT_SLOP_MIN, maxHeight: 112, borderRadius: radius.lg, borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
               multiline
+              onKeyPress={(event) => {
+                const native = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean; isComposing?: boolean };
+                if (!shouldSendMessageOnKey(Platform.OS, native.key, native.shiftKey, native.isComposing)) return;
+                event.preventDefault();
+                void send();
+              }}
               accessibilityLabel="Class message"
               testID="class-chat-input"
             />
