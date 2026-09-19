@@ -4,9 +4,11 @@ import React from "react";
 import { AppShellHeader } from "@/components/navigation/AppShellHeader";
 import { FloatingTabBar, type FloatingTabBarProps } from "@/components/navigation/FloatingTabBar";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
+import { useLayout } from "@/hooks/useLayout";
 
 function ClassicTabLayout() {
   const { unread: unreadMessages } = useUnreadMessages();
+  const { isExpanded, space } = useLayout();
   const icon = (name: React.ComponentProps<typeof Feather>["name"]) =>
     ({ color, focused }: { color: string; focused: boolean }) => (
       <Feather name={name} size={21} color={color} />
@@ -17,12 +19,16 @@ function ClassicTabLayout() {
       tabBar={(props) => (
         <FloatingTabBar {...(props as unknown as FloatingTabBarProps)} />
       )}
-      screenOptions={({ route }) => ({
-        headerShown: ["index", "sessions", "students", "support", "requests", "messages", "profile"].includes(route.name),
-        header: () => <AppShellHeader role="teacher" routeName={route.name} />,
-        animation: "fade",
-        freezeOnBlur: true,
-      })}
+      screenOptions={({ route }) => {
+        const shellRoute = ["index", "sessions", "students", "support", "requests", "messages", "profile"].includes(route.name);
+        return {
+          headerShown: shellRoute,
+          header: () => <AppShellHeader role="teacher" routeName={route.name} />,
+          animation: "fade",
+          freezeOnBlur: true,
+          sceneStyle: isExpanded && shellRoute ? { paddingLeft: 92 + space.xl } : undefined,
+        };
+      }}
     >
       <Tabs.Screen
         name="index"
