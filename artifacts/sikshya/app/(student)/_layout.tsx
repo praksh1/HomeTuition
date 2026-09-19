@@ -5,9 +5,11 @@ import { AppShellHeader } from "@/components/navigation/AppShellHeader";
 import { FloatingTabBar, type FloatingTabBarProps } from "@/components/navigation/FloatingTabBar";
 import { useUnreadMessages } from "@/hooks/useUnreadMessages";
 import { useAuth } from "@/context/AuthContext";
+import { useLayout } from "@/hooks/useLayout";
 
 function ClassicStudentTabLayout() {
   const { user } = useAuth();
+  const { isExpanded, space } = useLayout();
   const { unread: unreadMessages } = useUnreadMessages(user?.role === "student");
   const icon = (name: React.ComponentProps<typeof Feather>["name"]) =>
     ({ color, focused }: { color: string; focused: boolean }) => (
@@ -19,12 +21,16 @@ function ClassicStudentTabLayout() {
       tabBar={(props) => (
         <FloatingTabBar {...(props as unknown as FloatingTabBarProps)} />
       )}
-      screenOptions={({ route }) => ({
-        headerShown: ["index", "sessions", "messages", "support", "requests", "profile"].includes(route.name),
-        header: () => <AppShellHeader role="student" routeName={route.name} />,
-        animation: "fade",
-        freezeOnBlur: true,
-      })}
+      screenOptions={({ route }) => {
+        const shellRoute = ["index", "sessions", "messages", "support", "requests", "profile"].includes(route.name);
+        return {
+          headerShown: shellRoute,
+          header: () => <AppShellHeader role="student" routeName={route.name} />,
+          animation: "fade",
+          freezeOnBlur: true,
+          sceneStyle: isExpanded && shellRoute ? { paddingLeft: 92 + space.xl } : undefined,
+        };
+      }}
     >
       <Tabs.Screen
         name="index"
