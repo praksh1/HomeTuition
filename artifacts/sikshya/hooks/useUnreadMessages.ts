@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
+import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
+import { messageBadgeNeedsRefresh } from "@/utils/messageBadge";
 
 /** How often the badge re-checks while a screen using it is focused. */
 const POLL_MS = 20000;
@@ -15,6 +17,7 @@ const POLL_MS = 20000;
 export function useUnreadMessages(enabled = true): { unread: number; refresh: () => void } {
   const [unread, setUnread] = useState(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { lastEvent } = useNotifications();
 
   const refresh = useCallback(async () => {
     try {
@@ -35,6 +38,13 @@ export function useUnreadMessages(enabled = true): { unread: number; refresh: ()
       };
     }, [enabled, refresh]),
   );
+
+  useEffect(() => {
+    if (!enabled || !messageBadgeNeedsRefresh(lastEvent?.kind)) return;
+    // The socket is the fast path. The server count remains authoritative, so duplicated
+    // events, a reconnect, or another device reading the thread cannot make the badge drift.
+    void refresh();
+  }, [enabled, lastEvent, refresh]);
 
   useEffect(() => () => {
     if (timer.current) clearInterval(timer.current);

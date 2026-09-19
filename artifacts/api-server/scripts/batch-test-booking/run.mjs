@@ -211,6 +211,7 @@ try {
   check("teacher's open class conversation updates even when bell alerts are off", (await teacherLiveUpdate).type === "notification");
   check("another device signed in as the sender updates immediately", (await senderLiveUpdate).type === "notification");
   check("teacher sees a durable unread class-message count", (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.unreadMessages === 1);
+  check("the floating Messages badge includes unread class questions", (await api("/messages/unread-count", teacher.token)).body.unread === 1);
   const teacherInboxWithQuestion = await api("/message-inbox", teacher.token);
   check("teacher Messages shows the class question, sender and unread count", teacherInboxWithQuestion.body.classes.some((row) => row.batchId === c.id
     && row.lastMessage === "Please explain question four in our next lesson."
@@ -219,10 +220,12 @@ try {
     && row.lastMessageFromMe === false));
   check("fetching messages alone does not fabricate a read acknowledgement", (await api(`/class-groups/${c.id}/messages`, teacher.token)).body.messages.some((m) => m.id === studentMessage.body.id) && (await api(`/class-groups/${c.id}`, teacher.token)).body.counts.unreadMessages === 1);
   check("teacher acknowledgement clears only the loaded conversation", (await api(`/class-groups/${c.id}/messages/read`, teacher.token, { lastMessageId: studentMessage.body.id })).body.unreadMessages === 0);
+  check("reading the class clears it from the floating Messages badge", (await api("/messages/unread-count", teacher.token)).body.unread === 0);
   check("teacher Messages clears the class badge after the discussion is read", (await api("/message-inbox", teacher.token)).body.classes.find((row) => row.batchId === c.id).unreadCount === 0);
   const studentReplyUpdate = nextSocketEvent(studentMessageSocket, (event) => event.kind === "conversation_sync" && Number(event.batchId) === c.id);
   const teacherMessage = await api(`/class-groups/${c.id}/messages`, teacher.token, { body: "I will explain it at the start of class." });
   check("teacher message creates a student unread badge", teacherMessage.status === 201 && (await api(`/class-groups/${c.id}`, a.token)).body.counts.unreadMessages === 1);
+  check("the student's floating Messages badge includes the teacher reply", (await api("/messages/unread-count", a.token)).body.unread === 1);
   check("teacher reply reaches the student's open class conversation live", (await studentReplyUpdate).type === "notification");
   teacherMessageSocket.close(); studentMessageSocket.close();
   check("student Messages shows the teacher reply as unread", (await api("/message-inbox", a.token)).body.classes.some((row) => row.batchId === c.id
@@ -231,6 +234,7 @@ try {
     && row.unreadCount === 1));
   check("a message outside the conversation cannot clear its badge", (await api(`/class-groups/${c.id}/messages/read`, a.token, { lastMessageId: teacherMessage.body.id + 99999 })).status === 409 && (await api(`/class-groups/${c.id}`, a.token)).body.counts.unreadMessages === 1);
   check("student acknowledgement clears the loaded teacher message", (await api(`/class-groups/${c.id}/messages/read`, a.token, { lastMessageId: teacherMessage.body.id })).body.unreadMessages === 0);
+  check("the student's floating Messages badge clears with the class", (await api("/messages/unread-count", a.token)).body.unread === 0);
   check("student cannot set class homework", (await api(`/class-groups/${c.id}/homework`, a.token, { title: "Not allowed" })).status === 403);
   const task = await api(`/class-groups/${c.id}/homework`, teacher.token, { title: "Algebra practice", instructions: "Complete questions 1 to 4." });
   check("teacher can set class homework", task.status === 201 && task.body.title === "Algebra practice");

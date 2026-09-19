@@ -247,6 +247,69 @@ async function classConversations(userId: number, role: string) {
   });
 }
 
+/**
+ * Total unread messages from every purchased class the person may open.
+ *
+ * This is deliberately a count query rather than `classConversations(...).reduce(...)`:
+ * the floating tab badge is present throughout the app, so fetching titles and last-message
+ * previews every time its durable count is reconciled would make a tiny badge unnecessarily
+ * expensive. `count(distinct ...)` also prevents a class with more than one booking from
+ * multiplying a teacher's unread total through the booking join.
+ */
+async function unreadClassMessageTotal(userId: number, role: string): Promise<number> {
+  const readJoin = and(
+    eq(classGroupMessageReadsTable.batchId, classGroupMessagesTable.batchId),
+    eq(classGroupMessageReadsTable.userId, userId),
+  );
+  const unread = and(
+    ne(classGroupMessagesTable.senderId, userId),
+    gt(
+      classGroupMessagesTable.id,
+      sql<number>`coalesce(${classGroupMessageReadsTable.lastReadMessageId}, 0)`,
+    ),
+  );
+
+  if (role === "teacher") {
+    const [row] = await db
+      .select({ count: sql<number>`count(distinct ${classGroupMessagesTable.id})::int` })
+      .from(classGroupMessagesTable)
+      .innerJoin(
+        learningProgramBatchesTable,
+        eq(learningProgramBatchesTable.id, classGroupMessagesTable.batchId),
+      )
+      .innerJoin(
+        learningProgramsTable,
+        eq(learningProgramsTable.id, learningProgramBatchesTable.programId),
+      )
+      .innerJoin(
+        batchTestBookingsTable,
+        eq(batchTestBookingsTable.batchId, classGroupMessagesTable.batchId),
+      )
+      .leftJoin(classGroupMessageReadsTable, readJoin)
+      .where(and(eq(learningProgramsTable.teacherId, userId), unread));
+    return row?.count ?? 0;
+  }
+
+  if (role === "student") {
+    const [row] = await db
+      .select({ count: sql<number>`count(distinct ${classGroupMessagesTable.id})::int` })
+      .from(classGroupMessagesTable)
+      .innerJoin(
+        batchTestBookingsTable,
+        and(
+          eq(batchTestBookingsTable.batchId, classGroupMessagesTable.batchId),
+          eq(batchTestBookingsTable.studentId, userId),
+          gte(classGroupMessagesTable.createdAt, batchTestBookingsTable.createdAt),
+        ),
+      )
+      .leftJoin(classGroupMessageReadsTable, readJoin)
+      .where(unread);
+    return row?.count ?? 0;
+  }
+
+  return 0;
+}
+
 // GET /conversations — list this user's active conversations, most recent first,
 // with the other party's name/role, last message preview, and unread count.
 // Aggregation is done in JS (rather than a complex grouped SQL query) since the
@@ -254,16 +317,20 @@ async function classConversations(userId: number, role: string) {
 /**
  * Total unread messages for the signed-in user.
  *
- * Kept separate from /conversations so the tab badge can poll cheaply without pulling every
- * message the user has ever exchanged just to count the unread ones.
+ * Kept separate from /conversations so the tab badge can reconcile cheaply without pulling
+ * names, previews and timestamps. Direct and class discussions share one Messages tab, so its
+ * number must be the combined total rather than silently omitting class questions.
  */
 router.get("/messages/unread-count", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
-  const [row] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(messagesTable)
-    .where(and(eq(messagesTable.receiverId, userId), eq(messagesTable.read, false)));
-  res.json({ unread: row?.count ?? 0 });
+  const [[direct], classes] = await Promise.all([
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(messagesTable)
+      .where(and(eq(messagesTable.receiverId, userId), eq(messagesTable.read, false))),
+    unreadClassMessageTotal(userId, req.user!.role),
+  ]);
+  res.json({ unread: (direct?.count ?? 0) + classes });
 });
 
 router.get("/conversations", requireAuth, async (req, res): Promise<void> => {

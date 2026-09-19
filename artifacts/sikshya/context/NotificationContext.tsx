@@ -186,6 +186,10 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const onEvent = useCallback(
     async (event: UserEvent) => {
       if (event.kind === "notification_read") {
+        // The Messages tab badge listens to the same live channel. Publishing this read event
+        // before applying the local bell state makes a conversation opened on another phone
+        // clear the badge here without waiting for the recovery poll.
+        setLastEvent(event);
         await applyReadState({
           all: event.all,
           eventIds: event.eventIds,
