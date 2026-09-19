@@ -261,7 +261,11 @@ async function main() {
     // papered over here, and not the bug this checks.
     await page.goto(siteUrl, { waitUntil: "networkidle" });
     await page.waitForTimeout(2500);
-    await page.click('a[role="tab"][href="/profile"]', { timeout: 15000 });
+    // Use the tab's public test identity for the journey. The dedicated navigation suite
+    // separately proves that every tab is a semantic browser link with the right href; tying
+    // this notification journey to React Native Web's exact anchor/role nesting made it fail
+    // even though the visible Profile control was present and tappable.
+    await page.getByTestId("tab-profile").click({ timeout: 15000 });
     await page.waitForTimeout(2500);
     const row = page.getByTestId("notification-settings-link").first();
     check("the Notifications row is on the teacher's profile", (await row.count()) > 0);
