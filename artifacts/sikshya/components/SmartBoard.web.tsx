@@ -5,7 +5,8 @@ import {
   WelcomeScreen,
 } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
-import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
+import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardTemplate, BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
+import { LASER_THROTTLE_MS, normalizeLaserPoint } from "../utils/whiteboardLaser";
 import { teachingLibrary } from "./boardLibrary";
 import { isShareableSize, shrinkForSharing } from "../utils/boardImage";
 
@@ -63,6 +64,49 @@ const SYNC_INTERVAL_MS = 120;
 /** Excalidraw's own limits. Following the teacher must never leave a student outside them. */
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;
+
+const TEMPLATE_LABELS: Record<BoardTemplate, string> = {
+  blank: "Blank",
+  lined: "Lined",
+  graph: "Graph",
+  dots: "Dot grid",
+  "math-grid": "Math grid",
+  coordinate: "Coordinate plane",
+  "music-staff": "Music staff",
+};
+
+function templateStyle(template: BoardTemplate): React.CSSProperties {
+  const paper = "rgba(255,255,255,0.96)";
+  const ink = "rgba(37,99,235,0.13)";
+  switch (template) {
+    case "lined":
+      return { backgroundColor: paper, backgroundImage: `repeating-linear-gradient(0deg, transparent 0 31px, ${ink} 32px)` };
+    case "graph":
+      return { backgroundColor: paper, backgroundImage: `linear-gradient(${ink} 1px, transparent 1px), linear-gradient(90deg, ${ink} 1px, transparent 1px)`, backgroundSize: "32px 32px" };
+    case "dots":
+      return { backgroundColor: paper, backgroundImage: `radial-gradient(${ink} 1.2px, transparent 1.2px)`, backgroundSize: "24px 24px" };
+    case "math-grid":
+      return { backgroundColor: paper, backgroundImage: `linear-gradient(${ink} 1px, transparent 1px), linear-gradient(90deg, ${ink} 1px, transparent 1px)`, backgroundSize: "20px 20px" };
+    case "coordinate":
+      return { backgroundColor: paper, backgroundImage: `linear-gradient(${ink} 1px, transparent 1px), linear-gradient(90deg, ${ink} 1px, transparent 1px), linear-gradient(rgba(37,99,235,0.24) 2px, transparent 2px), linear-gradient(90deg, rgba(37,99,235,0.24) 2px, transparent 2px)`, backgroundSize: "24px 24px, 24px 24px, 120px 120px, 120px 120px" };
+    case "music-staff":
+      return { backgroundColor: paper, backgroundImage: `repeating-linear-gradient(0deg, transparent 0 20px, ${ink} 21px, transparent 22px)` };
+    default:
+      return { backgroundColor: paper };
+  }
+}
+
+function pageThumbnailStyle(template: BoardTemplate, active: boolean): React.CSSProperties {
+  return {
+    ...templateStyle(template),
+    width: 52,
+    height: 38,
+    flexShrink: 0,
+    borderRadius: 7,
+    border: active ? "2px solid var(--color-primary, navy)" : "1px solid rgba(15,23,42,0.16)",
+    boxShadow: active ? "0 0 0 2px var(--color-primary-light, aliceblue)" : "none",
+  };
+}
 
 /**
  * The shape properties panel is hidden until asked for.
@@ -174,6 +218,13 @@ interface Props {
   onClearAll?: () => void;
   /** Bumped by the server when the board is wiped at the start of a class. */
   clearedAt?: number;
+  /** The teacher-owned page list. Older callers omit it and get the original single board. */
+  pages?: BoardPage[];
+  activePageId?: string;
+  pageChangedAt?: number;
+  onPageCommand?: (command: BoardPageCommand) => void;
+  laser?: BoardLaserPoint | null;
+  onLaser?: (point: BoardLaserPoint) => void;
   theme?: "light" | "dark";
 }
 
@@ -201,6 +252,31 @@ const iconProps = {
   strokeWidth: 2,
   strokeLinecap: "round" as const,
   strokeLinejoin: "round" as const,
+};
+
+const pageButtonStyle: React.CSSProperties = {
+  minWidth: 32,
+  minHeight: 32,
+  padding: "0 8px",
+  border: "1px solid var(--default-border-color, silver)",
+  borderRadius: 9,
+  background: "white",
+  color: "var(--text-primary-color, slategray)",
+  fontSize: "medium",
+  cursor: "pointer",
+};
+
+const pageMenuButtonStyle: React.CSSProperties = {
+  minHeight: 34,
+  padding: "6px 8px",
+  border: "1px solid var(--default-border-color, silver)",
+  borderRadius: 8,
+  background: "white",
+  color: "var(--color-primary, navy)",
+  fontSize: "small",
+  fontWeight: 700,
+  textAlign: "left",
+  cursor: "pointer",
 };
 
 const SlidersIcon = () => (
@@ -233,6 +309,13 @@ const EyeIcon = () => (
   </svg>
 );
 
+const LaserIcon = () => (
+  <svg {...iconProps} aria-hidden="true">
+    <circle cx="12" cy="12" r="3" />
+    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+  </svg>
+);
+
 export default function SmartBoard({
   readOnly = false,
   sceneUpdates,
@@ -243,6 +326,12 @@ export default function SmartBoard({
   insertDocument = null,
   onClearAll,
   clearedAt = 0,
+  pages = [{ id: "page-1", title: "Page 1", template: "blank", locked: false }],
+  activePageId = "page-1",
+  pageChangedAt = 0,
+  onPageCommand,
+  laser = null,
+  onLaser,
   theme = "light",
 }: Props) {
   const [api, setApi] = useState<ExcalidrawAPI | null>(null);
@@ -250,6 +339,124 @@ export default function SmartBoard({
   const [showProps, setShowProps] = useState(false);
   /** Students only: whether the board still tracks the teacher's view. */
   const [following, setFollowing] = useState(true);
+  const [pageMenuOpen, setPageMenuOpen] = useState(false);
+  const [pageSidebarOpen, setPageSidebarOpen] = useState(false);
+  const [laserMode, setLaserMode] = useState(false);
+  const lastLaserSent = useRef(0);
+  const activePage = pages.find((page) => page.id === activePageId) ?? pages[0];
+  const pageLocked = Boolean(activePage?.locked);
+  const boardReadOnly = readOnly || pageLocked;
+  const activePageIndex = Math.max(0, pages.findIndex((page) => page.id === activePage?.id));
+
+  const handleLaserMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (!laserMode || boardReadOnly || !onLaser) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return;
+    const now = Date.now();
+    if (now - lastLaserSent.current < LASER_THROTTLE_MS) return;
+    lastLaserSent.current = now;
+    onLaser(normalizeLaserPoint((event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height));
+  }, [boardReadOnly, laserMode, onLaser]);
+
+  const stopLaser = useCallback(() => {
+    if (!laserMode) return;
+    setLaserMode(false);
+    onLaser?.({ x: 0, y: 0, active: false });
+  }, [laserMode, onLaser]);
+
+  const renamePage = useCallback(() => {
+    if (boardReadOnly || !activePage || typeof window === "undefined") return;
+    const title = window.prompt("Name this board page", activePage.title);
+    if (title !== null) onPageCommand?.({ op: "rename", pageId: activePage.id, title });
+  }, [activePage, boardReadOnly, onPageCommand]);
+
+  const pageNavigator = (
+    <div
+      className="sikshya-board__pages"
+      style={{
+        position: "absolute",
+        left: 12,
+        bottom: 12,
+        zIndex: 8,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: 6,
+        border: "1px solid rgba(15,23,42,0.12)",
+        borderRadius: 14,
+        background: "rgba(255,255,255,0.94)",
+        boxShadow: "0 8px 26px rgba(15,23,42,0.16)",
+        backdropFilter: "blur(16px)",
+        fontFamily: "system-ui, sans-serif",
+      }}
+    >
+      <button type="button" aria-label="Previous board page" title="Previous page" disabled={!onPageCommand || activePageIndex <= 0} onClick={() => onPageCommand?.({ op: "select", pageId: pages[Math.max(0, activePageIndex - 1)].id })} style={pageButtonStyle}>
+        ‹
+      </button>
+      <button type="button" aria-label="Open board pages" disabled={!onPageCommand} onClick={() => setPageMenuOpen((open) => !open)} style={{ ...pageButtonStyle, minWidth: 108, fontSize: "small", fontWeight: 700, color: "var(--color-primary, navy)" }}>
+        {activePage?.title ?? "Page"} <span style={{ color: "var(--text-muted-color, slategray)", fontWeight: 500 }}>{activePageIndex + 1} / {pages.length}</span>
+      </button>
+      <button type="button" aria-label="Next board page" title="Next page" disabled={!onPageCommand || activePageIndex >= pages.length - 1} onClick={() => onPageCommand?.({ op: "select", pageId: pages[Math.min(pages.length - 1, activePageIndex + 1)].id })} style={pageButtonStyle}>
+        ›
+      </button>
+      {onPageCommand ? (
+        <button type="button" aria-label="Show board page thumbnails" title="Page thumbnails" aria-pressed={pageSidebarOpen} onClick={() => setPageSidebarOpen((open) => !open)} style={{ ...pageButtonStyle, background: pageSidebarOpen ? "var(--color-primary-light, aliceblue)" : "white", color: "var(--color-primary, navy)" }}>
+          ▦
+        </button>
+      ) : null}
+      {!boardReadOnly && onPageCommand ? (
+        <button type="button" aria-label="Add board page" title="Add page" onClick={() => onPageCommand({ op: "add", template: "blank" })} style={{ ...pageButtonStyle, background: "var(--color-primary, navy)", color: "white", borderColor: "var(--color-primary, navy)", fontSize: "large" }}>
+          +
+        </button>
+      ) : null}
+      {pageMenuOpen ? (
+        <div style={{ position: "absolute", left: 0, bottom: "calc(100% + 8px)", width: 240, padding: 10, display: "grid", gap: 8, border: "1px solid rgba(15,23,42,0.12)", borderRadius: 14, background: "rgba(255,255,255,0.98)", boxShadow: "0 12px 32px rgba(15,23,42,0.18)" }}>
+          <div style={{ fontSize: "x-small", color: "var(--text-muted-color, slategray)", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Board pages</div>
+          {pages.map((page, index) => (
+            <button key={page.id} type="button" onClick={() => { onPageCommand?.({ op: "select", pageId: page.id }); setPageMenuOpen(false); }} style={{ ...pageMenuButtonStyle, background: page.id === activePage?.id ? "var(--color-primary-light, aliceblue)" : "transparent", color: page.id === activePage?.id ? "var(--color-primary, navy)" : "var(--text-primary-color, black)" }}>
+              <span>{index + 1}. {page.title}</span><span style={{ color: "var(--text-muted-color, slategray)" }}>{page.locked ? "Locked" : TEMPLATE_LABELS[page.template]}</span>
+            </button>
+          ))}
+          {!boardReadOnly && activePage ? (
+            <>
+              <label style={{ display: "grid", gap: 4, color: "var(--text-muted-color, slategray)", fontSize: "x-small", fontWeight: 700 }}>
+                Page template
+                <select value={activePage.template} onChange={(event) => onPageCommand?.({ op: "template", pageId: activePage.id, template: event.target.value as BoardTemplate })} style={{ minHeight: 34, border: "1px solid var(--default-border-color, silver)", borderRadius: 8, padding: "0 8px", background: "white", color: "var(--text-primary-color, black)" }}>
+                  {Object.entries(TEMPLATE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button type="button" onClick={() => onPageCommand?.({ op: "duplicate", pageId: activePage.id })} style={pageMenuButtonStyle}>Duplicate</button>
+                <button type="button" onClick={renamePage} style={pageMenuButtonStyle}>Rename</button>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button type="button" disabled={activePageIndex <= 0} onClick={() => onPageCommand?.({ op: "reorder", pageId: activePage.id, toIndex: activePageIndex - 1 })} style={{ ...pageMenuButtonStyle, flex: 1 }}>Move up</button>
+                <button type="button" disabled={activePageIndex >= pages.length - 1} onClick={() => onPageCommand?.({ op: "reorder", pageId: activePage.id, toIndex: activePageIndex + 1 })} style={{ ...pageMenuButtonStyle, flex: 1 }}>Move down</button>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button type="button" onClick={() => onPageCommand?.({ op: "lock", pageId: activePage.id, locked: !activePage.locked })} style={pageMenuButtonStyle}>{activePage.locked ? "Unlock" : "Lock"}</button>
+                <button type="button" disabled={pages.length <= 1} onClick={() => onPageCommand?.({ op: "delete", pageId: activePage.id })} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Delete</button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      {pageSidebarOpen && onPageCommand ? (
+        <div role="navigation" aria-label="Whiteboard page thumbnails" style={{ position: "absolute", left: 12, bottom: 60, zIndex: 8, width: 250, maxHeight: "min(60vh, 440px)", overflowY: "auto", display: "grid", gap: 8, padding: 10, border: "1px solid rgba(15,23,42,0.12)", borderRadius: 14, background: "rgba(255,255,255,0.98)", boxShadow: "0 12px 32px rgba(15,23,42,0.18)", backdropFilter: "blur(16px)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div style={{ fontSize: "x-small", color: "var(--text-muted-color, slategray)", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Pages</div>
+            <button type="button" aria-label="Close page thumbnails" onClick={() => setPageSidebarOpen(false)} style={{ ...pageButtonStyle, minWidth: 28, minHeight: 28, padding: 0 }}>×</button>
+          </div>
+          {pages.map((page, index) => (
+            <button key={page.id} type="button" onClick={() => { onPageCommand({ op: "select", pageId: page.id }); setPageSidebarOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", minHeight: 52, padding: 6, border: "1px solid transparent", borderRadius: 10, background: page.id === activePage?.id ? "var(--color-primary-light, aliceblue)" : "transparent", color: "var(--text-primary-color, black)", textAlign: "left", cursor: "pointer" }}>
+              <span aria-hidden="true" style={pageThumbnailStyle(page.template, page.id === activePage?.id)} />
+              <span style={{ display: "grid", gap: 2, minWidth: 0 }}><strong style={{ fontSize: "small", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{index + 1}. {page.title}</strong><span style={{ color: "var(--text-muted-color, slategray)", fontSize: "x-small" }}>{page.locked ? "Locked" : TEMPLATE_LABELS[page.template]}</span></span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 
   /**
    * The version of each element as last broadcast.
@@ -288,6 +495,8 @@ export default function SmartBoard({
   const sentView = useRef<BoardViewport | null>(null);
   /** The viewport this board was last moved to on the teacher's behalf. */
   const appliedView = useRef<{ scrollX: number; scrollY: number; zoom: number } | null>(null);
+  /** The page-change counter for which the local Excalidraw scene has already been reset. */
+  const appliedPageChange = useRef(0);
   /** Set once a student's board has been pointed at something, so it is only auto-fitted once. */
   const fitted = useRef(false);
   /**
@@ -345,7 +554,7 @@ export default function SmartBoard({
   // --- outgoing: what changed since last time ---
   const flush = useCallback(() => {
     pendingSync.current = null;
-    if (!api || readOnly) return;
+    if (!api || boardReadOnly) return;
 
     // Deleted elements included, deliberately: erasing is an edit, and a board that only ever
     // reports additions leaves every student looking at work the teacher rubbed out.
@@ -394,13 +603,13 @@ export default function SmartBoard({
     }
 
     if (changed.length > 0) onSceneChange(changed, files);
-  }, [api, readOnly, onSceneChange, readyToShare]);
+  }, [api, boardReadOnly, onSceneChange, readyToShare]);
   flushRef.current = flush;
 
   // --- outgoing: where the teacher is looking ---
   const publishViewport = useCallback(() => {
     pendingView.current = null;
-    if (!api || readOnly || !onViewportChange) return;
+    if (!api || boardReadOnly || !onViewportChange) return;
 
     const state = api.getAppState();
     const zoom = state.zoom?.value ?? 1;
@@ -415,31 +624,31 @@ export default function SmartBoard({
     if (sameView(sentView.current, view)) return;
     sentView.current = view;
     onViewportChange(view);
-  }, [api, readOnly, onViewportChange]);
+  }, [api, boardReadOnly, onViewportChange]);
 
   const scheduleViewportPublish = useCallback(() => {
-    if (readOnly || pendingView.current) return;
+    if (boardReadOnly || pendingView.current) return;
     pendingView.current = setTimeout(publishViewport, VIEWPORT_SYNC_MS);
-  }, [readOnly, publishViewport]);
+  }, [boardReadOnly, publishViewport]);
 
   const handleChange = useCallback(
     (_elements: readonly ExcalidrawElement[]) => {
-      if (readOnly || applyingRemote.current) return;
+      if (boardReadOnly || applyingRemote.current) return;
       // Drawing at the edge of the screen scrolls the canvas, so the view is worth re-checking
       // on any change; `publishViewport` drops it again if the rectangle has not moved.
       scheduleViewportPublish();
       if (pendingSync.current) return;
       pendingSync.current = setTimeout(flush, SYNC_INTERVAL_MS);
     },
-    [readOnly, flush, scheduleViewportPublish],
+    [boardReadOnly, flush, scheduleViewportPublish],
   );
 
   // Publish the opening view as soon as the board is up, so a student arriving later is put
   // where the teacher already is rather than at an arbitrary corner of an infinite canvas.
   useEffect(() => {
-    if (!api || readOnly) return;
+    if (!api || boardReadOnly) return;
     scheduleViewportPublish();
-  }, [api, readOnly, scheduleViewportPublish]);
+  }, [api, boardReadOnly, scheduleViewportPublish]);
 
   useEffect(() => {
     return () => {
@@ -524,7 +733,28 @@ export default function SmartBoard({
 
   // --- incoming: merge deltas into the live scene ---
   useEffect(() => {
-    if (!api || sceneUpdates.length === 0) return;
+    if (!api) return;
+
+    /**
+     * A page list and its full scene are two WebSocket messages. They can be batched by React,
+     * or the full scene can arrive one tick later. Reset exactly once per page counter, before
+     * considering the matching deltas, and ignore anything that belongs to the previous page.
+     * This prevents a fast page switch from either leaking old ink or erasing the new scene.
+     */
+    const pageChanged = pageChangedAt !== 0 && appliedPageChange.current !== pageChangedAt;
+    if (pageChanged) {
+      appliedPageChange.current = pageChangedAt;
+      sentVersions.current.clear();
+      sentFiles.current.clear();
+      insertedImages.current.clear();
+      fitted.current = false;
+      applyingRemote.current = true;
+      api.updateScene({ elements: [] });
+      setTimeout(() => { applyingRemote.current = false; }, 0);
+    }
+
+    const matchingUpdates = sceneUpdates.filter((delta) => !delta.pageId || delta.pageId === activePageId);
+    if (matchingUpdates.length === 0) return;
 
     // Deleted elements are kept in the map rather than dropped. They are the record that
     // something was erased: without them a late-arriving stale update would put it back.
@@ -535,7 +765,7 @@ export default function SmartBoard({
     // the element before the bytes shows an empty frame that only corrects itself on the next
     // change — and there may not be one.
     const incomingFiles: BinaryFile[] = [];
-    for (const delta of sceneUpdates) {
+    for (const delta of matchingUpdates) {
       for (const raw of delta.files ?? []) {
         const file = raw as BinaryFile;
         if (!file || typeof file.id !== "string" || typeof file.dataURL !== "string") continue;
@@ -546,7 +776,7 @@ export default function SmartBoard({
     if (incomingFiles.length > 0) api.addFiles(incomingFiles);
 
     let touched = false;
-    for (const delta of sceneUpdates) {
+    for (const delta of matchingUpdates) {
       for (const raw of delta.elements) {
         const el = raw as ExcalidrawElement;
         if (!el || typeof el.id !== "string") continue;
@@ -577,7 +807,7 @@ export default function SmartBoard({
         api.scrollToContent(visible, { fitToContent: true, animate: false, maxZoom: 1 });
       }
     }
-  }, [api, sceneUpdates, onConsumeUpdates, readOnly, viewport]);
+  }, [activePageId, api, pageChangedAt, sceneUpdates, onConsumeUpdates, readOnly, viewport]);
 
   // --- the server wiped the board at the start of a class ---
   useEffect(() => {
@@ -598,8 +828,8 @@ export default function SmartBoard({
    * server, which is what makes it mean the same thing for everyone.
    */
   const clearAll = useCallback(() => {
-    if (!api || readOnly) return;
-    if (typeof window !== "undefined" && !window.confirm("Clear the whiteboard for the whole class?")) {
+    if (!api || boardReadOnly) return;
+      if (typeof window !== "undefined" && !window.confirm("Clear this page for the whole class?")) {
       return;
     }
     sentVersions.current.clear();
@@ -609,7 +839,7 @@ export default function SmartBoard({
     setTimeout(() => { applyingRemote.current = false; }, 0);
     onClearAll?.();
     api.setToast({ message: "Board cleared", duration: 2000 });
-  }, [api, readOnly, onClearAll]);
+  }, [api, boardReadOnly, onClearAll]);
 
   /**
    * Put an uploaded document on the board as real elements.
@@ -764,7 +994,7 @@ export default function SmartBoard({
     })();
 
     return () => { cancelled = true; };
-  }, [api, readOnly, insertDocument, flush]);
+  }, [api, boardReadOnly, insertDocument, flush]);
 
   /** Show or hide the shape properties panel, in whichever layout Excalidraw is using. */
   const setPropsVisible = useCallback(
@@ -783,12 +1013,60 @@ export default function SmartBoard({
   }, [showProps, setPropsVisible]);
 
   const renderTopRightUI = useCallback(() => {
-    if (readOnly) return null;
+    if (boardReadOnly) return null;
     return (
       // The class name is what hides this on a phone — see BOARD_CSS. It cannot be a
       // conditional render here, because this callback does not re-run when the editor
       // changes layout.
       <div className="sikshya-board__top-right" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button
+          type="button"
+          onClick={() => setLaserMode((enabled) => !enabled)}
+          title="Point for the class"
+          aria-label="Point for the class"
+          aria-pressed={laserMode}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            border: "1px solid var(--default-border-color, silver)",
+            background: laserMode ? "var(--color-primary, navy)" : "var(--island-bg-color, white)",
+            color: laserMode ? "white" : "var(--text-primary-color, black)",
+            cursor: "pointer",
+          }}
+        >
+          <LaserIcon />
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            // The teacher may be bringing back a student who deliberately panned away. The
+            // viewport itself has not changed, so clear the de-duplication guard before sending
+            // this explicit invitation to follow again.
+            sentView.current = null;
+            publishViewport();
+            api?.setToast({ message: "Everyone is following your view", duration: 2200 });
+          }}
+          title="Bring everyone to your current view"
+          aria-label="Bring everyone to your current view"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            border: "1px solid var(--default-border-color, silver)",
+            background: "var(--island-bg-color, white)",
+            color: "var(--text-primary-color, black)",
+            cursor: "pointer",
+          }}
+        >
+          <EyeIcon />
+        </button>
         <button
           type="button"
           onClick={() => setPropsVisible(!showProps)}
@@ -832,7 +1110,7 @@ export default function SmartBoard({
         </button>
       </div>
     );
-  }, [readOnly, showProps, setPropsVisible, clearAll]);
+  }, [api, boardReadOnly, clearAll, laserMode, publishViewport, setPropsVisible, showProps]);
 
   const initialData = useMemo(
     () => ({
@@ -860,8 +1138,11 @@ export default function SmartBoard({
     <div
       className={`sikshya-board${showProps ? "" : " sikshya-board--hide-props"}`}
       style={{ position: "absolute", inset: 0, overflow: "hidden" }}
+      onPointerMove={handleLaserMove}
+      onPointerLeave={stopLaser}
     >
       <style>{BOARD_CSS}</style>
+      <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none", ...templateStyle(activePage?.template ?? "blank") }} />
       <Excalidraw
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         excalidrawAPI={(a: any) => setApi(a as ExcalidrawAPI)}
@@ -869,7 +1150,7 @@ export default function SmartBoard({
         onScrollChange={handleScrollChange}
         onPointerDown={handlePointerDown}
         initialData={initialData}
-        viewModeEnabled={readOnly}
+        viewModeEnabled={boardReadOnly}
         theme={theme}
         renderTopRightUI={renderTopRightUI}
         UIOptions={{
@@ -878,15 +1159,15 @@ export default function SmartBoard({
             // background mid-lesson, is confusing for everyone else.
             loadScene: false,
             saveToActiveFile: false,
-            export: readOnly ? false : { saveFileToDisk: true },
+            export: boardReadOnly ? false : { saveFileToDisk: true },
             toggleTheme: false,
           },
         }}
       >
         <MainMenu>
-          {!readOnly && (
+          {!boardReadOnly && (
             <MainMenu.Item onSelect={clearAll} icon={<TrashIcon />}>
-              Clear board for everyone
+              Clear this page for everyone
             </MainMenu.Item>
           )}
           <MainMenu.DefaultItems.SaveAsImage />
@@ -894,11 +1175,31 @@ export default function SmartBoard({
         <WelcomeScreen>
           <WelcomeScreen.Center>
             <WelcomeScreen.Center.Heading>
-              {readOnly ? "Your teacher's board" : "Your board — start teaching"}
+              {boardReadOnly ? "Your teacher's board" : "Your board — start teaching"}
             </WelcomeScreen.Center.Heading>
           </WelcomeScreen.Center>
         </WelcomeScreen>
       </Excalidraw>
+
+      {pageNavigator}
+
+      {laser?.active ? (
+        <div
+          aria-label="Teacher laser pointer"
+          style={{
+            position: "absolute",
+            left: `${laser.x * 100}%`,
+            top: `${laser.y * 100}%`,
+            width: 24,
+            height: 24,
+            transform: "translate(-50%, -50%)",
+            borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(239,68,68,1) 0 18%, rgba(239,68,68,0.36) 42%, transparent 72%)",
+            pointerEvents: "none",
+            zIndex: 9,
+          }}
+        />
+      ) : null}
 
       {readOnly && !following && (
         <button

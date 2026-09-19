@@ -279,6 +279,12 @@ export default function Classroom() {
     clearMaterial,
     materialRejected,
     clearMaterialRejected,
+    boardPages,
+    activeBoardPageId,
+    boardPageChangedAt,
+    sendBoardPage,
+    boardLaser,
+    sendBoardLaser,
   } = useClassroomSocket({
     sessionId: id ?? "",
     name: teacherName,
@@ -297,7 +303,11 @@ export default function Classroom() {
    * minus toggled two sizes a finger apart and left the window wherever it had been dragged,
    * which the owner reasonably read as a button that did nothing.
    */
-  const [callWindow, dispatchWindow] = useReducer(callWindowReducer, undefined, initialCallWindow);
+  const [callWindow, dispatchWindow] = useReducer(
+    callWindowReducer,
+    isCompact ? "compact" : "normal",
+    initialCallWindow,
+  );
   /** The names the rest of this screen has always used. One map, so nothing else had to change. */
   const videoWindowSize: VideoWindowSize =
     callWindow.state === "compact" ? "small" : callWindow.state === "normal" ? "medium" : callWindow.state;
@@ -2098,6 +2108,12 @@ export default function Classroom() {
                           )
                         }
                         clearedAt={boardClearedAt}
+                        pages={boardPages}
+                        activePageId={activeBoardPageId}
+                        pageChangedAt={boardPageChangedAt}
+                        onPageCommand={sendBoardPage}
+                        laser={boardLaser}
+                        onLaser={sendBoardLaser}
                       />
                     </>
                   )}

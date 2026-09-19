@@ -25,6 +25,7 @@ interface RoomClient {
 const rooms = new Map<string, Set<RoomClient>>();
 
 const DRAW_TOOLS = new Set(["pen", "line", "arrow", "circle", "rect", "text"]);
+const BOARD_TEMPLATES = new Set(["blank", "lined", "graph", "dots", "math-grid", "coordinate", "music-staff"]);
 /** Oldest strokes are dropped past this, so one long class cannot grow the room unbounded. */
 const MAX_REPLAY_PATHS = 800;
 /** Matches the client-side upload cap; anything larger is a bug or an abusive client. */
@@ -84,6 +85,18 @@ interface BoardState {
    * student joining mid-lesson gets picture frames with nothing in them.
    */
   files: Map<string, SceneFile>;
+  /** Page metadata and per-page Excalidraw scenes. The active scene remains in the legacy fields
+   * above so old clients continue to work while newer clients switch pages safely. */
+  pages: BoardPage[];
+  activePageId: string;
+  pageScenes: Map<string, { scene: Map<string, SceneElement>; files: Map<string, SceneFile> }>;
+}
+
+interface BoardPage {
+  id: string;
+  title: string;
+  template: string;
+  locked: boolean;
 }
 
 interface SceneFile {
@@ -120,11 +133,124 @@ const restoring = new Map<string, Promise<void>>();
 
 /** What is worth keeping of a board. Deleted elements included: erasing is an edit. */
 function boardToStore(board: BoardState) {
+  snapshotActivePage(board);
   return {
-    scene: [...board.scene.values()],
-    files: [...board.files.values()],
+    scene: {
+      version: 2,
+      activePageId: board.activePageId,
+      pages: board.pages.map((page) => {
+        const stored = board.pageScenes.get(page.id) ?? { scene: new Map(), files: new Map() };
+        return {
+          ...page,
+          scene: [...stored.scene.values()],
+          files: [...stored.files.values()],
+        };
+      }),
+    },
+    files: [],
     view: board.view,
   };
+}
+
+function defaultPage(): BoardPage {
+  return { id: "page-1", title: "Page 1", template: "blank", locked: false };
+}
+
+function snapshotActivePage(board: BoardState): void {
+  board.pageScenes.set(board.activePageId, { scene: board.scene, files: board.files });
+}
+
+function activatePage(board: BoardState, pageId: string): boolean {
+  if (!board.pages.some((page) => page.id === pageId)) return false;
+  snapshotActivePage(board);
+  const stored = board.pageScenes.get(pageId) ?? { scene: new Map<string, SceneElement>(), files: new Map<string, SceneFile>() };
+  board.pageScenes.set(pageId, stored);
+  board.activePageId = pageId;
+  board.scene = stored.scene;
+  board.files = stored.files;
+  return true;
+}
+
+function pagePayload(board: BoardState): { pages: BoardPage[]; activePageId: string } {
+  return { pages: board.pages, activePageId: board.activePageId };
+}
+
+function scenePayload(board: BoardState): object {
+  const elements = [...board.scene.values()].filter((element) => !element.isDeleted);
+  const fileIds = new Set(elements.map((element) => typeof element.fileId === "string" ? element.fileId : "").filter(Boolean));
+  const files = [...board.files.values()].filter((file) => fileIds.has(file.id));
+  return { type: "scene_state", pageId: board.activePageId, elements, files };
+}
+
+function newPageId(board: BoardState): string {
+  let id = `page-${Date.now().toString(36)}`;
+  let n = 1;
+  while (board.pages.some((page) => page.id === id)) id = `page-${Date.now().toString(36)}-${n++}`;
+  return id;
+}
+
+function cleanPageTitle(raw: unknown, fallback: string): string {
+  return typeof raw === "string" && raw.trim() ? raw.trim().replace(/\s+/g, " ").slice(0, 80) : fallback;
+}
+
+function applyPageCommand(board: BoardState, msg: Record<string, unknown>): boolean {
+  const op = typeof msg.op === "string" ? msg.op : "";
+  const pageId = typeof msg.pageId === "string" ? msg.pageId : "";
+  const index = board.pages.findIndex((page) => page.id === pageId);
+  if (op === "add") {
+    if (board.pages.length >= 80) return false;
+    const page: BoardPage = {
+      id: newPageId(board),
+      title: cleanPageTitle(msg.title, `Page ${board.pages.length + 1}`),
+      template: typeof msg.template === "string" && BOARD_TEMPLATES.has(msg.template) ? msg.template : "blank",
+      locked: false,
+    };
+    board.pages.push(page);
+    board.pageScenes.set(page.id, { scene: new Map(), files: new Map() });
+    activatePage(board, page.id);
+    return true;
+  }
+  if (index < 0) return false;
+  if (op === "select") return activatePage(board, pageId);
+  if (op === "rename") {
+    board.pages[index] = { ...board.pages[index], title: cleanPageTitle(msg.title, board.pages[index].title) };
+    return true;
+  }
+  if (op === "template") {
+    if (typeof msg.template !== "string" || !BOARD_TEMPLATES.has(msg.template)) return false;
+    board.pages[index] = { ...board.pages[index], template: msg.template };
+    return true;
+  }
+  if (op === "lock") {
+    board.pages[index] = { ...board.pages[index], locked: msg.locked === true };
+    return true;
+  }
+  if (op === "delete") {
+    if (board.pages.length <= 1) return false;
+    board.pages.splice(index, 1);
+    board.pageScenes.delete(pageId);
+    if (board.activePageId === pageId) activatePage(board, board.pages[Math.max(0, index - 1)].id);
+    return true;
+  }
+  if (op === "reorder") {
+    const rawTo = typeof msg.toIndex === "number" ? Math.trunc(msg.toIndex) : index;
+    const to = Math.max(0, Math.min(board.pages.length - 1, rawTo));
+    const [page] = board.pages.splice(index, 1);
+    board.pages.splice(to, 0, page);
+    return true;
+  }
+  if (op === "duplicate") {
+    if (board.pages.length >= 80) return false;
+    const source = board.pages[index];
+    const id = newPageId(board);
+    const copy: BoardPage = { ...source, id, title: cleanPageTitle(msg.title, `${source.title} copy`), locked: false };
+    board.pages.splice(index + 1, 0, copy);
+    const sourceScene = board.pageScenes.get(pageId) ?? { scene: board.scene, files: board.files };
+    board.pageScenes.set(id, { scene: new Map(sourceScene.scene), files: new Map(sourceScene.files) });
+    activatePage(board, id);
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -149,16 +275,59 @@ async function restoreBoard(sessionId: string): Promise<void> {
     const board = getBoard(sessionId);
     // Only fill an empty board. A live one is ahead of anything written down.
     if (stored && board.scene.size === 0) {
-      for (const element of stored.scene) {
-        const el = element as SceneElement;
-        if (el && typeof el.id === "string") board.scene.set(el.id, el);
-      }
-      for (const file of stored.files) {
-        const f = file as SceneFile;
-        if (f && typeof f.id === "string") board.files.set(f.id, f);
+      const envelope = stored.scene && typeof stored.scene === "object" && !Array.isArray(stored.scene)
+        ? stored.scene as { version?: number; activePageId?: string; pages?: unknown[] }
+        : null;
+      if (envelope?.version === 2 && Array.isArray(envelope.pages)) {
+        const pages: BoardPage[] = [];
+        for (const raw of envelope.pages.slice(0, 80)) {
+          if (!raw || typeof raw !== "object") continue;
+          const value = raw as Record<string, unknown>;
+          if (typeof value.id !== "string" || pages.some((page) => page.id === value.id)) continue;
+          const page: BoardPage = {
+            id: value.id,
+            title: cleanPageTitle(value.title, `Page ${pages.length + 1}`),
+            template: typeof value.template === "string" && BOARD_TEMPLATES.has(value.template) ? value.template : "blank",
+            locked: value.locked === true,
+          };
+          pages.push(page);
+          const scene = new Map<string, SceneElement>();
+          const files = new Map<string, SceneFile>();
+          for (const element of Array.isArray(value.scene) ? value.scene : []) {
+            const el = element as SceneElement;
+            if (el && typeof el.id === "string") scene.set(el.id, el);
+          }
+          for (const file of Array.isArray(value.files) ? value.files : []) {
+            const f = file as SceneFile;
+            if (f && typeof f.id === "string") files.set(f.id, f);
+          }
+          board.pageScenes.set(page.id, { scene, files });
+        }
+        if (pages.length > 0) {
+          board.pages = pages;
+          board.activePageId = pages.some((page) => page.id === envelope.activePageId) ? envelope.activePageId! : pages[0].id;
+          // Do not call activatePage here. That helper first snapshots the currently active
+          // in-memory scene, but during restoration that scene is the new board's empty
+          // placeholder. Because activePageId has already been set to the persisted page, the
+          // snapshot would overwrite that page's restored drawing before we read it.
+          const restoredActive = board.pageScenes.get(board.activePageId);
+          if (restoredActive) {
+            board.scene = restoredActive.scene;
+            board.files = restoredActive.files;
+          }
+        }
+      } else if (Array.isArray(stored.scene)) {
+        for (const element of stored.scene) {
+          const el = element as SceneElement;
+          if (el && typeof el.id === "string") board.scene.set(el.id, el);
+        }
+        for (const file of stored.files) {
+          const f = file as SceneFile;
+          if (f && typeof f.id === "string") board.files.set(f.id, f);
+        }
       }
       if (stored.view && !board.view) board.view = stored.view as BoardState["view"];
-      logger.info({ sessionId, elements: board.scene.size }, "whiteboard restored after restart");
+      logger.info({ sessionId, elements: board.scene.size, pages: board.pages.length }, "whiteboard restored after restart");
     }
   })()
     .catch((err) => {
@@ -183,7 +352,19 @@ function rememberBoard(sessionId: string): void {
 function getBoard(sessionId: string): BoardState {
   let board = boards.get(sessionId);
   if (!board) {
-    board = { material: null, paths: [], boardSize: null, view: null, scene: new Map(), files: new Map() };
+    const scene = new Map<string, SceneElement>();
+    const files = new Map<string, SceneFile>();
+    board = {
+      material: null,
+      paths: [],
+      boardSize: null,
+      view: null,
+      scene,
+      files,
+      pages: [defaultPage()],
+      activePageId: "page-1",
+      pageScenes: new Map([["page-1", { scene, files }]]),
+    };
     boards.set(sessionId, board);
   }
   return board;
@@ -332,6 +513,7 @@ export function resetBoardFor(sessionId: string): void {
 
   broadcast(id, { type: "board_clear" });
   broadcast(id, { type: "material_clear" });
+  broadcast(id, { type: "board_pages", pages: [defaultPage()], activePageId: "page-1" });
 }
 
 export function attachClassroomHub(server: http.Server): void {
@@ -406,6 +588,7 @@ export function attachClassroomHub(server: http.Server): void {
 /** Tells one client what is already on the board. Called once the stored copy is back. */
 function replayBoardTo(ws: WebSocket, sessionId: string): void {
     const board = getBoard(sessionId);
+    sendTo(ws, { type: "board_pages", ...pagePayload(board) });
     if (board.material || board.paths.length > 0 || board.boardSize) {
       sendTo(ws, {
         type: "board_state",
@@ -417,16 +600,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
     // Catch the new arrival up on the object board. Deleted elements are not replayed — nobody
     // joining needs to know what used to be there, and sending them grows the payload forever.
-    if (board.scene.size > 0) {
-      const elements = [...board.scene.values()].filter((e) => !e.isDeleted);
-      // The pictures travel with the elements that reference them, not separately, so a
-      // late joiner never renders an image element it has no bytes for.
-      const fileIds = new Set(
-        elements.map((e) => (typeof e.fileId === "string" ? e.fileId : "")).filter(Boolean),
-      );
-      const files = [...board.files.values()].filter((f) => fileIds.has(f.id));
-      if (elements.length > 0) sendTo(ws, { type: "scene_state", elements, files });
-    }
+    if (board.scene.size > 0) sendTo(ws, scenePayload(board));
 
     // Sent after the elements, so the board is pointed at content it already holds.
     if (board.view) sendTo(ws, { type: "board_view", ...board.view });
@@ -477,6 +651,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
     const numericSessionId = Number(sessionId);
     const ledger = { since: Date.now(), draws: 0, messages: 0, opened: true };
     let ledgerTimer: ReturnType<typeof setInterval> | null = null;
+    let lastLaserAt = 0;
 
     function flushLedger(): void {
       if (!Number.isFinite(numericSessionId)) return;
@@ -592,6 +767,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           if (incoming.length === 0 || incoming.length > MAX_SCENE_ELEMENTS) break;
 
           const board = getBoard(sessionId);
+          if (board.pages.find((page) => page.id === board.activePageId)?.locked) break;
           const accepted: SceneElement[] = [];
           for (const el of incoming) {
             if (!el || typeof el.id !== "string" || typeof el.version !== "number") continue;
@@ -658,7 +834,7 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
             // element on every frame of a drag. Stale/replayed versions are not teaching
             // activity and must not inflate the evidence ledger.
             ledger.draws += 1;
-            broadcast(sessionId, { type: "scene_update", elements: deliverable, files: acceptedFiles }, ws);
+            broadcast(sessionId, { type: "scene_update", pageId: board.activePageId, elements: deliverable, files: acceptedFiles }, ws);
             // Written down shortly, so a restart mid-lesson does not erase the board.
             rememberBoard(sessionId);
           }
@@ -667,16 +843,46 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
         case "board_clear":
           if (isSessionTeacher) {
-            getBoard(sessionId).paths = [];
-            getBoard(sessionId).scene.clear();
-            getBoard(sessionId).files.clear();
+            const board = getBoard(sessionId);
+            board.paths = [];
+            board.scene.clear();
+            board.files.clear();
             broadcast(sessionId, { type: "board_clear" }, ws);
-            // Cleared means cleared, including through a restart — otherwise wiping the board
-            // and restarting would bring the whole lesson back.
-            const cleared = Number(sessionId);
-            if (Number.isFinite(cleared)) void forgetBoard(cleared);
+            // Clearing applies to the page everyone is currently viewing. Persist the empty
+            // active page together with the other pages; deleting the entire stored board here
+            // would make every other page disappear only after a server restart.
+            rememberBoard(sessionId);
           }
           break;
+        case "board_page": {
+          // Page mutations are teacher-owned. Students follow the active page and cannot use a
+          // client-controlled page id to reveal another page's private scene.
+          if (!isSessionTeacher) break;
+          const board = getBoard(sessionId);
+          if (!applyPageCommand(board, msg)) break;
+          broadcast(sessionId, { type: "board_pages", ...pagePayload(board) });
+          // An explicit full state (including an empty scene) makes a page switch deterministic
+          // for clients that were already drawing or reconnecting at the same time.
+          broadcast(sessionId, scenePayload(board));
+          if (board.view) broadcast(sessionId, { type: "board_view", ...board.view });
+          rememberBoard(sessionId);
+          break;
+        }
+        case "board_laser": {
+          // The laser is presentation-only and expires on clients; it never enters the saved
+          // scene. Only the owner of this classroom may publish it.
+          if (!isSessionTeacher) break;
+          const x = typeof msg.x === "number" ? msg.x : NaN;
+          const y = typeof msg.y === "number" ? msg.y : NaN;
+          if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) break;
+          const now = Date.now();
+          // The client sends at most every 50 ms. Enforce a slightly looser server boundary too
+          // so a modified client cannot flood every phone in the class with pointer frames.
+          if (msg.active === true && now - lastLaserAt < 35) break;
+          lastLaserAt = now;
+          broadcast(sessionId, { type: "board_laser", x, y, active: msg.active === true });
+          break;
+        }
         case "board_size": {
           if (!isSessionTeacher) break;
           const width = typeof msg.width === "number" ? msg.width : NaN;

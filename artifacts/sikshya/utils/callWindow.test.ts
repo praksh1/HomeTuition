@@ -42,6 +42,13 @@ test("a call starts as a small preview, parked", () => {
   assert.deepEqual(m.offset, { x: 0, y: 0 });
 });
 
+test("a laptop can start with the working video window while phones keep the board primary", () => {
+  const m = initialCallWindow("normal");
+  assert.equal(m.state, "normal");
+  assert.equal(m.lastWindowed, "normal");
+  assert.deepEqual(m.offset, { x: 0, y: 0 });
+});
+
 test("minus from normal always lands on compact, in the corner", () => {
   const m = run([{ type: "toggle-full" }, { type: "toggle-full" }, { type: "drag", dx: -120, dy: -200 }]);
   const minimized = callWindowReducer({ ...m, state: "normal" }, { type: "minimize" });

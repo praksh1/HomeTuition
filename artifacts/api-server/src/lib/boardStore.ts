@@ -36,7 +36,8 @@ const SAVE_DEBOUNCE_MS = 2_000;
 const MAX_PERSISTED_CHARS = 6_000_000;
 
 export interface StoredBoard {
-  scene: unknown[];
+  /** A legacy scene array, or the versioned page envelope introduced without a DB migration. */
+  scene: unknown;
   files: unknown[];
   view: Record<string, number> | null;
 }
@@ -56,7 +57,7 @@ export async function loadBoard(sessionId: number): Promise<StoredBoard | null> 
       .where(eq(sessionBoardTable.sessionId, sessionId));
     if (!row) return null;
     return {
-      scene: Array.isArray(row.scene) ? row.scene : [],
+      scene: row.scene ?? [],
       files: Array.isArray(row.files) ? row.files : [],
       view: (row.view as Record<string, number> | null) ?? null,
     };
@@ -89,10 +90,13 @@ export async function saveBoardNow(sessionId: number, board: StoredBoard): Promi
 
     await db
       .insert(sessionBoardTable)
-      .values({ sessionId, scene: board.scene, files, view: board.view, updatedAt: new Date() })
+      // The existing jsonb column is intentionally reused for the versioned page envelope;
+      // adding a column would make a deploy depend on a manual db:push and could interrupt a
+      // live class. The old array shape remains readable forever.
+      .values({ sessionId, scene: board.scene as unknown[], files, view: board.view, updatedAt: new Date() })
       .onConflictDoUpdate({
         target: sessionBoardTable.sessionId,
-        set: { scene: board.scene, files, view: board.view, updatedAt: new Date() },
+        set: { scene: board.scene as unknown[], files, view: board.view, updatedAt: new Date() },
       });
   } catch (err) {
     logger.warn({ err, sessionId }, "could not keep the whiteboard; it will not survive a restart");

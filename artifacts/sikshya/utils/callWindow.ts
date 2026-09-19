@@ -55,8 +55,13 @@ export interface CallWindowModel {
   offset: { x: number; y: number };
 }
 
-export function initialCallWindow(): CallWindowModel {
-  return { state: "compact", lastVisible: "compact", lastWindowed: "compact", offset: { x: 0, y: 0 } };
+export function initialCallWindow(preferred: "compact" | "normal" = "compact"): CallWindowModel {
+  /**
+   * A laptop has room to make the first hello feel like a real classroom rather than a tiny
+   * thumbnail. Phones still start compact so the board remains the primary surface and the
+   * teacher can expand the call when they are ready.
+   */
+  return { state: preferred, lastVisible: preferred, lastWindowed: preferred, offset: { x: 0, y: 0 } };
 }
 
 export type CallWindowAction =

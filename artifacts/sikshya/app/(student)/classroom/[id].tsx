@@ -195,6 +195,10 @@ export default function StudentClassroom() {
     consumeSceneUpdates,
     boardClearedAt,
     boardView,
+    boardPages,
+    activeBoardPageId,
+    boardPageChangedAt,
+    boardLaser,
   } = useClassroomSocket({
     sessionId: id ?? "",
     name: studentName,
@@ -213,7 +217,11 @@ export default function StudentClassroom() {
    * callWindow.ts` is now the only description of where the call sits and what each button does
    * to it, and it is tested on its own.
    */
-  const [callWindow, dispatchWindow] = useReducer(callWindowReducer, undefined, initialCallWindow);
+  const [callWindow, dispatchWindow] = useReducer(
+    callWindowReducer,
+    isCompact ? "compact" : "normal",
+    initialCallWindow,
+  );
   const videoWindowSize: VideoWindowSize =
     callWindow.state === "compact" ? "small" : callWindow.state === "normal" ? "medium" : callWindow.state;
   const [unreadChatCount, setUnreadChatCount] = useState(0);
@@ -1269,6 +1277,10 @@ export default function StudentClassroom() {
                   onSceneChange={noopSceneChange}
                   viewport={boardView}
                   clearedAt={boardClearedAt}
+                  pages={boardPages}
+                  activePageId={activeBoardPageId}
+                  pageChangedAt={boardPageChangedAt}
+                  laser={boardLaser}
                 />
               </View>
             )}

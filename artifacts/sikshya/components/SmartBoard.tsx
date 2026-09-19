@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
-import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
+import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 
 /**
  * The same whiteboard, inside the native apps.
@@ -39,6 +39,12 @@ interface Props {
   viewport?: BoardViewport | null;
   onClearAll?: () => void;
   clearedAt?: number;
+  pages?: BoardPage[];
+  activePageId?: string;
+  pageChangedAt?: number;
+  onPageCommand?: (command: BoardPageCommand) => void;
+  laser?: BoardLaserPoint | null;
+  onLaser?: (point: BoardLaserPoint) => void;
   theme?: "light" | "dark";
 }
 
@@ -66,6 +72,12 @@ export default function SmartBoard({
   onDocumentLost,
   onClearAll,
   clearedAt = 0,
+  pages = [{ id: "page-1", title: "Page 1", template: "blank", locked: false }],
+  activePageId = "page-1",
+  pageChangedAt = 0,
+  onPageCommand,
+  laser = null,
+  onLaser,
   theme = "light",
 }: Props) {
   const webRef = useRef<WebView>(null);
@@ -80,6 +92,7 @@ export default function SmartBoard({
   const queued = useRef<SceneDelta[]>([]);
   /** The teacher's view, held the same way and for the same reason as the deltas above. */
   const queuedView = useRef<BoardViewport | null>(null);
+  const queuedPages = useRef<{ pages: BoardPage[]; activePageId: string } | null>(null);
   /**
    * A document posted to the board that has not been acknowledged yet.
    *
@@ -154,9 +167,20 @@ export default function SmartBoard({
     else post({ type: "view_in", view: viewport });
   }, [viewport, post]);
 
+  useEffect(() => {
+    const payload = { pages, activePageId };
+    if (!ready.current) queuedPages.current = payload;
+    else post({ type: "pages_in", ...payload });
+  }, [pages, activePageId, post]);
+
+  useEffect(() => {
+    if (!ready.current) return;
+    post({ type: "laser_in", laser });
+  }, [laser, post]);
+
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let msg: { type?: string; key?: string; elements?: unknown[]; files?: unknown[]; view?: BoardViewport };
+      let msg: { type?: string; key?: string; elements?: unknown[]; files?: unknown[]; view?: BoardViewport; pages?: BoardPage[]; activePageId?: string; command?: BoardPageCommand; laser?: BoardLaserPoint | null };
       try {
         msg = JSON.parse(event.nativeEvent.data);
       } catch {
@@ -168,6 +192,11 @@ export default function SmartBoard({
         post({ type: "config", readOnly, theme });
         for (const delta of queued.current) post({ type: "scene_in", delta });
         queued.current = [];
+        if (queuedPages.current) {
+          post({ type: "pages_in", ...queuedPages.current });
+          queuedPages.current = null;
+        }
+        post({ type: "laser_in", laser });
         if (queuedView.current) {
           post({ type: "view_in", view: queuedView.current });
           queuedView.current = null;
@@ -192,9 +221,17 @@ export default function SmartBoard({
       }
       if (msg.type === "clear_out") {
         onClearAll?.();
+        return;
+      }
+      if (msg.type === "pages_out" && msg.command) {
+        onPageCommand?.(msg.command);
+        return;
+      }
+      if (msg.type === "laser_out" && msg.laser) {
+        onLaser?.(msg.laser);
       }
     },
-    [post, readOnly, theme, onSceneChange, onViewportChange, onClearAll],
+    [post, readOnly, theme, laser, onSceneChange, onViewportChange, onClearAll, onPageCommand, onLaser],
   );
 
   const source = useMemo(

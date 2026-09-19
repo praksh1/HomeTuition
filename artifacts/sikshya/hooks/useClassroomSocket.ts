@@ -47,7 +47,43 @@ export interface SceneDelta {
    * saw when a teacher shared a photo.
    */
   files?: unknown[];
+  /** The synchronized page this scene belongs to. Older servers omit it and use page-1. */
+  pageId?: string;
 }
+
+export const BOARD_TEMPLATES = [
+  "blank",
+  "lined",
+  "graph",
+  "dots",
+  "math-grid",
+  "coordinate",
+  "music-staff",
+] as const;
+export type BoardTemplate = (typeof BOARD_TEMPLATES)[number];
+
+export interface BoardPage {
+  id: string;
+  title: string;
+  template: BoardTemplate;
+  locked: boolean;
+}
+
+export interface BoardLaserPoint {
+  x: number;
+  y: number;
+  active: boolean;
+}
+
+export type BoardPageCommand =
+  | { op: "add"; title?: string; template?: BoardTemplate }
+  | { op: "duplicate"; pageId: string; title?: string }
+  | { op: "rename"; pageId: string; title: string }
+  | { op: "template"; pageId: string; template: BoardTemplate }
+  | { op: "lock"; pageId: string; locked: boolean }
+  | { op: "delete"; pageId: string }
+  | { op: "reorder"; pageId: string; toIndex: number }
+  | { op: "select"; pageId: string };
 
 export interface FloatingReaction {
   id: string;
@@ -235,6 +271,13 @@ interface Result {
   sendBoardClear: () => void;
   sendMaterial: (dataUrl: string, kind: "image" | "pdf") => void;
   clearMaterial: () => void;
+  /** The synchronized page list. The teacher owns mutations; students follow the active page. */
+  boardPages: BoardPage[];
+  activeBoardPageId: string;
+  boardPageChangedAt: number;
+  sendBoardPage: (command: BoardPageCommand) => void;
+  boardLaser: BoardLaserPoint | null;
+  sendBoardLaser: (point: BoardLaserPoint) => void;
 }
 
 export function useClassroomSocket({ sessionId, name, role }: Options): Result {
@@ -252,6 +295,13 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   const [boardSize, setBoardSize] = useState<BoardSize | null>(null);
   const [boardView, setBoardView] = useState<BoardViewport | null>(null);
   const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+  const [boardPages, setBoardPages] = useState<BoardPage[]>([
+    { id: "page-1", title: "Page 1", template: "blank", locked: false },
+  ]);
+  const [activeBoardPageId, setActiveBoardPageId] = useState("page-1");
+  const [boardPageChangedAt, setBoardPageChangedAt] = useState(0);
+  const [boardLaser, setBoardLaser] = useState<BoardLaserPoint | null>(null);
+  const laserTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [accessDenied, setAccessDenied] = useState(false);
 
@@ -349,15 +399,46 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
         case "scene_state":
           setSceneUpdates((prev) => [
             ...prev,
-            { full: true, elements: (msg.elements as unknown[]) ?? [], files: (msg.files as unknown[]) ?? [] },
+            { full: true, pageId: typeof msg.pageId === "string" ? msg.pageId : undefined, elements: (msg.elements as unknown[]) ?? [], files: (msg.files as unknown[]) ?? [] },
           ]);
           break;
         case "scene_update":
           setSceneUpdates((prev) => [
             ...prev,
-            { full: false, elements: (msg.elements as unknown[]) ?? [], files: (msg.files as unknown[]) ?? [] },
+            { full: false, pageId: typeof msg.pageId === "string" ? msg.pageId : undefined, elements: (msg.elements as unknown[]) ?? [], files: (msg.files as unknown[]) ?? [] },
           ]);
           break;
+        case "board_pages": {
+          const rawPages = Array.isArray(msg.pages) ? msg.pages : [];
+          const pages = rawPages
+            .filter((page): page is Record<string, unknown> => Boolean(page) && typeof page === "object")
+            .map((page, index) => ({
+              id: typeof page.id === "string" ? page.id : `page-${index + 1}`,
+              title: typeof page.title === "string" && page.title.trim() ? page.title : `Page ${index + 1}`,
+              template: BOARD_TEMPLATES.includes(page.template as BoardTemplate) ? page.template as BoardTemplate : "blank",
+              locked: page.locked === true,
+            }));
+          if (pages.length > 0) {
+            const nextActive = typeof msg.activePageId === "string" && pages.some((page) => page.id === msg.activePageId)
+              ? msg.activePageId
+              : pages[0].id;
+            setBoardPages(pages);
+            setActiveBoardPageId((previous) => {
+              if (previous !== nextActive) setBoardPageChangedAt((value) => value + 1);
+              return nextActive;
+            });
+          }
+          break;
+        }
+        case "board_laser": {
+          const x = typeof msg.x === "number" ? Math.min(1, Math.max(0, msg.x)) : NaN;
+          const y = typeof msg.y === "number" ? Math.min(1, Math.max(0, msg.y)) : NaN;
+          if (!Number.isFinite(x) || !Number.isFinite(y)) break;
+          setBoardLaser({ x, y, active: msg.active !== false });
+          if (laserTimerRef.current) clearTimeout(laserTimerRef.current);
+          laserTimerRef.current = setTimeout(() => setBoardLaser(null), 900);
+          break;
+        }
         case "board_clear":
           setRemotePaths([]);
           setSceneUpdates([]);
@@ -428,8 +509,17 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     setMessages([]);
     setPresenceCount(0);
     setSessionStatus(null);
+    setBoardPages([{ id: "page-1", title: "Page 1", template: "blank", locked: false }]);
+    setActiveBoardPageId("page-1");
+    setBoardPageChangedAt(0);
+    setBoardLaser(null);
+    if (laserTimerRef.current) clearTimeout(laserTimerRef.current);
     setAccessDenied(false);
   }, [sessionId]);
+
+  useEffect(() => () => {
+    if (laserTimerRef.current) clearTimeout(laserTimerRef.current);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -536,6 +626,22 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     send({ type: "material_clear" });
   }, [send]);
 
+  const sendBoardPage = useCallback((command: BoardPageCommand) => {
+    send({ type: "board_page", ...command });
+  }, [send]);
+
+  const sendBoardLaser = useCallback((point: BoardLaserPoint) => {
+    const safe = {
+      x: Math.min(1, Math.max(0, Number.isFinite(point.x) ? point.x : 0)),
+      y: Math.min(1, Math.max(0, Number.isFinite(point.y) ? point.y : 0)),
+      active: point.active === true,
+    };
+    setBoardLaser(safe.active ? safe : null);
+    if (laserTimerRef.current) clearTimeout(laserTimerRef.current);
+    if (safe.active) laserTimerRef.current = setTimeout(() => setBoardLaser(null), 900);
+    send({ type: "board_laser", ...safe });
+  }, [send]);
+
   return {
     connected,
     accessDenied,
@@ -561,5 +667,11 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     sendBoardClear,
     sendMaterial,
     clearMaterial,
+    boardPages,
+    activeBoardPageId,
+    boardPageChangedAt,
+    sendBoardPage,
+    boardLaser,
+    sendBoardLaser,
   };
 }

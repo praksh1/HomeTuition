@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import SmartBoard from "../components/SmartBoard.web";
-import type { BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
+import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 
 /**
  * The whiteboard on its own, with no classroom around it.
@@ -23,6 +23,10 @@ export default function BoardPage() {
   const [updates, setUpdates] = useState<SceneDelta[]>([]);
   const [clearedAt, setClearedAt] = useState(0);
   const [viewport, setViewport] = useState<BoardViewport | null>(null);
+  const [pages, setPages] = useState<BoardPage[]>([{ id: "page-1", title: "Page 1", template: "blank", locked: false }]);
+  const [activePageId, setActivePageId] = useState("page-1");
+  const [pageChangedAt, setPageChangedAt] = useState(0);
+  const [laser, setLaser] = useState<BoardLaserPoint | null>(null);
   const [insertDocument, setInsertDocument] = useState<
     { key: string; dataUrl: string; kind: "image" | "pdf" } | null
   >(null);
@@ -46,6 +50,9 @@ export default function BoardPage() {
         readOnly?: boolean;
         theme?: "light" | "dark";
         view?: BoardViewport;
+        pages?: BoardPage[];
+        activePageId?: string;
+        laser?: BoardLaserPoint | null;
         document?: { key: string; dataUrl: string; kind: "image" | "pdf" };
       };
       try {
@@ -64,6 +71,18 @@ export default function BoardPage() {
           break;
         case "view_in":
           if (msg.view) setViewport(msg.view);
+          break;
+        case "pages_in":
+          if (Array.isArray(msg.pages) && typeof msg.activePageId === "string") {
+            setPages(msg.pages);
+            setActivePageId((previous) => {
+              if (previous !== msg.activePageId) setPageChangedAt((value) => value + 1);
+              return msg.activePageId as string;
+            });
+          }
+          break;
+        case "laser_in":
+          setLaser(msg.laser ?? null);
           break;
         case "insert_document":
           if (msg.document) {
@@ -115,6 +134,14 @@ export default function BoardPage() {
 
   const handleClearAll = useCallback(() => postToHost({ type: "clear_out" }), [postToHost]);
 
+  const handlePageCommand = useCallback((command: BoardPageCommand) => {
+    postToHost({ type: "pages_out", command });
+  }, [postToHost]);
+
+  const handleLaser = useCallback((point: BoardLaserPoint) => {
+    postToHost({ type: "laser_out", laser: point });
+  }, [postToHost]);
+
   const consume = useCallback(() => setUpdates([]), []);
 
   if (Platform.OS !== "web") {
@@ -139,6 +166,12 @@ export default function BoardPage() {
         insertDocument={insertDocument}
         onClearAll={handleClearAll}
         clearedAt={clearedAt}
+        pages={pages}
+        activePageId={activePageId}
+        pageChangedAt={pageChangedAt}
+        onPageCommand={handlePageCommand}
+        laser={laser}
+        onLaser={handleLaser}
         theme={theme}
       />
     </View>

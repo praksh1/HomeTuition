@@ -69,6 +69,17 @@ function socket(token, sessionId, name) {
         } catch { /* not ours */ }
       });
     }),
+    waitFor: (predicate, ms = 4000) => new Promise((resolve) => {
+      const found = seen.find(predicate);
+      if (found) return resolve(found);
+      const timer = setTimeout(() => resolve(null), ms);
+      ws.on("message", (raw) => {
+        try {
+          const m = JSON.parse(String(raw));
+          if (predicate(m)) { clearTimeout(timer); resolve(m); }
+        } catch { /* not ours */ }
+      });
+    }),
   };
 }
 
@@ -143,6 +154,56 @@ async function main() {
     const view = await s.wait("board_view", 3000);
     check("the teacher's view came back too", Boolean(view), "no board_view after the restart");
     s.ws.close();
+  }
+
+  console.log("\nEvery whiteboard page survives the server restarting");
+  {
+    const t = socket(teacher.token, sessionId, "T");
+    await t.open();
+    await wait(400);
+    t.ws.send(JSON.stringify({ type: "board_page", op: "add", title: "Worked example", template: "graph" }));
+    const pageList = await t.waitFor((message) =>
+      message.type === "board_pages" && message.activePageId !== "page-1" && message.pages?.length === 2,
+    6000);
+    const secondPageId = pageList?.activePageId;
+    check("the second page becomes active", typeof secondPageId === "string", JSON.stringify(pageList ?? {}));
+    t.ws.send(JSON.stringify({
+      type: "scene_update",
+      elements: [{ id: "page-2-mark", type: "freedraw", version: 1, x: 40, y: 50, width: 80, height: 30 }],
+    }));
+    await wait(3500);
+    t.ws.close();
+
+    await restartServer();
+
+    const s = socket(student.token, sessionId, "S");
+    await s.open();
+    const restoredPages = await s.wait("board_pages", 6000);
+    const activeScene = await s.waitFor((message) => message.type === "scene_state" && message.pageId === secondPageId, 6000);
+    check("the active page id comes back", restoredPages?.activePageId === secondPageId, JSON.stringify(restoredPages ?? {}));
+    check(
+      "the active page drawing comes back instead of an empty placeholder",
+      (activeScene?.elements ?? []).some((element) => element.id === "page-2-mark"),
+      JSON.stringify(activeScene ?? {}).slice(0, 180),
+    );
+    s.ws.close();
+
+    const t2 = socket(teacher.token, sessionId, "T2");
+    await t2.open();
+    await t2.waitFor((message) => message.type === "scene_state" && message.pageId === secondPageId, 6000);
+    t2.ws.send(JSON.stringify({ type: "board_page", op: "select", pageId: "page-1" }));
+    const firstPageScene = await t2.waitFor((message) => message.type === "scene_state" && message.pageId === "page-1", 6000);
+    check(
+      "switching back restores the first page drawing",
+      (firstPageScene?.elements ?? []).some((element) => element.id === "el-1"),
+      JSON.stringify(firstPageScene ?? {}).slice(0, 180),
+    );
+    check(
+      "and the first page picture bytes stay with that page",
+      (firstPageScene?.files ?? []).some((file) => file.id === "pic-1"),
+      JSON.stringify(firstPageScene ?? {}).slice(0, 180),
+    );
+    t2.ws.close();
   }
 
   console.log("\nClearing the board clears it for good");
