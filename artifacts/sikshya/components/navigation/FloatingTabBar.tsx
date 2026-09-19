@@ -11,6 +11,7 @@ import {
   type LayoutChangeEvent,
 } from "react-native";
 import * as Haptics from "expo-haptics";
+import { Link, type Href } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { HIT_SLOP_MIN, elevation, motion, radius, space } from "@/constants/layout";
@@ -167,34 +168,36 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
             };
             const onLongPress = () => navigation.emit({ type: "tabLongPress", target: route.key });
             const icon = options.tabBarIcon?.({ focused, color: focused ? colors.primary : colors.mutedForeground, size: 21, position: "below-icon" });
+            const href = (route.name === "index" ? "/" : `/${route.name}`) as Href;
 
             return (
-              <Pressable
-                key={route.key}
-                accessibilityRole="tab"
-                accessibilityState={focused ? { selected: true } : {}}
-                accessibilityLabel={options.tabBarAccessibilityLabel ?? label}
-                onPress={onPress}
-                onLongPress={onLongPress}
-                testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
-                style={({ pressed }) => [
-                  styles.item,
-                  isExpanded ? { height: railItemHeight } : { minHeight: HIT_SLOP_MIN + space.sm },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={styles.iconWrap}>
-                  {icon}
-                  {badge !== undefined && badge !== null ? (
-                    <View style={[styles.badge, { backgroundColor: colors.brand, borderColor: colors.card }]}>
-                      <Text style={[t.caption, styles.badgeText, { color: colors.onInverse }]}>{String(badge)}</Text>
-                    </View>
-                  ) : null}
-                </View>
-                <Text numberOfLines={1} style={[t.caption, styles.label, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
-                  {label}
-                </Text>
-              </Pressable>
+              <Link key={route.key} href={href} asChild>
+                <Pressable
+                  accessibilityRole="tab"
+                  accessibilityState={focused ? { selected: true } : {}}
+                  accessibilityLabel={options.tabBarAccessibilityLabel ?? label}
+                  onPress={onPress}
+                  onLongPress={onLongPress}
+                  testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
+                  style={({ pressed }) => [
+                    styles.item,
+                    isExpanded ? { height: railItemHeight } : { minHeight: HIT_SLOP_MIN + space.sm },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={styles.iconWrap}>
+                    {icon}
+                    {badge !== undefined && badge !== null ? (
+                      <View style={[styles.badge, { backgroundColor: colors.brand, borderColor: colors.card }]}>
+                        <Text style={[t.caption, styles.badgeText, { color: colors.onInverse }]}>{String(badge)}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text numberOfLines={1} style={[t.caption, styles.label, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
+                    {label}
+                  </Text>
+                </Pressable>
+              </Link>
             );
           })}
         </View>

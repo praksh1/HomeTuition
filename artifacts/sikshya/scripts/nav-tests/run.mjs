@@ -93,6 +93,10 @@ async function tabLabels(page) {
   );
 }
 
+async function tabDestinations(page) {
+  return page.$$eval('[role="tab"]', (nodes) => nodes.map((n) => n.getAttribute("href")));
+}
+
 async function main() {
   if (!(await fetch(`${API}/api/healthz`).catch(() => null))?.ok) {
     console.error(`No API at ${API}. Start it first, or set API_URL.`);
@@ -116,6 +120,7 @@ async function main() {
   await page.waitForTimeout(3500);
 
   const teacherTabs = await tabLabels(page);
+  const teacherDestinations = await tabDestinations(page);
   check("the floating navigation stays inside the phone viewport",
     await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     `${await page.evaluate(() => document.documentElement.scrollWidth)}px > ${await page.evaluate(() => innerWidth)}px`);
@@ -128,6 +133,10 @@ async function main() {
   check("only the five high-value teacher destinations are visible",
     teacherTabs.length === 5,
     JSON.stringify(teacherTabs));
+  check("every teacher tab is a real browser link",
+    teacherDestinations.every((href) => typeof href === "string" && href.startsWith("/")) &&
+      teacherDestinations.includes("/profile") && teacherDestinations.includes("/messages"),
+    JSON.stringify(teacherDestinations));
 
   // The half that a compile cannot catch: the screen that left the tab bar is still reachable.
   await page.locator('[data-testid="tab-profile"]').click({ timeout: 15000 });
@@ -190,6 +199,7 @@ async function main() {
   await page2.waitForTimeout(3500);
 
   const studentTabs = await tabLabels(page2);
+  const studentDestinations = await tabDestinations(page2);
   check("the student's floating navigation stays inside the phone viewport",
     await page2.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     `${await page2.evaluate(() => document.documentElement.scrollWidth)}px > ${await page2.evaluate(() => innerWidth)}px`);
@@ -200,6 +210,10 @@ async function main() {
   check("only the four daily student destinations are visible",
     studentTabs.length === 4,
     JSON.stringify(studentTabs));
+  check("every student tab is a real browser link",
+    studentDestinations.every((href) => typeof href === "string" && href.startsWith("/")) &&
+      studentDestinations.includes("/profile") && studentDestinations.includes("/messages"),
+    JSON.stringify(studentDestinations));
 
   await page2.locator('[data-testid="tab-profile"]').click({ timeout: 15000 });
   await page2.locator('[data-testid="profile-overflow-trigger"]').click({ timeout: 10000 });
