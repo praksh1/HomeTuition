@@ -186,37 +186,40 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
             const icon = options.tabBarIcon?.({ focused, color: focused ? colors.primary : colors.mutedForeground, size: 21, position: "below-icon" });
             const href = (route.name === "index" ? "/" : `/${route.name}`) as Href;
 
+            // Expo Router places a browser-link host around its `asChild` content on web.
+            // That host, not the visible Pressable, is the flex child of the dock. Giving the
+            // slot the geometry prevents link text from deciding every tab's width and height.
             return (
-              <Link key={route.key} href={href} asChild>
-                <Pressable
-                  accessibilityRole="tab"
-                  accessibilityState={focused ? { selected: true } : {}}
-                  aria-current={focused ? "page" : undefined}
-                  accessibilityLabel={options.tabBarAccessibilityLabel ?? label}
-                  onPress={onPress}
-                  onLongPress={onLongPress}
-                  testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
-                  style={({ pressed }) => [
-                    styles.item,
-                    isExpanded
-                      ? styles.desktopItem
-                      : [styles.mobileItem, { minHeight: HIT_SLOP_MIN + space.sm }],
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <View style={styles.iconWrap}>
-                    {icon}
-                    {badge !== undefined && badge !== null ? (
-                      <View style={[styles.badge, { backgroundColor: colors.brand, borderColor: colors.card }]}>
-                        <Text style={[t.caption, styles.badgeText, { color: colors.onInverse }]}>{String(badge)}</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <Text numberOfLines={1} style={[isExpanded ? t.bodyStrong : t.caption, styles.label, isExpanded && styles.desktopLabel, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
-                    {label}
-                  </Text>
-                </Pressable>
-              </Link>
+              <View key={route.key} style={isExpanded ? styles.desktopSlot : styles.mobileSlot}>
+                <Link href={href} asChild>
+                  <Pressable
+                    accessibilityRole="tab"
+                    accessibilityState={focused ? { selected: true } : {}}
+                    aria-current={focused ? "page" : undefined}
+                    accessibilityLabel={options.tabBarAccessibilityLabel ?? label}
+                    onPress={onPress}
+                    onLongPress={onLongPress}
+                    testID={options.tabBarButtonTestID ?? `tab-${route.name}`}
+                    style={({ pressed }) => [
+                      styles.item,
+                      isExpanded && styles.desktopItem,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={styles.iconWrap}>
+                      {icon}
+                      {badge !== undefined && badge !== null ? (
+                        <View style={[styles.badge, { backgroundColor: colors.brand, borderColor: colors.card }]}>
+                          <Text style={[t.caption, styles.badgeText, { color: colors.onInverse }]}>{String(badge)}</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <Text numberOfLines={1} style={[isExpanded ? t.bodyStrong : t.caption, styles.label, isExpanded && styles.desktopLabel, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
+                      {label}
+                    </Text>
+                  </Pressable>
+                </Link>
+              </View>
             );
           })}
         </View>
@@ -233,9 +236,10 @@ const styles = StyleSheet.create({
   rail: { flexDirection: "column", borderRadius: radius.lg, padding: space.xs },
   indicator: { position: "absolute", overflow: "hidden", borderWidth: 1, borderRadius: radius.pill },
   indicatorHighlight: { position: "absolute", left: "22%", right: "22%", top: 2, height: 1, opacity: 0.8 },
-  item: { alignItems: "center", justifyContent: "center", gap: 3, borderRadius: radius.pill, zIndex: 1 },
-  mobileItem: { minWidth: 0, flexBasis: 0, flexGrow: 1, flexShrink: 1 },
-  desktopItem: { width: "100%", height: 64, flexDirection: "row", justifyContent: "flex-start", gap: space.sm, paddingHorizontal: space.md },
+  mobileSlot: { minWidth: 0, height: HIT_SLOP_MIN + space.sm, flexBasis: 0, flexGrow: 1, flexShrink: 1, zIndex: 1 },
+  desktopSlot: { width: "100%", height: 64, zIndex: 1 },
+  item: { width: "100%", height: "100%", alignItems: "center", justifyContent: "center", gap: 3, borderRadius: radius.pill },
+  desktopItem: { flexDirection: "row", justifyContent: "flex-start", gap: space.sm, paddingHorizontal: space.md },
   pressed: { opacity: 0.72, transform: [{ scale: 0.94 }] },
   iconWrap: { width: 28, height: 25, alignItems: "center", justifyContent: "center" },
   label: { maxWidth: "100%", textAlign: "center" },
