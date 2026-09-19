@@ -55,7 +55,12 @@ try {
       check(box && box.height >= 44, `${width}: teacher ${id} filter meets the touch floor`);
     }
     const teacherContent = await page.getByTestId("teacher-schedule-content").boundingBox();
-    check(teacherContent && teacherContent.width <= 760, `${width}: teacher agenda keeps a readable width`);
+    check(
+      teacherContent && (width >= 1024
+        ? teacherContent.width >= 1000 && teacherContent.width <= 1120
+        : teacherContent.width <= 760),
+      `${width}: teacher agenda uses the right phone or laptop workspace`,
+    );
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: teacher agenda has no horizontal overflow`);
     await page.getByTestId("teacher-group-history").click();
     await page.getByText("Final revision", { exact: true }).waitFor();
@@ -78,7 +83,12 @@ try {
       check(box && box.height >= 44, `${width}: student ${id} filter meets the touch floor`);
     }
     const studentContent = await page.getByTestId("student-classes-content").boundingBox();
-    check(studentContent && studentContent.width <= 760, `${width}: student classes keep a readable width`);
+    check(
+      studentContent && (width >= 1024
+        ? studentContent.width >= 1000 && studentContent.width <= 1120
+        : studentContent.width <= 760),
+      `${width}: student classes use the right phone or laptop workspace`,
+    );
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: student classes have no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-student-classes.png`), fullPage: true });
 
