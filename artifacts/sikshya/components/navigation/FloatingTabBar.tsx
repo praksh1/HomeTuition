@@ -44,7 +44,7 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
   const currentOptions = descriptors[state.routes[state.index].key]?.options as RouteOptions | undefined;
 
   // Hidden detail routes can still live inside the tab navigator without covering their content.
-  if (currentOptions?.href === null || (currentOptions?.tabBarStyle as { display?: string } | undefined)?.display === "none") {
+  if (!currentOptions?.tabBarIcon || currentOptions.href === null || (currentOptions.tabBarStyle as { display?: string } | undefined)?.display === "none") {
     return null;
   }
 
@@ -74,7 +74,11 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
         >
           {state.routes.map((route, index) => {
             const options = descriptors[route.key].options;
-            if ((options as RouteOptions).href === null) return null;
+            // Expo Router removes its `href: null` hint before custom tab bars receive the
+            // descriptor on web. A real primary tab always defines an icon; hidden detail
+            // routes deliberately do not. Requiring the icon keeps paths such as monthly,
+            // teacher/[id] and classroom/[id] out of the visible navigation.
+            if (!options.tabBarIcon || (options as RouteOptions).href === null) return null;
             const focused = state.index === index;
             const label = typeof options.tabBarLabel === "string"
               ? options.tabBarLabel

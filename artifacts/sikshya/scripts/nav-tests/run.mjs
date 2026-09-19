@@ -129,6 +129,9 @@ async function main() {
   check("nothing else was lost on the way",
     ["Dashboard", "Schedule", "Students", "Messages", "Profile"].every((want) => teacherTabs.includes(want)),
     JSON.stringify(teacherTabs));
+  check("only the six teacher destinations are visible",
+    teacherTabs.length === 6,
+    JSON.stringify(teacherTabs));
 
   // The half that a compile cannot catch: the screen that left the tab bar is still reachable.
   await page.click('a[role="tab"][href="/profile"]', { timeout: 15000 });
@@ -195,6 +198,9 @@ async function main() {
   check("students get a Support tab too", studentTabs.some((t) => /support/i.test(t)), studentTabs.join(" | "));
   check("their other tabs are untouched",
     ["Discover", "Classes", "Messages", "Profile"].every((want) => studentTabs.includes(want)),
+    JSON.stringify(studentTabs));
+  check("only the five student destinations are visible",
+    studentTabs.length === 5,
     JSON.stringify(studentTabs));
 
   await page2.click('a[role="tab"][href="/support"]', { timeout: 15000 });
