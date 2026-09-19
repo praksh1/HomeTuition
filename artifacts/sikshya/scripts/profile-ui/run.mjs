@@ -52,6 +52,13 @@ try {
     check(body.includes("Account & payments"), `${width}: student account actions have a clear section`);
     check(body.includes("Charges, test payments and refunds"), `${width}: payments action explains its destination`);
     check(!body.includes("No saved payment method"), `${width}: empty payment-method explanation is gone`);
+    check((await page.getByTestId("profile-overflow-trigger").boundingBox()).height >= 44, `${width}: profile overflow menu meets touch floor`);
+    await page.getByTestId("profile-overflow-trigger").click();
+    await page.getByTestId("profile-overflow-menu").waitFor();
+    body = await page.locator("body").innerText();
+    check(body.includes("Fadko Support") && body.includes("Fadko AI assistant") && body.includes("Coming soon"), `${width}: student profile menu groups support and future assistant honestly`);
+    check(await page.getByTestId("profile-overflow-menu").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: student profile menu stays inside the viewport`);
+    await page.getByTestId("profile-overflow-trigger").click();
     check((await page.getByTestId("student-edit-account-details").boundingBox()).height >= 44, `${width}: student edit action meets touch floor`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: student profile has no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-student.png`), fullPage: true });
@@ -61,6 +68,12 @@ try {
     await page.getByTestId("teacher-account-details").waitFor();
     body = await page.locator("body").innerText();
     check(body.includes("Teaching tools"), `${width}: teacher tools are grouped`);
+    await page.getByTestId("profile-overflow-trigger").click();
+    await page.getByTestId("profile-overflow-menu").waitFor();
+    body = await page.locator("body").innerText();
+    check(body.includes("Teaching & earnings") && body.includes("Edit account details"), `${width}: teacher profile menu exposes high-frequency actions`);
+    check(await page.getByTestId("profile-overflow-menu").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: teacher profile menu stays inside the viewport`);
+    await page.getByTestId("profile-overflow-trigger").click();
     check(!body.includes("National ID / Citizenship"), `${width}: teacher document forms start collapsed`);
     check((await page.getByTestId("teacher-credentials-toggle").boundingBox()).height >= 44, `${width}: credentials disclosure meets touch floor`);
     await page.getByTestId("teacher-credentials-toggle").click();

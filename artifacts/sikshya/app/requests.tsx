@@ -4,6 +4,8 @@ import React, { useCallback, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN, elevation, radius, space } from "@/constants/layout";
 import { useDates } from "@/context/DatePreferenceContext";
 import { apiGet } from "@/utils/api";
 import { STATUS_TONE, type Ticket, type Allowance } from "@/utils/tickets";
@@ -21,6 +23,7 @@ import { STATUS_TONE, type Ticket, type Allowance } from "@/utils/tickets";
  */
 export default function MyRequestsScreen() {
   const colors = useColors();
+  const { t } = useLayout();
   const dates = useDates();
   const insets = useSafeAreaInsets();
 
@@ -105,6 +108,23 @@ export default function MyRequestsScreen() {
         <View style={{ width: 22 }} />
       </View>
 
+      <View
+        testID="requests-hero"
+        style={[styles.hero, { backgroundColor: colors.actionSoft, borderColor: colors.border }]}
+      >
+        <View style={[styles.heroIcon, { backgroundColor: colors.card }]}>
+          <Feather name="inbox" size={20} color={colors.primary} />
+        </View>
+        <View style={styles.heroCopy}>
+          <Text style={[t.title3, { color: colors.foreground }]}>Your support inbox</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>Updates, evidence, and replies in one calm place.</Text>
+        </View>
+        <View style={styles.heroCount}>
+          <Text style={[t.title3, { color: colors.primary }]}>{open.length}</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>open</Text>
+        </View>
+      </View>
+
       {tickets === null ? (
         <ActivityIndicator style={{ marginTop: 40 }} color={colors.secondary} />
       ) : (
@@ -166,7 +186,7 @@ export default function MyRequestsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20 },
+  container: { paddingHorizontal: space.md },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 20 },
   title: { fontFamily: "Inter_600SemiBold", fontSize: 18 },
   section: { fontFamily: "Inter_600SemiBold", fontSize: 12, letterSpacing: 0.6, textTransform: "uppercase", marginTop: 18, marginBottom: 8 },
@@ -185,4 +205,8 @@ const styles = StyleSheet.create({
   allowance: { fontFamily: "Inter_400Regular", fontSize: 12, marginTop: 18, lineHeight: 18 },
   newBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 13, marginTop: 14 },
   newBtnText: { fontFamily: "Inter_600SemiBold", fontSize: 14, color: "#fff" },
+  hero: { flexDirection: "row", alignItems: "center", gap: space.sm, borderRadius: radius.lg, borderWidth: 1, padding: space.md, ...elevation.card },
+  heroIcon: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  heroCopy: { flex: 1, gap: space.xxs },
+  heroCount: { alignItems: "flex-end", gap: space.xxs },
 });

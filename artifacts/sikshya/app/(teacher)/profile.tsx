@@ -10,6 +10,7 @@ import { SocialSignIn } from "@/components/SocialSignIn";
 import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
 import { ProfileActionRow } from "@/components/profile/ProfileActionRow";
 import { ProfileHero } from "@/components/profile/ProfileHero";
+import { ProfileOverflowMenu } from "@/components/profile/ProfileOverflowMenu";
 import StarRating from "@/components/StarRating";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth, type Teacher } from "@/context/AuthContext";
@@ -159,6 +160,22 @@ export default function TeacherProfile() {
       }]}
       showsVerticalScrollIndicator={false}
     >
+      <View style={styles.profileTopRow}>
+        <View style={styles.profileWordmark}>
+          <View style={[styles.profileWordmarkMark, { borderRadius: radius.xs, backgroundColor: colors.brand }]}>
+            <Feather name="book-open" size={13} color={colors.brandForeground} />
+          </View>
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Fadko</Text>
+        </View>
+        <ProfileOverflowMenu items={[
+          { icon: "edit-3", label: "Edit account details", detail: "Location, school and contact", onPress: () => router.push({ pathname: "/onboarding", params: { edit: "1", role: "teacher" } }) },
+          { icon: "credit-card", label: "Teaching & earnings", detail: "Payouts and payment records", onPress: () => router.push("/(teacher)/subscription") },
+          { icon: "bell", label: "Notifications", detail: "Choose what reaches you", onPress: () => router.push("/notification-settings") },
+          { icon: "life-buoy", label: "Fadko Support", detail: "Get help from the support team", onPress: () => router.push("/support") },
+          { icon: "zap", label: "Fadko AI assistant", detail: "Coming soon", disabled: true },
+          { icon: "log-out", label: "Log out", onPress: handleLogout, destructive: true },
+        ]} />
+      </View>
       <ProfileHero
         eyebrow="MY TEACHING PROFILE"
         initials={initials}
@@ -342,6 +359,9 @@ function createStyles({ colors, space, radius, gutter }: StyleOptions) {
     primaryAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.primary, paddingHorizontal: space.sm },
     destructiveAction: { minHeight: HIT_SLOP_MIN, justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingHorizontal: space.sm },
     socialRow: { marginHorizontal: space.xxs },
+    profileTopRow: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+    profileWordmark: { flexDirection: "row", alignItems: "center", gap: space.xs },
+    profileWordmarkMark: { width: space.lg, height: space.lg, alignItems: "center", justifyContent: "center" },
     logoutButton: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, borderRadius: radius.md, borderWidth: 1, borderColor: colors.destructive, backgroundColor: colors.card, paddingVertical: space.sm },
   });
 }

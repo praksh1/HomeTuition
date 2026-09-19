@@ -120,6 +120,10 @@ async function main() {
   await page.waitForTimeout(3500);
 
   const teacherTabs = await tabLabels(page);
+  check("the floating navigation stays inside the phone viewport",
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    `${await page.evaluate(() => document.documentElement.scrollWidth)}px > ${await page.evaluate(() => innerWidth)}px`);
+  check("one tab is visibly selected", await page.locator('a[role="tab"][aria-selected="true"]').count() === 1);
   check("Support is a tab of its own", teacherTabs.some((t) => /support/i.test(t)), teacherTabs.join(" | "));
   check("Plan is no longer a tab", !teacherTabs.some((t) => /^plan$/i.test(t)), teacherTabs.join(" | "));
   check("nothing else was lost on the way",
@@ -185,6 +189,9 @@ async function main() {
   await page2.waitForTimeout(3500);
 
   const studentTabs = await tabLabels(page2);
+  check("the student's floating navigation stays inside the phone viewport",
+    await page2.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    `${await page2.evaluate(() => document.documentElement.scrollWidth)}px > ${await page2.evaluate(() => innerWidth)}px`);
   check("students get a Support tab too", studentTabs.some((t) => /support/i.test(t)), studentTabs.join(" | "));
   check("their other tabs are untouched",
     ["Discover", "Classes", "Messages", "Profile"].every((want) => studentTabs.includes(want)),

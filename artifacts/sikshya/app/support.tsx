@@ -15,6 +15,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { notify } from "@/utils/alerts";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
+import { HIT_SLOP_MIN, elevation, radius, space } from "@/constants/layout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
@@ -64,6 +66,7 @@ const MAX_EVIDENCE_BYTES = 25 * 1024 * 1024;
 
 export default function SupportScreen() {
   const colors = useColors();
+  const { t } = useLayout();
   const insets = useSafeAreaInsets();
   /**
    * Arrived from a particular class, e.g. one whose teacher was late.
@@ -308,6 +311,50 @@ export default function SupportScreen() {
             "with supporting evidence so our team can help you quickly."}
       </Text>
 
+      <View
+        testID="support-hero"
+        style={[styles.hero, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+      >
+        <View style={styles.heroTopline}>
+          <View style={[styles.heroMark, { backgroundColor: colors.primaryForeground }]}>
+            <Feather name="life-buoy" size={20} color={colors.primary} />
+          </View>
+          <View style={styles.heroCopy}>
+            <Text style={[t.title3, { color: colors.primaryForeground }]}>Support, without the runaround</Text>
+            <Text style={[t.caption, { color: colors.primaryForeground, opacity: 0.78 }]}>Securely linked to your Fadko account</Text>
+          </View>
+          <View style={[styles.heroStatus, { backgroundColor: colors.primaryForeground }]}>
+            <View style={[styles.heroStatusDot, { backgroundColor: colors.online }]} />
+            <Text style={[t.caption, { color: colors.primary }]}>Ready</Text>
+          </View>
+        </View>
+        <Text style={[t.body, styles.heroBody, { color: colors.primaryForeground }]}>Choose a topic below or tell us what happened. Your request stays in one place so you can follow it later.</Text>
+      </View>
+
+      <View style={styles.quickSection}>
+        <Text style={[t.overline, { color: colors.inkFaint }]}>Start here</Text>
+        <View style={styles.quickRow}>
+          {[
+            { label: "Payment", icon: "credit-card" as const, reason: "Payment Issue" as Reason },
+            { label: "Class", icon: "calendar" as const, reason: "Technical Failure" as Reason },
+            { label: "Account", icon: "user" as const, reason: "Other" as Reason },
+          ].map((topic) => (
+            <TouchableOpacity
+              key={topic.label}
+              testID={`support-quick-${topic.label.toLowerCase()}`}
+              activeOpacity={0.78}
+              onPress={() => setReason(topic.reason)}
+              style={[styles.quickCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+            >
+              <View style={[styles.quickIcon, { backgroundColor: colors.actionSoft }]}>
+                <Feather name={topic.icon} size={16} color={colors.primary} />
+              </View>
+              <Text style={[t.caption, { color: colors.foreground, fontWeight: "700" }]}>{topic.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
       {/*
         Which class this is about.
 
@@ -500,7 +547,7 @@ export default function SupportScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { paddingHorizontal: 20, gap: 20 },
+  container: { paddingHorizontal: space.md, gap: space.lg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   headerTitle: { fontSize: 18, fontFamily: "Inter_600SemiBold" },
   myRequests: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
@@ -523,4 +570,15 @@ const styles = StyleSheet.create({
   uploadText: { fontSize: 14, fontFamily: "Inter_400Regular", flex: 1 },
   submitBtn: { borderRadius: 16, paddingVertical: 16, alignItems: "center", marginTop: 8 },
   submitText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
+  hero: { borderRadius: radius.lg, borderWidth: 1, padding: space.md, ...elevation.card },
+  heroTopline: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  heroMark: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  heroCopy: { flex: 1, gap: space.xxs },
+  heroStatus: { flexDirection: "row", alignItems: "center", gap: space.xxs, borderRadius: radius.pill, paddingHorizontal: space.xs, paddingVertical: space.xxs },
+  heroStatusDot: { width: 6, height: 6, borderRadius: radius.pill },
+  heroBody: { marginTop: space.md, lineHeight: 21, opacity: 0.88 },
+  quickSection: { gap: space.sm },
+  quickRow: { flexDirection: "row", gap: space.xs },
+  quickCard: { flex: 1, minHeight: HIT_SLOP_MIN, borderRadius: radius.md, borderWidth: 1, alignItems: "center", justifyContent: "center", gap: space.xxs, paddingHorizontal: space.xs, paddingVertical: space.xs },
+  quickIcon: { width: 28, height: 28, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
 });
