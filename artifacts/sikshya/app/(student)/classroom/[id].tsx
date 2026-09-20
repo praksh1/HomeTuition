@@ -44,6 +44,7 @@ import { aloneMessage } from "@/utils/aloneInCall";
 import { ExpiredClassRedirect } from "@/components/classes/ExpiredClassRedirect";
 import { canJoinSession } from "@/utils/sessionWindow";
 import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
+import WarningModal from "@/components/WarningModal";
 
 type Mode = "board" | "chat";
 type VideoWindowSize = "hidden" | "small" | "medium" | "full";
@@ -232,6 +233,8 @@ export default function StudentClassroom() {
     callWindow.state === "compact" ? "small" : callWindow.state === "normal" ? "medium" : callWindow.state;
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   /**
    * Whether this class's video can enforce a permission, and when its discussion opens.
    *
@@ -686,22 +689,22 @@ export default function StudentClassroom() {
     onCutoff: handleDailyLeft,
   });
 
-  const leaveSession = () => {
-    const doLeave = leaveNow;
-    if (Platform.OS === "web") {
-      if (window.confirm("Leave Session?\n\nAre you sure?")) doLeave();
-    } else {
-      Alert.alert("Leave Session", "Are you sure you want to leave?", [
-        { text: "Stay", style: "cancel" },
-        { text: "Leave", style: "destructive", onPress: doLeave },
-      ]);
-    }
-  };
+  const leaveSession = useCallback(() => setLeaveConfirmOpen(true), []);
+  const confirmLeaveSession = useCallback(() => {
+    if (leaving) return;
+    setLeaving(true);
+    setLeaveConfirmOpen(false);
+    leaveNow();
+  }, [leaveNow, leaving]);
 
   // Presence starts at 0 the instant the server clears stale entries on session start;
   // don't fall back to enrolledCount before the socket connects, or a ghost count/avatar
   // shows up for a class nobody has actually joined yet.
-  const livePresenceCount = connected ? presenceCount : 0;
+  const livePresenceCount = connected
+    ? floor?.scope === "student"
+      ? floor.participantCount
+      : presenceCount
+    : 0;
 
   /** Students never author anything, so outgoing changes are dropped. */
   const noopSceneChange = useCallback(() => {}, []);
@@ -724,6 +727,10 @@ export default function StudentClassroom() {
   const notifyTeacherLeft = useCallback(() => {
     teacherGoneRef.current = true;
     setTeacherGone(true);
+  }, []);
+  const notifyTeacherReturned = useCallback(() => {
+    teacherGoneRef.current = false;
+    setTeacherGone(false);
   }, []);
 
   /**
@@ -1230,15 +1237,32 @@ export default function StudentClassroom() {
                   token={meetingToken}
                   displayName={studentName}
                   style={StyleSheet.absoluteFill}
-                  onLeft={handleDailyLeft}
+                  onLeft={videoProvider === "livekit" ? leaveSession : handleDailyLeft}
                   /*
                     The classroom socket is up long before this is, and a grant made in that gap
                     reaches LiveKit before the student's participant does. The server keeps such a
                     grant pending rather than reporting it done; this is what tells it to finish.
                   */
                   onMediaReady={floorActions.mediaReady}
+                  isTeacher={false}
+                  canUseMicrophone={
+                    floor?.scope === "student" &&
+                    floor.you.allowedMic &&
+                    floor.you.state !== "muted-by-teacher"
+                  }
+                  canUseCamera={floor?.scope === "student" && floor.you.allowedCamera}
+                  onLocalMediaChange={(media) => {
+                    if (floor?.scope !== "student") return;
+                    if (floor.you.acceptedMic !== media.micEnabled) {
+                      floorActions.setMic(media.micEnabled);
+                    }
+                    if (floor.you.acceptedCamera !== media.cameraEnabled) {
+                      floorActions.setCamera(media.cameraEnabled);
+                    }
+                  }}
                   watchUserName={session?.teacherName}
                   onWatchedParticipantLeft={notifyTeacherLeft}
+                  onWatchedParticipantReturned={notifyTeacherReturned}
                   teacherUserId={teacherParticipantId}
                   spotlightUserId={spotlightParticipantId}
                   showProviderControls={windowControls.showsProviderControls}
@@ -1570,6 +1594,19 @@ export default function StudentClassroom() {
           </View>
         </View>
       </View>
+      <WarningModal
+        visible={leaveConfirmOpen}
+        title="Leave this class?"
+        consequences={[
+          "Your teacher and classmates remain in the active class.",
+          "You can return while this lesson is still open.",
+        ]}
+        confirmLabel="Leave class"
+        busy={leaving}
+        onConfirm={confirmLeaveSession}
+        onCancel={() => setLeaveConfirmOpen(false)}
+        testID="leave-class-confirmation"
+      />
     </KeyboardAvoidingView>
   );
 }

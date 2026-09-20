@@ -167,8 +167,8 @@ const NOW = Date.now();
   two values set it themselves.
 */
 const you = (over = {}) => ({
-  state: "audience", requestedAt: null, invitedAt: null, invitationScope: null,
-  allowedMic: false, allowedCamera: false, acceptedMic: false, acceptedCamera: false,
+  state: "muted-by-self", requestedAt: null, invitedAt: null, invitationScope: null,
+  allowedMic: true, allowedCamera: false, acceptedMic: false, acceptedCamera: false,
   provider: "ok", ...over,
 });
 const asStudent = (yourRow, over = {}) => ({
@@ -176,14 +176,18 @@ const asStudent = (yourRow, over = {}) => ({
   spotlight: null, handsUp: 0, queuePosition: null, ...over, you: you(yourRow),
 });
 const row = (over = {}) => ({
-  userId: 11, name: "Sita Sharma", state: "audience", requestedAt: null, invitedAt: null,
-  invitationScope: null, connected: true, allowedMic: false, allowedCamera: false,
+  userId: 11, name: "Sita Sharma", state: "muted-by-self", requestedAt: null, invitedAt: null,
+  invitationScope: null, connected: true, allowedMic: true, allowedCamera: false,
   provider: "ok", ...over,
 });
-const asTeacher = (over = {}) => ({
-  scope: "teacher", mode: "classroom", discussionEligible: false, discussionStartedAt: null,
-  spotlight: null, students: [], queue: [], ...over,
-});
+const asTeacher = (over = {}) => {
+  const students = over.students || [];
+  return {
+    scope: "teacher", mode: "classroom", discussionEligible: false, discussionStartedAt: null,
+    spotlight: null, students: [], queue: [], participantCount: students.filter((item) => item.connected).length,
+    ...over,
+  };
+};
 
 const SIZES = [
   { label: "phone-390", width: 390, height: 844 },
@@ -211,6 +215,7 @@ for (const size of SIZES) {
   };
   const seen = (id) => p.locator(`[data-testid="${id}"]`).count().then((n) => n > 0);
   const text = (id) => p.locator(`[data-testid="${id}"]`).first().innerText().catch(() => "");
+  const participantPanelOpen = async () => (await seen("participant-sheet")) || (await seen("participant-drawer"));
   /*
     A tap, and time for the answer.
 
@@ -229,97 +234,61 @@ for (const size of SIZES) {
   await show({ floor: asStudent({}), canModerate: false });
   check(`${L}: nothing is drawn on a provider that cannot enforce a permission`, !(await seen("student-floor")));
 
-  console.log(`\n[${L}] A student, listening`);
+  console.log(`\n[${L}] A student joins muted, with a microphone available`);
   await show({ floor: asStudent({}) }, "student-listening");
   check(`${L}: the strip is there`, await seen("student-floor"));
-  check(`${L}: one thing is offered — asking`, await seen("student-floor-ask"));
-  check(`${L}: and their own state is shown`, (await text("student-floor-state")).includes("Listening"));
+  check(`${L}: raising a hand is available`, await seen("student-floor-ask"));
+  check(`${L}: the microphone begins off`, (await text("student-floor-state")).includes("Microphone off"));
+  check(`${L}: camera access is teacher-controlled`, (await text("student-floor-camera")).includes("teacher controlled"));
   await tap("student-floor-ask");
   check(`${L}: tapping it asks the server`, JSON.stringify(await sent()) === JSON.stringify([{ name: "ask", args: [] }]));
 
-  console.log(`\n[${L}] A student waiting`);
+  console.log(`\n[${L}] A raised hand never changes microphone permission`);
   await show(
     { floor: asStudent({ state: "requested", requestedAt: NOW }, { queuePosition: 3, handsUp: 4 }) },
     "student-waiting",
   );
-  check(`${L}: they are told where they are in the line`, (await text("student-floor-body")).includes("3rd"));
-  check(`${L}: and can put their hand down`, await seen("student-floor-cancel"));
+  check(`${L}: the raised hand is shown`, (await text("student-floor-state")).includes("Hand up"));
+  check(`${L}: it can be lowered`, await seen("student-floor-cancel-ask"));
+  check(`${L}: microphone permission remains available`, asStudent({ state: "requested", requestedAt: NOW }).you.allowedMic === true);
+  await tap("student-floor-cancel-ask");
+  check(`${L}: lowering the hand reaches the server`,
+    JSON.stringify(await sent()) === JSON.stringify([{ name: "cancelAsk", args: [] }]));
 
-  console.log(`\n[${L}] A student invited to speak`);
+  console.log(`\n[${L}] Actual microphone and camera state are shown`);
   await show(
-    { floor: asStudent({ state: "allowed-not-accepted", invitedAt: NOW, allowedMic: true, allowedCamera: true }) },
-    "student-invited",
+    { floor: asStudent({ state: "speaking", allowedMic: true, acceptedMic: true }) },
+    "student-speaking",
   );
-  const title = await text("student-floor-title");
-  check(`${L}: the invitation is unmistakable`, title.includes("asked you to speak"), title);
-  check(`${L}: both ways to accept are offered`,
-    (await seen("student-floor-accept-mic")) && (await seen("student-floor-accept-camera")));
-  check(`${L}: and declining is one tap`, await seen("student-floor-decline"));
-  await tap("student-floor-accept-camera");
-  check(`${L}: accepting with a camera sends the camera scope`,
-    JSON.stringify(await sent()) === JSON.stringify([{ name: "accept", args: ["mic+camera"] }]));
+  check(`${L}: an active microphone is shown`, (await text("student-floor-state")).includes("Microphone on"));
+  check(`${L}: camera stays teacher-controlled`, (await text("student-floor-camera")).includes("teacher controlled"));
 
-  console.log(`\n[${L}] A student speaking, and turned off`);
   await show(
     { floor: asStudent({ state: "camera-active", allowedMic: true, allowedCamera: true, acceptedMic: true, acceptedCamera: true }) },
     "student-on-camera",
   );
-  check(`${L}: the camera can be turned off without ending the turn`, await seen("student-floor-camera"));
-  await tap("student-floor-camera");
-  check(`${L}: which sends the one switch`,
-    JSON.stringify(await sent()) === JSON.stringify([{ name: "setCamera", args: [false] }]));
+  check(`${L}: actual camera publication is shown`, (await text("student-floor-state")).includes("Camera on"));
+  check(`${L}: the camera grant is shown separately`, (await text("student-floor-camera")).includes("Camera available"));
 
   await show({ floor: asStudent({ state: "muted-by-teacher", allowedMic: true }) }, "student-muted");
-  const muted = await text("student-floor-title");
-  check(`${L}: being turned off says who did it`, muted.includes("Your teacher turned"), muted);
-  check(`${L}: and never reads as a punishment`, (await text("student-floor-body")).includes("hand up again"));
+  const muted = await text("student-floor-state");
+  check(`${L}: a teacher mute is explicit`, muted.includes("Muted by teacher"), muted);
 
   console.log(`\n[${L}] The video has not caught up with the decision`);
-  /*
-    Drawn, not merely computed.
-
-    A grant the SFU has not accepted must not look like a grant. The unit test next door proves
-    `studentOffer` withholds the buttons; this proves the component draws the waiting sentence
-    instead of an unmute a student would press and be refused by the SFU with no explanation —
-    which is the failure Codex's second finding names.
-  */
   await show(
     { floor: asStudent({ state: "allowed-not-accepted", allowedMic: true, provider: "pending" }) },
     "student-provider-pending",
   );
-  const waitingOn = await text("student-floor-title");
-  check(`${L}: a grant still going through says so`, waitingOn.includes("Switching your microphone on"), waitingOn);
-  check(`${L}: and offers nothing to press while it is in flight`, !(await seen("student-floor-accept-mic")));
+  const waitingOn = await text("student-floor-provider");
+  check(`${L}: an in-flight provider update says so`, waitingOn.includes("catching up"), waitingOn);
 
   await show(
     { floor: asStudent({ state: "allowed-not-accepted", allowedMic: true, provider: "failed" }) },
     "student-provider-failed",
   );
-  const stuck = await text("student-floor-title");
-  check(`${L}: a grant the video refused says that too`, stuck.includes("could not be switched on"), stuck);
-  check(`${L}: and the one thing offered is asking again`,
-    (await seen("student-floor-ask")) && !(await seen("student-floor-accept-mic")));
-
-  /*
-    The other direction, which matters more.
-
-    A mute the SFU never accepted leaves a child audible to the whole class. The screen has to say
-    so — and must never say the opposite, which is what an earlier version of this guard did by
-    reading the permission flag a muted student still carries.
-  */
-  await show(
-    { floor: asStudent({ state: "muted-by-teacher", allowedMic: true, provider: "failed" }) },
-    "student-provider-mute-failed",
-  );
-  const stillOn = await text("student-floor-title");
-  check(`${L}: a mute the video never took says the microphone may still be live`,
-    stillOn.includes("could not confirm your microphone is off"), stillOn);
-  check(`${L}: and never that it is being switched on`, !stillOn.includes("Switching"), stillOn);
-
-  await show({ floor: asStudent({ state: "speaking", allowedMic: true, acceptedMic: true, provider: "pending" }) });
-  check(`${L}: a student already speaking keeps the control that stops them`,
-    await seen("student-floor-stop"));
-  check(`${L}: and is told the video has not caught up`, await seen("student-floor-provider"));
+  const stuck = await text("student-floor-provider");
+  check(`${L}: a rejected provider update is explicit`, stuck.includes("did not accept"), stuck);
+  check(`${L}: raising a hand remains independent`, await seen("student-floor-ask"));
 
   console.log(`\n[${L}] A refusal`);
   await show(
@@ -337,10 +306,8 @@ for (const size of SIZES) {
     { floor: asStudent({}, { mode: "discussion", discussionEligible: true }) },
     "student-discussion",
   );
-  check(`${L}: three ways in, and listening is one`,
-    (await seen("student-floor-discussion-mic")) &&
-      (await seen("student-floor-discussion-camera")) &&
-      (await seen("student-floor-discussion-listen")));
+  check(`${L}: discussion mode keeps the simple student controls`,
+    (await seen("student-floor-ask")) && (await text("student-floor-state")).includes("Microphone off"));
 
   console.log(`\n[${L}] The teacher's strip`);
   const classRows = [
@@ -353,8 +320,8 @@ for (const size of SIZES) {
   await show({ floor: asTeacher({ students: classRows, queue: [11] }) }, "teacher-strip");
   check(`${L}: the class list is one tap away`, await seen("teacher-floor-participants"));
   check(`${L}: a raised hand is badged`, await seen("teacher-floor-hands"));
-  check(`${L}: and the two whole-class controls are there`,
-    (await seen("teacher-floor-invite-all")) && (await seen("teacher-floor-mute-all")));
+  check(`${L}: the one whole-class safety control is there`, await seen("teacher-floor-mute-all"));
+  check(`${L}: the retired invite-all workflow is absent`, !(await seen("teacher-floor-invite-all")));
   check(`${L}: a pay-as-you-go class has no discussion control at all`, !(await seen("teacher-floor-discussion")));
 
   await show({ floor: asTeacher({ students: classRows, queue: [11], discussionEligible: true }), opensAt: NOW + 12 * 60_000 });
@@ -366,19 +333,22 @@ for (const size of SIZES) {
   await tap("teacher-floor-participants");
   await p.waitForTimeout(300);
   await p.screenshot({ path: path.join(SHOTS, `${L}-teacher-sheet.png`) });
-  check(`${L}: the sheet opens`, await seen("participant-sheet"));
+  check(`${L}: the class list opens in the device-appropriate surface`, await participantPanelOpen());
   check(`${L}: everybody is listed, including the person who dropped`,
     (await seen("participant-row-11")) && (await seen("participant-row-44")));
   check(`${L}: the raised hand is first`, await p.evaluate(() => {
     const rows = [...document.querySelectorAll('[data-testid^="participant-row-"]')];
     return rows[0]?.getAttribute("data-testid") === "participant-row-11";
   }));
-  check(`${L}: a raised hand offers the three answers`,
+  await tap("participant-row-11");
+  check(`${L}: opening a raised-hand row offers the three contextual answers`,
     (await seen("participant-11-allow-mic")) && (await seen("participant-11-allow-camera")) && (await seen("participant-11-dismiss")));
-  check(`${L}: a student who dropped is offered nothing`, !(await seen("participant-44-allow-mic")));
+  await tap("participant-row-44");
+  check(`${L}: a student who dropped is offered nothing`, !(await seen("participant-44-allow-mic")) && !(await seen("participant-44-mute")));
   check(`${L}: the camera button warns it is taking somebody's camera`,
     (await text("participant-11-allow-camera")).includes("Take the camera"));
 
+  await tap("participant-row-22");
   await tap("participant-22-mute");
   check(`${L}: muting names the right student`,
     JSON.stringify(await sent()) === JSON.stringify([{ name: "mute", args: [22] }]));
@@ -393,9 +363,9 @@ for (const size of SIZES) {
     until a teacher is mid-lesson.
   */
   await show({ floor: asTeacher({ students: classRows, queue: [11], spotlight: 22 }) });
-  check(`${L}: the sheet stays open when the class changes underneath it`, await seen("participant-sheet"));
+  check(`${L}: the class list stays open when the class changes underneath it`, await participantPanelOpen());
   await tap("participant-sheet-close");
-  check(`${L}: and closes when asked`, !(await seen("participant-sheet")));
+  check(`${L}: and closes when asked`, !(await participantPanelOpen()));
 
   console.log(`\n[${L}] Rows the video has not caught up with`);
   /*
@@ -419,6 +389,7 @@ for (const size of SIZES) {
     (await text("participant-provider-22")).includes("Could not reach"), await text("participant-provider-22"));
   check(`${L}: a row still going through is marked differently`,
     (await text("participant-provider-55")).includes("Not applied yet"), await text("participant-provider-55"));
+  await tap("participant-row-22");
   check(`${L}: and a stuck row keeps the controls that unstick it`, await seen("participant-22-mute"));
   await tap("participant-sheet-close");
 
@@ -428,9 +399,31 @@ for (const size of SIZES) {
   await p.waitForTimeout(300);
   await p.screenshot({ path: path.join(SHOTS, `${L}-teacher-sheet-empty.png`) });
   check(`${L}: an empty class says so, rather than showing a blank sheet`,
-    (await p.locator("text=Nobody has joined yet.").count()) === 1);
+    (await p.locator("text=No students match this view.").count()) === 1);
   await tap("participant-sheet-close");
-  check(`${L}: and the sheet closes`, !(await seen("participant-sheet")));
+  check(`${L}: and the class list closes`, !(await participantPanelOpen()));
+
+  console.log(`\n[${L}] A class with more than one hundred students`);
+  const largeRows = Array.from({ length: 105 }, (_, index) =>
+    row({
+      userId: index + 1,
+      name: `Student ${String(index + 1).padStart(3, "0")}`,
+      state: index === 41 ? "requested" : "muted-by-self",
+      requestedAt: index === 41 ? NOW : null,
+    }));
+  await show({ floor: asTeacher({ students: largeRows, queue: [42] }) });
+  await tap("teacher-floor-participants");
+  check(`${L}: the class list reports the authoritative total`,
+    (await p.locator("text=Class · 105").count()) === 1);
+  check(`${L}: search remains available above the long list`, await seen("participant-search"));
+  await p.locator('[data-testid="participant-search"]').fill("Student 104");
+  await p.waitForTimeout(200);
+  check(`${L}: search reaches a student near the end without manual scrolling`, await seen("participant-row-104"));
+  await p.locator('[data-testid="participant-search"]').fill("");
+  await tap("participant-filter-hands");
+  check(`${L}: the raised-hands filter reduces the large class to the queued student`,
+    (await seen("participant-row-42")) && (await p.locator('[data-testid^="participant-row-"]').count()) === 1);
+  await tap("participant-sheet-close");
 
   console.log(`\n[${L}] Nothing runs off the side`);
   await show({ floor: asStudent({ state: "allowed-not-accepted", invitedAt: NOW, allowedMic: true, allowedCamera: true }) });
@@ -452,7 +445,8 @@ for (const size of SIZES) {
     browser saying it had to cut something.
   */
   const clipped = async () => p.evaluate(() =>
-    [...document.querySelectorAll('[role="button"] div[dir="auto"]')]
+    [...document.querySelectorAll('[data-testid][role="button"]')]
+      .flatMap((button) => [...button.querySelectorAll('div[dir="auto"]')])
       .filter((el) => el.scrollWidth > el.clientWidth + 1)
       .map((el) => `${el.textContent} (${el.clientWidth} < ${el.scrollWidth})`));
 
@@ -464,6 +458,7 @@ for (const size of SIZES) {
   cut = await clipped();
   check(`${L}: no control on the teacher's strip is cut off`, cut.length === 0, cut.join(" | "));
   await tap("teacher-floor-participants");
+  await tap("participant-row-11");
   cut = await clipped();
   check(`${L}: no control in the class list is cut off`, cut.length === 0, cut.join(" | "));
   await tap("participant-sheet-close");

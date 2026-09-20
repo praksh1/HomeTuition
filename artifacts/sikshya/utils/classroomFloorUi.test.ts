@@ -31,6 +31,7 @@ function student(over: Partial<StudentFloorView["you"]> = {}, view: Partial<Stud
     spotlight: null,
     handsUp: 0,
     queuePosition: null,
+    participantCount: 0,
     ...view,
     you: {
       state: "audience",
@@ -72,6 +73,7 @@ function teacher(over: Partial<TeacherFloorView> = {}): TeacherFloorView {
     spotlight: null,
     students: [],
     queue: [],
+    participantCount: 0,
     ...over,
   };
 }

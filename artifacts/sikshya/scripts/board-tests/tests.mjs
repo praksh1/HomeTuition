@@ -48,18 +48,27 @@ export const tests = [
       "its small mobile buttons. A teacher needs an obvious way back after one accidental mark.",
     async run(ctx, baseUrl, assert) {
       const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const undo = teacher.getByLabel("Undo last board change");
+      const redo = teacher.getByLabel("Redo board change");
+
+      assert("Undo starts disabled when no history exists", await undo.isDisabled());
+      assert("Redo starts disabled when no history exists", await redo.isDisabled());
 
       await selectTool(teacher, PEN);
       await stroke(teacher, 260, 280, 560, 440);
       assert("the test begins with a visible mark", (await ink(teacher)).n > 0);
+      assert("Undo becomes available after a change", !(await undo.isDisabled()));
+      assert("Redo stays disabled before an Undo", await redo.isDisabled());
 
-      await teacher.getByLabel("Undo last board change").click();
+      await undo.click();
       await teacher.waitForTimeout(450);
       assert("Undo removes the last mark", (await ink(teacher)).n === 0);
+      assert("Redo becomes available after Undo", !(await redo.isDisabled()));
 
-      await teacher.getByLabel("Redo board change").click();
+      await redo.click();
       await teacher.waitForTimeout(450);
       assert("Redo restores it", (await ink(teacher)).n > 0);
+      assert("Redo disables again after restoring the only undone change", await redo.isDisabled());
     },
   },
 
@@ -260,14 +269,13 @@ export const tests = [
       assert("there is a lesson on the board", (await ink(student)).n > 0);
 
       // Cancelling must leave the lesson alone — this is a destructive, class-wide action.
-      teacher.once("dialog", (d) => d.dismiss());
       await teacher.locator('button[aria-label="Clear this page for the whole class"]').click();
-      await teacher.waitForTimeout(400);
+      await teacher.getByRole("dialog").getByRole("button", { name: "Go back" }).click();
       assert("cancelling the confirmation changes nothing", (await ink(teacher)).n > 0);
       assert("and sends nothing", (await pump(teacher, student)).length === 0);
 
-      teacher.once("dialog", (d) => d.accept());
       await teacher.locator('button[aria-label="Clear this page for the whole class"]').click();
+      await teacher.getByRole("dialog").getByRole("button", { name: "Clear page" }).click();
       await teacher.waitForTimeout(500);
       const sent = await pump(teacher, student);
       assert("confirming tells the class", sent.includes("clear_out"));

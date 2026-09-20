@@ -47,6 +47,14 @@ export interface JoinRoomOptions {
   audioOnly?: boolean;
   /** Start muted. The classroom does not, but a lobby preview would. */
   startMuted?: boolean;
+  /**
+   * Start with a camera track only when the product has decided that this person should.
+   *
+   * This is intentionally separate from `audioOnly`. Audio-only is a bandwidth choice made by
+   * the person using the call. A student joining with their camera off is the classroom's normal
+   * privacy rule, not an error and not low-bandwidth mode.
+   */
+  startCamera?: boolean;
 }
 
 /** Where a call is, from the app's point of view. */

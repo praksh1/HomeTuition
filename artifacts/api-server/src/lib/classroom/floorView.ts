@@ -76,6 +76,8 @@ export interface TeacherFloorView {
   students: FloorRow[];
   /** Who is waiting, oldest first. The same order `requestQueue` gives, sent rather than re-derived. */
   queue: number[];
+  /** Connected students, derived once from the authoritative floor. */
+  participantCount: number;
 }
 
 export interface StudentFloorView {
@@ -102,6 +104,8 @@ export interface StudentFloorView {
   handsUp: number;
   /** This viewer's place in that line, 1-based. Null when they are not in it. */
   queuePosition: number | null;
+  /** Same authoritative count the teacher receives; no names are exposed. */
+  participantCount: number;
 }
 
 export type FloorView = TeacherFloorView | StudentFloorView;
@@ -135,6 +139,7 @@ export function teacherView(
     spotlight: floor.spotlight,
     students,
     queue: requestQueue(floor).map((r) => r.userId),
+    participantCount: students.filter((student) => student.connected).length,
   };
 }
 
@@ -166,13 +171,13 @@ export function studentView(
           provider: provider.get(userId) ?? "ok",
         }
       : {
-          // A student who has done nothing yet has no row, and "audience" is the truthful answer
-          // rather than a placeholder: nothing is granted and nothing is pending.
-          state: "audience",
+          // A student who has done nothing yet has no row, but ordinary microphone capability is
+          // still real. The actual device starts off, so this is self-muted rather than audience.
+          state: "muted-by-self",
           requestedAt: null,
           invitedAt: null,
           invitationScope: null,
-          allowedMic: false,
+          allowedMic: true,
           allowedCamera: false,
           acceptedMic: false,
           acceptedCamera: false,
@@ -181,5 +186,6 @@ export function studentView(
         },
     handsUp: queue.length,
     queuePosition: at === -1 ? null : at + 1,
+    participantCount: [...floor.students.values()].filter((student) => student.connected).length,
   };
 }

@@ -39,6 +39,7 @@ export interface VideoCallProps {
   /** Watch for one named participant leaving — how a student learns the teacher has gone. */
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
+  onWatchedParticipantReturned?: () => void;
   /** Presenter action, so only the teacher gets it. */
   canScreenShare?: boolean;
   /**
@@ -68,6 +69,11 @@ export interface VideoCallProps {
    * brings its own iframe UI and cannot use this hint; LiveKit can and must.
    */
   showProviderControls?: boolean;
+  /** Teacher camera is available immediately; student camera is a teacher-granted capability. */
+  isTeacher?: boolean;
+  canUseMicrophone?: boolean;
+  canUseCamera?: boolean;
+  onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
 }
 
 export default function VideoCall({ provider = "daily", ...props }: VideoCallProps) {
@@ -110,12 +116,17 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
           onMediaReady={props.onMediaReady}
           watchUserName={props.watchUserName}
           onWatchedParticipantLeft={props.onWatchedParticipantLeft}
+          onWatchedParticipantReturned={props.onWatchedParticipantReturned}
           canScreenShare={props.canScreenShare}
           chatMessages={props.chatMessages}
           onSendChat={props.onSendChat}
           teacherUserId={props.teacherUserId}
           spotlightUserId={props.spotlightUserId}
           showControls={props.showProviderControls}
+          isTeacher={props.isTeacher === true}
+          canUseMicrophone={props.isTeacher === true || props.canUseMicrophone === true}
+          canUseCamera={props.isTeacher === true || props.canUseCamera === true}
+          onLocalMediaChange={props.onLocalMediaChange}
         />
       );
 

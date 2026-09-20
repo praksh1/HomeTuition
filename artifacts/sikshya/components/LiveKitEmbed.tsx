@@ -48,6 +48,7 @@ export interface LiveKitEmbedProps {
   onMediaReady?: () => void;
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
+  onWatchedParticipantReturned?: () => void;
   style?: StyleProp<ViewStyle>;
   canScreenShare?: boolean;
   chatMessages?: { id: string; senderName: string; text: string; time: string; isMe: boolean }[];
@@ -64,6 +65,10 @@ export interface LiveKitEmbedProps {
   spotlightUserId?: string | null;
   /** Accepted for parity with the web component; this native fallback draws no call controls. */
   showControls?: boolean;
+  isTeacher?: boolean;
+  canUseMicrophone?: boolean;
+  canUseCamera?: boolean;
+  onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
 }
 
 export default function LiveKitEmbed({ style }: LiveKitEmbedProps) {

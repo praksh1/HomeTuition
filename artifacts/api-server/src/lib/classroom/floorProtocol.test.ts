@@ -180,11 +180,11 @@ test("nothing works after the cutoff, for either role", () => {
 
 /* --- the effects, which are derived rather than declared ------------------ */
 
-test("asking to speak tells the room but grants the provider nothing", () => {
+test("a first raised hand initializes ordinary mic rights and tells the room", () => {
   const f = room();
   const out = did(f, { action: "ask" }, ctx());
   assert.deepEqual(out.touched, [STUDENT]);
-  assert.deepEqual(out.push, [], "a raised hand is not a permission");
+  assert.deepEqual(out.push, [STUDENT], "the new participant gets the default microphone-only grant");
   assert.deepEqual(out.silence, []);
   assert.equal(out.roomChanged, false);
 });
@@ -196,10 +196,10 @@ test("asking twice is not a second event, so nothing is re-broadcast", () => {
   assert.deepEqual(again.touched, [], "an impatient second tap changes nothing and says nothing");
 });
 
-test("granting a microphone pushes a permission and silences nobody", () => {
+test("acknowledging a raised hand changes no provider permission and silences nobody", () => {
   const f = room();
   const out = did(f, { action: "allow", userId: STUDENT, scope: "mic", replace: false }, asTeacher());
-  assert.deepEqual(out.push, [STUDENT]);
+  assert.deepEqual(out.push, [], "ordinary microphone capability was already present");
   assert.deepEqual(out.silence, []);
 });
 
@@ -258,15 +258,15 @@ test("taking the camera without saying replace is refused, and changes nothing",
   assert.equal(f.students.get(STUDENT)!.allowed.camera, true, "the first student keeps it");
 });
 
-test("mute all reaches everybody who could speak and nobody who could not", () => {
+test("mute all prevents self-unmute for every connected student", () => {
   const f = room();
   did(f, { action: "allow", userId: STUDENT, scope: "mic", replace: false }, asTeacher());
   did(f, { action: "accept", want: { mic: true } }, ctx());
   did(f, { action: "ask" }, ctx({ actorId: OTHER }));
   const out = did(f, { action: "mute_all" }, asTeacher());
-  assert.deepEqual(out.push, [STUDENT]);
+  assert.deepEqual(out.push.sort(), [STUDENT, OTHER].sort());
   assert.deepEqual(out.silence, [STUDENT]);
-  assert.equal(mediaStateOf(f.students.get(OTHER)!), "requested", "a raised hand is not a microphone");
+  assert.equal(mediaStateOf(f.students.get(OTHER)!), "muted-by-teacher");
 });
 
 test("the spotlight moves the layout and no permission at all", () => {
@@ -302,7 +302,7 @@ test("opening the discussion lets a student grant themselves a microphone, and o
   did(f, { action: "start_discussion" }, asTeacher());
   const out = did(f, { action: "join_discussion", scope: "mic+camera" }, ctx());
   assert.deepEqual(out.push, [STUDENT]);
-  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "allowed-not-accepted",
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "muted-by-self",
     "still nothing switched on until they accept on their own device");
 });
 
@@ -324,21 +324,21 @@ test("closing the discussion revokes and cuts off everybody it widened", () => {
 
   const out = did(f, { action: "end_discussion" }, asTeacher());
   assert.equal(out.roomChanged, true);
-  assert.deepEqual(out.push.sort(), [STUDENT, OTHER].sort());
+  assert.deepEqual(out.push, [STUDENT], "only the camera permission changed at the provider");
   assert.deepEqual(out.silence, [STUDENT], "only the one who actually had something open");
   assert.equal(f.mode, "classroom");
 });
 
-test("a student leaving a discussion gives up the permission, not just the track", () => {
+test("a student leaving discussion stops the track and returns to ordinary muted audio", () => {
   const f = room(true);
   did(f, { action: "start_discussion" }, asTeacher());
   did(f, { action: "join_discussion", scope: "mic" }, ctx());
   did(f, { action: "accept", want: { mic: true } }, ctx());
   const out = did(f, { action: "leave_discussion" }, ctx());
-  assert.deepEqual(out.push, [STUDENT]);
+  assert.deepEqual(out.push, [], "microphone capability is unchanged; only activation stops");
   assert.deepEqual(out.silence, [STUDENT]);
-  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "audience",
-    "otherwise their microphone is one tap from live again with nothing granted");
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "muted-by-self",
+    "leaving stops media but returns to the ordinary join-muted classroom state");
 });
 
 /* --- what each side is told ----------------------------------------------- */
@@ -368,7 +368,7 @@ test("a student waiting behind somebody is told where they are, not who is ahead
 
 test("a student who has done nothing gets an honest empty row rather than no answer", () => {
   const view = studentView(room(), STUDENT);
-  assert.equal(view.you.state, "audience");
+  assert.equal(view.you.state, "muted-by-self");
   assert.equal(view.queuePosition, null);
 });
 

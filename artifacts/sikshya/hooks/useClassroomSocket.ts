@@ -4,6 +4,14 @@ import { getToken } from "@/utils/api";
 import { wsUrl } from "@/utils/wsUrl";
 import { onNetworkResume } from "@/utils/networkResume";
 
+const CLASSROOM_DEBUG = typeof __DEV__ !== "undefined" && __DEV__;
+
+/** Development-only lifecycle evidence. Never include socket URLs, tokens, names or message text. */
+function debugClassroom(event: string, details: Record<string, unknown> = {}): void {
+  if (!CLASSROOM_DEBUG) return;
+  console.debug(`[Fadko classroom] ${event}`, details);
+}
+
 export interface ChatMessage {
   id: string;
   senderName: string;
@@ -148,6 +156,7 @@ export interface TeacherFloorView {
   students: FloorRow[];
   /** Who is waiting, oldest first, in the server's own order. */
   queue: number[];
+  participantCount: number;
 }
 
 export interface StudentFloorView {
@@ -171,6 +180,7 @@ export interface StudentFloorView {
   handsUp: number;
   /** This viewer's own place in that line, 1-based, or null when they are not in it. */
   queuePosition: number | null;
+  participantCount: number;
 }
 
 export type FloorView = TeacherFloorView | StudentFloorView;
@@ -291,7 +301,19 @@ function toFloorView(raw: unknown): FloorView | null {
       });
     }
     const queue = Array.isArray(o.queue) ? o.queue.filter((n): n is number => typeof n === "number") : [];
-    return { scope: "teacher", mode, discussionEligible, discussionStartedAt, spotlight, students, queue };
+    return {
+      scope: "teacher",
+      mode,
+      discussionEligible,
+      discussionStartedAt,
+      spotlight,
+      students,
+      queue,
+      participantCount:
+        typeof o.participantCount === "number"
+          ? Math.max(0, o.participantCount)
+          : students.filter((student) => student.connected).length,
+    };
   }
 
   if (o.scope === "student") {
@@ -317,6 +339,7 @@ function toFloorView(raw: unknown): FloorView | null {
       },
       handsUp: typeof o.handsUp === "number" ? o.handsUp : 0,
       queuePosition: typeof o.queuePosition === "number" ? o.queuePosition : null,
+      participantCount: typeof o.participantCount === "number" ? Math.max(0, o.participantCount) : 0,
     };
   }
 
@@ -598,6 +621,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     const token = await getToken();
     if (!token) return;
 
+    debugClassroom("socket connecting", { sessionId, role: roleRef.current });
     const url = getWsUrl(sessionId, token, nameRef.current);
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -608,6 +632,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
       everConnectedRef.current = true;
       setConnected(true);
       setAccessDenied(false);
+      debugClassroom("socket connected", { sessionId, role: roleRef.current });
     };
 
     ws.onmessage = (event) => {
@@ -703,6 +728,10 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
           break;
         case "presence":
           setPresenceCount(msg.count as number);
+          debugClassroom("presence changed", {
+            sessionId,
+            count: typeof msg.count === "number" ? msg.count : null,
+          });
           break;
         case "reaction":
           addFloating(msg.emoji as string, msg.senderName as string);
@@ -720,12 +749,23 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
           break;
         case "session_status":
           setSessionStatus(msg.status as string);
+          debugClassroom("session status", {
+            sessionId,
+            status: typeof msg.status === "string" ? msg.status : "unknown",
+          });
           break;
         case "floor_state": {
           const next = toFloorView(msg.floor);
           // A payload this build cannot read leaves the last one it could standing, rather than
           // blanking the controls a teacher is halfway through using.
-          if (next) setFloor(next);
+          if (next) {
+            setFloor(next);
+            debugClassroom("floor synchronized", {
+              sessionId,
+              scope: next.scope,
+              participantCount: next.participantCount,
+            });
+          }
           break;
         }
         case "floor_refused":
@@ -742,14 +782,21 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
           // The class stopped. Every permission went with it, so the controls go too rather than
           // sitting there offering something the server would now refuse.
           setFloor(null);
+          debugClassroom("floor ended", { sessionId });
           break;
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       if (!mountedRef.current) return;
       setConnected(false);
       failedAttemptsRef.current += 1;
+      debugClassroom("socket disconnected", {
+        sessionId,
+        code: event.code,
+        attempt: failedAttemptsRef.current,
+        hadConnected: everConnectedRef.current,
+      });
 
       // Never opened after several tries means the server is rejecting this user, not that
       // the network is flaky — stop and let the screen explain it.
@@ -758,9 +805,11 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
         return;
       }
 
+      const delay = reconnectDelay(failedAttemptsRef.current, everConnectedRef.current);
+      debugClassroom("socket reconnect scheduled", { sessionId, delay });
       reconnTimerRef.current = setTimeout(
         () => { void connect(); },
-        reconnectDelay(failedAttemptsRef.current, everConnectedRef.current),
+        delay,
       );
     };
 

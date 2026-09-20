@@ -537,7 +537,7 @@ export function teacherRowButtons(row: FloorRow, view: TeacherFloorView): Teache
     return out;
   }
 
-  if (row.invitedAt !== null && row.state === "allowed-not-accepted") {
+  if (row.invitedAt !== null) {
     out.push({
       id: "cancel-invite",
       label: "Take it back",
@@ -595,23 +595,23 @@ export function teacherRowButtons(row: FloorRow, view: TeacherFloorView): Teache
     return out;
   }
 
-  if (row.state === "muted-by-teacher" || row.allowedMic || row.allowedCamera) {
+  if (row.state === "muted-by-teacher") {
     out.push({
-      id: "return",
-      label: "Back to listening",
-      spoken: `Take ${row.name}'s turn back`,
-      emphasis: "quiet",
-      intent: { do: "returnToAudience" },
+      id: "allow-mic",
+      label: "Allow self-unmute",
+      spoken: `Allow ${row.name} to unmute again`,
+      emphasis: "primary",
+      intent: { do: "allow", scope: "mic", replace: false },
     });
-    if (row.state === "muted-by-teacher") {
-      out.push({
-        id: "allow-mic",
-        label: "Let them speak again",
-        spoken: `Let ${row.name} speak again`,
-        emphasis: "primary",
-        intent: { do: "allow", scope: "mic", replace: false },
-      });
-    }
+    out.push({
+      id: "allow-camera",
+      label: someoneElseHasTheCamera ? "Take the camera" : "Allow camera",
+      spoken: someoneElseHasTheCamera
+        ? `Give ${row.name} the camera, taking it from whoever has it`
+        : `Allow ${row.name} to turn their camera on`,
+      emphasis: "secondary",
+      intent: { do: "allow", scope: "mic+camera", replace: someoneElseHasTheCamera },
+    });
     return out;
   }
 
@@ -625,21 +625,31 @@ export function teacherRowButtons(row: FloorRow, view: TeacherFloorView): Teache
   if (!row.connected) return out;
 
   out.push({
-    id: "allow-mic",
-    label: "Let them speak",
-    spoken: `Let ${row.name} speak`,
-    emphasis: "secondary",
-    intent: { do: "allow", scope: "mic", replace: false },
+    id: "mute",
+    label: "Prevent unmute",
+    spoken: `Prevent ${row.name} from unmuting until you allow it again`,
+    emphasis: "danger",
+    intent: { do: "mute" },
   });
-  out.push({
-    id: "allow-camera",
-    label: someoneElseHasTheCamera ? "Take the camera" : "With camera",
-    spoken: someoneElseHasTheCamera
-      ? `Give ${row.name} the camera, taking it from whoever has it`
-      : `Let ${row.name} speak and turn their camera on`,
-    emphasis: "quiet",
-    intent: { do: "allow", scope: "mic+camera", replace: someoneElseHasTheCamera },
-  });
+  out.push(
+    row.allowedCamera
+      ? {
+          id: "stop-camera",
+          label: "Remove camera access",
+          spoken: `Remove ${row.name}'s camera access`,
+          emphasis: "secondary",
+          intent: { do: "stopCamera" },
+        }
+      : {
+          id: "allow-camera",
+          label: someoneElseHasTheCamera ? "Take the camera" : "Allow camera",
+          spoken: someoneElseHasTheCamera
+            ? `Give ${row.name} the camera, taking it from whoever has it`
+            : `Allow ${row.name} to turn their camera on`,
+          emphasis: "quiet",
+          intent: { do: "allow", scope: "mic+camera", replace: someoneElseHasTheCamera },
+        },
+  );
   return out;
 }
 

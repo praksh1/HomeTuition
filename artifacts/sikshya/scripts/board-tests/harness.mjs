@@ -112,7 +112,13 @@ export async function openBoard(ctx, baseUrl, { readOnly }) {
   });
   page.errors = errors;
   await page.addInitScript(stubHost);
-  await page.goto(`${baseUrl}/board?readOnly=${readOnly ? 1 : 0}`, { waitUntil: "networkidle" });
+  // The app deliberately keeps background auth/reconnect work alive. `networkidle` therefore
+  // describes neither a ready whiteboard nor a failure and can leave this gate waiting forever
+  // when the final bundle points at a real staging API. The canvas is the readiness contract.
+  await page.goto(`${baseUrl}/board?readOnly=${readOnly ? 1 : 0}`, {
+    waitUntil: "commit",
+    timeout: 15_000,
+  });
   await page.waitForSelector("canvas.excalidraw__canvas.static", { timeout: 15_000 }).catch(async () => {
     const body = (await page.locator("body").innerText().catch(() => "")).slice(0, 800);
     throw new Error(`whiteboard canvas never appeared; page said: ${body || "(nothing)"}; errors: ${[...errors, ...diagnostics].join(" | ") || "none"}`);

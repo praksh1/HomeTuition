@@ -190,6 +190,7 @@ let setControls;
 
 function Harness() {
   const [controls, set] = React.useState(true);
+  const lockedStudent = new URLSearchParams(window.location.search).get("role") === "locked-student";
   setControls = set;
   return React.createElement("div", { style: { position: "relative", width: "100vw", height: "100vh" } },
     React.createElement(LiveKitEmbed, {
@@ -197,8 +198,11 @@ function Harness() {
       meetingToken: "test-token",
       displayName: "Sita Sharma",
       canScreenShare: true,
-      teacherUserId: "2",
+      teacherUserId: "u2",
       watchUserName: "Ram Bahadur",
+      isTeacher: !lockedStudent,
+      canUseMicrophone: !lockedStudent,
+      canUseCamera: !lockedStudent,
       onLeft: () => { window.__events.left += 1; },
       onWatchedParticipantLeft: () => { window.__events.watchedLeft += 1; },
       showControls: controls,
@@ -403,7 +407,7 @@ async function run(chromium, viewport, label) {
   await p.waitForTimeout(300);
   const denied = (await p.locator('[data-testid="livekit-device-problem"]').textContent()) ?? "";
   check(`${label}: it says the camera is blocked`, denied.includes("blocked"));
-  check(`${label}: it names the control to press`, denied.includes("padlock"));
+  check(`${label}: it names where to change permission`, /browser or site settings/i.test(denied));
   check(`${label}: and it can be dismissed`, (await p.locator('[data-testid="livekit-dismiss-problem"]').count()) === 1);
   await p.screenshot({ path: path.join(SHOTS, `${label}-camera-denied.png`) });
   await p.locator('[data-testid="livekit-dismiss-problem"]').click();
@@ -414,7 +418,7 @@ async function run(chromium, viewport, label) {
   await p.waitForTimeout(300);
   const inUse = (await p.locator('[data-testid="livekit-device-problem"]').textContent()) ?? "";
   check(`${label}: it says another app has the microphone`, inUse.includes("another app"));
-  check(`${label}: and does not tell them to change a permission they have`, !inUse.includes("padlock"));
+  check(`${label}: and does not tell them to change a permission they have`, !/browser or site settings/i.test(inUse));
   await p.locator('[data-testid="livekit-dismiss-problem"]').click();
   await p.waitForTimeout(200);
 
@@ -492,7 +496,7 @@ async function run(chromium, viewport, label) {
     window.__plans = [];
     window.__lk.connect([
       { id: "1", name: "Sita Sharma", isLocal: true },
-      { id: "2", name: "Teacher Sir" },
+      { id: "u2", name: "Teacher Sir" },
       ...Array.from({ length: 10 }, (_, i) => ({ id: String(100 + i), name: `Student ${i + 1}` })),
     ]);
   });
@@ -510,9 +514,26 @@ async function run(chromium, viewport, label) {
     Boolean(lastPlan) && lastPlan.unsubscribe.length === 12 - budget,
     JSON.stringify(lastPlan));
   check(`${label}: the teacher is never among them`,
-    Boolean(lastPlan) && !lastPlan.unsubscribe.includes("2"), JSON.stringify(lastPlan?.unsubscribe));
+    Boolean(lastPlan) && !lastPlan.unsubscribe.includes("u2"), JSON.stringify(lastPlan?.unsubscribe));
   check(`${label}: nobody is asked to subscribe and unsubscribe at once`,
     Boolean(lastPlan) && lastPlan.subscribe.every((id) => !lastPlan.unsubscribe.includes(id)));
+
+  console.log(`\n[${label}] A teacher-muted student sees permissions, not device errors`);
+  await p.goto(`file://${page}?role=locked-student`);
+  await p.waitForTimeout(500);
+  await p.evaluate(() => window.__lk.connect([
+    { id: "u1", name: "Sita Sharma", isLocal: true, micEnabled: false, cameraEnabled: false },
+    { id: "u2", name: "Teacher Sir" },
+  ]));
+  await p.waitForTimeout(250);
+  check(`${label}: the microphone explains the teacher mute`,
+    (await p.locator('[data-testid="livekit-mic"]').getAttribute("aria-label")) === "Microphone muted by teacher");
+  check(`${label}: a teacher-muted microphone cannot be pressed`,
+    await p.locator('[data-testid="livekit-mic"]').isDisabled());
+  check(`${label}: the camera explains teacher authorization`,
+    (await p.locator('[data-testid="livekit-camera"]').getAttribute("aria-label")) === "Camera off. Your teacher controls student camera access");
+  check(`${label}: unauthorized camera is not reported as a device failure`,
+    (await p.locator('[data-testid="livekit-device-problem"]').count()) === 0);
 
   check(`${label}: no page error during the run`, errors.length === 0, errors[0] ?? "");
 

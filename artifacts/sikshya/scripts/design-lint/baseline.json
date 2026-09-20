@@ -119,10 +119,6 @@
     "hex": 2,
     "size": 0
   },
-  "components/SmartBoard.web.tsx": {
-    "hex": 9,
-    "size": 0
-  },
   "components/StarRating.tsx": {
     "hex": 2,
     "size": 0

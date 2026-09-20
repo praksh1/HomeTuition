@@ -123,6 +123,7 @@ interface Props {
   /** Watch for one named person leaving — how a student learns the teacher has gone. */
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
+  onWatchedParticipantReturned?: () => void;
   /** Accepted so a parent can pass `StyleSheet.absoluteFill`; this component fills its box. */
   style?: unknown;
   /** Show the screen-share control. The token enforces the same rule independently. */
@@ -140,6 +141,11 @@ interface Props {
   enableInCallChat?: boolean;
   /** False while the app-owned call window is a compact preview. */
   showControls?: boolean;
+  /** Product role and permission state; neither is inferred from a device failure. */
+  isTeacher?: boolean;
+  canUseMicrophone?: boolean;
+  canUseCamera?: boolean;
+  onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
 }
 
 /** Long enough that a slow first join is not called a failure, short enough to be honest. */
@@ -159,7 +165,7 @@ function explain(problem: MediaProblem): string {
   const device = problem.kind === "camera" ? "camera" : problem.kind === "screen" ? "screen" : "microphone";
   switch (problem.reason) {
     case "denied":
-      return `Your ${device} is blocked. Tap the padlock in the address bar, allow ${device === "microphone" ? "Microphone" : "Camera"}, then reload this page.`;
+      return `${device === "camera" ? "Camera access" : device === "microphone" ? "Microphone access" : "Screen sharing"} is blocked. Allow it in your browser or site settings, then try again. You can continue the class without it.`;
     case "missing":
       return `No ${device} was found on this device. The class carries on without it.`;
     case "in-use":
@@ -469,6 +475,7 @@ function Control({
   active,
   danger,
   testID,
+  disabled,
 }: {
   /** What the button says. Short, because the panel is narrow. */
   label: string;
@@ -484,6 +491,7 @@ function Control({
   active?: boolean;
   danger?: boolean;
   testID: string;
+  disabled?: boolean;
 }) {
   /*
     Leave is an outline, not a second filled red button.
@@ -500,6 +508,7 @@ function Control({
     <button
       type="button"
       onClick={onPress}
+      disabled={disabled}
       aria-label={accessibilityLabel ?? label}
       aria-pressed={active}
       title={accessibilityLabel ?? label}
@@ -512,7 +521,8 @@ function Control({
         border: danger ? `1px solid ${colors.destructive}` : "none",
         background,
         color: ink,
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.48 : 1,
         display: "inline-flex",
         alignItems: "center",
         justifyContent: "center",
@@ -538,10 +548,15 @@ export default function LiveKitEmbed({
   onMediaReady,
   watchUserName,
   onWatchedParticipantLeft,
+  onWatchedParticipantReturned,
   canScreenShare,
   teacherUserId = null,
   spotlightUserId = null,
   showControls = true,
+  isTeacher = false,
+  canUseMicrophone = true,
+  canUseCamera = false,
+  onLocalMediaChange,
 }: Props) {
   const [session, setSession] = useState<VideoSession | null>(null);
   const [connection, setConnection] = useState<VideoConnectionState>("connecting");
@@ -553,6 +568,9 @@ export default function LiveKitEmbed({
   const [sharing, setSharing] = useState(false);
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const microphoneAuthorized = isTeacher || canUseMicrophone;
+  const cameraAuthorized = isTeacher || canUseCamera;
 
   /*
     Callbacks in refs, read at the moment they fire.
@@ -563,16 +581,38 @@ export default function LiveKitEmbed({
   */
   const onLeftRef = useRef(onLeft);
   const onWatchedLeftRef = useRef(onWatchedParticipantLeft);
+  const onWatchedReturnedRef = useRef(onWatchedParticipantReturned);
   const watchNameRef = useRef(watchUserName);
   const onMediaReadyRef = useRef(onMediaReady);
+  const onLocalMediaChangeRef = useRef(onLocalMediaChange);
   onLeftRef.current = onLeft;
   onWatchedLeftRef.current = onWatchedParticipantLeft;
+  onWatchedReturnedRef.current = onWatchedParticipantReturned;
   watchNameRef.current = watchUserName;
   onMediaReadyRef.current = onMediaReady;
+  onLocalMediaChangeRef.current = onLocalMediaChange;
 
   /** Whether the watched person has ever been seen, so their absence means something. */
   const watchedSeen = useRef(false);
   const watchedReported = useRef(false);
+  const reportedLocalMedia = useRef<{ micEnabled: boolean; cameraEnabled: boolean } | null>(null);
+
+  useEffect(() => {
+    // A new classroom gets a fresh absence history. A media reconnect inside the same room does
+    // not: the return event has to survive that transport rebuild so the student's warning clears.
+    watchedSeen.current = false;
+    watchedReported.current = false;
+  }, [roomUrl, teacherUserId, watchUserName]);
+
+  const reportLocalMedia = useCallback((roster: VideoParticipant[]) => {
+    const me = roster.find((participant) => participant.isLocal);
+    if (!me) return;
+    const next = { micEnabled: me.micEnabled, cameraEnabled: me.cameraEnabled };
+    const previous = reportedLocalMedia.current;
+    if (previous?.micEnabled === next.micEnabled && previous.cameraEnabled === next.cameraEnabled) return;
+    reportedLocalMedia.current = next;
+    onLocalMediaChangeRef.current?.(next);
+  }, []);
 
   /**
    * One departure, announced once.
@@ -586,22 +626,21 @@ export default function LiveKitEmbed({
    * once, and because a re-render must not un-announce something that already happened.
    */
   const leftAnnounced = useRef(false);
-  const announceOnce = useCallback(() => {
+  const announceLeave = useCallback(() => {
     if (leftAnnounced.current) return;
     leftAnnounced.current = true;
     onLeftRef.current?.();
   }, []);
 
-  /** The Leave button: go, then say so. */
-  const announceLeave = useCallback(() => {
-    void leaveRoom();
-    announceOnce();
-  }, [announceOnce]);
-
   useEffect(() => {
     if (!roomUrl || !meetingToken) return;
     let cancelled = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     const cleanups: (() => void)[] = [];
+    leftAnnounced.current = false;
+    setConnection("connecting");
+    setJoinError(null);
+    setSlow(false);
 
     // Says "still trying", not "failed" — the SDK is still working and usually wins.
     const slowTimer = setTimeout(() => {
@@ -610,7 +649,12 @@ export default function LiveKitEmbed({
 
     (async () => {
       try {
-        const live = await joinRoom({ url: roomUrl, token: meetingToken });
+        const live = await joinRoom({
+          url: roomUrl,
+          token: meetingToken,
+          startMuted: !isTeacher,
+          startCamera: isTeacher,
+        });
         if (cancelled) {
           // Unmounted while connecting. Leave immediately rather than holding a room and a
           // microphone open behind a screen nobody is looking at.
@@ -623,7 +667,14 @@ export default function LiveKitEmbed({
         cleanups.push(
           live.onConnectionStateChange((state) => {
             setConnection(state);
-            if (state === "disconnected") announceOnce();
+            if (state === "disconnected" && !leftAnnounced.current && !reconnectTimer) {
+              // LiveKit giving up on one transport is not the same as the Fadko class ending.
+              // Keep the board, timer and route intact, then rebuild only the media session.
+              reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                if (!cancelled) setReconnectAttempt((attempt) => attempt + 1);
+              }, 1200);
+            }
             /*
               Every arrival at `connected`, not only the first.
 
@@ -633,7 +684,13 @@ export default function LiveKitEmbed({
               server decides whether anything is actually outstanding; announcing it when nothing
               is costs one frame and no provider call at all.
             */
-            if (state === "connected") onMediaReadyRef.current?.();
+            if (state === "connected") {
+              if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+              }
+              onMediaReadyRef.current?.();
+            }
           }),
         );
         cleanups.push(
@@ -641,19 +698,27 @@ export default function LiveKitEmbed({
             setParticipants(roster);
             setSoundBlocked(live.audioBlocked);
             setAudioOnlyState(live.audioOnly);
+            reportLocalMedia(roster);
 
             const watched = watchNameRef.current;
-            if (!watched) return;
-            // The same predicate the Daily embed uses, from the shared helper, so a teacher's
-            // name matches identically on both providers rather than nearly identically.
+            if (!teacherUserId && !watched) return;
+            // LiveKit participant identity is the stable Fadko account id. Prefer it over a
+            // display-name comparison so two people named Sita cannot clear one another's
+            // departure warning. The name fallback keeps the Daily-compatible room payloads
+            // working while older sessions age out.
             const present = roster.some(
-              (p) => !p.isLocal && watchedParticipantLeft(watched, p.name),
+              (p) =>
+                !p.isLocal &&
+                ((!!teacherUserId && p.id === teacherUserId) ||
+                  (!!watched && watchedParticipantLeft(watched, p.name))),
             );
             if (present) {
+              const hadReportedDeparture = watchedReported.current;
               watchedSeen.current = true;
               // Rearmed on their return: a teacher whose connection dropped and came back can
               // legitimately leave again later, and the student should be told again.
               watchedReported.current = false;
+              if (hadReportedDeparture) onWatchedReturnedRef.current?.();
             } else if (watchedSeen.current && !watchedReported.current) {
               watchedReported.current = true;
               onWatchedLeftRef.current?.();
@@ -670,6 +735,7 @@ export default function LiveKitEmbed({
     return () => {
       cancelled = true;
       clearTimeout(slowTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       for (const cancel of cleanups) cancel();
       /*
         Fire and forget, because a React cleanup is synchronous and a disconnect is not.
@@ -680,7 +746,7 @@ export default function LiveKitEmbed({
       void leaveRoom();
       setSession(null);
     };
-  }, [roomUrl, meetingToken]);
+  }, [roomUrl, meetingToken, isTeacher, reconnectAttempt, reportLocalMedia]);
 
   const local = participants.find((p) => p.isLocal) ?? null;
   const remotes = useMemo(() => participants.filter((p) => !p.isLocal), [participants]);
@@ -750,6 +816,24 @@ export default function LiveKitEmbed({
     },
     [session],
   );
+
+  const toggleCamera = useCallback(() => {
+    if (!session || !cameraAuthorized) return;
+    void session.toggleCamera().then(() => {
+      const next = session.getParticipants();
+      setParticipants(next);
+      reportLocalMedia(next);
+    });
+  }, [cameraAuthorized, reportLocalMedia, session]);
+
+  const toggleMic = useCallback(() => {
+    if (!session || !microphoneAuthorized) return;
+    void session.toggleMic().then(() => {
+      const next = session.getParticipants();
+      setParticipants(next);
+      reportLocalMedia(next);
+    });
+  }, [microphoneAuthorized, reportLocalMedia, session]);
 
   const toggleShare = act(async (live) => {
     if (sharing) {
@@ -967,7 +1051,8 @@ export default function LiveKitEmbed({
         )}
 
         {/* The self-view, small and in the corner — the one tile nobody is watching. */}
-        {local ? <Tile participant={local} inset /> : null}
+        {/* A camera preview is useful; a second avatar saying "You, muted" is visual nesting. */}
+        {local?.cameraEnabled ? <Tile participant={local} inset /> : null}
       </div>
 
       {showControls ? (
@@ -1055,18 +1140,40 @@ export default function LiveKitEmbed({
           <Control
             testID="livekit-mic"
             icon={local?.micEnabled ? "mic" : "mic-off"}
-            label={local?.micEnabled ? "Mute" : "Unmute"}
-            accessibilityLabel={microphoneActionLabel(local?.micEnabled === true)}
+            label={
+              local?.micEnabled
+                ? "Mute"
+                : microphoneAuthorized
+                  ? "Unmute"
+                  : "Muted by teacher"
+            }
+            accessibilityLabel={
+              microphoneAuthorized
+                ? microphoneActionLabel(local?.micEnabled === true)
+                : "Microphone muted by teacher"
+            }
             active={local?.micEnabled === true}
-            onPress={act((live) => live.toggleMic())}
+            disabled={!microphoneAuthorized}
+            onPress={toggleMic}
           />
           <Control
             testID="livekit-camera"
             icon={local?.cameraEnabled ? "video" : "video-off"}
-            label={local?.cameraEnabled ? "Camera off" : "Camera on"}
-            accessibilityLabel={cameraActionLabel(local?.cameraEnabled === true)}
+            label={
+              local?.cameraEnabled
+                ? "Camera off"
+                : cameraAuthorized
+                  ? "Camera on"
+                  : "Camera needs teacher approval"
+            }
+            accessibilityLabel={
+              cameraAuthorized
+                ? cameraActionLabel(local?.cameraEnabled === true)
+                : "Camera off. Your teacher controls student camera access"
+            }
             active={local?.cameraEnabled === true}
-            onPress={act((live) => live.toggleCamera())}
+            disabled={!cameraAuthorized}
+            onPress={toggleCamera}
           />
           {canScreenShare ? (
             <Control
@@ -1098,6 +1205,7 @@ export default function LiveKitEmbed({
       ) : null}
     </div>
   );
+
 }
 
 const secondaryActionStyle: React.CSSProperties = {

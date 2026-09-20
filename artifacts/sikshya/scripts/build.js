@@ -183,6 +183,16 @@ function main() {
   const targetChanged = readLastTarget() !== target;
   if (targetChanged) {
     console.log("The API address or the app's name changed since the last build — clearing the bundler cache.");
+    // Invalidate the old stamp before Metro starts. A failed export may still populate Metro's
+    // cache with the new target; keeping the last successful stamp would then make a retry for
+    // that old target trust a cache produced by the failed build. The stamp is restored only
+    // after the exported bundle has passed both target and identity verification below.
+    try {
+      fs.rmSync(TARGET_STAMP, { force: true });
+    } catch {
+      // The export still receives --clear. A missing/locked stamp simply makes the next build
+      // clear once more instead of risking a stale API address.
+    }
   }
 
   const outputDir = path.join(projectRoot, "web-build");

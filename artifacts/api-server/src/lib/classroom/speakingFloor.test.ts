@@ -45,7 +45,7 @@ import {
 const T = 1_000_000;                       // an arbitrary server timestamp
 const STUDENT = 11, OTHER = 22, THIRD = 33;
 
-/** A floor with two connected students and nothing granted. */
+/** A floor with connected students in the ordinary join-muted state. */
 function floorWith(ids: number[], eligible = false): Floor {
   const f = emptyFloor(eligible);
   for (const id of ids) askToSpeak(f, id, T), cancelRequest(f, id);
@@ -56,14 +56,15 @@ const ok = <T,>(r: { ok: true; value: T } | { ok: false; reason: string; code: s
   return r.value;
 };
 
-/* --- 1, 2: nothing is granted by default --------------------------------- */
+/* --- 1, 2: ordinary audio capability, camera off, joins muted ------------ */
 
-test("1+2: a student publishes neither microphone nor camera by default", () => {
+test("1+2: a student has microphone capability but joins with both devices off", () => {
   const f = floorWith([STUDENT]);
   const s = f.students.get(STUDENT)!;
-  assert.deepEqual(s.allowed, { mic: false, camera: false });
-  assert.deepEqual(publishRightsFor(s), { canPublish: false, mic: false, camera: false });
-  assert.equal(mediaStateOf(s), "audience");
+  assert.deepEqual(s.allowed, { mic: true, camera: false });
+  assert.deepEqual(s.accepted, { mic: false, camera: false });
+  assert.deepEqual(publishRightsFor(s), { canPublish: true, mic: true, camera: false });
+  assert.equal(mediaStateOf(s), "muted-by-self");
 });
 
 /* --- 3, 4, 5: one request, no duplicates, cancellable --------------------- */
@@ -93,29 +94,30 @@ test("5: a student can cancel while waiting", () => {
   ok(askToSpeak(f, STUDENT, T));
   ok(cancelRequest(f, STUDENT));
   assert.equal(requestQueue(f).length, 0);
-  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "audience");
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "muted-by-self");
 });
 
 /* --- 6: the teacher decides ---------------------------------------------- */
 
-test("6: a teacher can dismiss a request without granting anything", () => {
+test("6: a teacher can dismiss a request without changing media capability", () => {
   const f = emptyFloor();
   ok(askToSpeak(f, STUDENT, T));
   ok(dismissRequest(f, STUDENT));
   assert.equal(requestQueue(f).length, 0);
-  assert.equal(f.students.get(STUDENT)!.allowed.mic, false);
+  assert.equal(f.students.get(STUDENT)!.allowed.mic, true);
 });
 
 /* --- 8..11: permission is an offer, not an activation --------------------- */
 
-test("8+9: granting a microphone does not open one — the student must accept", () => {
+test("8+9: acknowledging a student does not open their microphone", () => {
   const f = emptyFloor();
   ok(askToSpeak(f, STUDENT, T));
   ok(allowStudent(f, STUDENT, "mic", T + 1));
   const s = f.students.get(STUDENT)!;
   assert.equal(s.allowed.mic, true, "the server now permits it");
   assert.equal(s.accepted.mic, false, "but nothing is switched on");
-  assert.equal(mediaStateOf(s), "allowed-not-accepted");
+  assert.equal(s.invitedAt, null, "no second consent dialog is created");
+  assert.equal(mediaStateOf(s), "muted-by-self");
 
   ok(acceptSpeaking(f, STUDENT, { mic: true }));
   assert.equal(mediaStateOf(f.students.get(STUDENT)!), "speaking");
@@ -129,11 +131,13 @@ test("10+11: the same for a camera", () => {
   assert.equal(mediaStateOf(f.students.get(STUDENT)!), "camera-active");
 });
 
-test("a student cannot accept what was never granted", () => {
+test("a student may self-unmute by default until the teacher prevents it", () => {
   const f = emptyFloor();
   const r = acceptSpeaking(f, STUDENT, { mic: true });
-  assert.equal(r.ok, false);
-  assert.equal(f.students.get(STUDENT)!.accepted.mic, false);
+  assert.equal(r.ok, true);
+  assert.equal(f.students.get(STUDENT)!.accepted.mic, true);
+  ok(muteStudent(f, STUDENT));
+  assert.equal(acceptSpeaking(f, STUDENT, { mic: true }).ok, false);
 });
 
 /* --- 12, 13: one camera in the ordinary classroom ------------------------- */
@@ -189,13 +193,13 @@ test("15: stopping a camera leaves the microphone alone", () => {
   assert.equal(mediaStateOf(s), "speaking");
 });
 
-test("16: returning a student to the audience withdraws everything", () => {
+test("16: returning a student to listening stops media and prevents immediate self-unmute", () => {
   const f = emptyFloor();
   ok(allowStudent(f, STUDENT, "mic+camera", T));
   ok(acceptSpeaking(f, STUDENT, { mic: true, camera: true }));
   ok(returnToAudience(f, STUDENT));
   const s = f.students.get(STUDENT)!;
-  assert.equal(mediaStateOf(s), "audience");
+  assert.equal(mediaStateOf(s), "muted-by-teacher");
   assert.deepEqual(publishRightsFor(s), { canPublish: false, mic: false, camera: false });
 });
 
@@ -232,23 +236,23 @@ test("mute all leaves cameras running — it is a microphone control", () => {
 
 /* --- 18, 19: invite all is an offer -------------------------------------- */
 
-test("18: invite all activates no microphone by itself", () => {
+test("18: the legacy invite-all command is redundant and opens no microphone", () => {
   const f = emptyFloor();
   for (const id of [STUDENT, OTHER]) markReconnected(f, id);
   const { invited } = ok(inviteAllToSpeak(f, T));
-  assert.equal(invited.length, 2);
-  for (const id of invited) {
+  assert.equal(invited.length, 0);
+  for (const id of [STUDENT, OTHER]) {
     const s = f.students.get(id)!;
     assert.equal(s.accepted.mic, false, "nothing was switched on");
-    assert.equal(mediaStateOf(s), "allowed-not-accepted");
+    assert.equal(mediaStateOf(s), "muted-by-self");
   }
 });
 
-test("18: inviting twice does not notify the same student twice", () => {
+test("18: repeating legacy invite-all remains a no-op", () => {
   const f = emptyFloor();
   markReconnected(f, STUDENT);
-  assert.equal(ok(inviteAllToSpeak(f, T)).invited.length, 1);
-  assert.equal(ok(inviteAllToSpeak(f, T + 1)).invited.length, 0, "already holding an invitation");
+  assert.equal(ok(inviteAllToSpeak(f, T)).invited.length, 0);
+  assert.equal(ok(inviteAllToSpeak(f, T + 1)).invited.length, 0);
 });
 
 test("19: declining changes no media state", () => {
@@ -261,14 +265,14 @@ test("19: declining changes no media state", () => {
   assert.equal(s.invitedAt, null);
 });
 
-test("cancelling invitations takes back what nobody accepted, and keeps what they did", () => {
+test("cancelling old invitations never takes away ordinary microphone capability", () => {
   const f = emptyFloor();
   for (const id of [STUDENT, OTHER]) markReconnected(f, id);
   ok(inviteAllToSpeak(f, T));
   ok(acceptSpeaking(f, STUDENT, { mic: true }));      // one student said yes
   ok(cancelInvitations(f));
   assert.equal(f.students.get(STUDENT)!.allowed.mic, true, "an accepted invitation is not withdrawn");
-  assert.equal(f.students.get(OTHER)!.allowed.mic, false, "an unanswered one is");
+  assert.equal(f.students.get(OTHER)!.allowed.mic, true, "ordinary microphone access remains");
 });
 
 /* --- 20, 21: reconnection and session end -------------------------------- */
@@ -353,7 +357,7 @@ test("a student cannot join a discussion that has not started", () => {
   assert.equal(f.students.get(STUDENT)?.allowed.mic ?? false, false);
 });
 
-test("31: ending the discussion revokes what it widened", () => {
+test("31: ending discussion stops live media and camera access but restores ordinary muted audio", () => {
   const f = emptyFloor(true);
   ok(startDiscussion(f, T, true));
   for (const id of [STUDENT, OTHER, THIRD]) {
@@ -363,7 +367,9 @@ test("31: ending the discussion revokes what it widened", () => {
   const { revoked } = ok(endDiscussion(f));
   assert.equal(revoked.length, 3);
   for (const id of [STUDENT, OTHER, THIRD]) {
-    assert.deepEqual(publishRightsFor(f.students.get(id)!), { canPublish: false, mic: false, camera: false });
+    const s = f.students.get(id)!;
+    assert.deepEqual(s.accepted, { mic: false, camera: false });
+    assert.deepEqual(publishRightsFor(s), { canPublish: true, mic: true, camera: false });
   }
   assert.equal(f.mode, "classroom");
 });
@@ -386,7 +392,7 @@ test("the teacher keeps control during a discussion", () => {
   ok(stopStudentCamera(f, STUDENT));
   assert.equal(f.students.get(STUDENT)!.allowed.camera, false);
   ok(returnToAudience(f, STUDENT));
-  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "audience");
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "muted-by-teacher");
 });
 
 test("a student can step back to listening on their own", () => {
@@ -406,10 +412,10 @@ test("the nine media states are distinguishable, so 'muted' never means three th
   const f = emptyFloor();
   const s = f.students.get(STUDENT) ?? (askToSpeak(f, STUDENT, T), f.students.get(STUDENT)!);
 
-  assert.equal(mediaStateOf({ ...s, requestedAt: null }), "audience");
+  assert.equal(mediaStateOf({ ...s, requestedAt: null }), "muted-by-self");
   assert.equal(mediaStateOf({ ...s, requestedAt: T }), "requested");
   assert.equal(mediaStateOf({ ...s, requestedAt: null, invitedAt: T }), "invited");
-  assert.equal(mediaStateOf({ ...s, allowed: { mic: true, camera: false } }), "allowed-not-accepted");
+  assert.equal(mediaStateOf({ ...s, requestedAt: null, allowed: { mic: true, camera: false } }), "muted-by-self");
   assert.equal(
     mediaStateOf({ ...s, allowed: { mic: true, camera: false }, accepted: { mic: true, camera: false } }),
     "speaking",
@@ -446,8 +452,8 @@ test("spotlighting a student changes nobody's media", () => {
   ok(setSpotlight(f, STUDENT));
   assert.equal(f.spotlight, STUDENT);
   const s = f.students.get(STUDENT)!;
-  assert.deepEqual(s.allowed, { mic: false, camera: false });
-  assert.equal(mediaStateOf(s), "audience", "a featured tile is still a listening student");
+  assert.deepEqual(s.allowed, { mic: true, camera: false });
+  assert.equal(mediaStateOf(s), "muted-by-self", "a featured tile is still a listening student");
 });
 
 test("spotlighting the same person again puts the grid back", () => {
@@ -508,16 +514,16 @@ test("a class that ends forgets who was featured", () => {
 
 /* --- withdrawing one invitation rather than everybody's ------------------- */
 
-test("a mis-tapped invitation can be withdrawn from one person alone", () => {
+test("withdrawing an old invitation keeps ordinary microphone capability", () => {
   const f = floorWith([STUDENT, OTHER]);
   ok(allowStudent(f, STUDENT, "mic", T));
   ok(allowStudent(f, OTHER, "mic", T + 1));
   ok(cancelInvitation(f, STUDENT));
 
   const wrong = f.students.get(STUDENT)!;
-  assert.equal(mediaStateOf(wrong), "audience");
-  assert.equal(publishRightsFor(wrong).canPublish, false, "the permission goes with the invitation");
-  assert.equal(mediaStateOf(f.students.get(OTHER)!), "allowed-not-accepted", "everybody else is untouched");
+  assert.equal(mediaStateOf(wrong), "muted-by-self");
+  assert.equal(publishRightsFor(wrong).mic, true, "ordinary microphone capability survives");
+  assert.equal(mediaStateOf(f.students.get(OTHER)!), "muted-by-self", "everybody else is untouched");
 });
 
 test("withdrawing an invitation somebody already accepted does not silence them", () => {
@@ -529,18 +535,21 @@ test("withdrawing an invitation somebody already accepted does not silence them"
     "stopping a speaking student is muteStudent or returnToAudience, which say what they do");
 });
 
-test("withdrawing a camera invitation takes the camera permission too", () => {
+test("withdrawing an unanswered legacy camera invitation takes camera permission too", () => {
   const f = floorWith([STUDENT]);
   ok(allowStudent(f, STUDENT, "mic+camera", T));
+  const s = f.students.get(STUDENT)!;
+  s.invitedAt = T;
+  s.invitationScope = "mic+camera";
   ok(cancelInvitation(f, STUDENT));
-  assert.deepEqual(f.students.get(STUDENT)!.allowed, { mic: false, camera: false });
+  assert.deepEqual(f.students.get(STUDENT)!.allowed, { mic: true, camera: false });
   assert.deepEqual(cameraHolders(f), [], "and frees the one camera slot for somebody else");
 });
 
 test("withdrawing an invitation nobody has is safe", () => {
   const f = floorWith([STUDENT]);
   ok(cancelInvitation(f, STUDENT));
-  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "audience");
+  assert.equal(mediaStateOf(f.students.get(STUDENT)!), "muted-by-self");
 });
 
 /* --- the empty source list, which LiveKit reads as "everything" ----------- */

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Excalidraw,
   MainMenu,
@@ -328,7 +328,21 @@ const LaserIcon = () => (
   </svg>
 );
 
-export default function SmartBoard({
+const UndoIcon = () => (
+  <svg {...iconProps} aria-hidden="true">
+    <path d="M9 7 4 12l5 5" />
+    <path d="M5 12h8a6 6 0 0 1 6 6" />
+  </svg>
+);
+
+const RedoIcon = () => (
+  <svg {...iconProps} aria-hidden="true">
+    <path d="m15 7 5 5-5 5" />
+    <path d="M19 12h-8a6 6 0 0 0-6 6" />
+  </svg>
+);
+
+function SmartBoard({
   readOnly = false,
   sceneUpdates,
   onConsumeUpdates,
@@ -347,6 +361,15 @@ export default function SmartBoard({
   theme = "light",
 }: Props) {
   const [api, setApi] = useState<ExcalidrawAPI | null>(null);
+  const boardRootRef = useRef<HTMLDivElement | null>(null);
+  const [historyState, setHistoryState] = useState({ undo: false, redo: false });
+  const historyTransitionUntilRef = useRef(0);
+  const [boardDialog, setBoardDialog] = useState<
+    | { kind: "rename"; value: string }
+    | { kind: "delete"; pageTitle: string }
+    | { kind: "clear" }
+    | null
+  >(null);
   /** Whether Excalidraw's shape properties panel is currently allowed on screen. */
   const [showProps, setShowProps] = useState(false);
   /** Students only: whether the board still tracks the teacher's view. */
@@ -386,30 +409,28 @@ export default function SmartBoard({
   }, [onLaser]);
 
   const renamePage = useCallback(() => {
-    if (!canManagePages || !activePage || typeof window === "undefined") return;
-    const title = window.prompt("Name this board page", activePage.title);
-    if (title !== null) onPageCommand?.({ op: "rename", pageId: activePage.id, title });
+    if (!canManagePages || !activePage) return;
+    setBoardDialog({ kind: "rename", value: activePage.title });
   }, [activePage, canManagePages, onPageCommand]);
 
   const deletePage = useCallback(() => {
     if (!canManagePages || !activePage || pages.length <= 1) return;
-    if (typeof window !== "undefined" && !window.confirm(`Delete “${activePage.title}”? This cannot be undone.`)) return;
-    onPageCommand?.({ op: "delete", pageId: activePage.id });
-    setPageMenuOpen(false);
-  }, [activePage, canManagePages, onPageCommand, pages.length]);
+    setBoardDialog({ kind: "delete", pageTitle: activePage.title });
+  }, [activePage, canManagePages, pages.length]);
 
   const runHistoryShortcut = useCallback((redo: boolean) => {
-    if (typeof document === "undefined" || typeof window === "undefined") return;
-    const builtIn = document.querySelector<HTMLButtonElement>(
-      `button[aria-label="${redo ? "Redo" : "Undo"}"]`,
-    );
+    if (!api || typeof window === "undefined") return;
+    historyTransitionUntilRef.current = Date.now() + 250;
+    const builtIn = Array.from(boardRootRef.current?.querySelectorAll<HTMLButtonElement>(
+      `.excalidraw button[aria-label="${redo ? "Redo" : "Undo"}"]`,
+    ) ?? []).find((button) => !button.disabled);
     if (builtIn) {
       builtIn.click();
-      return;
-    }
-    const isApple = /Mac|iPhone|iPad|iPod/i.test(window.navigator.platform);
-    document.dispatchEvent(
-      new KeyboardEvent("keydown", {
+    } else {
+      const isApple = /Mac|iPhone|iPad|iPod/i.test(window.navigator.platform);
+      // Excalidraw registers its history shortcuts on `window`, not `document`. Dispatching the
+      // synthetic key on `document` made these buttons look alive while doing nothing.
+      window.dispatchEvent(new KeyboardEvent("keydown", {
         key: "z",
         code: "KeyZ",
         ctrlKey: !isApple,
@@ -417,9 +438,31 @@ export default function SmartBoard({
         shiftKey: redo,
         bubbles: true,
         cancelable: true,
-      }),
-    );
-  }, []);
+      }));
+    }
+    setHistoryState({
+      undo: redo ? true : api.getSceneElementsIncludingDeleted().length > 1,
+      redo: !redo,
+    });
+  }, [api]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const afterKeyboardHistory = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== "z" || (!event.ctrlKey && !event.metaKey)) return;
+      // Excalidraw has already applied the shortcut by key-up. Track the resulting availability
+      // ourselves: its responsive DOM keeps hidden history buttons mounted whose `disabled`
+      // attributes do not reliably represent the active editor.
+      window.setTimeout(() => {
+        setHistoryState({
+          undo: event.shiftKey ? true : Boolean(api?.getSceneElements().length),
+          redo: !event.shiftKey,
+        });
+      }, 0);
+    };
+    window.addEventListener("keyup", afterKeyboardHistory);
+    return () => window.removeEventListener("keyup", afterKeyboardHistory);
+  }, [api]);
 
   const historyControls = !boardReadOnly ? (
     <div
@@ -445,19 +488,21 @@ export default function SmartBoard({
         type="button"
         aria-label="Undo last board change"
         title="Undo"
+        disabled={!historyState.undo}
         onClick={() => runHistoryShortcut(false)}
-        style={{ ...pageButtonStyle, fontSize: "x-large" }}
+        style={{ ...pageButtonStyle, display: "grid", placeItems: "center" }}
       >
-        ↶
+        <UndoIcon />
       </button>
       <button
         type="button"
         aria-label="Redo board change"
         title="Redo"
+        disabled={!historyState.redo}
         onClick={() => runHistoryShortcut(true)}
-        style={{ ...pageButtonStyle, fontSize: "x-large" }}
+        style={{ ...pageButtonStyle, display: "grid", placeItems: "center" }}
       >
-        ↷
+        <RedoIcon />
       </button>
     </div>
   ) : null;
@@ -765,6 +810,12 @@ export default function SmartBoard({
         }
       }
       rememberVisibleBoardElements(visibleBeforeErase.current, scene);
+      if (Date.now() >= historyTransitionUntilRef.current) {
+        setHistoryState((current) => {
+          const next = { undo: scene.length > 0, redo: false };
+          return current.undo === next.undo && current.redo === next.redo ? current : next;
+        });
+      }
       // Drawing at the edge of the screen scrolls the canvas, so the view is worth re-checking
       // on any change; `publishViewport` drops it again if the rectangle has not moved.
       scheduleViewportPublish();
@@ -879,6 +930,7 @@ export default function SmartBoard({
       sentFiles.current.clear();
       insertedImages.current.clear();
       visibleBeforeErase.current.clear();
+      setHistoryState({ undo: false, redo: false });
       fitted.current = false;
       applyingRemote.current = true;
       api.updateScene({ elements: [] });
@@ -964,11 +1016,8 @@ export default function SmartBoard({
    * every student would have kept the whole lesson on screen. This clears here and tells the
    * server, which is what makes it mean the same thing for everyone.
    */
-  const clearAll = useCallback(() => {
+  const performClearAll = useCallback(() => {
     if (!api || boardReadOnly) return;
-    if (typeof window !== "undefined" && !window.confirm("Clear this page for the whole class?")) {
-      return;
-    }
     sentVersions.current.clear();
     sentFiles.current.clear();
     visibleBeforeErase.current.clear();
@@ -977,7 +1026,32 @@ export default function SmartBoard({
     setTimeout(() => { applyingRemote.current = false; }, 0);
     onClearAll?.();
     api.setToast({ message: "Board cleared", duration: 2000 });
+    setHistoryState({ undo: false, redo: false });
+    setBoardDialog(null);
   }, [api, boardReadOnly, onClearAll]);
+
+  const clearAll = useCallback(() => {
+    if (!api || boardReadOnly) return;
+    setBoardDialog({ kind: "clear" });
+  }, [api, boardReadOnly]);
+
+  const confirmBoardDialog = useCallback(() => {
+    if (!boardDialog) return;
+    if (boardDialog.kind === "clear") {
+      performClearAll();
+      return;
+    }
+    if (!activePage) return;
+    if (boardDialog.kind === "rename") {
+      const title = boardDialog.value.trim();
+      if (!title) return;
+      onPageCommand?.({ op: "rename", pageId: activePage.id, title });
+    } else {
+      onPageCommand?.({ op: "delete", pageId: activePage.id });
+      setPageMenuOpen(false);
+    }
+    setBoardDialog(null);
+  }, [activePage, boardDialog, onPageCommand, performClearAll]);
 
   /**
    * Put an uploaded document on the board as real elements.
@@ -1218,9 +1292,9 @@ export default function SmartBoard({
             width: 32,
             height: 32,
             borderRadius: 8,
-            border: "1px solid var(--default-border-color, #E5E7EB)",
-            background: showProps ? "var(--color-primary, #6965DB)" : "var(--island-bg-color, #FFFFFF)",
-            color: showProps ? "#FFFFFF" : "var(--text-primary-color, #1B1B1F)",
+            border: "1px solid var(--default-border-color, silver)",
+            background: showProps ? "var(--color-primary, navy)" : "var(--island-bg-color, white)",
+            color: showProps ? "white" : "var(--text-primary-color, black)",
             cursor: "pointer",
           }}
         >
@@ -1238,9 +1312,9 @@ export default function SmartBoard({
             width: 44,
             height: 44,
             borderRadius: 8,
-            border: "1px solid var(--default-border-color, #E5E7EB)",
-            background: "var(--island-bg-color, #FFFFFF)",
-            color: "#C2410C",
+            border: "1px solid var(--default-border-color, silver)",
+            background: "var(--island-bg-color, white)",
+            color: "var(--color-danger, firebrick)",
             cursor: "pointer",
           }}
         >
@@ -1274,6 +1348,7 @@ export default function SmartBoard({
 
   return (
     <div
+      ref={boardRootRef}
       className={`sikshya-board${showProps ? "" : " sikshya-board--hide-props"}`}
       style={{ position: "absolute", inset: 0, overflow: "hidden" }}
       onPointerMove={handleLaserMove}
@@ -1322,6 +1397,101 @@ export default function SmartBoard({
       {pageNavigator}
       {historyControls}
 
+      {boardDialog ? (
+        <div
+          role="presentation"
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 30,
+            display: "grid",
+            placeItems: "center",
+            padding: 20,
+            background: "rgba(15,23,42,0.42)",
+            backdropFilter: "blur(4px)",
+          }}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setBoardDialog(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="board-dialog-title"
+            style={{
+              width: "min(100%, 420px)",
+              display: "grid",
+              gap: 16,
+              padding: 22,
+              borderRadius: 20,
+              border: "1px solid rgba(15,23,42,0.12)",
+              background: "rgba(255,255,255,0.98)",
+              boxShadow: "0 24px 70px rgba(15,23,42,0.28)",
+              fontFamily: "system-ui, sans-serif",
+            }}
+          >
+            <div style={{ display: "grid", gap: 6 }}>
+              <strong id="board-dialog-title" style={{ color: "var(--text-primary-color, black)", fontSize: "1.25rem" }}>
+                {boardDialog.kind === "rename"
+                  ? "Rename this page"
+                  : boardDialog.kind === "delete"
+                    ? `Delete “${boardDialog.pageTitle}”?`
+                    : "Clear this page for everyone?"}
+              </strong>
+              <span style={{ color: "var(--text-secondary-color, slategray)", fontSize: "0.875rem", lineHeight: 1.45 }}>
+                {boardDialog.kind === "rename"
+                  ? "Use a short name students can recognize during class."
+                  : boardDialog.kind === "delete"
+                    ? "This removes the page and its board work from the class."
+                    : "This removes every object and note on the current page."}
+              </span>
+            </div>
+            {boardDialog.kind === "rename" ? (
+              <input
+                autoFocus
+                value={boardDialog.value}
+                maxLength={80}
+                aria-label="Board page name"
+                onChange={(event) => setBoardDialog({ kind: "rename", value: event.target.value })}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") confirmBoardDialog();
+                  if (event.key === "Escape") setBoardDialog(null);
+                }}
+                style={{
+                  minHeight: 48,
+                  padding: "0 14px",
+                  borderRadius: 12,
+                  border: "1px solid var(--default-border-color, silver)",
+                  color: "var(--text-primary-color, black)",
+                  background: "var(--island-bg-color, white)",
+                  fontSize: "1rem",
+                  outlineColor: "var(--color-primary, navy)",
+                }}
+              />
+            ) : null}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button type="button" onClick={() => setBoardDialog(null)} style={pageButtonStyle}>
+                Go back
+              </button>
+              <button
+                type="button"
+                onClick={confirmBoardDialog}
+                disabled={boardDialog.kind === "rename" && !boardDialog.value.trim()}
+                style={{
+                  ...pageButtonStyle,
+                  borderColor: boardDialog.kind === "rename" ? "var(--color-primary, navy)" : "var(--color-danger, firebrick)",
+                  background: boardDialog.kind === "rename" ? "var(--color-primary, navy)" : "var(--color-danger, firebrick)",
+                  color: "white",
+                  fontWeight: 700,
+                }}
+              >
+                {boardDialog.kind === "rename" ? "Save name" : boardDialog.kind === "delete" ? "Delete page" : "Clear page"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {laser?.active ? (
         <div
           aria-label="Teacher laser pointer"
@@ -1357,7 +1527,7 @@ export default function SmartBoard({
             borderRadius: 999,
             border: "none",
             background: "rgba(17,24,39,0.92)",
-            color: "#fff",
+            color: "white",
             font: "600 12.5px system-ui, sans-serif",
             cursor: "pointer",
             boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
@@ -1370,3 +1540,31 @@ export default function SmartBoard({
     </div>
   );
 }
+
+/**
+ * The classroom timer and LiveKit presence update frequently. None of that should make the
+ * editor rebuild its toolbar or selected-tool island. Only board-specific inputs cross this
+ * boundary, which also keeps Excalidraw's own undo stack alive during call reconnects.
+ */
+function boardPropsEqual(previous: Props, next: Props): boolean {
+  return (
+    previous.readOnly === next.readOnly &&
+    previous.sceneUpdates === next.sceneUpdates &&
+    previous.onConsumeUpdates === next.onConsumeUpdates &&
+    previous.onSceneChange === next.onSceneChange &&
+    previous.insertDocument === next.insertDocument &&
+    previous.onViewportChange === next.onViewportChange &&
+    previous.viewport === next.viewport &&
+    previous.onClearAll === next.onClearAll &&
+    previous.clearedAt === next.clearedAt &&
+    previous.pages === next.pages &&
+    previous.activePageId === next.activePageId &&
+    previous.pageChangedAt === next.pageChangedAt &&
+    previous.onPageCommand === next.onPageCommand &&
+    previous.laser === next.laser &&
+    previous.onLaser === next.onLaser &&
+    previous.theme === next.theme
+  );
+}
+
+export default memo(SmartBoard, boardPropsEqual);

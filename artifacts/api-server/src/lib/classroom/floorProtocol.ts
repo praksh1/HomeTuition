@@ -49,6 +49,7 @@ import {
   endDiscussion,
   inviteAllToSpeak,
   joinDiscussion,
+  leaveDiscussion,
   listenOnly,
   mediaStateOf,
   muteAllStudents,
@@ -334,11 +335,11 @@ function snapshotAll(floor: Floor, alsoInclude: number | null): Map<number, Snap
   // done nothing. Without this their arrival looks like "no change" and nothing is broadcast.
   if (alsoInclude !== null && !out.has(alsoInclude)) {
     out.set(alsoInclude, {
-      state: "audience",
+      state: "muted-by-self",
       requestedAt: null,
       invitedAt: null,
       scope: null,
-      rights: { canPublish: false, mic: false, camera: false },
+      rights: { canPublish: true, mic: true, camera: false },
       liveMic: false,
       liveCamera: false,
     });
@@ -478,15 +479,7 @@ function run(floor: Floor, request: FloorRequest, ctx: FloorContext): { ok: true
     case "join_discussion":
       return joinDiscussion(floor, me, request.scope);
     case "leave_discussion":
-      /*
-        A student stepping out of a discussion gives up the permission, not just the track.
-
-        `listenOnly` alone would leave them allowed and silent, which reads as "muted" on the
-        teacher's screen and means their microphone is one tap from being live again without the
-        teacher having granted anything. `returnToAudience` is a teacher's verb everywhere else in
-        this file; used on yourself it only ever takes away, so there is nothing here to abuse.
-      */
-      return returnToAudience(floor, me);
+      return leaveDiscussion(floor, me);
 
     /* --- the teacher's authority ------------------------------------------ */
     case "allow":

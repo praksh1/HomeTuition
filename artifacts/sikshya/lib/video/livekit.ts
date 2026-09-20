@@ -23,6 +23,14 @@ import type {
   VideoSession,
 } from "./types";
 
+const VIDEO_DEBUG = typeof __DEV__ !== "undefined" && __DEV__;
+
+/** Development-only lifecycle evidence. Tokens, room URLs and user names are never logged. */
+function debugVideo(event: string, details: Record<string, unknown> = {}): void {
+  if (!VIDEO_DEBUG) return;
+  console.debug(`[Fadko video] ${event}`, details);
+}
+
 /**
  * LiveKit, behind `lib/video/types.ts`.
  *
@@ -201,6 +209,7 @@ class LiveKitSession implements VideoSession {
   private readonly problemListeners = new Set<(problem: MediaProblem) => void>();
   private wantsAudioOnly: boolean;
   private left = false;
+  private rosterSnapshot = new Map<string, { mic: boolean; camera: boolean }>();
   /**
    * The camera the person chose, so `switchCamera` can rotate through the list.
    *
@@ -239,14 +248,31 @@ class LiveKitSession implements VideoSession {
 
   private handleConnectionState = (state: ConnectionState) => {
     const mapped = toConnectionState(state);
+    debugVideo("connection", { state: mapped });
     for (const fn of this.connectionListeners) fn(mapped);
     // A reconnect can bring back a different roster — somebody left while we were away.
     this.handleRoster();
   };
 
   private handleRoster = () => {
-    if (this.rosterListeners.size === 0) return;
     const roster = this.getParticipants();
+    const next = new Map<string, { mic: boolean; camera: boolean }>();
+    for (const participant of roster) {
+      next.set(participant.id, { mic: participant.micEnabled, camera: participant.cameraEnabled });
+      const previous = this.rosterSnapshot.get(participant.id);
+      if (!previous) debugVideo("participant joined", { identity: participant.id, local: participant.isLocal });
+      else if (previous.mic !== participant.micEnabled || previous.camera !== participant.cameraEnabled) {
+        debugVideo("media changed", {
+          identity: participant.id,
+          microphone: participant.micEnabled,
+          camera: participant.cameraEnabled,
+        });
+      }
+    }
+    for (const identity of this.rosterSnapshot.keys()) {
+      if (!next.has(identity)) debugVideo("participant left", { identity });
+    }
+    this.rosterSnapshot = next;
     for (const fn of this.rosterListeners) fn(roster);
   };
 
@@ -264,6 +290,7 @@ class LiveKitSession implements VideoSession {
   async leaveRoom(): Promise<void> {
     if (this.left) return;
     this.left = true;
+    debugVideo("leave requested");
     this.room.off(RoomEvent.ConnectionStateChanged, this.handleConnectionState);
     for (const event of ROSTER_EVENTS) this.room.off(event, this.handleRoster);
     this.room.off(RoomEvent.TrackPublished, this.applyAudioOnlyToRemotes);
@@ -291,6 +318,7 @@ class LiveKitSession implements VideoSession {
       return this.room.localParticipant.isMicrophoneEnabled;
     }
     this.handleRoster();
+    debugVideo("local microphone", { enabled: this.room.localParticipant.isMicrophoneEnabled });
     return this.room.localParticipant.isMicrophoneEnabled;
   }
 
@@ -314,6 +342,7 @@ class LiveKitSession implements VideoSession {
       return this.room.localParticipant.isCameraEnabled;
     }
     this.handleRoster();
+    debugVideo("local camera", { enabled: this.room.localParticipant.isCameraEnabled });
     return this.room.localParticipant.isCameraEnabled;
   }
 
@@ -514,14 +543,26 @@ class LiveKitSession implements VideoSession {
     return () => this.problemListeners.delete(fn);
   }
 
-  /** Publishes the tracks a fresh join should start with. Called once, after connecting. */
-  async publishInitialTracks(startMuted: boolean): Promise<void> {
-    const results = await Promise.allSettled([
-      this.room.localParticipant.setMicrophoneEnabled(!startMuted),
-      this.wantsAudioOnly
-        ? Promise.resolve<LocalTrackPublication | undefined>(undefined)
-        : this.room.localParticipant.setCameraEnabled(true, this.cameraCaptureOptions()),
-    ]);
+  /** Publishes only the tracks a fresh join should start with. Called once, after connecting. */
+  async publishInitialTracks(startMuted: boolean, startCamera: boolean): Promise<void> {
+    const requests: Array<{ kind: MediaProblem["kind"]; work: Promise<unknown> }> = [
+      {
+        kind: "microphone",
+        // Students have microphone capability but enter quietly. Creating no track is preferable
+        // to creating one and muting it: Safari then never opens a permission prompt merely for
+        // entering a class.
+        work: startMuted
+          ? Promise.resolve(undefined)
+          : this.room.localParticipant.setMicrophoneEnabled(true),
+      },
+    ];
+    if (startCamera && !this.wantsAudioOnly) {
+      requests.push({
+        kind: "camera",
+        work: this.room.localParticipant.setCameraEnabled(true, this.cameraCaptureOptions()),
+      });
+    }
+    const results = await Promise.allSettled(requests.map((request) => request.work));
     /*
       Settled, not `all`.
 
@@ -529,9 +570,8 @@ class LiveKitSession implements VideoSession {
       camera prompt — or has no camera — should still be in the class and still be heard; each
       device is reported separately and the call continues with whatever started.
     */
-    const kinds: MediaProblem["kind"][] = ["microphone", "camera"];
     results.forEach((result, index) => {
-      if (result.status === "rejected") this.report(toMediaProblem(kinds[index]!, result.reason));
+      if (result.status === "rejected") this.report(toMediaProblem(requests[index]!.kind, result.reason));
     });
     this.handleRoster();
   }
@@ -545,6 +585,7 @@ class LiveKitSession implements VideoSession {
  * — a future feature that publishes a second camera cannot accidentally publish it at 1080p.
  */
 export async function joinLiveKitRoom(options: JoinRoomOptions): Promise<VideoSession> {
+  debugVideo("connect requested", { startMuted: options.startMuted === true, startCamera: options.startCamera === true });
   const room = new Room({
     // Send the smallest layer a given receiver's tile actually needs, and nothing at all for a
     // tile that is off screen.
@@ -574,7 +615,8 @@ export async function joinLiveKitRoom(options: JoinRoomOptions): Promise<VideoSe
 
   const session = new LiveKitSession(room, options.audioOnly === true);
   await room.connect(options.url, options.token);
+  debugVideo("connected", { identity: room.localParticipant.identity });
   if (options.audioOnly) await session.setAudioOnly(true);
-  await session.publishInitialTracks(options.startMuted === true);
+  await session.publishInitialTracks(options.startMuted === true, options.startCamera === true);
   return session;
 }

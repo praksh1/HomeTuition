@@ -4,7 +4,6 @@ import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Animated,
   Easing,
   KeyboardAvoidingView,
@@ -58,8 +57,9 @@ import { useLayout } from "@/hooks/useLayout";
 import { HIT_SLOP_MIN, space as spaceScale } from "@/constants/layout";
 import { aloneMessage } from "@/utils/aloneInCall";
 import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
+import WarningModal from "@/components/WarningModal";
 
-type Mode = "whiteboard" | "chat";
+type Mode = "whiteboard" | "chat" | "participants";
 type VideoWindowSize = "hidden" | "small" | "medium" | "full";
 type VisibleVideoWindowSize = Exclude<VideoWindowSize, "hidden">;
 type WindowedVideoSize = Exclude<VisibleVideoWindowSize, "full">;
@@ -336,6 +336,8 @@ export default function Classroom() {
   // file:// paths are device-local and meaningless on other participants' devices.
   const [localPdfUri, setLocalPdfUri] = useState<string | null>(null);
   const [roomUrl, setRoomUrl] = useState<string | null>(null);
+  const [endConfirmOpen, setEndConfirmOpen] = useState(false);
+  const [endingClass, setEndingClass] = useState(false);
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
@@ -769,14 +771,7 @@ export default function Classroom() {
     setMeetingToken(null);
     const msg =
       "This class is no longer live. If you started another class, that one ended this one — a teacher can only run one at a time.";
-    if (Platform.OS === "web") {
-      window.alert(`Class ended\n\n${msg}`);
-      router.back();
-    } else {
-      Alert.alert("Class ended", msg, [
-        { text: "OK", onPress: () => router.back() },
-      ]);
-    }
+    setExpired({ title: "Class ended", message: msg });
   }, [classIsOver]);
 
   /**
@@ -806,9 +801,7 @@ export default function Classroom() {
         err instanceof ApiError && err.status === 409
           ? err.message
           : "That class could not be started. Please check your connection and try again.";
-      if (Platform.OS === "web")
-        window.alert(`Cannot start this class\n\n${message}`);
-      else Alert.alert("Cannot start this class", message);
+      setUploadError(message);
     } finally {
       setStarting(false);
     }
@@ -853,8 +846,6 @@ export default function Classroom() {
 
   const reportUploadError = (message: string) => {
     setUploadError(message);
-    if (Platform.OS === "web") window.alert(message);
-    else Alert.alert("Upload Failed", message);
   };
 
   const handleWebFileSelected = async (file: File) => {
@@ -919,10 +910,7 @@ export default function Classroom() {
       const permission =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert(
-          "Permission Needed",
-          "Photo Library access is required to upload a photo.",
-        );
+        reportUploadError("Allow Photo Library access in your device settings to upload a photo.");
         return;
       }
       // base64 is required, not just convenient: the picker's `file://` URI only resolves on
@@ -993,10 +981,7 @@ export default function Classroom() {
       }
       applyUploadedFile(picked.dataUrl, "pdf");
     } catch {
-      Alert.alert(
-        "Upload Failed",
-        "Could not upload the PDF. Please try again.",
-      );
+      reportUploadError("Could not upload the PDF. Please try again.");
     }
   };
 
@@ -1015,7 +1000,7 @@ export default function Classroom() {
     else router.replace("/(teacher)/sessions");
   }, []);
 
-  const handleDailyLeft = useCallback(async () => {
+  const completeClass = useCallback(async () => {
     // Drop the room URL before navigating. DailyEmbed tears the call down in its effect
     // cleanup, and clearing the URL makes that run immediately instead of waiting for the
     // screen to unmount — a navigation stack may keep this screen alive, and until the frame
@@ -1034,6 +1019,8 @@ export default function Classroom() {
     leaveScreen();
   }, [id, leaveScreen]);
 
+  const handleDailyLeft = completeClass;
+
   /**
    * The class's own clock, running while the call is.
    *
@@ -1043,18 +1030,18 @@ export default function Classroom() {
    * and not the other would be worse than no limit at all.
    */
   const endBecauseTimeIsUp = useCallback(() => {
-    setRoomUrl(null);
-    setMeetingToken(null);
-    void apiPatch(`/sessions/${id}`, { status: "completed" }).catch(() => {});
-    void cancelSessionReminder(String(id)).catch(() => {});
-    leaveScreen();
-  }, [id, leaveScreen]);
+    void completeClass();
+  }, [completeClass]);
 
   // Presence (from the live WebSocket room) is the source of truth once connected — it
   // starts at 0 the moment the teacher starts the session (server force-clears any stale
   // "ghost" entries on start). Falling back to enrolledCount before the socket connects
   // caused a stale avatar/count to render even when nobody is actually present.
-  const participantCount = connected ? presenceCount : 0;
+  const participantCount = connected
+    ? floor?.scope === "teacher"
+      ? floor.participantCount
+      : presenceCount
+    : 0;
 
   const timeLimit = useCallTimeLimit({
     session: session
@@ -1106,32 +1093,17 @@ export default function Classroom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waiting]);
 
-  const endSession = async () => {
-    const doEnd = async () => {
-      setRoomUrl(null);
-      setMeetingToken(null); // release camera/mic before leaving — see handleDailyLeft above
-      try {
-        await apiPatch(`/sessions/${id}`, { status: "completed" });
-      } catch {}
-      try {
-        await cancelSessionReminder(String(id));
-      } catch {}
-      leaveScreen();
-    };
-    if (Platform.OS === "web") {
-      if (
-        window.confirm(
-          "End Session?\n\nThis will mark the session as completed.",
-        )
-      )
-        await doEnd();
-    } else {
-      Alert.alert("End Session?", "This will mark the session as completed.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "End Session", style: "destructive", onPress: doEnd },
-      ]);
+  const endSession = useCallback(() => setEndConfirmOpen(true), []);
+  const confirmEndSession = useCallback(async () => {
+    if (endingClass) return;
+    setEndingClass(true);
+    try {
+      await completeClass();
+    } finally {
+      setEndConfirmOpen(false);
+      setEndingClass(false);
     }
-  };
+  }, [completeClass, endingClass]);
 
   const sendMessage = () => {
     if (!chatMsg.trim()) return;
@@ -1818,7 +1790,7 @@ export default function Classroom() {
                   token={meetingToken}
                   displayName={teacherName}
                   style={StyleSheet.absoluteFill}
-                  onLeft={handleDailyLeft}
+                  onLeft={videoProvider === "livekit" ? endSession : handleDailyLeft}
                   /*
                     The classroom socket is up long before this is, and a grant made in that gap
                     reaches LiveKit before the student's participant does. The server keeps such a
@@ -1826,6 +1798,7 @@ export default function Classroom() {
                   */
                   onMediaReady={floorActions.mediaReady}
                   canScreenShare
+                  isTeacher
                   teacherUserId={teacherParticipantId}
                   spotlightUserId={spotlightParticipantId}
                   showProviderControls={windowControls.showsProviderControls}
@@ -2201,6 +2174,8 @@ export default function Classroom() {
                 refusal={floorRefusal}
                 onDismissRefusal={clearFloorRefusal}
                 actions={floorActions}
+                participantOpen={mode === "participants"}
+                onParticipantOpenChange={(open) => setMode(open ? "participants" : "whiteboard")}
                 discussionOpensAt={discussionOpensAt}
                 canModerate={canModerate}
               />
@@ -2427,6 +2402,20 @@ export default function Classroom() {
           </View>
         </View>
       </View>
+      <WarningModal
+        visible={endConfirmOpen}
+        title="End this class for everyone?"
+        consequences={[
+          "The whiteboard is saved before the classroom closes.",
+          "Every participant leaves this live class.",
+          "Students cannot rejoin after it is completed.",
+        ]}
+        confirmLabel="End class"
+        busy={endingClass}
+        onConfirm={confirmEndSession}
+        onCancel={() => setEndConfirmOpen(false)}
+        testID="end-class-confirmation"
+      />
     </KeyboardAvoidingView>
   );
 }
