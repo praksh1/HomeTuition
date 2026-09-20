@@ -450,18 +450,16 @@ const grantCase = makeMonthlyClass();
   check("and stops the microphone that is open right now", methods.includes("MutePublishedTrack"), methods.join(","));
 
   /*
-    The assertion this suite exists for.
-
     LiveKit's `GetCanPublishSource` returns *true* for an empty source list when `canPublish` is
-    true — "unrestricted", not "nothing" — so a mute that sent `canPublish: true` with no sources
-    would hand the muted student a camera and a screen share. `canPublish` must therefore be
-    absent (Twirp's spelling of false) rather than true-with-nothing.
+    true — "unrestricted", not "nothing". This student still has the camera their teacher
+    explicitly authorised, so microphone mute must narrow them to camera-only rather than either
+    revoking the camera or accidentally granting every source.
   */
   const revoked = since(m).find((c) => c.method === "UpdateParticipant");
   const revokedPerm = revoked?.body?.permission ?? {};
-  check("a mute leaves them unable to publish at all, not unrestricted",
-    revokedPerm.canPublish !== true &&
-      (revokedPerm.canPublishSources === undefined || revokedPerm.canPublishSources.length === 0),
+  check("a microphone mute preserves only the teacher-authorised camera, never unrestricted access",
+    revokedPerm.canPublish === true &&
+      JSON.stringify(revokedPerm.canPublishSources ?? []) === JSON.stringify(["CAMERA"]),
     JSON.stringify(revokedPerm));
   const muted = since(m).find((c) => c.method === "MutePublishedTrack");
   check("the mute names a real track sid",
