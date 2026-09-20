@@ -198,6 +198,7 @@ jobs:
           pnpm run db:push
           pnpm --filter @workspace/api-server run build
           nohup node artifacts/api-server/dist/index.mjs > /tmp/preview-api.log 2>&1 &
+          echo $! > /tmp/api.pid
           for attempt in $(seq 1 40); do
             if curl -fsS http://127.0.0.1:8080/api/healthz >/dev/null; then
               exit 0
@@ -286,10 +287,20 @@ jobs:
           chmod +x "$HOME/bin/livekit-server" 2>/dev/null || true
           echo "LIVEKIT_SERVER_BIN=$HOME/bin/livekit-server" >> "$GITHUB_ENV"
 
-      - name: Prove a real two-person LiveKit call and full classroom floor
-        run: |
-          pnpm --filter @workspace/sikshya run test:livekit-live
-          pnpm --filter @workspace/sikshya run test:floor-live
+      - name: Prove a real two-person LiveKit call
+        run: pnpm --filter @workspace/sikshya run test:livekit-live
+
+      - name: Put the throwaway API on LiveKit for the complete classroom
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+          SESSION_SECRET: preview-ci-only-not-a-real-secret
+        run: bash scripts/start-local-livekit-stack.sh
+
+      - name: Prove the complete classroom speaking floor
+        env:
+          API_URL: http://127.0.0.1:8080
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: pnpm --filter @workspace/sikshya run test:floor-live
 
       - name: Verify Notification centre and settings at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:notifications-ui

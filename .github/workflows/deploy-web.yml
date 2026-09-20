@@ -586,6 +586,10 @@ jobs:
           # sends anywhere; this is the only thing in the repository that proves media flows.
           # It skips itself, loudly, when the binary is absent rather than failing.
           pnpm --filter @workspace/sikshya run test:livekit-live
+          # The media journey owns and stops its isolated API/SFU. Replace the shared Daily test
+          # API with a LiveKit-backed one before opening three complete classroom windows; the
+          # app build is already pointed at this same 8080 address.
+          bash scripts/start-local-livekit-stack.sh
           # Three real app windows, the real classroom socket and a recording LiveKit control
           # plane. It proves the teacher's visible floor, the students' offers and the provider's
           # permissions remain the same fact end to end.
