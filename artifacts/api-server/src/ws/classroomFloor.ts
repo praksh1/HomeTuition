@@ -35,6 +35,7 @@ import { db, sessionsTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { recordActivity } from "../lib/activityLog";
 import { videoProvider } from "../lib/video";
+import type { MediaStop } from "../lib/video/types";
 import { cutoffAt, type StartableSession } from "../lib/sessionStart.ts";
 import { discussionWindow, type WindowCheck } from "../lib/classroom/discussionWindow.ts";
 import { discussionModeEligible } from "../lib/classroom/discussionEligibility.ts";
@@ -607,11 +608,12 @@ interface ParticipantSync {
    * Sticky on purpose. Revoking a permission stops somebody publishing *again* and does nothing to
    * a microphone already open, so a stop that was asked for and never confirmed must survive the
    * next decision — otherwise a teacher who muted a student and then returned them to the audience
-   * would silently drop the requirement to close a track that may still be running. Only a
-   * decision that permits publishing again clears it, because silencing somebody a moment after
-   * allowing them to speak would undo the grant.
+   * would silently drop the requirement to close a track that may still be running. Microphone and
+   * camera are tracked separately: a newer grant of that same source clears its old stop, while a
+   * camera stop survives ordinary microphone permission and vice versa.
    */
-  needSilence: boolean;
+  needSilenceMic: boolean;
+  needSilenceCamera: boolean;
   /** Wakes an interruptible backoff, so a newer decision never queues behind an older one's wait. */
   wake: (() => void) | null;
   timer: ReturnType<typeof setTimeout> | null;
@@ -651,7 +653,8 @@ function syncFor(state: RoomFloor, userId: number): ParticipantSync {
     attempts: 0,
     stalledBy: "none",
     lastError: "",
-    needSilence: false,
+    needSilenceMic: false,
+    needSilenceCamera: false,
     wake: null,
     timer: null,
     lastNudge: 0,
@@ -694,7 +697,7 @@ export function providerStateOf(state: RoomFloor, userId: number): ProviderState
  * Called for every user in a decision's effects **before** the room is told, so the broadcast that
  * follows already says the provider has not caught up. `ok` is only ever written by an answer.
  */
-function bump(state: RoomFloor, userId: number, wantsSilence: boolean): void {
+function bump(state: RoomFloor, userId: number, wantsSilence: MediaStop): void {
   const s = syncFor(state, userId);
   s.desired += 1;
   // A new decision gets a fresh budget: the previous one's failures say nothing about this one.
@@ -703,8 +706,19 @@ function bump(state: RoomFloor, userId: number, wantsSilence: boolean): void {
   s.lastError = "";
 
   const student = state.floor.students.get(userId);
-  const permits = student ? publishRightsFor(student).canPublish : false;
-  s.needSilence = wantsSilence || (s.needSilence && !permits);
+  const rights = student
+    ? publishRightsFor(student)
+    : { canPublish: false, mic: false, camera: false };
+  /*
+    Stops are source-specific and sticky only until that same source is deliberately reopened.
+
+    A camera stop must survive while ordinary microphone permission remains, and a student who
+    chooses listening mode must have the open microphone stopped even though they retain the
+    ability to unmute later. Conversely, a newer teacher decision that permits the same source
+    supersedes an older failed stop so it cannot silence a fresh publication after a retry.
+  */
+  s.needSilenceMic = wantsSilence.mic || (s.needSilenceMic && !rights.mic);
+  s.needSilenceCamera = wantsSilence.camera || (s.needSilenceCamera && !rights.camera);
 
   // Cut short any backoff belonging to the instruction this one replaces.
   const wake = s.wake;
@@ -786,14 +800,17 @@ async function applyOnce(
     }
   }
 
-  // A grant never carries a stop: `bump` clears it, and this is the second guard on the same rule.
-  if (!sync?.needSilence || rights.canPublish) return { ok: true };
+  if (!sync || (!sync.needSilenceMic && !sync.needSilenceCamera)) return { ok: true };
   if (!provider.silence) return { ok: true };
 
-  const stop = await provider.silence(sessionId, userId);
+  const stop = await provider.silence(sessionId, userId, {
+    mic: sync.needSilenceMic,
+    camera: sync.needSilenceCamera,
+  });
   // Absent is a completed silence here for the same reason as above: nobody is publishing.
   if (stop.applied || stop.reason === "absent") {
-    sync.needSilence = false;
+    sync.needSilenceMic = false;
+    sync.needSilenceCamera = false;
     return { ok: true };
   }
   return { ok: false, reason: "error", error: stop.error };
@@ -886,11 +903,13 @@ function syncParticipants(
   sessionId: string,
   state: RoomFloor,
   push: readonly number[],
-  silence: readonly number[],
+  stopMedia: readonly { userId: number; mic: boolean; camera: boolean }[],
 ): void {
-  const stopping = new Set(silence);
-  const everyone = new Set([...push, ...silence]);
-  for (const userId of everyone) bump(state, userId, stopping.has(userId));
+  const stopping = new Map(stopMedia.map((stop) => [stop.userId, stop]));
+  const everyone = new Set([...push, ...stopping.keys()]);
+  for (const userId of everyone) {
+    bump(state, userId, stopping.get(userId) ?? { mic: false, camera: false });
+  }
   for (const userId of everyone) reconcile(sessionId, state, userId);
 }
 
@@ -1065,7 +1084,7 @@ export async function handleFloorFrame(
 
   // The provider first: a permission the class has been told about but the SFU has not is a
   // student pressing "unmute" and being refused by LiveKit while their screen says they may.
-  syncParticipants(sessionId, state, outcome.push, outcome.silence);
+  syncParticipants(sessionId, state, outcome.push, outcome.stopMedia);
 
   trackFloorHeld(sessionId, state, outcome.touched);
   if (parsed.request.action === "ask") noteAsk(sessionId, state, client.userId);

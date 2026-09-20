@@ -63,6 +63,12 @@ export interface PublishRights {
   camera: boolean;
 }
 
+/** The already-open media tracks the classroom has decided must stop now. */
+export interface MediaStop {
+  mic: boolean;
+  camera: boolean;
+}
+
 /**
  * What happened when the server asked the provider to change something.
  *
@@ -186,7 +192,7 @@ export interface VideoProvider {
    * Separate from `setPublishing` because they answer different questions: one is "may they
    * speak again", the other is "are they speaking now". A teacher pressing mute means both.
    */
-  silence?(sessionId: string | number, userId: number): Promise<ProviderApply>;
+  silence?(sessionId: string | number, userId: number, media?: MediaStop): Promise<ProviderApply>;
 }
 
 /** What the room route hands back. Named for what it is, not for whoever is providing it. */

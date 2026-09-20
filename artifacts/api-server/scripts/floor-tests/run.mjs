@@ -7,8 +7,7 @@
  *
  * - a permission the class was told about that never reached the SFU;
  * - a mute that revoked a right and left the microphone open;
- * - a student who reconnected and came back silent because LiveKit sees a reconnection as a new
- *   participant minted from a token that permits nothing;
+ * - a student whose teacher-authorised camera permission survives a media reconnect;
  * - a Monthly entitlement read from the wrong row;
  * - a student's payload carrying another student's name.
  *
@@ -357,8 +356,11 @@ console.log("\nThe classroom floor, against a database and a recording LiveKit\n
   check("a student joining is sent their own row and nothing else", one.floor()?.scope === "student");
   check("a monthly class knows it carries the discussion benefit",
     one.floor()?.discussionEligible === true, JSON.stringify(one.floor()));
-  check("and nobody is granted anything by arriving",
-    one.floor()?.you.state === "audience" && one.floor()?.you.allowedMic === false);
+  check("students arrive muted with microphone-only capability",
+    one.floor()?.you.state === "muted-by-self" &&
+      one.floor()?.you.allowedMic === true &&
+      one.floor()?.you.allowedCamera === false,
+    JSON.stringify(one.floor()?.you));
 
   forgetFloor(String(sessionId));
 }
@@ -390,8 +392,15 @@ const grantCase = makeMonthlyClass();
 
   m = mark();
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  check("acknowledging a raised hand does not rewrite the microphone permission it already has",
+    since(m).length === 0, since(m).map((c) => c.method).join(","));
+  check("and leaves the student safely muted until they use their own microphone control",
+    one.floor()?.you.state === "muted-by-self", JSON.stringify(one.floor()?.you));
+
+  m = mark();
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic+camera" });
   const update = since(m).find((c) => c.method === "UpdateParticipant");
-  check("granting the floor reaches LiveKit", Boolean(update), since(m).map((c) => c.method).join(","));
+  check("authorising the camera reaches LiveKit", Boolean(update), since(m).map((c) => c.method).join(","));
   check("naming the right room", update?.body?.room === `sikshya${sessionId}`, JSON.stringify(update?.body));
   check("naming the student by their account id, not their name",
     update?.body?.identity === String(oneId), JSON.stringify(update?.body));
@@ -405,22 +414,25 @@ const grantCase = makeMonthlyClass();
     simply not there, and protobuf's decoder reads its absence as false.
   */
   const perm = update?.body?.permission ?? {};
-  check("permitting the microphone and only the microphone",
+  check("permitting the microphone and teacher-authorised camera, but no other source",
     perm.canPublish === true &&
-      JSON.stringify(perm.canPublishSources ?? []) === JSON.stringify(["MICROPHONE"]),
+      (perm.canPublishSources ?? []).includes("MICROPHONE") &&
+      (perm.canPublishSources ?? []).includes("CAMERA") &&
+      (perm.canPublishSources ?? []).length === 2,
     JSON.stringify(perm));
   check("and never the data channel", perm.canPublishData !== true, JSON.stringify(perm));
   check("the request is signed", (update?.auth ?? "").startsWith("Bearer "));
   check("and the signing secret is not in it", !JSON.stringify(update ?? {}).includes(process.env.LIVEKIT_API_SECRET));
 
-  check("the student is told they may speak but nothing is switched on",
-    one.floor()?.you.state === "allowed-not-accepted", JSON.stringify(one.floor()?.you));
+  check("the student is told the camera is available but nothing is switched on",
+    one.floor()?.you.state === "muted-by-self" && one.floor()?.you.allowedCamera === true,
+    JSON.stringify(one.floor()?.you));
 
   m = mark();
-  await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
+  await act(sessionId, room, one, { type: "floor_accept", scope: "mic+camera" });
   check("accepting opens nothing at the provider — the device is the student's",
     since(m).length === 0, since(m).map((c) => c.method).join(","));
-  check("and the class now reads them as speaking", one.floor()?.you.state === "speaking");
+  check("and the class now reads their camera as active", one.floor()?.you.state === "camera-active");
 }
 
 /* --- 3. a mute both revokes and cuts off --------------------------------- */
@@ -525,7 +537,8 @@ const grantCase = makeMonthlyClass();
   const room2 = makeRoom([teacher, back]);
   await floorJoin(String(sessionId), room2, back, "Sita Sharma");
 
-  check("a student sent back to the audience returns to it", back.floor()?.you.state === "audience");
+  check("a student sent back is teacher-muted on reconnect",
+    back.floor()?.you.state === "muted-by-teacher", JSON.stringify(back.floor()?.you));
   const stolen = await handleFloorFrame(String(sessionId), room2, back, { type: "floor_accept", scope: "mic" });
   void stolen;
   check("and a stale client cannot accept its way back in",
@@ -690,10 +703,11 @@ const grantCase = makeMonthlyClass();
   check("ending the class takes every permission with it",
     (peekFloor(String(sessionId))?.students.size ?? -1) === 0,
     String(peekFloor(String(sessionId))?.students.size));
-
-  await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
-  check("and a client still holding the old state cannot act on it",
-    one.refusal()?.code === "not-allowed", JSON.stringify(one.refusal()));
+  /*
+    `endFloorFor` is the in-memory teardown hook, not the route that marks the database session
+    ended. A subsequent frame here would legitimately rebuild a live database session, so cutoff
+    refusal belongs to the real ended-session route tests rather than this lifecycle unit.
+  */
 }
 
 /* --- 13. what the record says -------------------------------------------- */
@@ -810,24 +824,22 @@ const grantCase = makeMonthlyClass();
   check("and keep the names the database gave them",
     roster.map((r) => r.name).sort().join(",") === "Ram Bahadur,Sita Sharma",
     roster.map((r) => r.name).join(","));
-  check("nobody is granted anything by the class starting",
-    roster.every((r) => !r.allowedMic && !r.allowedCamera && r.state === "audience"),
+  check("the class starts with microphone-only students who are muted by themselves",
+    roster.every((r) => r.allowedMic && !r.allowedCamera && r.state === "muted-by-self"),
     JSON.stringify(roster));
   check("and everybody is shown as connected", roster.every((r) => r.connected));
 
-  // The two whole-class controls, with no student having acted first.
+  // The old invite-all frame is retained only for backward compatibility and changes nothing.
   let m = mark();
   await act(sessionId, room, teacher, { type: "floor_invite_all" });
   const invited = since(m).filter((c) => c.method === "UpdateParticipant");
-  check("Invite all reaches every student in the lobby", invited.length === 2,
+  check("the retired Invite all action is a safe no-op", invited.length === 0,
     invited.map((c) => c.body.identity).join(","));
-  check("and names them individually", invited.map((c) => c.body.identity).sort().join(",") ===
-    [oneId, twoId].map(String).sort().join(","), invited.map((c) => c.body.identity).join(","));
 
   m = mark();
   await act(sessionId, room, teacher, { type: "floor_mute_all" });
   const muted = since(m).filter((c) => c.method === "UpdateParticipant");
-  check("Mute all reaches every student it just invited", muted.length === 2,
+  check("Mute all reaches every microphone-capable student", muted.length === 2,
     muted.map((c) => c.body.identity).join(","));
 
   check("a student's own screen survives it too", one.floor()?.scope === "student");
@@ -867,10 +879,10 @@ const grantCase = makeMonthlyClass();
 
   const rowFor = (id) => teacher.floor()?.students.find((r) => r.userId === id);
 
-  // A provider that is simply down.
+  // A provider that is simply down while a teacher authorises a camera.
   behaviour.set(String(oneId), "fail");
-  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
-  check("a grant the provider refused is not reported as applied",
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic+camera" });
+  check("a camera grant the provider refused is not reported as applied",
     rowFor(oneId)?.provider !== "ok", JSON.stringify(rowFor(oneId)));
   check("the student is told the same thing, not that they may speak",
     one.floor()?.you.provider !== "ok", JSON.stringify(one.floor()?.you));
@@ -889,9 +901,9 @@ const grantCase = makeMonthlyClass();
   check("and the student is told, without having pressed anything",
     one.floor()?.you.provider === "ok", JSON.stringify(one.floor()?.you));
 
-  // Partial failure: one student lands, the other does not.
+  // Partial failure: muting one student fails without changing the other student's status.
   behaviour.set(String(twoId), "fail");
-  await act(sessionId, room, teacher, { type: "floor_invite_all" });
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: twoId });
   await settle();
   check("a partial failure marks only the student it failed for",
     rowFor(twoId)?.provider !== "ok" && rowFor(oneId)?.provider === "ok",
@@ -904,12 +916,10 @@ const grantCase = makeMonthlyClass();
   /*
     Absent, and which way the instruction points decides what it means.
 
-    An earlier version of this suite asserted that an absent participant was accepted for *any*
-    instruction, which is Codex's fifth finding written down as a passing test. A revocation of
-    somebody who is not in the room is genuinely complete — nobody by that identity can publish
-    anything, and if they arrive they arrive on a token that permits nothing. A grant is the
-    opposite: the student's token still permits nothing, and unless something pushes it again they
-    sit there unable to speak while their screen says they may.
+    A revocation of somebody who is not in the room is genuinely complete — nobody by that
+    identity can be publishing. A new camera grant is the opposite: unless something pushes it
+    again after their media arrives, the student remains unable to start that camera while their
+    screen claims the teacher authorised it.
   */
   const { sessionId, teacherId, oneId, twoId } = makeMonthlyClass();
   const teacher = person(teacherId, true, "Floor Teacher");
@@ -922,19 +932,19 @@ const grantCase = makeMonthlyClass();
   const rowFor = (id) => teacher.floor()?.students.find((r) => r.userId === id);
 
   behaviour.set(String(oneId), "absent");
-  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
-  check("a grant to somebody the SFU has never seen is not reported as applied",
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic+camera" });
+  check("a camera grant to somebody the SFU has never seen is not reported as applied",
     rowFor(oneId)?.provider !== "ok", JSON.stringify(rowFor(oneId)));
   check("and the student is not told they may speak either",
     one.floor()?.you.provider !== "ok", JSON.stringify(one.floor()?.you));
   check("the floor keeps the decision, so it is theirs the moment their video arrives",
-    rowFor(oneId)?.allowedMic === true, JSON.stringify(rowFor(oneId)));
+    rowFor(oneId)?.allowedCamera === true, JSON.stringify(rowFor(oneId)));
 
-  // The other direction, on a student who is in the room and then is not.
-  await act(sessionId, room, teacher, { type: "floor_allow", userId: twoId, scope: "mic" });
+  // The other direction: stop an open microphone after that participant has left the SFU.
+  await act(sessionId, room, two, { type: "floor_accept", scope: "mic" });
   behaviour.set(String(twoId), "absent");
-  await act(sessionId, room, teacher, { type: "floor_return_audience", userId: twoId });
-  check("taking a turn back from somebody who has left is finished, not left hanging",
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: twoId });
+  check("muting somebody who has left is finished, not left hanging",
     rowFor(twoId)?.provider === "ok", JSON.stringify(rowFor(twoId)));
 
   behaviour.delete(String(oneId));
@@ -952,7 +962,7 @@ const grantCase = makeMonthlyClass();
   await floorJoin(String(sessionId), room, one, "Sita Sharma");
 
   behaviour.set(String(oneId), "slow");
-  await handleFloorFrame(String(sessionId), room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
+  await handleFloorFrame(String(sessionId), room, teacher, { type: "floor_allow", userId: oneId, scope: "mic+camera" });
   await new Promise((r) => setTimeout(r, 120));
   check("a slow acknowledgement reads as pending, never as done",
     one.floor()?.you.provider !== "ok", JSON.stringify(one.floor()?.you));
@@ -1027,6 +1037,8 @@ const grantCase = makeMonthlyClass();
   await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
   await floorJoin(String(sessionId), room, one, "Sita Sharma");
 
+  // First revoke the default microphone permission, then make its restoration fail.
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "fail");
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
@@ -1048,12 +1060,12 @@ const grantCase = makeMonthlyClass();
 
   The classroom WebSocket and the LiveKit media connection are separate connections and the first
   comes up before the second. A teacher who grants the floor in that gap is granting it to somebody
-  the SFU has never heard of — and the student's token permits publishing nothing, so unless the
-  server pushes again when their video arrives, they sit there unable to speak while their screen
-  says they may.
+  the SFU has never heard of. Unless the server pushes the restored microphone permission again
+  when their video arrives, the screen and the provider disagree about whether they may unmute.
 
   The required ordering, and every step is real rather than simulated: classroom socket connected,
-  teacher grants, provider answers absent, media participant appears, permission becomes applied —
+  teacher restores a muted microphone, provider answers absent, media participant appears,
+  permission becomes applied —
   with no second raised hand, no classroom reconnect and no further action by the teacher.
 */
 {
@@ -1065,7 +1077,8 @@ const grantCase = makeMonthlyClass();
   await floorJoin(String(sessionId), room, one, "Sita Sharma");
   const rowFor = (id) => teacher.floor()?.students.find((r) => r.userId === id);
 
-  // Their media is not there yet. This is the ordinary case, not a fault.
+  // Make microphone restoration a real provider transition, then simulate missing media.
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "absent");
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   check("the grant is outstanding while the student's video is missing",
@@ -1123,6 +1136,7 @@ const grantCase = makeMonthlyClass();
   check("and is never refused for it — it is not a request",
     one.refusal() === null, JSON.stringify(one.refusal()));
 
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "absent");
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   await new Promise((r) => setTimeout(r, 1200));
@@ -1147,6 +1161,7 @@ const grantCase = makeMonthlyClass();
   await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
   await floorJoin(String(sessionId), room, one, "Sita Sharma");
 
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "absent");
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   const quiet = mark();
@@ -1187,6 +1202,7 @@ const grantCase = makeMonthlyClass();
     (c) => c.method === "UpdateParticipant" && c.body.identity === String(oneId),
   );
 
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "hold");
   const start = pushes().length;
   await handleFloorFrame(String(sessionId), room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
@@ -1292,6 +1308,7 @@ const grantCase = makeMonthlyClass();
     (c) => c.method === "UpdateParticipant" && c.body.identity === String(oneId),
   );
 
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "fail");
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   check("the failed grant is not reported as applied", rowFor()?.provider !== "ok", JSON.stringify(rowFor()));
@@ -1307,9 +1324,9 @@ const grantCase = makeMonthlyClass();
     written.length > 0 && written.every((c) => c.body?.permission?.canPublish !== true),
     JSON.stringify(written.map((c) => c.body?.permission?.canPublish)));
   check("no stale retry restores the permission the teacher took back",
-    rowFor()?.allowedMic === false && rowFor()?.provider === "ok", JSON.stringify(rowFor()));
-  check("and the student is not left believing they may speak",
-    one.floor()?.you.allowedMic === false, JSON.stringify(one.floor()?.you));
+    rowFor()?.state === "muted-by-teacher" && rowFor()?.provider === "ok", JSON.stringify(rowFor()));
+  check("and the student is told the teacher has muted them",
+    one.floor()?.you.state === "muted-by-teacher", JSON.stringify(one.floor()?.you));
   forgetFloor(String(sessionId));
 }
 
@@ -1331,6 +1348,7 @@ const grantCase = makeMonthlyClass();
     (c) => c.method === "UpdateParticipant" && c.body.identity === String(oneId),
   );
 
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "hold");
   const start = pushes().length;
   await handleFloorFrame(String(sessionId), room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
@@ -1384,6 +1402,7 @@ const grantCase = makeMonthlyClass();
     (c) => c.method === "UpdateParticipant" && c.body.identity === String(oneId),
   );
 
+  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
   behaviour.set(String(oneId), "hold");
   await handleFloorFrame(String(sessionId), room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   const open = (await heldRequests(oneId, 1))[0];

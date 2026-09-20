@@ -4,7 +4,7 @@ import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk"
 import { logger } from "../logger";
 import { providerUserId } from "./participantIdentity";
 import { roomNameForSession } from "./roomName";
-import type { JoinOptions, ProviderApply, VideoProvider } from "./types";
+import type { JoinOptions, MediaStop, ProviderApply, VideoProvider } from "./types";
 
 /**
  * LiveKit Cloud, behind the same interface Daily uses.
@@ -393,7 +393,11 @@ export const livekitProvider: VideoProvider = {
    * microphone already open. A teacher pressing mute expects silence now, so the live track is
    * muted as well — which is why `endDiscussion` and `muteAllStudents` call both halves.
    */
-  async silence(sessionId: string | number, userId: number): Promise<ProviderApply> {
+  async silence(
+    sessionId: string | number,
+    userId: number,
+    media: MediaStop = { mic: true, camera: true },
+  ): Promise<ProviderApply> {
     const settings = config();
     if (!settings) return { applied: false, reason: "failed", error: "LiveKit is not configured" };
     const identity = providerUserId(userId);
@@ -414,7 +418,12 @@ export const livekitProvider: VideoProvider = {
       const who = people.find((p) => p.identity === identity);
       if (!who) return { applied: false, reason: "absent" };
 
-      const open = (who.tracks ?? []).filter((track) => !track.muted);
+      const open = (who.tracks ?? []).filter(
+        (track) =>
+          !track.muted &&
+          ((media.mic && track.source === TrackSource.MICROPHONE) ||
+            (media.camera && track.source === TrackSource.CAMERA)),
+      );
       // Present with nothing running is a completed silence: there is nothing left to stop.
       if (open.length === 0) return { applied: true };
 

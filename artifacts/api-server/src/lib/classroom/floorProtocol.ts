@@ -287,6 +287,8 @@ export interface FloorEffects {
   push: number[];
   /** Whose live track must stop *now*, because revoking a right does not close an open one. */
   silence: number[];
+  /** Which of that person's tracks must stop. Stopping a camera must never cut their audio. */
+  stopMedia: Array<{ userId: number; mic: boolean; camera: boolean }>;
   /** The mode or the spotlight moved, so everybody's layout is affected rather than one row. */
   roomChanged: boolean;
   /** For the evidence log. `subjects` is empty for a room-level action. */
@@ -409,6 +411,7 @@ export function applyFloorRequest(floor: Floor, request: FloorRequest, ctx: Floo
   const touched: number[] = [];
   const push: number[] = [];
   const silence: number[] = [];
+  const stopMedia: Array<{ userId: number; mic: boolean; camera: boolean }> = [];
 
   for (const [id, now] of after) {
     const was = before.get(id);
@@ -444,7 +447,12 @@ export function applyFloorRequest(floor: Floor, request: FloorRequest, ctx: Floo
       permissions, of which perhaps three were ever switched on; silencing the other thirty-seven
       would be thirty-seven provider round trips to stop tracks that never existed.
     */
-    if ((was.liveMic && !now.liveMic) || (was.liveCamera && !now.liveCamera)) silence.push(id);
+    const stopMic = was.liveMic && !now.liveMic;
+    const stopCamera = was.liveCamera && !now.liveCamera;
+    if (stopMic || stopCamera) {
+      silence.push(id);
+      stopMedia.push({ userId: id, mic: stopMic, camera: stopCamera });
+    }
   }
 
   return {
@@ -452,6 +460,7 @@ export function applyFloorRequest(floor: Floor, request: FloorRequest, ctx: Floo
     touched,
     push,
     silence,
+    stopMedia,
     roomChanged: floor.mode !== modeBefore || floor.spotlight !== spotlightBefore,
     note: {
       action: request.action,

@@ -218,6 +218,7 @@ test("a mute both revokes and cuts off, because revoking does not close an open 
   const out = did(f, { action: "mute", userId: STUDENT }, asTeacher());
   assert.deepEqual(out.push, [STUDENT], "the right to speak again is withdrawn");
   assert.deepEqual(out.silence, [STUDENT], "and the track that is open right now is stopped");
+  assert.deepEqual(out.stopMedia, [{ userId: STUDENT, mic: true, camera: false }]);
 });
 
 test("a student stepping back to listening is cut off too, not merely believed", () => {
@@ -236,6 +237,7 @@ test("stopping a camera does not stop a microphone", () => {
   const out = did(f, { action: "stop_camera", userId: STUDENT }, asTeacher());
   assert.deepEqual(out.push, [STUDENT]);
   assert.deepEqual(out.silence, [STUDENT]);
+  assert.deepEqual(out.stopMedia, [{ userId: STUDENT, mic: false, camera: true }]);
   assert.equal(mediaStateOf(f.students.get(STUDENT)!), "speaking", "still able to answer");
 });
 
@@ -326,6 +328,8 @@ test("closing the discussion revokes and cuts off everybody it widened", () => {
   assert.equal(out.roomChanged, true);
   assert.deepEqual(out.push, [STUDENT], "only the camera permission changed at the provider");
   assert.deepEqual(out.silence, [STUDENT], "only the one who actually had something open");
+  assert.deepEqual(out.stopMedia, [{ userId: STUDENT, mic: true, camera: true }],
+    "closing discussion stops both tracks even though ordinary microphone capability remains");
   assert.equal(f.mode, "classroom");
 });
 
