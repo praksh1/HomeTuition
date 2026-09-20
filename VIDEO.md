@@ -77,11 +77,14 @@ Point the suite at your new provider by adding it to `PROVIDERS` and running wit
 
 ## The LiveKit trial
 
-**Status: proved against a real LiveKit server — two browsers, real media, 37 assertions.
-Never run against LiveKit Cloud. Not deployed.**
+**Status, 20 September 2026: the replacement code is deployed to the staging API and proved
+against a real LiveKit server — two browsers, real media, 37 assertions. Staging still serves
+Daily until the owner creates a LiveKit Cloud project/key and supplies the three credentials.**
 
-LiveKit Cloud is built and sits beside Daily rather than replacing it. Daily is untouched and
-remains the default; the whole trial is reversible by one environment variable.
+LiveKit is built behind the production provider seam rather than spliced into one screen. Daily
+is untouched and remains the safe fallback; the whole cutover is reversible by one environment
+variable. The browser receives whichever provider the server selects. Native Expo builds continue
+to receive Daily because the two native WebRTC SDKs cannot coexist in one binary.
 
 ### Turning it on and off
 
@@ -229,12 +232,13 @@ the difference between a credentials problem and a network one.
 | A teacher gets moderator rights and screen share; a student gets neither | same suite, decoding the JWT's claims |
 | An unconfigured LiveKit fails honestly | same suite — no silent fallback, no unsigned token, no variable name leaked |
 | Room naming still correlates provider evidence to a class | `src/lib/video/roomName.test.ts`, which reads `lib/daily.ts` as source and fails if the two rules drift apart |
-| The call surface at phone and laptop width | `sikshya` `scripts/livekit-tests` — 74 checks in a real browser |
-| Reconnection, refused camera, microphone in use, blocked sound, a teacher leaving | same suite, each state driven deliberately |
-| Controls are at least 44×44 and do not run off a narrow panel | same suite, measured from the rendered boxes |
+| The call surface at phone and laptop width | `sikshya` `scripts/livekit-tests` — 102 checks in a real browser |
+| The server-owned speaking floor at phone and laptop width | `sikshya` `scripts/classroom-floor-tests` — 216 rendered checks |
+| Reconnection, refused camera, microphone in use, blocked sound, a teacher leaving | LiveKit render suite, each state driven deliberately |
+| Controls are at least 44×44, use the premium compact rail, and do not run off a narrow panel | LiveKit render suite, measured from the rendered boxes |
 | A phone keeps Daily while the browser is on LiveKit | `scripts/video-tests` — iOS and Android both, plus a client that sends no platform at all |
 | Claiming a platform grants nothing | same suite — a student calling itself a browser still gets a student's token |
-| Daily and the whiteboard still behave | `test:board` 44/44, `test:call-chat` 17/17, `test:call-leave` 9/9 |
+| Daily and the whiteboard still behave | `test:board` 74/74, `test:call-chat` 17/17, `test:call-leave` 9/9 |
 
 ### Proved against a real LiveKit server
 
@@ -258,14 +262,16 @@ The suite skips itself, loudly, when `livekit-server` is not installed.
 ### What still has not been checked
 
 - **LiveKit Cloud itself.** The local SFU is the same software, so the code is proven; the
-  internet is not. No latency, no packet loss, no TURN relay, no cloud region. The owner's own
-  two-browser test through LiveKit Cloud is still the thing to do. (Cost is no longer unknown —
-  it is priced in `HANDOVER.md` §8.6, and the answer is uncomfortable.)
+  account, internet path and managed TURN are not. No LiveKit Cloud project or API key has been
+  created from this workspace. The owner's own two-browser test through the configured cloud
+  project is still the final acceptance gate. (Cost is no longer unknown — it is priced in
+  `HANDOVER.md` §8.6, and the answer is uncomfortable.)
 - **A real phone browser**, which is the market this is for. Chromium on a laptop is not a
   budget Android handset on a 3G line.
-- **`docs.livekit.io` is blocked** by this environment's network egress. Everything is written
-  against the installed SDK's own TypeScript definitions and source — authoritative for the API
-  surface — plus, now, direct experiment against the server.
+- **LiveKit Cloud credentials are absent from Railway staging.** `LIVEKIT_URL`,
+  `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` must all be added before changing
+  `VIDEO_PROVIDER` to `livekit`. Until then, Daily is intentionally returned rather than a broken
+  LiveKit room.
 - **The credentials check has never reached a real LiveKit project.** Its settings checks, its
   token-signing check and its unreachable-network branch were all run and behave correctly.
   The two branches that need livekit.cloud itself — "accepted" and "refused" — could not be.

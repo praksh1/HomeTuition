@@ -40,10 +40,10 @@ import type { JoinOptions, ProviderApply, VideoProvider } from "./types";
  * does not break it; it leaves it equally off. LiveKit signs its webhooks differently, so turning
  * that on for LiveKit is its own piece of work — see SESSION-PROOF.md.
  *
- * **The documentation could not be read.** `docs.livekit.io` is blocked by this environment's
- * network egress proxy, so everything here is written against the installed SDK's own TypeScript
- * definitions — which are authoritative for the API surface — rather than against a guide. The
- * behaviour that only a live server can confirm is listed in VIDEO.md under the LiveKit trial.
+ * The server SDK's TypeScript definitions are the executable API contract, and the security-
+ * relevant pieces were also checked against LiveKit's official authentication, participant
+ * permission, webhook and deployment documentation. Behaviour that only a live SFU can confirm
+ * is measured by the two-browser suite described in VIDEO.md rather than inferred from a guide.
  */
 
 /**

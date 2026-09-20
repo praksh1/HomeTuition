@@ -735,6 +735,9 @@ check("a student muting is visible to the teacher", mutedSeen);
   on a weak line — stops *subscribing* to everyone else's. The proof is that inbound video
   frames stop rising while the call stays up.
 */
+// Audio-only lives in the compact premium rail's More sheet. Exercise the route a person uses
+// rather than reaching for a control that is deliberately absent from the closed DOM.
+await s.page.locator('[data-testid="livekit-more"]').click();
 await s.page.locator('[data-testid="livekit-audio-only"]').click();
 await new Promise((r) => setTimeout(r, 2500));
 const beforeQuiet = await inboundVideo(s.page);
@@ -745,6 +748,7 @@ check("audio-only stops incoming video, not just outgoing",
   `${beforeQuiet.framesDecoded} → ${afterQuiet.framesDecoded}`);
 check("and the call is still up", await bothSee(s.page));
 
+await s.page.locator('[data-testid="livekit-more"]').click();
 await s.page.locator('[data-testid="livekit-audio-only"]').click();
 const videoBack = await waitFor(async () => (await inboundVideo(s.page)).framesDecoded > afterQuiet.framesDecoded, 40, 300);
 check("turning it off brings the faces back", videoBack);

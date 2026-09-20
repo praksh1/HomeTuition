@@ -318,8 +318,8 @@ function Tile({ participant, inset }: { participant: VideoParticipant; inset?: b
               // is a corner of the classroom on a laptop and nearly the whole screen when a
               // teacher expands it, and a 160px square is wrong in one of those.
               //
-              // Top right, not bottom right: every tile carries its name along its bottom
-              // edge, and an inset in that corner sat on top of somebody's name.
+              // Top right, leaving the tile's identity pill clear at top left and the floating
+              // call controls clear along the bottom.
               right: `${space.xs}px`,
               top: `${space.xs}px`,
               width: "clamp(76px, 24%, 168px)",
@@ -340,10 +340,13 @@ function Tile({ participant, inset }: { participant: VideoParticipant; inset?: b
           turned their camera off. The text stayed legible; the band stopped looking like one.
         */
         background: colors.ink,
+        border: `1px solid ${participant.isSpeaking ? colors.online : colors.onInverseMuted}`,
         // A speaking person is outlined rather than enlarged: re-laying out the grid every time
         // somebody says "yes" is unusable on a small panel.
-        outline: participant.isSpeaking ? `2px solid ${colors.online}` : "none",
-        outlineOffset: "-2px",
+        boxShadow: participant.isSpeaking
+          ? `0 0 0 2px ${colors.online}, 0 14px 34px rgba(0, 0, 0, 0.24)`
+          : "0 10px 26px rgba(0, 0, 0, 0.18)",
+        transition: "border-color 180ms ease, box-shadow 180ms ease",
       }}
     >
       {showVideo ? (
@@ -370,24 +373,26 @@ function Tile({ participant, inset }: { participant: VideoParticipant; inset?: b
       <div
         style={{
           position: "absolute",
-          left: 0,
-          right: 0,
-          bottom: 0,
+          left: `${space.xs}px`,
+          top: `${space.xs}px`,
+          maxWidth: `calc(100% - ${space.sm}px)`,
           display: "flex",
           alignItems: "center",
           gap: `${space.xxs}px`,
-          padding: `${space.xxs}px ${space.xs}px`,
+          padding: `${space.xxs}px ${space.sm}px`,
           /*
-            Opaque, not a scrim.
-
-            A translucent black over video is not a contrast pair — it is a different pair on
-            every frame, and a name over a bright whiteboard or a window behind somebody's head
-            fails while the same code passes over a dark room. `secondary` with
-            `secondaryForeground` is 12.14:1 whatever is underneath. The same correction Codex
-            made to the Daily embed's presenter tag on review, for the same reason.
+            A compact glass identity pill rather than a full-width television-style name bar.
+            The dark fill stays nearly opaque, with a light edge and white ink, so a bright
+            camera frame cannot wash the name out. It sits at top left because the premium call
+            rail floats over the bottom centre on both phone and laptop.
           */
-          background: colors.secondary,
+          background: "rgba(10, 20, 37, 0.88)",
           color: colors.secondaryForeground,
+          border: "1px solid rgba(255, 255, 255, 0.16)",
+          borderRadius: `${radius.pill}px`,
+          boxShadow: "0 6px 20px rgba(0, 0, 0, 0.2)",
+          backdropFilter: "blur(14px)",
+          WebkitBackdropFilter: "blur(14px)",
           fontFamily: t.caption.fontFamily,
           fontSize: `${t.caption.fontSize}px`,
         }}
@@ -512,6 +517,12 @@ function Control({
         alignItems: "center",
         justifyContent: "center",
         flex: "0 0 auto",
+        boxShadow: active
+          ? "0 8px 22px rgba(20, 73, 147, 0.34)"
+          : danger
+            ? "0 5px 16px rgba(0, 0, 0, 0.16)"
+            : "none",
+        transition: "transform 160ms ease, background 160ms ease, box-shadow 160ms ease",
       }}
     >
       <CallIcon name={icon} colour={ink} />
@@ -766,7 +777,7 @@ export default function LiveKitEmbed({
         inset: 0,
         display: "flex",
         flexDirection: "column",
-        background: colors.ink,
+        background: `radial-gradient(circle at 50% 0%, ${colors.secondary} 0%, ${colors.ink} 46%)`,
         overflow: "hidden",
       }}
     >
@@ -963,12 +974,23 @@ export default function LiveKitEmbed({
         <div
           data-testid="livekit-controls"
           style={{
-            position: "relative",
+            position: "absolute",
+            left: "50%",
+            bottom: `${space.xs}px`,
+            transform: "translateX(-50%)",
             display: "flex",
             justifyContent: "center",
             gap: `${space.xxs}px`,
-            padding: `${space.xs}px`,
-            background: colors.ink,
+            width: "max-content",
+            maxWidth: `calc(100% - ${space.md}px)`,
+            padding: `${space.xxs}px`,
+            border: "1px solid rgba(255, 255, 255, 0.16)",
+            borderRadius: `${radius.pill}px`,
+            background: "rgba(10, 20, 37, 0.82)",
+            boxShadow: "0 16px 40px rgba(0, 0, 0, 0.34)",
+            backdropFilter: "blur(18px)",
+            WebkitBackdropFilter: "blur(18px)",
+            zIndex: 5,
           }}
         >
           {moreOpen ? (
@@ -978,18 +1000,22 @@ export default function LiveKitEmbed({
               aria-label="More call controls"
               style={{
                 position: "absolute",
-                left: `${space.xs}px`,
-                right: `${space.xs}px`,
+                left: "50%",
                 bottom: `calc(100% + ${space.xs}px)`,
+                transform: "translateX(-50%)",
                 display: "flex",
                 flexWrap: "wrap",
                 justifyContent: "center",
                 gap: `${space.xs}px`,
+                width: "min(320px, calc(100vw - 32px))",
+                boxSizing: "border-box",
                 padding: `${space.xs}px`,
-                border: `1px solid ${colors.onInverseMuted}`,
+                border: "1px solid rgba(255, 255, 255, 0.18)",
                 borderRadius: `${radius.md}px`,
-                background: colors.secondary,
-                boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                background: "rgba(10, 20, 37, 0.94)",
+                boxShadow: "0 18px 44px rgba(0, 0, 0, 0.36)",
+                backdropFilter: "blur(18px)",
+                WebkitBackdropFilter: "blur(18px)",
                 zIndex: 4,
               }}
             >
