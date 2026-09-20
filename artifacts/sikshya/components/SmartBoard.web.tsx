@@ -9,6 +9,10 @@ import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardTemplate, Board
 import { LASER_THROTTLE_MS, normalizeLaserPoint } from "../utils/whiteboardLaser";
 import { teachingLibrary } from "./boardLibrary";
 import { isShareableSize, shrinkForSharing } from "../utils/boardImage";
+import {
+  protectBoardElementsFromEraser,
+  rememberVisibleBoardElements,
+} from "../utils/boardEraser";
 
 /**
  * The classroom whiteboard, on Excalidraw.
@@ -150,6 +154,7 @@ type ExcalidrawAppState = {
   zoom: { value: number };
   width: number;
   height: number;
+  activeTool?: { type?: string };
 };
 
 type ExcalidrawAPI = {
@@ -393,6 +398,70 @@ export default function SmartBoard({
     setPageMenuOpen(false);
   }, [activePage, canManagePages, onPageCommand, pages.length]);
 
+  const runHistoryShortcut = useCallback((redo: boolean) => {
+    if (typeof document === "undefined" || typeof window === "undefined") return;
+    const builtIn = document.querySelector<HTMLButtonElement>(
+      `button[aria-label="${redo ? "Redo" : "Undo"}"]`,
+    );
+    if (builtIn) {
+      builtIn.click();
+      return;
+    }
+    const isApple = /Mac|iPhone|iPad|iPod/i.test(window.navigator.platform);
+    document.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "z",
+        code: "KeyZ",
+        ctrlKey: !isApple,
+        metaKey: isApple,
+        shiftKey: redo,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }, []);
+
+  const historyControls = !boardReadOnly ? (
+    <div
+      className="sikshya-board__history"
+      role="group"
+      aria-label="Whiteboard history"
+      style={{
+        position: "absolute",
+        left: 12,
+        bottom: 76,
+        zIndex: 8,
+        display: "flex",
+        gap: 6,
+        padding: 5,
+        border: "1px solid rgba(15,23,42,0.12)",
+        borderRadius: 16,
+        background: "rgba(255,255,255,0.94)",
+        boxShadow: "0 10px 28px rgba(15,23,42,0.16)",
+        backdropFilter: "blur(16px)",
+      }}
+    >
+      <button
+        type="button"
+        aria-label="Undo last board change"
+        title="Undo"
+        onClick={() => runHistoryShortcut(false)}
+        style={{ ...pageButtonStyle, fontSize: "x-large" }}
+      >
+        ↶
+      </button>
+      <button
+        type="button"
+        aria-label="Redo board change"
+        title="Redo"
+        onClick={() => runHistoryShortcut(true)}
+        style={{ ...pageButtonStyle, fontSize: "x-large" }}
+      >
+        ↷
+      </button>
+    </div>
+  ) : null;
+
   const pageNavigator = (
     <div
       className="sikshya-board__pages"
@@ -541,6 +610,10 @@ export default function SmartBoard({
    * *given* means the next diff sees them as already sent.
    */
   const applyingRemote = useRef(false);
+  /** The last intact objects, used to keep an eraser stroke from cutting holes in lesson pages. */
+  const visibleBeforeErase = useRef<Map<string, ExcalidrawElement>>(new Map());
+  /** `updateScene` fires `onChange`; this prevents a protected-object restore from recursing. */
+  const restoringProtected = useRef(false);
 
   /**
    * The version of a picture that may go on the wire, or null while one is being made.
@@ -666,15 +739,39 @@ export default function SmartBoard({
   }, [boardReadOnly, publishViewport]);
 
   const handleChange = useCallback(
-    (_elements: readonly ExcalidrawElement[]) => {
-      if (boardReadOnly || applyingRemote.current) return;
+    (
+      elements: readonly ExcalidrawElement[],
+      appState?: ExcalidrawAppState,
+    ) => {
+      if (boardReadOnly || applyingRemote.current || restoringProtected.current) return;
+
+      // `onChange` may omit erased elements; the inclusive scene is the only reliable record of
+      // which object the eraser just marked deleted.
+      let scene = [...(api?.getSceneElementsIncludingDeleted() ?? elements)];
+      if (appState?.activeTool?.type === "eraser") {
+        const protectedScene = protectBoardElementsFromEraser(
+          scene,
+          visibleBeforeErase.current,
+        );
+        scene = protectedScene.elements;
+        if (protectedScene.protectedCount > 0 && api) {
+          restoringProtected.current = true;
+          api.updateScene({ elements: scene, captureUpdate: "IMMEDIATELY" });
+          api.setToast({
+            message: "Eraser removes writing only. Select a picture or shape and press Delete to remove it.",
+            duration: 4200,
+          });
+          setTimeout(() => { restoringProtected.current = false; }, 0);
+        }
+      }
+      rememberVisibleBoardElements(visibleBeforeErase.current, scene);
       // Drawing at the edge of the screen scrolls the canvas, so the view is worth re-checking
       // on any change; `publishViewport` drops it again if the rectangle has not moved.
       scheduleViewportPublish();
       if (pendingSync.current) return;
       pendingSync.current = setTimeout(flush, SYNC_INTERVAL_MS);
     },
-    [boardReadOnly, flush, scheduleViewportPublish],
+    [api, boardReadOnly, flush, scheduleViewportPublish],
   );
 
   // Publish the opening view as soon as the board is up, so a student arriving later is put
@@ -781,6 +878,7 @@ export default function SmartBoard({
       sentVersions.current.clear();
       sentFiles.current.clear();
       insertedImages.current.clear();
+      visibleBeforeErase.current.clear();
       fitted.current = false;
       applyingRemote.current = true;
       api.updateScene({ elements: [] });
@@ -832,6 +930,7 @@ export default function SmartBoard({
 
     applyingRemote.current = true;
     api.updateScene({ elements: [...current.values()] });
+    rememberVisibleBoardElements(visibleBeforeErase.current, [...current.values()]);
     // Cleared on a later tick because updateScene triggers onChange synchronously.
     setTimeout(() => { applyingRemote.current = false; }, 0);
 
@@ -851,6 +950,7 @@ export default function SmartBoard({
     if (!api || clearedAt === 0) return;
     sentVersions.current.clear();
     sentFiles.current.clear();
+    visibleBeforeErase.current.clear();
     applyingRemote.current = true;
     api.updateScene({ elements: [] });
     setTimeout(() => { applyingRemote.current = false; }, 0);
@@ -871,6 +971,7 @@ export default function SmartBoard({
     }
     sentVersions.current.clear();
     sentFiles.current.clear();
+    visibleBeforeErase.current.clear();
     applyingRemote.current = true;
     api.updateScene({ elements: [] });
     setTimeout(() => { applyingRemote.current = false; }, 0);
@@ -1219,6 +1320,7 @@ export default function SmartBoard({
       </Excalidraw>
 
       {pageNavigator}
+      {historyControls}
 
       {laser?.active ? (
         <div

@@ -55,8 +55,15 @@ await waitForServer();
 const browser = await chromium.launch();
 let failures = 0;
 let checks = 0;
+const filter = process.env.BOARD_TEST_FILTER?.trim().toLowerCase();
+const selectedTests = filter ? tests.filter((test) => test.name.toLowerCase().includes(filter)) : tests;
 
-for (const test of tests) {
+if (filter && selectedTests.length === 0) {
+  console.error(`No board test matched BOARD_TEST_FILTER=${JSON.stringify(filter)}`);
+  process.exit(1);
+}
+
+for (const test of selectedTests) {
   const ctx = await browser.newContext({ viewport: { width: 900, height: 700 } });
   const failedHere = [];
   const assert = (what, ok) => {

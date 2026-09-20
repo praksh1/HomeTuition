@@ -56,6 +56,7 @@ import SmartBoard from "@/components/SmartBoard";
 import { useLayout } from "@/hooks/useLayout";
 import { HIT_SLOP_MIN } from "@/constants/layout";
 import { aloneMessage } from "@/utils/aloneInCall";
+import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
 
 type Mode = "whiteboard" | "chat";
 type VideoWindowSize = "hidden" | "small" | "medium" | "full";
@@ -1246,20 +1247,21 @@ export default function Classroom() {
               elevation.card,
               {
                 top: boardToolbarBottom,
-                left: space.md,
-                right: space.md,
-                gap: space.sm,
-                paddingHorizontal: space.md,
-                paddingVertical: space.xs,
+                left: space.sm,
+                width: Math.min(width - space.lg, isCompact ? width - space.lg : 620),
+                minHeight: HIT_SLOP_MIN,
+                gap: space.xxs,
+                paddingHorizontal: space.sm,
+                paddingVertical: space.xxs,
                 borderRadius: radius.pill,
                 backgroundColor: colors.card,
                 borderColor: colors.border,
               },
             ]}
           >
-            <View style={s.sessionInfo}>
+            <View style={[s.sessionCompactInfo, { gap: space.xs }]}>
               <Text
-                style={[t.caption, { color: colors.foreground }]}
+                style={[t.caption, { color: colors.foreground, flex: 1 }]}
                 numberOfLines={1}
               >
                 {session
@@ -1268,9 +1270,9 @@ export default function Classroom() {
               </Text>
               <Text
                 style={[t.overline, numeric, { color: colors.mutedForeground }]}
+                numberOfLines={1}
               >
-                {fmt(elapsed)} /{" "}
-                {String(session?.duration ?? 60).padStart(2, "0")}:00
+                {fmt(elapsed)}
               </Text>
             </View>
             {classIsLive ? (
@@ -1427,13 +1429,31 @@ export default function Classroom() {
           ) : null}
         </View>
 
+        <ClassroomControlDock
+          bottom={hudBottom}
+          chatOpen={mode === "chat"}
+          unreadCount={unreadChatCount}
+          videoHidden={videoHidden}
+          materialOpen={materialMenuOpen}
+          onToggleMaterial={() => {
+            setMode("whiteboard");
+            setMaterialMenuOpen((open) => !open);
+          }}
+          onToggleChat={() =>
+            setMode((current) => (current === "chat" ? "whiteboard" : "chat"))
+          }
+          onToggleVideo={videoHidden ? showVideoWindow : hideVideoWindow}
+          onLeave={endSession}
+          leaveLabel="End class"
+        />
+
         {/* Only the visible capsule captures touches; its full-screen layer is transparent. */}
         <View
-          pointerEvents={mode === "chat" ? "none" : "box-none"}
+          pointerEvents="none"
           style={[
             s.hudLayer,
             { bottom: hudBottom },
-            mode === "chat" && s.overlayHidden,
+            s.overlayHidden,
           ]}
         >
           <View
@@ -1581,7 +1601,7 @@ export default function Classroom() {
           </View>
         </View>
 
-        {videoHidden && mode !== "chat" ? (
+        {false && videoHidden && mode !== "chat" ? (
           <View
             pointerEvents="box-none"
             style={[
@@ -1658,12 +1678,7 @@ export default function Classroom() {
                   accessibilityRole="adjustable"
                   accessibilityLabel="Drag video window"
                 >
-                  <View
-                    style={[
-                      s.pipGrip,
-                      { backgroundColor: colors.onInverseMuted },
-                    ]}
-                  />
+                  <Feather name="move" size={18} color={colors.onInverseMuted} />
                 </View>
               ) : (
                 <View style={s.callDragZone} />
@@ -1702,6 +1717,7 @@ export default function Classroom() {
                       width: HIT_SLOP_MIN + space.md,
                       height: HIT_SLOP_MIN,
                       gap: space.xxs,
+                      display: "none",
                     },
                   ]}
                   onPress={hideVideoWindow}
@@ -1715,7 +1731,7 @@ export default function Classroom() {
                 <TouchableOpacity
                   style={[
                     s.callFrameButton,
-                    { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN },
+                    { width: HIT_SLOP_MIN + space.xl, height: HIT_SLOP_MIN, gap: space.xxs },
                   ]}
                   onPress={minimizeVideoWindow}
                   disabled={!windowControls.canMinimize}
@@ -1724,10 +1740,11 @@ export default function Classroom() {
                   testID="video-window-size-btn"
                 >
                   <Feather
-                    name="minimize"
+                    name="minimize-2"
                     size={18}
                     color={windowControls.canMinimize ? colors.onInverse : colors.onInverseMuted}
                   />
+                  <Text style={[t.caption, { color: colors.onInverse }]}>Small</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
@@ -2385,6 +2402,7 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   sessionInfo: { flex: 1 },
+  sessionCompactInfo: { flex: 1, flexDirection: "row", alignItems: "center", minWidth: 0 },
   testTag: { alignItems: "center", justifyContent: "center" },
   liveTag: { flexDirection: "row", alignItems: "center" },
   liveDot: { width: 8, height: 8, borderRadius: 4 },

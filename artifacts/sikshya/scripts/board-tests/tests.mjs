@@ -42,6 +42,28 @@ export const tests = [
   },
 
   {
+    name: "undo and redo are visible classroom controls",
+    why:
+      "The board library has history internally, but the page strip and call controls covered " +
+      "its small mobile buttons. A teacher needs an obvious way back after one accidental mark.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+
+      await selectTool(teacher, PEN);
+      await stroke(teacher, 260, 280, 560, 440);
+      assert("the test begins with a visible mark", (await ink(teacher)).n > 0);
+
+      await teacher.getByLabel("Undo last board change").click();
+      await teacher.waitForTimeout(450);
+      assert("Undo removes the last mark", (await ink(teacher)).n === 0);
+
+      await teacher.getByLabel("Redo board change").click();
+      await teacher.waitForTimeout(450);
+      assert("Redo restores it", (await ink(teacher)).n > 0);
+    },
+  },
+
+  {
     name: "a picture the teacher shares actually reaches the student",
     why:
       "Excalidraw keeps a picture's bytes in a separate map from the element that draws it. " +
@@ -76,6 +98,52 @@ export const tests = [
         "at the same size, not as an empty frame",
         Math.abs(onStudent.red - onTeacher.red) < onTeacher.red * 0.1,
       );
+    },
+  },
+
+  {
+    name: "the eraser removes annotation without damaging the lesson page",
+    why:
+      "A broad eraser gesture used to cut holes through an uploaded image or PDF page along " +
+      "with the handwriting above it. Imported lesson material must be deleted deliberately.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+
+      await teacher.evaluate(
+        (dataUrl) =>
+          window.postMessage(
+            JSON.stringify({
+              type: "insert_document",
+              document: { key: "protected-photo-1", dataUrl, kind: "image" },
+            }),
+            "*",
+          ),
+        RED_PNG,
+      );
+      await teacher.waitForTimeout(1200);
+      const paper = await ink(teacher);
+      assert("the lesson picture is visible before annotation", paper.red > 200);
+
+      await selectTool(teacher, PEN);
+      await stroke(teacher, 390, 310, 510, 410);
+      const annotated = await ink(teacher);
+      assert("handwriting was added over the lesson", annotated.n > paper.n);
+
+      await selectTool(teacher, ERASER);
+      await stroke(teacher, 390, 310, 510, 410);
+      await teacher.waitForTimeout(450);
+      const cleaned = await ink(teacher);
+      assert("the handwriting was erased", cleaned.n < annotated.n);
+      assert("the picture was not erased", cleaned.red > paper.red * 0.9);
+      assert(
+        "the teacher is told how to delete a fixed object",
+        (await teacher.getByText(/Eraser removes writing only/).count()) === 1,
+      );
+
+      await pump(teacher, student);
+      await student.waitForTimeout(400);
+      assert("students keep the intact lesson picture too", (await ink(student)).red > paper.red * 0.9);
     },
   },
 

@@ -16,6 +16,7 @@ const teachingEarnings = read("components", "commerce", "TeachingEarnings.tsx");
 const teacherClassroom = read("app", "(teacher)", "classroom", "[id].tsx");
 const studentClassroom = read("app", "(student)", "classroom", "[id].tsx");
 const videoCall = read("components", "VideoCall.tsx");
+const classroomDock = read("components", "classes", "ClassroomControlDock.tsx");
 
 test("student Sessions is a grouped learning timetable rather than one row per generated lesson", () => {
   assert.match(studentSessions, /My classes/);
@@ -73,4 +74,20 @@ test("test accounting cannot cover the live teaching canvas", () => {
   }
   assert.match(videoCall, /case "echo"/);
   assert.match(videoCall, /Whiteboard and class chat are ready/);
+});
+
+test("the classroom uses one compact control dock instead of duplicate visible call controls", () => {
+  for (const classroom of [teacherClassroom, studentClassroom]) {
+    assert.match(classroom, /<ClassroomControlDock/);
+    assert.match(classroom, /pointerEvents="none"[\s\S]{0,140}s\.overlayHidden/);
+    assert.match(classroom, /false && videoHidden/);
+    assert.match(classroom, /display: "none"/);
+    assert.match(classroom, /name="move"/);
+    assert.match(classroom, /sessionCompactInfo/);
+  }
+  assert.match(classroomDock, /label=\{videoHidden \? "Show call" : "Hide call"\}/);
+  assert.match(classroomDock, /testID="classroom-dock-chat"/);
+  assert.match(classroomDock, /testID="classroom-dock-more"/);
+  assert.match(classroomDock, /onMouseEnter/);
+  assert.match(classroomDock, /Animated\.spring/);
 });
