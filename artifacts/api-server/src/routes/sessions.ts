@@ -1349,7 +1349,13 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       // so two teachers moving classes at the same moment never wait on each other.
       await lockScheduleQuota(tx, user.userId);
       const [current] = await tx.select().from(sessionsTable).where(eq(sessionsTable.id, id)).for("update");
-      await assertTeacherSchedule(tx, user.userId, [{ startsAt: newDate!, durationMinutes: duration ?? current!.duration, label: `Class “${existing.topic}”` }], { sessionId: id });
+      const parentBatchId = await batchTestForSession(id, tx);
+      await assertTeacherSchedule(
+        tx,
+        user.userId,
+        [{ startsAt: newDate!, durationMinutes: duration ?? current!.duration, label: `Class “${existing.topic}”` }],
+        { sessionId: id, ...(parentBatchId !== null ? { batchId: parentBatchId } : null) },
+      );
 
       // Counted again, now that the count cannot change underneath us. This is the check that
       // decides; the one above the write only saves a lock when the answer is already no.
@@ -1409,7 +1415,19 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       const [current] = await tx.select().from(sessionsTable).where(eq(sessionsTable.id, id)).for("update");
       const reactivating = current && !["upcoming", "live"].includes(current.status) && (status === "upcoming" || status === "live");
       if (current && ((updates.date !== undefined || updates.duration !== undefined) && ["upcoming", "live"].includes(current.status) || reactivating)) {
-        await assertTeacherSchedule(tx, user.userId, [{ startsAt: newDate ?? current.date, durationMinutes: duration ?? current.duration, label: `Class “${current.topic}”` }], { sessionId: id });
+        /**
+         * The immutable Batch snapshot and its materialised session describe one booking.
+         * Re-entry used to compare those two representations and call the lesson an overlap
+         * with itself. Excluding both still leaves every genuinely different commitment in
+         * the schedule.
+         */
+        const parentBatchId = await batchTestForSession(id, tx);
+        await assertTeacherSchedule(
+          tx,
+          user.userId,
+          [{ startsAt: newDate ?? current.date, durationMinutes: duration ?? current.duration, label: `Class “${current.topic}”` }],
+          { sessionId: id, ...(parentBatchId !== null ? { batchId: parentBatchId } : null) },
+        );
       }
       const [updated] = await tx.update(sessionsTable).set(updates).where(eq(sessionsTable.id, id)).returning();
       return updated!;

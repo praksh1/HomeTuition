@@ -313,6 +313,12 @@ try {
   const secondBookingId = Number((await q("SELECT id FROM batch_test_bookings WHERE batch_id=$1 AND student_id=$2", [c.id, b.user.id])).rows[0].id);
   await q("INSERT INTO session_participation (session_id,user_id,role,present_ms,join_count) VALUES ($1,$2,'teacher',60000,1)", [sid, teacher.user.id]);
   check("teacher can finish the recorded test lesson", (await api(`/sessions/${sid}`, teacher.token, { status: "completed" }, "PATCH")).status === 200);
+  // The session and Batch snapshot reserve the same lesson. Ending the call by mistake and
+  // walking back in must not compare those two records and call the lesson an overlap with
+  // itself. A genuinely different overlapping class remains covered by the schedule suites.
+  const resumedLesson = await api(`/sessions/${sid}`, teacher.token, { status: "live" }, "PATCH");
+  check("teacher can resume the same booked lesson without a self-overlap", resumedLesson.status === 200);
+  check("the resumed booked lesson can be ended again", (await api(`/sessions/${sid}`, teacher.token, { status: "completed" }, "PATCH")).status === 200);
   const automaticDelivery = await quote(c.id, b);
   check("classroom completion and teacher presence automatically start review", automaticDelivery.receipts.find(r => r.bookingId === secondBookingId).allocations[0].state === "delivered_pending");
   const complaint = await api("/disputes", b.token, { reason: "Refund Request", description: "Synthetic student asks support to review this lesson.", sessionId: sid });

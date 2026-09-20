@@ -366,16 +366,16 @@ async function main() {
     ]) {
       const { page, crashes } = await open(context, who.token, who.route, 6000);
       check(`[${viewport.name}/${who.name}] the classroom opens`, crashes.length === 0, crashes[0] ?? "");
-      // The student holds a granted place, so they are told no payment was taken. The teacher
-      // did not book anything, so they are told what is true of the class instead.
+      // The detailed payment disclosure belongs on checkout, receipts and the class page. In a
+      // live classroom it used to sit at absolute top-left, cover the board controls, and prevent
+      // the teacher from testing. The compact chip preserves the server-owned fact without
+      // putting accounting copy on the teaching canvas.
       const expected = who.name === "student" ? "classroom-test-booking" : "classroom-test-class";
-      check(`[${viewport.name}/${who.name}] and says so for the whole lesson`,
+      check(`[${viewport.name}/${who.name}] has a compact test-room marker`,
         (await seen(page, expected)) > 0, expected);
       const text = await textOf(page);
-      check(`[${viewport.name}/${who.name}] in the sentence that is true for them`,
-        who.name === "student"
-          ? /TEST\s*—\s*no payment was processed/i.test(text)
-          : /TEST-ENABLED CLASS/i.test(text) && !/no payment was processed/i.test(text),
+      check(`[${viewport.name}/${who.name}] without payment copy on the board`,
+        /TEST/i.test(text) && !/no payment was processed/i.test(text),
         text.slice(0, 500));
       await page.close();
     }

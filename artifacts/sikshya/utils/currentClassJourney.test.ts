@@ -13,6 +13,9 @@ const teacherClasses = read("app", "(teacher)", "teaching-classes.tsx");
 const teacherStudents = read("app", "(teacher)", "students.tsx");
 const classSetup = read("components", "classes", "ClassSetup.tsx");
 const teachingEarnings = read("components", "commerce", "TeachingEarnings.tsx");
+const teacherClassroom = read("app", "(teacher)", "classroom", "[id].tsx");
+const studentClassroom = read("app", "(student)", "classroom", "[id].tsx");
+const videoCall = read("components", "VideoCall.tsx");
 
 test("student Sessions is a grouped learning timetable rather than one row per generated lesson", () => {
   assert.match(studentSessions, /My classes/);
@@ -53,4 +56,21 @@ test("one lesson uses the current class setup and every fresh Create action clea
   assert.match(classSetup, /setItem\(null\)/);
   assert.match(classSetup, /setStep\(0\)/);
   assert.match(classSetup, /key\.current = Crypto\.randomUUID\(\)/);
+});
+
+test("an ended lesson guides the teacher back to that lesson instead of another overlapping setup", () => {
+  assert.match(teacherClassroom, /Return to live class/);
+  assert.match(teacherClassroom, /View class details/);
+  assert.match(teacherClassroom, /Teaching schedule/);
+  assert.doesNotMatch(teacherClassroom, /Create a new session/);
+});
+
+test("test accounting cannot cover the live teaching canvas", () => {
+  for (const classroom of [teacherClassroom, studentClassroom]) {
+    assert.match(classroom, />TEST<\/Text>/);
+    assert.doesNotMatch(classroom, /testBanner/);
+    assert.doesNotMatch(classroom, /no payment was processed/i);
+  }
+  assert.match(videoCall, /case "echo"/);
+  assert.match(videoCall, /Whiteboard and class chat are ready/);
 });

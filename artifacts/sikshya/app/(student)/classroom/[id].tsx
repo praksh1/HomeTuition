@@ -780,37 +780,24 @@ export default function StudentClassroom() {
                 <Text style={[t.overline, { color: colors.brand }]}>LIVE</Text>
               </View>
             ) : null}
+            {testNotice ? (
+              <View
+                testID={testNotice.kind === "booking" ? "classroom-test-booking" : "classroom-test-class"}
+                accessibilityLabel="Test classroom"
+                style={[
+                  s.testTag,
+                  {
+                    paddingHorizontal: space.xs,
+                    paddingVertical: space.xxs,
+                    borderRadius: radius.pill,
+                    backgroundColor: colors.warnSoft,
+                  },
+                ]}
+              >
+                <Text style={[t.overline, { color: colors.warn }]}>TEST</Text>
+              </View>
+            ) : null}
           </View>
-          {/*
-            A class nobody paid for says so, to everybody in it.
-
-            In the always-visible pill rather than a dismissible notice: the point is that it
-            cannot be mistaken for an ordinary class at any moment during the lesson, by either
-            person in the room. The sentence is the server's — this side never decides that a
-            class was free.
-          */}
-          {testNotice ? (
-            <View
-              testID={testNotice.kind === "booking" ? "classroom-test-booking" : "classroom-test-class"}
-              accessibilityRole="alert"
-              style={[
-                s.testBanner,
-                {
-                  marginTop: space.xs,
-                  paddingHorizontal: space.sm,
-                  paddingVertical: space.xxs,
-                  borderRadius: radius.pill,
-                  backgroundColor: colors.warnSoft,
-                  borderColor: colors.warn,
-                },
-              ]}
-            >
-              <Feather name="alert-triangle" size={12} color={colors.warn} />
-              <Text style={[t.overline, { color: colors.warn }]} numberOfLines={2}>
-                {testNotice.text}
-              </Text>
-            </View>
-          ) : null}
         </View>
 
         {livePresenceCount > 0 && !videoFull && !isCompact ? (
@@ -1535,13 +1522,7 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   sessionInfo: { flex: 1 },
-  testBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 4,
-    borderWidth: 1,
-  },
+  testTag: { alignItems: "center", justifyContent: "center" },
   liveTag: { flexDirection: "row", alignItems: "center" },
   liveDot: { width: 8, height: 8, borderRadius: 4 },
   presence: {

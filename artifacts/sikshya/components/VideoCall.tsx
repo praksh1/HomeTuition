@@ -89,6 +89,15 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
         />
       );
 
+    case "echo":
+      /**
+       * Preview and automated journeys may deliberately use the no-media provider. It proves
+       * room access, attendance, chat and the shared board without opening a paid video room.
+       * Calling that an old app which needs an update was false and made a test class look
+       * broken.
+       */
+      return <TestRoomVideo style={props.style} />;
+
     default:
       /**
        * A provider this build does not know.
@@ -100,6 +109,21 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
        */
       return <UnknownProvider name={provider} style={props.style} />;
   }
+}
+
+function TestRoomVideo({ style }: { style?: StyleProp<ViewStyle> }) {
+  const colors = useColors();
+  const { t, space } = useLayout();
+  return (
+    <View
+      style={[styles.unknown, { backgroundColor: colors.ink, padding: space.lg }, style]}
+      testID="video-provider-test-room"
+    >
+      <Text style={[t.callout, { color: colors.onInverse, textAlign: "center" }]}>
+        Video is off in this test room. Whiteboard and class chat are ready.
+      </Text>
+    </View>
+  );
 }
 
 /**

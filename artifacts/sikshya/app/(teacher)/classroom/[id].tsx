@@ -356,6 +356,8 @@ export default function Classroom() {
   const [expired, setExpired] = useState<{
     title: string;
     message: string;
+    /** A genuinely different class which is already live. */
+    liveSessionId?: number;
   } | null>(null);
   /**
    * The doors have not opened yet — which is not the same as the class being over.
@@ -585,6 +587,15 @@ export default function Classroom() {
       return true;
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
+        const runningId = err.data.liveSessionId;
+        if (typeof runningId === "number") {
+          setExpired({
+            title: "Another class is already live",
+            message: err.message,
+            liveSessionId: runningId,
+          });
+          return false;
+        }
         const refusal = readRoomRefusal(err.status, err.data, err.message);
         if (refusal.kind === "waiting") {
           setWaiting(refusal);
@@ -1191,21 +1202,29 @@ export default function Classroom() {
               backgroundColor: colors.primary,
             },
           ]}
-          onPress={() => router.replace("/(teacher)/create-class")}
+          onPress={() =>
+            expired.liveSessionId
+              ? router.replace(`/(teacher)/classroom/${expired.liveSessionId}`)
+              : router.replace(`/session/${id}`)
+          }
           activeOpacity={0.85}
         >
-          <Feather name="plus" size={16} color={colors.primaryForeground} />
+          <Feather
+            name={expired.liveSessionId ? "video" : "calendar"}
+            size={16}
+            color={colors.primaryForeground}
+          />
           <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>
-            Create a new session
+            {expired.liveSessionId ? "Return to live class" : "View class details"}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.expiredBackButton, { minHeight: HIT_SLOP_MIN }]}
-          onPress={() => router.back()}
+          onPress={() => router.replace("/(teacher)/sessions")}
           activeOpacity={0.7}
         >
           <Text style={[t.caption, { color: colors.mutedForeground }]}>
-            Back to my sessions
+            Teaching schedule
           </Text>
         </TouchableOpacity>
       </View>
@@ -1271,37 +1290,24 @@ export default function Classroom() {
                 <Text style={[t.overline, { color: colors.brand }]}>LIVE</Text>
               </View>
             ) : null}
+            {testNotice ? (
+              <View
+                testID={testNotice.kind === "booking" ? "classroom-test-booking" : "classroom-test-class"}
+                accessibilityLabel="Test classroom"
+                style={[
+                  s.testTag,
+                  {
+                    paddingHorizontal: space.xs,
+                    paddingVertical: space.xxs,
+                    borderRadius: radius.pill,
+                    backgroundColor: colors.warnSoft,
+                  },
+                ]}
+              >
+                <Text style={[t.overline, { color: colors.warn }]}>TEST</Text>
+              </View>
+            ) : null}
           </View>
-          {/*
-            A class nobody paid for says so, to everybody in it.
-
-            In the always-visible pill rather than a dismissible notice: the point is that it
-            cannot be mistaken for an ordinary class at any moment during the lesson, by either
-            person in the room. The sentence is the server's — this side never decides that a
-            class was free.
-          */}
-          {testNotice ? (
-            <View
-              testID={testNotice.kind === "booking" ? "classroom-test-booking" : "classroom-test-class"}
-              accessibilityRole="alert"
-              style={[
-                s.testBanner,
-                {
-                  marginTop: space.xs,
-                  paddingHorizontal: space.sm,
-                  paddingVertical: space.xxs,
-                  borderRadius: radius.pill,
-                  backgroundColor: colors.warnSoft,
-                  borderColor: colors.warn,
-                },
-              ]}
-            >
-              <Feather name="alert-triangle" size={12} color={colors.warn} />
-              <Text style={[t.overline, { color: colors.warn }]} numberOfLines={2}>
-                {testNotice.text}
-              </Text>
-            </View>
-          ) : null}
         </View>
 
         {/* Presence — do not render avatar bubbles or an "active" count at all when
@@ -2379,13 +2385,7 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   sessionInfo: { flex: 1 },
-  testBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    alignSelf: "flex-start",
-    gap: 4,
-    borderWidth: 1,
-  },
+  testTag: { alignItems: "center", justifyContent: "center" },
   liveTag: { flexDirection: "row", alignItems: "center" },
   liveDot: { width: 8, height: 8, borderRadius: 4 },
   presence: {
