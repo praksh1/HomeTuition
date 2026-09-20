@@ -1,10 +1,10 @@
 // `TrackSource` is re-exported by the server SDK, so this needs no second dependency — importing
 // it from `@livekit/protocol` directly would mean depending on a transitive package by name.
-import { AccessToken, TrackSource } from "livekit-server-sdk";
+import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 import { logger } from "../logger";
 import { providerUserId } from "./participantIdentity";
 import { roomNameForSession } from "./roomName";
-import type { JoinOptions, VideoProvider } from "./types";
+import type { JoinOptions, ProviderApply, VideoProvider } from "./types";
 
 /**
  * LiveKit Cloud, behind the same interface Daily uses.
@@ -46,8 +46,59 @@ import type { JoinOptions, VideoProvider } from "./types";
  * behaviour that only a live server can confirm is listed in VIDEO.md under the LiveKit trial.
  */
 
-/** Eight hours, matching the Daily token, so a long class cannot expire underneath somebody. */
-const TOKEN_TTL_SECONDS = 60 * 60 * 8;
+/**
+ * Eight hours — the ceiling, and what a token gets when nothing says otherwise.
+ *
+ * Matches the Daily token. It is a ceiling rather than the value because a token good for eight
+ * hours is a credential somebody still holds long after the class it was minted for.
+ */
+const TOKEN_TTL_CEILING_SECONDS = 60 * 60 * 8;
+
+/**
+ * The shortest token this will ever mint.
+ *
+ * A floor is needed because expiry is checked against the *server's* clock with roughly a
+ * minute of leeway, and a token minted seconds before the cutoff would otherwise be dead on
+ * arrival. Five minutes past a cutoff costs nothing: the room route refuses to mint a token at
+ * all once a class is past it, so this only ever covers somebody who was already let in.
+ */
+const TOKEN_TTL_FLOOR_SECONDS = 60 * 5;
+
+/**
+ * How long this credential should live, from when the class stops being enterable.
+ *
+ * ## Why this is safe, and how that was established
+ *
+ * The obvious worry about a short-lived token is that it expires while a lesson is running and
+ * hangs up on a class. It does not. Run against a real `livekit-server`
+ * (`sikshya/scripts/livekit-live`, and the experiment recorded in VIDEO.md): a participant
+ * connected on a twenty-second token stayed connected for **two hundred seconds past expiry**
+ * with no `Disconnected` and no `Reconnecting` event. Expiry is checked when the signal
+ * connection is established and not afterwards — joining and rejoining with an expired token
+ * are both refused with `token has invalid claims: token is expired`.
+ *
+ * So the token is a *door key, not a heartbeat*. Shortening it cannot interrupt anybody already
+ * inside; it only stops the key opening the door again once the class is over.
+ *
+ * That measurement is the whole reason this changed. It was left at eight hours precisely
+ * because the answer was unknown and guessing wrong would drop students mid-lesson.
+ */
+function ttlSecondsFor(expiresAt: number | undefined, now: number): number {
+  if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) return TOKEN_TTL_CEILING_SECONDS;
+  const seconds = Math.ceil((expiresAt - now) / 1000);
+  return Math.min(TOKEN_TTL_CEILING_SECONDS, Math.max(TOKEN_TTL_FLOOR_SECONDS, seconds));
+}
+
+/**
+ * The REST address, from the `wss://` one the app is given.
+ *
+ * LiveKit's HTTP API lives on the same host as the signalling socket; the scheme is the only
+ * difference. Converted in one place so a second caller cannot invent a slightly different
+ * rule — `lib/video/diagnose.ts` does the same conversion for the credentials check.
+ */
+function httpsFrom(url: string): string {
+  return url.trim().replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+}
 
 interface LiveKitConfig {
   apiKey: string;
@@ -68,6 +119,39 @@ function config(): LiveKitConfig | null {
   if (!apiKey || !apiSecret || !url) return null;
   return { apiKey, apiSecret, url };
 }
+
+/**
+ * Is this error the provider saying "there is nobody by that name in the room"?
+ *
+ * Measured against a real `livekit-server` 1.13.6 rather than guessed. `updateParticipant` for an
+ * identity that is not in the room answers:
+ *
+ * ```
+ * { name: "Not Found", code: "not_found", status: 404,
+ *   message: "twirp error unknown: participant does not exist" }
+ * ```
+ *
+ * — and the same for a room that does not exist at all, which is the correct answer for us too: a
+ * class nobody has joined yet has no LiveKit room, and a student who is not in it is absent.
+ *
+ * Three independent signals are checked because a Twirp client that changes how it surfaces one of
+ * them must not silently reclassify an absence as an outage. Getting that wrong in *this* direction
+ * is the safe one — an outage treated as an absence would hide a real failure — so anything that
+ * does not match all-clear falls through to `failed`.
+ */
+function looksAbsent(err: unknown): boolean {
+  const e = err as { code?: unknown; status?: unknown; message?: unknown } | null;
+  if (!e) return false;
+  if (e.code === "not_found") return true;
+  if (e.status === 404) return true;
+  return typeof e.message === "string" && /participant does not exist|room does not exist/i.test(e.message);
+}
+
+const failedWith = (err: unknown): ProviderApply => ({
+  applied: false,
+  reason: "failed",
+  error: err instanceof Error ? err.message : String(err),
+});
 
 export const livekitProvider: VideoProvider = {
   name: "livekit",
@@ -104,6 +188,14 @@ export const livekitProvider: VideoProvider = {
      * who have not joined yet, and does not split a class in two.
      */
     builtInChat: false,
+    /**
+     * True, and the reason this provider is worth the trial at all.
+     *
+     * A student's token permits publishing nothing; `setPublishing` below is the only way that
+     * ever changes, and it runs on the server in response to a teacher's decision. That is a
+     * classroom with a floor in it rather than a conference call where the loudest person wins.
+     */
+    moderatesPublishing: true,
   },
 
   configured() {
@@ -164,14 +256,29 @@ export const livekitProvider: VideoProvider = {
       const token = new AccessToken(settings.apiKey, settings.apiSecret, {
         identity,
         name: options.userName,
-        ttl: TOKEN_TTL_SECONDS,
+        // The class's own cutoff when the caller knows it, the eight-hour ceiling when it does not.
+        ttl: ttlSecondsFor(options.expiresAt, Date.now()),
       });
 
       token.addGrant({
         roomJoin: true,
         room: roomNameForSession(sessionId),
-        canPublish: true,
         canSubscribe: true,
+        /**
+         * **A student's token permits nothing to be published.**
+         *
+         * This is the security boundary of the whole classroom, and it is a signed claim rather
+         * than a hidden button. Before this, every token said `canPublish: true` and the class
+         * relied on the app not offering a microphone control — which protects against a student
+         * who behaves, and against nobody else. A browser console was enough to publish into a
+         * lesson.
+         *
+         * A student is granted the floor by the *server*, in response to a teacher's decision,
+         * through `RoomServiceClient.updateParticipant`. That path is in `grantPublishing`
+         * below, it consults `lib/classroom/speakingFloor.ts`, and it is the only way a
+         * microphone or camera is ever permitted.
+         */
+        canPublish: options.isOwner,
         // The app's own signalling runs over its own WebSocket; nothing needs LiveKit's data
         // channel, and a capability nobody uses is a capability nobody is watching.
         canPublishData: false,
@@ -184,14 +291,15 @@ export const livekitProvider: VideoProvider = {
          */
         roomAdmin: options.isOwner,
         /**
-         * Screen sharing is the teacher's, enforced in the token rather than by hiding a control.
+         * The teacher publishes; a student starts with an empty list.
          *
-         * Everyone may send camera and microphone. Only an owner may send a screen — the same
-         * split the classroom already draws, now true even for a client that ignores the UI.
+         * An empty `canPublishSources` alongside `canPublish: false` is belt and braces on
+         * purpose: the two are separate fields in the protocol and a future SDK that reads one
+         * without the other must still refuse.
          */
         canPublishSources: options.isOwner
           ? [TrackSource.CAMERA, TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
-          : [TrackSource.CAMERA, TrackSource.MICROPHONE],
+          : [],
       });
 
       // Async in livekit-server-sdk v2. Returning the promise unawaited would hand the app a
@@ -200,6 +308,142 @@ export const livekitProvider: VideoProvider = {
     } catch (err) {
       logger.error({ err, sessionId }, "could not mint a LiveKit access token");
       return null;
+    }
+  },
+
+  /**
+   * Tell LiveKit what one participant may now publish.
+   *
+   * The other half of the boundary the token opened above. A student joins able to publish
+   * nothing; this is the single path by which that ever changes, and it runs on the server in
+   * response to a teacher's decision that `lib/membership.ts` has already authorised.
+   *
+   * **`updateParticipant`, not a new token.** Re-minting would mean handing the client a fresh
+   * credential and asking it to reconnect with it — a reconnection mid-lesson, and a moment
+   * where the old token is still valid. Updating the live participant applies immediately, to
+   * the participant the server names, and leaves nothing reusable behind.
+   *
+   * Answers with an outcome rather than throwing, and the outcome has three values rather than
+   * two. A student who dropped off a second before the teacher pressed the button is `absent` —
+   * ordinary in a Nepali classroom, and safe, because their token permits publishing nothing and
+   * a reconnect re-pushes the grant. A call that could not be made is `failed`, and the caller
+   * must not report that as a change that happened. See `ProviderApply` in `types.ts`.
+   */
+  async setPublishing(
+    sessionId: string | number,
+    userId: number,
+    rights: { canPublish: boolean; mic: boolean; camera: boolean },
+  ): Promise<ProviderApply> {
+    const settings = config();
+    // Not "absent": nobody has been asked anything. Reporting this as absence would let a
+    // deployment with no LiveKit credentials look like a classroom where everybody had left.
+    if (!settings) return { applied: false, reason: "failed", error: "LiveKit is not configured" };
+    const identity = providerUserId(userId);
+    if (identity === null) {
+      return { applied: false, reason: "failed", error: `no usable participant identity for user ${userId}` };
+    }
+
+    const sources: TrackSource[] = [];
+    if (rights.mic) sources.push(TrackSource.MICROPHONE);
+    if (rights.camera) sources.push(TrackSource.CAMERA);
+
+    /**
+     * An empty source list is not "nothing" — to LiveKit it is "everything".
+     *
+     * From its own `protocol/auth/grants.go`, which is what the SFU actually runs:
+     *
+     * ```go
+     * func (v *VideoGrant) GetCanPublishSource(source livekit.TrackSource) bool {
+     *     if !v.GetCanPublish() { return false }
+     *     if len(v.CanPublishSources) == 0 { return true }
+     * ```
+     *
+     * So `canPublish: true` with no sources permits camera, microphone *and screen share*. The
+     * only thing standing between a caller's mistake and that outcome is `canPublish`, so it is
+     * forced false whenever there is nothing to permit. `publishRightsFor` already derives it
+     * correctly; this is here because the consequence is severe enough to be worth refusing twice,
+     * and because this file is the one that knows the rule.
+     */
+    const canPublish = rights.canPublish && sources.length > 0;
+
+    try {
+      const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
+      await rooms.updateParticipant(roomNameForSession(sessionId), identity, undefined, {
+        canSubscribe: true,
+        canPublish,
+        canPublishData: false,
+        canPublishSources: sources,
+      });
+      /*
+        Note what cannot be set from here: `roomAdmin` is not part of `ParticipantPermission`
+        at all. Moderator rights exist only as a claim in the signed token, and the token gets
+        them only from `isOwner`. So a permission update is structurally incapable of making
+        somebody a moderator — it is not a rule this code enforces, it is one the protocol does,
+        which is the better kind. The compiler rejected an earlier version of this that tried.
+      */
+      return { applied: true };
+    } catch (err) {
+      if (looksAbsent(err)) return { applied: false, reason: "absent" };
+      logger.warn({ err, sessionId, userId }, "could not update LiveKit publishing permission");
+      return failedWith(err);
+    }
+  },
+
+  /**
+   * Stop a track that is already live.
+   *
+   * Revoking permission stops somebody publishing *again*; it does not by itself silence a
+   * microphone already open. A teacher pressing mute expects silence now, so the live track is
+   * muted as well — which is why `endDiscussion` and `muteAllStudents` call both halves.
+   */
+  async silence(sessionId: string | number, userId: number): Promise<ProviderApply> {
+    const settings = config();
+    if (!settings) return { applied: false, reason: "failed", error: "LiveKit is not configured" };
+    const identity = providerUserId(userId);
+    if (identity === null) {
+      return { applied: false, reason: "failed", error: `no usable participant identity for user ${userId}` };
+    }
+
+    try {
+      const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
+      /*
+        The roster answers the absence question on its own.
+
+        Measured: `listParticipants` on an empty room, and on a room that does not exist, both
+        return `[]` rather than throwing. So a participant who is not in the list is `absent` —
+        an ordinary outcome that needs no retry, because there is no track to stop.
+      */
+      const people = await rooms.listParticipants(roomNameForSession(sessionId));
+      const who = people.find((p) => p.identity === identity);
+      if (!who) return { applied: false, reason: "absent" };
+
+      const open = (who.tracks ?? []).filter((track) => !track.muted);
+      // Present with nothing running is a completed silence: there is nothing left to stop.
+      if (open.length === 0) return { applied: true };
+
+      for (const track of open) {
+        /*
+          One at a time, and a single failure fails the whole call.
+
+          A student publishing a microphone and a camera whose microphone was muted and whose
+          camera was not is still audible in the sense that matters — something the teacher asked
+          to stop is still running. Reporting partial success would put that student back in the
+          "silenced" column on the teacher's screen, which is the exact lie this change exists to
+          remove. The caller retries, and a retry re-lists, so an already-muted track is skipped.
+        */
+        await rooms.mutePublishedTrack(roomNameForSession(sessionId), identity, track.sid, true);
+      }
+      return { applied: true };
+    } catch (err) {
+      /*
+        A participant who vanished between the list and the mute answers `unavailable`/503 ("no
+        response from servers"), which is indistinguishable from a real outage — measured. So it
+        is classified as `failed` and retried; the retry re-lists and finds them absent, which
+        converges on the right answer without ever calling an outage an absence.
+      */
+      if (looksAbsent(err)) return { applied: false, reason: "absent" };
+      logger.warn({ err, sessionId, userId }, "could not stop a LiveKit track");
+      return failedWith(err);
     }
   },
 };

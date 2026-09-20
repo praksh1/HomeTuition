@@ -81,15 +81,21 @@ LIVEKIT_API_SECRET=
 LIVEKIT_URL=wss://your-project.livekit.cloud
 ```
 
-Then check them before starting anything:
+Then check them before starting anything. Two ways, same answer:
 
-```
-pnpm.cmd run livekit:check
-```
+- **In the app** — sign in as a support agent and press **Check video calls** at the top of the
+  support desk. This is the one to use for the live site, because it reads that server's
+  settings rather than this file.
+- **In a terminal**, for the `.env` you just edited:
 
-It says in plain words whether each value is present, whether the secret can sign a token, and
-whether LiveKit accepts them — and what to do about each failure. Worth the twenty seconds,
-because a wrong secret and a bad connection produce the same message inside the app.
+  ```
+  pnpm.cmd run livekit:check
+  ```
+
+Either says in plain words whether each value is present, whether the secret can sign a token,
+and whether LiveKit accepts them — and what to do about each failure, naming the place to do it.
+Worth the twenty seconds, because a wrong secret and a bad connection produce the same message
+inside the app.
 
 Delete the `VIDEO_PROVIDER` line to go back to Daily. Nothing else changes and there is nothing
 to rebuild. Phones keep Daily either way — the server decides per device, so you cannot break

@@ -64,6 +64,7 @@ const fakeProvider = path.join(work, "fake-video.js");
 writeFileSync(
   fakeProvider,
   `
+window.__plans = [];
 const connectionListeners = new Set();
 const rosterListeners = new Set();
 const problemListeners = new Set();
@@ -124,6 +125,14 @@ const session = {
     roster();
   },
   async unblockAudio() { state.audioBlocked = false; roster(); },
+  /*
+    Recorded rather than performed.
+
+    The real one unsubscribes and asks for a simulcast layer; what is worth asserting here is the
+    *decision* — who the component thought was worth paying for — and that is the argument, not
+    the effect. Whether unsubscribing actually saves bytes is LiveKit's business.
+  */
+  setCameraPlan(plan) { window.__plans.push(plan); },
   onConnectionStateChange(fn) { connectionListeners.add(fn); fn(state.connection); return () => connectionListeners.delete(fn); },
   onParticipantsChange(fn) { rosterListeners.add(fn); fn(session.getParticipants()); return () => rosterListeners.delete(fn); },
   onMediaProblem(fn) { problemListeners.add(fn); return () => problemListeners.delete(fn); },
@@ -177,21 +186,27 @@ import { createRoot } from "react-dom/client";
 import LiveKitEmbed from ${JSON.stringify(path.join(appRoot, "components", "LiveKitEmbed.web.tsx"))};
 
 window.__events = { left: 0, watchedLeft: 0 };
+let setControls;
 
 function Harness() {
+  const [controls, set] = React.useState(true);
+  setControls = set;
   return React.createElement("div", { style: { position: "relative", width: "100vw", height: "100vh" } },
     React.createElement(LiveKitEmbed, {
       roomUrl: "wss://example.invalid",
       meetingToken: "test-token",
       displayName: "Sita Sharma",
       canScreenShare: true,
+      teacherUserId: "2",
       watchUserName: "Ram Bahadur",
       onLeft: () => { window.__events.left += 1; },
       onWatchedParticipantLeft: () => { window.__events.watchedLeft += 1; },
+      showControls: controls,
     }),
   );
 }
 createRoot(document.getElementById("root")).render(React.createElement(Harness));
+window.__showControls = (value) => setControls(Boolean(value));
 `,
 );
 
@@ -232,6 +247,12 @@ async function run(chromium, viewport, label) {
   console.log(`\n[${label}] The call surface comes up`);
   check(`${label}: renders without a page error`, errors.length === 0, errors[0] ?? "");
   check(`${label}: the call area is there`, (await p.locator('[data-testid="livekit-embed"]').count()) === 1);
+  await p.evaluate(() => window.__showControls(false));
+  await p.waitForTimeout(120);
+  check(`${label}: a compact preview does not squeeze provider controls into the thumbnail`,
+    (await p.locator('[data-testid="livekit-controls"]').count()) === 0);
+  await p.evaluate(() => window.__showControls(true));
+  await p.waitForTimeout(120);
 
   console.log(`\n[${label}] A class with a teacher and two students`);
   await p.evaluate(() => window.__lk.connect([
@@ -302,7 +323,7 @@ async function run(chromium, viewport, label) {
   );
 
   console.log(`\n[${label}] The controls are reachable`);
-  for (const id of ["livekit-mic", "livekit-camera", "livekit-audio-only", "livekit-leave"]) {
+  for (const id of ["livekit-mic", "livekit-camera", "livekit-share", "livekit-more", "livekit-leave"]) {
     const box = await p.locator(`[data-testid="${id}"]`).boundingBox();
     check(
       `${label}: ${id} is at least 44x44`,
@@ -310,22 +331,32 @@ async function run(chromium, viewport, label) {
       box ? `${Math.round(box.width)}x${Math.round(box.height)}` : "missing",
     );
   }
-  check(
-    `${label}: the teacher's screen-share control is offered`,
-    (await p.locator('[data-testid="livekit-share"]').count()) === 1,
-  );
-  // The panel is narrow on a phone; controls must wrap rather than run off the edge.
+  check(`${label}: the teacher's screen-share control is offered`,
+    (await p.locator('[data-testid="livekit-share"]').count()) === 1);
+  // The primary rail is deliberately one row. Less frequent controls stay one tap away rather
+  // than squeezing six labelled buttons into the call window.
   const barWidth = (await p.locator('[data-testid="livekit-controls"]').boundingBox())?.width ?? 0;
   check(`${label}: no control is cut off by the panel edge`, barWidth <= viewport.width + 1);
+  await p.locator('[data-testid="livekit-more"]').click();
+  check(`${label}: the secondary controls open from one clear action`,
+    (await p.locator('[data-testid="livekit-more-menu"]').count()) === 1);
+  for (const id of ["livekit-flip", "livekit-audio-only"]) {
+    const box = await p.locator(`[data-testid="${id}"]`).boundingBox();
+    check(`${label}: ${id} is at least 44 points tall`, Boolean(box) && box.height >= 44,
+      box ? `${Math.round(box.width)}x${Math.round(box.height)}` : "missing");
+  }
+  await p.locator('[data-testid="livekit-more"]').click();
 
   await p.screenshot({ path: path.join(SHOTS, `${label}-call.png`) });
 
   console.log(`\n[${label}] Audio-only keeps the lesson and drops the faces`);
+  await p.locator('[data-testid="livekit-more"]').click();
   await p.locator('[data-testid="livekit-audio-only"]').click();
   await p.waitForTimeout(300);
+  await p.locator('[data-testid="livekit-more"]').click();
   check(
     `${label}: the control flips to offering video back`,
-    (await p.locator('[data-testid="livekit-audio-only"]').textContent()) === "Video on",
+    (await p.locator('[data-testid="livekit-audio-only"]').getAttribute("aria-label")) === "Turn video back on for everyone",
   );
   check(`${label}: and it turned the local camera off`, await p.evaluate(() => window.__lk.state().audioOnly));
   /*
@@ -413,18 +444,17 @@ async function run(chromium, viewport, label) {
     button shows, whichever way round the control currently is.
   */
   const spoken = {
-    "livekit-mic": { Mute: "Mute microphone", Unmute: "Unmute microphone" },
-    "livekit-camera": { "Camera off": "Turn camera off", "Camera on": "Turn camera on" },
-    "livekit-share": { "Share screen": "Share screen", "Stop sharing": "Stop sharing screen" },
+    "livekit-mic": ["Mute microphone", "Unmute microphone"],
+    "livekit-camera": ["Turn camera off", "Turn camera on"],
+    "livekit-share": ["Share screen", "Stop sharing screen"],
   };
   for (const [id, wording] of Object.entries(spoken)) {
     const control = p.locator(`[data-testid="${id}"]`);
-    const seen = (await control.textContent()) ?? "";
     const heard = await control.getAttribute("aria-label");
     check(
       `${label}: ${id} names its action, not its state`,
-      heard === wording[seen],
-      `shows "${seen}", says "${heard}"`,
+      wording.includes(heard),
+      `says "${heard}"`,
     );
   }
 
@@ -452,6 +482,38 @@ async function run(chromium, viewport, label) {
   );
 
   console.log(`\n[${label}] Nothing threw along the way`);
+  console.log(`\n[${label}] A discussion bigger than the screen`);
+  /*
+    Twelve people, which is a real monthly class. The point is not the layout — it is that a phone
+    does not download eleven cameras to draw four tiles, because that is the number the whole
+    Monthly price rests on. See utils/discussionLayout.ts.
+  */
+  await p.evaluate(() => {
+    window.__plans = [];
+    window.__lk.connect([
+      { id: "1", name: "Sita Sharma", isLocal: true },
+      { id: "2", name: "Teacher Sir" },
+      ...Array.from({ length: 10 }, (_, i) => ({ id: String(100 + i), name: `Student ${i + 1}` })),
+    ]);
+  });
+  await p.waitForTimeout(400);
+
+  const drawn = await p.locator('[data-testid^="livekit-tile-"]').count();
+  const budget = label.startsWith("phone") ? 4 : 9;
+  // The local self-view is a tile too, and it is inside the budget.
+  check(`${label}: only ${budget} tiles are drawn for twelve people`, drawn === budget, `tiles=${drawn}`);
+  check(`${label}: and the rest are said, not silently hidden`,
+    (await p.locator('[data-testid="livekit-overflow"]').count()) === 1);
+
+  const lastPlan = await p.evaluate(() => window.__plans[window.__plans.length - 1] ?? null);
+  check(`${label}: the provider is told which cameras to drop`,
+    Boolean(lastPlan) && lastPlan.unsubscribe.length === 12 - budget,
+    JSON.stringify(lastPlan));
+  check(`${label}: the teacher is never among them`,
+    Boolean(lastPlan) && !lastPlan.unsubscribe.includes("2"), JSON.stringify(lastPlan?.unsubscribe));
+  check(`${label}: nobody is asked to subscribe and unsubscribe at once`,
+    Boolean(lastPlan) && lastPlan.subscribe.every((id) => !lastPlan.unsubscribe.includes(id)));
+
   check(`${label}: no page error during the run`, errors.length === 0, errors[0] ?? "");
 
   await browser.close();

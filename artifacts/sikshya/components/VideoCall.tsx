@@ -28,6 +28,14 @@ export interface VideoCallProps {
   style?: StyleProp<ViewStyle>;
   /** The instant the local person leaves the call. */
   onLeft?: () => void;
+  /**
+   * The instant this device's media connection comes up.
+   *
+   * Only a provider whose permissions the server can change mid-call has anything to do with it,
+   * so Daily ignores it — and on Daily every participant may unmute themselves anyway, which is
+   * why there is no grant to be waiting on. The classroom passes it to the floor.
+   */
+  onMediaReady?: () => void;
   /** Watch for one named participant leaving — how a student learns the teacher has gone. */
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
@@ -42,6 +50,24 @@ export interface VideoCallProps {
    */
   chatMessages?: { id: string; senderName: string; text: string; time: string; isMe: boolean }[];
   onSendChat?: (text: string) => void;
+  /**
+   * The class's teacher, by account id, so their tile is never dropped for a talkative student.
+   *
+   * Only a provider that lays out its own tiles can use it. Daily brings its own interface and
+   * ignores it, which is why it is optional rather than required — a prop no provider needs is a
+   * prop that should not be in this contract at all.
+   */
+  teacherUserId?: string | null;
+  /** Whoever the teacher has featured, from the classroom floor. */
+  spotlightUserId?: string | null;
+  /**
+   * Whether provider controls fit in the app-owned call window.
+   *
+   * A compact call window is a preview, not a second toolbar. The classroom shell owns the
+   * window size and tells a custom provider when there is enough room to draw controls. Daily
+   * brings its own iframe UI and cannot use this hint; LiveKit can and must.
+   */
+  showProviderControls?: boolean;
 }
 
 export default function VideoCall({ provider = "daily", ...props }: VideoCallProps) {
@@ -81,11 +107,15 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
           displayName={props.displayName}
           style={props.style}
           onLeft={props.onLeft}
+          onMediaReady={props.onMediaReady}
           watchUserName={props.watchUserName}
           onWatchedParticipantLeft={props.onWatchedParticipantLeft}
           canScreenShare={props.canScreenShare}
           chatMessages={props.chatMessages}
           onSendChat={props.onSendChat}
+          teacherUserId={props.teacherUserId}
+          spotlightUserId={props.spotlightUserId}
+          showControls={props.showProviderControls}
         />
       );
 

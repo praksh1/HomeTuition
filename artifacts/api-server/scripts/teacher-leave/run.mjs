@@ -11,10 +11,11 @@
  * see .agents/backlog/monthly-partial-months-and-dropping.md. What is checked here is the
  * narrow thing that was asked for, and that it does not quietly do more than that.
  *
- * Usage: PGURL=... API_URL=http://127.0.0.1:8080 node scripts/teacher-leave/run.mjs
+ * Usage: PGURL=... API_URL=http://127.0.0.1:8080  (that API must run with NODE_ENV=test) node scripts/teacher-leave/run.mjs
  */
 import { execFileSync } from "node:child_process";
 import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+import { assertPlanPurchased } from "../test-support/apiMode.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const PGURL = process.env.PGURL ?? process.env.DATABASE_URL ?? "postgres://postgres@127.0.0.1:55432/ht";
@@ -57,7 +58,9 @@ async function run() {
     name: "Away Teacher", email, password: "password123", role: "teacher", subject: "Maths", bio: "x" } })).body;
   prepareTeacherForClass(teacher.user.id);
   sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${teacher.user.id}`);
-  await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+  // The response was being discarded. When it is a refusal every later step fails for a
+  // reason that looks nothing like the cause — see ../test-support/apiMode.mjs.
+  assertPlanPurchased(await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } }));
   const made = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
     subject: "Maths", topic: "Daily algebra", startMinute: 17 * 60, durationMinutes: 60,
     timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20 } });

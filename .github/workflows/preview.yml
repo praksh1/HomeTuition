@@ -53,7 +53,7 @@ concurrency:
 jobs:
   preview:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16
@@ -224,10 +224,23 @@ jobs:
       - name: Notification delivery and preferences
         run: pnpm --filter @workspace/api-server run test:notifications
 
+      # A UI-only preview cannot prove that a student's microphone is actually denied by the
+      # provider. These drive the real API on both providers, inspect signed grants, and exercise
+      # the server-owned speaking floor against a recording LiveKit control plane.
+      - name: Video provider and speaking-floor contracts
+        run: |
+          pnpm --filter @workspace/api-server run test:video
+          pnpm --filter @workspace/api-server run test:floor
+
       - name: Install Chromium for rendered checks
         run: |
           npm i -g playwright
           npx playwright install --with-deps chromium
+
+      - name: Render LiveKit and its speaking floor at phone and laptop sizes
+        run: |
+          pnpm --filter @workspace/sikshya run test:livekit
+          pnpm --filter @workspace/sikshya run test:floor-ui
 
       - name: Render Program discovery and teacher profiles
         run: pnpm --filter @workspace/sikshya run test:discover
@@ -260,6 +273,24 @@ jobs:
       - name: Verify teacher, student and operator navigation
         run: pnpm --filter @workspace/sikshya run test:nav
 
+      # A released local SFU gives the branch a genuine two-person WebRTC call without spending
+      # money or trusting staging credentials. Download failure is non-fatal and the media test
+      # reports an explicit skip; the deterministic contracts above remain mandatory.
+      - name: Install LiveKit for a genuine local call
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          mkdir -p "$HOME/bin"
+          curl -fsSL "https://github.com/livekit/livekit/releases/download/v1.13.6/livekit_1.13.6_linux_amd64.tar.gz" \
+            | tar -xz -C "$HOME/bin" livekit-server || true
+          chmod +x "$HOME/bin/livekit-server" 2>/dev/null || true
+          echo "LIVEKIT_SERVER_BIN=$HOME/bin/livekit-server" >> "$GITHUB_ENV"
+
+      - name: Prove a real two-person LiveKit call and full classroom floor
+        run: |
+          pnpm --filter @workspace/sikshya run test:livekit-live
+          pnpm --filter @workspace/sikshya run test:floor-live
+
       - name: Verify Notification centre and settings at phone and laptop sizes
         run: pnpm --filter @workspace/sikshya run test:notifications-ui
 
@@ -277,6 +308,11 @@ jobs:
         env:
           # Baked in at build time, not read at run time — see .agents/memory/deploy-url-baked-in.md.
           EXPO_PUBLIC_API_URL: ${{ steps.api.outputs.url }}
+
+      - name: Keep the premium whiteboard intact around the replacement call
+        run: |
+          pnpm --filter @workspace/sikshya run test:board
+          pnpm --filter @workspace/sikshya run test:phone
 
       # The build verifies its own baked-in address, but this checks the one thing that would be
       # catastrophic and silent: a bundle that talks to production.

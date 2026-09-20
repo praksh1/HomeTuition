@@ -16,7 +16,7 @@ import type { VideoProvider } from "./types.ts";
 const daily: VideoProvider = {
   name: "daily",
   platforms: ["web", "ios", "android"],
-  capabilities: { screenShare: true, builtInChat: true },
+  capabilities: { screenShare: true, builtInChat: true, moderatesPublishing: false },
   configured: () => true,
   ensureRoom: async () => "https://example.daily.co/room",
   joinToken: async () => "token",
@@ -59,7 +59,7 @@ test("a second provider is chosen when it is named", () => {
 const pretend: VideoProvider = {
   name: "pretend",
   platforms: ["web"],
-  capabilities: { screenShare: false, builtInChat: false },
+  capabilities: { screenShare: false, builtInChat: false, moderatesPublishing: false },
   configured: () => true,
   ensureRoom: async (sessionId) => `wss://video.example/room/${sessionId}`,
   joinToken: async (sessionId, options) =>

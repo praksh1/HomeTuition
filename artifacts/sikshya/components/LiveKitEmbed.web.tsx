@@ -24,6 +24,12 @@ import {
   is still in flight.
 */
 import {
+  planDiscussionLayout,
+  rememberSpeakers,
+  tileCapacity,
+  type SpeakerMemory,
+} from "@/utils/discussionLayout";
+import {
   cameraActionLabel,
   microphoneActionLabel,
   screenShareActionLabel,
@@ -83,6 +89,16 @@ interface Props {
   /** The LiveKit project's `wss://` address, from the server. */
   roomUrl: string;
   /**
+   * The class's teacher, by account id, so their tile is never dropped for a talkative student.
+   *
+   * The id rather than the name: `providerUserId` puts the account id in the participant identity
+   * precisely so two students called Sita are two people, and matching on a display name here
+   * would reintroduce the ambiguity one layer up.
+   */
+  teacherUserId?: string | null;
+  /** Whoever the teacher has featured, from the classroom floor. Null for the ordinary grid. */
+  spotlightUserId?: string | null;
+  /**
    * The signed join token, minted by the API.
    *
    * It carries the room, the identity and the rights: only a teacher's token permits screen
@@ -92,6 +108,18 @@ interface Props {
   meetingToken?: string | null;
   displayName: string;
   onLeft?: () => void;
+  /**
+   * This device's media connection has come up, and the classroom needs to hear about it.
+   *
+   * The classroom WebSocket connects first and the SFU connection follows a moment later, so a
+   * teacher granting the floor in that gap grants it to somebody LiveKit has never seen. The
+   * server keeps such a grant pending rather than pretending, and this is what tells it to finish.
+   *
+   * Fired on every arrival at `connected`, reconnections included — a reconnection is a *new*
+   * participant to LiveKit, minted from the same locked token, so the standing grant has to be
+   * pushed again. The server bounds how often it will act on it.
+   */
+  onMediaReady?: () => void;
   /** Watch for one named person leaving — how a student learns the teacher has gone. */
   watchUserName?: string;
   onWatchedParticipantLeft?: () => void;
@@ -110,6 +138,8 @@ interface Props {
   chatMessages?: ChatMessage[];
   onSendChat?: (text: string) => void;
   enableInCallChat?: boolean;
+  /** False while the app-owned call window is a compact preview. */
+  showControls?: boolean;
 }
 
 /** Long enough that a slow first join is not called a failure, short enough to be honest. */
@@ -390,8 +420,45 @@ function Tile({ participant, inset }: { participant: VideoParticipant; inset?: b
  * `minWidth`/`minHeight` of `HIT_SLOP_MIN` because these are pressed by somebody who is halfway
  * through teaching, on a phone, and the button next to the one they want ends the class.
  */
+type CallIconName =
+  | "mic" | "mic-off" | "video" | "video-off" | "monitor"
+  | "more-horizontal" | "x" | "phone-off" | "refresh-cw" | "headphones";
+
+/**
+ * Tiny provider-owned icons.
+ *
+ * This web component intentionally does not import the native icon bridge. The real Expo bundle
+ * can resolve it, but the lightweight browser/real-media harness cannot—and a call surface should
+ * not depend on a native module just to draw ten lines. These use the same 24-point geometry as
+ * the rest of Fadko's Feather icons, with currentColor so every state keeps its semantic colour.
+ */
+function CallIcon({ name, colour }: { name: CallIconName; colour: string }) {
+  const common = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  let shape: React.ReactNode;
+  switch (name) {
+    case "mic": shape = <><path {...common} d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path {...common} d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3M8 22h8"/></>; break;
+    case "mic-off": shape = <><path {...common} d="m1 1 22 22M9 9v3a3 3 0 0 0 5.1 2.1M15 9.3V5a3 3 0 0 0-5.8-1M17 16.9A7 7 0 0 1 5 12v-2M19 10v2c0 .9-.2 1.8-.5 2.6M12 19v3M8 22h8"/></>; break;
+    case "video": shape = <><rect {...common} x="1" y="5" width="15" height="14" rx="2"/><path {...common} d="m23 7-7 5 7 5V7Z"/></>; break;
+    case "video-off": shape = <><path {...common} d="m1 1 22 22M15 15v2a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7c0-.6.2-1.1.6-1.5M9.5 5H13a2 2 0 0 1 2 2v3.5M23 7l-7 5 3.5 2.5"/></>; break;
+    case "monitor": shape = <><rect {...common} x="2" y="3" width="20" height="14" rx="2"/><path {...common} d="M8 21h8M12 17v4"/></>; break;
+    case "more-horizontal": shape = <><circle cx="5" cy="12" r="1" fill="currentColor"/><circle cx="12" cy="12" r="1" fill="currentColor"/><circle cx="19" cy="12" r="1" fill="currentColor"/></>; break;
+    case "x": shape = <path {...common} d="M18 6 6 18M6 6l12 12"/>; break;
+    case "phone-off": shape = <><path {...common} d="M10.7 13.7a16 16 0 0 0 3.6 3.6l2.4-2.4a1 1 0 0 1 1-.2 11 11 0 0 0 3.5.6 1 1 0 0 1 1 1V20a2 2 0 0 1-2 2C10.1 22 2 13.9 2 4a2 2 0 0 1 2-2h3.7a1 1 0 0 1 1 1 11 11 0 0 0 .6 3.5 1 1 0 0 1-.2 1L6.7 9.9M23 1 1 23"/></>; break;
+    case "refresh-cw": shape = <><path {...common} d="M23 4v6h-6M1 20v-6h6M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></>; break;
+    case "headphones": shape = <><path {...common} d="M3 18v-6a9 9 0 0 1 18 0v6"/><path {...common} d="M21 19a2 2 0 0 1-2 2h-1v-6h3v4ZM3 19a2 2 0 0 0 2 2h1v-6H3v4Z"/></>; break;
+  }
+  return <svg aria-hidden="true" viewBox="0 0 24 24" width="19" height="19" style={{ color: colour, display: "block" }}>{shape}</svg>;
+}
+
 function Control({
   label,
+  icon,
   accessibilityLabel,
   onPress,
   active,
@@ -400,6 +467,7 @@ function Control({
 }: {
   /** What the button says. Short, because the panel is narrow. */
   label: string;
+  icon: CallIconName;
   /**
    * What the button *does*, for somebody who cannot see it.
    *
@@ -429,21 +497,24 @@ function Control({
       onClick={onPress}
       aria-label={accessibilityLabel ?? label}
       aria-pressed={active}
+      title={accessibilityLabel ?? label}
       data-testid={testID}
       style={{
-        minWidth: `${HIT_SLOP_MIN}px`,
+        width: `${HIT_SLOP_MIN}px`,
         minHeight: `${HIT_SLOP_MIN}px`,
-        padding: `0 ${space.sm}px`,
+        padding: 0,
         borderRadius: `${radius.pill}px`,
         border: danger ? `1px solid ${colors.destructive}` : "none",
         background,
         color: ink,
-        fontFamily: t.caption.fontFamily,
-        fontSize: `${t.caption.fontSize}px`,
         cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flex: "0 0 auto",
       }}
     >
-      {label}
+      <CallIcon name={icon} colour={ink} />
     </button>
   );
 }
@@ -453,9 +524,13 @@ export default function LiveKitEmbed({
   meetingToken,
   displayName,
   onLeft,
+  onMediaReady,
   watchUserName,
   onWatchedParticipantLeft,
   canScreenShare,
+  teacherUserId = null,
+  spotlightUserId = null,
+  showControls = true,
 }: Props) {
   const [session, setSession] = useState<VideoSession | null>(null);
   const [connection, setConnection] = useState<VideoConnectionState>("connecting");
@@ -466,6 +541,7 @@ export default function LiveKitEmbed({
   const [audioOnly, setAudioOnlyState] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [soundBlocked, setSoundBlocked] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   /*
     Callbacks in refs, read at the moment they fire.
@@ -477,9 +553,11 @@ export default function LiveKitEmbed({
   const onLeftRef = useRef(onLeft);
   const onWatchedLeftRef = useRef(onWatchedParticipantLeft);
   const watchNameRef = useRef(watchUserName);
+  const onMediaReadyRef = useRef(onMediaReady);
   onLeftRef.current = onLeft;
   onWatchedLeftRef.current = onWatchedParticipantLeft;
   watchNameRef.current = watchUserName;
+  onMediaReadyRef.current = onMediaReady;
 
   /** Whether the watched person has ever been seen, so their absence means something. */
   const watchedSeen = useRef(false);
@@ -535,6 +613,16 @@ export default function LiveKitEmbed({
           live.onConnectionStateChange((state) => {
             setConnection(state);
             if (state === "disconnected") announceOnce();
+            /*
+              Every arrival at `connected`, not only the first.
+
+              To LiveKit a reconnection is a *new* participant, minted from the same token — which
+              for a student permits publishing nothing. So a student who was speaking, dropped and
+              came back needs their standing grant pushed again, and this is what asks for it. The
+              server decides whether anything is actually outstanding; announcing it when nothing
+              is costs one frame and no provider call at all.
+            */
+            if (state === "connected") onMediaReadyRef.current?.();
           }),
         );
         cleanups.push(
@@ -589,7 +677,56 @@ export default function LiveKitEmbed({
   const screen = useMemo(() => participants.find((p) => p.screen !== null) ?? null, [participants]);
 
   const [gridRef, gridBox] = useBoxSize();
-  const columns = bestColumns(remotes.length, gridBox.width, gridBox.height);
+
+  /**
+   * Who gets a tile, and whose camera is worth paying for.
+   *
+   * Recomputed whenever the roster moves, which is also when somebody starts or stops talking —
+   * the provider reports both through the same subscription. The plan itself is
+   * `utils/discussionLayout.ts` and is tested there; this is the wiring.
+   *
+   * The memory lives in a ref rather than in state on purpose. It changes on every frame in which
+   * anybody is speaking, and putting that in state would re-render the whole call several times a
+   * second to move a number nobody looks at directly.
+   */
+  const speakerMemory = useRef<SpeakerMemory>({});
+  const capacity = tileCapacity(gridBox.width || 0);
+  const plan = useMemo(() => {
+    const people = participants.map((p) => ({
+      id: p.id,
+      isLocal: p.isLocal,
+      hasCamera: p.camera !== null,
+      isSpeaking: p.isSpeaking,
+    }));
+    const now = Date.now();
+    speakerMemory.current = rememberSpeakers(speakerMemory.current, people, now);
+    return planDiscussionLayout({
+      people,
+      teacherId: teacherUserId,
+      spotlightId: spotlightUserId,
+      memory: speakerMemory.current,
+      now,
+      // Before the grid has been measured there is no honest capacity, so nothing is dropped:
+      // a first frame that unsubscribed from everybody would blank the class for a moment.
+      capacity: gridBox.width > 0 ? capacity : Number.MAX_SAFE_INTEGER,
+    });
+  }, [participants, teacherUserId, spotlightUserId, capacity, gridBox.width]);
+
+  /*
+    Hand the plan to the provider.
+
+    In its own effect rather than inside the render above, because subscribing is a side effect on
+    a live connection and React may run a render twice. `setCameraPlan` is optional on the
+    contract: a provider that cannot express it simply does not get asked, rather than being made
+    to look as though it had.
+  */
+  useEffect(() => {
+    session?.setCameraPlan?.(plan);
+  }, [session, plan]);
+
+  const visible = useMemo(() => new Set(plan.visible), [plan]);
+  const shown = useMemo(() => remotes.filter((p) => visible.has(p.id)), [remotes, visible]);
+  const columns = bestColumns(shown.length, gridBox.width, gridBox.height);
 
   const act = useCallback(
     (fn: (live: VideoSession) => Promise<unknown>) => () => {
@@ -744,6 +881,31 @@ export default function LiveKitEmbed({
           </div>
         ) : null}
 
+        {/*
+          Somebody is here and off screen, said rather than hidden.
+
+          The tile budget drops the quietest people first, which is right — and a class where
+          three students simply vanished with no explanation is not. The count is deliberately not
+          a list of names: on a phone that is another row of text over the board, and the person
+          reading it can open the class list if they want to know who.
+        */}
+        {plan.overflow > 0 ? (
+          <div
+            data-testid="livekit-overflow"
+            style={{
+              alignSelf: "center",
+              padding: `${space.xxs}px ${space.xs}px`,
+              borderRadius: `${radius.pill}px`,
+              background: colors.secondary,
+              color: colors.secondaryForeground,
+              fontFamily: t.caption.fontFamily,
+              fontSize: `${t.caption.fontSize}px`,
+            }}
+          >
+            {plan.overflow === 1 ? "1 more person is here" : `${plan.overflow} more people are here`}
+          </div>
+        ) : null}
+
         {remotes.length === 0 ? (
           <div
             data-testid="livekit-waiting"
@@ -787,7 +949,7 @@ export default function LiveKitEmbed({
                   }),
             }}
           >
-            {remotes.map((participant) => (
+            {shown.map((participant) => (
               <Tile key={participant.id} participant={participant} />
             ))}
           </div>
@@ -797,63 +959,133 @@ export default function LiveKitEmbed({
         {local ? <Tile participant={local} inset /> : null}
       </div>
 
-      <div
-        data-testid="livekit-controls"
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          justifyContent: "center",
-          gap: `${space.xs}px`,
-          padding: `${space.xs}px`,
-          background: colors.ink,
-        }}
-      >
-        <Control
-          testID="livekit-mic"
-          label={local?.micEnabled ? "Mute" : "Unmute"}
-          accessibilityLabel={microphoneActionLabel(local?.micEnabled === true)}
-          active={local?.micEnabled === true}
-          onPress={act((live) => live.toggleMic())}
-        />
-        <Control
-          testID="livekit-camera"
-          label={local?.cameraEnabled ? "Camera off" : "Camera on"}
-          accessibilityLabel={cameraActionLabel(local?.cameraEnabled === true)}
-          active={local?.cameraEnabled === true}
-          onPress={act((live) => live.toggleCamera())}
-        />
-        <Control
-          testID="livekit-flip"
-          label="Flip"
-          accessibilityLabel="Switch to the other camera"
-          onPress={act((live) => live.switchCamera())}
-        />
-        {canScreenShare ? (
+      {showControls ? (
+        <div
+          data-testid="livekit-controls"
+          style={{
+            position: "relative",
+            display: "flex",
+            justifyContent: "center",
+            gap: `${space.xxs}px`,
+            padding: `${space.xs}px`,
+            background: colors.ink,
+          }}
+        >
+          {moreOpen ? (
+            <div
+              data-testid="livekit-more-menu"
+              role="group"
+              aria-label="More call controls"
+              style={{
+                position: "absolute",
+                left: `${space.xs}px`,
+                right: `${space.xs}px`,
+                bottom: `calc(100% + ${space.xs}px)`,
+                display: "flex",
+                flexWrap: "wrap",
+                justifyContent: "center",
+                gap: `${space.xs}px`,
+                padding: `${space.xs}px`,
+                border: `1px solid ${colors.onInverseMuted}`,
+                borderRadius: `${radius.md}px`,
+                background: colors.secondary,
+                boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+                zIndex: 4,
+              }}
+            >
+              <button
+                type="button"
+                data-testid="livekit-flip"
+                aria-label="Switch to the other camera"
+                onClick={() => {
+                  setMoreOpen(false);
+                  act((live) => live.switchCamera())();
+                }}
+                style={secondaryActionStyle}
+              >
+                <CallIcon name="refresh-cw" colour={colors.onInverse} />
+                <span>Flip camera</span>
+              </button>
+              <button
+                type="button"
+                data-testid="livekit-audio-only"
+                aria-label={audioOnly ? "Turn video back on for everyone" : "Switch to audio only, keeping the board"}
+                aria-pressed={audioOnly}
+                onClick={() => {
+                  setMoreOpen(false);
+                  act((live) => live.setAudioOnly(!live.audioOnly))();
+                }}
+                style={{
+                  ...secondaryActionStyle,
+                  background: audioOnly ? colors.primary : colors.ink,
+                }}
+              >
+                <CallIcon name={audioOnly ? "video" : "headphones"} colour={colors.onInverse} />
+                <span>{audioOnly ? "Turn video on" : "Use audio only"}</span>
+              </button>
+            </div>
+          ) : null}
+
           <Control
-            testID="livekit-share"
-            label={sharing ? "Stop sharing" : "Share screen"}
-            accessibilityLabel={screenShareActionLabel(sharing ? "sharing" : "idle")}
-            active={sharing}
-            onPress={toggleShare}
+            testID="livekit-mic"
+            icon={local?.micEnabled ? "mic" : "mic-off"}
+            label={local?.micEnabled ? "Mute" : "Unmute"}
+            accessibilityLabel={microphoneActionLabel(local?.micEnabled === true)}
+            active={local?.micEnabled === true}
+            onPress={act((live) => live.toggleMic())}
           />
-        ) : null}
-        <Control
-          testID="livekit-audio-only"
-          label={audioOnly ? "Video on" : "Audio only"}
-          accessibilityLabel={
-            audioOnly ? "Turn video back on for everyone" : "Switch to audio only, keeping the board"
-          }
-          active={audioOnly}
-          onPress={act((live) => live.setAudioOnly(!live.audioOnly))}
-        />
-        <Control
-          testID="livekit-leave"
-          label="Leave"
-          accessibilityLabel="Leave the class"
-          danger
-          onPress={announceLeave}
-        />
-      </div>
+          <Control
+            testID="livekit-camera"
+            icon={local?.cameraEnabled ? "video" : "video-off"}
+            label={local?.cameraEnabled ? "Camera off" : "Camera on"}
+            accessibilityLabel={cameraActionLabel(local?.cameraEnabled === true)}
+            active={local?.cameraEnabled === true}
+            onPress={act((live) => live.toggleCamera())}
+          />
+          {canScreenShare ? (
+            <Control
+              testID="livekit-share"
+              icon="monitor"
+              label={sharing ? "Stop sharing" : "Share screen"}
+              accessibilityLabel={screenShareActionLabel(sharing ? "sharing" : "idle")}
+              active={sharing}
+              onPress={toggleShare}
+            />
+          ) : null}
+          <Control
+            testID="livekit-more"
+            icon={moreOpen ? "x" : "more-horizontal"}
+            label={moreOpen ? "Close more controls" : "More controls"}
+            accessibilityLabel={moreOpen ? "Close more call controls" : "Open more call controls"}
+            active={moreOpen}
+            onPress={() => setMoreOpen((open) => !open)}
+          />
+          <Control
+            testID="livekit-leave"
+            icon="phone-off"
+            label="Leave"
+            accessibilityLabel="Leave the class"
+            danger
+            onPress={announceLeave}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
+
+const secondaryActionStyle: React.CSSProperties = {
+  minHeight: HIT_SLOP_MIN,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: space.xs,
+  padding: `0 ${space.sm}px`,
+  border: `1px solid ${colors.onInverseMuted}`,
+  borderRadius: radius.pill,
+  background: colors.ink,
+  color: colors.onInverse,
+  fontFamily: t.caption.fontFamily,
+  fontSize: t.caption.fontSize,
+  cursor: "pointer",
+};

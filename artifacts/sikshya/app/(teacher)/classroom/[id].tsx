@@ -24,6 +24,7 @@ import { useAuth } from "@/context/AuthContext";
 import type { Teacher } from "@/context/AuthContext";
 import { ApiError, apiGet, apiPatch } from "@/utils/api";
 import { useClassroomSocket } from "@/hooks/useClassroomSocket";
+import ClassroomFloor from "@/components/ClassroomFloor";
 import VideoCall from "@/components/VideoCall";
 import { readRoomRefusal, retryDelayMs, type RoomRefusal } from "@/utils/roomRefusal";
 import { TEST_BOOKING_LABEL, TEST_CLASS_LABEL } from "@/utils/testAccess";
@@ -54,7 +55,7 @@ import { useCallTimeLimit } from "@/hooks/useCallTimeLimit";
 import { useAloneInCall } from "@/hooks/useAloneInCall";
 import SmartBoard from "@/components/SmartBoard";
 import { useLayout } from "@/hooks/useLayout";
-import { HIT_SLOP_MIN } from "@/constants/layout";
+import { HIT_SLOP_MIN, space as spaceScale } from "@/constants/layout";
 import { aloneMessage } from "@/utils/aloneInCall";
 import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
 
@@ -286,6 +287,10 @@ export default function Classroom() {
     sendBoardPage,
     boardLaser,
     sendBoardLaser,
+    floor,
+    floorRefusal,
+    clearFloorRefusal,
+    floorActions,
   } = useClassroomSocket({
     sessionId: id ?? "",
     name: teacherName,
@@ -334,6 +339,17 @@ export default function Classroom() {
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
+  /**
+   * Whether this class's video can enforce a permission, and when its discussion opens.
+   *
+   * Both decided by the server and carried in the room payload. On Daily `canModerate` is false —
+   * everybody in a Prebuilt room can unmute themselves — so the whole floor is hidden rather than
+   * drawn as controls Daily would ignore.
+   */
+  const [canModerate, setCanModerate] = useState(false);
+  const [discussionOpensAt, setDiscussionOpensAt] = useState<number | null>(null);
+  /** The teacher's participant identity, from the room payload. Used only for the tile budget. */
+  const [teacherParticipantId, setTeacherParticipantId] = useState<string | null>(null);
   /**
    * What, if anything, this room has to say about payment — and to *this* person.
    *
@@ -612,6 +628,17 @@ export default function Classroom() {
     }
   };
 
+  /**
+   * Whoever the teacher has featured, as a participant identity rather than an account id.
+   *
+   * The floor speaks in account ids because that is what the server authorises against; the call
+   * roster speaks in participant identities. `providerUserId` on the server is just the id as a
+   * string, so the conversion is a `String(...)` — written out here rather than assumed, so that
+   * the day the identity format gains a prefix there is one place to change.
+   */
+  const spotlightParticipantId =
+    floor && floor.spotlight !== null ? String(floor.spotlight) : null;
+
   const loadSession = async (): Promise<SessionData | null> => {
     try {
       const current = await apiGet<SessionData>(`/sessions/${id}`);
@@ -635,6 +662,9 @@ export default function Classroom() {
         roomUrl: url,
         token,
         provider,
+        capabilities,
+        discussionOpensAt: opensAt,
+        teacherUserId: teacherIdentity,
         testClass,
         testClassLabel,
         testBooking,
@@ -643,6 +673,10 @@ export default function Classroom() {
         roomUrl: string;
         token?: string | null;
         provider?: string;
+        capabilities?: { moderatesPublishing?: boolean };
+        discussionOpensAt?: number | null;
+        /** The teacher's participant identity, so their tile is never dropped for a busy grid. */
+        teacherUserId?: string | null;
         /** The class is open to test bookings. Says nothing about whether *you* paid. */
         testClass?: boolean;
         testClassLabel?: string;
@@ -651,6 +685,9 @@ export default function Classroom() {
         testBookingLabel?: string;
       }>(`/sessions/${id}/room`);
       if (provider) setVideoProvider(provider);
+      setCanModerate(capabilities?.moderatesPublishing === true);
+      setDiscussionOpensAt(typeof opensAt === "number" ? opensAt : null);
+      setTeacherParticipantId(typeof teacherIdentity === "string" ? teacherIdentity : null);
       /**
        * The narrower, personal fact wins; the class-level one is the fallback.
        *
@@ -1782,7 +1819,16 @@ export default function Classroom() {
                   displayName={teacherName}
                   style={StyleSheet.absoluteFill}
                   onLeft={handleDailyLeft}
+                  /*
+                    The classroom socket is up long before this is, and a grant made in that gap
+                    reaches LiveKit before the student's participant does. The server keeps such a
+                    grant pending rather than reporting it done; this is what tells it to finish.
+                  */
+                  onMediaReady={floorActions.mediaReady}
                   canScreenShare
+                  teacherUserId={teacherParticipantId}
+                  spotlightUserId={spotlightParticipantId}
+                  showProviderControls={windowControls.showsProviderControls}
                 />
               ) : (
                 <View
@@ -2143,6 +2189,23 @@ export default function Classroom() {
                 </View>
               </View>
             </ErrorBoundary>
+            {/*
+              The class list, the two whole-class controls, and the discussion.
+
+              Along the bottom rather than in the header: a teacher moderating is looking at the
+              board, and a raised hand they have to go and find is a raised hand that waits.
+            */}
+            <View pointerEvents="box-none" style={s.floorLayer}>
+              <ClassroomFloor
+                floor={floor}
+                refusal={floorRefusal}
+                onDismissRefusal={clearFloorRefusal}
+                actions={floorActions}
+                discussionOpensAt={discussionOpensAt}
+                canModerate={canModerate}
+              />
+            </View>
+
             {/* The transparent layer is inert while closed; the scrim and sheet alone capture. */}
             <View
               pointerEvents={mode === "chat" ? "auto" : "none"}
@@ -2415,6 +2478,20 @@ const s = StyleSheet.create({
   },
   presenceDot: { width: 8, height: 8, borderRadius: 4 },
   noticeLayer: { position: "absolute", alignItems: "center", zIndex: 120 },
+  /*
+    Under the chat sheet and over the board, matching the student's classroom exactly.
+
+    The two screens had already drifted apart once over the call window, which is why that now
+    lives in one shared file. This is the same shape kept the same on purpose.
+  */
+  floorLayer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    padding: spaceScale.sm,
+    zIndex: 110,
+  },
   hudLayer: {
     position: "absolute",
     left: 0,

@@ -15,11 +15,12 @@
  * thirty daily ones — because a teacher saying "bring your compass tomorrow" should not have to
  * choose which day to say it in.
  *
- * Usage: PGURL=... API_URL=http://127.0.0.1:8080 node scripts/one-chat/run.mjs
+ * Usage: PGURL=... API_URL=http://127.0.0.1:8080  (that API must run with NODE_ENV=test) node scripts/one-chat/run.mjs
  */
 import { execFileSync } from "node:child_process";
 import { WebSocket } from "ws";
 import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+import { assertPlanPurchased } from "../test-support/apiMode.mjs";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
 const WS = API.replace(/^http/, "ws");
@@ -92,7 +93,9 @@ async function run() {
 
   console.log("\nA monthly class\n");
 
-  await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+  // The response was being discarded. When it is a refusal every later step fails for a
+  // reason that looks nothing like the cause — see ../test-support/apiMode.mjs.
+  assertPlanPurchased(await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } }));
   const klass = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
     subject: "Maths", topic: "Daily algebra", startMinute: 17 * 60, durationMinutes: 60,
     timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20 } });

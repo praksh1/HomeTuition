@@ -32,6 +32,16 @@ export const dailyProvider: VideoProvider = {
      */
     screenShare: true,
     builtInChat: true,
+    /**
+     * False, and this file implements no `setPublishing` — the two say the same thing once.
+     *
+     * Prebuilt is Daily's own interface and it does not hand us per-participant publish
+     * permissions. More to the point, everybody in a Prebuilt room can unmute themselves, so
+     * there is nothing for a student to ask for and nothing for a teacher's mute to take away.
+     * The classroom hides the raise-your-hand controls on this provider rather than drawing
+     * buttons whose effect Daily would ignore.
+     */
+    moderatesPublishing: false,
   },
 
   configured() {

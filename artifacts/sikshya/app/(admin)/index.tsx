@@ -141,6 +141,17 @@ export default function AdminTickets() {
       */}
       <StorageCheck colors={colors} />
 
+      {/*
+        And can it start a video call?
+
+        The same reasoning one line up, learned twice more. There is a script that answers this,
+        and the owner could not run it: once because their checkout did not have it yet, once
+        because a `cmd.exe` line went into PowerShell, where `&&` is not a statement separator.
+        Neither failure was about video. A button on a screen has no shell to get wrong, and it
+        asks the server that actually serves the calls rather than whatever is on a laptop.
+      */}
+      <VideoCheck colors={colors} />
+
       {counts && (
         <View style={styles.stats}>
           <Stat label="Open tickets" value={counts.known ? counts.openTickets : "—"} colors={colors} />
@@ -371,6 +382,120 @@ function StorageCheck({ colors }: { colors: ReturnType<typeof useColors> }) {
   );
 }
 
+/** One line of the video check, as the server decided it. Never carries a secret. */
+interface Finding {
+  id: string;
+  verdict: "ok" | "wrong" | "unknown";
+  title: string;
+  fix?: string;
+}
+
+interface VideoResult {
+  provider: string;
+  healthy: boolean;
+  /** The headline, written by the server rather than inferred from a count of ticks. */
+  summary: string;
+  findings: Finding[];
+}
+
+/**
+ * The video-settings check, on a button.
+ *
+ * What it reports is the state of the deployed server — the only place the answer is true,
+ * since the key, the secret and the address live on the deployment and not in any checkout.
+ * Somebody who has just pasted three variables into Railway can press this and find out
+ * whether they landed, whether LiveKit accepts them, and whether the switch is actually
+ * flipped, without opening a terminal.
+ *
+ * Three verdicts rather than two, and the middle one earns its place. "The settings are right
+ * but this server cannot reach LiveKit" is not a failure of the settings, and painting it red
+ * sends somebody to regenerate a key that was fine.
+ */
+function VideoCheck({ colors }: { colors: ReturnType<typeof useColors> }) {
+  const [result, setResult] = useState<VideoResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+
+  const run = async () => {
+    setRunning(true);
+    setProblem(null);
+    try {
+      setResult(await apiGet<VideoResult>("/admin/video/check"));
+    } catch (e) {
+      setResult(null);
+      setProblem(e instanceof Error ? e.message : "The check could not be run.");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const tone = (verdict: Finding["verdict"]) =>
+    verdict === "ok" ? colors.success : verdict === "wrong" ? colors.destructive : colors.warn;
+  const mark = (verdict: Finding["verdict"]) =>
+    verdict === "ok" ? "check-circle" : verdict === "wrong" ? "alert-circle" : "help-circle";
+
+  /*
+    The headline takes the worst verdict present, not the average and not the first.
+
+    A screen that says "mostly fine" about a call nobody can join is worse than one that says
+    nothing, and the one thing being asked here is whether a class can start.
+  */
+  const worst: Finding["verdict"] = !result
+    ? "unknown"
+    : result.findings.some((f) => f.verdict === "wrong")
+      ? "wrong"
+      : result.findings.some((f) => f.verdict === "unknown")
+        ? "unknown"
+        : "ok";
+
+  return (
+    <View style={[styles.checkCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      <TouchableOpacity
+        testID="admin-video-check"
+        onPress={() => void run()}
+        disabled={running}
+        activeOpacity={0.8}
+        style={styles.checkRow}
+      >
+        <Feather name="video" size={16} color={colors.secondary} />
+        <Text style={[styles.checkTitle, { color: colors.foreground }]}>
+          {running ? "Checking video calls…" : "Check video calls"}
+        </Text>
+        {running ? <ActivityIndicator size="small" color={colors.secondary} /> : null}
+      </TouchableOpacity>
+
+      {problem ? <Text style={[styles.checkBody, { color: colors.destructive }]}>{problem}</Text> : null}
+
+      {result ? (
+        <View style={styles.checkResult}>
+          <Text testID="admin-video-verdict" style={[styles.checkVerdict, { color: tone(worst) }]}>
+            {result.summary}
+          </Text>
+
+          {result.findings.map((finding) => (
+            <View key={finding.id} style={styles.findingRow}>
+              <Feather name={mark(finding.verdict)} size={14} color={tone(finding.verdict)} style={styles.findingIcon} />
+              <View style={styles.findingText}>
+                <Text testID={`admin-video-${finding.id}`} style={[styles.checkBody, { color: colors.foreground }]}>
+                  {finding.title}
+                </Text>
+                {/*
+                  The remedy sits under the problem, always, and names the actual place to go.
+                  "Check your settings" is a destination; "Railway → your api-server service →
+                  Variables" is a route, and the difference is an evening.
+                */}
+                {finding.fix ? (
+                  <Text style={[styles.checkMeta, { color: colors.mutedForeground }]}>{finding.fix}</Text>
+                ) : null}
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function Stat({ label, value, colors }: { label: string; value: number | string; colors: ReturnType<typeof useColors> }) {
   return (
     <View style={[styles.stat, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -392,6 +517,11 @@ const styles = StyleSheet.create({
   checkVerdict: { fontSize: 14, fontFamily: "Inter_600SemiBold", lineHeight: 20 },
   checkBody: { fontSize: 13, fontFamily: "Inter_400Regular", lineHeight: 19 },
   checkMeta: { fontSize: 11, fontFamily: "Inter_400Regular", lineHeight: 16 },
+  checkResult: { gap: 6, marginTop: 8 },
+  findingRow: { flexDirection: "row", gap: 8, alignItems: "flex-start" },
+  // Nudged down so the icon sits on the first line's baseline rather than its top edge.
+  findingIcon: { marginTop: 2 },
+  findingText: { flex: 1, gap: 2 },
   stats: { flexDirection: "row", gap: 10 },
   stat: { flex: 1, borderRadius: 14, borderWidth: 1, padding: 12, alignItems: "center", gap: 2 },
   statValue: { fontSize: 20, fontFamily: "Inter_600SemiBold" },

@@ -42,7 +42,49 @@ export interface JoinOptions {
    * never from a request body: an identity a client could choose is not an identity.
    */
   userId: number;
+  /**
+   * When this credential should stop working, as epoch milliseconds. Optional.
+   *
+   * The class's hard cutoff — `cutoffAt` in `lib/sessionStart.ts`, ten minutes past the booked
+   * finish, after which no teacher may reopen the call. A provider that can express expiry
+   * should use it; one that cannot may ignore it, which is why this is optional rather than
+   * required. Daily's token lifetime is set by Daily and is untouched by this.
+   *
+   * It exists because a join token outliving its class is a credential somebody still holds
+   * after a refund, after being unenrolled, and after the lesson they paid for ended.
+   */
+  expiresAt?: number;
 }
+
+/** What the classroom has decided one person may publish. Never assembled by a client. */
+export interface PublishRights {
+  canPublish: boolean;
+  mic: boolean;
+  camera: boolean;
+}
+
+/**
+ * What happened when the server asked the provider to change something.
+ *
+ * ## Three answers, because two of them are not the same
+ *
+ * This was a `boolean`, and the false branch meant both "that student is not in the room" and
+ * "the call to the provider failed" — which are opposite situations. An absent participant is
+ * ordinary and safe: their token permits publishing nothing, so a grant they never received
+ * cannot be used, and reconnecting re-pushes it. A failed call is the dangerous one: the floor
+ * has moved, the class has been told, and the SFU has not agreed. Collapsing them meant a
+ * classroom that reported a mute as done while a microphone was still open.
+ *
+ * `.agents/memory/refusals-must-name-their-reason.md` is this same lesson one layer down: when a
+ * check folds several situations into one boolean, make it return which one and let the caller
+ * decide what to say.
+ */
+export type ProviderApply =
+  | { applied: true }
+  /** The provider answered, and there is nobody by that identity in the room. */
+  | { applied: false; reason: "absent" }
+  /** The provider could not be asked, or refused. The change has **not** taken effect. */
+  | { applied: false; reason: "failed"; error: string };
 
 /**
  * What a provider can do, so the app stops guessing.
@@ -55,6 +97,19 @@ export interface VideoCapabilities {
   screenShare: boolean;
   /** The provider brings its own chat panel. When false, the app's own chat is the only one. */
   builtInChat: boolean;
+  /**
+   * The server can decide, mid-call, who is allowed to publish a microphone or a camera.
+   *
+   * The whole raise-your-hand classroom rests on this one bit. Where it is false the feature is
+   * not merely unstyled, it is *meaningless*: Daily Prebuilt lets every participant unmute
+   * themselves, so a student asking permission would be asking for something they already have,
+   * and a teacher's "mute" would be a button that does nothing while looking as though it had.
+   *
+   * So it is answered here rather than inferred from the provider's name, the hub refuses floor
+   * actions when it is false, and the app hides the controls. All three, because a control the
+   * server refuses is still a control that should never have been drawn.
+   */
+  moderatesPublishing: boolean;
 }
 
 /** The three places this app runs. What a client says it is; it confers nothing. */
@@ -110,6 +165,28 @@ export interface VideoProvider {
    * about itself — `isOwner` comes from the server's own membership check.
    */
   joinToken(sessionId: string | number, options: JoinOptions): Promise<string | null>;
+
+  /**
+   * Change what one participant may publish, mid-call, on the server's authority.
+   *
+   * Optional because it is a real capability rather than a universal one: Daily's classroom is
+   * its own prebuilt interface and does not expose per-participant publish permissions to us,
+   * so `dailyProvider` does not implement this and the classroom refuses the teacher's control
+   * rather than pretending it worked. A provider that cannot enforce a permission must not be
+   * asked to look as though it did.
+   *
+   * @returns whether the provider applied it, and if not, whether the participant was simply
+   * absent or the call itself failed. The caller must not report a failure as a completed change.
+   */
+  setPublishing?(sessionId: string | number, userId: number, rights: PublishRights): Promise<ProviderApply>;
+
+  /**
+   * Stop whatever this participant currently has open.
+   *
+   * Separate from `setPublishing` because they answer different questions: one is "may they
+   * speak again", the other is "are they speaking now". A teacher pressing mute means both.
+   */
+  silence?(sessionId: string | number, userId: number): Promise<ProviderApply>;
 }
 
 /** What the room route hands back. Named for what it is, not for whoever is providing it. */

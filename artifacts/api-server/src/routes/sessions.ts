@@ -32,11 +32,15 @@ import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
 import {
   canJoin,
   canStart,
+  cutoffAt,
   isCreatableAt,
   isPastCutoff,
   STUDENT_GRACE_MINUTES,
   studentDoorClosesAt,
 } from "../lib/sessionStart";
+import { discussionOpensAt } from "../lib/classroom/discussionWindow.ts";
+import { providerUserId } from "../lib/video/participantIdentity";
+import { discussionModeEligible as eligibleForDiscussion } from "../lib/classroom/discussionEligibility.ts";
 import type { StartCheck, StartRefusal } from "../lib/sessionStart";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor, teacherIsLate, teacherMinutesLate } from "../lib/sessionEvidence";
@@ -957,6 +961,29 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       // From the authenticated request, never from the body. It identifies the participant in the
       // provider's own records so a dispute can be corroborated per person; it confers nothing.
       userId: req.user!.userId,
+      /**
+       * The credential dies with the class, not eight hours later.
+       *
+       * `cutoffAt` is the same hard stop the rest of this file runs on — ten minutes past the
+       * booked finish, after which no teacher may reopen the call — so the key stops working at
+       * exactly the moment there is nothing left to unlock. Before this, a student who joined at
+       * 10:00 still held a usable LiveKit credential at 17:00: after the lesson, after a refund,
+       * after being unenrolled. This route would refuse them a *new* token and could not take
+       * back the one they had.
+       *
+       * Safe because a token is a door key rather than a heartbeat — measured against a real
+       * server, a live call runs on well past its own token's expiry without noticing. That
+       * measurement is why this is no longer eight hours; see `livekitProvider.ttlSecondsFor`.
+       *
+       * `?? undefined` because a session with no usable time gets the provider's own ceiling
+       * rather than a token that is already dead.
+       *
+       * `endedAt: null` is honest rather than a stub: `cutoffAt` is a function of the *booked*
+       * slot alone — date plus duration plus the overtime allowance — and never of when a
+       * teacher happened to press stop. That is deliberate across this whole timeline, so that
+       * a teacher who starts twenty minutes late does not get twenty extra minutes.
+       */
+      expiresAt: cutoffAt({ ...session, endedAt: null }) ?? undefined,
     });
     /**
      * `roomUrl`, `token` and `isOwner` keep their names.
@@ -984,12 +1011,42 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
      * not been taken.
      */
     const testClass = await isTestClass(id);
+    /*
+      Whether this class carries the Monthly discussion benefit, and when it opens.
+
+      Both derived on the server. The app is told the answer, never asked for its opinion: a
+      client that claims to be Monthly gets whatever the billing records say, which for a
+      pay-as-you-go class is `false` and no window at all.
+
+      `discussionOpensAt` is sent as an instant rather than "in 18 minutes" because the app owns
+      both calendars and does its own formatting; a server phrasing a time would be a third
+      place that has to know how Fadko writes one. It is null when the class is not eligible,
+      so there is nothing for a pay-as-you-go screen to render even by mistake.
+    */
+    const discussionModeEligible = await eligibleForDiscussion(id);
     res.json({
       roomUrl,
       token,
       isOwner: membership!.isSessionTeacher,
       provider: video.name,
       capabilities: video.capabilities,
+      discussionModeEligible,
+      discussionOpensAt: discussionModeEligible
+        ? discussionOpensAt({ ...session, endedAt: null })
+        : null,
+      /*
+        Who the teacher is, in the provider's own vocabulary.
+
+        The app uses it for one thing: never dropping the teacher's tile when the discussion is
+        busier than the screen. Sent as the *participant identity* rather than the raw id so the
+        client compares like with like — matching on a display name instead would put two students
+        called Sita back into one person, which `providerUserId` exists to prevent.
+
+        It discloses nothing a student cannot already see: every participant's identity is in the
+        room roster the moment they join, and which of them is the teacher is not a secret from a
+        class they are sitting in.
+      */
+      teacherUserId: providerUserId(session.teacherId),
       ...(testClass ? { testClass: true, testClassLabel: TEST_CLASS_LABEL } : null),
       ...(membership!.viaTestAccess ? { testBooking: true, testBookingLabel: TEST_BOOKING_LABEL } : null),
     });

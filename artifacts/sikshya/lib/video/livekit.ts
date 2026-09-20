@@ -7,6 +7,7 @@ import {
   Track,
   VideoPreset,
   VideoPresets43,
+  VideoQuality,
   type LocalTrackPublication,
   type Participant,
   type TrackPublication,
@@ -410,6 +411,49 @@ class LiveKitSession implements VideoSession {
       }
     }
   };
+
+  /**
+   * Carry only the cameras that have a tile, at the size that tile is.
+   *
+   * The money, in about fifteen lines. Everything else in this file affects one person's upload;
+   * this affects every person's download, which in a ten-way discussion is nine times as much
+   * traffic. See `utils/discussionLayout.ts` for who ends up on the list.
+   *
+   * `setVideoQuality` names a simulcast layer that is already being published — 180p, 360p or the
+   * 480p cap — so asking for `low` costs the publisher nothing and saves the subscriber most of
+   * the bytes. It is a hint on top of `adaptiveStream` rather than a replacement for it: adaptive
+   * sizing is measured from the element, and an element that has just appeared has no size yet.
+   */
+  setCameraPlan(plan: {
+    subscribe: string[];
+    unsubscribe: string[];
+    quality: Record<string, "low" | "medium" | "high">;
+  }): void {
+    // Audio-only has already dropped every camera on purpose. Re-subscribing four of them here
+    // would undo the one thing a student turned on to keep a lesson alive on a weak line.
+    if (this.wantsAudioOnly) return;
+
+    const wanted = new Set(plan.subscribe);
+    const dropped = new Set(plan.unsubscribe);
+
+    for (const participant of this.room.remoteParticipants.values()) {
+      const id = participant.identity;
+      for (const publication of participant.videoTrackPublications.values()) {
+        // A shared screen is content, like the whiteboard, and is never part of the tile budget.
+        if (publication.source !== Track.Source.Camera) continue;
+
+        if (dropped.has(id) && publication.isSubscribed) publication.setSubscribed(false);
+        else if (wanted.has(id) && !publication.isSubscribed) publication.setSubscribed(true);
+
+        const want = plan.quality[id];
+        if (!want || !publication.isSubscribed) continue;
+        if (typeof publication.setVideoQuality !== "function") continue;
+        publication.setVideoQuality(
+          want === "high" ? VideoQuality.HIGH : want === "medium" ? VideoQuality.MEDIUM : VideoQuality.LOW,
+        );
+      }
+    }
+  }
 
   async setAudioOnly(on: boolean): Promise<void> {
     this.wantsAudioOnly = on;

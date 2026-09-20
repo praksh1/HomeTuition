@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Animated } from "react-native";
 import { getToken } from "@/utils/api";
 import { wsUrl } from "@/utils/wsUrl";
@@ -84,6 +84,244 @@ export type BoardPageCommand =
   | { op: "delete"; pageId: string }
   | { op: "reorder"; pageId: string; toIndex: number }
   | { op: "select"; pageId: string };
+
+/* ========================================================================== *
+ * The classroom floor — who may speak, and who decided                        *
+ * ========================================================================== */
+
+/**
+ * The nine labels a person can be shown about their own or somebody else's media.
+ *
+ * Mirrors `api-server/src/lib/classroom/speakingFloor.ts` exactly. Nine rather than a boolean
+ * because "muted" covers three situations a student needs told apart: they muted themselves, the
+ * teacher muted them, or they never asked to speak in the first place — and a student who thinks
+ * their teacher silenced them behaves differently from one who knows they have not put their hand
+ * up yet.
+ */
+export type MediaState =
+  | "audience"
+  | "requested"
+  | "invited"
+  | "allowed-not-accepted"
+  | "speaking"
+  | "camera-active"
+  | "muted-by-self"
+  | "muted-by-teacher"
+  | "disconnected";
+
+export type InvitationScope = "mic" | "mic+camera";
+export type FloorMode = "classroom" | "discussion";
+
+/**
+ * How far behind the video provider is on one person.
+ *
+ * `ok` is in step. `pending` means the server asked and has not been told yes yet. `failed` means
+ * it asked, could not get through, and stopped trying — the classroom's decision stands on the
+ * server and the SFU has **not** accepted it.
+ *
+ * It exists because the screen used to claim otherwise: a mute that never reached LiveKit was
+ * drawn as a finished mute, so a teacher believed a microphone was off while the class could still
+ * hear it. Nothing in the app may render a row that is not in step as one that is.
+ */
+export type ProviderState = "ok" | "pending" | "failed";
+
+/** One row of the teacher's participant list. Students never receive these. */
+export interface FloorRow {
+  userId: number;
+  name: string;
+  state: MediaState;
+  requestedAt: number | null;
+  invitedAt: number | null;
+  invitationScope: InvitationScope | null;
+  connected: boolean;
+  allowedMic: boolean;
+  allowedCamera: boolean;
+  provider: ProviderState;
+}
+
+export interface TeacherFloorView {
+  scope: "teacher";
+  mode: FloorMode;
+  discussionEligible: boolean;
+  discussionStartedAt: number | null;
+  spotlight: number | null;
+  students: FloorRow[];
+  /** Who is waiting, oldest first, in the server's own order. */
+  queue: number[];
+}
+
+export interface StudentFloorView {
+  scope: "student";
+  mode: FloorMode;
+  discussionEligible: boolean;
+  discussionStartedAt: number | null;
+  spotlight: number | null;
+  you: {
+    state: MediaState;
+    requestedAt: number | null;
+    invitedAt: number | null;
+    invitationScope: InvitationScope | null;
+    allowedMic: boolean;
+    allowedCamera: boolean;
+    acceptedMic: boolean;
+    acceptedCamera: boolean;
+    provider: ProviderState;
+  };
+  /** How many hands are up. A count, never names — see `floorView.ts` on the server. */
+  handsUp: number;
+  /** This viewer's own place in that line, 1-based, or null when they are not in it. */
+  queuePosition: number | null;
+}
+
+export type FloorView = TeacherFloorView | StudentFloorView;
+
+/** Why the server said no. Shown to the one person who asked, and to nobody else. */
+export interface FloorRefusal {
+  action: string | null;
+  code: string;
+  reason: string;
+}
+
+/**
+ * The twenty-three things a person can ask the floor for.
+ *
+ * Typed rather than a `send(type, payload)` because the wire is the security boundary: a screen
+ * that assembles message names from strings is a screen that can send `floor_mute` from a
+ * student's phone by accident. The server refuses that anyway — this just means it never has to.
+ */
+export interface FloorActions {
+  /* A student, about their own place */
+  ask: () => void;
+  cancelAsk: () => void;
+  /**
+   * "My video is connected now." A fact about this device, and not a request for anything.
+   *
+   * The classroom socket and the video connection are separate, and this one comes up first — so a
+   * teacher who grants the floor in the gap is granting it to somebody the SFU has never heard of.
+   * The server used to record that as done; it now leaves it pending and finishes it when this
+   * arrives.
+   *
+   * It carries no payload, deliberately. The server takes the identity from this authenticated
+   * socket and the rights from its own floor, so the most a client can do with it is ask for a
+   * decision its teacher already made to be re-attempted. Sending it in a loop achieves nothing:
+   * the server rate-limits and caps it.
+   */
+  mediaReady: () => void;
+  /** Answer an invitation, or switch on what the teacher has already permitted. */
+  accept: (scope: InvitationScope) => void;
+  /**
+   * One switch at a time, for a student already speaking.
+   *
+   * The case this exists for: turning the camera off to save bandwidth on a weak line while
+   * carrying on answering. Sent to the floor as well as to the call, so the teacher's list does
+   * not go on showing a camera nobody is sending.
+   */
+  setMic: (on: boolean) => void;
+  setCamera: (on: boolean) => void;
+  decline: () => void;
+  listenOnly: () => void;
+  joinDiscussion: (scope: InvitationScope) => void;
+  leaveDiscussion: () => void;
+  /* This class's teacher, about anybody in it */
+  allow: (userId: number, scope: InvitationScope, replace?: boolean) => void;
+  dismiss: (userId: number) => void;
+  cancelInvite: (userId: number) => void;
+  cancelInvites: () => void;
+  inviteAll: () => void;
+  mute: (userId: number) => void;
+  muteAll: () => void;
+  stopCamera: (userId: number) => void;
+  returnToAudience: (userId: number) => void;
+  startDiscussion: () => void;
+  endDiscussion: () => void;
+  spotlight: (userId: number | null) => void;
+}
+
+const PROVIDER_STATES: ProviderState[] = ["ok", "pending", "failed"];
+
+/**
+ * Read a provider state, defaulting to `pending` rather than `ok`.
+ *
+ * The one place where the safe default is *not* the optimistic one. A payload from a server that
+ * does not send this field yet, or one this build cannot read, must not be drawn as "the provider
+ * has this" — that is the exact claim the field was added to stop being made without evidence.
+ */
+function toProviderState(raw: unknown): ProviderState {
+  return PROVIDER_STATES.includes(raw as ProviderState) ? (raw as ProviderState) : "pending";
+}
+
+const MEDIA_STATES: MediaState[] = [
+  "audience", "requested", "invited", "allowed-not-accepted", "speaking",
+  "camera-active", "muted-by-self", "muted-by-teacher", "disconnected",
+];
+
+/**
+ * Read a floor payload, or refuse it.
+ *
+ * The server is ours, so this is not defending against a hostile peer — it is defending against a
+ * *version skew*, which is the realistic failure: a deployed app talking to an API that has moved
+ * on. An unrecognised media state rendered as a label would read as a blank chip; dropped here,
+ * the screen keeps the last state it understood.
+ */
+function toFloorView(raw: unknown): FloorView | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const mode: FloorMode = o.mode === "discussion" ? "discussion" : "classroom";
+  const spotlight = typeof o.spotlight === "number" ? o.spotlight : null;
+  const discussionStartedAt = typeof o.discussionStartedAt === "number" ? o.discussionStartedAt : null;
+  const discussionEligible = o.discussionEligible === true;
+
+  if (o.scope === "teacher") {
+    const rows = Array.isArray(o.students) ? o.students : [];
+    const students: FloorRow[] = [];
+    for (const row of rows) {
+      const r = row as Record<string, unknown>;
+      if (typeof r.userId !== "number" || !MEDIA_STATES.includes(r.state as MediaState)) continue;
+      students.push({
+        userId: r.userId,
+        name: typeof r.name === "string" ? r.name : "Student",
+        state: r.state as MediaState,
+        requestedAt: typeof r.requestedAt === "number" ? r.requestedAt : null,
+        invitedAt: typeof r.invitedAt === "number" ? r.invitedAt : null,
+        invitationScope: r.invitationScope === "mic" || r.invitationScope === "mic+camera" ? r.invitationScope : null,
+        connected: r.connected !== false,
+        allowedMic: r.allowedMic === true,
+        allowedCamera: r.allowedCamera === true,
+        provider: toProviderState(r.provider),
+      });
+    }
+    const queue = Array.isArray(o.queue) ? o.queue.filter((n): n is number => typeof n === "number") : [];
+    return { scope: "teacher", mode, discussionEligible, discussionStartedAt, spotlight, students, queue };
+  }
+
+  if (o.scope === "student") {
+    const you = (o.you ?? {}) as Record<string, unknown>;
+    if (!MEDIA_STATES.includes(you.state as MediaState)) return null;
+    return {
+      scope: "student",
+      mode,
+      discussionEligible,
+      discussionStartedAt,
+      spotlight,
+      you: {
+        state: you.state as MediaState,
+        requestedAt: typeof you.requestedAt === "number" ? you.requestedAt : null,
+        invitedAt: typeof you.invitedAt === "number" ? you.invitedAt : null,
+        invitationScope:
+          you.invitationScope === "mic" || you.invitationScope === "mic+camera" ? you.invitationScope : null,
+        allowedMic: you.allowedMic === true,
+        allowedCamera: you.allowedCamera === true,
+        acceptedMic: you.acceptedMic === true,
+        acceptedCamera: you.acceptedCamera === true,
+        provider: toProviderState(you.provider),
+      },
+      handsUp: typeof o.handsUp === "number" ? o.handsUp : 0,
+      queuePosition: typeof o.queuePosition === "number" ? o.queuePosition : null,
+    };
+  }
+
+  return null;
+}
 
 export interface FloatingReaction {
   id: string;
@@ -265,6 +503,19 @@ interface Result {
   /** Teacher only: publish the visible region so students can follow along. */
   sendBoardView: (view: BoardViewport) => void;
   sessionStatus: string | null;
+  /**
+   * Where this person stands on the classroom floor, as the server sees it.
+   *
+   * Null until the first `floor_state` arrives, and null again once the class ends. Never derived
+   * locally: a screen that guessed at its own permission would be a screen that disagrees with the
+   * SFU, and the disagreement always shows up as somebody being told they may speak while nobody
+   * can hear them.
+   */
+  floor: FloorView | null;
+  /** The last refusal, for the person who asked. Cleared once shown. */
+  floorRefusal: FloorRefusal | null;
+  clearFloorRefusal: () => void;
+  floorActions: FloorActions;
   sendChat: (text: string) => void;
   sendReaction: (emoji: string) => void;
   sendDrawCommit: (shape: DrawPath) => void;
@@ -302,6 +553,9 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   const [boardPageChangedAt, setBoardPageChangedAt] = useState(0);
   const [boardLaser, setBoardLaser] = useState<BoardLaserPoint | null>(null);
   const laserTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [floor, setFloor] = useState<FloorView | null>(null);
+  const [floorRefusal, setFloorRefusal] = useState<FloorRefusal | null>(null);
+  const clearFloorRefusal = useCallback(() => setFloorRefusal(null), []);
 
   const [accessDenied, setAccessDenied] = useState(false);
 
@@ -467,6 +721,28 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
         case "session_status":
           setSessionStatus(msg.status as string);
           break;
+        case "floor_state": {
+          const next = toFloorView(msg.floor);
+          // A payload this build cannot read leaves the last one it could standing, rather than
+          // blanking the controls a teacher is halfway through using.
+          if (next) setFloor(next);
+          break;
+        }
+        case "floor_refused":
+          setFloorRefusal({
+            action: typeof msg.action === "string" ? msg.action : null,
+            code: typeof msg.code === "string" ? msg.code : "unknown",
+            reason:
+              typeof msg.reason === "string" && msg.reason.length > 0
+                ? msg.reason
+                : "That could not be done.",
+          });
+          break;
+        case "floor_ended":
+          // The class stopped. Every permission went with it, so the controls go too rather than
+          // sitting there offering something the server would now refuse.
+          setFloor(null);
+          break;
       }
     };
 
@@ -515,6 +791,10 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     setBoardLaser(null);
     if (laserTimerRef.current) clearTimeout(laserTimerRef.current);
     setAccessDenied(false);
+    // The floor belongs to one class. Carrying it across would show a teacher the previous
+    // lesson's raised hands, and offer a student a microphone in a room they have just left.
+    setFloor(null);
+    setFloorRefusal(null);
   }, [sessionId]);
 
   useEffect(() => () => {
@@ -642,6 +922,58 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     send({ type: "board_laser", ...safe });
   }, [send]);
 
+  /**
+   * The floor's verbs.
+   *
+   * **Nothing here changes local state optimistically**, and that is the whole design. Chat is
+   * echoed locally because a message that appears instantly and arrives a moment later is a better
+   * lie than a laggy one. A *permission* is the opposite: a screen that shows "you may speak"
+   * before the server agrees is a screen that will be wrong, and the student finds out by pressing
+   * unmute and being refused by LiveKit. So every one of these sends and waits, and the UI moves
+   * only when `floor_state` comes back.
+   *
+   * A refusal is cleared as each new action is sent, so the message on screen always belongs to
+   * the last thing the person actually did.
+   */
+  const floorActions = useMemo<FloorActions>(() => {
+    const ask = (data: object) => {
+      setFloorRefusal(null);
+      send(data);
+    };
+    return {
+      ask: () => ask({ type: "floor_ask" }),
+      cancelAsk: () => ask({ type: "floor_cancel_ask" }),
+      /*
+        Sent bare, and without clearing a refusal.
+
+        Every other action here is something the person did, so it replaces whatever the server
+        last said no to. This one is the device talking about itself while the person is reading
+        that message, and wiping it off their screen would be this app losing an answer they
+        asked for.
+      */
+      mediaReady: () => send({ type: "floor_media_ready" }),
+      accept: (scope) => ask({ type: "floor_accept", scope }),
+      setMic: (on) => ask({ type: "floor_accept", mic: on }),
+      setCamera: (on) => ask({ type: "floor_accept", camera: on }),
+      decline: () => ask({ type: "floor_decline" }),
+      listenOnly: () => ask({ type: "floor_listen_only" }),
+      joinDiscussion: (scope) => ask({ type: "floor_join_discussion", scope }),
+      leaveDiscussion: () => ask({ type: "floor_leave_discussion" }),
+      allow: (userId, scope, replace = false) => ask({ type: "floor_allow", userId, scope, replace }),
+      dismiss: (userId) => ask({ type: "floor_dismiss", userId }),
+      cancelInvite: (userId) => ask({ type: "floor_cancel_invite", userId }),
+      cancelInvites: () => ask({ type: "floor_cancel_invites" }),
+      inviteAll: () => ask({ type: "floor_invite_all" }),
+      mute: (userId) => ask({ type: "floor_mute", userId }),
+      muteAll: () => ask({ type: "floor_mute_all" }),
+      stopCamera: (userId) => ask({ type: "floor_stop_camera", userId }),
+      returnToAudience: (userId) => ask({ type: "floor_return_audience", userId }),
+      startDiscussion: () => ask({ type: "floor_start_discussion" }),
+      endDiscussion: () => ask({ type: "floor_end_discussion" }),
+      spotlight: (userId) => ask({ type: "floor_spotlight", userId }),
+    };
+  }, [send]);
+
   return {
     connected,
     accessDenied,
@@ -661,6 +993,10 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     materialRejected,
     clearMaterialRejected,
     sessionStatus,
+    floor,
+    floorRefusal,
+    clearFloorRefusal,
+    floorActions,
     sendChat,
     sendReaction,
     sendDrawCommit,
