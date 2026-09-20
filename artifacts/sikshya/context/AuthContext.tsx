@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost, apiPatch, getToken, setToken, clearToken, ApiError } from "../utils/api";
+import { withinRequestDeadline } from "../utils/requestDeadline";
 
 export type TeacherApprovalStatus = "pending" | "approved" | "rejected";
 
@@ -112,11 +113,14 @@ interface RegisterResult {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  startupProblem: boolean;
+  isRetryingStartup: boolean;
   login: (email: string, password: string, role: "teacher" | "student") => Promise<User | null>;
   register: (data: RegisterData) => Promise<RegisterResult>;
   logout: () => void;
   updateUser: (updates: Partial<User>) => Promise<void>;
   refreshUser: () => Promise<void>;
+  retryStartup: () => Promise<void>;
   socialLogin: (provider: "google" | "facebook" | "apple", credential: string) => Promise<User | null>;
 }
 
@@ -240,30 +244,40 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
 const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
+  startupProblem: false,
+  isRetryingStartup: false,
   login: async () => null,
   register: async () => ({ success: false, verificationEmailSent: false, emailConfigured: false }),
   logout: () => {},
   updateUser: async () => {},
   refreshUser: async () => {},
+  retryStartup: async () => {},
   socialLogin: async () => null,
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [startupProblem, setStartupProblem] = useState(false);
+  const [isRetryingStartup, setIsRetryingStartup] = useState(false);
+  const startupRequestInFlight = useRef(false);
 
   useEffect(() => {
-    loadUser();
+    void restoreUser(true);
   }, []);
 
-  const loadUser = async () => {
+  const restoreUser = async (startup: boolean) => {
     try {
-      const token = await getToken();
+      // AsyncStorage on web sits on browser storage. It is normally instant, but it is still an
+      // external subsystem and has hung on damaged browser profiles. Bound it independently so
+      // the auth request keeps most of the launch budget.
+      const token = await withinRequestDeadline(() => getToken(), 2_500);
       if (token) {
-        const profile = await apiGet<ApiUserProfile>("/auth/me");
+        const profile = await apiGet<ApiUserProfile>("/auth/me", { timeoutMs: 8_000 });
         const mapped = mapApiUserToUser(profile);
         setUser(mapped);
       }
+      if (startup) setStartupProblem(false);
     } catch (err) {
       // Only a rejected token means the login is actually invalid. Clearing on *any* failure
       // logged people out whenever the request merely failed to arrive — a dropped packet, a
@@ -271,11 +285,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // The saved token is kept in that case so the next launch can try again.
       if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
         await clearToken();
+        setUser(null);
+        if (startup) setStartupProblem(false);
+      } else if (startup) {
+        // Keep the token. A deploy, database failover or dropped connection does not sign a
+        // person out; it puts the launch screen into a recoverable state and retries from there.
+        setStartupProblem(true);
       }
     } finally {
-      setIsLoading(false);
+      if (startup) setIsLoading(false);
     }
   };
+
+  const retryStartup = useCallback(async () => {
+    if (startupRequestInFlight.current) return;
+    startupRequestInFlight.current = true;
+    setIsRetryingStartup(true);
+    try {
+      await restoreUser(true);
+    } finally {
+      startupRequestInFlight.current = false;
+      setIsRetryingStartup(false);
+    }
+  }, []);
 
   const login = async (email: string, password: string, _role: "teacher" | "student"): Promise<User | null> => {
     const res = await apiPost<ApiAuthResponse>("/auth/login", { email, password });
@@ -323,6 +355,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async () => {
     await clearToken();
     setUser(null);
+    setStartupProblem(false);
   };
 
   const updateUser = async (updates: Partial<User>) => {
@@ -336,8 +369,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser({ ...user, ...updates } as User);
   };
 
+  const refreshUser = async () => {
+    await restoreUser(false);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, logout, updateUser, refreshUser: loadUser, socialLogin }}>
+    <AuthContext.Provider value={{
+      user,
+      isLoading,
+      startupProblem,
+      isRetryingStartup,
+      login,
+      register,
+      logout,
+      updateUser,
+      refreshUser,
+      retryStartup,
+      socialLogin,
+    }}>
       {children}
     </AuthContext.Provider>
   );

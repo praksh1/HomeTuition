@@ -1,5 +1,10 @@
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  DEFAULT_API_TIMEOUT_MS,
+  RequestTimeoutError,
+  withinRequestDeadline,
+} from "./requestDeadline";
 
 export const TOKEN_KEY = "@sikshya_token";
 
@@ -75,47 +80,71 @@ async function baseHeaders(contentType = "application/json"): Promise<Record<str
   return headers;
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  const headers = await baseHeaders();
-  const res = await fetch(`${getApiBase()}${path}`, { headers });
-  const data = await res.json();
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
-  return data as T;
+interface ApiRequestOptions {
+  timeoutMs?: number;
 }
 
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const headers = await baseHeaders();
-  const res = await fetch(`${getApiBase()}${path}`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
-  return data as T;
+async function readJson(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
-export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const headers = await baseHeaders();
-  const res = await fetch(`${getApiBase()}${path}`, {
-    method: "PATCH",
-    headers,
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
-  return data as T;
+async function apiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  options: ApiRequestOptions = {},
+  contentType = "application/json",
+): Promise<T> {
+  try {
+    return await withinRequestDeadline(async (signal) => {
+      // Storage is part of the deadline too. A browser whose IndexedDB is wedged must not be
+      // able to hold the whole app on its launch screen before the network request even starts.
+      const headers = await baseHeaders(contentType);
+      const res = await fetch(`${getApiBase()}${path}`, { ...init, headers, signal });
+      const data = await readJson(res);
+      if (!res.ok) {
+        const message = typeof data.error === "string" ? data.error : "Request failed";
+        throw new ApiError(res.status, message, data);
+      }
+      return data as T;
+    }, options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    if (error instanceof RequestTimeoutError) {
+      throw new ApiError(0, "Fadko is taking longer than expected. Please try again.", {
+        code: error.code,
+        retryable: true,
+      });
+    }
+    if (error instanceof TypeError || (error instanceof Error && error.name === "AbortError")) {
+      throw new ApiError(0, "Fadko could not reach the server. Check your connection and try again.", {
+        code: "NETWORK_ERROR",
+        retryable: true,
+      });
+    }
+    throw error;
+  }
 }
 
-export async function apiDelete<T>(path: string): Promise<T> {
-  const headers = await baseHeaders();
-  const res = await fetch(`${getApiBase()}${path}`, {
-    method: "DELETE",
-    headers,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "Request failed", data);
-  return data as T;
+export async function apiGet<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  return apiRequest<T>(path, {}, options);
+}
+
+export async function apiPost<T>(path: string, body: unknown, options: ApiRequestOptions = {}): Promise<T> {
+  return apiRequest<T>(path, { method: "POST", body: JSON.stringify(body) }, options);
+}
+
+export async function apiPatch<T>(path: string, body: unknown, options: ApiRequestOptions = {}): Promise<T> {
+  return apiRequest<T>(path, { method: "PATCH", body: JSON.stringify(body) }, options);
+}
+
+export async function apiDelete<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  return apiRequest<T>(path, { method: "DELETE" }, options);
 }
 
 /**
@@ -138,9 +167,7 @@ export async function attachmentUrl(key: string): Promise<string> {
  * bucket. Kept here beside the other callers so the auth header and base URL cannot drift.
  */
 export async function apiPutBinary<T>(path: string, body: Blob, contentType: string): Promise<T> {
-  const headers = await baseHeaders(contentType);
-  const res = await fetch(`${getApiBase()}${path}`, { method: "PUT", headers, body });
-  const data = await res.json().catch(() => ({}) as { error?: string });
-  if (!res.ok) throw new ApiError(res.status, data.error ?? "That file could not be sent.", data);
-  return data as T;
+  // A homework PDF on a slow mobile connection needs more room than an ordinary JSON request,
+  // but it must still finish or fail instead of waiting forever.
+  return apiRequest<T>(path, { method: "PUT", body }, { timeoutMs: 120_000 }, contentType);
 }

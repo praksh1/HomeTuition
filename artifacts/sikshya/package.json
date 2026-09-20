@@ -57,7 +57,8 @@
     "test:class-students": "node scripts/class-students-journey/run.mjs",
     "test:messages-ui": "node scripts/messages-ui/run.mjs",
     "test:profile-ui": "node scripts/profile-ui/run.mjs",
-    "test:notifications-ui": "node scripts/notifications-ui/run.mjs"
+    "test:notifications-ui": "node scripts/notifications-ui/run.mjs",
+    "test:startup-recovery": "node scripts/startup-recovery/run.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
