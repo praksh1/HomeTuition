@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router, usePathname } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
   ActivityIndicator,
@@ -87,9 +87,9 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
       if (skipHistoryLoad.current) return;
       setConversationId(latest.id);
       setTicketId(latest.ticketId);
-      setBubbles([WELCOME, ...detail.messages.map((message) => ({
+      setBubbles(detail.messages.map((message) => ({
         id: String(message.id), from: message.role, text: message.body, source: message.source,
-      }))]);
+      })));
     } catch { /* The assistant remains available for a fresh question. */ }
   }, []);
   useEffect(() => {
@@ -98,7 +98,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
 
   const bottom = Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) + (isExpanded ? 92 : 88);
   const panelWidth = Math.min(width - space.md * 2, isExpanded ? 440 : 520);
-  const panelTitle = useMemo(() => (bubbles.length > 1 ? "Continue with Fadko Support" : "Fadko Support"), [bubbles.length]);
+  const hasConversation = bubbles.some((bubble) => bubble.id !== WELCOME.id);
 
   // The full Support tab already owns the form. Showing another launcher on it would feel like
   // a duplicate control and would make browser Back harder to understand.
@@ -130,7 +130,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
         "/support/assistant/messages", { message: text, conversationId }, { timeoutMs: 12_000 },
       );
       setConversationId(result.conversationId);
-      setBubbles((current) => [...current,
+      setBubbles((current) => [...current.filter((bubble) => bubble.id !== WELCOME.id),
         { id: String(result.question.id), from: "user", text: result.question.body },
         { id: String(result.reply.id), from: "assistant", text: result.reply.body,
           source: result.reply.source, article: result.article?.title },
@@ -221,10 +221,9 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                 <View style={[styles.markDot, { backgroundColor: colors.brand }]} />
               </View>
               <View style={styles.headerCopy}>
-                <Text style={[t.title3, { color: colors.foreground }]}>{panelTitle}</Text>
+                <Text style={[t.title3, { color: colors.foreground }]}>Fadko Support</Text>
                 <View style={styles.statusLine}>
-                  <View style={[styles.statusDot, { backgroundColor: colors.brand }]} />
-                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Reviewed answers · human help when needed</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Reviewed answers</Text>
                 </View>
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Start a new support conversation"
@@ -282,7 +281,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
               {busy && <ActivityIndicator size="small" color={colors.primary} accessibilityLabel="Fadko Support is answering" />}
               {!!error && <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{error}</Text>}
 
-              <Text style={[t.caption, styles.sectionLabel, { color: colors.mutedForeground }]}>Choose a topic</Text>
+              {!hasConversation && <><Text style={[t.caption, styles.sectionLabel, { color: colors.mutedForeground }]}>Choose a topic</Text>
               <View style={styles.topicGrid}>
                 {TOPICS.map((topic) => (
                   <Pressable
@@ -303,7 +302,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                     <Text style={[t.caption, { color: colors.foreground, fontWeight: "600" }]}>{topic.label}</Text>
                   </Pressable>
                 ))}
-              </View>
+              </View></>}
             </ScrollView>
 
             <View style={[styles.composer, { borderColor: colors.border, backgroundColor: colors.muted }]}>
@@ -387,7 +386,6 @@ const styles = StyleSheet.create({
   markDot: { position: "absolute", right: 4, top: 4, width: 7, height: 7, borderRadius: radius.pill },
   headerCopy: { flex: 1, gap: 2 },
   statusLine: { flexDirection: "row", alignItems: "center", gap: space.xxs },
-  statusDot: { width: 6, height: 6, borderRadius: radius.pill },
   close: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
   transcript: { flexGrow: 0 },
   transcriptContent: { paddingHorizontal: space.md, paddingBottom: space.sm, gap: space.sm },
