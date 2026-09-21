@@ -30,7 +30,7 @@ import {
   teacherRowButtons,
   type TeacherIntent,
 } from "@/utils/classroomFloorUi";
-import { FloorButton, FloorChipView, FloorCount, floorStyles, initialsOf } from "./floor/FloorPieces";
+import { FloorButton, FloorChipView, floorStyles, initialsOf } from "./floor/FloorPieces";
 
 /**
  * The classroom floor, on screen.
@@ -202,38 +202,62 @@ function StudentFloor({
       testID="student-floor"
       style={{
         gap: space.xs,
-        padding: space.sm,
-        borderRadius: radius.md,
-        backgroundColor: colors.card,
-        borderWidth: 1,
-        borderColor: handRaised ? colors.primary : colors.border,
+        alignSelf: "center",
       }}
     >
       <Refusal refusal={refusal} onDismiss={onDismissRefusal} />
 
       <View
         style={[
-          isCompact ? floorStyles.rowWrap : floorStyles.row,
-          { gap: space.xs },
+          floorStyles.row,
+          {
+            alignSelf: "center",
+            gap: space.xxs,
+            padding: space.xxs,
+            borderRadius: radius.pill,
+            borderWidth: 1,
+            borderColor: handRaised ? colors.primary : colors.border,
+            backgroundColor: colors.card,
+          },
         ]}
       >
-        <FloorButton
+        <Pressable
           testID={handRaised ? "student-floor-cancel-ask" : "student-floor-ask"}
-          label={handRaised ? "Lower hand" : "Raise hand"}
-          spoken={handRaised ? "Lower your hand" : "Raise your hand for the teacher"}
-          emphasis={handRaised ? "secondary" : "primary"}
-          grow={isCompact}
+          accessibilityRole="button"
+          accessibilityLabel={handRaised ? "Lower your hand" : "Raise your hand for the teacher"}
+          accessibilityState={{ selected: handRaised }}
           onPress={() => {
             if (handRaised) actions.cancelAsk();
             else actions.ask();
           }}
-        />
+          style={[
+            floorStyles.row,
+            {
+              minWidth: HIT_SLOP_MIN,
+              height: HIT_SLOP_MIN,
+              justifyContent: "center",
+              gap: space.xxs,
+              paddingHorizontal: isCompact ? space.sm : space.md,
+              borderRadius: radius.pill,
+              backgroundColor: handRaised ? colors.actionSoft : colors.card,
+            },
+          ]}
+        >
+          <Feather name={handRaised ? "chevron-down" : "arrow-up"} size={19} color={handRaised ? colors.primary : colors.foreground} />
+          {!isCompact ? (
+            <Text style={[t.caption, { color: handRaised ? colors.primary : colors.foreground }]}>
+              {handRaised ? "Hand raised" : "Raise hand"}
+            </Text>
+          ) : null}
+        </Pressable>
         <FloorChipView testID="student-floor-state" label={chip.label} tone={chip.tone} />
-        <FloorChipView
-          testID="student-floor-camera"
-          label={floor.you.allowedCamera ? "Camera available" : "Camera off · teacher controlled"}
-          tone={floor.you.allowedCamera ? "live" : "neutral"}
-        />
+        {floor.you.allowedCamera || floor.you.acceptedCamera ? (
+          <FloorChipView
+            testID="student-floor-camera"
+            label={floor.you.acceptedCamera ? "Camera on" : "Camera available"}
+            tone={floor.you.acceptedCamera ? "live" : "neutral"}
+          />
+        ) : null}
       </View>
 
       {provider ? (
@@ -293,7 +317,6 @@ function TeacherFloor({
     return () => clearInterval(timer);
   }, [floor.discussionEligible]);
 
-  const summary = useMemo(() => floorSummary(floor), [floor]);
   const discussion = discussionControl(floor, discussionOpensAt, now);
 
   /*
@@ -331,112 +354,6 @@ function TeacherFloor({
   return (
     <View testID="teacher-floor" style={{ gap: space.xs }}>
       <Refusal refusal={refusal} onDismiss={onDismissRefusal} />
-
-      <View
-        style={[
-          floorStyles.rowWrap,
-          {
-            gap: space.xs,
-            padding: space.xs,
-            borderRadius: radius.md,
-            backgroundColor: colors.card,
-            borderWidth: 1,
-            borderColor: colors.border,
-          },
-        ]}
-      >
-        <Pressable
-          testID="teacher-floor-participants"
-          onPress={() => setSheetOpen(true)}
-          accessibilityRole="button"
-          accessibilityLabel={
-            summary.handsUp === 0
-              ? "Open the class list"
-              : `Open the class list. ${summary.handsUp} ${summary.handsUp === 1 ? "hand is" : "hands are"} up`
-          }
-          style={[
-            floorStyles.row,
-            {
-              gap: space.xs,
-              minHeight: HIT_SLOP_MIN,
-              paddingHorizontal: space.sm,
-              borderRadius: radius.sm,
-              // The one control that changes colour on its own, because it is the one a teacher
-              // needs to notice without looking for it.
-              backgroundColor: summary.handsUp > 0 ? colors.warnSoft : colors.muted,
-            },
-          ]}
-        >
-          <Feather
-            name="users"
-            size={16}
-            color={summary.handsUp > 0 ? colors.warn : colors.mutedForeground}
-          />
-          <Text
-            style={[t.caption, { color: summary.handsUp > 0 ? colors.warn : colors.mutedForeground }]}
-          >
-            {isCompact ? "Class" : "Class list"}
-          </Text>
-          {summary.handsUp > 0 ? (
-            <FloorCount
-              testID="teacher-floor-hands"
-              icon="arrow-up"
-              count={summary.handsUp}
-              label={`${summary.handsUp} ${summary.handsUp === 1 ? "hand" : "hands"} up`}
-              tone="waiting"
-            />
-          ) : null}
-        </Pressable>
-
-        {summary.speaking + summary.onCamera > 0 ? (
-          <FloorCount
-            testID="teacher-floor-speaking"
-            icon="mic"
-            count={summary.speaking + summary.onCamera}
-            label={`${summary.speaking + summary.onCamera} speaking`}
-            tone="live"
-          />
-        ) : null}
-        {summary.waitingToAnswer > 0 ? (
-          <FloorCount
-            testID="teacher-floor-waiting"
-            icon="clock"
-            count={summary.waitingToAnswer}
-            label={`${summary.waitingToAnswer} invited, not answered yet`}
-            tone="waiting"
-          />
-        ) : null}
-
-        <View style={floorStyles.grow} />
-
-        <FloorButton
-          testID="teacher-floor-mute-all"
-          label="Mute all"
-          spoken="Turn off every student's microphone"
-          emphasis="danger"
-          onPress={() => actions.muteAll()}
-        />
-        {discussion.show ? (
-          <FloorButton
-            testID="teacher-floor-discussion"
-            label={discussion.label}
-            spoken={discussion.hint ? `${discussion.label}. ${discussion.hint}` : discussion.label}
-            emphasis={discussion.ending ? "danger" : "primary"}
-            disabled={!discussion.enabled}
-            onPress={() => {
-              if (discussion.ending) actions.endDiscussion();
-              else actions.startDiscussion();
-            }}
-          />
-        ) : null}
-      </View>
-
-      {discussion.show && discussion.hint ? (
-        <Text testID="teacher-floor-discussion-hint" style={[t.caption, { color: colors.mutedForeground }]}>
-          {discussion.hint}
-        </Text>
-      ) : null}
-
       <ParticipantSheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
@@ -444,6 +361,7 @@ function TeacherFloor({
         floor={floor}
         actions={actions}
         onRowAction={runRow}
+        discussion={discussion}
       />
     </View>
   );
@@ -460,6 +378,7 @@ function ParticipantSheet({
   floor,
   actions,
   onRowAction,
+  discussion,
 }: {
   open: boolean;
   onClose: () => void;
@@ -467,6 +386,7 @@ function ParticipantSheet({
   floor: TeacherFloorView;
   actions: FloorActions;
   onRowAction: (row: FloorRow, intent: TeacherIntent) => void;
+  discussion: ReturnType<typeof discussionControl>;
 }) {
   const colors = useColors();
   const { t, space, radius, isCompact } = useLayout();
@@ -553,6 +473,28 @@ function ParticipantSheet({
           </Pressable>
         </View>
 
+        {discussion.show ? (
+          <View style={{ gap: space.xxs }}>
+            <FloorButton
+              testID="teacher-floor-discussion"
+              label={discussion.label}
+              spoken={discussion.hint ? `${discussion.label}. ${discussion.hint}` : discussion.label}
+              emphasis={discussion.ending ? "danger" : "primary"}
+              disabled={!discussion.enabled}
+              onPress={() => {
+                if (discussion.ending) actions.endDiscussion();
+                else actions.startDiscussion();
+              }}
+              grow
+            />
+            {discussion.hint ? (
+              <Text testID="teacher-floor-discussion-hint" style={[t.caption, { color: colors.mutedForeground }]}>
+                {discussion.hint}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
         <View style={[floorStyles.row, { gap: space.xs, minHeight: HIT_SLOP_MIN, paddingHorizontal: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, backgroundColor: colors.surfaceSunk }]}>
           <Feather name="search" size={18} color={colors.mutedForeground} />
           <TextInput
@@ -570,14 +512,6 @@ function ParticipantSheet({
           <FloorButton testID="participant-mute-all" label="Mute all" spoken="Mute every student" emphasis="danger" onPress={() => actions.muteAll()} grow />
           <FloorButton testID="participant-permissions" label="Permissions" spoken="Open class permissions" emphasis={permissionsOpen ? "primary" : "secondary"} onPress={() => setPermissionsOpen((value) => !value)} grow />
         </View>
-
-        {permissionsOpen ? (
-          <View testID="class-permissions" style={{ gap: space.xxs, padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.muted }}>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Class permissions</Text>
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>Student audio · joins muted · self-unmute allowed until teacher mutes</Text>
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>Student camera · teacher approval required</Text>
-          </View>
-        ) : null}
 
         <View style={[floorStyles.row, { gap: space.xs, flexWrap: "wrap" }]}>
           {([
@@ -618,6 +552,51 @@ function ParticipantSheet({
           </View>
         }
       />
+
+      {permissionsOpen ? (
+        <View
+          testID="class-permissions-surface"
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 5,
+            gap: space.lg,
+            padding: space.md,
+            backgroundColor: colors.card,
+          } as object}
+        >
+          <View style={[floorStyles.row, { gap: space.xs }]}>
+            <Pressable
+              testID="class-permissions-back"
+              accessibilityRole="button"
+              accessibilityLabel="Back to class list"
+              onPress={() => setPermissionsOpen(false)}
+              style={{ width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center" }}
+            >
+              <Feather name="arrow-left" size={20} color={colors.foreground} />
+            </Pressable>
+            <View style={floorStyles.grow}>
+              <Text style={[t.title3, { color: colors.foreground }]}>Class permissions</Text>
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>What students can use in this lesson</Text>
+            </View>
+          </View>
+
+          <View style={{ gap: space.sm }}>
+            <Text style={[t.overline, { color: colors.primary }]}>Student audio</Text>
+            <View style={{ gap: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceSunk }}>
+              <PermissionRow label="Join muted" detail="Students enter without broadcasting" />
+              <PermissionRow label="Self-unmute" detail="Available until you mute a student" />
+            </View>
+          </View>
+
+          <View style={{ gap: space.sm }}>
+            <Text style={[t.overline, { color: colors.primary }]}>Student camera</Text>
+            <View style={{ gap: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceSunk }}>
+              <PermissionRow label="Teacher approval required" detail="A student's camera stays off until you allow it" />
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 
@@ -650,6 +629,32 @@ function ParticipantSheet({
         </Animated.View>
       </Pressable>
     </Modal>
+  );
+}
+
+function PermissionRow({ label, detail }: { label: string; detail: string }) {
+  const colors = useColors();
+  const { t, space, radius } = useLayout();
+  return (
+    <View style={[floorStyles.row, { gap: space.sm }]}>
+      <View style={floorStyles.grow}>
+        <Text style={[t.body, { color: colors.foreground }]}>{label}</Text>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>{detail}</Text>
+      </View>
+      <View
+        accessibilityLabel={`${label}: active classroom rule`}
+        style={{
+          minWidth: 32,
+          height: 32,
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: radius.pill,
+          backgroundColor: colors.actionSoft,
+        }}
+      >
+        <Feather name="check" size={17} color={colors.primary} />
+      </View>
+    </View>
   );
 }
 

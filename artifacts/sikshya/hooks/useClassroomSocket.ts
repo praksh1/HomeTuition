@@ -401,6 +401,8 @@ export interface BoardViewport {
   minY: number;
   maxX: number;
   maxY: number;
+  /** Present only when the teacher explicitly asks every student to return to this view. */
+  focusId?: number;
 }
 
 function toBoardViewport(raw: unknown): BoardViewport | null {
@@ -410,7 +412,13 @@ function toBoardViewport(raw: unknown): BoardViewport | null {
   if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
   const [minX, minY, maxX, maxY] = nums as number[];
   if (maxX <= minX || maxY <= minY) return null;
-  return { minX, minY, maxX, maxY };
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    focusId: typeof o.focusId === "number" && Number.isFinite(o.focusId) ? o.focusId : undefined,
+  };
 }
 
 function toMaterial(kind: unknown, dataUrl: unknown): BoardMaterial | null {

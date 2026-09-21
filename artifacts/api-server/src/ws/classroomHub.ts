@@ -88,7 +88,7 @@ interface BoardState {
    * student who joins mid-lesson otherwise lands at the origin, which may be nowhere near the
    * work, and has to hunt for it.
    */
-  view: { minX: number; minY: number; maxX: number; maxY: number } | null;
+  view: { minX: number; minY: number; maxX: number; maxY: number; focusId?: number } | null;
   /**
    * The object board, keyed by element id.
    *
@@ -1039,7 +1039,10 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           const maxY = typeof msg.maxY === "number" ? msg.maxY : NaN;
           if (![minX, minY, maxX, maxY].every(Number.isFinite)) break;
           if (maxX <= minX || maxY <= minY) break;
-          const view = { minX, minY, maxX, maxY };
+          const focusId = typeof msg.focusId === "number" && Number.isFinite(msg.focusId)
+            ? msg.focusId
+            : undefined;
+          const view = { minX, minY, maxX, maxY, ...(focusId === undefined ? {} : { focusId }) };
           getBoard(sessionId).view = view;
           broadcast(sessionId, { type: "board_view", ...view }, ws);
           break;

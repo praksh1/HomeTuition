@@ -80,7 +80,7 @@ test("the classroom uses one compact control dock instead of duplicate visible c
   for (const classroom of [teacherClassroom, studentClassroom]) {
     assert.match(classroom, /<ClassroomControlDock/);
     assert.match(classroom, /pointerEvents="none"[\s\S]{0,140}s\.overlayHidden/);
-    assert.match(classroom, /false && videoHidden/);
+    assert.doesNotMatch(classroom, /video-show-call-btn/);
     assert.match(classroom, /display: "none"/);
     assert.match(classroom, /name="move"/);
     assert.match(classroom, /sessionCompactInfo/);

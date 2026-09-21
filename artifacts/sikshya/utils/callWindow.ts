@@ -170,7 +170,8 @@ export interface DragBounds {
 
 /** Compact is a preview plus one row that must stay tappable. Nothing smaller is honest. */
 export function compactSize(v: Viewport): { width: number; height: number } {
-  const width = Math.min(Math.max(v.hitSlopMin * 3, 132), Math.max(120, v.width - v.hitSlopMin * 2));
+  const available = Math.max(120, v.width - v.insets.left - v.insets.right - 16);
+  const width = Math.min(180, Math.max(148, Math.round(v.width * 0.42)), available);
   // 16:9 for the picture, plus one full tap target for the header that carries Restore.
   return { width, height: Math.round((width * 9) / 16) + v.hitSlopMin };
 }

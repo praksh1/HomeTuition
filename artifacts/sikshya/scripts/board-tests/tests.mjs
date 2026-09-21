@@ -157,6 +157,86 @@ export const tests = [
   },
 
   {
+    name: "a selected lesson object can be deleted and restored",
+    why:
+      "The eraser intentionally protects lesson material, so teachers need a deliberate object " +
+      "action for images, PDF pages and shapes — plus an Undo path after an accidental deletion.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+
+      await teacher.evaluate(
+        (dataUrl) =>
+          window.postMessage(
+            JSON.stringify({
+              type: "insert_document",
+              document: { key: "delete-picture-1", dataUrl, kind: "image" },
+            }),
+            "*",
+          ),
+        RED_PNG,
+      );
+      await teacher.waitForTimeout(1200);
+      await teacher.waitForTimeout(400);
+      await pump(teacher, student);
+      await student.waitForTimeout(500);
+      const original = await ink(teacher);
+      assert("the lesson object starts on both boards", original.red > 200 && (await ink(student)).red > 200);
+
+      await teacher.mouse.click(450, 400);
+      await teacher.keyboard.press("1");
+      await teacher.mouse.click(450, 350);
+      await teacher.waitForTimeout(300);
+      assert(
+        "selecting the object opens deliberate actions",
+        (await teacher.locator('[data-testid="board-selection-toolbar"]').count()) === 1,
+      );
+
+      await teacher.locator('[data-testid="board-delete-selection"]').click();
+      await teacher.waitForTimeout(450);
+      await pump(teacher, student);
+      assert("Delete removes the selected image for the teacher", (await ink(teacher)).red < original.red * 0.1);
+      assert("and removes it for the student", (await ink(student)).red < original.red * 0.1);
+
+      const undo = teacher.getByLabel("Undo last board change");
+      assert("Undo is available after object deletion", !(await undo.isDisabled()));
+      await undo.click();
+      await teacher.waitForTimeout(450);
+      await pump(teacher, student);
+      assert("Undo restores the lesson object for the teacher", (await ink(teacher)).red > original.red * 0.9);
+      assert("and restores it for the student", (await ink(student)).red > original.red * 0.9);
+    },
+  },
+
+  {
+    name: "a selected drawn shape can be deleted and restored",
+    why:
+      "The contextual action must work on native Excalidraw shapes, not only imported images.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+      await selectTool(teacher, "2");
+      await stroke(teacher, 480, 250, 640, 380);
+      await teacher.waitForTimeout(500);
+      await pump(teacher, student);
+      const original = await ink(student);
+      assert("the rectangle reaches the student", original.n > 100);
+
+      await selectTool(teacher, "1");
+      await teacher.mouse.click(480, 250);
+      assert("the rectangle offers object actions", (await teacher.getByTestId("board-selection-toolbar").count()) === 1);
+      await teacher.getByTestId("board-delete-selection").click();
+      await teacher.waitForTimeout(450);
+      await pump(teacher, student);
+      assert("the rectangle is removed from both boards", (await ink(teacher)).n < original.n * 0.1 && (await ink(student)).n < original.n * 0.1);
+      await teacher.getByLabel("Undo last board change").click();
+      await teacher.waitForTimeout(450);
+      await pump(teacher, student);
+      assert("Undo restores the rectangle to both boards", (await ink(teacher)).n > original.n * 0.9 && (await ink(student)).n > original.n * 0.9);
+    },
+  },
+
+  {
     name: "a shared PDF becomes pages on the board that students can see",
     why:
       "A PDF used to be broadcast and rendered separately by everyone: the teacher got a PDF " +
@@ -242,13 +322,33 @@ export const tests = [
       await student.waitForTimeout(400);
       assert(
         "a student who pans is offered the way back",
-        (await student.getByText("Follow the teacher").count()) === 1,
+        (await student.getByText("Return to teacher").count()) === 1,
       );
 
-      await student.getByText("Follow the teacher").click();
+      await student.getByText("Return to teacher").click();
       await student.waitForTimeout(500);
       const back = await ink(student);
       assert("and tapping it restores the teacher's view", near(t.minX, back.minX) && near(t.minY, back.minY));
+
+      await student.keyboard.down("Space");
+      await student.mouse.move(450, 350);
+      await student.mouse.down();
+      await student.mouse.move(260, 250, { steps: 8 });
+      await student.mouse.up();
+      await student.keyboard.up("Space");
+      await student.waitForTimeout(350);
+      assert("the student can move away a second time", (await student.getByText("Return to teacher").count()) === 1);
+
+      await takeMessages(teacher);
+      await teacher.locator('.main-menu-trigger').first().click();
+      await teacher.getByText("Bring everyone to my view").click();
+      const focusMessages = await takeMessages(teacher);
+      const forcedView = focusMessages.find((message) => message.type === "view_out")?.view;
+      assert("the teacher's explicit focus carries a new focus signal", typeof forcedView?.focusId === "number");
+      await relayMessages(focusMessages, student);
+      await student.waitForTimeout(450);
+      const broughtBack = await ink(student);
+      assert("Bring everyone here resumes following", near(t.minX, broughtBack.minX) && near(t.minY, broughtBack.minY));
     },
   },
 

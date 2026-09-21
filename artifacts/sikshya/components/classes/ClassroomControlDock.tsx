@@ -18,7 +18,11 @@ interface ClassroomControlDockProps {
   chatOpen: boolean;
   unreadCount: number;
   videoHidden: boolean;
+  participantCount?: number;
+  raisedHands?: number;
+  participantOpen?: boolean;
   materialOpen?: boolean;
+  onToggleParticipants?: () => void;
   onToggleChat: () => void;
   onToggleVideo: () => void;
   onToggleMaterial?: () => void;
@@ -47,7 +51,11 @@ export function ClassroomControlDock({
   chatOpen,
   unreadCount,
   videoHidden,
+  participantCount,
+  raisedHands = 0,
+  participantOpen = false,
   materialOpen = false,
+  onToggleParticipants,
   onToggleChat,
   onToggleVideo,
   onToggleMaterial,
@@ -188,6 +196,61 @@ export function ClassroomControlDock({
           },
         ]}
       >
+        {onToggleParticipants ? (
+          <TouchableOpacity
+            testID="teacher-floor-participants"
+            accessibilityRole="button"
+            accessibilityLabel={
+              raisedHands > 0
+                ? `Open class list. ${raisedHands} ${raisedHands === 1 ? "hand is" : "hands are"} raised.`
+                : `Open class list. ${participantCount ?? 0} people.`
+            }
+            activeOpacity={0.78}
+            onPress={onToggleParticipants}
+            style={[
+              s.primaryButton,
+              s.participantButton,
+              {
+                minWidth: HIT_SLOP_MIN + space.md,
+                height: HIT_SLOP_MIN,
+                gap: space.xxs,
+                borderRadius: radius.pill,
+                backgroundColor: participantOpen
+                  ? colors.actionSoft
+                  : raisedHands > 0
+                    ? colors.warnSoft
+                    : colors.card,
+              },
+            ]}
+          >
+            <Feather name="users" size={19} color={participantOpen ? colors.primary : raisedHands > 0 ? colors.warn : colors.foreground} />
+            <Text style={[t.caption, numeric, { color: participantOpen ? colors.primary : raisedHands > 0 ? colors.warn : colors.foreground }]}>
+              {participantCount ?? 0}
+            </Text>
+            {raisedHands > 0 ? (
+              <View
+                pointerEvents="none"
+                testID="teacher-floor-hands"
+                style={[
+                  s.badge,
+                  {
+                    minWidth: space.lg,
+                    height: space.lg,
+                    paddingHorizontal: space.xxs,
+                    borderRadius: radius.pill,
+                    borderColor: colors.card,
+                    backgroundColor: colors.warn,
+                  },
+                ]}
+              >
+                <Text style={[t.overline, numeric, { color: colors.primaryForeground }]}>
+                  {raisedHands > 9 ? "9+" : raisedHands}
+                </Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+        ) : null}
+
         {videoHidden ? (
           <TouchableOpacity
             testID="video-show-call-btn"
@@ -303,6 +366,10 @@ const s = StyleSheet.create({
   primaryButton: {
     alignItems: "center",
     justifyContent: "center",
+  },
+  participantButton: {
+    flexDirection: "row",
+    paddingHorizontal: 8,
   },
   badge: {
     position: "absolute",

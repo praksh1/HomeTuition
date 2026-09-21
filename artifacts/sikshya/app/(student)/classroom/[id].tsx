@@ -9,10 +9,8 @@ import {
   KeyboardAvoidingView,
   PanResponder,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   Vibration,
   View,
@@ -44,6 +42,8 @@ import { aloneMessage } from "@/utils/aloneInCall";
 import { ExpiredClassRedirect } from "@/components/classes/ExpiredClassRedirect";
 import { canJoinSession } from "@/utils/sessionWindow";
 import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
+import { ClassroomChatDrawer } from "@/components/classes/ClassroomChatDrawer";
+import { ClassroomMediaPreparation } from "@/components/classes/ClassroomMediaPreparation";
 import WarningModal from "@/components/WarningModal";
 
 type Mode = "board" | "chat";
@@ -249,6 +249,7 @@ export default function StudentClassroom() {
   const [meetingToken, setMeetingToken] = useState<string | null>(null);
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
+  const [mediaPrepared, setMediaPrepared] = useState(false);
   /**
    * What, if anything, this room has to say about payment — and to *this* person.
    *
@@ -285,8 +286,6 @@ export default function StudentClassroom() {
    */
   const hasLeft = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const scrollRef = useRef<ScrollView>(null);
-  const chatProgress = useRef(new Animated.Value(0)).current;
   const pipDrag = useRef(new Animated.ValueXY()).current;
   const lastSeenIncomingRef = useRef(0);
   const previousIncomingRef = useRef(0);
@@ -323,6 +322,10 @@ export default function StudentClassroom() {
   const videoWidth = rect.width;
   const videoHeight = rect.height;
   const videoLeft = rect.left;
+  const presentedVideoLeft =
+    !isCompact && mode === "chat" && !videoFull
+      ? Math.min(videoLeft, Math.max(space.sm, width - 404 - videoWidth))
+      : videoLeft;
   const windowedVideoWidth = rect.width;
   const windowedVideoHeight = rect.height;
   const windowedVideoBaseLeft = rect.left;
@@ -403,15 +406,6 @@ export default function StudentClassroom() {
   const restoreVideoWindow = useCallback(() => dispatchWindow({ type: "restore" }), []);
 
   useEffect(() => {
-    Animated.timing(chatProgress, {
-      toValue: mode === "chat" ? 1 : 0,
-      duration: 220,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [chatProgress, mode]);
-
-  useEffect(() => {
     const previous = previousIncomingRef.current;
     if (incomingMessageCount > previous && mode !== "chat") {
       Vibration.vibrate();
@@ -449,6 +443,7 @@ export default function StudentClassroom() {
     hasLeft.current = true;
     setRoomUrl(null);
     setMeetingToken(null);
+    setMediaPrepared(false);
     router.replace("/(student)");
   }, []);
 
@@ -659,7 +654,6 @@ export default function StudentClassroom() {
     if (!chatMsg.trim()) return;
     sendChat(chatMsg.trim());
     setChatMsg("");
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   };
 
   // Called when the student clicks Daily's native Leave button — no confirmation needed
@@ -784,12 +778,12 @@ export default function StudentClassroom() {
               {
                 top: boardToolbarBottom,
                 left: space.sm,
-                width: Math.min(width - space.lg, isCompact ? width - space.lg : 620),
-                minHeight: HIT_SLOP_MIN,
+                width: Math.min(width - space.lg, isCompact ? width - space.lg : 440),
+                minHeight: 36,
                 gap: space.xxs,
-                paddingHorizontal: space.sm,
-                paddingVertical: space.xxs,
-                borderRadius: radius.pill,
+                paddingHorizontal: space.xs,
+                paddingVertical: 3,
+                borderRadius: radius.sm,
                 backgroundColor: colors.card,
                 borderColor: colors.border,
               },
@@ -826,7 +820,7 @@ export default function StudentClassroom() {
                 <Text style={[t.overline, { color: colors.brand }]}>LIVE</Text>
               </View>
             ) : null}
-            {testNotice ? (
+            {typeof __DEV__ !== "undefined" && __DEV__ && testNotice ? (
               <View
                 testID={testNotice.kind === "booking" ? "classroom-test-booking" : "classroom-test-class"}
                 accessibilityLabel="Test classroom"
@@ -1057,45 +1051,7 @@ export default function StudentClassroom() {
           </View>
         </View>
 
-        {false && videoHidden && mode !== "chat" ? (
-          <View
-            pointerEvents="box-none"
-            style={[
-              s.callDockLayer,
-              {
-                bottom: hudBottom + HIT_SLOP_MIN + space.md,
-                paddingRight: space.md,
-              },
-            ]}
-          >
-            <TouchableOpacity
-              style={[
-                s.showCallButton,
-                elevation.sheet,
-                {
-                  minHeight: HIT_SLOP_MIN,
-                  gap: space.xs,
-                  paddingHorizontal: space.md,
-                  borderRadius: radius.pill,
-                  backgroundColor: colors.card,
-                  borderColor: colors.primary,
-                },
-              ]}
-              onPress={showVideoWindow}
-              activeOpacity={0.75}
-              accessibilityLabel="Show call window"
-              accessibilityRole="button"
-              testID="video-show-call-btn"
-            >
-              <Feather name="video" size={18} color={colors.primary} />
-              <Text style={[t.caption, { color: colors.primary }]}>
-                Show call
-              </Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {/* Daily stays mounted through hide and every size change; only its shell moves. */}
+        {/* The media session stays mounted through hide and size changes; only its shell moves. */}
         <View style={s.contentArea}>
           <Animated.View
             testID="video-window"
@@ -1105,7 +1061,7 @@ export default function StudentClassroom() {
               elevation.sheet,
               {
                 top: pipTop,
-                left: videoLeft,
+                left: presentedVideoLeft,
                 width: videoWidth,
                 height: videoHeight,
                 borderRadius: videoFull ? radius.lg : radius.md,
@@ -1114,7 +1070,7 @@ export default function StudentClassroom() {
                 // Position comes from the shared model; the animated value only tracks a live drag.
                 transform: windowControls.canDrag ? pipDrag.getTranslateTransform() : [],
               },
-              (mode === "chat" || videoHidden) && s.videoAreaHidden,
+              ((isCompact && mode === "chat") || videoHidden) && s.videoAreaHidden,
             ]}
           >
             <View
@@ -1151,9 +1107,18 @@ export default function StudentClassroom() {
               {videoSmall ? (
                 <View style={s.callFrameActions}>
                   <TouchableOpacity
+                    style={[s.callFrameButton, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN }]}
+                    onPress={hideVideoWindow}
+                    accessibilityRole="button"
+                    accessibilityLabel="Hide call window"
+                    testID="video-hide-btn"
+                  >
+                    <Feather name="eye-off" size={18} color={colors.onInverse} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     style={[
                       s.callFrameButton,
-                      { width: HIT_SLOP_MIN + space.lg, height: HIT_SLOP_MIN, gap: space.xxs },
+                      { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN },
                     ]}
                     onPress={restoreVideoWindow}
                     accessibilityRole="button"
@@ -1161,7 +1126,6 @@ export default function StudentClassroom() {
                     testID="video-restore-btn"
                   >
                     <Feather name="maximize-2" size={18} color={colors.onInverse} />
-                    <Text style={[t.caption, { color: colors.onInverse }]}>Restore</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
@@ -1173,11 +1137,11 @@ export default function StudentClassroom() {
                       width: HIT_SLOP_MIN + space.md,
                       height: HIT_SLOP_MIN,
                       gap: space.xxs,
-                      display: "none",
                     },
                   ]}
                   onPress={hideVideoWindow}
                   accessibilityLabel="Hide call window"
+                  testID="video-hide-btn"
                 >
                   <Feather name="eye-off" size={18} color={colors.onInverse} />
                   <Text style={[t.caption, { color: colors.onInverse }]}>
@@ -1187,7 +1151,7 @@ export default function StudentClassroom() {
                 <TouchableOpacity
                   style={[
                     s.callFrameButton,
-                    { width: HIT_SLOP_MIN + space.xl, height: HIT_SLOP_MIN, gap: space.xxs },
+                    { width: 94, height: HIT_SLOP_MIN, gap: space.xxs },
                   ]}
                   onPress={minimizeVideoWindow}
                   disabled={!windowControls.canMinimize}
@@ -1200,7 +1164,7 @@ export default function StudentClassroom() {
                     size={18}
                     color={windowControls.canMinimize ? colors.onInverse : colors.onInverseMuted}
                   />
-                  <Text style={[t.caption, { color: colors.onInverse }]}>Small</Text>
+                  <Text style={[t.caption, { color: colors.onInverse }]}>Minimize</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
@@ -1230,7 +1194,7 @@ export default function StudentClassroom() {
             </View>
 
             <View style={s.callFrameBody}>
-              {roomUrl ? (
+              {roomUrl && (videoProvider !== "livekit" || mediaPrepared) ? (
                 <VideoCall
                   provider={videoProvider}
                   roomUrl={roomUrl}
@@ -1373,227 +1337,23 @@ export default function StudentClassroom() {
               />
             </View>
 
-            {/* This carrier is inert while closed; only the scrim and sheet capture touches. */}
-            <View
-              pointerEvents={mode === "chat" ? "auto" : "none"}
-              style={s.chatLayer}
-            >
-              <Animated.View
-                style={[
-                  StyleSheet.absoluteFill,
-                  { opacity: chatProgress, backgroundColor: colors.scrim },
-                ]}
-              >
-                <TouchableOpacity
-                  style={StyleSheet.absoluteFill}
-                  activeOpacity={1}
-                  onPress={() => setMode("board")}
-                  accessibilityLabel="Close class chat"
-                />
-              </Animated.View>
-
-              <Animated.View
-                pointerEvents="auto"
-                style={[
-                  s.chatCover,
-                  elevation.modal,
-                  {
-                    height: isCompact ? "64%" : "56%",
-                    maxWidth: space.huge * 12,
-                    borderTopLeftRadius: radius.lg,
-                    borderTopRightRadius: radius.lg,
-                    backgroundColor: colors.card,
-                    borderColor: colors.border,
-                    transform: [
-                      {
-                        translateY: chatProgress.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [height, 0],
-                        }),
-                      },
-                    ],
-                  },
-                ]}
-              >
-                <View
-                  style={[
-                    s.chatHeader,
-                    {
-                      minHeight: HIT_SLOP_MIN,
-                      paddingLeft: space.md,
-                      paddingRight: space.xxs,
-                      borderBottomColor: colors.border,
-                    },
-                  ]}
-                >
-                  <View style={s.sessionInfo}>
-                    <Text style={[t.title3, { color: colors.foreground }]}>
-                      Class chat
-                    </Text>
-                    <Text
-                      style={[t.caption, { color: colors.mutedForeground }]}
-                    >
-                      {messages.length === 0
-                        ? "No messages yet"
-                        : `${messages.length} ${messages.length === 1 ? "message" : "messages"}`}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[
-                      s.chatClose,
-                      { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN },
-                    ]}
-                    onPress={() => setMode("board")}
-                    activeOpacity={0.7}
-                    accessibilityLabel="Close class chat"
-                  >
-                    <Feather
-                      name="x"
-                      size={20}
-                      color={colors.mutedForeground}
-                    />
-                  </TouchableOpacity>
-                </View>
-
-                <ScrollView
-                  ref={scrollRef}
-                  style={s.flex}
-                  contentContainerStyle={[
-                    s.chatMessages,
-                    { gap: space.sm, padding: space.md },
-                  ]}
-                  keyboardShouldPersistTaps="handled"
-                  onContentSizeChange={() =>
-                    scrollRef.current?.scrollToEnd({ animated: false })
-                  }
-                >
-                  {messages.length === 0 ? (
-                    <Text
-                      style={[
-                        t.callout,
-                        {
-                          color: colors.mutedForeground,
-                          textAlign: "center",
-                          marginTop: space.xxxl,
-                        },
-                      ]}
-                    >
-                      No messages yet. Ask your teacher a question here.
-                    </Text>
-                  ) : null}
-                  {messages.map((msg) => (
-                    <View
-                      key={msg.id}
-                      style={[s.chatBubble, msg.isMe && s.chatBubbleMe]}
-                    >
-                      {!msg.isMe ? (
-                        <Text
-                          style={[
-                            t.overline,
-                            { color: colors.mutedForeground },
-                          ]}
-                        >
-                          {msg.senderName}
-                        </Text>
-                      ) : null}
-                      <View
-                        style={[
-                          s.bubbleContent,
-                          {
-                            paddingHorizontal: space.sm,
-                            paddingVertical: space.xs,
-                            borderRadius: radius.md,
-                            backgroundColor: msg.isMe
-                              ? colors.primary
-                              : colors.muted,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            t.body,
-                            {
-                              color: msg.isMe
-                                ? colors.primaryForeground
-                                : colors.foreground,
-                            },
-                          ]}
-                        >
-                          {msg.text}
-                        </Text>
-                      </View>
-                      <Text
-                        style={[
-                          t.overline,
-                          numeric,
-                          { color: colors.inkFaint },
-                        ]}
-                      >
-                        {msg.time}
-                      </Text>
-                    </View>
-                  ))}
-                </ScrollView>
-
-                <View
-                  style={[
-                    s.chatInputRow,
-                    {
-                      gap: space.xs,
-                      paddingHorizontal: space.md,
-                      paddingTop: space.xs,
-                      paddingBottom: insets.bottom + space.xs,
-                      borderTopColor: colors.border,
-                    },
-                  ]}
-                >
-                  <TextInput
-                    style={[
-                      t.body,
-                      s.chatInputField,
-                      {
-                        minHeight: HIT_SLOP_MIN,
-                        paddingHorizontal: space.md,
-                        borderRadius: radius.pill,
-                        color: colors.foreground,
-                        backgroundColor: colors.muted,
-                        borderColor: colors.border,
-                      },
-                    ]}
-                    value={chatMsg}
-                    onChangeText={setChatMsg}
-                    placeholder="Ask the teacher…"
-                    placeholderTextColor={colors.inkFaint}
-                    onSubmitEditing={sendMessage}
-                    returnKeyType="send"
-                    testID="chat-input"
-                  />
-                  <TouchableOpacity
-                    style={[
-                      s.sendBtn,
-                      {
-                        width: HIT_SLOP_MIN,
-                        height: HIT_SLOP_MIN,
-                        borderRadius: radius.pill,
-                        backgroundColor: colors.primary,
-                      },
-                    ]}
-                    onPress={sendMessage}
-                    activeOpacity={0.8}
-                    accessibilityLabel="Send message"
-                  >
-                    <Feather
-                      name="send"
-                      size={18}
-                      color={colors.primaryForeground}
-                    />
-                  </TouchableOpacity>
-                </View>
-              </Animated.View>
-            </View>
+            <ClassroomChatDrawer
+              open={mode === "chat"}
+              messages={messages}
+              value={chatMsg}
+              onChangeText={setChatMsg}
+              onSend={sendMessage}
+              onClose={() => setMode("board")}
+              placeholder="Message everyone…"
+              emptyText="Ask your teacher a question without leaving the board."
+            />
           </View>
         </View>
       </View>
+      <ClassroomMediaPreparation
+        visible={Boolean(roomUrl && videoProvider === "livekit" && !mediaPrepared)}
+        onComplete={() => setMediaPrepared(true)}
+      />
       <WarningModal
         visible={leaveConfirmOpen}
         title="Leave this class?"
@@ -1677,19 +1437,6 @@ const s = StyleSheet.create({
     justifyContent: "center",
     position: "relative",
   },
-  callDockLayer: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    alignItems: "flex-end",
-    zIndex: 100,
-  },
-  showCallButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-  },
   chatBadge: {
     position: "absolute",
     top: 0,
@@ -1744,29 +1491,4 @@ const s = StyleSheet.create({
   boardWrap: { flex: 1, overflow: "hidden" },
   boardArea: { flex: 1, overflow: "hidden" },
   boardWaiting: { alignItems: "center", justifyContent: "flex-end" },
-  chatLayer: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "flex-end",
-    alignItems: "center",
-    zIndex: 200,
-  },
-  chatCover: {
-    width: "100%",
-    alignSelf: "center",
-    overflow: "hidden",
-    borderTopWidth: 1,
-  },
-  chatHeader: { flexDirection: "row", alignItems: "center" },
-  chatClose: { alignItems: "center", justifyContent: "center" },
-  chatMessages: { flexGrow: 1 },
-  chatBubble: { gap: 3, maxWidth: "80%" },
-  chatBubbleMe: { alignSelf: "flex-end", alignItems: "flex-end" },
-  bubbleContent: {},
-  chatInputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderTopWidth: 1,
-  },
-  chatInputField: { flex: 1, borderWidth: 1, outlineStyle: "none" } as object,
-  sendBtn: { justifyContent: "center", alignItems: "center" },
 });

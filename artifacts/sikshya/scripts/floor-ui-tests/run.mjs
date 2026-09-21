@@ -71,7 +71,7 @@ class Boundary extends React.Component {
 }
 
 function Harness() {
-  const [scene, set] = React.useState({ floor: null, refusal: null, opensAt: null, canModerate: true });
+  const [scene, set] = React.useState({ floor: null, refusal: null, opensAt: null, canModerate: true, participantOpen: false });
   setScene = set;
   return React.createElement(
     "div",
@@ -83,11 +83,14 @@ function Harness() {
       actions,
       discussionOpensAt: scene.opensAt,
       canModerate: scene.canModerate,
+      participantOpen: scene.participantOpen,
+      onParticipantOpenChange: (participantOpen) => set((s) => ({ ...s, participantOpen })),
     })),
   );
 }
 createRoot(document.getElementById("root")).render(React.createElement(Harness));
-window.__show = (scene) => { window.__sent = []; setScene({ refusal: null, opensAt: null, canModerate: true, ...scene }); };
+window.__show = (scene) => { window.__sent = []; setScene({ refusal: null, opensAt: null, canModerate: true, participantOpen: false, ...scene }); };
+window.__participants = (participantOpen) => setScene((scene) => ({ ...scene, participantOpen }));
 `,
 );
 
@@ -216,6 +219,10 @@ for (const size of SIZES) {
   const seen = (id) => p.locator(`[data-testid="${id}"]`).count().then((n) => n > 0);
   const text = (id) => p.locator(`[data-testid="${id}"]`).first().innerText().catch(() => "");
   const participantPanelOpen = async () => (await seen("participant-sheet")) || (await seen("participant-drawer"));
+  const openParticipants = async () => {
+    await p.evaluate(() => window.__participants(true));
+    await p.waitForTimeout(400);
+  };
   /*
     A tap, and time for the answer.
 
@@ -239,7 +246,7 @@ for (const size of SIZES) {
   check(`${L}: the strip is there`, await seen("student-floor"));
   check(`${L}: raising a hand is available`, await seen("student-floor-ask"));
   check(`${L}: the microphone begins off`, (await text("student-floor-state")).includes("Microphone off"));
-  check(`${L}: camera access is teacher-controlled`, (await text("student-floor-camera")).includes("teacher controlled"));
+  check(`${L}: unavailable camera access does not waste space`, !(await seen("student-floor-camera")));
   await tap("student-floor-ask");
   check(`${L}: tapping it asks the server`, JSON.stringify(await sent()) === JSON.stringify([{ name: "ask", args: [] }]));
 
@@ -261,14 +268,14 @@ for (const size of SIZES) {
     "student-speaking",
   );
   check(`${L}: an active microphone is shown`, (await text("student-floor-state")).includes("Microphone on"));
-  check(`${L}: camera stays teacher-controlled`, (await text("student-floor-camera")).includes("teacher controlled"));
+  check(`${L}: unavailable camera access stays out of the compact strip`, !(await seen("student-floor-camera")));
 
   await show(
     { floor: asStudent({ state: "camera-active", allowedMic: true, allowedCamera: true, acceptedMic: true, acceptedCamera: true }) },
     "student-on-camera",
   );
   check(`${L}: actual camera publication is shown`, (await text("student-floor-state")).includes("Camera on"));
-  check(`${L}: the camera grant is shown separately`, (await text("student-floor-camera")).includes("Camera available"));
+  check(`${L}: the active camera is shown separately`, (await text("student-floor-camera")).includes("Camera on"));
 
   await show({ floor: asStudent({ state: "muted-by-teacher", allowedMic: true }) }, "student-muted");
   const muted = await text("student-floor-state");
@@ -309,7 +316,7 @@ for (const size of SIZES) {
   check(`${L}: discussion mode keeps the simple student controls`,
     (await seen("student-floor-ask")) && (await text("student-floor-state")).includes("Microphone off"));
 
-  console.log(`\n[${L}] The teacher's strip`);
+  console.log(`\n[${L}] The teacher's compact controls`);
   const classRows = [
     row({ userId: 11, name: "Sita Sharma", state: "requested", requestedAt: NOW }),
     row({ userId: 22, name: "Ram Bahadur", state: "speaking", allowedMic: true }),
@@ -318,19 +325,19 @@ for (const size of SIZES) {
     row({ userId: 55, name: "Anjali Gurung" }),
   ];
   await show({ floor: asTeacher({ students: classRows, queue: [11] }) }, "teacher-strip");
-  check(`${L}: the class list is one tap away`, await seen("teacher-floor-participants"));
-  check(`${L}: a raised hand is badged`, await seen("teacher-floor-hands"));
-  check(`${L}: the one whole-class safety control is there`, await seen("teacher-floor-mute-all"));
+  check(`${L}: the retired permanent class banner is absent`, !(await seen("teacher-floor-participants")));
+  check(`${L}: the roster stays closed until the dock opens it`, !(await participantPanelOpen()));
+  check(`${L}: mute all is not exposed outside the roster`, !(await seen("teacher-floor-mute-all")));
   check(`${L}: the retired invite-all workflow is absent`, !(await seen("teacher-floor-invite-all")));
   check(`${L}: a pay-as-you-go class has no discussion control at all`, !(await seen("teacher-floor-discussion")));
 
-  await show({ floor: asTeacher({ students: classRows, queue: [11], discussionEligible: true }), opensAt: NOW + 12 * 60_000 });
+  await show({ floor: asTeacher({ students: classRows, queue: [11], discussionEligible: true }), opensAt: NOW + 12 * 60_000, participantOpen: true });
   check(`${L}: a monthly class shows the discussion, and when it opens`,
     (await seen("teacher-floor-discussion")) && (await text("teacher-floor-discussion-hint")).includes("Opens in"));
 
   console.log(`\n[${L}] The class list`);
   await show({ floor: asTeacher({ students: classRows, queue: [11] }) });
-  await tap("teacher-floor-participants");
+  await openParticipants();
   await p.waitForTimeout(300);
   await p.screenshot({ path: path.join(SHOTS, `${L}-teacher-sheet.png`) });
   check(`${L}: the class list opens in the device-appropriate surface`, await participantPanelOpen());
@@ -362,7 +369,7 @@ for (const size of SIZES) {
     assumed, because it is the sort of thing a later refactor breaks without anybody noticing
     until a teacher is mid-lesson.
   */
-  await show({ floor: asTeacher({ students: classRows, queue: [11], spotlight: 22 }) });
+  await show({ floor: asTeacher({ students: classRows, queue: [11], spotlight: 22 }), participantOpen: true });
   check(`${L}: the class list stays open when the class changes underneath it`, await participantPanelOpen());
   await tap("participant-sheet-close");
   check(`${L}: and closes when asked`, !(await participantPanelOpen()));
@@ -382,7 +389,7 @@ for (const size of SIZES) {
     ],
     queue: [],
   }) });
-  await tap("teacher-floor-participants");
+  await openParticipants();
   await p.screenshot({ path: path.join(SHOTS, `${L}-teacher-sheet-provider.png`) });
   check(`${L}: a row the video refused is marked as such`, await seen("participant-provider-22"));
   check(`${L}: in words about the class, not about a server`,
@@ -395,7 +402,7 @@ for (const size of SIZES) {
 
   console.log(`\n[${L}] Nobody has joined`);
   await show({ floor: asTeacher({}) });
-  await tap("teacher-floor-participants");
+  await openParticipants();
   await p.waitForTimeout(300);
   await p.screenshot({ path: path.join(SHOTS, `${L}-teacher-sheet-empty.png`) });
   check(`${L}: an empty class says so, rather than showing a blank sheet`,
@@ -410,9 +417,9 @@ for (const size of SIZES) {
       name: `Student ${String(index + 1).padStart(3, "0")}`,
       state: index === 41 ? "requested" : "muted-by-self",
       requestedAt: index === 41 ? NOW : null,
-    }));
+  }));
   await show({ floor: asTeacher({ students: largeRows, queue: [42] }) });
-  await tap("teacher-floor-participants");
+  await openParticipants();
   check(`${L}: the class list reports the authoritative total`,
     (await p.locator("text=Class · 105").count()) === 1);
   check(`${L}: search remains available above the long list`, await seen("participant-search"));
@@ -457,7 +464,7 @@ for (const size of SIZES) {
   await show({ floor: asTeacher({ students: classRows, queue: [11], discussionEligible: true }), opensAt: NOW - 60_000 });
   cut = await clipped();
   check(`${L}: no control on the teacher's strip is cut off`, cut.length === 0, cut.join(" | "));
-  await tap("teacher-floor-participants");
+  await openParticipants();
   await tap("participant-row-11");
   cut = await clipped();
   check(`${L}: no control in the class list is cut off`, cut.length === 0, cut.join(" | "));

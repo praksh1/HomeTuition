@@ -286,8 +286,8 @@ async function main() {
   const secondStart = await textOf(s2.page, "student-floor-state");
   check("the first student joins with their microphone off", /microphone off/i.test(firstStart), firstStart);
   check("the second student joins with their microphone off", /microphone off/i.test(secondStart), secondStart);
-  check("camera stays teacher-controlled",
-    /teacher controlled/i.test(await textOf(s.page, "student-floor-camera")));
+  check("camera status stays out of the compact strip until it is available",
+    (await s.page.locator('[data-testid="student-floor-camera"]').count()) === 0);
 
   console.log("\n[1e] One-student moderation blocks and restores self-unmute");
   const mutedOne = await inSheet(async () => {
@@ -320,7 +320,13 @@ async function main() {
     await textOf(s.page, "student-floor-state"));
 
   console.log("\n[1f] Mute all reaches every student, and each permission can be restored");
-  await t.page.locator('[data-testid="teacher-floor-mute-all"]').click();
+  const mutedAll = await inSheet(async () => {
+    const action = t.page.locator('[data-testid="participant-mute-all"]');
+    if ((await action.count()) === 0) return false;
+    await action.click();
+    return true;
+  });
+  check("mute all stays inside the class list", mutedAll === true);
   await s.page.waitForTimeout(1000);
   check("the first student is blocked",
     /muted by teacher/i.test(await textOf(s.page, "student-floor-state")));
@@ -381,8 +387,8 @@ async function main() {
   });
   check("the teacher can remove camera access", cameraStopped === true);
   await s.page.waitForTimeout(900);
-  check("camera returns to teacher-controlled",
-    /teacher controlled/i.test(await textOf(s.page, "student-floor-camera")));
+  check("camera status leaves the compact strip after access is removed",
+    (await s.page.locator('[data-testid="student-floor-camera"]').count()) === 0);
   check("microphone permission remains available",
     /microphone off/i.test(await textOf(s.page, "student-floor-state")));
 

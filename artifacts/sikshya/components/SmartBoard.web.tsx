@@ -155,6 +155,7 @@ type ExcalidrawAppState = {
   width: number;
   height: number;
   activeTool?: { type?: string };
+  selectedElementIds?: Record<string, boolean>;
 };
 
 type ExcalidrawAPI = {
@@ -363,6 +364,7 @@ function SmartBoard({
   const [api, setApi] = useState<ExcalidrawAPI | null>(null);
   const boardRootRef = useRef<HTMLDivElement | null>(null);
   const [historyState, setHistoryState] = useState({ undo: false, redo: false });
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const historyTransitionUntilRef = useRef(0);
   const [boardDialog, setBoardDialog] = useState<
     | { kind: "rename"; value: string }
@@ -374,6 +376,7 @@ function SmartBoard({
   const [showProps, setShowProps] = useState(false);
   /** Students only: whether the board still tracks the teacher's view. */
   const [following, setFollowing] = useState(true);
+  const lastFocusId = useRef<number | null>(null);
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [pageSidebarOpen, setPageSidebarOpen] = useState(false);
   const [laserMode, setLaserMode] = useState(false);
@@ -759,7 +762,7 @@ function SmartBoard({
   flushRef.current = flush;
 
   // --- outgoing: where the teacher is looking ---
-  const publishViewport = useCallback(() => {
+  const publishViewport = useCallback((forceFocus = false) => {
     pendingView.current = null;
     if (!api || boardReadOnly || !onViewportChange) return;
 
@@ -772,8 +775,9 @@ function SmartBoard({
       minY: -state.scrollY,
       maxX: -state.scrollX + state.width / zoom,
       maxY: -state.scrollY + state.height / zoom,
+      ...(forceFocus ? { focusId: Date.now() } : {}),
     };
-    if (sameView(sentView.current, view)) return;
+    if (!forceFocus && sameView(sentView.current, view)) return;
     sentView.current = view;
     onViewportChange(view);
   }, [api, boardReadOnly, onViewportChange]);
@@ -788,6 +792,14 @@ function SmartBoard({
       elements: readonly ExcalidrawElement[],
       appState?: ExcalidrawAppState,
     ) => {
+      const nextSelected = Object.entries(appState?.selectedElementIds ?? {})
+        .filter(([, selected]) => selected)
+        .map(([id]) => id);
+      setSelectedIds((current) =>
+        current.length === nextSelected.length && current.every((id, index) => id === nextSelected[index])
+          ? current
+          : nextSelected,
+      );
       if (boardReadOnly || applyingRemote.current || restoringProtected.current) return;
 
       // `onChange` may omit erased elements; the inclusive scene is the only reliable record of
@@ -829,8 +841,9 @@ function SmartBoard({
   // where the teacher already is rather than at an arbitrary corner of an infinite canvas.
   useEffect(() => {
     if (!api || boardReadOnly) return;
+    sentView.current = null;
     scheduleViewportPublish();
-  }, [api, boardReadOnly, scheduleViewportPublish]);
+  }, [activePageId, api, boardReadOnly, scheduleViewportPublish]);
 
   useEffect(() => {
     return () => {
@@ -881,7 +894,15 @@ function SmartBoard({
   );
 
   useEffect(() => {
-    if (!api || !readOnly || !viewport || !following) return;
+    if (!api || !readOnly || !viewport) return;
+    if (viewport.focusId !== undefined && viewport.focusId !== lastFocusId.current) {
+      lastFocusId.current = viewport.focusId;
+      setFollowing(true);
+      applyViewport(viewport);
+      api.setToast({ message: "Your teacher brought everyone back to this view", duration: 2400 });
+      return;
+    }
+    if (!following) return;
     applyViewport(viewport);
   }, [api, readOnly, viewport, following, applyViewport]);
 
@@ -1208,6 +1229,135 @@ function SmartBoard({
     return () => { cancelled = true; };
   }, [api, boardReadOnly, insertDocument, flush]);
 
+  const updateSelectedObjects = useCallback(
+    (operation: "delete" | "duplicate" | "lock") => {
+      if (!api || boardReadOnly || selectedIds.length === 0) return;
+      const selected = new Set(selectedIds);
+      const now = Date.now();
+      const current = [...api.getSceneElementsIncludingDeleted()];
+      let next: ExcalidrawElement[] = current;
+
+      if (operation === "duplicate") {
+        const copies = current
+          .filter((element) => selected.has(element.id) && !element.isDeleted)
+          .map((element, index) => ({
+            ...element,
+            id: `copy-${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+            x: typeof element.x === "number" ? element.x + 24 : element.x,
+            y: typeof element.y === "number" ? element.y + 24 : element.y,
+            version: 1,
+            versionNonce: Math.floor(Math.random() * 1_000_000_000),
+            updated: now,
+            isDeleted: false,
+            locked: false,
+            groupIds: [],
+            boundElements: null,
+          }));
+        next = [...current, ...copies];
+      } else {
+        next = current.map((element) => {
+          if (!selected.has(element.id) || element.isDeleted) return element;
+          return {
+            ...element,
+            ...(operation === "delete" ? { isDeleted: true } : { locked: true }),
+            version: Math.max(1, Number(element.version) || 1) + 1,
+            versionNonce: Math.floor(Math.random() * 1_000_000_000),
+            updated: now,
+          };
+        });
+      }
+
+      api.updateScene({
+        elements: next,
+        appState: { selectedElementIds: {} },
+        captureUpdate: "IMMEDIATELY",
+      });
+      setSelectedIds([]);
+      setHistoryState({ undo: true, redo: false });
+      api.setToast({
+        message:
+          operation === "delete"
+            ? "Object deleted — Undo restores it"
+            : operation === "duplicate"
+              ? "Object duplicated"
+              : "Object locked",
+        duration: 1800,
+      });
+      setTimeout(flush, 0);
+    },
+    [api, boardReadOnly, flush, selectedIds],
+  );
+
+  const selectionToolbar = !boardReadOnly && selectedIds.length > 0 ? (
+    <div
+      role="toolbar"
+      aria-label="Selected object actions"
+      data-testid="board-selection-toolbar"
+      style={{
+        position: "absolute",
+        left: "50%",
+        bottom: 132,
+        zIndex: 12,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: 6,
+        border: "1px solid rgba(15,23,42,0.14)",
+        borderRadius: 16,
+        background: "rgba(255,255,255,0.96)",
+        boxShadow: "0 14px 38px rgba(15,23,42,0.2)",
+        backdropFilter: "blur(18px)",
+        transform: "translateX(-50%)",
+      }}
+    >
+      <button
+        type="button"
+        title="Delete selected object"
+        aria-label="Delete selected object"
+        data-testid="board-delete-selection"
+        onClick={() => updateSelectedObjects("delete")}
+        style={{ ...pageMenuButtonStyle, display: "flex", alignItems: "center", gap: 6, color: "var(--color-danger, firebrick)" }}
+      >
+        <TrashIcon /> Delete
+      </button>
+      <button
+        type="button"
+        title="Duplicate selected object"
+        aria-label="Duplicate selected object"
+        data-testid="board-duplicate-selection"
+        onClick={() => updateSelectedObjects("duplicate")}
+        style={pageMenuButtonStyle}
+      >
+        Duplicate
+      </button>
+      <button
+        type="button"
+        title="Lock selected object"
+        aria-label="Lock selected object"
+        data-testid="board-lock-selection"
+        onClick={() => updateSelectedObjects("lock")}
+        style={pageMenuButtonStyle}
+      >
+        Lock
+      </button>
+    </div>
+  ) : null;
+
+  useEffect(() => {
+    const root = boardRootRef.current;
+    if (!root || typeof MutationObserver === "undefined") return;
+    const labelControls = () => {
+      root.querySelectorAll<HTMLElement>("button[aria-label], [role='button'][aria-label]").forEach((control) => {
+        const label = control.getAttribute("aria-label");
+        if (label && !control.getAttribute("title")) control.setAttribute("title", label);
+      });
+    };
+    labelControls();
+    const observer = new MutationObserver(labelControls);
+    observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-label"] });
+    return () => observer.disconnect();
+  }, [api]);
+
   /** Show or hide the shape properties panel, in whichever layout Excalidraw is using. */
   const setPropsVisible = useCallback(
     (visible: boolean) => {
@@ -1223,6 +1373,12 @@ function SmartBoard({
   const handlePointerDown = useCallback(() => {
     if (showProps) setPropsVisible(false);
   }, [showProps, setPropsVisible]);
+
+  const bringEveryoneHere = useCallback(() => {
+    sentView.current = null;
+    publishViewport(true);
+    api?.setToast({ message: "Bringing everyone to this view", duration: 2200 });
+  }, [api, publishViewport]);
 
   const renderTopRightUI = useCallback(() => {
     if (boardReadOnly) return null;
@@ -1251,33 +1407,6 @@ function SmartBoard({
           }}
         >
           <LaserIcon />
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            // The teacher may be bringing back a student who deliberately panned away. The
-            // viewport itself has not changed, so clear the de-duplication guard before sending
-            // this explicit invitation to follow again.
-            sentView.current = null;
-            publishViewport();
-            api?.setToast({ message: "Everyone is following your view", duration: 2200 });
-          }}
-          title="Bring everyone to your current view"
-          aria-label="Bring everyone to your current view"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            border: "1px solid var(--default-border-color, silver)",
-            background: "var(--island-bg-color, white)",
-            color: "var(--text-primary-color, black)",
-            cursor: "pointer",
-          }}
-        >
-          <EyeIcon />
         </button>
         <button
           type="button"
@@ -1322,7 +1451,7 @@ function SmartBoard({
         </button>
       </div>
     );
-  }, [api, boardReadOnly, clearAll, laserMode, publishViewport, setPropsVisible, showProps, toggleLaser]);
+  }, [boardReadOnly, clearAll, laserMode, setPropsVisible, showProps, toggleLaser]);
 
   const initialData = useMemo(
     () => ({
@@ -1379,6 +1508,11 @@ function SmartBoard({
       >
         <MainMenu>
           {!boardReadOnly && (
+            <MainMenu.Item onSelect={bringEveryoneHere} icon={<EyeIcon />}>
+              Bring everyone to my view
+            </MainMenu.Item>
+          )}
+          {!boardReadOnly && (
             <MainMenu.Item onSelect={clearAll} icon={<TrashIcon />}>
               Clear this page for the whole class
             </MainMenu.Item>
@@ -1396,6 +1530,7 @@ function SmartBoard({
 
       {pageNavigator}
       {historyControls}
+      {selectionToolbar}
 
       {boardDialog ? (
         <div
@@ -1513,6 +1648,8 @@ function SmartBoard({
       {readOnly && !following && (
         <button
           type="button"
+          title="Return to the teacher's current view"
+          aria-label="Return to teacher"
           onClick={resumeFollowing}
           style={{
             position: "absolute",
@@ -1534,7 +1671,7 @@ function SmartBoard({
           }}
         >
           <EyeIcon />
-          Follow the teacher
+          Return to teacher
         </button>
       )}
     </div>

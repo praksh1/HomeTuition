@@ -17,6 +17,8 @@
     "ios": "expo run:ios",
     "test:notifications": "node scripts/notification-tests/browser.mjs",
     "test:call-chat": "node scripts/call-chat-tests/run.mjs",
+    "test:classroom-chat-ui": "node scripts/classroom-chat-ui/run.mjs",
+    "test:classroom-media-ui": "node scripts/classroom-media-ui/run.mjs",
     "test:phone": "node scripts/phone-tests/run.mjs",
     "test:photo": "node scripts/phone-tests/photo.mjs",
     "test": "node --test --experimental-strip-types \"utils/**/*.test.ts\" \"components/**/*.test.ts\"",

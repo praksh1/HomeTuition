@@ -569,8 +569,11 @@ export default function LiveKitEmbed({
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
+  const [mediaToast, setMediaToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const microphoneAuthorized = isTeacher || canUseMicrophone;
   const cameraAuthorized = isTeacher || canUseCamera;
+  const previousCameraAuthorization = useRef(cameraAuthorized);
 
   /*
     Callbacks in refs, read at the moment they fire.
@@ -596,6 +599,26 @@ export default function LiveKitEmbed({
   const watchedSeen = useRef(false);
   const watchedReported = useRef(false);
   const reportedLocalMedia = useRef<{ micEnabled: boolean; cameraEnabled: boolean } | null>(null);
+
+  const showMediaToast = useCallback((message: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setMediaToast(message);
+    toastTimer.current = setTimeout(() => {
+      toastTimer.current = null;
+      setMediaToast(null);
+    }, 1300);
+  }, []);
+
+  useEffect(() => {
+    if (!isTeacher && cameraAuthorized && !previousCameraAuthorization.current) {
+      showMediaToast("Your teacher enabled camera access");
+    }
+    previousCameraAuthorization.current = cameraAuthorized;
+  }, [cameraAuthorized, isTeacher, showMediaToast]);
+
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+  }, []);
 
   useEffect(() => {
     // A new classroom gets a fresh absence history. A media reconnect inside the same room does
@@ -832,8 +855,10 @@ export default function LiveKitEmbed({
       const next = session.getParticipants();
       setParticipants(next);
       reportLocalMedia(next);
+      const me = next.find((participant) => participant.isLocal);
+      if (me) showMediaToast(me.micEnabled ? "Microphone on" : "Microphone muted");
     });
-  }, [microphoneAuthorized, reportLocalMedia, session]);
+  }, [microphoneAuthorized, reportLocalMedia, session, showMediaToast]);
 
   const toggleShare = act(async (live) => {
     if (sharing) {
@@ -1054,6 +1079,32 @@ export default function LiveKitEmbed({
         {/* A camera preview is useful; a second avatar saying "You, muted" is visual nesting. */}
         {local?.cameraEnabled ? <Tile participant={local} inset /> : null}
       </div>
+
+      {mediaToast ? (
+        <div
+          role="status"
+          data-testid="livekit-media-toast"
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: showControls ? `${HIT_SLOP_MIN + space.lg}px` : `${space.md}px`,
+            zIndex: 7,
+            transform: "translateX(-50%)",
+            maxWidth: "calc(100% - 24px)",
+            padding: `${space.xs}px ${space.sm}px`,
+            borderRadius: `${radius.pill}px`,
+            background: "rgba(10, 20, 37, 0.92)",
+            color: colors.onInverse,
+            boxShadow: "0 10px 30px rgba(0,0,0,0.28)",
+            fontFamily: t.caption.fontFamily,
+            fontSize: `${t.caption.fontSize}px`,
+            fontWeight: 700,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {mediaToast}
+        </div>
+      ) : null}
 
       {showControls ? (
         <div
