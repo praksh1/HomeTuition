@@ -135,7 +135,11 @@ export function FloorButton({
          * survive.
          */
         flexGrow: grow ? 1 : 0,
-        flexShrink: 1,
+        // A wrapped moderation row must move this whole control to the next line instead of
+        // squeezing the words inside it. Tablet drawers exposed the difference: three actions
+        // technically fit on one flex line only by clipping "Let them speak". Long standalone
+        // controls are still bounded by maxWidth and can use the two text lines below.
+        flexShrink: 0,
         flexBasis: "auto",
         maxWidth: "100%",
       }}
