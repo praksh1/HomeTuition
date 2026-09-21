@@ -1001,7 +1001,10 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
             // Clearing applies to the page everyone is currently viewing. Persist the empty
             // active page together with the other pages; deleting the entire stored board here
             // would make every other page disappear only after a server restart.
-            rememberBoard(sessionId);
+            // Unlike a stroke, a clear must survive a restart immediately: otherwise the
+            // pending debounce can be cut off and the erased page reappears.
+            const numericId = Number(sessionId);
+            if (Number.isFinite(numericId)) void saveBoardNow(numericId, boardToStore(board));
           }
           break;
         case "board_page": {
