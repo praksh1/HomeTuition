@@ -371,6 +371,11 @@ for (const size of SIZES) {
   */
   await show({ floor: asTeacher({ students: classRows, queue: [11], spotlight: 22 }), participantOpen: true });
   check(`${L}: the class list stays open when the class changes underneath it`, await participantPanelOpen());
+  await tap("participant-permissions");
+  check(`${L}: permissions move to a separate surface`, await seen("class-permissions-surface"));
+  check(`${L}: the permission rules are readable`, (await text("class-permissions-surface")).includes("Teacher approval required"));
+  await tap("class-permissions-back");
+  check(`${L}: returning from permissions preserves the roster`, (await participantPanelOpen()) && (await seen("participant-row-11")));
   await tap("participant-sheet-close");
   check(`${L}: and closes when asked`, !(await participantPanelOpen()));
 
