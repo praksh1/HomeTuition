@@ -140,6 +140,9 @@ interface SceneElement {
  * current board per room lets late joiners be caught up on connect.
  */
 const boards = new Map<string, BoardState>();
+/** Keep an empty room's board briefly so a reconnect cannot race a pending save. */
+const boardEvictions = new Map<string, ReturnType<typeof setTimeout>>();
+const BOARD_IDLE_EVICTION_MS = 30_000;
 
 /**
  * Sessions whose stored whiteboard has already been read back, and the reads in flight.
@@ -369,7 +372,10 @@ async function restoreBoard(sessionId: string): Promise<void> {
 function rememberBoard(sessionId: string): void {
   const numericId = Number(sessionId);
   if (!Number.isFinite(numericId)) return;
-  saveBoardSoon(numericId, () => boardToStore(getBoard(sessionId)));
+  // Capture this board, not a future replacement. A timer firing after a reset or an idle
+  // eviction must never create and persist an empty board over the real lesson.
+  const board = getBoard(sessionId);
+  saveBoardSoon(numericId, () => boardToStore(board));
 }
 
 function getBoard(sessionId: string): BoardState {
@@ -564,6 +570,9 @@ export function broadcastSessionStatus(sessionId: string, status: string): void 
  */
 export function resetBoardFor(sessionId: string): void {
   const id = String(sessionId);
+  const eviction = boardEvictions.get(id);
+  if (eviction) clearTimeout(eviction);
+  boardEvictions.delete(id);
   boards.delete(id);
   /**
    * The stored copy has to go too, and the "already restored" mark with it.
@@ -693,6 +702,10 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
   // this session. Identity is never re-read from the query string here.
   function handleConnection(ws: WebSocket, member: Membership): void {
     const { sessionId, userId, role, name, isSessionTeacher } = member;
+
+    const eviction = boardEvictions.get(sessionId);
+    if (eviction) clearTimeout(eviction);
+    boardEvictions.delete(sessionId);
 
     watchHeartbeat(ws);
     const client: RoomClient = { ws, userId, role, name, isSessionTeacher };
@@ -1096,7 +1109,18 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
       if (!remaining?.size) {
         rooms.delete(sessionId);
-        boards.delete(sessionId);
+        // The last socket often closes for an instant during a phone refresh. Keep the board
+        // until its debounced save has had time to read it, then allow a later join to restore
+        // from storage. Removing only `boards` while retaining `restored` lost every page.
+        const eviction = setTimeout(() => {
+          if (boardEvictions.get(sessionId) !== eviction) return;
+          boardEvictions.delete(sessionId);
+          if (rooms.has(sessionId)) return;
+          boards.delete(sessionId);
+          restored.delete(sessionId);
+        }, BOARD_IDLE_EVICTION_MS);
+        eviction.unref?.();
+        boardEvictions.set(sessionId, eviction);
         // The floor is live state and nothing else keeps it; an empty room has none.
         forgetFloor(sessionId);
       }
