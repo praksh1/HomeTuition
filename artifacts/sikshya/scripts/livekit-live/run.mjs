@@ -321,10 +321,12 @@ window.__events = { left: 0, watchedLeft: 0 };
 function Harness() {
   const owner = params.get("owner") === "1";
   const [cameraAllowed, setCameraAllowed] = React.useState(owner);
+  const [active, setActive] = React.useState(true);
   React.useEffect(() => {
     window.__setCameraAllowed = setCameraAllowed;
     return () => { delete window.__setCameraAllowed; };
   }, []);
+  if (!active) return React.createElement("div", { "data-testid": "left-call" });
   return React.createElement("div", { style: { position: "relative", width: "100vw", height: "100vh" } },
     React.createElement(LiveKitEmbed, {
       roomUrl: params.get("url"),
@@ -334,7 +336,9 @@ function Harness() {
       isTeacher: owner,
       canUseMicrophone: true,
       canUseCamera: cameraAllowed,
-      onLeft: () => { window.__events.left += 1; },
+      // The real classroom closes this component after Leave. Mirror that route transition so
+      // the provider cleanup is exercised and the SFU sees the participant depart.
+      onLeft: () => { window.__events.left += 1; setActive(false); },
       onWatchedParticipantLeft: () => { window.__events.watchedLeft += 1; },
     }),
   );
@@ -391,13 +395,22 @@ async function open(room, name, owner) {
 const t = await open(tRoom, "Ram Bahadur", true);
 const s = await open(sRoom, "Sita Sharma", false);
 
-/** Two tiles on screen means both sides agree somebody else is there. */
-const bothSee = async (p) =>
-  (await p.locator('[data-testid^="livekit-tile-"]').count()) >= 2;
+/**
+ * The other account's tile means this browser sees the other person.
+ *
+ * A camera-off student deliberately has no local self-preview, so counting two generic tiles
+ * confused "two people are connected" with "both people are publishing cameras". Identity is
+ * the actual property under test and continues to work for microphone-only participants.
+ */
+const seesParticipant = async (p, userId) =>
+  (await p.locator(`[data-testid="livekit-tile-${userId}"]`).count()) >= 1;
+const bothSee = async () =>
+  (await seesParticipant(t.page, student.user.id))
+  && (await seesParticipant(s.page, teacher.user.id));
 
-const connected = await waitFor(async () => (await bothSee(t.page)) && (await bothSee(s.page)), 100, 300);
+const connected = await waitFor(bothSee, 100, 300);
 check("both browsers connected and see each other", connected,
-  `teacher tiles=${await t.page.locator('[data-testid^="livekit-tile-"]').count()}, student tiles=${await s.page.locator('[data-testid^="livekit-tile-"]').count()}`);
+  `teacher sees student=${await seesParticipant(t.page, student.user.id)}, student sees teacher=${await seesParticipant(s.page, teacher.user.id)}`);
 check("the teacher's page threw nothing", t.errors.length === 0, t.errors[0] ?? "");
 check("the student's page threw nothing", s.errors.length === 0, s.errors[0] ?? "");
 
@@ -465,7 +478,7 @@ await trackPeerConnections(s.page);
 await t.page.reload();
 await s.page.reload();
 
-const rejoined = await waitFor(async () => (await bothSee(t.page)) && (await bothSee(s.page)), 100, 300);
+const rejoined = await waitFor(bothSee, 100, 300);
 check("both rejoined after the reload", rejoined);
 
 const first = { t: await inboundVideo(t.page), s: await inboundVideo(s.page) };
@@ -779,7 +792,7 @@ const afterQuiet = await inboundVideo(s.page);
 check("audio-only stops incoming video, not just outgoing",
   afterQuiet.framesDecoded === beforeQuiet.framesDecoded,
   `${beforeQuiet.framesDecoded} → ${afterQuiet.framesDecoded}`);
-check("and the call is still up", await bothSee(s.page));
+check("and the call is still up", await seesParticipant(s.page, teacher.user.id));
 
 await s.page.locator('[data-testid="livekit-more"]').click();
 await s.page.locator('[data-testid="livekit-audio-only"]').click();
