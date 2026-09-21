@@ -35,3 +35,4 @@ export * from "./sessionQualitySamples";
 export * from "./learningPrograms";
 export * from "./batchTesting";
 export * from "./classGroups";
+export * from "./support";

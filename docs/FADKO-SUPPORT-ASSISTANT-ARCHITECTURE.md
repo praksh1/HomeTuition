@@ -1,6 +1,8 @@
 # Fadko Support Assistant — architecture and handoff
 
-Status: design + deterministic safety core prepared on `codex/unified-messages-inbox`.
+Status: original design record. The implementation and activation checklist now live in
+`docs/FADKO-SUPPORT-ASSISTANT-ROLLOUT.md`. Statements below describing a future phase are
+historical, not a claim about the current branch.
 
 This document is the handoff for the next implementation pass. It is intentionally honest about
 what is already in Fadko and what is not. No AI provider, new support table, payment operation or

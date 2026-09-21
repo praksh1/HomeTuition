@@ -313,6 +313,11 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:tickets
 
+      - name: Fadko assistant review, privacy and human handoff
+        env:
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
+        run: API_URL=http://127.0.0.1:8080 pnpm --filter @workspace/api-server run test:support-assistant
+
       # The upgrade the owner's own server has to survive. The live database has three ticket
       # statuses, none of the new columns and no history table, and nobody is going to run a
       # migration by hand on it — Railway redeploys on push and the server has to come up

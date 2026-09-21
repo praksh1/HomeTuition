@@ -33,6 +33,7 @@
     "test:public-classes": "node scripts/public-classes-tests/run.mjs",
     "test:portal": "node scripts/portal-tests/run.mjs",
     "test:tickets": "node scripts/ticket-tests/run.mjs",
+    "test:support-assistant": "node scripts/support-assistant-tests/run.mjs",
     "test:upgrade": "node scripts/ticket-upgrade/run.mjs",
     "test:operators": "node scripts/operator-tests/run.mjs",
     "test:one-chat": "node scripts/one-chat/run.mjs",

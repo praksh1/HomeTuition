@@ -169,6 +169,14 @@ export default function AdminTickets() {
         <Text style={[styles.body, { color: colors.mutedForeground }]}>Review identity documents, account applications, and flagged profile or class text in People.</Text>
       </TouchableOpacity>
 
+      <TouchableOpacity style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/help-library")} activeOpacity={0.8} testID="admin-help-library-link">
+        <View style={styles.cardHead}>
+          <Text style={[styles.reason, { color: colors.primary }]}>Fadko help library</Text>
+          <Feather name="chevron-right" size={16} color={colors.primary} />
+        </View>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Review the short answers the assistant can use. Drafts are never shown to users.</Text>
+      </TouchableOpacity>
+
       <View style={[styles.filters, styles.categoryFilters]}>
         {CATEGORIES.map((item) => {
           const active = category === item.id;

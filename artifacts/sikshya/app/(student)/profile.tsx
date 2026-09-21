@@ -1,4 +1,4 @@
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -7,12 +7,14 @@ import { SocialSignIn } from "@/components/SocialSignIn";
 import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
 import { ProfileActionRow } from "@/components/profile/ProfileActionRow";
 import { ProfileHero } from "@/components/profile/ProfileHero";
+import SupportAssistantLauncher from "@/components/support/SupportAssistantLauncher";
 import { readingWidth } from "@/constants/layout";
 import { useAuth, type Student } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 
 export default function StudentProfile() {
+  const { support } = useLocalSearchParams<{ support?: string }>();
   const { user } = useAuth();
   const colors = useColors();
   const { t, space, radius, gutter } = useLayout();
@@ -27,6 +29,7 @@ export default function StudentProfile() {
   const verificationBackground = student.emailVerified ? colors.successSoft : colors.warnSoft;
 
   return (
+    <View style={{ flex: 1 }}>
     <ScrollView
       style={styles.screen}
       contentContainerStyle={[styles.container, {
@@ -71,6 +74,8 @@ export default function StudentProfile() {
       <View style={styles.socialRow}><SocialSignIn mode="link" /></View>
 
     </ScrollView>
+    <SupportAssistantLauncher openOnMount={support === "1"} />
+    </View>
   );
 }
 

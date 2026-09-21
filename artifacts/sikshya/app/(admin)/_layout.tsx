@@ -82,6 +82,7 @@ export default function AdminTabLayout() {
         />
         <Tabs.Screen name="ticket/[id]" options={{ href: null }} />
         <Tabs.Screen name="person/[id]" options={{ href: null }} />
+        <Tabs.Screen name="help-library" options={{ href: null }} />
       </Tabs>
     </>
   );

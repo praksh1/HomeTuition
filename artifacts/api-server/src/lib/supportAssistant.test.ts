@@ -76,6 +76,12 @@ test("unknown or injection-shaped text is clarified or handed off", () => {
   assert.deepEqual(resolveSupport("hello", articles).suggestedActions.slice(0, 2), ["open_request", "view_my_requests"]);
 });
 
+test("one shared word does not answer a different billing or class question", () => {
+  assert.notEqual(resolveSupport("I need a refund for my payment", articles).mode, "faq");
+  assert.notEqual(resolveSupport("I paid but cannot join class", articles).mode, "faq");
+  assert.equal(resolveSupport("How do I join class?", articles).mode, "faq");
+});
+
 test("read tools are account-scoped and deny writes or cross-user reads", () => {
   assert.equal(canUseSupportReadTool({ tool: "get_my_profile", authenticatedUserId: 7, targetUserId: 7 }), true);
   assert.equal(canUseSupportReadTool({ tool: "get_my_profile", authenticatedUserId: 7, targetUserId: 8 }), false);

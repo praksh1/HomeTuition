@@ -250,8 +250,12 @@ export function resolveSupport(
   articles: readonly SupportArticle[] = [],
 ): SupportResolution {
   const classification = classifySupportQuery(value);
-  const matches = searchSupportArticles(articles, value);
-  const isFaq = classification.confidence !== "low" && matches.length > 0;
+  const matches = searchSupportArticles(articles, value).filter((article) =>
+    classification.intent === "general" || article.intent === classification.intent,
+  );
+  // One incidental keyword or an article from another topic is not evidence that it answers
+  // the question. Ambiguity goes to a person instead of a polished but wrong FAQ reply.
+  const isFaq = classification.confidence !== "low" && (matches[0]?.score ?? 0) >= 3;
   return {
     mode: isFaq ? "faq" : classification.confidence === "low" ? "clarify" : "handoff",
     classification,

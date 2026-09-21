@@ -1,8 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import { router, usePathname } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
+  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -18,46 +19,82 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { elevation, HIT_SLOP_MIN, radius, space } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
+import { apiGet, apiPost } from "@/utils/api";
+import { useAuth } from "@/context/AuthContext";
 
 type Topic = {
   label: string;
   icon: React.ComponentProps<typeof Feather>["name"];
-  reason: "Payment Issue" | "Technical Failure" | "Inappropriate Behavior" | "Other";
+  question: string;
 };
 
 const TOPICS: readonly Topic[] = [
-  { label: "Payments", icon: "credit-card", reason: "Payment Issue" },
-  { label: "Classes", icon: "calendar", reason: "Technical Failure" },
-  { label: "Messages", icon: "message-circle", reason: "Technical Failure" },
-  { label: "Homework", icon: "edit-3", reason: "Technical Failure" },
-  { label: "Account", icon: "user", reason: "Other" },
-  { label: "Safety", icon: "shield", reason: "Inappropriate Behavior" },
+  { label: "Payments", icon: "credit-card", question: "I need help with a class payment or refund." },
+  { label: "Classes", icon: "calendar", question: "I cannot join my class or lesson." },
+  { label: "Messages", icon: "message-circle", question: "I need help with class or direct messages." },
+  { label: "Homework", icon: "edit-3", question: "I need help with homework or feedback." },
+  { label: "Account", icon: "user", question: "I need help with my account or profile." },
+  { label: "Safety", icon: "shield", question: "I need to report a safety concern." },
 ];
 
-type Bubble = { id: string; from: "assistant" | "user"; text: string };
+type Bubble = { id: string; from: "assistant" | "user"; text: string; source?: string; article?: string };
+type SavedMessage = { id: number; role: "assistant" | "user"; body: string; source: string };
+type Conversation = { id: number; ticketId: number | null };
 
 const WELCOME: Bubble = {
   id: "welcome",
   from: "assistant",
-  text: "Hi — I’m Fadko Support. Ask about classes, payments, homework, messages, or your account.",
+  text: "Hi — I can search Fadko’s reviewed answers. If I’m not sure, you can send your question to a person.",
 };
 
 /**
- * Premium support entry point shared by teacher and student tabs.
- *
- * It is deliberately useful while AI is disabled: topic shortcuts go to the existing secure
- * support form, and typed questions are kept on-device until the user chooses a human request.
- * This avoids a fake chatbot that implies an answer was checked when no provider is running.
+ * The Profile support panel. Reviewed answers work without an AI key; unanswered questions
+ * offer a durable human handoff rather than a fabricated promise or a dead-end chatbot.
  */
-export default function SupportAssistantLauncher() {
+export default function SupportAssistantLauncher({ openOnMount = false }: { openOnMount?: boolean }) {
   const pathname = usePathname();
+  const { user } = useAuth();
   const colors = useColors();
   const { t, isExpanded } = useLayout();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(openOnMount);
   const [draft, setDraft] = useState("");
   const [bubbles, setBubbles] = useState<Bubble[]>([WELCOME]);
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [ticketId, setTicketId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sendingToHuman, setSendingToHuman] = useState(false);
+  const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState<Record<string, boolean>>({});
+  const transcript = useRef<ScrollView>(null);
+  const skipHistoryLoad = useRef(false);
+
+  useEffect(() => { if (openOnMount) setVisible(true); }, [openOnMount]);
+  useEffect(() => {
+    skipHistoryLoad.current = false;
+    setConversationId(null);
+    setTicketId(null);
+    setBubbles([WELCOME]);
+  }, [user?.id]);
+
+  const loadLatest = useCallback(async () => {
+    try {
+      const result = await apiGet<{ conversations: Conversation[] }>("/support/assistant/conversations");
+      const latest = result.conversations?.[0];
+      if (!latest) return;
+      const detail = await apiGet<{ messages: SavedMessage[] }>(`/support/assistant/conversations/${latest.id}`);
+      if (skipHistoryLoad.current) return;
+      setConversationId(latest.id);
+      setTicketId(latest.ticketId);
+      setBubbles([WELCOME, ...detail.messages.map((message) => ({
+        id: String(message.id), from: message.role, text: message.body, source: message.source,
+      }))]);
+    } catch { /* The assistant remains available for a fresh question. */ }
+  }, []);
+  useEffect(() => {
+    if (visible && conversationId === null && !skipHistoryLoad.current) void loadLatest();
+  }, [visible, conversationId, loadLatest]);
 
   const bottom = Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) + (isExpanded ? 92 : 88);
   const panelWidth = Math.min(width - space.md * 2, isExpanded ? 440 : 520);
@@ -67,28 +104,65 @@ export default function SupportAssistantLauncher() {
   // a duplicate control and would make browser Back harder to understand.
   if (pathname === "/support") return null;
 
-  const openRequest = (topic?: Topic) => {
+  const openRequest = () => {
     setVisible(false);
-    if (topic) {
-      router.push({ pathname: "/support", params: { reason: topic.reason } });
-    } else {
-      router.push("/support");
-    }
+    router.push("/support");
   };
 
-  const sendDraft = () => {
-    const text = draft.trim();
-    if (!text) return;
-    setBubbles((current) => [
-      ...current,
-      { id: `user-${Date.now()}`, from: "user", text },
-      {
-        id: `assistant-${Date.now()}`,
-        from: "assistant",
-        text: "I can help you get this to the right place. Open a support request and the team will see your question with the correct category.",
-      },
-    ]);
+  const startFresh = () => {
+    skipHistoryLoad.current = true;
+    setConversationId(null);
+    setTicketId(null);
+    setBubbles([WELCOME]);
     setDraft("");
+    setError("");
+  };
+
+  const sendQuestion = async (value: string) => {
+    const text = value.trim();
+    if (!text || busy || ticketId) return;
+    skipHistoryLoad.current = true;
+    setError("");
+    setBusy(true);
+    setDraft("");
+    try {
+      const result = await apiPost<{ conversationId: number; question: SavedMessage; reply: SavedMessage; article: { title: string } | null }>(
+        "/support/assistant/messages", { message: text, conversationId }, { timeoutMs: 12_000 },
+      );
+      setConversationId(result.conversationId);
+      setBubbles((current) => [...current,
+        { id: String(result.question.id), from: "user", text: result.question.body },
+        { id: String(result.reply.id), from: "assistant", text: result.reply.body,
+          source: result.reply.source, article: result.article?.title },
+      ]);
+    } catch (cause) {
+      setDraft(text);
+      setError(cause instanceof Error ? cause.message : "Your question was not sent. Try again.");
+    } finally { setBusy(false); }
+  };
+
+  const rateAnswer = async (id: string, helpful: boolean) => {
+    if (!/^\d+$/.test(id) || id in feedback) return;
+    try {
+      await apiPost(`/support/assistant/messages/${id}/feedback`, { helpful });
+      setFeedback((current) => ({ ...current, [id]: helpful }));
+    } catch { setError("Could not save your feedback. You can try again."); }
+  };
+
+  const handoff = async () => {
+    if (!conversationId) { openRequest(); return; }
+    if (sendingToHuman || ticketId) return;
+    setSendingToHuman(true);
+    setError("");
+    try {
+      const result = await apiPost<{ ticketId: number; ref: string }>(
+        `/support/assistant/conversations/${conversationId}/request`, {},
+      );
+      setTicketId(result.ticketId);
+      setBubbles((current) => [...current, { id: `request-${result.ticketId}`, from: "assistant",
+        text: `Sent to Fadko Support as ${result.ref}. You can follow it in My requests.` }]);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not send this request."); }
+    finally { setSendingToHuman(false); }
   };
 
   return (
@@ -113,7 +187,7 @@ export default function SupportAssistantLauncher() {
       >
         <View style={[styles.launcherRing, { borderColor: colors.brand + "90" }]} />
         <Feather name="life-buoy" size={21} color={colors.primaryForeground} />
-        <View style={[styles.launcherDot, { backgroundColor: colors.online, borderColor: colors.primary }]} />
+        <View style={[styles.launcherDot, { backgroundColor: colors.brand, borderColor: colors.primary }]} />
       </Pressable>
 
       <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
@@ -149,10 +223,14 @@ export default function SupportAssistantLauncher() {
               <View style={styles.headerCopy}>
                 <Text style={[t.title3, { color: colors.foreground }]}>{panelTitle}</Text>
                 <View style={styles.statusLine}>
-                  <View style={[styles.statusDot, { backgroundColor: colors.online }]} />
-                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Quick answers · human help when needed</Text>
+                  <View style={[styles.statusDot, { backgroundColor: colors.brand }]} />
+                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Reviewed answers · human help when needed</Text>
                 </View>
               </View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Start a new support conversation"
+                onPress={startFresh} style={({ pressed }) => [styles.close, pressed && styles.pressed]}>
+                <Feather name="edit" size={18} color={colors.primary} />
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close Fadko Support"
@@ -166,8 +244,10 @@ export default function SupportAssistantLauncher() {
             </View>
 
             <ScrollView
+              ref={transcript}
               style={styles.transcript}
               contentContainerStyle={styles.transcriptContent}
+              onContentSizeChange={() => transcript.current?.scrollToEnd({ animated: true })}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
@@ -184,8 +264,23 @@ export default function SupportAssistantLauncher() {
                   <Text style={[t.body, { color: bubble.from === "user" ? colors.primaryForeground : colors.foreground }]}>
                     {bubble.text}
                   </Text>
+                  {bubble.article && <Text style={[t.caption, { color: colors.mutedForeground }]}>From Fadko Help: {bubble.article}</Text>}
+                  {bubble.source === "ai" && <Text style={[t.caption, { color: colors.mutedForeground }]}>AI-assisted answer · verify important details</Text>}
+                  {(bubble.source === "faq" || bubble.source === "ai") && <View style={styles.feedbackRow}>
+                    <Text style={[t.caption, { color: colors.mutedForeground }]}>{bubble.id in feedback ? "Thanks for the feedback" : "Helpful?"}</Text>
+                    {!(bubble.id in feedback) && <>
+                      <Pressable accessibilityRole="button" accessibilityLabel="This answer helped" onPress={() => void rateAnswer(bubble.id, true)} hitSlop={8}>
+                        <Feather name="thumbs-up" size={16} color={colors.primary} />
+                      </Pressable>
+                      <Pressable accessibilityRole="button" accessibilityLabel="This answer did not help" onPress={() => void rateAnswer(bubble.id, false)} hitSlop={8}>
+                        <Feather name="thumbs-down" size={16} color={colors.primary} />
+                      </Pressable>
+                    </>}
+                  </View>}
                 </View>
               ))}
+              {busy && <ActivityIndicator size="small" color={colors.primary} accessibilityLabel="Fadko Support is answering" />}
+              {!!error && <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{error}</Text>}
 
               <Text style={[t.caption, styles.sectionLabel, { color: colors.mutedForeground }]}>Choose a topic</Text>
               <View style={styles.topicGrid}>
@@ -193,8 +288,9 @@ export default function SupportAssistantLauncher() {
                   <Pressable
                     key={topic.label}
                     accessibilityRole="button"
+                    disabled={busy || !!ticketId}
                     testID={`support-topic-${topic.label.toLowerCase()}`}
-                    onPress={() => openRequest(topic)}
+                    onPress={() => void sendQuestion(topic.question)}
                     style={({ pressed }) => [
                       styles.topic,
                       { backgroundColor: colors.card, borderColor: colors.border },
@@ -215,39 +311,43 @@ export default function SupportAssistantLauncher() {
                 testID="support-assistant-input"
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Ask a question…"
+                placeholder={ticketId ? "Request sent — start a new chat to ask more" : "Ask a question…"}
                 placeholderTextColor={colors.mutedForeground}
                 multiline
                 maxLength={1200}
+                editable={!busy && !ticketId}
                 returnKeyType="send"
-                onSubmitEditing={sendDraft}
+                submitBehavior="submit"
+                onSubmitEditing={() => void sendQuestion(draft)}
                 style={[t.body, styles.input, { color: colors.foreground }]}
               />
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Send support question"
                 testID="support-assistant-send"
-                disabled={!draft.trim()}
-                onPress={sendDraft}
+                disabled={!draft.trim() || busy || !!ticketId}
+                onPress={() => void sendQuestion(draft)}
                 style={({ pressed }) => [
                   styles.send,
-                  { backgroundColor: draft.trim() ? colors.primary : colors.border },
+                  { backgroundColor: draft.trim() && !busy ? colors.primary : colors.border },
                   pressed && styles.pressed,
                 ]}
               >
-                <Feather name="arrow-up" size={18} color={draft.trim() ? colors.primaryForeground : colors.mutedForeground} />
+                <Feather name="arrow-up" size={18} color={draft.trim() && !busy ? colors.primaryForeground : colors.mutedForeground} />
               </Pressable>
             </View>
+
+            <Text style={[t.caption, styles.privacyNote, { color: colors.mutedForeground }]}>Do not share passwords, codes or payment numbers. Fadko never needs them here.</Text>
 
             <View style={styles.panelFooter}>
               <Pressable
                 accessibilityRole="button"
                 testID="support-assistant-open-request"
-                onPress={() => openRequest()}
+                onPress={() => void handoff()}
                 style={({ pressed }) => [styles.footerAction, pressed && styles.pressed]}
               >
                 <Feather name="edit-2" size={15} color={colors.primary} />
-                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>Open a support request</Text>
+                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>{ticketId ? "Sent to a person" : sendingToHuman ? "Sending…" : "Ask a person"}</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -292,6 +392,7 @@ const styles = StyleSheet.create({
   transcript: { flexGrow: 0 },
   transcriptContent: { paddingHorizontal: space.md, paddingBottom: space.sm, gap: space.sm },
   bubble: { maxWidth: "88%", borderRadius: radius.md, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: space.sm },
+  feedbackRow: { flexDirection: "row", alignItems: "center", gap: space.sm, marginTop: space.xs },
   sectionLabel: { marginTop: space.xs, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 },
   topicGrid: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
   topic: { minHeight: HIT_SLOP_MIN, minWidth: "31%", flexGrow: 1, flexBasis: "30%", borderWidth: 1, borderRadius: radius.md, alignItems: "center", justifyContent: "center", gap: space.xxs, paddingHorizontal: space.xs, paddingVertical: space.xs },
@@ -299,6 +400,7 @@ const styles = StyleSheet.create({
   composer: { marginHorizontal: space.md, marginBottom: space.sm, borderWidth: 1, borderRadius: radius.md, flexDirection: "row", alignItems: "flex-end", padding: space.xs, gap: space.xs },
   input: { flex: 1, minHeight: 40, maxHeight: 90, paddingHorizontal: space.xs, paddingVertical: space.xs },
   send: { width: 40, height: 40, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
+  privacyNote: { paddingHorizontal: space.md, paddingBottom: space.xs },
   panelFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: space.md, paddingBottom: space.md, gap: space.sm },
   footerAction: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.xxs, justifyContent: "center", paddingHorizontal: space.xs },
   pressed: { opacity: 0.72 },

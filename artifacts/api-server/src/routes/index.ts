@@ -22,6 +22,7 @@ import programBatchesRouter from "./programBatches";
 import teachingClassesRouter from "./teachingClasses";
 import batchTestingRouter from "./batchTesting";
 import classGroupsRouter from "./classGroups";
+import supportAssistantRouter from "./supportAssistant";
 
 const router: IRouter = Router();
 
@@ -46,6 +47,7 @@ router.use(programBatchesRouter);
 router.use(teachingClassesRouter);
 router.use(batchTestingRouter);
 router.use(classGroupsRouter);
+router.use(supportAssistantRouter);
 router.use(operatorsRouter);
 router.use(adminRouter);
 router.use(passwordResetRouter);
