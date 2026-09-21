@@ -49,6 +49,21 @@ for _ in $(seq 1 40); do
   fi
   sleep 0.25
 done
+# A restart test earlier in the same CI job can replace the shared API without updating
+# /tmp/api.pid. Only on the disposable GitHub runner, release this exact test port after
+# the recorded PID has been given time to exit; never use this fallback on a developer's
+# machine, where that port could belong to an unrelated service.
+if curl -sf --max-time 1 "http://127.0.0.1:${api_port}/api/healthz" >/dev/null 2>&1 \
+  && [[ "${GITHUB_ACTIONS:-}" == "true" ]] \
+  && command -v fuser >/dev/null 2>&1; then
+  fuser -k "${api_port}/tcp" >/dev/null 2>&1 || true
+  for _ in $(seq 1 40); do
+    if ! curl -sf --max-time 1 "http://127.0.0.1:${api_port}/api/healthz" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.25
+  done
+fi
 if curl -sf --max-time 1 "http://127.0.0.1:${api_port}/api/healthz" >/dev/null 2>&1; then
   echo "::error title=Old test API still running::Port ${api_port} is still serving the previous provider."
   exit 1
