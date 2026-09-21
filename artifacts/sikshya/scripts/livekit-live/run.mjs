@@ -319,12 +319,21 @@ const params = new URLSearchParams(location.search);
 window.__events = { left: 0, watchedLeft: 0 };
 
 function Harness() {
+  const owner = params.get("owner") === "1";
+  const [cameraAllowed, setCameraAllowed] = React.useState(owner);
+  React.useEffect(() => {
+    window.__setCameraAllowed = setCameraAllowed;
+    return () => { delete window.__setCameraAllowed; };
+  }, []);
   return React.createElement("div", { style: { position: "relative", width: "100vw", height: "100vh" } },
     React.createElement(LiveKitEmbed, {
       roomUrl: params.get("url"),
       meetingToken: params.get("token"),
       displayName: params.get("name"),
-      canScreenShare: params.get("owner") === "1",
+      canScreenShare: owner,
+      isTeacher: owner,
+      canUseMicrophone: true,
+      canUseCamera: cameraAllowed,
       onLeft: () => { window.__events.left += 1; },
       onWatchedParticipantLeft: () => { window.__events.watchedLeft += 1; },
     }),
@@ -466,17 +475,16 @@ const second = { t: await inboundVideo(t.page), s: await inboundVideo(s.page) };
 /*
   The direction that matters, and the direction that must NOT work.
 
-  A student's token now permits nothing to be published, so the teacher decodes nothing from
-  them until a teacher grants the floor. An earlier version of this suite asserted frames
-  flowing both ways and passed — against a build where every token said canPublish: true. Its
-  failure when the token was tightened is the clearest evidence the change took effect.
+  A student's token permits a microphone but the student enters muted, and the token does not
+  permit a camera. The teacher therefore decodes no student video until camera access is granted.
+  This proves the product's two independent rules: self-unmute is ordinary, camera is moderated.
 */
 check("the teacher's video reaches the student",
   second.s.framesDecoded > first.s.framesDecoded && second.s.framesDecoded > 0,
   `${first.s.framesDecoded} -> ${second.s.framesDecoded}`);
 check("and bytes are arriving to prove it",
   second.s.bytesReceived > 0, `student received ${second.s.bytesReceived} bytes`);
-check("a student publishes nothing without being granted the floor",
+check("a student publishes no camera before teacher authorization",
   second.t.framesDecoded === 0 && second.t.bytesReceived === 0,
   `teacher decoded ${second.t.framesDecoded} frames / ${second.t.bytesReceived} bytes from the student`);
 
@@ -651,22 +659,34 @@ check("both people were matched by account id", Boolean(teacherParticipant && st
 
 check("the teacher's token permits a screen share", teacherParticipant ? canScreen(teacherParticipant) : false,
   JSON.stringify(teacherParticipant?.permission ?? null));
-check("a student may not share a screen, nor publish at all", studentParticipant ? !canScreen(studentParticipant) : false,
+const mayPublishSource = (p, source) => {
+  const permission = p?.permission;
+  if (!permission?.canPublish) return false;
+  const sources = permission.canPublishSources ?? [];
+  if (sources.length === 0) return true;
+  return sources.some((candidate) => candidate === source || String(candidate) === String(source));
+};
+check("a student token permits microphone but not camera or screen share",
+  studentParticipant
+    ? mayPublishSource(studentParticipant, TrackSource.MICROPHONE)
+      && !mayPublishSource(studentParticipant, TrackSource.CAMERA)
+      && !canScreen(studentParticipant)
+    : false,
   JSON.stringify(studentParticipant?.permission ?? null));
 
 // ---------------------------------------------------------------------------
-// 7b. Granting the floor, and taking it back
+// 7b. Granting camera access, and taking it back
 // ---------------------------------------------------------------------------
 
-console.log("\nThe floor: granted by the server, revoked by the server");
+console.log("\nStudent camera: granted by the server, revoked by the server");
 
 /*
   What this proves, and what it does not.
 
-  `lib/classroom/speakingFloor.ts` decides *whether* a student may speak, and its 35 unit tests
-  cover that. What no unit test can cover is whether LiveKit actually honours the grant — that
-  `updateParticipant` lets a previously-silenced student publish, and that taking it away stops
-  them. That is this section, and it applies exactly the permission shape
+  `lib/classroom/speakingFloor.ts` decides *whether* a student may use their camera, and its unit
+  tests cover that. What no unit test can cover is whether LiveKit actually honours the grant —
+  that `updateParticipant` adds camera to a microphone-only participant, and that taking camera
+  away does not also take the microphone. That is this section, using exactly the permission shape
   `livekitProvider.setPublishing` builds.
 
   It calls the SDK directly rather than the API route because the route's own authorisation is
@@ -675,7 +695,7 @@ console.log("\nThe floor: granted by the server, revoked by the server");
 */
 const room = open_[0].name;
 const studentIdentity = studentParticipant?.identity;
-check("the student was found in the room to grant", Boolean(studentIdentity), String(studentIdentity));
+check("the student was found in the room for camera authorization", Boolean(studentIdentity), String(studentIdentity));
 
 await rooms.updateParticipant(room, studentIdentity, undefined, {
   canSubscribe: true,
@@ -686,15 +706,18 @@ await rooms.updateParticipant(room, studentIdentity, undefined, {
 
 const granted = await waitFor(async () => {
   const who = (await rooms.listParticipants(room)).find((p) => p.identity === studentIdentity);
-  return who?.permission?.canPublish === true;
+  return who?.permission?.canPublish === true
+    && mayPublishSource(who, TrackSource.MICROPHONE)
+    && mayPublishSource(who, TrackSource.CAMERA);
 }, 40, 250);
-check("the server can grant a student the floor mid-call", granted);
+check("the server can authorize a student camera mid-call", granted);
 
 /*
   And the grant is real, not merely recorded: the student's browser now publishes a camera the
   teacher decodes. Frames rising is the only evidence that distinguishes a permission that took
   effect from one that was written down.
 */
+await s.page.evaluate(() => window.__setCameraAllowed?.(true));
 await s.page.locator('[data-testid="livekit-camera"]').click().catch(() => {});
 await new Promise((r) => setTimeout(r, 2500));
 const beforeGrantFrames = await inboundVideo(t.page);
@@ -706,15 +729,17 @@ check("and the teacher then decodes the student's camera",
 
 await rooms.updateParticipant(room, studentIdentity, undefined, {
   canSubscribe: true,
-  canPublish: false,
+  canPublish: true,
   canPublishData: false,
-  canPublishSources: [],
+  canPublishSources: [TrackSource.MICROPHONE],
 });
 const revoked = await waitFor(async () => {
   const who = (await rooms.listParticipants(room)).find((p) => p.identity === studentIdentity);
-  return who?.permission?.canPublish === false;
+  return who?.permission?.canPublish === true
+    && mayPublishSource(who, TrackSource.MICROPHONE)
+    && !mayPublishSource(who, TrackSource.CAMERA);
 }, 40, 250);
-check("and take it back again", revoked);
+check("and take camera access back without taking the microphone", revoked);
 
 // ---------------------------------------------------------------------------
 // 8. The controls, against a real connection
@@ -723,10 +748,18 @@ check("and take it back again", revoked);
 console.log("\nThe controls do what they say");
 
 await s.page.locator('[data-testid="livekit-mic"]').click();
+const speakingSeen = await waitFor(async () =>
+  (await t.page.locator('[data-testid="livekit-tile-' + student.user.id + '"]').getByText("muted").count()) === 0,
+  40,
+  250,
+);
+check("a student can unmute without waiting for a camera grant", speakingSeen);
+
+await s.page.locator('[data-testid="livekit-mic"]').click();
 const mutedSeen = await waitFor(async () =>
   (await t.page.locator('[data-testid="livekit-tile-' + student.user.id + '"]').getByText("muted").count()) > 0
   || (await t.page.locator("text=muted").count()) > 0, 40, 250);
-check("a student muting is visible to the teacher", mutedSeen);
+check("and muting again is visible to the teacher", mutedSeen);
 
 /*
   Audio-only, the reason this provider was chosen.
