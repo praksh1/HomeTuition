@@ -1652,7 +1652,17 @@ export default function Classroom() {
         <View style={s.contentArea}>
           <Animated.View
             testID="video-window"
-            pointerEvents={mode === "chat" || videoHidden ? "none" : "auto"}
+            // The browser's one-time "turn on sound" prompt is a real button inside this
+            // floating window. It must stay clickable during the call, but never through the
+            // participant drawer: on Safari and headless Chromium it can otherwise win the hit
+            // test even while the drawer is visibly painted above it. The list is the active
+            // surface while it is open, so the call window becomes deliberately inert until the
+            // teacher closes the list.
+            pointerEvents={
+              mode === "chat" || mode === "participants" || videoHidden
+                ? "none"
+                : "auto"
+            }
             style={[
               s.videoArea,
               elevation.sheet,
