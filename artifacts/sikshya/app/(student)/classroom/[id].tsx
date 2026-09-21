@@ -1408,7 +1408,8 @@ const s = StyleSheet.create({
     zIndex: 72,
   },
   presenceDot: { width: 8, height: 8, borderRadius: 4 },
-  noticeLayer: { position: "absolute", alignItems: "center", zIndex: 120 },
+  // Time and access notices must remain actionable above the floating control dock.
+  noticeLayer: { position: "absolute", alignItems: "center", zIndex: 130 },
   /*
     Under the chat sheet and over the board.
 
