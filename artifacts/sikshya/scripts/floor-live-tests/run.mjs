@@ -16,9 +16,9 @@
  *
  * Because one student cannot catch the bug this suite was extended for. Starting a class used to
  * clear the roster and rebuild nothing, so a teacher's class list was empty the moment their
- * lesson began — and "Invite all" and "Mute all" iterate that list, so both reached nobody while
- * looking as though they had worked. With a single student who raises a hand, the row is rebuilt
- * by the raised hand itself and the hole never shows. So: two students, both named, both sitting
+ * lesson began — and "Mute all" reached nobody while looking as though it had worked. With a
+ * single student who raises a hand, the row is rebuilt by the raised hand itself and the hole
+ * never shows. So: two students, both named, both sitting
  * in the lobby, neither of whom reconnects and neither of whom raises a hand before the class
  * starts. That is the shape the failure needs to be visible.
  *
@@ -206,12 +206,24 @@ async function main() {
   const s = await open(student.token, { width: 390, height: 844 }, `/(student)/classroom/${sessionId}`);
   const s2 = await open(second.token, { width: 390, height: 844 }, `/(student)/classroom/${sessionId}`);
 
-  /** Open the class list, do something in it, and close it again. */
+  /** Open the responsive class list, do something in it, and close it again. */
   const inSheet = async (body) => {
     await t.page.locator('[data-testid="teacher-floor-participants"]').click();
-    const there = await waitFor(t.page, "participant-sheet");
-    if (!there) return false;
-    const out = await body();
+    const deadline = Date.now() + 12000;
+    let panelId = null;
+    while (Date.now() < deadline) {
+      if ((await t.page.locator('[data-testid="participant-drawer"]').count()) > 0) {
+        panelId = "participant-drawer";
+        break;
+      }
+      if ((await t.page.locator('[data-testid="participant-sheet"]').count()) > 0) {
+        panelId = "participant-sheet";
+        break;
+      }
+      await t.page.waitForTimeout(200);
+    }
+    if (panelId === null) return false;
+    const out = await body(panelId);
     await t.page.locator('[data-testid="participant-sheet-close"]').click();
     await t.page.waitForTimeout(300);
     return out;
@@ -249,10 +261,10 @@ async function main() {
     so nothing but `restartFloorFor` can have put these rows back. Before the correction this list
     was empty here, and the two bulk controls below reached nobody.
   */
-  const roster = await inSheet(async () => ({
+  const roster = await inSheet(async (panelId) => ({
     first: await t.page.locator(`[data-testid="participant-row-${student.user.id}"]`).count(),
     second: await t.page.locator(`[data-testid="participant-row-${second.user.id}"]`).count(),
-    text: await textOf(t.page, "participant-sheet"),
+    text: await textOf(t.page, panelId),
   }));
   check("the class list opens", roster !== false);
   check("the first student is in it", roster && roster.first === 1,
@@ -267,109 +279,133 @@ async function main() {
     Boolean(roster && roster.first === 1 && roster.second === 1 && !/\bStudent\b/.test(roster.text)),
     roster ? roster.text.slice(0, 200) : "no sheet");
 
-  console.log("\n[1d] Invite all reaches every student who was already in the room");
-  await t.page.locator('[data-testid="teacher-floor-invite-all"]').click();
-  check("the first student is asked to speak", await waitFor(s.page, "student-floor-accept-mic"),
-    "Invite all reached nobody — the floor had no students to iterate");
-  check("the second student is asked to speak", await waitFor(s2.page, "student-floor-accept-mic"),
-    "Invite all reached only some of the room");
-  const inviteText = await textOf(s2.page, "student-floor-title");
-  check("and it reads as their teacher asking them", /asked you to speak/i.test(inviteText), inviteText);
+  console.log("\n[1d] The current microphone-first classroom is what both students see");
+  check("the retired Invite all control stays retired",
+    (await t.page.locator('[data-testid="teacher-floor-invite-all"]').count()) === 0);
+  const firstStart = await textOf(s.page, "student-floor-state");
+  const secondStart = await textOf(s2.page, "student-floor-state");
+  check("the first student joins with their microphone off", /microphone off/i.test(firstStart), firstStart);
+  check("the second student joins with their microphone off", /microphone off/i.test(secondStart), secondStart);
+  check("camera stays teacher-controlled",
+    /teacher controlled/i.test(await textOf(s.page, "student-floor-camera")));
 
-  await s.page.locator('[data-testid="student-floor-accept-mic"]').click();
-  await s2.page.locator('[data-testid="student-floor-accept-mic"]').click();
-  await t.page.waitForTimeout(1500);
-  /*
-    The badge shows a bare number and says the whole sentence to a screen reader, so both are read.
-    Checking only the visible text would have matched "2" from a badge that meant something else.
-
-    The digits are pulled out rather than the text trimmed: `innerText` here begins with the Feather
-    icon's own glyph — a private-use character, U+F19F — which is not whitespace and survives
-    `trim()`. It also prints as nothing at all in a terminal, so the comparison failed against a
-    string that looked identical to the one expected.
-  */
-  const speakingCount = (await textOf(t.page, "teacher-floor-speaking")).replace(/\D+/g, "");
-  const speakingSpoken = await t.page
-    .locator('[data-testid="teacher-floor-speaking"]')
-    .first()
-    .getAttribute("aria-label")
-    .catch(() => "");
-  check("the teacher's strip counts both of them speaking",
-    speakingCount === "2" && /2 speaking/i.test(speakingSpoken ?? ""),
-    `visible=${JSON.stringify(speakingCount)} spoken=${JSON.stringify(speakingSpoken)}`);
-
-  console.log("\n[1e] Mute all reaches every student too");
-  // Held for over a second before being stopped, so the record below has something to hold.
-  await t.page.waitForTimeout(1200);
-  await t.page.locator('[data-testid="teacher-floor-mute-all"]').click();
-  await s.page.waitForTimeout(1500);
-  const mutedFirst = await textOf(s.page, "student-floor-title");
-  const mutedSecond = await textOf(s2.page, "student-floor-title");
-  check("the first student's microphone is turned off", /your teacher turned/i.test(mutedFirst), mutedFirst);
-  check("the second student's is too", /your teacher turned/i.test(mutedSecond), mutedSecond);
-
-  console.log("\n[1f] Both are put back to listening, so the rest of the lesson starts clean");
-  const returned = await inSheet(async () => {
-    await t.page.locator(`[data-testid="participant-${student.user.id}-return"]`).click();
-    await t.page.waitForTimeout(400);
-    await t.page.locator(`[data-testid="participant-${second.user.id}-return"]`).click();
-    await t.page.waitForTimeout(400);
+  console.log("\n[1e] One-student moderation blocks and restores self-unmute");
+  const mutedOne = await inSheet(async () => {
+    await t.page.locator(`[data-testid="participant-row-${student.user.id}"]`).click();
+    const action = `participant-${student.user.id}-mute`;
+    if (!(await waitFor(t.page, action))) return false;
+    await t.page.locator(`[data-testid="${action}"]`).click();
     return true;
   });
-  check("the teacher can take both turns back", returned === true);
-  await s.page.waitForTimeout(1200);
-  check("the first student can ask again", await waitFor(s.page, "student-floor-ask"));
-  check("and so can the second", await waitFor(s2.page, "student-floor-ask"));
+  check("the teacher can prevent one student from unmuting", mutedOne === true);
+  await s.page.waitForTimeout(900);
+  check("that student is told the teacher muted them",
+    /muted by teacher/i.test(await textOf(s.page, "student-floor-state")),
+    await textOf(s.page, "student-floor-state"));
+  check("the other student's microphone remains their own choice",
+    /microphone off/i.test(await textOf(s2.page, "student-floor-state")),
+    await textOf(s2.page, "student-floor-state"));
+
+  const restoredOne = await inSheet(async () => {
+    await t.page.locator(`[data-testid="participant-row-${student.user.id}"]`).click();
+    const action = `participant-${student.user.id}-allow-mic`;
+    if (!(await waitFor(t.page, action))) return false;
+    await t.page.locator(`[data-testid="${action}"]`).click();
+    return true;
+  });
+  check("the teacher can restore that student's self-unmute", restoredOne === true);
+  await s.page.waitForTimeout(900);
+  check("restoring permission does not open the microphone",
+    /microphone off/i.test(await textOf(s.page, "student-floor-state")),
+    await textOf(s.page, "student-floor-state"));
+
+  console.log("\n[1f] Mute all reaches every student, and each permission can be restored");
+  await t.page.locator('[data-testid="teacher-floor-mute-all"]').click();
+  await s.page.waitForTimeout(1000);
+  check("the first student is blocked",
+    /muted by teacher/i.test(await textOf(s.page, "student-floor-state")));
+  check("the second student is blocked too",
+    /muted by teacher/i.test(await textOf(s2.page, "student-floor-state")));
+
+  const restoredBoth = await inSheet(async () => {
+    for (const id of [student.user.id, second.user.id]) {
+      await t.page.locator(`[data-testid="participant-row-${id}"]`).click();
+      const action = `participant-${id}-allow-mic`;
+      if (!(await waitFor(t.page, action))) return false;
+      await t.page.locator(`[data-testid="${action}"]`).click();
+      await t.page.waitForTimeout(350);
+    }
+    return true;
+  });
+  check("the teacher can restore both microphone permissions", restoredBoth === true);
+  await s.page.waitForTimeout(900);
+  check("the first stays muted by themselves after permission returns",
+    /microphone off/i.test(await textOf(s.page, "student-floor-state")));
+  check("the second stays muted by themselves after permission returns",
+    /microphone off/i.test(await textOf(s2.page, "student-floor-state")));
 
   console.log("\n[2] The student raises a hand, and the teacher sees it");
   await s.page.locator('[data-testid="student-floor-ask"]').click();
   check("the teacher's badge appears", await waitFor(t.page, "teacher-floor-hands"),
     "the socket did not carry the request to the other browser");
-  const waiting = await textOf(s.page, "student-floor-body");
-  check("and the student is told where they are", /next|in line/i.test(waiting), waiting);
+  check("the student's control becomes Lower hand", await waitFor(s.page, "student-floor-cancel-ask"));
+  const waiting = await textOf(s.page, "student-floor-state");
+  check("and the student sees their hand is up", /hand up/i.test(waiting), waiting);
 
-  console.log("\n[3] The teacher lets them speak");
-  await t.page.locator('[data-testid="teacher-floor-participants"]').click();
-  check("the class list opens", await waitFor(t.page, "participant-sheet"));
-  const rowId = `participant-${student.user.id}-allow-mic`;
-  check("the student is listed with the three answers", await waitFor(t.page, rowId),
-    `no ${rowId} — the roster did not reach the teacher's screen`);
-  await t.page.locator(`[data-testid="${rowId}"]`).click();
+  console.log("\n[3] The teacher answers the hand with separate camera permission");
+  const cameraAllowed = await inSheet(async () => {
+    await t.page.locator(`[data-testid="participant-row-${student.user.id}"]`).click();
+    const action = `participant-${student.user.id}-allow-camera`;
+    if (!(await waitFor(t.page, action))) return false;
+    await t.page.locator(`[data-testid="${action}"]`).click();
+    await t.page.waitForTimeout(1100);
+    return (await t.page.locator(`[data-testid="participant-provider-${student.user.id}"]`).count()) === 0;
+  });
+  check("the teacher can acknowledge the hand and allow camera", cameraAllowed === true,
+    "the permission did not settle with LiveKit");
+  await s.page.waitForTimeout(900);
+  check("the hand is cleared without another consent dialog", await waitFor(s.page, "student-floor-ask"));
+  check("camera is now available to the student",
+    /camera available/i.test(await textOf(s.page, "student-floor-camera")),
+    await textOf(s.page, "student-floor-camera"));
+  check("the microphone remains off until the student chooses otherwise",
+    /microphone off/i.test(await textOf(s.page, "student-floor-state")));
 
-  check("the student is told they may speak", await waitFor(s.page, "student-floor-accept-mic"),
-    "the grant did not come back down the student's socket");
-  const invited = await textOf(s.page, "student-floor-title");
-  check("and it reads as their teacher asking them, not as a setting changing",
-    /asked you to speak/i.test(invited), invited);
+  console.log("\n[4] Camera permission can be removed without changing microphone permission");
+  const cameraStopped = await inSheet(async () => {
+    await t.page.locator(`[data-testid="participant-row-${student.user.id}"]`).click();
+    const action = `participant-${student.user.id}-stop-camera`;
+    if (!(await waitFor(t.page, action))) return false;
+    await t.page.locator(`[data-testid="${action}"]`).click();
+    return true;
+  });
+  check("the teacher can remove camera access", cameraStopped === true);
+  await s.page.waitForTimeout(900);
+  check("camera returns to teacher-controlled",
+    /teacher controlled/i.test(await textOf(s.page, "student-floor-camera")));
+  check("microphone permission remains available",
+    /microphone off/i.test(await textOf(s.page, "student-floor-state")));
 
-  /*
-    The grant reached a real SFU and a real participant, and the class was told so.
-
-    Worth asserting out loud rather than inferred from the sentence above. A grant the provider has
-    not confirmed now withholds those buttons and says "Switching your microphone on…" instead, so
-    the invitation being drawn at all means `livekit-server` accepted `updateParticipant` for a
-    participant that was actually in the room — which is only true because both browsers really do
-    join it. The file header used to claim they did not.
-  */
-  check("the teacher's row shows nothing outstanding against the provider",
-    (await t.page.locator(`[data-testid="participant-provider-${student.user.id}"]`).count()) === 0,
-    await textOf(t.page, `participant-provider-${student.user.id}`));
-
-  console.log("\n[4] The student accepts, and the class agrees about it");
-  await s.page.locator('[data-testid="student-floor-accept-mic"]').click();
-  await s.page.waitForTimeout(1200);
-  const mine = await textOf(s.page, "student-floor-title");
-  check("the student's own screen says they are speaking", /you're speaking/i.test(mine), mine);
-  const onTeacher = await textOf(t.page, `participant-state-${student.user.id}`);
-  check("and the teacher's list says the same thing", /speaking/i.test(onTeacher), onTeacher);
-
-  console.log("\n[5] The teacher turns them off");
-  await t.page.locator(`[data-testid="participant-${student.user.id}-mute"]`).click();
-  await s.page.waitForTimeout(1200);
-  const muted = await textOf(s.page, "student-floor-title");
-  check("the student is told who turned their microphone off",
-    /your teacher turned/i.test(muted), muted);
-  check("and never as an unexplained setting", !/muted by moderator/i.test(muted), muted);
+  console.log("\n[5] A later teacher mute is still explicit and reversible");
+  const mutedAgain = await inSheet(async () => {
+    await t.page.locator(`[data-testid="participant-row-${student.user.id}"]`).click();
+    const action = `participant-${student.user.id}-mute`;
+    if (!(await waitFor(t.page, action))) return false;
+    await t.page.locator(`[data-testid="${action}"]`).click();
+    return true;
+  });
+  check("the teacher can block self-unmute again", mutedAgain === true);
+  await s.page.waitForTimeout(900);
+  check("the student sees Muted by teacher",
+    /muted by teacher/i.test(await textOf(s.page, "student-floor-state")));
+  const restoredAgain = await inSheet(async () => {
+    await t.page.locator(`[data-testid="participant-row-${student.user.id}"]`).click();
+    const action = `participant-${student.user.id}-allow-mic`;
+    if (!(await waitFor(t.page, action))) return false;
+    await t.page.locator(`[data-testid="${action}"]`).click();
+    return true;
+  });
+  check("the teacher can restore self-unmute again", restoredAgain === true);
 
   console.log("\n[6] A pay-as-you-go class has no discussion to offer");
   check("no discussion control is drawn",
@@ -384,36 +420,26 @@ async function main() {
   check("the raised hand is in the record", countOf("classroom.floor.ask") === 1,
     String(countOf("classroom.floor.ask")));
   const allows = countOf("classroom.floor.allow", ` and user_id = ${teacher.user.id}`);
-  check("so is the teacher's decision, against the teacher's own account", allows === 1, String(allows));
-  check("and so is the mute", countOf("classroom.floor.mute") === 1, String(countOf("classroom.floor.mute")));
-  check("the whole-room invitation is one line, not one per student",
-    countOf("classroom.floor.invite_all") === 1, String(countOf("classroom.floor.invite_all")));
+  check("each restored or expanded permission is recorded against the teacher", allows === 5, String(allows));
+  check("and so are both individual mutes",
+    countOf("classroom.floor.mute") === 2, String(countOf("classroom.floor.mute")));
+  check("the retired whole-room invitation is never emitted",
+    countOf("classroom.floor.invite_all") === 0, String(countOf("classroom.floor.invite_all")));
   check("and so is the whole-room mute", countOf("classroom.floor.mute_all") === 1,
     String(countOf("classroom.floor.mute_all")));
-  check("each turn taken back is its own line", countOf("classroom.floor.return_audience") === 2,
-    String(countOf("classroom.floor.return_audience")));
+  check("camera removal is recorded separately",
+    countOf("classroom.floor.stop_camera") === 1, String(countOf("classroom.floor.stop_camera")));
 
-  console.log("\n[7b] And what it says about speech is what the app can actually prove");
+  console.log("\n[7b] And the audit record does not invent speech from permissions");
   /*
-    Finding 3, checked against the database a support agent would actually read.
-
-    Two students held a microphone for over a second each, so there are rows here. What matters is
-    what they are called and what they claim: `classroom.floor.held` and `speechConfirmed: false`.
-    Nothing in this build observes a published audio track, so a row asserting that speech occurred
-    would be a number a refund decision could rest on and the app cannot support.
+    These browsers have no device permission, so nobody can publish a track. Permission changes
+    must not become evidence that somebody spoke or even held an open microphone. The separate
+    real-media suite proves track publication and revocation with virtual devices.
   */
   const held = countOf("classroom.floor.held");
-  check("holding the floor is recorded", held >= 2, String(held));
+  check("no microphone hold is invented", held === 0, String(held));
   const spoke = countOf("classroom.floor.spoke");
-  check("and never under a name that claims speech happened", spoke === 0, String(spoke));
-  const unconfirmed = Number(sql(`select count(*) from activity_log
-    where subject_id = ${sessionId} and action = 'classroom.floor.held'
-      and detail->>'speechConfirmed' = 'false'`));
-  check("every row says outright that speech is unconfirmed", unconfirmed === held,
-    `${unconfirmed} of ${held}`);
-  const basis = sql(`select distinct detail->>'basis' from activity_log
-    where subject_id = ${sessionId} and action = 'classroom.floor.held'`);
-  check("and says what it was measured from", basis === "permission_and_consent", basis);
+  check("no speech is invented either", spoke === 0, String(spoke));
 
   console.log("\n[8] Nothing threw on any screen");
   check("no page error in the teacher's browser", t.errors.length === 0, t.errors[0] ?? "");
