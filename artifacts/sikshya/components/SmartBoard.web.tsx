@@ -374,8 +374,9 @@ function SmartBoard({
   >(null);
   /** Whether Excalidraw's shape properties panel is currently allowed on screen. */
   const [showProps, setShowProps] = useState(false);
-  /** Students only: whether the board still tracks the teacher's view. */
+  /** Teacher ink settings stay visible even while Excalidraw's larger properties panel is hidden. */
   const [inkColor, setInkColor] = useState("#1e293b");
+  const [inkThickness, setInkThickness] = useState<1 | 2 | 4>(2);
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
   const [mediaElements, setMediaElements] = useState<ExcalidrawElement[]>([]);
   const lastFocusId = useRef<number | null>(null);
@@ -528,18 +529,46 @@ function SmartBoard({
       >
         <RedoIcon />
       </button>
-      <button type="button" aria-label="Choose writing colour" title="Writing colour"
+      <button type="button" aria-label="Choose ink colour and thickness" title="Ink settings"
         aria-expanded={colorMenuOpen} onClick={() => setColorMenuOpen((open) => !open)}
-        style={{ ...pageButtonStyle, display: "grid", placeItems: "center" }}>
+        style={{ ...pageButtonStyle, display: "grid", placeItems: "center", gap: 2 }}>
         <span aria-hidden="true" style={{ width: 19, height: 19, borderRadius: "50%", background: inkColor, border: "2px solid white", boxShadow: "0 0 0 1px rgba(15,23,42,0.25)" }} />
+        <span aria-hidden="true" style={{ width: 19, height: inkThickness, minHeight: 1, borderRadius: 99, background: inkColor }} />
       </button>
       {colorMenuOpen ? (
-        <div role="group" aria-label="Writing colours" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, display: "flex", gap: 6, padding: 8, borderRadius: 14, border: "1px solid rgba(15,23,42,0.12)", background: "white", boxShadow: "0 10px 28px rgba(15,23,42,0.16)" }}>
-          {[["Charcoal", "#1e293b"], ["Blue", "#1d4ed8"], ["Red", "#dc2626"], ["Green", "#15803d"], ["Purple", "#7c3aed"], ["Orange", "#c2410c"]].map(([name, value]) => (
-            <button key={value} type="button" aria-label={`${name} writing colour`} aria-pressed={inkColor === value}
-              onClick={() => { api?.updateScene({ appState: { currentItemStrokeColor: value } }); setInkColor(value); setColorMenuOpen(false); }}
-              style={{ width: 34, height: 34, borderRadius: "50%", border: inkColor === value ? "3px solid #0f172a" : "2px solid white", background: value, boxShadow: "0 0 0 1px rgba(15,23,42,0.2)", cursor: "pointer" }} />
-          ))}
+        <div role="group" aria-label="Ink settings" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 244, display: "grid", gap: 12, padding: 12, borderRadius: 16, border: "1px solid rgba(15,23,42,0.12)", background: "white", boxShadow: "0 10px 28px rgba(15,23,42,0.16)" }}>
+          <div style={{ display: "grid", gap: 7 }}>
+            <strong style={{ color: "#0f172a", fontFamily: "system-ui, sans-serif", fontSize: 12 }}>Ink colour</strong>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+              {[["Charcoal", "#1e293b"], ["Blue", "#1d4ed8"], ["Red", "#dc2626"], ["Green", "#15803d"], ["Purple", "#7c3aed"], ["Orange", "#c2410c"]].map(([name, value]) => (
+                <button key={value} type="button" aria-label={`${name} writing colour`} aria-pressed={inkColor === value}
+                  onClick={() => { api?.updateScene({ appState: { currentItemStrokeColor: value } }); setInkColor(value); }}
+                  style={{ width: 30, height: 30, borderRadius: "50%", border: inkColor === value ? "3px solid #0f172a" : "2px solid white", background: value, boxShadow: "0 0 0 1px rgba(15,23,42,0.2)", cursor: "pointer" }} />
+              ))}
+            </div>
+          </div>
+          <label style={{ display: "grid", gap: 8, color: "#0f172a", fontFamily: "system-ui, sans-serif", fontSize: 12, fontWeight: 700 }}>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <span>Ink thickness</span>
+              <span style={{ color: "#64748b", fontWeight: 600 }}>{inkThickness === 1 ? "Thin" : inkThickness === 2 ? "Medium" : "Bold"}</span>
+            </span>
+            <input
+              aria-label="Ink thickness"
+              aria-valuetext={inkThickness === 1 ? "Thin" : inkThickness === 2 ? "Medium" : "Bold"}
+              type="range"
+              min={0}
+              max={2}
+              step={1}
+              value={inkThickness === 1 ? 0 : inkThickness === 2 ? 1 : 2}
+              onChange={(event) => {
+                const width = ([1, 2, 4] as const)[Number(event.currentTarget.value)] ?? 2;
+                api?.updateScene({ appState: { currentItemStrokeWidth: width } });
+                setInkThickness(width);
+              }}
+              style={{ width: "100%", accentColor: inkColor, cursor: "pointer" }}
+            />
+            <span aria-hidden="true" style={{ display: "block", width: "100%", height: inkThickness, minHeight: 1, borderRadius: 99, background: inkColor }} />
+          </label>
         </div>
       ) : null}
     </div>
