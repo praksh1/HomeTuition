@@ -8,6 +8,7 @@ import {
   resolveSupport,
   searchSupportArticles,
   supportQueryMetric,
+  supportFollowUp,
   type SupportArticle,
 } from "./supportAssistant.ts";
 
@@ -74,6 +75,16 @@ test("unknown or injection-shaped text is clarified or handed off", () => {
   assert.notEqual(result.mode, "faq");
   assert.equal(result.articles.some((article) => article.id === "draft-refund"), false);
   assert.deepEqual(resolveSupport("hello", articles).suggestedActions.slice(0, 2), ["open_request", "view_my_requests"]);
+});
+
+test("broad questions get short, actionable follow-up choices without inventing an answer", () => {
+  const classChoices = supportFollowUp("I cannot join my class or lesson.", "class_access");
+  assert.match(classChoices?.prompt ?? "", /Which of these/);
+  assert.equal(classChoices?.choices.some((choice) => choice.label === "Camera or sound"), true);
+  assert.equal(supportFollowUp("hello", "general")?.choices.length, 4);
+  assert.equal(supportFollowUp("I need help with a class.", "class_access")?.choices.length, 4);
+  assert.equal(supportFollowUp("thanks", "general"), null);
+  assert.equal(supportFollowUp("I paid but cannot join a class after the lesson started", "billing"), null);
 });
 
 test("one shared word does not answer a different billing or class question", () => {

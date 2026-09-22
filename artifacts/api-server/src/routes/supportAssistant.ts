@@ -7,7 +7,7 @@ import {
 } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import {
-  localSupportReply, normaliseSupportQuery, resolveSupport, searchSupportArticles,
+  localSupportReply, normaliseSupportQuery, resolveSupport, searchSupportArticles, supportFollowUp,
   type SupportArticle, type SupportIntent,
 } from "../lib/supportAssistant";
 import { readSupportAIConfig, redactSupportQuestion, supportAIProviderFromEnv } from "../lib/supportAiProvider";
@@ -131,7 +131,12 @@ router.get("/support/assistant/conversations/:id", requireAuth, async (req, res)
     const messages = await db.select().from(supportMessagesTable)
       .where(eq(supportMessagesTable.conversationId, id))
       .orderBy(asc(supportMessagesTable.id)).limit(100);
-    res.json({ conversation, messages });
+    const lastReply = messages.at(-1);
+    const lastQuestion = messages.at(-2);
+    const followUp = lastReply?.role === "assistant" && ["handoff", "local"].includes(lastReply.source) && lastQuestion?.role === "user"
+      ? supportFollowUp(lastQuestion.body, resolveSupport(lastQuestion.body).classification.intent) : null;
+    res.json({ conversation, messages,
+      suggestedReplies: followUp && followUp.prompt === lastReply?.body ? followUp.choices : [] });
   } catch {
     res.status(503).json({ error: "Could not load this conversation right now." });
   }
@@ -160,8 +165,9 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
     const articles = await publishedArticles();
     const resolved = resolveSupport(message, articles);
     const top = resolved.articles[0];
-    let answer = localSupportReply(message) ?? (resolved.mode === "faq" && top ? top.answer : FALLBACK);
-    let source: "local" | "faq" | "ai" | "handoff" = localSupportReply(message) ? "local" : resolved.mode === "faq" && top ? "faq" : "handoff";
+    const localReply = localSupportReply(message);
+    let answer = localReply ?? (resolved.mode === "faq" && top ? top.answer : FALLBACK);
+    let source: "local" | "faq" | "ai" | "handoff" = localReply ? "local" : resolved.mode === "faq" && top ? "faq" : "handoff";
     const config = readSupportAIConfig(process.env);
     const aiAllowedIntent = !["billing", "account", "safety"].includes(resolved.classification.intent);
     if (source === "handoff" && config.enabled && aiAllowedIntent && resolved.articles.length > 0) {
@@ -175,6 +181,9 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
         if (result.kind === "answer") { answer = result.text; source = "ai"; }
       }
     }
+    const followUp = source === "handoff" || source === "local"
+      ? supportFollowUp(message, resolved.classification.intent) : null;
+    if (followUp) answer = followUp.prompt;
     const saved = await db.transaction(async (tx) => {
       let conversationId = requestedId;
       if (!conversationId) {
@@ -195,6 +204,7 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
       return { conversationId, question, reply };
     });
     res.status(201).json({ ...saved, source, suggestedActions: resolved.suggestedActions,
+      suggestedReplies: followUp?.choices ?? [],
       article: source === "faq" && top ? { id: top.id, title: top.title } : null });
   } catch (error) {
     req.log.error({ err: error, userId }, "support assistant reply failed");

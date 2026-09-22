@@ -14,6 +14,15 @@ export async function apiGet(path) {
 }
 export async function apiPatch() { return {}; }
 export async function apiPost(path, body) {
+  if (path === "/support/assistant/messages" && body.message === "I cannot join my class or lesson.") return {
+    conversationId: 31,
+    question: { id: 3, role: "user", body: body.message, source: "user" },
+    reply: { id: 4, role: "assistant", body: "Which of these is closest to your question?", source: "handoff" },
+    suggestedReplies: [
+      { label: "Can't join a lesson", question: "I cannot join a lesson I booked. What should I check?" },
+      { label: "Camera or sound", question: "My camera or sound is not working in a lesson." },
+    ],
+  };
   if (path === "/support/assistant/messages") return {
     conversationId: 31,
     question: { id: 1, role: "user", body: body.message, source: "user" },

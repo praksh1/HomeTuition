@@ -51,6 +51,10 @@ const search = await api("/support/assistant/articles?q=join%20class", { token: 
 check("reviewed answer is now searchable", search.body.articles?.some((item) => item.title === article.title));
 
 console.log("\nConversation and human handoff");
+const guided = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "I need help with my account or profile." } });
+check("broad account question offers narrow choices", guided.status === 201 && guided.body.suggestedReplies?.some((choice) => choice.label === "Can't sign in"));
+const guidedHistory = await api(`/support/assistant/conversations/${guided.body.conversationId}`, { token: owner.token });
+check("follow-up choices survive reopening the conversation", guidedHistory.body.suggestedReplies?.length === guided.body.suggestedReplies.length);
 const answered = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "How do I join class?" } });
 check("answer uses reviewed words", answered.status === 201 && answered.body.source === "faq" && answered.body.reply?.body === article.answer, JSON.stringify(answered.body));
 const conversationId = answered.body.conversationId;

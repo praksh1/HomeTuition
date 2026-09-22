@@ -71,6 +71,74 @@ export type SupportAction =
   | "open_homework"
   | "open_profile";
 
+export interface SupportChoice {
+  label: string;
+  question: string;
+}
+
+const FOLLOW_UPS: Record<SupportIntent, readonly SupportChoice[]> = {
+  billing: [
+    { label: "Payment didn't work", question: "My class payment did not go through. What should I do?" },
+    { label: "Paid but can't join", question: "I paid for a class but cannot join it. What should I check?" },
+    { label: "Refund question", question: "I need help with a refund for my class." },
+    { label: "Payment history", question: "Where can I see my class payment history?" },
+  ],
+  class_access: [
+    { label: "Can't join a lesson", question: "I cannot join a lesson I booked. What should I check?" },
+    { label: "Camera or sound", question: "My camera or sound is not working in a lesson." },
+    { label: "Lesson already ended", question: "The lesson says it has already ended. What can I do?" },
+    { label: "Class dates", question: "Where can I see the dates for my class?" },
+  ],
+  messaging: [
+    { label: "Message not showing", question: "A class or direct message is not showing. What should I check?" },
+    { label: "Can't send", question: "I cannot send a class or direct message." },
+    { label: "Notifications", question: "I am not getting message notifications." },
+  ],
+  homework: [
+    { label: "Submit work", question: "How do I submit homework for my class?" },
+    { label: "Can't open a file", question: "I cannot open a homework file." },
+    { label: "Feedback", question: "Where can I find feedback on submitted homework?" },
+  ],
+  account: [
+    { label: "Can't sign in", question: "I cannot sign in to my account." },
+    { label: "Update my profile", question: "How do I update my profile details?" },
+    { label: "Change contact details", question: "I need help changing my phone number or email address." },
+  ],
+  safety: [
+    { label: "Report a person", question: "I need to report a safety concern about a person." },
+    { label: "Report class content", question: "I need to report unsafe class content." },
+  ],
+  general: [
+    { label: "Classes", question: "I need help with a class." },
+    { label: "Payments", question: "I need help with a payment." },
+    { label: "Messages", question: "I need help with messages." },
+    { label: "Account", question: "I need help with my account." },
+  ],
+};
+
+/** One narrowing question, then an honest human path if the knowledge base still cannot answer. */
+export function supportFollowUp(value: unknown, intent: SupportIntent): { prompt: string; choices: readonly SupportChoice[] } | null {
+  const query = normaliseSupportQuery(value).toLocaleLowerCase();
+  const isGreeting = ["hi", "hello", "hey", "hi!", "hello!", "hey!"].includes(query);
+  if (["thanks", "thank you", "bye", "goodbye"].includes(query)) return null;
+  const broad = query.split(/\s+/).length <= 4 || FOLLOW_UPS.general.some((choice) => choice.question.toLocaleLowerCase() === query) || [
+    "i need help with a class payment or refund.",
+    "i cannot join my class or lesson.",
+    "i need help with class or direct messages.",
+    "i need help with homework or feedback.",
+    "i need help with my account or profile.",
+    "i need to report a safety concern.",
+  ].includes(query);
+  if (!isGreeting && !broad) return null;
+  const topic = isGreeting ? "general" : intent;
+  return {
+    prompt: topic === "general" ? "What do you need help with?" :
+      topic === "safety" ? "I'm sorry this happened. Which kind of concern should I send to Fadko Support?" :
+      "Which of these is closest to your question?",
+    choices: FOLLOW_UPS[topic],
+  };
+}
+
 /** Read-only, account-scoped tools that a future assistant may request. */
 export const SUPPORT_READ_TOOLS = [
   "get_my_profile",

@@ -71,6 +71,13 @@ try {
     await page.getByText("Open Sessions and choose your lesson.", { exact: true }).waitFor();
     check((await page.getByTestId("support-assistant-panel").innerText()).includes("From Fadko Help: Joining a booked class"), `${width}: reviewed answer is attributed`);
     check(await page.getByTestId("support-topic-classes").count() === 0, `${width}: topic shortcuts give way to the conversation`);
+    await page.getByRole("button", { name: "Start a new support conversation" }).click();
+    await page.getByTestId("support-topic-classes").click();
+    await page.getByRole("button", { name: "Can't join a lesson" }).waitFor();
+    check(await page.getByTestId("support-suggested-reply").count() === 2, `${width}: a broad question has concise next-step choices`);
+    await page.getByRole("button", { name: "Can't join a lesson" }).click();
+    await page.getByText("Open Sessions and choose your lesson.", { exact: true }).waitFor();
+    check(await page.getByTestId("support-suggested-reply").count() === 0, `${width}: follow-up choices clear after a specific answer`);
     await page.waitForTimeout(400);
     await page.screenshot({ path: path.join(work, `${width}-support-answer.png`) });
     await page.getByTestId("support-assistant-open-request").click();

@@ -40,6 +40,7 @@ const TOPICS: readonly Topic[] = [
 type Bubble = { id: string; from: "assistant" | "user"; text: string; source?: string; article?: string };
 type SavedMessage = { id: number; role: "assistant" | "user"; body: string; source: string };
 type Conversation = { id: number; ticketId: number | null };
+type SuggestedReply = { label: string; question: string };
 
 const WELCOME: Bubble = {
   id: "welcome",
@@ -61,6 +62,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   const [visible, setVisible] = useState(openOnMount);
   const [draft, setDraft] = useState("");
   const [bubbles, setBubbles] = useState<Bubble[]>([WELCOME]);
+  const [suggestedReplies, setSuggestedReplies] = useState<readonly SuggestedReply[]>([]);
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [ticketId, setTicketId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -76,6 +78,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
     setConversationId(null);
     setTicketId(null);
     setBubbles([WELCOME]);
+    setSuggestedReplies([]);
   }, [user?.id]);
 
   const loadLatest = useCallback(async () => {
@@ -83,10 +86,11 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
       const result = await apiGet<{ conversations: Conversation[] }>("/support/assistant/conversations");
       const latest = result.conversations?.[0];
       if (!latest) return;
-      const detail = await apiGet<{ messages: SavedMessage[] }>(`/support/assistant/conversations/${latest.id}`);
+      const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[] }>(`/support/assistant/conversations/${latest.id}`);
       if (skipHistoryLoad.current) return;
       setConversationId(latest.id);
       setTicketId(latest.ticketId);
+      setSuggestedReplies(detail.suggestedReplies ?? []);
       setBubbles(detail.messages.map((message) => ({
         id: String(message.id), from: message.role, text: message.body, source: message.source,
       })));
@@ -114,6 +118,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
     setConversationId(null);
     setTicketId(null);
     setBubbles([WELCOME]);
+    setSuggestedReplies([]);
     setDraft("");
     setError("");
   };
@@ -126,10 +131,11 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
     setBusy(true);
     setDraft("");
     try {
-      const result = await apiPost<{ conversationId: number; question: SavedMessage; reply: SavedMessage; article: { title: string } | null }>(
+      const result = await apiPost<{ conversationId: number; question: SavedMessage; reply: SavedMessage; article: { title: string } | null; suggestedReplies?: SuggestedReply[] }>(
         "/support/assistant/messages", { message: text, conversationId }, { timeoutMs: 12_000 },
       );
       setConversationId(result.conversationId);
+      setSuggestedReplies(result.suggestedReplies ?? []);
       setBubbles((current) => [...current.filter((bubble) => bubble.id !== WELCOME.id),
         { id: String(result.question.id), from: "user", text: result.question.body },
         { id: String(result.reply.id), from: "assistant", text: result.reply.body,
@@ -278,6 +284,22 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                   </View>}
                 </View>
               ))}
+              {suggestedReplies.length > 0 && !ticketId && <View style={styles.replyChoices}>
+                {suggestedReplies.map((choice) => <Pressable
+                  key={choice.question}
+                  accessibilityRole="button"
+                  accessibilityLabel={choice.label}
+                  disabled={busy}
+                  testID="support-suggested-reply"
+                  onPress={() => void sendQuestion(choice.question)}
+                  style={({ pressed }) => [styles.replyChoice,
+                    { backgroundColor: colors.card, borderColor: colors.primary },
+                    pressed && { backgroundColor: colors.actionSoft }]}
+                >
+                  <Text style={[t.caption, { color: colors.primary, fontWeight: "600" }]}>{choice.label}</Text>
+                  <Feather name="arrow-up-right" size={14} color={colors.primary} />
+                </Pressable>)}
+              </View>}
               {busy && <ActivityIndicator size="small" color={colors.primary} accessibilityLabel="Fadko Support is answering" />}
               {!!error && <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{error}</Text>}
 
@@ -391,6 +413,9 @@ const styles = StyleSheet.create({
   transcriptContent: { paddingHorizontal: space.md, paddingBottom: space.sm, gap: space.sm },
   bubble: { maxWidth: "88%", borderRadius: radius.md, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: space.sm },
   feedbackRow: { flexDirection: "row", alignItems: "center", gap: space.sm, marginTop: space.xs },
+  replyChoices: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
+  replyChoice: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.xxs,
+    borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: space.xs },
   sectionLabel: { marginTop: space.xs, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 },
   topicGrid: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
   topic: { minHeight: HIT_SLOP_MIN, minWidth: "31%", flexGrow: 1, flexBasis: "30%", borderWidth: 1, borderRadius: radius.md, alignItems: "center", justifyContent: "center", gap: space.xxs, paddingHorizontal: space.xs, paddingVertical: space.xs },
