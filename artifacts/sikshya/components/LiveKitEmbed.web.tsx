@@ -146,6 +146,7 @@ interface Props {
   canUseMicrophone?: boolean;
   canUseCamera?: boolean;
   onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
+  micToggleRequest?: number;
 }
 
 /** Long enough that a slow first join is not called a failure, short enough to be honest. */
@@ -557,6 +558,7 @@ export default function LiveKitEmbed({
   canUseMicrophone = true,
   canUseCamera = false,
   onLocalMediaChange,
+  micToggleRequest = 0,
 }: Props) {
   const [session, setSession] = useState<VideoSession | null>(null);
   const [connection, setConnection] = useState<VideoConnectionState>("connecting");
@@ -859,6 +861,14 @@ export default function LiveKitEmbed({
       if (me) showMediaToast(me.micEnabled ? "Microphone on" : "Microphone muted");
     });
   }, [microphoneAuthorized, reportLocalMedia, session, showMediaToast]);
+
+  const lastMicToggleRequest = useRef(micToggleRequest ?? 0);
+  useEffect(() => {
+    const next = micToggleRequest ?? 0;
+    if (next <= lastMicToggleRequest.current) return;
+    lastMicToggleRequest.current = next;
+    toggleMic();
+  }, [micToggleRequest, toggleMic]);
 
   const toggleShare = act(async (live) => {
     if (sharing) {

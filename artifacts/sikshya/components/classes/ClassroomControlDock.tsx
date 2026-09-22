@@ -44,7 +44,8 @@ interface DockActionProps {
  * The old classroom rendered a permanent horizontal toolbar, another "Show call" pill, and a
  * second Hide action inside the video frame. On a phone those controls covered the lesson they
  * were meant to help. This dock keeps Messages visible, folds occasional actions into one button,
- * and makes Show/Hide one authoritative action. A pointer can reveal it on hover; a finger taps.
+ * and makes Show/Hide one authoritative action. Hover can reveal it, but moving a pointer from
+ * the trigger to an action must never collapse the menu underneath the teacher's hand.
  */
 export function ClassroomControlDock({
   bottom,
@@ -82,7 +83,6 @@ export function ClassroomControlDock({
       Platform.OS === "web"
         ? ({
             onMouseEnter: () => setExpanded(true),
-            onMouseLeave: () => setExpanded(false),
           } as Record<string, unknown>)
         : {},
     [],
@@ -181,6 +181,29 @@ export function ClassroomControlDock({
           onPress={onLeave}
         />
       </Animated.View>
+
+      {(onToggleParticipants && raisedHands > 0) || (!chatOpen && unreadCount > 0) ? (
+        <View style={[s.attentionRow, { gap: space.xs, marginBottom: space.xs }]}>
+          {onToggleParticipants && raisedHands > 0 ? (
+            <TouchableOpacity testID="classroom-hands-attention" accessibilityRole="button"
+              accessibilityLabel={`${raisedHands} ${raisedHands === 1 ? "student has" : "students have"} a hand raised. Open class list.`}
+              onPress={onToggleParticipants}
+              style={[s.attentionAction, elevation.card, { borderRadius: radius.pill, backgroundColor: colors.warnSoft, borderColor: colors.warn, paddingHorizontal: space.sm }]}>
+              <Feather name="alert-circle" size={16} color={colors.warn} />
+              <Text style={[t.caption, { color: colors.warn, fontWeight: "700" }]}>{raisedHands === 1 ? "Hand raised" : `${raisedHands} hands raised`}</Text>
+            </TouchableOpacity>
+          ) : null}
+          {!chatOpen && unreadCount > 0 ? (
+            <TouchableOpacity testID="classroom-chat-attention" accessibilityRole="button"
+              accessibilityLabel={`${unreadCount} new class ${unreadCount === 1 ? "message" : "messages"}. Open messages.`}
+              onPress={onToggleChat}
+              style={[s.attentionAction, elevation.card, { borderRadius: radius.pill, backgroundColor: colors.actionSoft, borderColor: colors.primary, paddingHorizontal: space.sm }]}>
+              <Feather name="message-circle" size={16} color={colors.primary} />
+              <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>{unreadCount === 1 ? "New message" : `${unreadCount} new messages`}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
 
       <View
         pointerEvents="auto"
@@ -367,6 +390,8 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  attentionRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" },
+  attentionAction: { minHeight: 36, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1 },
   participantButton: {
     flexDirection: "row",
     paddingHorizontal: 8,
