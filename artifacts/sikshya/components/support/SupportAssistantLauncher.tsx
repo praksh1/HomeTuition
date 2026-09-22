@@ -71,6 +71,8 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState<Record<string, boolean>>({});
   const transcript = useRef<ScrollView>(null);
+  const activeUserId = useRef(user?.id);
+  activeUserId.current = user?.id;
 
   useEffect(() => { if (openOnMount) setVisible(true); }, [openOnMount]);
   useEffect(() => {
@@ -78,12 +80,14 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
     setTicketId(null);
     setBubbles([WELCOME]);
     setSuggestedReplies([]);
+    setRecentConversations([]);
   }, [user?.id]);
 
   const loadRecent = useCallback(async () => {
+    const expectedUserId = activeUserId.current;
     try {
       const result = await apiGet<{ conversations: Conversation[] }>("/support/assistant/conversations");
-      setRecentConversations(result.conversations ?? []);
+      if (activeUserId.current === expectedUserId) setRecentConversations(result.conversations ?? []);
     } catch { /* New questions remain available if history cannot load. */ }
   }, []);
   useEffect(() => {
@@ -92,8 +96,10 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
 
   const openConversation = async (item: Conversation) => {
     setError("");
+    const expectedUserId = activeUserId.current;
     try {
       const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[] }>(`/support/assistant/conversations/${item.id}`);
+      if (activeUserId.current !== expectedUserId) return;
       setConversationId(item.id);
       setTicketId(item.ticketId);
       setSuggestedReplies(detail.suggestedReplies ?? []);
