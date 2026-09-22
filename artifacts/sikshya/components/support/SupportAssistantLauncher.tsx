@@ -39,7 +39,7 @@ const TOPICS: readonly Topic[] = [
 
 type Bubble = { id: string; from: "assistant" | "user"; text: string; source?: string; article?: string };
 type SavedMessage = { id: number; role: "assistant" | "user"; body: string; source: string };
-type Conversation = { id: number; ticketId: number | null };
+type Conversation = { id: number; title: string; ticketId: number | null };
 type SuggestedReply = { label: string; question: string };
 
 const WELCOME: Bubble = {
@@ -63,6 +63,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   const [draft, setDraft] = useState("");
   const [bubbles, setBubbles] = useState<Bubble[]>([WELCOME]);
   const [suggestedReplies, setSuggestedReplies] = useState<readonly SuggestedReply[]>([]);
+  const [recentConversations, setRecentConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState<number | null>(null);
   const [ticketId, setTicketId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,35 +71,37 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState<Record<string, boolean>>({});
   const transcript = useRef<ScrollView>(null);
-  const skipHistoryLoad = useRef(false);
 
   useEffect(() => { if (openOnMount) setVisible(true); }, [openOnMount]);
   useEffect(() => {
-    skipHistoryLoad.current = false;
     setConversationId(null);
     setTicketId(null);
     setBubbles([WELCOME]);
     setSuggestedReplies([]);
   }, [user?.id]);
 
-  const loadLatest = useCallback(async () => {
+  const loadRecent = useCallback(async () => {
     try {
       const result = await apiGet<{ conversations: Conversation[] }>("/support/assistant/conversations");
-      const latest = result.conversations?.[0];
-      if (!latest) return;
-      const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[] }>(`/support/assistant/conversations/${latest.id}`);
-      if (skipHistoryLoad.current) return;
-      setConversationId(latest.id);
-      setTicketId(latest.ticketId);
+      setRecentConversations(result.conversations ?? []);
+    } catch { /* New questions remain available if history cannot load. */ }
+  }, []);
+  useEffect(() => {
+    if (visible && conversationId === null) void loadRecent();
+  }, [visible, conversationId, loadRecent]);
+
+  const openConversation = async (item: Conversation) => {
+    setError("");
+    try {
+      const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[] }>(`/support/assistant/conversations/${item.id}`);
+      setConversationId(item.id);
+      setTicketId(item.ticketId);
       setSuggestedReplies(detail.suggestedReplies ?? []);
       setBubbles(detail.messages.map((message) => ({
         id: String(message.id), from: message.role, text: message.body, source: message.source,
       })));
-    } catch { /* The assistant remains available for a fresh question. */ }
-  }, []);
-  useEffect(() => {
-    if (visible && conversationId === null && !skipHistoryLoad.current) void loadLatest();
-  }, [visible, conversationId, loadLatest]);
+    } catch { setError("Could not open this conversation. Please try again."); }
+  };
 
   const bottom = Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) + (isExpanded ? 92 : 88);
   const panelWidth = Math.min(width - space.md * 2, isExpanded ? 440 : 520);
@@ -114,19 +117,20 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   };
 
   const startFresh = () => {
-    skipHistoryLoad.current = true;
     setConversationId(null);
     setTicketId(null);
     setBubbles([WELCOME]);
     setSuggestedReplies([]);
     setDraft("");
     setError("");
+    void loadRecent();
   };
+
+  const closePanel = () => { setVisible(false); startFresh(); };
 
   const sendQuestion = async (value: string) => {
     const text = value.trim();
     if (!text || busy || ticketId) return;
-    skipHistoryLoad.current = true;
     setError("");
     setBusy(true);
     setDraft("");
@@ -135,6 +139,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
         "/support/assistant/messages", { message: text, conversationId }, { timeoutMs: 12_000 },
       );
       setConversationId(result.conversationId);
+      void loadRecent();
       setSuggestedReplies(result.suggestedReplies ?? []);
       setBubbles((current) => [...current.filter((bubble) => bubble.id !== WELCOME.id),
         { id: String(result.question.id), from: "user", text: result.question.body },
@@ -178,7 +183,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
         accessibilityLabel="Open Fadko Support"
         testID="support-assistant-launcher"
         hitSlop={8}
-        onPress={() => setVisible(true)}
+        onPress={() => { startFresh(); setVisible(true); }}
         style={({ pressed }) => [
           styles.launcher,
           {
@@ -196,7 +201,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
         <View style={[styles.launcherDot, { backgroundColor: colors.brand, borderColor: colors.primary }]} />
       </Pressable>
 
-      <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={closePanel}>
         <KeyboardAvoidingView
           style={styles.modalRoot}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -204,7 +209,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
           <Pressable
             accessibilityLabel="Close support"
             style={[styles.scrim, { backgroundColor: colors.scrim }]}
-            onPress={() => setVisible(false)}
+            onPress={closePanel}
           />
           <View
             testID="support-assistant-panel"
@@ -222,7 +227,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
             ]}
           >
             <View style={styles.panelHeader}>
-              <View style={[styles.supportMark, { backgroundColor: colors.primary }]}>
+              <View style={[styles.supportMark, { backgroundColor: colors.primary }, !isExpanded && { display: "none" }]}>
                 <Feather name="life-buoy" size={20} color={colors.primaryForeground} />
                 <View style={[styles.markDot, { backgroundColor: colors.brand }]} />
               </View>
@@ -233,15 +238,17 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                 </View>
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Start a new support conversation"
-                onPress={startFresh} style={({ pressed }) => [styles.close, pressed && styles.pressed]}>
-                <Feather name="edit" size={18} color={colors.primary} />
+                testID="support-new-question" onPress={startFresh}
+                style={({ pressed }) => [styles.newQuestion, { backgroundColor: colors.actionSoft }, pressed && styles.pressed]}>
+                <Feather name="plus" size={16} color={colors.primary} />
+                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>New question</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close Fadko Support"
                 testID="support-assistant-close"
                 hitSlop={10}
-                onPress={() => setVisible(false)}
+                onPress={closePanel}
                 style={({ pressed }) => [styles.close, pressed && styles.pressed]}
               >
                 <Feather name="x" size={20} color={colors.mutedForeground} />
@@ -300,6 +307,12 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                   <Feather name="arrow-up-right" size={14} color={colors.primary} />
                 </Pressable>)}
               </View>}
+              {hasConversation && !busy && <Pressable accessibilityRole="button" accessibilityLabel="Ask about a different topic"
+                testID="support-change-topic" onPress={startFresh}
+                style={({ pressed }) => [styles.changeTopic, { borderColor: colors.border }, pressed && styles.pressed]}>
+                <Feather name="plus-circle" size={17} color={colors.primary} />
+                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>Ask about a different topic</Text>
+              </Pressable>}
               {busy && <ActivityIndicator size="small" color={colors.primary} accessibilityLabel="Fadko Support is answering" />}
               {!!error && <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{error}</Text>}
 
@@ -324,7 +337,19 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                     <Text style={[t.caption, { color: colors.foreground, fontWeight: "600" }]}>{topic.label}</Text>
                   </Pressable>
                 ))}
-              </View></>}
+              </View>
+              {recentConversations.length > 0 && <View style={styles.recentSection}>
+                <Text style={[t.caption, styles.sectionLabel, { color: colors.mutedForeground }]}>Recent conversations</Text>
+                {recentConversations.slice(0, 5).map((item) => <Pressable key={item.id}
+                  accessibilityRole="button" accessibilityLabel={`Open previous conversation: ${item.title}`}
+                  onPress={() => void openConversation(item)}
+                  style={({ pressed }) => [styles.recentRow, { borderColor: colors.border }, pressed && styles.pressed]}>
+                  <Feather name="message-circle" size={16} color={colors.primary} />
+                  <Text numberOfLines={1} style={[t.caption, styles.recentTitle, { color: colors.foreground }]}>{item.title}</Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>)}
+              </View>}
+              </>}
             </ScrollView>
 
             <View style={[styles.composer, { borderColor: colors.border, backgroundColor: colors.muted }]}>
@@ -334,7 +359,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                 onChangeText={setDraft}
                 placeholder={ticketId ? "Request sent — start a new chat to ask more" : "Ask a question…"}
                 placeholderTextColor={colors.mutedForeground}
-                multiline
+                multiline={Platform.OS !== "web"}
                 maxLength={1200}
                 editable={!busy && !ticketId}
                 returnKeyType="send"
@@ -404,6 +429,7 @@ const styles = StyleSheet.create({
   scrim: { ...StyleSheet.absoluteFillObject },
   panel: { position: "absolute", borderRadius: radius.lg, borderWidth: 1, overflow: "hidden" },
   panelHeader: { flexDirection: "row", alignItems: "center", gap: space.sm, padding: space.md, borderBottomWidth: 1, borderBottomColor: "transparent" },
+  newQuestion: { minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, flexDirection: "row", alignItems: "center", gap: space.xxs, paddingHorizontal: space.sm },
   supportMark: { width: 42, height: 42, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
   markDot: { position: "absolute", right: 4, top: 4, width: 7, height: 7, borderRadius: radius.pill },
   headerCopy: { flex: 1, gap: 2 },
@@ -416,6 +442,10 @@ const styles = StyleSheet.create({
   replyChoices: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
   replyChoice: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.xxs,
     borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: space.xs },
+  changeTopic: { minHeight: HIT_SLOP_MIN, borderWidth: 1, borderRadius: radius.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.xs },
+  recentSection: { gap: space.xs, marginTop: space.sm },
+  recentRow: { minHeight: HIT_SLOP_MIN, borderWidth: 1, borderRadius: radius.md, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.sm },
+  recentTitle: { flex: 1 },
   sectionLabel: { marginTop: space.xs, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 },
   topicGrid: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
   topic: { minHeight: HIT_SLOP_MIN, minWidth: "31%", flexGrow: 1, flexBasis: "30%", borderWidth: 1, borderRadius: radius.md, alignItems: "center", justifyContent: "center", gap: space.xxs, paddingHorizontal: space.xs, paddingVertical: space.xs },

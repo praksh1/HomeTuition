@@ -66,11 +66,14 @@ try {
     check(await page.getByTestId("support-assistant-panel").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: support panel fits the screen`);
     check(await page.getByTestId("support-assistant-panel").evaluate((node) => node.getBoundingClientRect().top >= -1 && node.getBoundingClientRect().bottom <= innerHeight + 1), `${width}: support panel stays within viewport height`);
     check(await page.getByTestId("support-topic-classes").isVisible(), `${width}: quick topics are available before the first question`);
+    check(await page.getByRole("button", { name: /Open previous conversation: Earlier class question/ }).isVisible(), `${width}: past chats are available without replacing a new topic`);
     await page.getByTestId("support-assistant-input").fill("How do I join my class?");
-    await page.getByTestId("support-assistant-send").click();
+    await page.getByTestId("support-assistant-input").press("Enter");
     await page.getByText("Open Sessions and choose your lesson.", { exact: true }).waitFor();
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("How do I join my class?"), `${width}: Enter sends the question on web`);
     check((await page.getByTestId("support-assistant-panel").innerText()).includes("From Fadko Help: Joining a booked class"), `${width}: reviewed answer is attributed`);
     check(await page.getByTestId("support-topic-classes").count() === 0, `${width}: topic shortcuts give way to the conversation`);
+    check(await page.getByTestId("support-change-topic").isVisible(), `${width}: switching topics has an explicit action in the chat`);
     await page.getByRole("button", { name: "Start a new support conversation" }).click();
     await page.getByTestId("support-topic-classes").click();
     await page.getByRole("button", { name: "Can't join a lesson" }).waitFor();
@@ -84,6 +87,12 @@ try {
     await page.getByText(/Sent to Fadko Support as FDK-17/).waitFor();
     check((await page.getByTestId("support-assistant-panel").innerText()).includes("Sent to a person"), `${width}: human handoff confirms the request`);
     await page.screenshot({ path: path.join(work, `${width}-support-handoff.png`) });
+    await page.getByTestId("support-assistant-close").click();
+    await page.getByTestId("support-assistant-launcher").click();
+    check(await page.getByTestId("support-topic-classes").isVisible(), `${width}: reopening Support starts at a fresh topic`);
+    await page.getByRole("button", { name: /Open previous conversation: Earlier class question/ }).click();
+    await page.getByText("Earlier answer", { exact: true }).waitFor();
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("Earlier class question"), `${width}: past chat can be reopened deliberately`);
     await page.getByTestId("support-assistant-close").click();
     check((await page.getByTestId("student-edit-account-details").boundingBox()).height >= 44, `${width}: student edit action meets touch floor`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: student profile has no horizontal overflow`);

@@ -4,11 +4,13 @@ import {
   canUseSupportReadTool,
   classifySupportQuery,
   localSupportReply,
+  localSupportGuide,
   normaliseSupportQuery,
   resolveSupport,
   searchSupportArticles,
   supportQueryMetric,
   supportFollowUp,
+  supportToneResponse,
   type SupportArticle,
 } from "./supportAssistant.ts";
 
@@ -85,6 +87,21 @@ test("broad questions get short, actionable follow-up choices without inventing 
   assert.equal(supportFollowUp("I need help with a class.", "class_access")?.choices.length, 4);
   assert.equal(supportFollowUp("thanks", "general"), null);
   assert.equal(supportFollowUp("I paid but cannot join a class after the lesson started", "billing"), null);
+});
+
+test("exact app-navigation questions get a useful guide without inventing account decisions", () => {
+  assert.match(localSupportGuide("Where can I see the dates for my class?") ?? "", /Schedule/);
+  assert.match(localSupportGuide("I cannot join a lesson I booked. What should I check?") ?? "", /cannot verify your booking/);
+  assert.equal(localSupportGuide("Please refund my class"), null);
+});
+
+test("abusive language gets a respectful human path while reports are not blamed", () => {
+  assert.match(supportToneResponse("You are a bitch", ["bitch"])?.message ?? "", /respectful/);
+  assert.equal(supportToneResponse("You are a bitch", ["bitch"])?.kind, "abuse");
+  assert.match(supportToneResponse("My teacher called me a bitch", ["bitch"])?.message ?? "", /sorry you experienced/);
+  assert.equal(supportToneResponse("My teacher called me a bitch", ["bitch"])?.kind, "report");
+  assert.equal(supportToneResponse("My teacher bullied me", [])?.kind, "report");
+  assert.equal(supportToneResponse("I need help", []), null);
 });
 
 test("one shared word does not answer a different billing or class question", () => {

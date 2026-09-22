@@ -2,7 +2,11 @@ const completeOnboarding = { phone: "+977 9800000000", province: "Bagmati Provin
 const incompleteLegacyOnboarding = { ...completeOnboarding, phone: null };
 const syntheticLegacyOnboarding = { phone: "9801234567", province: "Bagmati", district: "Kathmandu", localLevel: "Kathmandu", locality: "Synthetic staging fixture", institutionName: "Synthetic Staging School", affiliationStatus: "not_specified", profilePhotoKey: null };
 export async function apiGet(path) {
-  if (path === "/support/assistant/conversations") return { conversations: [] };
+  if (path === "/support/assistant/conversations") return { conversations: [{ id: 9, title: "Earlier class question", ticketId: null }] };
+  if (path === "/support/assistant/conversations/9") return { messages: [
+    { id: 91, role: "user", body: "Earlier class question", source: "user" },
+    { id: 92, role: "assistant", body: "Earlier answer", source: "local" },
+  ], suggestedReplies: [] };
   if (path === "/onboarding/me") {
     const profile = new URLSearchParams(window.location.search).get("profile");
     return { onboarding: profile === "incomplete" ? incompleteLegacyOnboarding : profile === "fixture" ? syntheticLegacyOnboarding : completeOnboarding };

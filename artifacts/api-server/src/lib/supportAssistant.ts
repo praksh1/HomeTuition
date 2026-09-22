@@ -139,6 +139,30 @@ export function supportFollowUp(value: unknown, intent: SupportIntent): { prompt
   };
 }
 
+/** Verified navigation only. Policy, access and money decisions still require reviewed articles. */
+export function localSupportGuide(value: unknown): string | null {
+  const query = normaliseSupportQuery(value).toLocaleLowerCase();
+  const guides: Record<string, string> = {
+    "where can i see the dates for my class?": "Open Classes, choose the class, then look at its Schedule. If a date looks wrong, tap Ask a person and include the class name.",
+    "where can i see my class payment history?": "Open Profile, then Payments & receipts. You can see test charges and any recorded refunds there. If a record looks wrong, tap Ask a person.",
+    "where can i find feedback on submitted homework?": "Open Classes, choose the class, then Homework. Feedback appears with the submitted work when your teacher has returned it.",
+    "how do i update my profile details?": "Open Profile and tap Edit account details. You can update your contact and location information there.",
+    "a class or direct message is not showing. what should i check?": "Open Messages and choose the class or direct conversation. If the message still does not appear after reconnecting, tap Ask a person.",
+    "i cannot join a lesson i booked. what should i check?": "Open Classes, choose your class, and open the lesson from its schedule. I cannot verify your booking or the live room here. If the Join option is missing or the room fails, tap Ask a person so Fadko can check your class.",
+  };
+  return guides[query] ?? null;
+}
+
+/** A report about harassment is not itself misconduct by the reporter. */
+export function supportToneResponse(value: unknown, matchedTerms: readonly string[]): { kind: "report" | "abuse"; message: string } | null {
+  const query = normaliseSupportQuery(value).toLocaleLowerCase();
+  const reporting = /\b(teacher|student|someone|person|they|he|she)\s+(said|called|wrote|sent|told|bullied|harassed|threatened)\b|\b(report|reported|was called|called me|said to me)\b|मलाई|उसले|उनले|गाली गर/.test(query);
+  const safetyConcern = /\b(bullied|bullying|harassed|harassment|threatened|threat|intimidated|abused|abuse)\b|धम्की|दुर्व्यवहार|हेप/.test(query);
+  if (reporting && (matchedTerms.length > 0 || safetyConcern)) return { kind: "report", message: "I'm sorry you experienced this. Please tap Ask a person so Fadko Support can review what happened. You can include the class or conversation involved." };
+  if (matchedTerms.length === 0) return null;
+  return { kind: "abuse", message: "Please keep the conversation respectful. If something went wrong, tap Ask a person and a team member can review it. Repeated abusive messages may lead to a human review of your account; this message does not automatically restrict you." };
+}
+
 /** Read-only, account-scoped tools that a future assistant may request. */
 export const SUPPORT_READ_TOOLS = [
   "get_my_profile",

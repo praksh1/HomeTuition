@@ -2,15 +2,16 @@ import { createHmac } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
-  activityLogTable, db, disputesTable, supportAiUsageTable, supportArticlesTable,
+  activityLogTable, db, disputesTable, moderationFlagsTable, supportAiUsageTable, supportArticlesTable,
   supportConversationsTable, supportMessagesTable,
 } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import {
-  localSupportReply, normaliseSupportQuery, resolveSupport, searchSupportArticles, supportFollowUp,
+  localSupportGuide, localSupportReply, normaliseSupportQuery, resolveSupport, searchSupportArticles, supportFollowUp, supportToneResponse,
   type SupportArticle, type SupportIntent,
 } from "../lib/supportAssistant";
 import { readSupportAIConfig, redactSupportQuestion, supportAIProviderFromEnv } from "../lib/supportAiProvider";
+import { flagContent, flaggedTerms } from "../lib/moderation";
 import { allowanceFor, nameOf, recordOpened } from "../lib/ticketStore";
 import { ticketRef } from "../lib/tickets";
 
@@ -166,11 +167,14 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
     const resolved = resolveSupport(message, articles);
     const top = resolved.articles[0];
     const localReply = localSupportReply(message);
-    let answer = localReply ?? (resolved.mode === "faq" && top ? top.answer : FALLBACK);
-    let source: "local" | "faq" | "ai" | "handoff" = localReply ? "local" : resolved.mode === "faq" && top ? "faq" : "handoff";
+    const toneReply = supportToneResponse(message, flaggedTerms(message));
+    const guideReply = localSupportGuide(message);
+    let answer = toneReply?.message ?? localReply ?? (resolved.mode === "faq" && top ? top.answer : guideReply ?? FALLBACK);
+    let source: "local" | "faq" | "ai" | "handoff" = toneReply || localReply || (guideReply && resolved.mode !== "faq")
+      ? "local" : resolved.mode === "faq" && top ? "faq" : "handoff";
     const config = readSupportAIConfig(process.env);
     const aiAllowedIntent = !["billing", "account", "safety"].includes(resolved.classification.intent);
-    if (source === "handoff" && config.enabled && aiAllowedIntent && resolved.articles.length > 0) {
+    if (!toneReply && source === "handoff" && config.enabled && aiAllowedIntent && resolved.articles.length > 0) {
       if (await reserveAiBudget(userId, req.ip ?? "unknown")) {
         const result = await supportAIProviderFromEnv().generateResponse({
           question: message,
@@ -181,7 +185,7 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
         if (result.kind === "answer") { answer = result.text; source = "ai"; }
       }
     }
-    const followUp = source === "handoff" || source === "local"
+    const followUp = !toneReply && !guideReply && (source === "handoff" || source === "local")
       ? supportFollowUp(message, resolved.classification.intent) : null;
     if (followUp) answer = followUp.prompt;
     const saved = await db.transaction(async (tx) => {
@@ -203,6 +207,16 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
         .where(eq(supportConversationsTable.id, conversationId));
       return { conversationId, question, reply };
     });
+    if (toneReply) {
+      const recorded = await flagContent({ userId, surface: toneReply.kind === "report" ? "support_safety_report" : "support_chat_abuse",
+        subjectId: saved.question.id, text: message });
+      // A bullying report need not quote profanity to warrant a human review case.
+      if (!recorded && toneReply.kind === "report") {
+        try { await db.insert(moderationFlagsTable).values({ userId, surface: "support_safety_report",
+          subjectId: saved.question.id, excerpt: message.slice(0, 500), matchedTerms: ["safety report"], status: "open" }); }
+        catch { /* The user can still open a support request. */ }
+      }
+    }
     res.status(201).json({ ...saved, source, suggestedActions: resolved.suggestedActions,
       suggestedReplies: followUp?.choices ?? [],
       article: source === "faq" && top ? { id: top.id, title: top.title } : null });

@@ -1,6 +1,8 @@
 /** Conservative launch list. Matches create a review case; they do not delete user content. */
 const ENGLISH_TERMS = [
   "bitch", "cunt", "fuck", "motherfucker", "nigger", "paki", "retard", "slut", "whore",
+  // Common romanised Nepali insults. Word boundaries avoid matching innocent longer words.
+  "muji", "mujii", "chikne", "madarchod", "randi",
 ];
 const NEPALI_TERMS = [
   "चिक्ने", "चिकने", "मुजी", "मूजी", "रन्डी", "रंडी", "मादरचोद", "भालु", "खाते",

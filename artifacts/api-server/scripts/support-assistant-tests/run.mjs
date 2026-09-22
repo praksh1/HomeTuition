@@ -81,4 +81,14 @@ for (let index = 0; index < 12; index += 1) {
 }
 check("the thirteenth question is rate-limited without another transcript write", lastStatus === 429);
 
+const guide = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "Where can I see the dates for my class?" } });
+check("class dates have a concrete in-app guide without a help article", guide.status === 201 && guide.body.source === "local" && /Schedule/.test(guide.body.reply.body));
+const abusive = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "You are a muji" } });
+check("romanised Nepali abuse receives a respectful human route", abusive.status === 201 && /respectful/.test(abusive.body.reply.body));
+check("support abuse creates a moderation case for human review", Number(sql(`SELECT count(*) FROM moderation_flags WHERE user_id = ${Number(owner.user.id)} AND surface = 'support_chat_abuse'`)) >= 1);
+const reported = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "My teacher called me a muji" } });
+check("a student reporting abuse is not admonished", reported.status === 201 && /sorry you experienced/.test(reported.body.reply.body));
+check("a report is labeled separately from abuse by the reporter", Number(sql(`SELECT count(*) FROM moderation_flags WHERE user_id = ${Number(owner.user.id)} AND surface = 'support_safety_report'`)) >= 1);
+const bullying = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "My teacher bullied me" } });
+check("bullying without a quoted curse goes to human review", bullying.status === 201 && /Ask a person/.test(bullying.body.reply.body) && Number(sql(`SELECT count(*) FROM moderation_flags WHERE user_id = ${Number(owner.user.id)} AND surface = 'support_safety_report'`)) >= 2);
 console.log(`\n${passed} support assistant checks passed`);
