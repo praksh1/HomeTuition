@@ -99,6 +99,18 @@ test("exact app-navigation questions get a useful guide without inventing accoun
   assert.equal(localSupportGuide("Please refund my class"), null);
 });
 
+test("every offered second-step choice has a specific safe answer or human safety route", () => {
+  const categories = ["billing", "class_access", "messaging", "homework", "account", "safety"] as const;
+  for (const category of categories) {
+    const offered = supportFollowUp("I need help with a class.", category)?.choices ?? [];
+    assert.ok(offered.length > 0, `missing choices for ${category}`);
+    for (const choice of offered) {
+      assert.ok(localSupportGuide(choice.question) || supportToneResponse(choice.question, []),
+        `generic dead end after ${category}: ${choice.label}`);
+    }
+  }
+});
+
 test("abusive language gets a respectful human path while reports are not blamed", () => {
   assert.match(supportToneResponse("You are a bitch", ["bitch"])?.message ?? "", /respectful/);
   assert.equal(supportToneResponse("You are a bitch", ["bitch"])?.kind, "abuse");
