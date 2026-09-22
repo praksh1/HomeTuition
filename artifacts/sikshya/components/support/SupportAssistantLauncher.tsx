@@ -360,6 +360,16 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
 
             <View style={[styles.composer, { borderColor: colors.border, backgroundColor: colors.muted }]}>
               <TextInput
+                ref={(node) => {
+                  if (Platform.OS !== "web" || !node) return;
+                  const input = node as unknown as HTMLInputElement;
+                  input.onkeydown = (event) => {
+                    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+                      event.preventDefault();
+                      void sendQuestion(input.value);
+                    }
+                  };
+                }}
                 testID="support-assistant-input"
                 value={draft}
                 onChangeText={setDraft}
@@ -370,12 +380,6 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                 editable={!busy && !ticketId}
                 returnKeyType="send"
                 submitBehavior="submit"
-                onKeyPress={(event) => {
-                  if (Platform.OS === "web" && event.nativeEvent.key === "Enter") {
-                    event.preventDefault();
-                    void sendQuestion(draft);
-                  }
-                }}
                 onSubmitEditing={Platform.OS === "web" ? undefined : () => void sendQuestion(draft)}
                 style={[t.body, styles.input, { color: colors.foreground }]}
               />

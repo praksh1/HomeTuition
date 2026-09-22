@@ -68,7 +68,9 @@ try {
     check(await page.getByTestId("support-topic-classes").isVisible(), `${width}: quick topics are available before the first question`);
     check(await page.getByRole("button", { name: /Open previous conversation: Earlier class question/ }).isVisible(), `${width}: past chats are available without replacing a new topic`);
     await page.getByTestId("support-assistant-input").fill("How do I join my class?");
-    await page.getByTestId("support-assistant-input").press("Enter");
+    await page.getByTestId("support-assistant-input").click();
+    // Exercise the input's native keydown handler directly; RN Web blurs this field on Enter.
+    await page.getByTestId("support-assistant-input").evaluate((node) => node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
     await page.getByText("Open Sessions and choose your lesson.", { exact: true }).waitFor();
     check((await page.getByTestId("support-assistant-panel").innerText()).includes("How do I join my class?"), `${width}: Enter sends the question on web`);
     check((await page.getByTestId("support-assistant-panel").innerText()).includes("From Fadko Help: Joining a booked class"), `${width}: reviewed answer is attributed`);
