@@ -250,6 +250,8 @@ export default function StudentClassroom() {
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
   const [mediaPrepared, setMediaPrepared] = useState(false);
+  const [micToggleRequest, setMicToggleRequest] = useState(0);
+  const [localMicOn, setLocalMicOn] = useState(false);
   /**
    * What, if anything, this room has to say about payment — and to *this* person.
    *
@@ -1208,6 +1210,7 @@ export default function StudentClassroom() {
                     grant pending rather than reporting it done; this is what tells it to finish.
                   */
                   onMediaReady={floorActions.mediaReady}
+                  micToggleRequest={micToggleRequest}
                   isTeacher={false}
                   canUseMicrophone={
                     floor?.scope === "student" &&
@@ -1216,6 +1219,7 @@ export default function StudentClassroom() {
                   }
                   canUseCamera={floor?.scope === "student" && floor.you.allowedCamera}
                   onLocalMediaChange={(media) => {
+                    setLocalMicOn(media.micEnabled);
                     if (floor?.scope !== "student") return;
                     if (floor.you.acceptedMic !== media.micEnabled) {
                       floorActions.setMic(media.micEnabled);
@@ -1334,6 +1338,8 @@ export default function StudentClassroom() {
                 actions={floorActions}
                 discussionOpensAt={discussionOpensAt}
                 canModerate={canModerate}
+                microphoneOn={localMicOn}
+                onToggleMicrophone={() => setMicToggleRequest((count) => count + 1)}
               />
             </View>
 

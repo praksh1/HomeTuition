@@ -1245,7 +1245,7 @@ export default function Classroom() {
               {
                 top: boardToolbarBottom,
                 left: space.sm,
-                width: Math.min(width - space.lg, isCompact ? width - space.lg : 440),
+                width: Math.min(width - space.lg, isCompact ? 190 : 320),
                 minHeight: 36,
                 gap: space.xxs,
                 paddingHorizontal: space.xs,
@@ -1261,9 +1261,7 @@ export default function Classroom() {
                 style={[t.caption, { color: colors.foreground, flex: 1 }]}
                 numberOfLines={1}
               >
-                {session
-                  ? `${session.subject}: ${session.topic}`
-                  : "Live session"}
+                {session?.topic ?? "Live session"}
               </Text>
               <Text
                 style={[t.overline, numeric, { color: colors.mutedForeground }]}
@@ -1272,7 +1270,7 @@ export default function Classroom() {
                 {fmt(elapsed)}
               </Text>
             </View>
-            {classIsLive ? (
+            {classIsLive && !isCompact ? (
               <View
                 style={[
                   s.liveTag,

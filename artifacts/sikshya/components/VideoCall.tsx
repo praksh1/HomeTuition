@@ -74,6 +74,8 @@ export interface VideoCallProps {
   canUseMicrophone?: boolean;
   canUseCamera?: boolean;
   onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
+  /** Request a microphone toggle from the app-owned classroom control, even when video is hidden. */
+  micToggleRequest?: number;
 }
 
 export default function VideoCall({ provider = "daily", ...props }: VideoCallProps) {
@@ -127,6 +129,7 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
           canUseMicrophone={props.isTeacher === true || props.canUseMicrophone === true}
           canUseCamera={props.isTeacher === true || props.canUseCamera === true}
           onLocalMediaChange={props.onLocalMediaChange}
+          micToggleRequest={props.micToggleRequest}
         />
       );
 

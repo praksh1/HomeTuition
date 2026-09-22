@@ -1,4 +1,4 @@
-import { Feather } from "@expo/vector-icons";
+import { Feather, FontAwesome5 } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -79,6 +79,8 @@ interface Props {
   /** Shared classroom panel state: participants and messages never stack. */
   participantOpen?: boolean;
   onParticipantOpenChange?: (open: boolean) => void;
+  microphoneOn?: boolean;
+  onToggleMicrophone?: () => void;
 }
 
 export default function ClassroomFloor({
@@ -90,6 +92,8 @@ export default function ClassroomFloor({
   canModerate = true,
   participantOpen,
   onParticipantOpenChange,
+  microphoneOn = false,
+  onToggleMicrophone,
 }: Props) {
   if (!floor || !canModerate) return null;
   return floor.scope === "teacher" ? (
@@ -108,6 +112,8 @@ export default function ClassroomFloor({
       refusal={refusal}
       onDismissRefusal={onDismissRefusal}
       actions={actions}
+      microphoneOn={microphoneOn}
+      onToggleMicrophone={onToggleMicrophone}
     />
   );
 }
@@ -177,24 +183,20 @@ function StudentFloor({
   refusal,
   onDismissRefusal,
   actions,
+  microphoneOn,
+  onToggleMicrophone,
 }: {
   floor: StudentFloorView;
   refusal: FloorRefusal | null;
   onDismissRefusal: () => void;
   actions: FloorActions;
+  microphoneOn: boolean;
+  onToggleMicrophone?: () => void;
 }) {
   const colors = useColors();
   const { t, space, radius, isCompact } = useLayout();
-  const chip = floor.you.acceptedCamera
-    ? { label: "Camera on", tone: "live" as const }
-    : floor.you.acceptedMic
-      ? { label: "Microphone on", tone: "live" as const }
-      : floor.you.state === "muted-by-teacher"
-        ? { label: "Muted by teacher", tone: "stopped" as const }
-        : floor.you.requestedAt !== null
-          ? { label: "Hand up", tone: "waiting" as const }
-          : { label: "Microphone off", tone: "neutral" as const };
   const handRaised = floor.you.requestedAt !== null;
+  const canToggleMicrophone = Boolean(onToggleMicrophone && (microphoneOn || (floor.you.allowedMic && floor.you.state !== "muted-by-teacher")));
   const provider = providerNote(floor.you.provider, true);
 
   return (
@@ -243,14 +245,23 @@ function StudentFloor({
             },
           ]}
         >
-          <Feather name={handRaised ? "chevron-down" : "arrow-up"} size={19} color={handRaised ? colors.primary : colors.foreground} />
+          <FontAwesome5 name="hand-paper" size={18} color={handRaised ? colors.primary : colors.foreground} />
           {!isCompact ? (
             <Text style={[t.caption, { color: handRaised ? colors.primary : colors.foreground }]}>
               {handRaised ? "Hand raised" : "Raise hand"}
             </Text>
           ) : null}
         </Pressable>
-        <FloorChipView testID="student-floor-state" label={chip.label} tone={chip.tone} />
+        <Pressable testID="student-floor-microphone" accessibilityRole="button"
+          accessibilityLabel={microphoneOn ? "Mute microphone" : canToggleMicrophone ? "Turn on microphone" : "Microphone off until teacher allows you to speak"}
+          accessibilityState={{ disabled: !canToggleMicrophone, selected: microphoneOn }}
+          disabled={!canToggleMicrophone} onPress={onToggleMicrophone}
+          style={[floorStyles.row, { minWidth: HIT_SLOP_MIN, height: HIT_SLOP_MIN, justifyContent: "center", gap: space.xxs,
+            paddingHorizontal: isCompact ? space.sm : space.md, borderRadius: radius.pill,
+            backgroundColor: microphoneOn ? colors.actionSoft : colors.card, opacity: canToggleMicrophone ? 1 : 0.65 }]}>
+          <Feather name={microphoneOn ? "mic" : "mic-off"} size={19} color={microphoneOn ? colors.primary : colors.mutedForeground} />
+          {!isCompact ? <Text style={[t.caption, { color: microphoneOn ? colors.primary : colors.mutedForeground }]}>{microphoneOn ? "Mic on" : "Mic off"}</Text> : null}
+        </Pressable>
         {floor.you.allowedCamera || floor.you.acceptedCamera ? (
           <FloorChipView
             testID="student-floor-camera"

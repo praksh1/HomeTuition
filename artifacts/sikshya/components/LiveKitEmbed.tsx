@@ -69,6 +69,7 @@ export interface LiveKitEmbedProps {
   canUseMicrophone?: boolean;
   canUseCamera?: boolean;
   onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
+  micToggleRequest?: number;
 }
 
 export default function LiveKitEmbed({ style }: LiveKitEmbedProps) {

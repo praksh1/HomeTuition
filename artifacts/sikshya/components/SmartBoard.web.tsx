@@ -50,7 +50,7 @@ import {
  *     find work that was, to the teacher, plainly on screen. The teacher's visible rectangle is
  *     broadcast in scene coordinates and each student fits it to their own screen, which also
  *     handles a phone and a laptop having nothing like the same shape. A student who pans or
- *     zooms themselves stops following until they ask to be taken back.
+ *     stays on the teacher's current page and viewport throughout the lesson.
  */
 
 /** The teacher's visible rectangle, refreshed no more often than this. */
@@ -375,7 +375,9 @@ function SmartBoard({
   /** Whether Excalidraw's shape properties panel is currently allowed on screen. */
   const [showProps, setShowProps] = useState(false);
   /** Students only: whether the board still tracks the teacher's view. */
-  const [following, setFollowing] = useState(true);
+  const [inkColor, setInkColor] = useState("#1e293b");
+  const [colorMenuOpen, setColorMenuOpen] = useState(false);
+  const [mediaElements, setMediaElements] = useState<ExcalidrawElement[]>([]);
   const lastFocusId = useRef<number | null>(null);
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [pageSidebarOpen, setPageSidebarOpen] = useState(false);
@@ -387,6 +389,25 @@ function SmartBoard({
   /** Locking protects page content; it must never take the teacher's Unlock control away. */
   const canManagePages = !readOnly && Boolean(onPageCommand);
   const activePageIndex = Math.max(0, pages.findIndex((page) => page.id === activePage?.id));
+
+  /** An explicit document list is easier to use than a browser right-click menu. */
+  function changeMediaObjects(ids: string[], operation: "remove" | "lock" | "unlock") {
+    if (!api || boardReadOnly || ids.length === 0) return;
+    const targets = new Set(ids);
+    const now = Date.now();
+    const next = api.getSceneElementsIncludingDeleted().map((element: ExcalidrawElement) =>
+      targets.has(element.id) && !element.isDeleted
+        ? { ...element, ...(operation === "remove" ? { isDeleted: true } : { locked: operation === "lock" }),
+            version: Math.max(1, Number(element.version) || 1) + 1,
+            versionNonce: Math.floor(Math.random() * 1_000_000_000), updated: now }
+        : element,
+    );
+    api.updateScene({ elements: next, appState: { selectedElementIds: {} }, captureUpdate: "IMMEDIATELY" });
+    setMediaElements(next.filter((element: ExcalidrawElement) => element.type === "image" && !element.isDeleted));
+    setHistoryState({ undo: true, redo: false });
+    api.setToast({ message: operation === "remove" ? "Document removed from this board page" : operation === "lock" ? "Document locked" : "Document unlocked", duration: 2500 });
+    setTimeout(() => flushRef.current(), 0);
+  }
 
   const handleLaserMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!laserMode || boardReadOnly || !onLaser) return;
@@ -474,8 +495,8 @@ function SmartBoard({
       aria-label="Whiteboard history"
       style={{
         position: "absolute",
-        left: 12,
-        bottom: 76,
+        right: 12,
+        top: 66,
         zIndex: 8,
         display: "flex",
         gap: 6,
@@ -507,6 +528,20 @@ function SmartBoard({
       >
         <RedoIcon />
       </button>
+      <button type="button" aria-label="Choose writing colour" title="Writing colour"
+        aria-expanded={colorMenuOpen} onClick={() => setColorMenuOpen((open) => !open)}
+        style={{ ...pageButtonStyle, display: "grid", placeItems: "center" }}>
+        <span aria-hidden="true" style={{ width: 19, height: 19, borderRadius: "50%", background: inkColor, border: "2px solid white", boxShadow: "0 0 0 1px rgba(15,23,42,0.25)" }} />
+      </button>
+      {colorMenuOpen ? (
+        <div role="group" aria-label="Writing colours" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, display: "flex", gap: 6, padding: 8, borderRadius: 14, border: "1px solid rgba(15,23,42,0.12)", background: "white", boxShadow: "0 10px 28px rgba(15,23,42,0.16)" }}>
+          {[["Charcoal", "#1e293b"], ["Blue", "#1d4ed8"], ["Red", "#dc2626"], ["Green", "#15803d"], ["Purple", "#7c3aed"], ["Orange", "#c2410c"]].map(([name, value]) => (
+            <button key={value} type="button" aria-label={`${name} writing colour`} aria-pressed={inkColor === value}
+              onClick={() => { api?.updateScene({ appState: { currentItemStrokeColor: value } }); setInkColor(value); setColorMenuOpen(false); }}
+              style={{ width: 34, height: 34, borderRadius: "50%", border: inkColor === value ? "3px solid #0f172a" : "2px solid white", background: value, boxShadow: "0 0 0 1px rgba(15,23,42,0.2)", cursor: "pointer" }} />
+          ))}
+        </div>
+      ) : null}
     </div>
   ) : null;
 
@@ -537,19 +572,14 @@ function SmartBoard({
             ‹
           </button>
           <button className="sikshya-board__page-label" type="button" aria-label="Open board pages" onClick={() => setPageMenuOpen((open) => !open)} style={{ ...pageButtonStyle, minWidth: 118, fontSize: "small", fontWeight: 700, color: "var(--color-primary, navy)" }}>
-            {activePage?.title ?? "Page"} <span style={{ color: "var(--text-muted-color, slategray)", fontWeight: 500 }}>{activePageIndex + 1} / {pages.length}</span>
+            <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activePage?.title === `Page ${activePageIndex + 1}` ? `Page ${activePageIndex + 1} of ${pages.length}` : activePage?.title ?? "Board page"}</span>
+            {activePage?.title !== `Page ${activePageIndex + 1}` ? <span style={{ display: "block", color: "var(--text-muted-color, slategray)", fontWeight: 500, fontSize: "x-small" }}>Page {activePageIndex + 1} of {pages.length}</span> : null}
           </button>
           <button type="button" aria-label="Next board page" title="Next page" disabled={activePageIndex >= pages.length - 1} onClick={() => onPageCommand?.({ op: "select", pageId: pages[Math.min(pages.length - 1, activePageIndex + 1)].id })} style={pageButtonStyle}>
             ›
           </button>
         </>
-      ) : (
-        <div aria-live="polite" style={{ minHeight: 44, padding: "0 14px", display: "flex", alignItems: "center", gap: 8, color: "var(--color-primary, navy)", fontSize: "small", fontWeight: 750 }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>{activePage?.title ?? "Page"}</span>
-          <span style={{ color: "var(--text-muted-color, slategray)", fontWeight: 550 }}>{activePageIndex + 1} / {pages.length}</span>
-          {pageLocked ? <span style={{ color: "var(--text-muted-color, slategray)", fontSize: "x-small" }}>Locked</span> : null}
-        </div>
-      )}
+      ) : null}
       {onPageCommand ? (
         <button className="sikshya-board__thumb-toggle" type="button" aria-label="Show board page thumbnails" title="Page thumbnails" aria-pressed={pageSidebarOpen} onClick={() => setPageSidebarOpen((open) => !open)} style={{ ...pageButtonStyle, background: pageSidebarOpen ? "var(--color-primary-light, aliceblue)" : "white", color: "var(--color-primary, navy)" }}>
           ▦
@@ -561,7 +591,7 @@ function SmartBoard({
         </button>
       ) : null}
       {pageMenuOpen ? (
-        <div style={{ position: "absolute", left: 0, bottom: "calc(100% + 8px)", width: 240, padding: 10, display: "grid", gap: 8, border: "1px solid rgba(15,23,42,0.12)", borderRadius: 14, background: "rgba(255,255,255,0.98)", boxShadow: "0 12px 32px rgba(15,23,42,0.18)" }}>
+        <div style={{ position: "absolute", left: 0, bottom: "calc(100% + 8px)", width: 260, maxHeight: "min(70vh, 520px)", overflowY: "auto", padding: 10, display: "grid", gap: 8, border: "1px solid rgba(15,23,42,0.12)", borderRadius: 14, background: "rgba(255,255,255,0.98)", boxShadow: "0 12px 32px rgba(15,23,42,0.18)" }}>
           <div style={{ fontSize: "x-small", color: "var(--text-muted-color, slategray)", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Board pages</div>
           {pages.map((page, index) => (
             <button key={page.id} type="button" onClick={() => { onPageCommand?.({ op: "select", pageId: page.id }); setPageMenuOpen(false); }} style={{ ...pageMenuButtonStyle, background: page.id === activePage?.id ? "var(--color-primary-light, aliceblue)" : "transparent", color: page.id === activePage?.id ? "var(--color-primary, navy)" : "var(--text-primary-color, black)" }}>
@@ -589,6 +619,26 @@ function SmartBoard({
                 <button type="button" disabled={pages.length <= 1} onClick={deletePage} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Delete</button>
               </div>
             </>
+          ) : null}
+          {canManagePages && mediaElements.length > 0 ? (
+            <div style={{ display: "grid", gap: 8, paddingTop: 8, borderTop: "1px solid rgba(15,23,42,0.12)" }}>
+              <strong style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>Pictures and PDF pages on this board page</strong>
+              {mediaElements.map((element, index) => {
+                const data = element.customData as { fadkoPage?: number; fadkoTotal?: number; fadkoDocumentId?: string } | undefined;
+                const label = data?.fadkoPage ? `PDF page ${data.fadkoPage} of ${data.fadkoTotal ?? "?"}` : `Picture ${index + 1}`;
+                const documentIds = data?.fadkoDocumentId
+                  ? mediaElements.filter((item) => (item.customData as typeof data | undefined)?.fadkoDocumentId === data.fadkoDocumentId).map((item) => item.id)
+                  : [];
+                return <div key={element.id} style={{ display: "grid", gap: 5, padding: 7, borderRadius: 9, background: "rgba(15,23,42,0.04)" }}>
+                  <span style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>{label}{element.locked ? " · Locked" : ""}</span>
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    <button type="button" aria-label={`${element.locked ? "Unlock" : "Lock"} ${label}`} onClick={() => changeMediaObjects([element.id], element.locked ? "unlock" : "lock")} style={pageMenuButtonStyle}>{element.locked ? "Unlock" : "Lock"}</button>
+                    <button type="button" aria-label={`Remove ${label}`} onClick={() => changeMediaObjects([element.id], "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove page</button>
+                    {documentIds.length > 1 ? <button type="button" aria-label="Remove entire PDF from this board page" onClick={() => changeMediaObjects(documentIds, "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove entire PDF</button> : null}
+                  </div>
+                </div>;
+              })}
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -805,6 +855,8 @@ function SmartBoard({
       // `onChange` may omit erased elements; the inclusive scene is the only reliable record of
       // which object the eraser just marked deleted.
       let scene = [...(api?.getSceneElementsIncludingDeleted() ?? elements)];
+      const images = scene.filter((element) => element.type === "image" && !element.isDeleted);
+      setMediaElements((current) => current.length === images.length && current.every((element, index) => element.id === images[index].id && element.version === images[index].version) ? current : images);
       if (appState?.activeTool?.type === "eraser") {
         const protectedScene = protectBoardElementsFromEraser(
           scene,
@@ -853,7 +905,7 @@ function SmartBoard({
     };
   }, []);
 
-  // --- incoming: follow the teacher's view ---
+  // --- incoming: always follow the teacher's view ---
   const applyViewport = useCallback<(view: BoardViewport) => void>(
     (view) => {
       if (!api) return;
@@ -897,42 +949,21 @@ function SmartBoard({
     if (!api || !readOnly || !viewport) return;
     if (viewport.focusId !== undefined && viewport.focusId !== lastFocusId.current) {
       lastFocusId.current = viewport.focusId;
-      setFollowing(true);
       applyViewport(viewport);
       api.setToast({ message: "Your teacher brought everyone back to this view", duration: 2400 });
       return;
     }
-    if (!following) return;
     applyViewport(viewport);
-  }, [api, readOnly, viewport, following, applyViewport]);
+  }, [api, readOnly, viewport, applyViewport]);
 
-  /**
-   * A student who pans or zooms has taken over their own view.
-   *
-   * Snapping them back on the teacher's next stroke would make the board unusable for anyone
-   * reading a detail, so following stops and a button offers it back.
-   */
   const handleScrollChange = useCallback(
-    (scrollX: number, scrollY: number, zoom: { value: number }) => {
+    (_scrollX: number, _scrollY: number, _zoom: { value: number }) => {
       if (!readOnly) {
         scheduleViewportPublish();
-        return;
       }
-      const applied = appliedView.current;
-      if (!applied) return;
-      const moved =
-        Math.abs(applied.scrollX - scrollX) > 1 ||
-        Math.abs(applied.scrollY - scrollY) > 1 ||
-        Math.abs(applied.zoom - zoom.value) > 0.01;
-      if (moved) setFollowing(false);
     },
     [readOnly, scheduleViewportPublish],
   );
-
-  const resumeFollowing = useCallback(() => {
-    setFollowing(true);
-    if (viewport) applyViewport(viewport);
-  }, [viewport, applyViewport]);
 
   // --- incoming: merge deltas into the live scene ---
   useEffect(() => {
@@ -949,8 +980,10 @@ function SmartBoard({
       appliedPageChange.current = pageChangedAt;
       sentVersions.current.clear();
       sentFiles.current.clear();
-      insertedImages.current.clear();
+      // An upload key belongs to the whole classroom, not the active page. Clearing it here
+      // reinserted the same PDF every time the teacher added or selected a page.
       visibleBeforeErase.current.clear();
+      setMediaElements([]);
       setHistoryState({ undo: false, redo: false });
       fitted.current = false;
       applyingRemote.current = true;
@@ -1003,6 +1036,7 @@ function SmartBoard({
 
     applyingRemote.current = true;
     api.updateScene({ elements: [...current.values()] });
+    setMediaElements([...current.values()].filter((element) => element.type === "image" && !element.isDeleted));
     rememberVisibleBoardElements(visibleBeforeErase.current, [...current.values()]);
     // Cleared on a later tick because updateScene triggers onChange synchronously.
     setTimeout(() => { applyingRemote.current = false; }, 0);
@@ -1111,6 +1145,7 @@ function SmartBoard({
 
       const files: BinaryFile[] = [];
       const elements: Record<string, unknown>[] = [];
+      const documentId = `document-${insertDocument.key}`;
       let cursorY = 0;
       let firstElement: Record<string, unknown> | null = null;
 
@@ -1163,6 +1198,7 @@ function SmartBoard({
           updated: Date.now(),
           link: null,
           locked: false,
+          customData: insertDocument.kind === "pdf" ? { fadkoDocumentId: documentId, fadkoPage: index + 1, fadkoTotal: entries.length } : null,
           scale: [1, 1],
           crop: null,
         };
@@ -1173,6 +1209,7 @@ function SmartBoard({
       api.addFiles(files);
       applyingRemote.current = true;
       api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...elements] });
+      setMediaElements((current) => [...current, ...(elements as ExcalidrawElement[])]);
       setTimeout(() => {
         applyingRemote.current = false;
         // Start at the top of the document. Fitting every page at once would shrink the text to
@@ -1485,6 +1522,7 @@ function SmartBoard({
     >
       <style>{BOARD_CSS}</style>
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none", ...templateStyle(activePage?.template ?? "blank") }} />
+      <div style={{ position: "absolute", inset: 0, pointerEvents: readOnly ? "none" : "auto" }}>
       <Excalidraw
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         excalidrawAPI={(a: any) => setApi(a as ExcalidrawAPI)}
@@ -1527,8 +1565,9 @@ function SmartBoard({
           </WelcomeScreen.Center>
         </WelcomeScreen>
       </Excalidraw>
+      </div>
 
-      {pageNavigator}
+      {!readOnly ? pageNavigator : null}
       {historyControls}
       {selectionToolbar}
 
@@ -1645,35 +1684,6 @@ function SmartBoard({
         />
       ) : null}
 
-      {readOnly && !following && (
-        <button
-          type="button"
-          title="Return to the teacher's current view"
-          aria-label="Return to teacher"
-          onClick={resumeFollowing}
-          style={{
-            position: "absolute",
-            left: "50%",
-            bottom: 16,
-            transform: "translateX(-50%)",
-            zIndex: 6,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "8px 14px",
-            borderRadius: 999,
-            border: "none",
-            background: "rgba(17,24,39,0.92)",
-            color: "white",
-            font: "600 12.5px system-ui, sans-serif",
-            cursor: "pointer",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-          }}
-        >
-          <EyeIcon />
-          Return to teacher
-        </button>
-      )}
     </div>
   );
 }
