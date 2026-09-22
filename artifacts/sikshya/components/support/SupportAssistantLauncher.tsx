@@ -370,7 +370,13 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
                 editable={!busy && !ticketId}
                 returnKeyType="send"
                 submitBehavior="submit"
-                onSubmitEditing={() => void sendQuestion(draft)}
+                onKeyPress={(event) => {
+                  if (Platform.OS === "web" && event.nativeEvent.key === "Enter") {
+                    event.preventDefault();
+                    void sendQuestion(draft);
+                  }
+                }}
+                onSubmitEditing={Platform.OS === "web" ? undefined : () => void sendQuestion(draft)}
                 style={[t.body, styles.input, { color: colors.foreground }]}
               />
               <Pressable
