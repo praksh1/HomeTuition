@@ -143,12 +143,23 @@ export function supportFollowUp(value: unknown, intent: SupportIntent): { prompt
 export function localSupportGuide(value: unknown): string | null {
   const query = normaliseSupportQuery(value).toLocaleLowerCase();
   const guides: Record<string, string> = {
+    "my class payment did not go through. what should i do?": "I cannot see whether a payment succeeded from this chat. Check Profile → Payments & receipts for a record, then tap Ask a person with the class name if the result is unclear. Do not share a card number or password here.",
+    "i paid for a class but cannot join it. what should i check?": "Open Classes and choose the class to check its lesson dates and Join option. I cannot verify a payment or restore access here. Tap Ask a person with the class name so Fadko can check the payment and booking records.",
+    "i need help with a refund for my class.": "Refund eligibility and status need a person to review the class and payment record. You can check Profile → Payments & receipts, then tap Ask a person and name the class. Please do not send payment credentials here.",
     "where can i see the dates for my class?": "Open Classes, choose the class, then look at its Schedule. If a date looks wrong, tap Ask a person and include the class name.",
     "where can i see my class payment history?": "Open Profile, then Payments & receipts. You can see test charges and any recorded refunds there. If a record looks wrong, tap Ask a person.",
     "where can i find feedback on submitted homework?": "Open Classes, choose the class, then Homework. Feedback appears with the submitted work when your teacher has returned it.",
     "how do i update my profile details?": "Open Profile and tap Edit account details. You can update your contact and location information there.",
     "a class or direct message is not showing. what should i check?": "Open Messages and choose the class or direct conversation. If the message still does not appear after reconnecting, tap Ask a person.",
     "i cannot join a lesson i booked. what should i check?": "Open Classes, choose your class, and open the lesson from its schedule. I cannot verify your booking or the live room here. If the Join option is missing or the room fails, tap Ask a person so Fadko can check your class.",
+    "my camera or sound is not working in a lesson.": "Check that your browser or phone has allowed camera and microphone for Fadko, then try leaving and reopening the lesson. If it still fails, tap Ask a person and include your device and browser. Never send a password.",
+    "the lesson says it has already ended. what can i do?": "A finished lesson cannot be reopened by this chat. Check the class Schedule for the next lesson. If the end time looks wrong or you need help with a missed lesson, tap Ask a person and include the class name.",
+    "i cannot send a class or direct message.": "Open Messages and try that conversation again after reconnecting. If sending still fails, tap Ask a person and say whether it was a class or direct message. Do not include private message content unless it is needed for support.",
+    "i am not getting message notifications.": "Check your notification choices in Profile and your browser or phone notification permission for Fadko. Messages may still be available inside the app. If notifications remain missing, tap Ask a person and include your device.",
+    "how do i submit homework for my class?": "Open Classes, choose your class, then Homework. Open the assignment and use its hand-in action. If the action is missing or a file will not upload, tap Ask a person with the class and assignment name.",
+    "i cannot open a homework file.": "Open the assignment in Classes → Homework and try the file again. If it still will not open, tap Ask a person with the assignment name and your device; Fadko can investigate the file without you posting it in this chat.",
+    "i cannot sign in to my account.": "Use the student or teacher sign-in choice for your account, and try Forgot password on the sign-in screen if needed. I cannot see or change your password. If you still cannot sign in, open Fadko Support from the sign-in page or contact a person.",
+    "i need help changing my phone number or email address.": "Open Profile → Edit account details to review your contact information. If the change cannot be saved, tap Ask a person. Never send a password or verification code in this chat.",
   };
   return guides[query] ?? null;
 }
@@ -157,7 +168,7 @@ export function localSupportGuide(value: unknown): string | null {
 export function supportToneResponse(value: unknown, matchedTerms: readonly string[]): { kind: "report" | "abuse"; message: string } | null {
   const query = normaliseSupportQuery(value).toLocaleLowerCase();
   const reporting = /\b(teacher|student|someone|person|they|he|she)\s+(said|called|wrote|sent|told|bullied|harassed|threatened)\b|\b(report|reported|was called|called me|said to me)\b|मलाई|उसले|उनले|गाली गर/.test(query);
-  const safetyConcern = /\b(bullied|bullying|harassed|harassment|threatened|threat|intimidated|abused|abuse)\b|धम्की|दुर्व्यवहार|हेप/.test(query);
+  const safetyConcern = /\b(bullied|bullying|harassed|harassment|threatened|threat|intimidated|abused|abuse|unsafe|safety concern)\b|धम्की|दुर्व्यवहार|हेप/.test(query);
   if (reporting && (matchedTerms.length > 0 || safetyConcern)) return { kind: "report", message: "I'm sorry you experienced this. Please tap Ask a person so Fadko Support can review what happened. You can include the class or conversation involved." };
   if (matchedTerms.length === 0) return null;
   return { kind: "abuse", message: "Please keep the conversation respectful. If something went wrong, tap Ask a person and a team member can review it. Repeated abusive messages may lead to a human review of your account; this message does not automatically restrict you." };

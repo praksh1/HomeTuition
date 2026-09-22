@@ -92,6 +92,10 @@ test("broad questions get short, actionable follow-up choices without inventing 
 test("exact app-navigation questions get a useful guide without inventing account decisions", () => {
   assert.match(localSupportGuide("Where can I see the dates for my class?") ?? "", /Schedule/);
   assert.match(localSupportGuide("I cannot join a lesson I booked. What should I check?") ?? "", /cannot verify your booking/);
+  assert.match(localSupportGuide("My class payment did not go through. What should I do?") ?? "", /cannot see whether a payment succeeded/);
+  assert.match(localSupportGuide("I need help with a refund for my class.") ?? "", /person to review/);
+  assert.match(localSupportGuide("My camera or sound is not working in a lesson.") ?? "", /browser or phone/);
+  assert.match(localSupportGuide("How do I submit homework for my class?") ?? "", /Homework/);
   assert.equal(localSupportGuide("Please refund my class"), null);
 });
 
@@ -101,6 +105,7 @@ test("abusive language gets a respectful human path while reports are not blamed
   assert.match(supportToneResponse("My teacher called me a bitch", ["bitch"])?.message ?? "", /sorry you experienced/);
   assert.equal(supportToneResponse("My teacher called me a bitch", ["bitch"])?.kind, "report");
   assert.equal(supportToneResponse("My teacher bullied me", [])?.kind, "report");
+  assert.equal(supportToneResponse("I need to report unsafe class content", [])?.kind, "report");
   assert.equal(supportToneResponse("I need help", []), null);
 });
 
