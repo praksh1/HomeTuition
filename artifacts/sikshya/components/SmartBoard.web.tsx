@@ -379,6 +379,11 @@ function SmartBoard({
   const [inkThickness, setInkThickness] = useState<1 | 2 | 4>(2);
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
   const [mediaElements, setMediaElements] = useState<ExcalidrawElement[]>([]);
+  const pdfGroups = new Map<string, string[]>();
+  for (const element of mediaElements) {
+    const documentId = (element.customData as { fadkoDocumentId?: string } | undefined)?.fadkoDocumentId;
+    if (documentId) pdfGroups.set(documentId, [...(pdfGroups.get(documentId) ?? []), element.id]);
+  }
   const lastFocusId = useRef<number | null>(null);
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [pageSidebarOpen, setPageSidebarOpen] = useState(false);
@@ -497,7 +502,7 @@ function SmartBoard({
       style={{
         position: "absolute",
         right: 12,
-        top: 66,
+        top: "calc(env(safe-area-inset-top, 0px) + 128px)",
         zIndex: 8,
         display: "flex",
         gap: 6,
@@ -652,18 +657,20 @@ function SmartBoard({
           {canManagePages && mediaElements.length > 0 ? (
             <div style={{ display: "grid", gap: 8, paddingTop: 8, borderTop: "1px solid rgba(15,23,42,0.12)" }}>
               <strong style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>Pictures and PDF pages on this board page</strong>
+              {[...pdfGroups.entries()].filter(([, ids]) => ids.length > 1).map(([documentId, ids], index) => (
+                <div key={documentId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: 7, borderRadius: 9, background: "rgba(29,78,216,0.06)" }}>
+                  <span style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>PDF {index + 1} · {ids.length} pages</span>
+                  <button type="button" aria-label={`Remove all pages of PDF ${index + 1}`} onClick={() => changeMediaObjects(ids, "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove all</button>
+                </div>
+              ))}
               {mediaElements.map((element, index) => {
                 const data = element.customData as { fadkoPage?: number; fadkoTotal?: number; fadkoDocumentId?: string } | undefined;
                 const label = data?.fadkoPage ? `PDF page ${data.fadkoPage} of ${data.fadkoTotal ?? "?"}` : `Picture ${index + 1}`;
-                const documentIds = data?.fadkoDocumentId
-                  ? mediaElements.filter((item) => (item.customData as typeof data | undefined)?.fadkoDocumentId === data.fadkoDocumentId).map((item) => item.id)
-                  : [];
                 return <div key={element.id} style={{ display: "grid", gap: 5, padding: 7, borderRadius: 9, background: "rgba(15,23,42,0.04)" }}>
                   <span style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>{label}{element.locked ? " · Locked" : ""}</span>
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                     <button type="button" aria-label={`${element.locked ? "Unlock" : "Lock"} ${label}`} onClick={() => changeMediaObjects([element.id], element.locked ? "unlock" : "lock")} style={pageMenuButtonStyle}>{element.locked ? "Unlock" : "Lock"}</button>
                     <button type="button" aria-label={`Remove ${label}`} onClick={() => changeMediaObjects([element.id], "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove page</button>
-                    {documentIds.length > 1 ? <button type="button" aria-label="Remove entire PDF from this board page" onClick={() => changeMediaObjects(documentIds, "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove entire PDF</button> : null}
                   </div>
                 </div>;
               })}
@@ -985,6 +992,25 @@ function SmartBoard({
     applyViewport(viewport);
   }, [api, readOnly, viewport, applyViewport]);
 
+  // A phone can rotate while the teacher is still drawing. Refit the latest teacher view even
+  // when no new viewport message arrives, because students cannot pan the read-only board.
+  useEffect(() => {
+    if (!api || !readOnly || !viewport || !boardRootRef.current) return;
+    let pending: ReturnType<typeof setTimeout> | null = null;
+    const refit = () => {
+      if (pending) clearTimeout(pending);
+      pending = setTimeout(() => applyViewport(viewport), 120);
+    };
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(refit) : null;
+    observer?.observe(boardRootRef.current);
+    window.addEventListener("resize", refit);
+    return () => {
+      if (pending) clearTimeout(pending);
+      observer?.disconnect();
+      window.removeEventListener("resize", refit);
+    };
+  }, [api, readOnly, viewport, applyViewport]);
+
   const handleScrollChange = useCallback(
     (_scrollX: number, _scrollY: number, _zoom: { value: number }) => {
       if (!readOnly) {
@@ -1087,6 +1113,7 @@ function SmartBoard({
     sentVersions.current.clear();
     sentFiles.current.clear();
     visibleBeforeErase.current.clear();
+    setMediaElements([]);
     applyingRemote.current = true;
     api.updateScene({ elements: [] });
     setTimeout(() => { applyingRemote.current = false; }, 0);
@@ -1105,6 +1132,7 @@ function SmartBoard({
     sentVersions.current.clear();
     sentFiles.current.clear();
     visibleBeforeErase.current.clear();
+    setMediaElements([]);
     applyingRemote.current = true;
     api.updateScene({ elements: [] });
     setTimeout(() => { applyingRemote.current = false; }, 0);
@@ -1157,6 +1185,7 @@ function SmartBoard({
     insertedImages.current.add(insertDocument.key);
 
     let cancelled = false;
+    let placed = false;
 
     const load = (src: string) =>
       new Promise<HTMLImageElement | null>((resolve) => {
@@ -1290,10 +1319,16 @@ function SmartBoard({
         return;
       }
       place(usable);
+      placed = true;
     })();
 
-    return () => { cancelled = true; };
-  }, [api, boardReadOnly, insertDocument, flush]);
+    return () => {
+      cancelled = true;
+      // A teacher may switch pages while a PDF is still rendering. The next effect retries it
+      // on the selected page; a completed placement keeps its key so it cannot be duplicated.
+      if (!placed) insertedImages.current.delete(insertDocument.key);
+    };
+  }, [api, boardReadOnly, insertDocument, activePageId, flush]);
 
   const updateSelectedObjects = useCallback(
     (operation: "delete" | "duplicate" | "lock") => {

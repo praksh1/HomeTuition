@@ -356,11 +356,15 @@ console.log("\nThe classroom floor, against a database and a recording LiveKit\n
   check("a student joining is sent their own row and nothing else", one.floor()?.scope === "student");
   check("a monthly class knows it carries the discussion benefit",
     one.floor()?.discussionEligible === true, JSON.stringify(one.floor()));
-  check("students arrive muted with microphone-only capability",
-    one.floor()?.you.state === "muted-by-self" &&
-      one.floor()?.you.allowedMic === true &&
+  check("students arrive as audience without microphone or camera permission",
+    one.floor()?.you.state === "audience" &&
+      one.floor()?.you.allowedMic === false &&
       one.floor()?.you.allowedCamera === false,
     JSON.stringify(one.floor()?.you));
+  await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
+  check("a student cannot unmute before the teacher grants the floor",
+    one.refusal()?.code === "not-allowed" && one.floor()?.you.allowedMic === false,
+    JSON.stringify({ refusal: one.refusal(), row: one.floor()?.you }));
 
   forgetFloor(String(sessionId));
 }
@@ -389,11 +393,17 @@ const grantCase = makeMonthlyClass();
   check("a raised hand is not broadcast to the other students",
     two.inbox.filter((msg) => msg.type === "floor_state").length === 1,
     "a student should hear only about their own row");
+  check("and does not let the student publish a microphone",
+    one.floor()?.you.allowedMic === false, JSON.stringify(one.floor()?.you));
 
   m = mark();
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
-  check("acknowledging a raised hand does not rewrite the microphone permission it already has",
-    since(m).length === 0, since(m).map((c) => c.method).join(","));
+  const micGrant = since(m).find((c) => c.method === "UpdateParticipant");
+  check("only the teacher's grant gives the student microphone publishing rights",
+    micGrant?.body?.identity === String(oneId) &&
+      micGrant?.body?.permission?.canPublish === true &&
+      JSON.stringify(micGrant?.body?.permission?.canPublishSources ?? []) === JSON.stringify(["MICROPHONE"]),
+    JSON.stringify(micGrant?.body));
   check("and leaves the student safely muted until they use their own microphone control",
     one.floor()?.you.state === "muted-by-self", JSON.stringify(one.floor()?.you));
 
@@ -533,10 +543,17 @@ const grantCase = makeMonthlyClass();
   floorLeave(String(sessionId), room, oneId, false);
   const back = person(oneId, false, "Sita Sharma");
   const room2 = makeRoom([teacher, back]);
+  const reconnectMark = mark();
   await floorJoin(String(sessionId), room2, back, "Sita Sharma");
+  await settle();
 
   check("a student sent back is teacher-muted on reconnect",
     back.floor()?.you.state === "muted-by-teacher", JSON.stringify(back.floor()?.you));
+  const repushed = since(reconnectMark).find((c) =>
+    c.method === "UpdateParticipant" && c.body.identity === String(oneId));
+  check("reconnecting cannot restore a previously revoked microphone grant",
+    Boolean(repushed) && repushed.body.permission?.canPublish !== true,
+    JSON.stringify(repushed?.body?.permission));
   const stolen = await handleFloorFrame(String(sessionId), room2, back, { type: "floor_accept", scope: "mic" });
   void stolen;
   check("and a stale client cannot accept its way back in",
@@ -822,8 +839,8 @@ const grantCase = makeMonthlyClass();
   check("and keep the names the database gave them",
     roster.map((r) => r.name).sort().join(",") === "Ram Bahadur,Sita Sharma",
     roster.map((r) => r.name).join(","));
-  check("the class starts with microphone-only students who are muted by themselves",
-    roster.every((r) => r.allowedMic && !r.allowedCamera && r.state === "muted-by-self"),
+  check("the class starts with students in the audience until the teacher grants the floor",
+    roster.every((r) => !r.allowedMic && !r.allowedCamera && r.state === "audience"),
     JSON.stringify(roster));
   check("and everybody is shown as connected", roster.every((r) => r.connected));
 
@@ -837,7 +854,7 @@ const grantCase = makeMonthlyClass();
   m = mark();
   await act(sessionId, room, teacher, { type: "floor_mute_all" });
   const muted = since(m).filter((c) => c.method === "UpdateParticipant");
-  check("Mute all reaches every microphone-capable student", muted.length === 2,
+  check("Mute all does not grant or push rights to students already in the audience", muted.length === 0,
     muted.map((c) => c.body.identity).join(","));
 
   check("a student's own screen survives it too", one.floor()?.scope === "student");
@@ -939,6 +956,7 @@ const grantCase = makeMonthlyClass();
     rowFor(oneId)?.allowedCamera === true, JSON.stringify(rowFor(oneId)));
 
   // The other direction: stop an open microphone after that participant has left the SFU.
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: twoId, scope: "mic" });
   await act(sessionId, room, two, { type: "floor_accept", scope: "mic" });
   behaviour.set(String(twoId), "absent");
   await act(sessionId, room, teacher, { type: "floor_mute", userId: twoId });
@@ -1035,8 +1053,7 @@ const grantCase = makeMonthlyClass();
   await floorJoin(String(sessionId), room, teacher, "Floor Teacher");
   await floorJoin(String(sessionId), room, one, "Sita Sharma");
 
-  // First revoke the default microphone permission, then make its restoration fail.
-  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
+  // Make the teacher's first microphone grant fail; audience students have no default grant.
   behaviour.set(String(oneId), "fail");
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   await act(sessionId, room, one, { type: "floor_accept", scope: "mic" });
@@ -1075,8 +1092,7 @@ const grantCase = makeMonthlyClass();
   await floorJoin(String(sessionId), room, one, "Sita Sharma");
   const rowFor = (id) => teacher.floor()?.students.find((r) => r.userId === id);
 
-  // Make microphone restoration a real provider transition, then simulate missing media.
-  await act(sessionId, room, teacher, { type: "floor_mute", userId: oneId });
+  // The teacher's first microphone grant is a provider transition; simulate missing media.
   behaviour.set(String(oneId), "absent");
   await act(sessionId, room, teacher, { type: "floor_allow", userId: oneId, scope: "mic" });
   check("the grant is outstanding while the student's video is missing",

@@ -191,9 +191,8 @@ export const livekitProvider: VideoProvider = {
     /**
      * True, and the reason this provider is worth the trial at all.
      *
-     * A student's token permits a microphone but no camera or screen. They join muted; the
-     * teacher can revoke self-unmute and separately grant camera through `setPublishing` below.
-     * Those server-enforced rights make this a classroom rather than an uncontrolled conference.
+     * Students join as audience members. The teacher grants a named student a microphone or
+     * camera through `setPublishing` below, which LiveKit enforces mid-call.
      */
     moderatesPublishing: true,
   },
@@ -265,20 +264,11 @@ export const livekitProvider: VideoProvider = {
         room: roomNameForSession(sessionId),
         canSubscribe: true,
         /**
-         * **A student's token permits a microphone, but no camera or screen.**
-         *
-         * This is the security boundary of the whole classroom, and it is a signed claim rather
-         * than a hidden button. Before this, every token said `canPublish: true` and the class
-         * relied on the app not offering a microphone control — which protects against a student
-         * who behaves, and against nobody else. A browser console was enough to publish into a
-         * lesson.
-         *
-         * Students join muted in the client. Granting the microphone in the signed token avoids
-         * turning an ordinary Unmute tap into a multi-dialog permission ceremony. The teacher can
-         * still revoke self-unmute through `RoomServiceClient.updateParticipant`; camera remains
-         * impossible until that same server-authorized path explicitly adds it.
+         * The student token begins as audience-only. A modified client cannot publish by
+         * skipping the app's disabled mic button; a teacher must grant the right on the server.
+         * A standing grant is re-applied when a student's media connection returns.
          */
-        canPublish: true,
+        canPublish: options.isOwner,
         // The app's own signalling runs over its own WebSocket; nothing needs LiveKit's data
         // channel, and a capability nobody uses is a capability nobody is watching.
         canPublishData: false,
@@ -291,12 +281,12 @@ export const livekitProvider: VideoProvider = {
          */
         roomAdmin: options.isOwner,
         /**
-         * The teacher may publish every classroom source. A student begins with microphone only;
-         * camera is added only through the server-authorized moderation path.
+         * The teacher may publish every classroom source. No student source is permitted by a
+         * fresh token; `setPublishing` names each source after the teacher approves it.
          */
         canPublishSources: options.isOwner
           ? [TrackSource.CAMERA, TrackSource.MICROPHONE, TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO]
-          : [TrackSource.MICROPHONE],
+          : [],
       });
 
       // Async in livekit-server-sdk v2. Returning the promise unawaited would hand the app a
@@ -311,9 +301,9 @@ export const livekitProvider: VideoProvider = {
   /**
    * Tell LiveKit what one participant may now publish.
    *
-   * The other half of the boundary the token opened above. A student joins with microphone-only
-   * capability but muted; this is the single path that can revoke that capability or add camera,
-   * and it runs after `lib/membership.ts` has authorised the teacher's decision.
+   * The other half of the boundary the token closed above. A student joins unable to publish;
+   * this is the single path that can grant or revoke a microphone or camera, and it runs after
+   * `lib/membership.ts` has authorised the teacher's decision.
    *
    * **`updateParticipant`, not a new token.** Re-minting would mean handing the client a fresh
    * credential and asking it to reconnect with it — a reconnection mid-lesson, and a moment

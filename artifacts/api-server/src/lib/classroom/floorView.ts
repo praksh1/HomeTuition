@@ -171,13 +171,13 @@ export function studentView(
           provider: provider.get(userId) ?? "ok",
         }
       : {
-          // A student who has done nothing yet has no row, but ordinary microphone capability is
-          // still real. The actual device starts off, so this is self-muted rather than audience.
-          state: "muted-by-self",
+          // A student with no floor row has no microphone grant. The screen must agree with the
+          // LiveKit join token, which permits subscribing but not publishing.
+          state: "audience",
           requestedAt: null,
           invitedAt: null,
           invitationScope: null,
-          allowedMic: true,
+          allowedMic: false,
           allowedCamera: false,
           acceptedMic: false,
           acceptedCamera: false,

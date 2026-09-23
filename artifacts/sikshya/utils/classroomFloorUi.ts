@@ -598,8 +598,8 @@ export function teacherRowButtons(row: FloorRow, view: TeacherFloorView): Teache
   if (row.state === "muted-by-teacher") {
     out.push({
       id: "allow-mic",
-      label: "Allow self-unmute",
-      spoken: `Allow ${row.name} to unmute again`,
+      label: "Allow microphone",
+      spoken: `Allow ${row.name} to turn their microphone on again`,
       emphasis: "primary",
       intent: { do: "allow", scope: "mic", replace: false },
     });
@@ -624,13 +624,21 @@ export function teacherRowButtons(row: FloorRow, view: TeacherFloorView): Teache
   */
   if (!row.connected) return out;
 
-  out.push({
-    id: "mute",
-    label: "Prevent unmute",
-    spoken: `Prevent ${row.name} from unmuting until you allow it again`,
-    emphasis: "danger",
-    intent: { do: "mute" },
-  });
+  out.push(row.allowedMic
+    ? {
+        id: "mute",
+        label: "Remove mic access",
+        spoken: `Remove ${row.name}'s microphone access`,
+        emphasis: "danger",
+        intent: { do: "mute" },
+      }
+    : {
+        id: "allow-mic",
+        label: "Allow microphone",
+        spoken: `Allow ${row.name} to turn their microphone on`,
+        emphasis: "primary",
+        intent: { do: "allow", scope: "mic", replace: false },
+      });
   out.push(
     row.allowedCamera
       ? {

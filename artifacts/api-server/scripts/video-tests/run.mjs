@@ -286,16 +286,14 @@ async function run() {
       !(studentClaims?.video?.canPublishSources ?? []).includes("screen_share"),
       JSON.stringify(studentClaims?.video?.canPublishSources));
     /*
-      A student's signed token permits only a microphone. The client still joins muted, and the
-      server-owned speaking floor can revoke self-unmute when the teacher mutes that student.
-      Keeping the microphone in the token avoids a second browser-permission ceremony when the
-      teacher invites somebody to speak. Camera and screen share remain impossible until the
-      server explicitly changes the participant permission.
+      A student joins as an audience member. A signed token permitting a microphone would let a
+      stale or hostile client bypass the teacher-facing floor entirely. The server uses LiveKit's
+      participant permission update after an explicit teacher grant; a fresh token must permit no
+      publishing source, including microphone, camera and screen share.
     */
-    check("and begins with microphone as the only publishable source",
-      studentClaims?.video?.canPublish === true &&
-      (studentClaims?.video?.canPublishSources ?? []).length === 1 &&
-      studentClaims?.video?.canPublishSources?.[0] === "microphone",
+    check("and cannot publish any media before teacher permission",
+      studentClaims?.video?.canPublish === false &&
+      (studentClaims?.video?.canPublishSources ?? []).length === 0,
       JSON.stringify({ canPublish: studentClaims?.video?.canPublish, sources: studentClaims?.video?.canPublishSources }));
     check("while the teacher's own token still carries camera, microphone and screen",
       claims?.video?.canPublish === true &&
