@@ -425,9 +425,13 @@ async function main() {
     "the permission did not settle with LiveKit");
   await s.page.waitForTimeout(900);
   check("the hand is cleared without another consent dialog", await waitFor(s.page, "student-floor-ask"));
+  const permittedCamera = s.page.locator('[data-testid="student-floor-camera"]');
+  const permittedCameraLabel = await permittedCamera.getAttribute("aria-label");
+  // React Native Web omits aria-disabled when enabled; it does not serialize "false".
+  // Check usable semantics (including a disabled ancestor), not the attribute spelling.
   check("camera is now available to the student",
-    (await s.page.locator('[data-testid="student-floor-camera"]').getAttribute("aria-label")) === "Turn on camera" &&
-    (await s.page.locator('[data-testid="student-floor-camera"]').getAttribute("aria-disabled")) === "false");
+    permittedCameraLabel === "Turn on camera" && await permittedCamera.isEnabled(),
+    JSON.stringify({ label: permittedCameraLabel, disabled: await permittedCamera.getAttribute("aria-disabled") }));
   const afterCameraGrant = await microphoneOf(s.page);
   check("the microphone remains off until the student chooses otherwise",
     afterCameraGrant.label === "Turn on microphone" && afterCameraGrant.disabled === false,

@@ -50,11 +50,14 @@ Completed:
 - Repository typecheck and design-token guard pass (baseline not increased).
 - API unit suite: 713/713.
 - Rendered LiveKit controls: 116/116, including external camera and permission rejection.
-- Rendered student floor / teacher roster: 264/264 at 390, 412, 768 and 1440px.
+- Rendered student floor / teacher roster: 272/272 at 390, 412, 768 and 1440px, including
+  approved-camera enabled/click coverage added following the CI assertion finding below.
 - Rendered classroom chat: 26/26. Phone whiteboard suite: 18/18.
 - Targeted toolbar geometry: 30/30 at 360, 390, 768, 1366, 1440 and 1920px.
 - Full whiteboard regression suite: 134/134, including rejoin image pixels, explicit file
   delete/Undo, page isolation, eraser protection, PDFs and viewport following.
+- Supplemental real-canvas page-history test: 5/5; changing pages clears history and keyboard
+  Undo cannot bring the previous page's content into the new blank page.
 - App unit suite: 559/560; the sole remaining failure is the unchanged support-menu assertion
   described below. Current-class journey contracts pass 7/7.
 - Screenshots inspected in temporary fadko-board-chrome, floor-shots and fadko-classroom-chat
@@ -72,6 +75,13 @@ until a new interaction, and imported files were not committed to Undo history u
 gesture. Both corrected. One early full-board run was invalidated by a simultaneous local
 rebuild; it was discarded and rerun against a stable build, not counted as a pass.
 
+Preview run 35930879450 stopped before deployment at the full-classroom camera-enabled assertion
+(60/61 checks). The test incorrectly required `aria-disabled="false"`; React Native Web emits
+that attribute only when disabled, otherwise omitting it. Reproduced the enabled DOM with
+`label: Turn on camera, disabled: null` and verified an actual click reaches the LiveKit callback.
+Use Playwright `isEnabled()` plus the exact action label instead; disabled/listener/revocation
+checks remain intact. No application permission changes for this correction.
+
 The full app unit suite has a pre-existing paused-support assertion in accountDetailsUi.test.ts
 expecting a disabled "Fadko assistant" menu. Its test and AppShellHeader source are unchanged in
 this pass. The other failing assertion expected the old hover-trigger dock; it was updated to
@@ -88,6 +98,9 @@ Production and the paused AI-support rollout.
 
 ## Remaining risks / next pickup point
 
-Commit/push the classroom branch, deploy the isolated Preview Worker
-and confirm the corresponding staging API revision. No production merge/deploy. Physical
+Commit `d545e9f401ab613d8443503132ab6f9bb5f5b55f` pushed to the classroom branch. Preview workflow
+run `35930879450` stopped at the assertion described above. Railway reports that same commit deployed successfully to service
+`hometuition-api-staging`; its `/api/readyz` returns HTTP 200 with `status: ok`.
+
+Push the test-only correction and rerun the Preview Worker release gate. No production merge/deploy. Physical
 iPhone/Android camera/mic and dropped-call retry should be retested by the owner on Preview.
