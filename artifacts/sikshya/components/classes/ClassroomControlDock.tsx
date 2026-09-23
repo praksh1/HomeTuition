@@ -1,8 +1,7 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
-  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -28,6 +27,8 @@ interface ClassroomControlDockProps {
   onToggleMaterial?: () => void;
   onLeave: () => void;
   leaveLabel: string;
+  /** In the student's one shared hand/mic/camera/call rail. */
+  inline?: boolean;
 }
 
 interface DockActionProps {
@@ -44,8 +45,8 @@ interface DockActionProps {
  * The old classroom rendered a permanent horizontal toolbar, another "Show call" pill, and a
  * second Hide action inside the video frame. On a phone those controls covered the lesson they
  * were meant to help. This dock keeps Messages visible, folds occasional actions into one button,
- * and makes Show/Hide one authoritative action. Hover can reveal it, but moving a pointer from
- * the trigger to an action must never collapse the menu underneath the teacher's hand.
+ * and makes Show/Hide one authoritative action. The menu opens on an intentional tap/click,
+ * never on hover, so moving between controls cannot toggle it underneath the teacher's hand.
  */
 export function ClassroomControlDock({
   bottom,
@@ -62,6 +63,7 @@ export function ClassroomControlDock({
   onToggleMaterial,
   onLeave,
   leaveLabel,
+  inline = false,
 }: ClassroomControlDockProps) {
   const colors = useColors();
   const { t, numeric, space, radius, elevation } = useLayout();
@@ -77,16 +79,6 @@ export function ClassroomControlDock({
       useNativeDriver: true,
     }).start();
   }, [expanded, progress]);
-
-  const hoverProps = useMemo(
-    () =>
-      Platform.OS === "web"
-        ? ({
-            onMouseEnter: () => setExpanded(true),
-          } as Record<string, unknown>)
-        : {},
-    [],
-  );
 
   const DockAction = ({ icon, label, tone = "default", testID, onPress }: DockActionProps) => {
     const active = tone === "active";
@@ -129,8 +121,8 @@ export function ClassroomControlDock({
   return (
     <View
       pointerEvents="box-none"
-      style={[s.layer, { right: space.md, bottom }]}
-      {...(hoverProps as object)}
+      testID="classroom-control-dock"
+      style={inline ? { position: "relative", zIndex: 125 } : [s.layer, { right: space.md, bottom }]}
     >
       <Animated.View
         testID="classroom-dock-actions"
@@ -138,6 +130,7 @@ export function ClassroomControlDock({
         style={[
           s.expandedActions,
           { gap: space.xs, marginBottom: space.xs },
+          inline && { position: "absolute", right: 0, bottom: HIT_SLOP_MIN + space.sm, minWidth: 200 },
           {
             opacity: progress,
             transform: [
@@ -182,7 +175,7 @@ export function ClassroomControlDock({
         />
       </Animated.View>
 
-      {(onToggleParticipants && raisedHands > 0) || (!chatOpen && unreadCount > 0) ? (
+      {!inline && ((onToggleParticipants && raisedHands > 0) || (!chatOpen && unreadCount > 0)) ? (
         <View style={[s.attentionRow, { gap: space.xs, marginBottom: space.xs }]}>
           {onToggleParticipants && raisedHands > 0 ? (
             <TouchableOpacity testID="classroom-hands-attention" accessibilityRole="button"
@@ -217,6 +210,7 @@ export function ClassroomControlDock({
             borderColor: colors.border,
             backgroundColor: colors.card,
           },
+          inline && { padding: 0, gap: 0, borderWidth: 0, boxShadow: "none", shadowOpacity: 0 },
         ]}
       >
         {onToggleParticipants ? (
@@ -291,7 +285,7 @@ export function ClassroomControlDock({
               },
             ]}
           >
-            <Feather name="video" size={19} color={colors.primary} />
+            <Feather name="monitor" size={19} color={colors.primary} />
           </TouchableOpacity>
         ) : null}
 

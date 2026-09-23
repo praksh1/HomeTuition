@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated } from "react-native";
+import { AccessibilityInfo, Animated } from "react-native";
+import { CLASS_REACTIONS, REACTION_COOLDOWN_MS } from "@/utils/classroomReactions";
 import { getToken } from "@/utils/api";
 import { wsUrl } from "@/utils/wsUrl";
 import { onNetworkResume } from "@/utils/networkResume";
@@ -581,6 +582,7 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
     { id: "page-1", title: "Page 1", template: "blank", locked: false },
   ]);
   const [activeBoardPageId, setActiveBoardPageId] = useState("page-1");
+  const activeBoardPageRef = useRef("page-1");
   const [boardPageChangedAt, setBoardPageChangedAt] = useState(0);
   const [boardLaser, setBoardLaser] = useState<BoardLaserPoint | null>(null);
   const laserTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -601,19 +603,27 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
   const everConnectedRef = useRef(false);
   const nameRef = useRef(name);
   const roleRef = useRef(role);
+  const reducedMotion = useRef(false);
+  const lastReactionSent = useRef(0);
+  useEffect(() => {
+    void AccessibilityInfo.isReduceMotionEnabled().then((value) => { reducedMotion.current = value; });
+    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (value) => { reducedMotion.current = value; });
+    return () => subscription.remove();
+  }, []);
   nameRef.current = name;
   roleRef.current = role;
 
   const addFloating = useCallback((emoji: string, senderName: string) => {
+    if (!CLASS_REACTIONS.some((reaction) => reaction.emoji === emoji)) return;
     const id = `${Date.now()}-${Math.random()}`;
     const opacity = new Animated.Value(1);
     const translateY = new Animated.Value(0);
     const x = 0.05 + Math.random() * 0.65;
     const reaction: FloatingReaction = { id, emoji, senderName, opacity, translateY, x };
-    setFloatingReactions((prev) => [...prev, reaction]);
+    setFloatingReactions((prev) => [...prev.slice(-4), reaction]);
     Animated.parallel([
       Animated.timing(opacity, { toValue: 0, duration: 2500, useNativeDriver: true }),
-      Animated.timing(translateY, { toValue: -130, duration: 2500, useNativeDriver: true }),
+      Animated.timing(translateY, { toValue: reducedMotion.current ? 0 : -96, duration: 2500, useNativeDriver: true }),
     ]).start(() => {
       setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
     });
@@ -710,10 +720,11 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
               ? msg.activePageId
               : pages[0].id;
             setBoardPages(pages);
-            setActiveBoardPageId((previous) => {
-              if (previous !== nextActive) setBoardPageChangedAt((value) => value + 1);
-              return nextActive;
-            });
+            if (activeBoardPageRef.current !== nextActive) {
+              activeBoardPageRef.current = nextActive;
+              setBoardPageChangedAt((value) => value + 1);
+            }
+            setActiveBoardPageId(nextActive);
           }
           break;
         }
@@ -911,10 +922,13 @@ export function useClassroomSocket({ sessionId, name, role }: Options): Result {
 
   const sendReaction = useCallback(
     (emoji: string) => {
-      addFloating(emoji, nameRef.current);
+      if (wsRef.current?.readyState !== WebSocket.OPEN || Date.now() - lastReactionSent.current < REACTION_COOLDOWN_MS) return;
+      if (!CLASS_REACTIONS.some((reaction) => reaction.emoji === emoji)) return;
+      lastReactionSent.current = Date.now();
+      // The server echoes accepted reactions to everyone, including this device.
       send({ type: "reaction", emoji });
     },
-    [addFloating, send],
+    [send],
   );
 
   const sendDrawCommit = useCallback(

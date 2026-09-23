@@ -16,6 +16,9 @@ import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import type { ChatMessage } from "@/hooks/useClassroomSocket";
+import type { FloatingReaction } from "@/hooks/useClassroomSocket";
+import { CLASS_REACTIONS, REACTION_COOLDOWN_MS } from "@/utils/classroomReactions";
+import { ClassroomReactions } from "./ClassroomReactions";
 
 interface ClassroomChatDrawerProps {
   open: boolean;
@@ -26,6 +29,9 @@ interface ClassroomChatDrawerProps {
   onClose: () => void;
   placeholder: string;
   emptyText: string;
+  onReaction?: (emoji: string) => void;
+  reactions?: FloatingReaction[];
+  connected?: boolean;
 }
 
 interface GroupedMessage extends ChatMessage {
@@ -65,6 +71,9 @@ export function ClassroomChatDrawer({
   onClose,
   placeholder,
   emptyText,
+  onReaction,
+  reactions = [],
+  connected = true,
 }: ClassroomChatDrawerProps) {
   const colors = useColors();
   const { t, numeric, isCompact, space, radius, elevation } = useLayout();
@@ -72,6 +81,13 @@ export function ClassroomChatDrawer({
   const nearEndRef = useRef(true);
   const previousCountRef = useRef(messages.length);
   const [newBelow, setNewBelow] = useState(0);
+  const [reactionPicker, setReactionPicker] = useState(false);
+  const [reactionCooling, setReactionCooling] = useState(false);
+  useEffect(() => {
+    if (!reactionCooling) return;
+    const timer = setTimeout(() => setReactionCooling(false), REACTION_COOLDOWN_MS);
+    return () => clearTimeout(timer);
+  }, [reactionCooling]);
   const grouped = useMemo(() => groupMessages(messages), [messages]);
 
   const scrollToLatest = useCallback((animated = true) => {
@@ -98,10 +114,10 @@ export function ClassroomChatDrawer({
   }, [messages, open, scrollToLatest]);
 
   const submit = useCallback(() => {
-    if (!value.trim()) return;
+    if (!value.trim() || !connected) return;
     onSend();
     setTimeout(() => scrollToLatest(true), 0);
-  }, [onSend, scrollToLatest, value]);
+  }, [onSend, scrollToLatest, value, connected]);
 
   const panel = (
     <KeyboardAvoidingView
@@ -142,7 +158,7 @@ export function ClassroomChatDrawer({
         </View>
         <View style={styles.grow}>
           <Text style={[t.title3, { color: colors.foreground }]}>In-class messages</Text>
-          <Text style={[t.caption, { color: colors.mutedForeground }]}>Everyone in this class</Text>
+          <Text style={[t.caption, { color: connected ? colors.mutedForeground : colors.warn }]}>{connected ? "Everyone in this class · Live" : "Reconnecting · your draft is saved here"}</Text>
         </View>
         <TouchableOpacity
           testID="classroom-chat-close"
@@ -158,10 +174,12 @@ export function ClassroomChatDrawer({
 
       <View style={styles.messageArea}>
         <ScrollView
+          testID="classroom-chat-scroll"
           ref={scrollRef}
           style={styles.grow}
           contentContainerStyle={{ flexGrow: 1, paddingHorizontal: space.md, paddingVertical: space.lg }}
           keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => { if (nearEndRef.current) scrollToLatest(false); }}
           scrollEventThrottle={80}
           onScroll={(event) => {
             const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
@@ -211,7 +229,7 @@ export function ClassroomChatDrawer({
                   !message.isMe && { borderBottomLeftRadius: message.endsGroup ? space.xxs : radius.md },
                 ]}
               >
-                <Text style={[t.body, { color: colors.foreground }]}>{message.text}</Text>
+                <Text selectable style={[t.body, { color: colors.foreground }]}>{message.text}</Text>
               </View>
               {message.endsGroup ? (
                 <Text
@@ -227,6 +245,7 @@ export function ClassroomChatDrawer({
             </View>
           ))}
         </ScrollView>
+        <ClassroomReactions reactions={reactions} />
 
         {newBelow > 0 ? (
           <TouchableOpacity
@@ -253,6 +272,22 @@ export function ClassroomChatDrawer({
         ) : null}
       </View>
 
+      {reactionPicker && onReaction ? (
+        <View testID="classroom-reaction-picker" style={{ paddingHorizontal: space.md, paddingVertical: space.sm, gap: space.xs, borderTopWidth: 1, borderTopColor: colors.border }}>
+          <Text style={[t.overline, { color: colors.inkFaint }]}>React to the class</Text>
+          <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.xs }}>
+            {CLASS_REACTIONS.map(({ emoji, label }) => <TouchableOpacity key={emoji}
+              accessibilityRole="button" accessibilityLabel={`React: ${label}`}
+              disabled={!connected || reactionCooling} aria-disabled={!connected || reactionCooling}
+              onPress={() => { onReaction(emoji); setReactionCooling(true); }}
+              style={{ minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.md, backgroundColor: colors.actionSoft, opacity: reactionCooling ? 0.55 : 1 }}>
+              <Text style={t.title2}>{emoji}</Text>
+            </TouchableOpacity>)}
+          </View>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>A quick reaction appears for everyone, then fades.</Text>
+        </View>
+      ) : null}
+
       <View
         style={[
           styles.composer,
@@ -278,6 +313,12 @@ export function ClassroomChatDrawer({
             },
           ]}
         >
+          {onReaction ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Class reactions"
+            testID="classroom-reactions-toggle" accessibilityState={{ expanded: reactionPicker }}
+            onPress={() => setReactionPicker((open) => !open)}
+            style={[styles.iconButton, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN }]}>
+            <Feather name={reactionPicker ? "x" : "smile"} size={21} color={reactionPicker ? colors.primary : colors.inkFaint} />
+          </TouchableOpacity> : null}
           <TextInput
             testID="chat-input"
             accessibilityLabel={placeholder}
@@ -290,11 +331,12 @@ export function ClassroomChatDrawer({
             onKeyPress={(event) => {
               const keyboardEvent = event as unknown as {
                 preventDefault?: () => void;
-                nativeEvent: { key?: string; shiftKey?: boolean };
+                nativeEvent: { key?: string; shiftKey?: boolean; isComposing?: boolean };
               };
               if (
                 Platform.OS === "web" &&
                 keyboardEvent.nativeEvent.key === "Enter" &&
+                !keyboardEvent.nativeEvent.isComposing &&
                 !keyboardEvent.nativeEvent.shiftKey
               ) {
                 keyboardEvent.preventDefault?.();
@@ -307,7 +349,7 @@ export function ClassroomChatDrawer({
             testID="chat-send"
             accessibilityRole="button"
             accessibilityLabel="Send message"
-            disabled={!value.trim()}
+            disabled={!value.trim() || !connected}
             onPress={submit}
             activeOpacity={0.8}
             style={[

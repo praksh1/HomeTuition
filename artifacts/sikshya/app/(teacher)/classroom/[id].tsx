@@ -56,6 +56,7 @@ import { HIT_SLOP_MIN, space as spaceScale } from "@/constants/layout";
 import { aloneMessage } from "@/utils/aloneInCall";
 import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
 import { ClassroomChatDrawer } from "@/components/classes/ClassroomChatDrawer";
+import { ClassroomReactions } from "@/components/classes/ClassroomReactions";
 import WarningModal from "@/components/WarningModal";
 
 type Mode = "whiteboard" | "chat" | "participants";
@@ -269,6 +270,8 @@ export default function Classroom() {
     accessDenied,
     presenceCount,
     messages,
+    floatingReactions,
+    sendReaction,
     sessionStatus,
     boardClearedAt,
     sceneUpdates,
@@ -1243,10 +1246,10 @@ export default function Classroom() {
               s.sessionPill,
               elevation.card,
               {
-                top: boardToolbarBottom,
-                left: space.sm,
-                width: Math.min(width - space.lg, isCompact ? 190 : 320),
-                minHeight: 36,
+                top: insets.top + (width >= 1440 ? space.md : space.xs),
+                left: width >= 1440 ? 60 : space.sm,
+                width: width >= 1440 ? 264 : Math.min(360, width - 172),
+                minHeight: 44,
                 gap: space.xxs,
                 paddingHorizontal: space.xs,
                 paddingVertical: 3,
@@ -1270,7 +1273,7 @@ export default function Classroom() {
                 {fmt(elapsed)}
               </Text>
             </View>
-            {classIsLive && !isCompact ? (
+            {classIsLive && width >= 1440 ? (
               <View
                 style={[
                   s.liveTag,
@@ -1307,33 +1310,7 @@ export default function Classroom() {
           </View>
         </View>
 
-        {/* Presence — do not render avatar bubbles or an "active" count at all when
-            nobody is actually present, so a ghost participant never shows up. */}
-        {participantCount > 0 && !videoFull && !isCompact && (
-          <View
-            pointerEvents="none"
-            style={[
-              s.presence,
-              elevation.card,
-              {
-                top: pipTop,
-                left: space.md,
-                gap: space.xs,
-                paddingHorizontal: space.sm,
-                paddingVertical: space.xs,
-                borderRadius: radius.pill,
-                backgroundColor: colors.successSoft,
-                borderColor: colors.success,
-              },
-            ]}
-          >
-            <View style={[s.presenceDot, { backgroundColor: colors.online }]} />
-            <Text style={[t.caption, numeric, { color: colors.success }]}>
-              {participantCount}{" "}
-              {participantCount === 1 ? "student" : "students"}
-            </Text>
-          </View>
-        )}
+        {/* The class-list control owns the student count; no duplicate over the board. */}
 
         <View
           pointerEvents="box-none"
@@ -1424,14 +1401,14 @@ export default function Classroom() {
           ) : null}
         </View>
 
-        <ClassroomControlDock
+        {mode !== "chat" && mode !== "participants" ? <ClassroomControlDock
           bottom={hudBottom}
-          chatOpen={mode === "chat"}
+          chatOpen={false}
           unreadCount={unreadChatCount}
           videoHidden={videoHidden}
           participantCount={floor?.scope === "teacher" ? floor.participantCount : participantCount}
           raisedHands={floor?.scope === "teacher" ? floor.queue.length : 0}
-          participantOpen={mode === "participants"}
+          participantOpen={false}
           materialOpen={materialMenuOpen}
           onToggleParticipants={() =>
             setMode((current) => (current === "participants" ? "whiteboard" : "participants"))
@@ -1446,7 +1423,7 @@ export default function Classroom() {
           onToggleVideo={videoHidden ? showVideoWindow : hideVideoWindow}
           onLeave={endSession}
           leaveLabel="End class"
-        />
+        /> : null}
 
         {/* Only the visible capsule captures touches; its full-screen layer is transparent. */}
         <View
@@ -2101,6 +2078,7 @@ export default function Classroom() {
                       is reused and the previous lesson's working comes along for the ride. */}
                       <SmartBoard
                         key={id}
+                        classroomChrome
                         sceneUpdates={sceneUpdates}
                         onConsumeUpdates={consumeSceneUpdates}
                         onSceneChange={sendSceneUpdate}
@@ -2149,8 +2127,12 @@ export default function Classroom() {
               />
             </View>
 
+            {mode !== "chat" ? <ClassroomReactions reactions={floatingReactions} /> : null}
             <ClassroomChatDrawer
               open={mode === "chat"}
+              connected={connected}
+              onReaction={sendReaction}
+              reactions={floatingReactions}
               messages={messages}
               value={chatMsg}
               onChangeText={setChatMsg}

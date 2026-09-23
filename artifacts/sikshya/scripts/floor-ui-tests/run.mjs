@@ -45,6 +45,7 @@ writeFileSync(
 import React from "react";
 import { createRoot } from "react-dom/client";
 import ClassroomFloor from ${JSON.stringify(path.join(appRoot, "components", "ClassroomFloor.tsx"))};
+import { ClassroomControlDock } from ${JSON.stringify(path.join(appRoot, "components", "classes", "ClassroomControlDock.tsx"))};
 
 /** Every action the component can send, recorded rather than performed. */
 window.__sent = [];
@@ -75,7 +76,7 @@ function Harness() {
   setScene = set;
   return React.createElement(
     "div",
-    { style: { width: "100vw", minHeight: "100vh", background: "#FBFAF8", padding: 12, boxSizing: "border-box" } },
+    { style: { width: "100vw", minHeight: "100vh", background: "#FBFAF8", padding: 12, boxSizing: "border-box", ...(scene.withDock ? { display: "flex", flexDirection: "column", justifyContent: "flex-end" } : {}) } },
     React.createElement(Boundary, null, React.createElement(ClassroomFloor, {
       floor: scene.floor,
       refusal: scene.refusal,
@@ -87,6 +88,13 @@ function Harness() {
       onParticipantOpenChange: (participantOpen) => set((s) => ({ ...s, participantOpen })),
       microphoneOn: Boolean(scene.microphoneOn),
       onToggleMicrophone: () => record("toggleMic")(),
+      cameraOn: Boolean(scene.cameraOn),
+      onToggleCamera: () => record("toggleCamera")(),
+      dockControls: scene.withDock ? React.createElement(ClassroomControlDock, {
+        inline: true, bottom: 0, chatOpen: false, unreadCount: 1, videoHidden: true,
+        onToggleChat: record("chat"), onToggleVideo: record("video"), onLeave: record("leave"),
+        leaveLabel: "Leave class",
+      }) : undefined,
     })),
   );
 }
@@ -254,7 +262,7 @@ for (const size of SIZES) {
   await tap("student-floor-microphone");
   check(`${L}: the board microphone reaches the LiveKit toggle`, JSON.stringify(await sent()) === JSON.stringify([{ name: "toggleMic", args: [] }]));
   await show({ floor: asStudent({}) });
-  check(`${L}: unavailable camera access does not waste space`, !(await seen("student-floor-camera")));
+  check(`${L}: camera control explains its permission gate`, await p.locator('[data-testid="student-floor-camera"]').isDisabled());
   await tap("student-floor-ask");
   check(`${L}: tapping it asks the server`, JSON.stringify(await sent()) === JSON.stringify([{ name: "ask", args: [] }]));
 
@@ -276,14 +284,16 @@ for (const size of SIZES) {
     "student-speaking",
   );
   check(`${L}: an active microphone is shown`, (await label("student-floor-microphone")) === "Mute microphone");
-  check(`${L}: unavailable camera access stays out of the compact strip`, !(await seen("student-floor-camera")));
+  check(`${L}: microphone approval alone cannot enable the camera`, await p.locator('[data-testid="student-floor-camera"]').isDisabled());
 
   await show(
-    { floor: asStudent({ state: "camera-active", allowedMic: true, allowedCamera: true, acceptedMic: true, acceptedCamera: true }), microphoneOn: true },
+    { floor: asStudent({ state: "camera-active", allowedMic: true, allowedCamera: true, acceptedMic: true, acceptedCamera: true }), microphoneOn: true, cameraOn: true },
     "student-on-camera",
   );
-  check(`${L}: actual camera publication is shown`, (await text("student-floor-camera")).includes("Camera on"));
-  check(`${L}: the active camera is shown separately`, (await text("student-floor-camera")).includes("Camera on"));
+  check(`${L}: actual camera publication is shown`, (await label("student-floor-camera")) === "Turn off camera");
+  check(`${L}: media state is below the controls`, (await text("student-media-status")).toLowerCase().includes("camera and microphone on"));
+  await tap("student-floor-camera");
+  check(`${L}: the board camera reaches the LiveKit toggle`, JSON.stringify(await sent()) === JSON.stringify([{ name: "toggleCamera", args: [] }]));
 
   await show({ floor: asStudent({ state: "muted-by-teacher", allowedMic: true }) }, "student-muted");
   const muted = await label("student-floor-microphone");
@@ -447,6 +457,22 @@ for (const size of SIZES) {
   await tap("participant-sheet-close");
 
   console.log(`\n[${L}] Nothing runs off the side`);
+  await show({ floor: asStudent({ allowedMic: true, allowedCamera: true }), withDock: true }, "student-unified-dock");
+  const dockGeometry = await p.evaluate(() => {
+    const ids = ["student-floor-ask", "student-floor-microphone", "student-floor-camera", "video-show-call-btn", "classroom-dock-chat", "classroom-dock-more"];
+    const boxes = ids.map((id) => document.querySelector('[data-testid="' + id + '"]').getBoundingClientRect());
+    return { inside: boxes.every((r) => r.left >= 0 && r.right <= innerWidth),
+      aligned: boxes.every((r) => Math.abs(r.top + r.height / 2 - boxes[0].top - boxes[0].height / 2) < 2),
+      separate: boxes.every((r, i) => i === 0 || r.left >= boxes[i - 1].right - 1),
+      statusBelow: document.querySelector('[data-testid="student-media-status"]').getBoundingClientRect().top >= Math.max(...boxes.map((r) => r.bottom)),
+    };
+  });
+  check(`${L}: all six student actions fit the viewport`, dockGeometry.inside);
+  check(`${L}: student controls are one aligned row without overlap`, dockGeometry.aligned && dockGeometry.separate);
+  check(`${L}: media status sits below that row`, dockGeometry.statusBelow);
+  await tap("classroom-dock-more");
+  await tap("classroom-dock-leave");
+  check(`${L}: one deliberate menu click exposes Leave`, (await sent()).some((event) => event.name === "leave"));
   await show({ floor: asStudent({ state: "allowed-not-accepted", invitedAt: NOW, allowedMic: true, allowedCamera: true }) });
   const overflow = await p.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check(`${L}: the student strip does not scroll sideways`, overflow <= 1, `overflow=${overflow}px`);
@@ -482,6 +508,16 @@ for (const size of SIZES) {
   await tap("participant-row-11");
   cut = await clipped();
   check(`${L}: no control in the class list is cut off`, cut.length === 0, cut.join(" | "));
+  const escapingActions = await p.evaluate(() => {
+    const panel = document.querySelector('[data-testid="participant-drawer"], [data-testid="participant-sheet"]');
+    const bound = panel.getBoundingClientRect();
+    return [...panel.querySelectorAll('[role="button"]')].filter((button) => {
+      const r = button.getBoundingClientRect();
+      return r.width && (r.left < bound.left - 1 || r.right > bound.right + 1);
+    }).map((button) => button.getAttribute('aria-label') || button.textContent);
+  });
+  check(`${L}: actions stay inside the roster panel, not merely the screen`, escapingActions.length === 0, escapingActions.join(', '));
+  await p.screenshot({ path: path.join(SHOTS, `${L}-roster-expanded.png`) });
   await tap("participant-sheet-close");
 
   console.log(`\n[${L}] Every control can be hit`);

@@ -43,6 +43,7 @@ import { ExpiredClassRedirect } from "@/components/classes/ExpiredClassRedirect"
 import { canJoinSession } from "@/utils/sessionWindow";
 import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
 import { ClassroomChatDrawer } from "@/components/classes/ClassroomChatDrawer";
+import { ClassroomReactions } from "@/components/classes/ClassroomReactions";
 import { ClassroomMediaPreparation } from "@/components/classes/ClassroomMediaPreparation";
 import WarningModal from "@/components/WarningModal";
 
@@ -192,6 +193,8 @@ export default function StudentClassroom() {
     accessDenied,
     presenceCount,
     messages,
+    floatingReactions,
+    sendReaction,
     sessionStatus,
     sendChat,
     sceneUpdates,
@@ -252,6 +255,8 @@ export default function StudentClassroom() {
   const [mediaPrepared, setMediaPrepared] = useState(false);
   const [micToggleRequest, setMicToggleRequest] = useState(0);
   const [localMicOn, setLocalMicOn] = useState(false);
+  const [localCameraOn, setLocalCameraOn] = useState(false);
+  const [cameraToggleRequest, setCameraToggleRequest] = useState(0);
   /**
    * What, if anything, this room has to say about payment — and to *this* person.
    *
@@ -778,7 +783,7 @@ export default function StudentClassroom() {
               s.sessionPill,
               elevation.card,
               {
-                top: boardToolbarBottom,
+                top: insets.top + space.xs,
                 left: space.sm,
                 width: Math.min(width - space.lg, isCompact ? width - space.lg : 440),
                 minHeight: 36,
@@ -916,9 +921,9 @@ export default function StudentClassroom() {
           ) : null}
         </View>
 
-        <ClassroomControlDock
+        {(!canModerate || !floor) && mode !== "chat" ? <ClassroomControlDock
           bottom={hudBottom}
-          chatOpen={mode === "chat"}
+          chatOpen={false}
           unreadCount={unreadChatCount}
           videoHidden={videoHidden}
           onToggleChat={() =>
@@ -927,7 +932,7 @@ export default function StudentClassroom() {
           onToggleVideo={videoHidden ? showVideoWindow : hideVideoWindow}
           onLeave={leaveSession}
           leaveLabel="Leave class"
-        />
+        /> : null}
 
         {/* Only this visible capsule captures touches; its carrier stays transparent. */}
         <View
@@ -1211,6 +1216,7 @@ export default function StudentClassroom() {
                   */
                   onMediaReady={floorActions.mediaReady}
                   micToggleRequest={micToggleRequest}
+                  cameraToggleRequest={cameraToggleRequest}
                   isTeacher={false}
                   canUseMicrophone={
                     floor?.scope === "student" &&
@@ -1221,6 +1227,7 @@ export default function StudentClassroom() {
                   canUseCamera={floor?.scope === "student" && floor.you.allowedCamera}
                   onLocalMediaChange={(media) => {
                     setLocalMicOn(media.micEnabled);
+                    setLocalCameraOn(media.cameraEnabled);
                     if (floor?.scope !== "student") return;
                     if (floor.you.acceptedMic !== media.micEnabled) {
                       floorActions.setMic(media.micEnabled);
@@ -1331,7 +1338,7 @@ export default function StudentClassroom() {
               answers. Inert when the floor is null — before the first state arrives, once the
               class ends, and on a provider that cannot enforce a permission.
             */}
-            <View pointerEvents="box-none" style={s.floorLayer}>
+            {mode !== "chat" ? <View pointerEvents="box-none" style={[s.floorLayer, { bottom: insets.bottom + space.sm }]}>
               <ClassroomFloor
                 floor={floor}
                 refusal={floorRefusal}
@@ -1341,11 +1348,22 @@ export default function StudentClassroom() {
                 canModerate={canModerate}
                 microphoneOn={localMicOn}
                 onToggleMicrophone={() => setMicToggleRequest((count) => count + 1)}
+                cameraOn={localCameraOn}
+                onToggleCamera={() => setCameraToggleRequest((count) => count + 1)}
+                dockControls={<ClassroomControlDock inline bottom={0}
+                  chatOpen={false} unreadCount={unreadChatCount} videoHidden={videoHidden}
+                  onToggleChat={() => setMode("chat")}
+                  onToggleVideo={videoHidden ? showVideoWindow : hideVideoWindow}
+                  onLeave={leaveSession} leaveLabel="Leave class" />}
               />
-            </View>
+            </View> : null}
 
+            {mode !== "chat" ? <ClassroomReactions reactions={floatingReactions} /> : null}
             <ClassroomChatDrawer
               open={mode === "chat"}
+              connected={connected}
+              onReaction={sendReaction}
+              reactions={floatingReactions}
               messages={messages}
               value={chatMsg}
               onChangeText={setChatMsg}

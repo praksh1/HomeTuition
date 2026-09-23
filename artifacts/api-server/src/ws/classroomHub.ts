@@ -12,6 +12,7 @@ import { markTeacherPresent } from "../lib/sessionLifecycle";
 import { recordParticipation } from "../lib/participation";
 import { forgetBoard, loadBoard, saveBoardNow, saveBoardSoon } from "../lib/boardStore";
 import { startHeartbeat, watchHeartbeat } from "./heartbeat";
+import { acceptClassReaction } from "../lib/classroom/reactions";
 import {
   floorJoin,
   floorLeave,
@@ -64,6 +65,7 @@ const TEACHER_PRESENCE_INTERVAL_MS = 30_000;
 const PARTICIPATION_FLUSH_INTERVAL_MS = 30_000;
 
 interface BoardState {
+  reactions: Map<number, number>;
   /**
    * In-memory mutations made while the saved board is being loaded.
    *
@@ -384,6 +386,7 @@ function getBoard(sessionId: string): BoardState {
     const scene = new Map<string, SceneElement>();
     const files = new Map<string, SceneFile>();
     board = {
+      reactions: new Map(),
       revision: 0,
       material: null,
       paths: [],
@@ -691,7 +694,8 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
 
     // Catch the new arrival up on the object board. Deleted elements are not replayed — nobody
     // joining needs to know what used to be there, and sending them grows the payload forever.
-    if (board.scene.size > 0) sendTo(ws, scenePayload(board));
+    // An empty snapshot also matters: it clears content removed while offline.
+    sendTo(ws, scenePayload(board));
 
     // Sent after the elements, so the board is pointed at content it already holds.
     if (board.view) sendTo(ws, { type: "board_view", ...board.view });
@@ -1064,7 +1068,9 @@ function replayBoardTo(ws: WebSocket, sessionId: string): void {
           break;
         }
         case "reaction":
-          broadcast(sessionId, { type: "reaction", emoji: msg.emoji, senderName: name });
+          if (acceptClassReaction(getBoard(sessionId).reactions, userId, msg.emoji, Date.now())) {
+            broadcast(sessionId, { type: "reaction", emoji: msg.emoji, senderName: name });
+          }
           break;
         case "material_set": {
           if (!isSessionTeacher) break;

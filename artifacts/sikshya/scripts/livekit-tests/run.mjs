@@ -187,9 +187,12 @@ import LiveKitEmbed from ${JSON.stringify(path.join(appRoot, "components", "Live
 
 window.__events = { left: 0, watchedLeft: 0 };
 let setControls;
+let requestCamera;
 
 function Harness() {
   const [controls, set] = React.useState(true);
+  const [cameraRequest, setCameraRequest] = React.useState(0);
+  requestCamera = () => setCameraRequest((value) => value + 1);
   const lockedStudent = new URLSearchParams(window.location.search).get("role") === "locked-student";
   setControls = set;
   return React.createElement("div", { style: { position: "relative", width: "100vw", height: "100vh" } },
@@ -203,6 +206,8 @@ function Harness() {
       isTeacher: !lockedStudent,
       canUseMicrophone: !lockedStudent,
       canUseCamera: !lockedStudent,
+      cameraToggleRequest: cameraRequest,
+      onLocalMediaChange: (media) => { window.__localMedia = media; },
       onLeft: () => { window.__events.left += 1; },
       onWatchedParticipantLeft: () => { window.__events.watchedLeft += 1; },
       showControls: controls,
@@ -211,6 +216,7 @@ function Harness() {
 }
 createRoot(document.getElementById("root")).render(React.createElement(Harness));
 window.__showControls = (value) => setControls(Boolean(value));
+window.__requestCamera = () => requestCamera();
 `,
 );
 
@@ -327,6 +333,12 @@ async function run(chromium, viewport, label) {
   );
 
   console.log(`\n[${label}] The controls are reachable`);
+  await p.evaluate(() => window.__requestCamera());
+  await p.waitForTimeout(150);
+  check(`${label}: the external board camera turns actual media off`, await p.evaluate(() => window.__localMedia?.cameraEnabled === false));
+  await p.evaluate(() => window.__requestCamera());
+  await p.waitForTimeout(150);
+  check(`${label}: the external board camera turns actual media on`, await p.evaluate(() => window.__localMedia?.cameraEnabled === true));
   for (const id of ["livekit-mic", "livekit-camera", "livekit-share", "livekit-more", "livekit-leave"]) {
     const box = await p.locator(`[data-testid="${id}"]`).boundingBox();
     check(
@@ -534,6 +546,9 @@ async function run(chromium, viewport, label) {
     (await p.locator('[data-testid="livekit-camera"]').getAttribute("aria-label")) === "Camera off. Your teacher controls student camera access");
   check(`${label}: unauthorized camera is not reported as a device failure`,
     (await p.locator('[data-testid="livekit-device-problem"]').count()) === 0);
+  await p.evaluate(() => window.__requestCamera());
+  await p.waitForTimeout(150);
+  check(`${label}: external camera cannot bypass teacher permission`, await p.evaluate(() => window.__localMedia?.cameraEnabled === false));
 
   check(`${label}: no page error during the run`, errors.length === 0, errors[0] ?? "");
 

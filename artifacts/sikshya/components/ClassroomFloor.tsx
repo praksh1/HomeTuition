@@ -81,6 +81,9 @@ interface Props {
   onParticipantOpenChange?: (open: boolean) => void;
   microphoneOn?: boolean;
   onToggleMicrophone?: () => void;
+  cameraOn?: boolean;
+  onToggleCamera?: () => void;
+  dockControls?: React.ReactNode;
 }
 
 export default function ClassroomFloor({
@@ -94,6 +97,9 @@ export default function ClassroomFloor({
   onParticipantOpenChange,
   microphoneOn = false,
   onToggleMicrophone,
+  cameraOn = false,
+  onToggleCamera,
+  dockControls,
 }: Props) {
   if (!floor || !canModerate) return null;
   return floor.scope === "teacher" ? (
@@ -114,6 +120,9 @@ export default function ClassroomFloor({
       actions={actions}
       microphoneOn={microphoneOn}
       onToggleMicrophone={onToggleMicrophone}
+      cameraOn={cameraOn}
+      onToggleCamera={onToggleCamera}
+      dockControls={dockControls}
     />
   );
 }
@@ -185,6 +194,9 @@ function StudentFloor({
   actions,
   microphoneOn,
   onToggleMicrophone,
+  cameraOn,
+  onToggleCamera,
+  dockControls,
 }: {
   floor: StudentFloorView;
   refusal: FloorRefusal | null;
@@ -192,12 +204,17 @@ function StudentFloor({
   actions: FloorActions;
   microphoneOn: boolean;
   onToggleMicrophone?: () => void;
+  cameraOn: boolean;
+  onToggleCamera?: () => void;
+  dockControls?: React.ReactNode;
 }) {
   const colors = useColors();
   const { t, space, radius, isCompact } = useLayout();
   const handRaised = floor.you.requestedAt !== null;
   const canToggleMicrophone = Boolean(onToggleMicrophone && (microphoneOn || (floor.you.allowedMic && floor.you.provider === "ok" && floor.you.state !== "muted-by-teacher")));
   const provider = providerNote(floor.you.provider, true);
+  const canToggleCamera = Boolean(onToggleCamera && (cameraOn || (floor.you.allowedCamera && floor.you.provider === "ok")));
+  const mediaStatus = microphoneOn && cameraOn ? "Camera and microphone on" : cameraOn ? "Camera on · microphone off" : microphoneOn ? "Microphone on · camera off" : "Camera and microphone off";
 
   return (
     <View
@@ -205,6 +222,7 @@ function StudentFloor({
       style={{
         gap: space.xs,
         alignSelf: "center",
+        maxWidth: "100%",
       }}
     >
       <Refusal refusal={refusal} onDismiss={onDismissRefusal} />
@@ -246,7 +264,7 @@ function StudentFloor({
           ]}
         >
           <FontAwesome5 name="hand-paper" size={18} color={handRaised ? colors.primary : colors.foreground} />
-          {!isCompact ? (
+          {!isCompact && !dockControls ? (
             <Text style={[t.caption, { color: handRaised ? colors.primary : colors.foreground }]}>
               {handRaised ? "Hand raised" : "Raise hand"}
             </Text>
@@ -260,17 +278,24 @@ function StudentFloor({
             paddingHorizontal: isCompact ? space.sm : space.md, borderRadius: radius.pill,
             backgroundColor: microphoneOn ? colors.actionSoft : colors.card, opacity: canToggleMicrophone ? 1 : 0.65 }]}>
           <Feather name={microphoneOn ? "mic" : "mic-off"} size={19} color={microphoneOn ? colors.primary : colors.mutedForeground} />
-          {!isCompact ? <Text style={[t.caption, { color: microphoneOn ? colors.primary : colors.mutedForeground }]}>{microphoneOn ? "Mic on" : "Mic off"}</Text> : null}
+          {!isCompact && !dockControls ? <Text style={[t.caption, { color: microphoneOn ? colors.primary : colors.mutedForeground }]}>{microphoneOn ? "Mic on" : "Mic off"}</Text> : null}
         </Pressable>
-        {floor.you.allowedCamera || floor.you.acceptedCamera ? (
-          <FloorChipView
-            testID="student-floor-camera"
-            label={floor.you.acceptedCamera ? "Camera on" : "Camera available"}
-            tone={floor.you.acceptedCamera ? "live" : "neutral"}
-          />
-        ) : null}
+        <Pressable testID="student-floor-camera" accessibilityRole="button"
+          accessibilityLabel={cameraOn ? "Turn off camera" : canToggleCamera ? "Turn on camera" : "Camera off until teacher allows it"}
+          accessibilityState={{ disabled: !canToggleCamera, selected: cameraOn }}
+          aria-disabled={!canToggleCamera}
+          disabled={!canToggleCamera} onPress={onToggleCamera}
+          style={{ width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.pill,
+            backgroundColor: cameraOn ? colors.actionSoft : colors.card, opacity: canToggleCamera ? 1 : 0.65 }}>
+          <Feather name={cameraOn ? "video" : "video-off"} size={19} color={cameraOn ? colors.primary : colors.mutedForeground} />
+        </Pressable>
+        {dockControls}
       </View>
 
+      <Text testID="student-media-status" accessibilityLiveRegion="polite"
+        style={[t.overline, { color: microphoneOn || cameraOn ? colors.success : colors.inkFaint, textAlign: "center", paddingHorizontal: space.sm }]}>
+        {mediaStatus}
+      </Text>
       {floor.you.state === "muted-by-teacher" ? (
         <FloorChipView testID="student-floor-muted" label="Muted by teacher" tone="stopped" />
       ) : null}
@@ -749,7 +774,7 @@ function ParticipantRow({
       ) : null}
 
       {expanded && buttons.length > 0 ? (
-        <View style={[stack ? floorStyles.rowWrap : floorStyles.row, { gap: space.xs }]}>
+        <View style={[floorStyles.rowWrap, { gap: space.xs, maxWidth: "100%" }]}>
           {buttons.map((button) => (
             <FloorButton
               key={button.id}
