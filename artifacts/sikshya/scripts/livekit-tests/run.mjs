@@ -527,7 +527,7 @@ async function run(chromium, viewport, label) {
   ]));
   await p.waitForTimeout(250);
   check(`${label}: the microphone explains the teacher mute`,
-    (await p.locator('[data-testid="livekit-mic"]').getAttribute("aria-label")) === "Microphone muted by teacher");
+    (await p.locator('[data-testid="livekit-mic"]').getAttribute("aria-label")) === "Microphone off until teacher allows you to speak");
   check(`${label}: a teacher-muted microphone cannot be pressed`,
     await p.locator('[data-testid="livekit-mic"]').isDisabled());
   check(`${label}: the camera explains teacher authorization`,

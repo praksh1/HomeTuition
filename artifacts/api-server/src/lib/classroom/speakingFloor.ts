@@ -19,10 +19,10 @@
  *
  * ## Permission is not activation
  *
- * Permission and activation are separate. Every student has ordinary microphone capability but
- * joins muted; a teacher can revoke self-unmute with Mute or Mute All. Camera capability remains
- * teacher-authorized. Neither permission opens a device: the student's own device stays shut
- * until they act. Two reasons, and the second is the one that matters:
+ * Permission and activation are separate. Students join as an audience with no publishing right.
+ * A teacher can grant microphone or camera permission to one student, and can revoke it again.
+ * Neither permission opens a device: the student's own device stays shut until they act. Two
+ * reasons, and the second is the one that matters:
  *
  * - A browser will not open a microphone without a user gesture anyway, so a design that
  *   assumed otherwise would be broken as well as rude.
@@ -40,7 +40,7 @@
  * own billing record; this file is only told the answer.
  */
 
-/** What a student is allowed to publish. Microphone is ordinary; camera is teacher-controlled. */
+/** What a student is allowed to publish. Both sources require teacher permission. */
 export interface Allowance {
   mic: boolean;
   camera: boolean;
@@ -116,10 +116,9 @@ export function emptyStudent(): StudentFloor {
     requestedAt: null,
     invitedAt: null,
     invitationScope: null,
-    // Ordinary classroom audio is a capability, not an invitation ceremony. Students still join
-    // muted (`accepted.mic` is false) and the teacher can revoke this capability with Mute or
-    // Mute All. Camera remains teacher-authorized because it costs bandwidth and exposes video.
-    allowed: { mic: true, camera: false },
+    // Listening is the default. The teacher's Allow action is the only ordinary classroom path
+    // that grants a microphone; even a hand raise does not change provider publishing rights.
+    allowed: { mic: false, camera: false },
     accepted: { mic: false, camera: false },
     mutedByTeacher: false,
     connected: true,
@@ -160,8 +159,7 @@ export function mediaStateOf(s: StudentFloor): MediaState {
   if (s.requestedAt !== null) return "requested";
   if (s.invitedAt !== null) return "invited";
   if (!s.allowed.mic && !s.allowed.camera) return "audience";
-  // Microphone permission is the normal classroom capability. It is not itself an invitation
-  // or an active media state; until a student publishes a track, the truthful state is off.
+  // A granted microphone still starts off until the student turns on their own device.
   return "muted-by-self";
 }
 
@@ -195,7 +193,7 @@ const yes = <T,>(value: T): Done<T> => ({ ok: true, value });
  */
 export function askToSpeak(floor: Floor, userId: number, at: number): Result<StudentFloor> {
   const s = studentOf(floor, userId);
-  // Raising a hand is etiquette and queueing, independent of ordinary microphone capability.
+  // Raising a hand is a request, never permission to publish a microphone.
   // Camera permission or an already-open microphone must not make the hand button meaningless.
   // Already asked: keep the original time so a second tap cannot jump the queue either.
   if (s.requestedAt !== null) return yes(s);
@@ -222,9 +220,8 @@ export function acceptSpeaking(
   want: Partial<Accepted>,
 ): Result<StudentFloor> {
   const s = studentOf(floor, userId);
-  if (want.mic && (!s.allowed.mic || s.mutedByTeacher)) {
-    return no("not-allowed", "Your teacher has muted your microphone for now.");
-  }
+  if (want.mic && !s.allowed.mic) return no("not-allowed", "Ask your teacher to let you speak first.");
+  if (want.mic && s.mutedByTeacher) return no("not-allowed", "Your teacher has muted your microphone for now.");
   if (want.camera && !s.allowed.camera) return no("not-allowed", "Your teacher has not allowed your camera.");
   if (want.mic !== undefined) s.accepted.mic = want.mic;
   if (want.camera !== undefined) s.accepted.camera = want.camera;
@@ -300,7 +297,7 @@ export function allowStudent(
   return yes({ student: s, replaced });
 }
 
-/** Dismiss a raised hand without changing ordinary media capabilities. */
+/** Dismiss a raised hand without granting media permission. */
 export function dismissRequest(floor: Floor, userId: number): Result<StudentFloor> {
   const s = studentOf(floor, userId);
   s.requestedAt = null;
@@ -326,7 +323,7 @@ export function stopStudentCamera(floor: Floor, userId: number): Result<StudentF
 /** Send a student back to listening and prevent an immediate self-unmute. */
 export function returnToAudience(floor: Floor, userId: number): Result<StudentFloor> {
   const s = studentOf(floor, userId);
-  s.allowed = { mic: true, camera: false };
+  s.allowed = { mic: false, camera: false };
   s.accepted = { mic: false, camera: false };
   s.invitedAt = null;
   s.invitationScope = null;
@@ -355,26 +352,14 @@ export function muteAllStudents(floor: Floor): Result<{ affected: number[] }> {
 }
 
 /**
- * Invite every connected student to speak — an offer, not an unmuting.
- *
- * The invitation *carries* the permission and the permission is inert: `allowed.mic` goes true so
- * that `acceptSpeaking` has something to check against, and `accepted.mic` stays false, so not one
- * microphone opens until its owner presses something. Withdrawing an unanswered invitation takes
- * the permission back with it — see `cancelInvitations` below.
- *
- * (An earlier version of this comment claimed `allowed` was left alone. It was wrong about its own
- * code, and wrong in a way that mattered: with `allowed.mic` false, every student accepting this
- * invitation would have been refused `not-allowed`, and the feature could not have worked at all.)
- *
- * Re-inviting somebody who is already holding an invitation does not renotify them; a teacher
- * pressing the button twice must not make forty phones buzz twice.
+ * Legacy mass invitation frame. Kept as a no-op so an older client cannot unexpectedly grant
+ * microphones to an entire class. Teachers grant a named student with `allowStudent` instead.
  */
 export function inviteAllToSpeak(floor: Floor, at: number): Result<{ invited: number[] }> {
   void floor;
   void at;
-  // Kept as a protocol-compatible no-op while older clients age out. Ordinary microphone
-  // capability makes a mass invitation redundant, and recreating the removed consent dialog
-  // would restore the very complexity this model replaced.
+  // Kept as a protocol-compatible no-op while older clients age out. A blanket grant would
+  // undermine the teacher's individual permission control; use Allow for a named student.
   return yes({ invited: [] });
 }
 
@@ -407,9 +392,8 @@ export function cancelInvitation(floor: Floor, userId: number): Result<StudentFl
   if (s.invitedAt === null) return yes(s);
   s.invitedAt = null;
   s.invitationScope = null;
-  // Ordinary microphone capability survives a withdrawn invitation. Only an explicit teacher
-  // mute prevents self-unmute.
-  if (!s.accepted.mic) s.allowed.mic = true;
+  // An unanswered legacy invitation must not leave microphone permission behind.
+  if (!s.accepted.mic) s.allowed.mic = false;
   if (!s.accepted.camera) s.allowed.camera = false;
   return yes(s);
 }
@@ -421,7 +405,7 @@ export function cancelInvitations(floor: Floor): Result<{ cancelled: number[] }>
     if (s.invitedAt === null) continue;
     s.invitedAt = null;
     s.invitationScope = null;
-    if (!s.accepted.mic) s.allowed.mic = true;
+    if (!s.accepted.mic) s.allowed.mic = false;
     cancelled.push(id);
   }
   return yes({ cancelled });
@@ -466,8 +450,8 @@ export function endDiscussion(floor: Floor): Result<{ revoked: number[] }> {
   const revoked: number[] = [];
   if (floor.mode !== "discussion") return yes({ revoked });
   for (const [id, s] of floor.students) {
-    if (s.allowed.camera || s.accepted.mic || s.accepted.camera) {
-      s.allowed = { mic: true, camera: false };
+    if (s.allowed.mic || s.allowed.camera || s.accepted.mic || s.accepted.camera) {
+      s.allowed = { mic: false, camera: false };
       s.accepted = { mic: false, camera: false };
       s.mutedByTeacher = false;
       revoked.push(id);
@@ -508,10 +492,10 @@ export function joinDiscussion(
   return yes(s);
 }
 
-/** A student's own exit from discussion: devices stop, camera access closes, normal mic remains. */
+/** A student's own exit from discussion: devices stop and temporary access closes. */
 export function leaveDiscussion(floor: Floor, userId: number): Result<StudentFloor> {
   const s = studentOf(floor, userId);
-  s.allowed = { mic: true, camera: false };
+  s.allowed = { mic: false, camera: false };
   s.accepted = { mic: false, camera: false };
   s.mutedByTeacher = false;
   s.invitedAt = null;

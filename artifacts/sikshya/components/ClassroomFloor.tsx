@@ -196,7 +196,7 @@ function StudentFloor({
   const colors = useColors();
   const { t, space, radius, isCompact } = useLayout();
   const handRaised = floor.you.requestedAt !== null;
-  const canToggleMicrophone = Boolean(onToggleMicrophone && (microphoneOn || (floor.you.allowedMic && floor.you.state !== "muted-by-teacher")));
+  const canToggleMicrophone = Boolean(onToggleMicrophone && (microphoneOn || (floor.you.allowedMic && floor.you.provider === "ok" && floor.you.state !== "muted-by-teacher")));
   const provider = providerNote(floor.you.provider, true);
 
   return (
@@ -270,6 +270,10 @@ function StudentFloor({
           />
         ) : null}
       </View>
+
+      {floor.you.state === "muted-by-teacher" ? (
+        <FloorChipView testID="student-floor-muted" label="Muted by teacher" tone="stopped" />
+      ) : null}
 
       {provider ? (
         <FloorChipView testID="student-floor-provider" label={provider.label} tone={provider.tone} />
@@ -596,7 +600,7 @@ function ParticipantSheet({
             <Text style={[t.overline, { color: colors.primary }]}>Student audio</Text>
             <View style={{ gap: space.md, padding: space.md, borderRadius: radius.md, backgroundColor: colors.surfaceSunk }}>
               <PermissionRow label="Join muted" detail="Students enter without broadcasting" />
-              <PermissionRow label="Self-unmute" detail="Available until you mute a student" />
+              <PermissionRow label="Teacher approval required" detail="Students can unmute only after you allow them" />
             </View>
           </View>
 

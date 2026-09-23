@@ -852,7 +852,11 @@ export default function LiveKitEmbed({
   }, [cameraAuthorized, reportLocalMedia, session]);
 
   const toggleMic = useCallback(() => {
-    if (!session || !microphoneAuthorized) return;
+    if (!session) return;
+    // Permission may be revoked while this client still has a local track. Stopping that track
+    // must remain possible even while starting a new one is forbidden.
+    const localMicOn = session.getParticipants().find((participant) => participant.isLocal)?.micEnabled === true;
+    if (!microphoneAuthorized && !localMicOn) return;
     void session.toggleMic().then(() => {
       const next = session.getParticipants();
       setParticipants(next);
@@ -1206,15 +1210,15 @@ export default function LiveKitEmbed({
                 ? "Mute"
                 : microphoneAuthorized
                   ? "Unmute"
-                  : "Muted by teacher"
+                  : "Ask teacher"
             }
             accessibilityLabel={
-              microphoneAuthorized
+              microphoneAuthorized || local?.micEnabled
                 ? microphoneActionLabel(local?.micEnabled === true)
-                : "Microphone muted by teacher"
+                : "Microphone off until teacher allows you to speak"
             }
             active={local?.micEnabled === true}
-            disabled={!microphoneAuthorized}
+            disabled={!microphoneAuthorized && !local?.micEnabled}
             onPress={toggleMic}
           />
           <Control

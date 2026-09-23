@@ -1215,6 +1215,7 @@ export default function StudentClassroom() {
                   canUseMicrophone={
                     floor?.scope === "student" &&
                     floor.you.allowedMic &&
+                    floor.you.provider === "ok" &&
                     floor.you.state !== "muted-by-teacher"
                   }
                   canUseCamera={floor?.scope === "student" && floor.you.allowedCamera}

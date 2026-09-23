@@ -610,7 +610,7 @@ interface ParticipantSync {
    * next decision — otherwise a teacher who muted a student and then returned them to the audience
    * would silently drop the requirement to close a track that may still be running. Microphone and
    * camera are tracked separately: a newer grant of that same source clears its old stop, while a
-   * camera stop survives ordinary microphone permission and vice versa.
+   * camera stop survives a separately granted microphone permission and vice versa.
    */
   needSilenceMic: boolean;
   needSilenceCamera: boolean;
@@ -712,7 +712,7 @@ function bump(state: RoomFloor, userId: number, wantsSilence: MediaStop): void {
   /*
     Stops are source-specific and sticky only until that same source is deliberately reopened.
 
-    A camera stop must survive while ordinary microphone permission remains, and a student who
+    A camera stop must survive while a separately granted microphone permission remains, and a student who
     chooses listening mode must have the open microphone stopped even though they retain the
     ability to unmute later. Conversely, a newer teacher decision that permits the same source
     supersedes an older failed stop so it cannot silence a fresh publication after a retry.

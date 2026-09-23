@@ -85,6 +85,8 @@ function Harness() {
       canModerate: scene.canModerate,
       participantOpen: scene.participantOpen,
       onParticipantOpenChange: (participantOpen) => set((s) => ({ ...s, participantOpen })),
+      microphoneOn: Boolean(scene.microphoneOn),
+      onToggleMicrophone: () => record("toggleMic")(),
     })),
   );
 }
@@ -170,8 +172,8 @@ const NOW = Date.now();
   two values set it themselves.
 */
 const you = (over = {}) => ({
-  state: "muted-by-self", requestedAt: null, invitedAt: null, invitationScope: null,
-  allowedMic: true, allowedCamera: false, acceptedMic: false, acceptedCamera: false,
+  state: "audience", requestedAt: null, invitedAt: null, invitationScope: null,
+  allowedMic: false, allowedCamera: false, acceptedMic: false, acceptedCamera: false,
   provider: "ok", ...over,
 });
 const asStudent = (yourRow, over = {}) => ({
@@ -217,7 +219,8 @@ for (const size of SIZES) {
     if (shot) await p.screenshot({ path: path.join(SHOTS, `${L}-${shot}.png`), fullPage: false });
   };
   const seen = (id) => p.locator(`[data-testid="${id}"]`).count().then((n) => n > 0);
-  const text = (id) => p.locator(`[data-testid="${id}"]`).first().innerText().catch(() => "");
+  const text = async (id) => (await seen(id)) ? p.locator(`[data-testid="${id}"]`).first().innerText({ timeout: 1000 }).catch(() => "") : "";
+  const label = async (id) => (await seen(id)) ? p.locator(`[data-testid="${id}"]`).first().getAttribute("aria-label", { timeout: 1000 }).catch(() => "") : "";
   const participantPanelOpen = async () => (await seen("participant-sheet")) || (await seen("participant-drawer"));
   const openParticipants = async () => {
     await p.evaluate(() => window.__participants(true));
@@ -241,11 +244,16 @@ for (const size of SIZES) {
   await show({ floor: asStudent({}), canModerate: false });
   check(`${L}: nothing is drawn on a provider that cannot enforce a permission`, !(await seen("student-floor")));
 
-  console.log(`\n[${L}] A student joins muted, with a microphone available`);
+  console.log(`\n[${L}] A student joins muted until the teacher grants speaking`);
   await show({ floor: asStudent({}) }, "student-listening");
   check(`${L}: the strip is there`, await seen("student-floor"));
   check(`${L}: raising a hand is available`, await seen("student-floor-ask"));
-  check(`${L}: the microphone begins off`, (await text("student-floor-state")).includes("Microphone off"));
+  check(`${L}: the microphone begins off and unavailable`, (await label("student-floor-microphone")) === "Microphone off until teacher allows you to speak" && await p.locator('[data-testid="student-floor-microphone"]').isDisabled());
+  await show({ floor: asStudent({ allowedMic: true }) });
+  check(`${L}: permission makes the microphone available`, (await label("student-floor-microphone")) === "Turn on microphone");
+  await tap("student-floor-microphone");
+  check(`${L}: the board microphone reaches the LiveKit toggle`, JSON.stringify(await sent()) === JSON.stringify([{ name: "toggleMic", args: [] }]));
+  await show({ floor: asStudent({}) });
   check(`${L}: unavailable camera access does not waste space`, !(await seen("student-floor-camera")));
   await tap("student-floor-ask");
   check(`${L}: tapping it asks the server`, JSON.stringify(await sent()) === JSON.stringify([{ name: "ask", args: [] }]));
@@ -255,31 +263,31 @@ for (const size of SIZES) {
     { floor: asStudent({ state: "requested", requestedAt: NOW }, { queuePosition: 3, handsUp: 4 }) },
     "student-waiting",
   );
-  check(`${L}: the raised hand is shown`, (await text("student-floor-state")).includes("Hand up"));
+  check(`${L}: the raised hand is shown`, (await label("student-floor-cancel-ask")) === "Lower your hand");
   check(`${L}: it can be lowered`, await seen("student-floor-cancel-ask"));
-  check(`${L}: microphone permission remains available`, asStudent({ state: "requested", requestedAt: NOW }).you.allowedMic === true);
+  check(`${L}: a raised hand does not grant microphone permission`, (await label("student-floor-microphone")) === "Microphone off until teacher allows you to speak");
   await tap("student-floor-cancel-ask");
   check(`${L}: lowering the hand reaches the server`,
     JSON.stringify(await sent()) === JSON.stringify([{ name: "cancelAsk", args: [] }]));
 
   console.log(`\n[${L}] Actual microphone and camera state are shown`);
   await show(
-    { floor: asStudent({ state: "speaking", allowedMic: true, acceptedMic: true }) },
+    { floor: asStudent({ state: "speaking", allowedMic: true, acceptedMic: true }), microphoneOn: true },
     "student-speaking",
   );
-  check(`${L}: an active microphone is shown`, (await text("student-floor-state")).includes("Microphone on"));
+  check(`${L}: an active microphone is shown`, (await label("student-floor-microphone")) === "Mute microphone");
   check(`${L}: unavailable camera access stays out of the compact strip`, !(await seen("student-floor-camera")));
 
   await show(
-    { floor: asStudent({ state: "camera-active", allowedMic: true, allowedCamera: true, acceptedMic: true, acceptedCamera: true }) },
+    { floor: asStudent({ state: "camera-active", allowedMic: true, allowedCamera: true, acceptedMic: true, acceptedCamera: true }), microphoneOn: true },
     "student-on-camera",
   );
-  check(`${L}: actual camera publication is shown`, (await text("student-floor-state")).includes("Camera on"));
+  check(`${L}: actual camera publication is shown`, (await text("student-floor-camera")).includes("Camera on"));
   check(`${L}: the active camera is shown separately`, (await text("student-floor-camera")).includes("Camera on"));
 
   await show({ floor: asStudent({ state: "muted-by-teacher", allowedMic: true }) }, "student-muted");
-  const muted = await text("student-floor-state");
-  check(`${L}: a teacher mute is explicit`, muted.includes("Muted by teacher"), muted);
+  const muted = await label("student-floor-microphone");
+  check(`${L}: a teacher mute blocks the board microphone`, muted === "Microphone off until teacher allows you to speak" && (await text("student-floor-muted")).includes("Muted by teacher"), muted ?? "");
 
   console.log(`\n[${L}] The video has not caught up with the decision`);
   await show(
@@ -288,6 +296,7 @@ for (const size of SIZES) {
   );
   const waitingOn = await text("student-floor-provider");
   check(`${L}: an in-flight provider update says so`, waitingOn.includes("catching up"), waitingOn);
+  check(`${L}: microphone stays unavailable until LiveKit accepts permission`, await p.locator('[data-testid="student-floor-microphone"]').isDisabled());
 
   await show(
     { floor: asStudent({ state: "allowed-not-accepted", allowedMic: true, provider: "failed" }) },
@@ -314,7 +323,7 @@ for (const size of SIZES) {
     "student-discussion",
   );
   check(`${L}: discussion mode keeps the simple student controls`,
-    (await seen("student-floor-ask")) && (await text("student-floor-state")).includes("Microphone off"));
+    (await seen("student-floor-ask")) && (await label("student-floor-microphone")) === "Microphone off until teacher allows you to speak");
 
   console.log(`\n[${L}] The teacher's compact controls`);
   const classRows = [

@@ -205,6 +205,17 @@ test("a raised hand offers the three answers a teacher actually has", () => {
   assert.deepEqual(ids(teacherRowButtons(view.students[0]!, view)), ["allow-mic", "allow-camera", "dismiss"]);
 });
 
+test("a listening student starts without mic access and can be granted it by the teacher", () => {
+  const listener = row();
+  const buttons = teacherRowButtons(listener, teacher({ students: [listener] }));
+  assert.ok(buttons.some((button) => button.id === "allow-mic"));
+  assert.equal(buttons.some((button) => button.id === "mute"), false);
+  const allowed = row({ allowedMic: true, state: "allowed-not-accepted" });
+  const allowedButtons = teacherRowButtons(allowed, teacher({ students: [allowed] }));
+  assert.ok(allowedButtons.some((button) => button.id === "mute"));
+  assert.equal(allowedButtons.some((button) => button.id === "allow-mic"), false);
+});
+
 test("the camera button says it is taking somebody's camera away, before it does", () => {
   const holder = row({ userId: 22, name: "Ram", state: "camera-active", allowedMic: true, allowedCamera: true });
   const asking = row({ state: "requested", requestedAt: NOW });

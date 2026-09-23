@@ -1830,7 +1830,7 @@ export default function Classroom() {
                         <Text
                           style={[t.caption, { color: colors.mutedForeground }]}
                         >
-                          Photos and PDFs are placed on the shared board.
+                          Photos and PDFs stay on the shared board. Remove placed pages from Board pages.
                         </Text>
                       </View>
                       {(boardDocument || localPdfUri) && (
@@ -1841,7 +1841,7 @@ export default function Classroom() {
                               minHeight: HIT_SLOP_MIN,
                               paddingHorizontal: space.sm,
                               borderRadius: radius.sm,
-                              borderColor: colors.destructive,
+                              borderColor: colors.border,
                             },
                           ]}
                           onPress={() => {
@@ -1854,15 +1854,11 @@ export default function Classroom() {
                           activeOpacity={0.75}
                         >
                           <Feather
-                            name="trash-2"
+                            name="x"
                             size={16}
-                            color={colors.destructive}
+                            color={colors.mutedForeground}
                           />
-                          <Text
-                            style={[t.caption, { color: colors.destructive }]}
-                          >
-                            Clear
-                          </Text>
+                          <Text style={[t.caption, { color: colors.mutedForeground }]}>Dismiss</Text>
                         </TouchableOpacity>
                       )}
                     </View>

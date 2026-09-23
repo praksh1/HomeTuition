@@ -337,11 +337,11 @@ function snapshotAll(floor: Floor, alsoInclude: number | null): Map<number, Snap
   // done nothing. Without this their arrival looks like "no change" and nothing is broadcast.
   if (alsoInclude !== null && !out.has(alsoInclude)) {
     out.set(alsoInclude, {
-      state: "muted-by-self",
+      state: "audience",
       requestedAt: null,
       invitedAt: null,
       scope: null,
-      rights: { canPublish: true, mic: true, camera: false },
+      rights: { canPublish: false, mic: false, camera: false },
       liveMic: false,
       liveCamera: false,
     });
