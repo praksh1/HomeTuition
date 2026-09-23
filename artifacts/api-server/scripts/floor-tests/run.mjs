@@ -916,6 +916,12 @@ const grantCase = makeMonthlyClass();
   check("and the student is told, without having pressed anything",
     one.floor()?.you.provider === "ok", JSON.stringify(one.floor()?.you));
 
+  // Give the second student a microphone first, so muting has provider rights to revoke.
+  await act(sessionId, room, teacher, { type: "floor_allow", userId: twoId, scope: "mic" });
+  check("the second student's microphone grant reached the provider",
+    rowFor(twoId)?.allowedMic === true && rowFor(twoId)?.provider === "ok",
+    JSON.stringify(rowFor(twoId)));
+
   // Partial failure: muting one student fails without changing the other student's status.
   behaviour.set(String(twoId), "fail");
   await act(sessionId, room, teacher, { type: "floor_mute", userId: twoId });
