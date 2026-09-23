@@ -286,6 +286,14 @@ for (const size of SIZES) {
   check(`${L}: an active microphone is shown`, (await label("student-floor-microphone")) === "Mute microphone");
   check(`${L}: microphone approval alone cannot enable the camera`, await p.locator('[data-testid="student-floor-camera"]').isDisabled());
 
+  await show({ floor: asStudent({ state: "allowed-not-accepted", allowedMic: true, allowedCamera: true }), microphoneOn: false, cameraOn: false });
+  const availableCamera = p.locator('[data-testid="student-floor-camera"]');
+  const cameraAttributes = await availableCamera.evaluate((element) => ({ label: element.getAttribute('aria-label'), disabled: element.getAttribute('aria-disabled') }));
+  console.log(`${L}: available camera DOM`, cameraAttributes);
+  check(`${L}: teacher-approved camera is enabled but remains off`, cameraAttributes.label === "Turn on camera" && await availableCamera.isEnabled(), JSON.stringify(cameraAttributes));
+  await availableCamera.click();
+  check(`${L}: enabling a permitted camera reaches the LiveKit toggle`, JSON.stringify(await sent()) === JSON.stringify([{ name: "toggleCamera", args: [] }]));
+
   await show(
     { floor: asStudent({ state: "camera-active", allowedMic: true, allowedCamera: true, acceptedMic: true, acceptedCamera: true }), microphoneOn: true, cameraOn: true },
     "student-on-camera",
