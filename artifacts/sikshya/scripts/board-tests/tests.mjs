@@ -284,8 +284,8 @@ export const tests = [
   {
     name: "the student's view follows the teacher's",
     why:
-      "On an infinite canvas, matching elements is not the same as matching views. Students " +
-      "opened somewhere else entirely and had to pinch around hunting for the lesson.",
+      "On an infinite canvas, matching elements is not the same as matching views. A student " +
+      "must stay on the teacher's view even after trying to pan or zoom away.",
     async run(ctx, baseUrl, assert) {
       const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
       const student = await openBoard(ctx, baseUrl, { readOnly: true });
@@ -312,32 +312,46 @@ export const tests = [
         near(t.minX, s.minX) && near(t.minY, s.minY) && near(t.maxX, s.maxX),
       );
 
-      // A student reading a detail must be able to break away without being snapped back.
+      // Students follow throughout the lesson; their gestures cannot detach the read-only board.
+      await takeMessages(student);
       await student.mouse.move(450, 350);
       await student.keyboard.down("Space");
       await student.mouse.down();
       await student.mouse.move(250, 250, { steps: 8 });
       await student.mouse.up();
       await student.keyboard.up("Space");
+      await student.mouse.wheel(0, -240);
       await student.waitForTimeout(400);
+      const afterGesture = await ink(student);
       assert(
-        "a student who pans is offered the way back",
-        (await student.getByText("Return to teacher").count()) === 1,
+        "student pan and zoom gestures cannot leave the teacher's view",
+        near(s.minX, afterGesture.minX) && near(s.minY, afterGesture.minY) &&
+          near(s.maxX, afterGesture.maxX) && near(s.maxY, afterGesture.maxY),
       );
+      assert(
+        "the student cannot send a competing view",
+        !(await takeMessages(student)).some((message) => message.type === "view_out"),
+      );
+      assert("there is no unnecessary return control", (await student.getByText("Return to teacher").count()) === 0);
 
-      await student.getByText("Return to teacher").click();
-      await student.waitForTimeout(500);
-      const back = await ink(student);
-      assert("and tapping it restores the teacher's view", near(t.minX, back.minX) && near(t.minY, back.minY));
-
-      await student.keyboard.down("Space");
-      await student.mouse.move(450, 350);
-      await student.mouse.down();
-      await student.mouse.move(260, 250, { steps: 8 });
-      await student.mouse.up();
-      await student.keyboard.up("Space");
-      await student.waitForTimeout(350);
-      assert("the student can move away a second time", (await student.getByText("Return to teacher").count()) === 1);
+      await teacher.mouse.move(450, 350);
+      await teacher.keyboard.down("Space");
+      await teacher.mouse.down();
+      await teacher.mouse.move(510, 390, { steps: 8 });
+      await teacher.mouse.up();
+      await teacher.keyboard.up("Space");
+      await teacher.waitForTimeout(450);
+      await pump(teacher, student);
+      const movedTeacher = await ink(teacher);
+      const movedStudent = await ink(student);
+      assert(
+        "the teacher can move to another part of the lesson",
+        !near(t.minX, movedTeacher.minX, 10) || !near(t.minY, movedTeacher.minY, 10),
+      );
+      assert(
+        "the student follows the teacher's new view",
+        near(movedTeacher.minX, movedStudent.minX) && near(movedTeacher.minY, movedStudent.minY),
+      );
 
       await takeMessages(teacher);
       await teacher.locator('.main-menu-trigger').first().click();
@@ -348,7 +362,10 @@ export const tests = [
       await relayMessages(focusMessages, student);
       await student.waitForTimeout(450);
       const broughtBack = await ink(student);
-      assert("Bring everyone here resumes following", near(t.minX, broughtBack.minX) && near(t.minY, broughtBack.minY));
+      assert(
+        "Bring everyone here keeps the student's view aligned",
+        near(movedTeacher.minX, broughtBack.minX) && near(movedTeacher.minY, broughtBack.minY),
+      );
     },
   },
 
@@ -422,7 +439,12 @@ export const tests = [
       }
       await teacher.waitForTimeout(450);
       assert("the teacher moved to Page 2", (await teacher.getByText(/Worked example/).count()) > 0);
-      assert("the student followed to Page 2", (await student.getByText(/Worked example/).count()) > 0);
+      assert(
+        "the student has no independent page controls",
+        (await student.getByLabel("Previous board page").count()) === 0 &&
+          (await student.getByLabel("Next board page").count()) === 0 &&
+          (await student.getByLabel("Show board page thumbnails").count()) === 0,
+      );
       assert("Page 1 ink did not leak onto Page 2 for the teacher", (await ink(teacher)).n === 0);
       assert("or for the student", (await ink(student)).n === 0);
 
