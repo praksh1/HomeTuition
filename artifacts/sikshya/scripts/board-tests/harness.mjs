@@ -51,8 +51,12 @@ function fallbackExecutable() {
  */
 export async function getChromium() {
   let browserType = null;
+  // Local test runners may supply a bundled Playwright without installing it globally.
+  if (process.env.PLAYWRIGHT_MODULE) {
+    browserType = (await import(pathToFileURL(process.env.PLAYWRIGHT_MODULE).href)).chromium;
+  }
   try {
-    browserType = (await import("playwright")).chromium;
+    browserType ??= (await import("playwright")).chromium;
   } catch {}
   if (!browserType) {
     try {

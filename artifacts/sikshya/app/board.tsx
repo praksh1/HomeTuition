@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import SmartBoard from "../components/SmartBoard.web";
@@ -19,6 +19,8 @@ import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardViewport, Scene
 export default function BoardPage() {
   const params = useLocalSearchParams<{ readOnly?: string; theme?: string }>();
   const [readOnly, setReadOnly] = useState(params.readOnly === "1");
+  const [classroomChrome, setClassroomChrome] = useState(false);
+  const activePageRef = useRef("page-1");
   const [theme, setTheme] = useState<"light" | "dark">(params.theme === "dark" ? "dark" : "light");
   const [updates, setUpdates] = useState<SceneDelta[]>([]);
   const [clearedAt, setClearedAt] = useState(0);
@@ -48,6 +50,7 @@ export default function BoardPage() {
         type?: string;
         delta?: SceneDelta;
         readOnly?: boolean;
+        classroomChrome?: boolean;
         theme?: "light" | "dark";
         view?: BoardViewport;
         pages?: BoardPage[];
@@ -63,6 +66,7 @@ export default function BoardPage() {
 
       switch (msg.type) {
         case "config":
+          if (typeof msg.classroomChrome === "boolean") setClassroomChrome(msg.classroomChrome);
           if (typeof msg.readOnly === "boolean") setReadOnly(msg.readOnly);
           if (msg.theme) setTheme(msg.theme);
           break;
@@ -75,10 +79,11 @@ export default function BoardPage() {
         case "pages_in":
           if (Array.isArray(msg.pages) && typeof msg.activePageId === "string") {
             setPages(msg.pages);
-            setActivePageId((previous) => {
-              if (previous !== msg.activePageId) setPageChangedAt((value) => value + 1);
-              return msg.activePageId as string;
-            });
+            if (activePageRef.current !== msg.activePageId) {
+              activePageRef.current = msg.activePageId;
+              setPageChangedAt((value) => value + 1);
+            }
+            setActivePageId(msg.activePageId);
           }
           break;
         case "laser_in":
@@ -158,6 +163,7 @@ export default function BoardPage() {
   return (
     <View style={styles.root}>
       <SmartBoard
+        classroomChrome={classroomChrome}
         readOnly={readOnly}
         sceneUpdates={updates}
         onConsumeUpdates={consume}

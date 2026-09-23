@@ -147,6 +147,7 @@ interface Props {
   canUseCamera?: boolean;
   onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
   micToggleRequest?: number;
+  cameraToggleRequest?: number;
 }
 
 /** Long enough that a slow first join is not called a failure, short enough to be honest. */
@@ -559,6 +560,7 @@ export default function LiveKitEmbed({
   canUseCamera = false,
   onLocalMediaChange,
   micToggleRequest = 0,
+  cameraToggleRequest = 0,
 }: Props) {
   const [session, setSession] = useState<VideoSession | null>(null);
   const [connection, setConnection] = useState<VideoConnectionState>("connecting");
@@ -843,7 +845,9 @@ export default function LiveKitEmbed({
   );
 
   const toggleCamera = useCallback(() => {
-    if (!session || !cameraAuthorized) return;
+    if (!session) return;
+    const localCameraOn = session.getParticipants().find((participant) => participant.isLocal)?.cameraEnabled === true;
+    if (!cameraAuthorized && !localCameraOn) return;
     void session.toggleCamera().then(() => {
       const next = session.getParticipants();
       setParticipants(next);
@@ -873,6 +877,13 @@ export default function LiveKitEmbed({
     lastMicToggleRequest.current = next;
     toggleMic();
   }, [micToggleRequest, toggleMic]);
+
+  const lastCameraToggleRequest = useRef(cameraToggleRequest);
+  useEffect(() => {
+    if (cameraToggleRequest <= lastCameraToggleRequest.current) return;
+    lastCameraToggleRequest.current = cameraToggleRequest;
+    toggleCamera();
+  }, [cameraToggleRequest, toggleCamera]);
 
   const toggleShare = act(async (live) => {
     if (sharing) {

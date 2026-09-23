@@ -310,8 +310,8 @@ async function main() {
   check("the second student has the same listening-only start",
     secondStart.label === "Microphone off until teacher allows you to speak" && secondStart.disabled === true,
     JSON.stringify(secondStart));
-  check("camera status stays out of the compact strip until it is available",
-    (await s.page.locator('[data-testid="student-floor-camera"]').count()) === 0);
+  check("the board camera is present but permission-gated for a listener",
+    (await s.page.locator('[data-testid="student-floor-camera"]').getAttribute("aria-disabled")) === "true");
 
   console.log("\n[1e] The teacher grants one listener a microphone, then mutes and restores them");
   const grantedOne = await inSheet(async () => {
@@ -426,8 +426,8 @@ async function main() {
   await s.page.waitForTimeout(900);
   check("the hand is cleared without another consent dialog", await waitFor(s.page, "student-floor-ask"));
   check("camera is now available to the student",
-    /camera available/i.test(await textOf(s.page, "student-floor-camera")),
-    await textOf(s.page, "student-floor-camera"));
+    (await s.page.locator('[data-testid="student-floor-camera"]').getAttribute("aria-label")) === "Turn on camera" &&
+    (await s.page.locator('[data-testid="student-floor-camera"]').getAttribute("aria-disabled")) === "false");
   const afterCameraGrant = await microphoneOf(s.page);
   check("the microphone remains off until the student chooses otherwise",
     afterCameraGrant.label === "Turn on microphone" && afterCameraGrant.disabled === false,
@@ -443,8 +443,8 @@ async function main() {
   });
   check("the teacher can remove camera access", cameraStopped === true);
   await s.page.waitForTimeout(900);
-  check("camera status leaves the compact strip after access is removed",
-    (await s.page.locator('[data-testid="student-floor-camera"]').count()) === 0);
+  check("the board camera is disabled again when access is removed",
+    (await s.page.locator('[data-testid="student-floor-camera"]').getAttribute("aria-disabled")) === "true");
   const afterCameraStop = await microphoneOf(s.page);
   check("microphone permission remains available",
     afterCameraStop.label === "Turn on microphone" && afterCameraStop.disabled === false,

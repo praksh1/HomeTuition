@@ -88,6 +88,8 @@ test("the classroom uses one compact control dock instead of duplicate visible c
   assert.match(classroomDock, /label=\{videoHidden \? "Show call" : "Hide call"\}/);
   assert.match(classroomDock, /testID="classroom-dock-chat"/);
   assert.match(classroomDock, /testID="classroom-dock-more"/);
-  assert.match(classroomDock, /onMouseEnter/);
+  // Hover plus tap toggled the menu twice on hybrid/touch browsers. Open only deliberately.
+  assert.doesNotMatch(classroomDock, /onMouseEnter|onMouseLeave/);
+  assert.match(classroomDock, /onPress=\{\(\) => setExpanded\(\(value\) => !value\)\}/);
   assert.match(classroomDock, /Animated\.spring/);
 });

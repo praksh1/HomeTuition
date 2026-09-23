@@ -5,6 +5,8 @@ import {
   WelcomeScreen,
 } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
+import { BOARD_INK_COLORS } from "../constants/boardInk";
+import { useColors } from "../hooks/useColors";
 import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardTemplate, BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 import { LASER_THROTTLE_MS, normalizeLaserPoint } from "../utils/whiteboardLaser";
 import { teachingLibrary } from "./boardLibrary";
@@ -139,11 +141,21 @@ const BOARD_CSS = `
  * which uses a dismissable bottom sheet, does not have.
  */
 .excalidraw--mobile .sikshya-board__top-right { display: none !important; }
+.sikshya-board__top-right .sikshya-board__history { display: none !important; }
+.sikshya-board--classroom .sikshya-board__editor { top: 56px !important; }
+.sikshya-board--classroom > .sikshya-board__history { top: 4px !important; right: 8px !important; box-shadow: none !important; padding: 0 !important; gap: 4px !important; border: 0 !important; }
+.sikshya-board--classroom > .sikshya-board__history > button { width: 44px; min-width: 44px; height: 44px; padding: 0; }
+@media (min-width: 1440px) {
+  .sikshya-board--classroom .sikshya-board__editor { top: 0 !important; }
+  .sikshya-board--classroom > .sikshya-board__history { display: none !important; }
+  .sikshya-board--classroom .sikshya-board__top-right .sikshya-board__history { display: flex !important; position: relative !important; top: auto !important; right: auto !important; padding: 0 !important; box-shadow: none !important; border: 0 !important; gap: 4px !important; }
+  .sikshya-board--classroom .sikshya-board__top-right .sikshya-board__history > button { width: 44px; min-width: 44px; height: 44px; padding: 0; }
+}
 .sikshya-board__pages button { transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease, opacity 140ms ease; }
 .sikshya-board__pages button:not(:disabled):hover { transform: translateY(-1px); }
 .sikshya-board__pages button:disabled { cursor: default !important; opacity: 0.38; }
 @media (max-width: 360px) {
-  .sikshya-board__thumb-toggle { display: none !important; }
+  .sikshya-board__thumb-toggle[aria-label="Show board page thumbnails"] { display: none !important; }
   .sikshya-board__page-label { min-width: 88px !important; max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 `;
@@ -167,6 +179,8 @@ type ExcalidrawAPI = {
   getSceneElements: () => readonly ExcalidrawElement[];
   getSceneElementsIncludingDeleted: () => readonly ExcalidrawElement[];
   getAppState: () => ExcalidrawAppState;
+  refresh: () => void;
+  history: { clear: () => void };
   /** The picture data behind image elements, keyed by file id. */
   getFiles: () => Record<string, BinaryFile>;
   addFiles: (files: BinaryFile[]) => void;
@@ -199,6 +213,7 @@ interface ExcalidrawElement {
 }
 
 interface Props {
+  classroomChrome?: boolean;
   /** Teachers draw; students watch. */
   readOnly?: boolean;
   /** Deltas arriving from the classroom socket. */
@@ -344,6 +359,7 @@ const RedoIcon = () => (
 );
 
 function SmartBoard({
+  classroomChrome = false,
   readOnly = false,
   sceneUpdates,
   onConsumeUpdates,
@@ -362,9 +378,25 @@ function SmartBoard({
   theme = "light",
 }: Props) {
   const [api, setApi] = useState<ExcalidrawAPI | null>(null);
+  const colors = useColors();
+  const [wideToolbar, setWideToolbar] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1440);
+  useEffect(() => {
+    let frame = 0;
+    const resize = () => {
+      setWideToolbar(window.innerWidth >= 1440);
+      cancelAnimationFrame(frame);
+      // Give the editor the updated container after a breakpoint/header change. Its responsive
+      // toolbar must not retain the previous laptop width until the next pointer interaction.
+      frame = requestAnimationFrame(() => api?.refresh());
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("resize", resize); };
+  }, [api, classroomChrome]);
   const boardRootRef = useRef<HTMLDivElement | null>(null);
   const [historyState, setHistoryState] = useState({ undo: false, redo: false });
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectionLocked, setSelectionLocked] = useState(false);
   const historyTransitionUntilRef = useRef(0);
   const [boardDialog, setBoardDialog] = useState<
     | { kind: "rename"; value: string }
@@ -375,7 +407,7 @@ function SmartBoard({
   /** Whether Excalidraw's shape properties panel is currently allowed on screen. */
   const [showProps, setShowProps] = useState(false);
   /** Teacher ink settings stay visible even while Excalidraw's larger properties panel is hidden. */
-  const [inkColor, setInkColor] = useState("#1e293b");
+  const [inkColor, setInkColor] = useState<string>(BOARD_INK_COLORS[0][1]);
   const [inkThickness, setInkThickness] = useState<1 | 2 | 4>(2);
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
   const [mediaElements, setMediaElements] = useState<ExcalidrawElement[]>([]);
@@ -387,6 +419,7 @@ function SmartBoard({
   const lastFocusId = useRef<number | null>(null);
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [pageSidebarOpen, setPageSidebarOpen] = useState(false);
+  const [materialsOpen, setMaterialsOpen] = useState(false);
   const [laserMode, setLaserMode] = useState(false);
   const lastLaserSent = useRef(0);
   const activePage = pages.find((page) => page.id === activePageId) ?? pages[0];
@@ -400,6 +433,8 @@ function SmartBoard({
   function changeMediaObjects(ids: string[], operation: "remove" | "lock" | "unlock") {
     if (!api || boardReadOnly || ids.length === 0) return;
     const targets = new Set(ids);
+    // Explicit removal is not an eraser gesture, even if that tool was selected before Files.
+    if (operation === "remove") for (const id of ids) visibleBeforeErase.current.delete(id);
     const now = Date.now();
     const next = api.getSceneElementsIncludingDeleted().map((element: ExcalidrawElement) =>
       targets.has(element.id) && !element.isDeleted
@@ -408,7 +443,9 @@ function SmartBoard({
             versionNonce: Math.floor(Math.random() * 1_000_000_000), updated: now }
         : element,
     );
-    api.updateScene({ elements: next, appState: { selectedElementIds: {} }, captureUpdate: "IMMEDIATELY" });
+    api.updateScene({ elements: next,
+      appState: { selectedElementIds: {}, activeTool: { ...api.getAppState().activeTool, type: "selection" } },
+      captureUpdate: "IMMEDIATELY" });
     setMediaElements(next.filter((element: ExcalidrawElement) => element.type === "image" && !element.isDeleted));
     setHistoryState({ undo: true, redo: false });
     api.setToast({ message: operation === "remove" ? "Document removed from this board page" : operation === "lock" ? "Document locked" : "Document unlocked", duration: 2500 });
@@ -451,16 +488,14 @@ function SmartBoard({
   const runHistoryShortcut = useCallback((redo: boolean) => {
     if (!api || typeof window === "undefined") return;
     historyTransitionUntilRef.current = Date.now() + 250;
-    const builtIn = Array.from(boardRootRef.current?.querySelectorAll<HTMLButtonElement>(
-      `.excalidraw button[aria-label="${redo ? "Redo" : "Undo"}"]`,
-    ) ?? []).find((button) => !button.disabled);
-    if (builtIn) {
-      builtIn.click();
-    } else {
+    const editor = boardRootRef.current?.querySelector<HTMLElement>(".excalidraw");
+    if (editor) {
       const isApple = /Mac|iPhone|iPad|iPod/i.test(window.navigator.platform);
-      // Excalidraw registers its history shortcuts on `window`, not `document`. Dispatching the
-      // synthetic key on `document` made these buttons look alive while doing nothing.
-      window.dispatchEvent(new KeyboardEvent("keydown", {
+      // Use the editor's own keyboard action. Its handler is on the editor (or document when
+      // global shortcuts are enabled), never window. Clicking our external Files panel must
+      // not leave Undo dependent on whether a previous drawing gesture installed a listener.
+      editor.focus({ preventScroll: true });
+      editor.dispatchEvent(new KeyboardEvent("keydown", {
         key: "z",
         code: "KeyZ",
         ctrlKey: !isApple,
@@ -543,19 +578,19 @@ function SmartBoard({
       {colorMenuOpen ? (
         <div role="group" aria-label="Ink settings" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 244, display: "grid", gap: 12, padding: 12, borderRadius: 16, border: "1px solid rgba(15,23,42,0.12)", background: "white", boxShadow: "0 10px 28px rgba(15,23,42,0.16)" }}>
           <div style={{ display: "grid", gap: 7 }}>
-            <strong style={{ color: "#0f172a", fontFamily: "system-ui, sans-serif", fontSize: 12 }}>Ink colour</strong>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
-              {[["Charcoal", "#1e293b"], ["Blue", "#1d4ed8"], ["Red", "#dc2626"], ["Green", "#15803d"], ["Purple", "#7c3aed"], ["Orange", "#c2410c"]].map(([name, value]) => (
+            <strong style={{ color: colors.foreground, fontFamily: "system-ui, sans-serif", fontSize: "small" }}>Ink colour</strong>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {BOARD_INK_COLORS.map(([name, value]) => (
                 <button key={value} type="button" aria-label={`${name} writing colour`} aria-pressed={inkColor === value}
                   onClick={() => { api?.updateScene({ appState: { currentItemStrokeColor: value } }); setInkColor(value); }}
-                  style={{ width: 30, height: 30, borderRadius: "50%", border: inkColor === value ? "3px solid #0f172a" : "2px solid white", background: value, boxShadow: "0 0 0 1px rgba(15,23,42,0.2)", cursor: "pointer" }} />
+                  style={{ minWidth: 44, height: 44, borderRadius: 12, border: inkColor === value ? `3px solid ${colors.foreground}` : "2px solid white", background: value, boxShadow: "0 0 0 1px rgba(15,23,42,0.2)", cursor: "pointer" }} />
               ))}
             </div>
           </div>
-          <label style={{ display: "grid", gap: 8, color: "#0f172a", fontFamily: "system-ui, sans-serif", fontSize: 12, fontWeight: 700 }}>
+          <label style={{ display: "grid", gap: 8, color: colors.foreground, fontFamily: "system-ui, sans-serif", fontSize: "small", fontWeight: 700 }}>
             <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
               <span>Ink thickness</span>
-              <span style={{ color: "#64748b", fontWeight: 600 }}>{inkThickness === 1 ? "Thin" : inkThickness === 2 ? "Medium" : "Bold"}</span>
+              <span style={{ color: colors.mutedForeground, fontWeight: 600 }}>{inkThickness === 1 ? "Thin" : inkThickness === 2 ? "Medium" : "Bold"}</span>
             </span>
             <input
               aria-label="Ink thickness"
@@ -615,8 +650,8 @@ function SmartBoard({
         </>
       ) : null}
       {onPageCommand ? (
-        <button className="sikshya-board__thumb-toggle" type="button" aria-label="Show board page thumbnails" title="Page thumbnails" aria-pressed={pageSidebarOpen} onClick={() => setPageSidebarOpen((open) => !open)} style={{ ...pageButtonStyle, background: pageSidebarOpen ? "var(--color-primary-light, aliceblue)" : "white", color: "var(--color-primary, navy)" }}>
-          ▦
+        <button className="sikshya-board__thumb-toggle" type="button" aria-label={mediaElements.length ? "Manage teaching materials" : "Show board page thumbnails"} title={mediaElements.length ? "Materials: unlock or remove" : "Page thumbnails"} aria-pressed={mediaElements.length ? materialsOpen : pageSidebarOpen} onClick={() => mediaElements.length ? setMaterialsOpen((open) => !open) : setPageSidebarOpen((open) => !open)} style={{ ...pageButtonStyle, background: pageSidebarOpen || materialsOpen ? "var(--color-primary-light, aliceblue)" : "white", color: "var(--color-primary, navy)" }}>
+          {mediaElements.length ? <span style={{ fontSize: "small", fontWeight: 600 }}>Files</span> : "▦"}
         </button>
       ) : null}
       {canManagePages && onPageCommand ? (
@@ -624,15 +659,18 @@ function SmartBoard({
           +
         </button>
       ) : null}
-      {pageMenuOpen ? (
+      {pageMenuOpen || materialsOpen ? (
         <div style={{ position: "absolute", left: 0, bottom: "calc(100% + 8px)", width: 260, maxHeight: "min(70vh, 520px)", overflowY: "auto", padding: 10, display: "grid", gap: 8, border: "1px solid rgba(15,23,42,0.12)", borderRadius: 14, background: "rgba(255,255,255,0.98)", boxShadow: "0 12px 32px rgba(15,23,42,0.18)" }}>
-          <div style={{ fontSize: "x-small", color: "var(--text-muted-color, slategray)", fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase" }}>Board pages</div>
-          {pages.map((page, index) => (
+          <div style={{ fontSize: "small", color: "var(--text-primary-color, black)", fontWeight: 700 }}>{materialsOpen ? "Teaching materials" : "Board pages"}</div>
+          {materialsOpen ? <span style={{ fontSize: "small", lineHeight: 1.5, color: "var(--text-muted-color, slategray)" }}>
+            Materials on {activePage?.title ?? "this page"}. Each PDF sheet is a separate object here. New board pages stay blank.
+          </span> : null}
+          {!materialsOpen && pages.map((page, index) => (
             <button key={page.id} type="button" onClick={() => { onPageCommand?.({ op: "select", pageId: page.id }); setPageMenuOpen(false); }} style={{ ...pageMenuButtonStyle, background: page.id === activePage?.id ? "var(--color-primary-light, aliceblue)" : "transparent", color: page.id === activePage?.id ? "var(--color-primary, navy)" : "var(--text-primary-color, black)" }}>
               <span>{index + 1}. {page.title}</span><span style={{ color: "var(--text-muted-color, slategray)" }}>{page.locked ? "Locked" : TEMPLATE_LABELS[page.template]}</span>
             </button>
           ))}
-          {canManagePages && activePage ? (
+          {!materialsOpen && canManagePages && activePage ? (
             <>
               <label style={{ display: "grid", gap: 4, color: "var(--text-muted-color, slategray)", fontSize: "x-small", fontWeight: 700 }}>
                 Page template
@@ -654,13 +692,15 @@ function SmartBoard({
               </div>
             </>
           ) : null}
+          <button type="button" aria-label="Close board page menu" onClick={() => { setPageMenuOpen(false); setMaterialsOpen(false); }} style={pageMenuButtonStyle}>Done</button>
           {canManagePages && mediaElements.length > 0 ? (
             <div style={{ display: "grid", gap: 8, paddingTop: 8, borderTop: "1px solid rgba(15,23,42,0.12)" }}>
-              <strong style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>Pictures and PDF pages on this board page</strong>
+              {!materialsOpen && <strong style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>Pictures and PDF pages on this board page</strong>}
+              {pageLocked ? <button type="button" onClick={() => onPageCommand?.({ op: "lock", pageId: activePageId, locked: false })} style={pageMenuButtonStyle}>Unlock board page to edit materials</button> : null}
               {[...pdfGroups.entries()].filter(([, ids]) => ids.length > 1).map(([documentId, ids], index) => (
                 <div key={documentId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: 7, borderRadius: 9, background: "rgba(29,78,216,0.06)" }}>
                   <span style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>PDF {index + 1} · {ids.length} pages</span>
-                  <button type="button" aria-label={`Remove all pages of PDF ${index + 1}`} onClick={() => changeMediaObjects(ids, "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove all</button>
+                  <button type="button" disabled={pageLocked} aria-label={`Remove all pages of PDF ${index + 1}`} onClick={() => changeMediaObjects(ids, "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove all</button>
                 </div>
               ))}
               {mediaElements.map((element, index) => {
@@ -669,13 +709,15 @@ function SmartBoard({
                 return <div key={element.id} style={{ display: "grid", gap: 5, padding: 7, borderRadius: 9, background: "rgba(15,23,42,0.04)" }}>
                   <span style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>{label}{element.locked ? " · Locked" : ""}</span>
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                    <button type="button" aria-label={`${element.locked ? "Unlock" : "Lock"} ${label}`} onClick={() => changeMediaObjects([element.id], element.locked ? "unlock" : "lock")} style={pageMenuButtonStyle}>{element.locked ? "Unlock" : "Lock"}</button>
-                    <button type="button" aria-label={`Remove ${label}`} onClick={() => changeMediaObjects([element.id], "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove page</button>
+                    <button type="button" aria-label={`Find ${label} on board`} onClick={() => api?.scrollToContent([element], { fitToContent: true, animate: false, maxZoom: 1 })} style={pageMenuButtonStyle}>Locate</button>
+                    <button type="button" disabled={pageLocked} aria-label={`${element.locked ? "Unlock" : "Lock"} ${label}`} onClick={() => changeMediaObjects([element.id], element.locked ? "unlock" : "lock")} style={pageMenuButtonStyle}>{element.locked ? "Unlock" : "Lock"}</button>
+                    <button type="button" disabled={pageLocked} aria-label={`Remove ${label}`} onClick={() => changeMediaObjects([element.id], "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>{data?.fadkoPage ? "Remove sheet" : "Remove picture"}</button>
                   </div>
                 </div>;
               })}
             </div>
           ) : null}
+          {materialsOpen && mediaElements.length === 0 ? <span style={{ fontSize: "small" }}>No pictures or PDF sheets on this board page.</span> : null}
         </div>
       ) : null}
       {pageSidebarOpen && onPageCommand ? (
@@ -886,6 +928,7 @@ function SmartBoard({
           ? current
           : nextSelected,
       );
+      setSelectionLocked(elements.some((element) => nextSelected.includes(element.id) && element.locked === true));
       if (boardReadOnly || applyingRemote.current || restoringProtected.current) return;
 
       // `onChange` may omit erased elements; the inclusive scene is the only reliable record of
@@ -1042,7 +1085,8 @@ function SmartBoard({
       setHistoryState({ undo: false, redo: false });
       fitted.current = false;
       applyingRemote.current = true;
-      api.updateScene({ elements: [] });
+      api.updateScene({ elements: [], captureUpdate: "NEVER" });
+      api.history.clear();
       setTimeout(() => { applyingRemote.current = false; }, 0);
     }
 
@@ -1070,10 +1114,14 @@ function SmartBoard({
         incomingFiles.push(file);
       }
     }
-    if (incomingFiles.length > 0) api.addFiles(incomingFiles);
-
     let touched = false;
     for (const delta of matchingUpdates) {
+      // A catch-up is authoritative, including deletions missed while disconnected.
+      // It is not a version delta: equal-version images must be rendered again.
+      if (delta.full) {
+        current.clear();
+        touched = true;
+      }
       for (const raw of delta.elements) {
         const el = raw as ExcalidrawElement;
         if (!el || typeof el.id !== "string") continue;
@@ -1087,10 +1135,14 @@ function SmartBoard({
       }
     }
 
-    if (!touched) return;
+    if (!touched && incomingFiles.length === 0) return;
 
     applyingRemote.current = true;
-    api.updateScene({ elements: [...current.values()] });
+    api.updateScene({ elements: [...current.values()], captureUpdate: "NEVER" });
+    // Excalidraw's addFiles scans the CURRENT scene to populate its decoded-image
+    // cache. Calling it before installing the image elements left catch-up images
+    // blank until a later page switch or edit happened to trigger another scan.
+    if (incomingFiles.length > 0) api.addFiles(incomingFiles);
     setMediaElements([...current.values()].filter((element) => element.type === "image" && !element.isDeleted));
     rememberVisibleBoardElements(visibleBeforeErase.current, [...current.values()]);
     // Cleared on a later tick because updateScene triggers onChange synchronously.
@@ -1264,9 +1316,12 @@ function SmartBoard({
         if (index === 0) firstElement = element;
       });
 
-      api.addFiles(files);
       applyingRemote.current = true;
-      api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...elements] });
+      // Imported objects are local edits, not uncommitted remote deltas. Without this capture,
+      // Excalidraw excludes later Files-panel changes from its history until a canvas gesture.
+      api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...elements], captureUpdate: "IMMEDIATELY" });
+      api.addFiles(files);
+      setHistoryState({ undo: true, redo: false });
       setMediaElements((current) => [...current, ...(elements as ExcalidrawElement[])]);
       setTimeout(() => {
         applyingRemote.current = false;
@@ -1331,7 +1386,7 @@ function SmartBoard({
   }, [api, boardReadOnly, insertDocument, activePageId, flush]);
 
   const updateSelectedObjects = useCallback(
-    (operation: "delete" | "duplicate" | "lock") => {
+    (operation: "delete" | "duplicate" | "lock" | "unlock") => {
       if (!api || boardReadOnly || selectedIds.length === 0) return;
       const selected = new Set(selectedIds);
       const now = Date.now();
@@ -1360,7 +1415,7 @@ function SmartBoard({
           if (!selected.has(element.id) || element.isDeleted) return element;
           return {
             ...element,
-            ...(operation === "delete" ? { isDeleted: true } : { locked: true }),
+            ...(operation === "delete" ? { isDeleted: true } : { locked: operation === "lock" }),
             version: Math.max(1, Number(element.version) || 1) + 1,
             versionNonce: Math.floor(Math.random() * 1_000_000_000),
             updated: now,
@@ -1381,7 +1436,7 @@ function SmartBoard({
             ? "Object deleted — Undo restores it"
             : operation === "duplicate"
               ? "Object duplicated"
-              : "Object locked",
+              : operation === "unlock" ? "Object unlocked" : "Object locked",
         duration: 1800,
       });
       setTimeout(flush, 0);
@@ -1433,13 +1488,13 @@ function SmartBoard({
       </button>
       <button
         type="button"
-        title="Lock selected object"
-        aria-label="Lock selected object"
+        title={selectionLocked ? "Unlock selected object" : "Lock selected object"}
+        aria-label={selectionLocked ? "Unlock selected object" : "Lock selected object"}
         data-testid="board-lock-selection"
-        onClick={() => updateSelectedObjects("lock")}
+        onClick={() => updateSelectedObjects(selectionLocked ? "unlock" : "lock")}
         style={pageMenuButtonStyle}
       >
-        Lock
+        {selectionLocked ? "Unlock" : "Lock"}
       </button>
     </div>
   ) : null;
@@ -1488,6 +1543,7 @@ function SmartBoard({
       // conditional render here, because this callback does not re-run when the editor
       // changes layout.
       <div className="sikshya-board__top-right" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {classroomChrome && wideToolbar ? historyControls : null}
         <button
           type="button"
           onClick={toggleLaser}
@@ -1552,7 +1608,7 @@ function SmartBoard({
         </button>
       </div>
     );
-  }, [boardReadOnly, clearAll, laserMode, setPropsVisible, showProps, toggleLaser]);
+  }, [boardReadOnly, clearAll, laserMode, setPropsVisible, showProps, toggleLaser, historyControls, classroomChrome, wideToolbar]);
 
   const initialData = useMemo(
     () => ({
@@ -1579,14 +1635,23 @@ function SmartBoard({
   return (
     <div
       ref={boardRootRef}
-      className={`sikshya-board${showProps ? "" : " sikshya-board--hide-props"}`}
-      style={{ position: "absolute", inset: 0, overflow: "hidden" }}
+      className={`sikshya-board${showProps ? "" : " sikshya-board--hide-props"}${classroomChrome ? " sikshya-board--classroom" : ""}`}
+      style={{ position: "absolute", inset: 0, overflow: "hidden",
+        "--color-primary": colors.primary, "--color-primary-light": colors.actionSoft,
+        "--color-danger": colors.destructive, "--text-primary-color": colors.foreground,
+        "--text-muted-color": colors.mutedForeground, "--default-border-color": colors.border,
+        fontFamily: "system-ui, sans-serif",
+      } as React.CSSProperties}
       onPointerMove={handleLaserMove}
       onPointerLeave={stopLaser}
+      onContextMenuCapture={(event) => {
+        // Keep the editor's own context menu, but never stack the browser's menu over it.
+        event.preventDefault();
+      }}
     >
       <style>{BOARD_CSS}</style>
       <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none", ...templateStyle(activePage?.template ?? "blank") }} />
-      <div style={{ position: "absolute", inset: 0, pointerEvents: readOnly ? "none" : "auto" }}>
+      <div className="sikshya-board__editor" style={{ position: "absolute", inset: 0, pointerEvents: readOnly ? "none" : "auto" }}>
       <Excalidraw
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         excalidrawAPI={(a: any) => setApi(a as ExcalidrawAPI)}
@@ -1609,6 +1674,9 @@ function SmartBoard({
         }}
       >
         <MainMenu>
+          {!readOnly && <MainMenu.Item onSelect={() => setMaterialsOpen(true)}>
+            Materials: unlock or remove
+          </MainMenu.Item>}
           {!boardReadOnly && (
             <MainMenu.Item onSelect={bringEveryoneHere} icon={<EyeIcon />}>
               Bring everyone to my view
@@ -1632,7 +1700,7 @@ function SmartBoard({
       </div>
 
       {!readOnly ? pageNavigator : null}
-      {historyControls}
+      {!classroomChrome || !wideToolbar ? historyControls : null}
       {selectionToolbar}
 
       {boardDialog ? (
@@ -1760,6 +1828,7 @@ function SmartBoard({
 function boardPropsEqual(previous: Props, next: Props): boolean {
   return (
     previous.readOnly === next.readOnly &&
+    previous.classroomChrome === next.classroomChrome &&
     previous.sceneUpdates === next.sceneUpdates &&
     previous.onConsumeUpdates === next.onConsumeUpdates &&
     previous.onSceneChange === next.onSceneChange &&

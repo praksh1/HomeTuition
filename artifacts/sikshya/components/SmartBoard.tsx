@@ -25,6 +25,7 @@ import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardViewport, Scene
  */
 
 interface Props {
+  classroomChrome?: boolean;
   readOnly?: boolean;
   sceneUpdates: SceneDelta[];
   onConsumeUpdates: () => void;
@@ -62,6 +63,7 @@ const BOARD_ORIGIN =
 const DELIVERY_DEADLINE_MS = 15_000;
 
 export default function SmartBoard({
+  classroomChrome = false,
   readOnly = false,
   sceneUpdates,
   onConsumeUpdates,
@@ -114,10 +116,12 @@ export default function SmartBoard({
     if (!ready.current) {
       queued.current.push(...sceneUpdates);
     } else {
+      // Page context must reach the WebView before a scene naming that page.
+      post({ type: "pages_in", pages, activePageId });
       for (const delta of sceneUpdates) post({ type: "scene_in", delta });
     }
     onConsumeUpdates();
-  }, [sceneUpdates, onConsumeUpdates, post]);
+  }, [sceneUpdates, onConsumeUpdates, post, pages, activePageId]);
 
   useEffect(() => {
     if (clearedAt === 0 || !ready.current) return;
@@ -189,13 +193,13 @@ export default function SmartBoard({
 
       if (msg.type === "ready") {
         ready.current = true;
-        post({ type: "config", readOnly, theme });
-        for (const delta of queued.current) post({ type: "scene_in", delta });
-        queued.current = [];
+        post({ type: "config", readOnly, theme, classroomChrome });
         if (queuedPages.current) {
           post({ type: "pages_in", ...queuedPages.current });
           queuedPages.current = null;
         }
+        for (const delta of queued.current) post({ type: "scene_in", delta });
+        queued.current = [];
         post({ type: "laser_in", laser });
         if (queuedView.current) {
           post({ type: "view_in", view: queuedView.current });
@@ -235,7 +239,7 @@ export default function SmartBoard({
         onLaser?.(msg.laser);
       }
     },
-    [activePageId, post, readOnly, theme, laser, onSceneChange, onViewportChange, onClearAll, onPageCommand, onLaser],
+    [activePageId, post, readOnly, theme, classroomChrome, laser, onSceneChange, onViewportChange, onClearAll, onPageCommand, onLaser],
   );
 
   const source = useMemo(

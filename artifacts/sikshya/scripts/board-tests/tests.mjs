@@ -5,8 +5,107 @@
  * Every one of these has been broken in production at least once.
  */
 import { ERASER, PEN, RED_PNG, TWO_PAGE_PDF, drawPath, ink, near, openBoard, pump, relayMessages, roughCircle, selectTool, stroke, takeMessages, writingPath } from "./harness.mjs";
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 export const tests = [
+  {
+    name: "classroom toolbar stays together on phone and desktop",
+    why: "Controls must be alongside the editor toolbar, inside the viewport and actually tappable.",
+    async run(ctx, baseUrl, assert) {
+      const page = await openBoard(ctx, baseUrl, { readOnly: false });
+      await page.evaluate(() => window.postMessage(JSON.stringify({ type: "config", classroomChrome: true }), "*"));
+      const shots = path.join(tmpdir(), "fadko-board-chrome");
+      mkdirSync(shots, { recursive: true });
+      for (const width of [360, 390, 768, 1366, 1440, 1920]) {
+        await page.setViewportSize({ width, height: width < 500 ? 844 : 900 });
+        await page.waitForTimeout(900);
+        const geometry = await page.evaluate(() => {
+          const history = document.querySelector('.sikshya-board__history').getBoundingClientRect();
+          const toolbar = document.querySelector('.App-toolbar').getBoundingClientRect();
+          return { history: { left: history.left, right: history.right, top: history.top, bottom: history.bottom },
+            toolbar: { left: toolbar.left, right: toolbar.right, top: toolbar.top, bottom: toolbar.bottom },
+            overflow: document.documentElement.scrollWidth > innerWidth + 1 };
+        });
+        const h = geometry.history, t = geometry.toolbar;
+        if (geometry.overflow || h.left < 0 || h.right > width || t.left < 0 || t.right > width) console.log('   geometry', width, geometry);
+        assert(width + ': history is in the toolbar band, not midway down the board', h.top < 70);
+        assert(width + ': toolbar and history are inside the viewport', !geometry.overflow && h.left >= 0 && h.right <= width && t.left >= 0 && t.right <= width);
+        assert(width + ': toolbar does not overlap history', h.bottom <= t.top || t.bottom <= h.top || h.left >= t.right || t.left >= h.right);
+        const inkButton = page.getByRole('button', { name: 'Choose ink colour and thickness', exact: true });
+        await inkButton.click();
+        const blue = page.getByRole('button', { name: 'Blue writing colour', exact: true });
+        const box = await blue.boundingBox();
+        assert(width + ': colour targets are at least 44 by 44', box.width >= 44 && box.height >= 44);
+        await blue.click();
+        assert(width + ': colour choice is active', await blue.getAttribute('aria-pressed') === 'true');
+        await page.screenshot({ path: path.join(shots, width + '-ink.png') });
+        await inkButton.click();
+        await page.screenshot({ path: path.join(shots, width + '-toolbar.png') });
+      }
+    },
+  },
+  {
+    name: "rejoin restores image pixels immediately without a teacher page switch",
+    why: "An image snapshot must populate Excalidraw's decoded cache and full catch-up must replace missed deletions.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      await teacher.evaluate((dataUrl) => window.postMessage(JSON.stringify({
+        type: "insert_document", document: { key: "rejoin-photo", kind: "image", dataUrl },
+      }), "*"), RED_PNG);
+      await teacher.waitForTimeout(1000);
+      const sent = await takeMessages(teacher);
+      const scene = sent.filter((message) => message.type === "scene_out");
+      const elements = [...new Map(scene.flatMap((message) => message.elements).map((element) => [element.id, element])).values()];
+      const files = scene.flatMap((message) => message.files ?? []);
+      const view = sent.filter((message) => message.type === "view_out").at(-1)?.view;
+      assert("snapshot includes picture bytes", files.length > 0);
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+      const snapshot = { full: true, pageId: "rejoin-page", elements, files };
+      await student.evaluate(({ snapshot, view }) => {
+        window.postMessage(JSON.stringify({ type: "pages_in", pages: [{ id: "rejoin-page", title: "Lesson page", template: "blank", locked: false }], activePageId: "rejoin-page" }), "*");
+        window.postMessage(JSON.stringify({ type: "scene_in", delta: snapshot }), "*");
+        if (view) window.postMessage(JSON.stringify({ type: "view_in", view }), "*");
+      }, { snapshot, view });
+      await student.waitForTimeout(500);
+      assert("fresh join on a non-default page paints the image", (await ink(student)).red > 200);
+      await student.evaluate((delta) => window.postMessage(JSON.stringify({ type: "scene_in", delta }), "*"), snapshot);
+      await student.waitForTimeout(300);
+      assert("same-version reconnect keeps the image visible", (await ink(student)).red > 200);
+      await student.evaluate(() => window.postMessage(JSON.stringify({ type: "scene_in", delta: { full: true, pageId: "rejoin-page", elements: [], files: [] } }), "*"));
+      await student.waitForTimeout(300);
+      assert("an empty reconnect snapshot clears material deleted while offline", (await ink(student)).red === 0);
+    },
+  },
+  {
+    name: "locked materials can be unlocked and removed without right-click",
+    why: "The owner encountered browser and editor menus stacked over a locked image.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      await teacher.evaluate((dataUrl) => window.postMessage(JSON.stringify({
+        type: "insert_document", document: { key: "manager-photo", kind: "image", dataUrl },
+      }), "*"), RED_PNG);
+      await teacher.waitForTimeout(1000);
+      await selectTool(teacher, ERASER);
+      await teacher.getByRole("button", { name: "Manage teaching materials", exact: true }).click();
+      assert("the materials list opens with ordinary click", await teacher.getByText("Teaching materials", { exact: true }).isVisible());
+      const unlock = teacher.getByRole("button", { name: "Unlock Picture 1", exact: true });
+      if (!(await unlock.count())) await teacher.getByRole("button", { name: "Lock Picture 1", exact: true }).click();
+      await unlock.click();
+      assert("unlock changes the available action back to Lock", await teacher.getByRole("button", { name: "Lock Picture 1", exact: true }).isVisible());
+      await teacher.getByRole("button", { name: "Remove Picture 1", exact: true }).click();
+      await teacher.waitForTimeout(300);
+      assert("remove deletes the picture, not just a menu entry", (await ink(teacher)).red === 0);
+      await teacher.getByRole("button", { name: "Close board page menu", exact: true }).click();
+      await teacher.getByLabel("Undo last board change", { exact: true }).click();
+      await teacher.waitForTimeout(300);
+      if ((await ink(teacher)).red === 0) {
+        console.log('   material undo events', (await takeMessages(teacher)).filter((m) => m.type === 'scene_out').map((m) => m.elements.map((e) => ({ type: e.type, deleted: e.isDeleted, locked: e.locked, version: e.version }))));
+      }
+      assert("Undo restores the removed material", (await ink(teacher)).red > 200);
+    },
+  },
   {
     name: "an erased stroke disappears for the student too",
     why:

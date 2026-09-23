@@ -1,5 +1,5 @@
 /** Rendered checks for the shared teacher/student classroom conversation surface. */
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,8 @@ import { bundleForBrowser } from "../bundle-for-browser.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, "..", "..");
 const work = mkdtempSync(path.join(tmpdir(), "classroom-chat-ui-"));
+const shots = path.join(tmpdir(), "fadko-classroom-chat");
+mkdirSync(shots, { recursive: true });
 let passed = 0;
 let failed = 0;
 const failures = [];
@@ -41,6 +43,7 @@ function Harness() {
   const [open, setOpen] = React.useState(true);
   const [messages, setMessages] = React.useState(seed);
   const [value, setValue] = React.useState("");
+  window.__reactions = window.__reactions || [];
   window.__chat = {
     open: () => setOpen(true),
     push: (message) => setMessages((current) => [...current, message]),
@@ -65,6 +68,7 @@ function Harness() {
     setValue("");
   };
   return React.createElement(ClassroomChatDrawer, {
+    onReaction: (emoji) => window.__reactions.push(emoji),
     open,
     messages,
     value,
@@ -82,9 +86,22 @@ createRoot(document.getElementById("root")).render(React.createElement(Harness))
 const fontStub = path.join(work, "expo-font-stub.js");
 writeFileSync(
   fontStub,
-  `export async function loadAsync(){} export function isLoaded(){return true}
-export function isLoading(){return false} export function useFonts(){return [true,null]}
-export function processFontFamily(name){return name} export function getLoadedFonts(){return []}
+  `const loaded = new Set();
+function inject(name, source) {
+  if (loaded.has(name)) return;
+  const url = typeof source === 'string' ? source : source && (source.uri || source.default);
+  if (!url) return;
+  const style = document.createElement('style');
+  style.textContent = '@font-face{font-family:' + JSON.stringify(name) + ';src:url(' + JSON.stringify(url) + ')}';
+  document.head.appendChild(style); loaded.add(name);
+}
+export async function loadAsync(name, source){
+  if (typeof name === 'string') inject(name, source);
+  else for (const [family, file] of Object.entries(name || {})) inject(family, file);
+}
+export function isLoaded(name){return loaded.has(name)}
+export function isLoading(){return false} export function useFonts(map){void loadAsync(map);return [true,null]}
+export function processFontFamily(name){return name} export function getLoadedFonts(){return [...loaded]}
 export default {loadAsync,isLoaded,isLoading,useFonts,processFontFamily,getLoadedFonts};`,
 );
 
@@ -119,6 +136,18 @@ for (const viewport of [{ label: "phone", width: 390, height: 844 }, { label: "l
   await page.waitForTimeout(350);
   check(`${viewport.label}: Enter sends instead of adding a blank line`, (await page.getByText("A message sent with Enter").count()) === 1);
   check(`${viewport.label}: sending clears the composer`, (await input.inputValue()) === "");
+  await input.fill("First line");
+  await input.press("Shift+Enter");
+  check(`${viewport.label}: Shift+Enter still inserts a new line`, (await input.inputValue()).includes("\n"));
+  await input.fill("");
+  await page.getByTestId("classroom-reactions-toggle").click();
+  await page.getByRole("button", { name: "React: Got it", exact: true }).click();
+  check(`${viewport.label}: a reaction reaches the classroom callback`, JSON.stringify(await page.evaluate(() => window.__reactions)) === JSON.stringify(["👍"]));
+  check(`${viewport.label}: reactions are briefly throttled`, await page.getByRole("button", { name: "React: Got it", exact: true }).isDisabled());
+  const composer = await input.boundingBox();
+  check(`${viewport.label}: the composer stays in the visible viewport`, composer && composer.x >= 0 && composer.y + composer.height <= viewport.height);
+  await page.screenshot({ path: path.join(shots, viewport.label + '-reactions.png') });
+  await page.getByTestId("classroom-reactions-toggle").click();
 
   await page.evaluate(() => window.__chat.many());
   await page.waitForTimeout(350);
