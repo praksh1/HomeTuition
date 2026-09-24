@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { logger } from "./logger";
 import { BATCH_TEST_DDL } from "./batchTestingSchema";
 import { CLASS_GROUP_DDL } from "./classGroupSchema";
+import { SUPPORT_DDL } from "./supportSchema";
 import {
   markProviderEvidenceSchemaInvalid,
   markProviderEvidenceSchemaReady,
@@ -1635,5 +1636,14 @@ export async function ensureLearningProgramTables(): Promise<void> {
         "inspect the schema error and repair the additive boot guard before release. " +
         "Class planning, schedule checks and booking may be unavailable until storage is ready.",
     );
+  }
+}
+
+export async function ensureSupportAssistantTables(): Promise<void> {
+  try {
+    for (const statement of SUPPORT_DDL) await db.execute(sql.raw(statement));
+    logger.info("support assistant tables are present");
+  } catch (err) {
+    logger.warn({ err }, "support assistant storage is unavailable; ordinary classes and existing requests remain available");
   }
 }

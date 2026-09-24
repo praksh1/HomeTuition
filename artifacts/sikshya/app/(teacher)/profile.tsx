@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,6 +10,7 @@ import { SocialSignIn } from "@/components/SocialSignIn";
 import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
 import { ProfileActionRow } from "@/components/profile/ProfileActionRow";
 import { ProfileHero } from "@/components/profile/ProfileHero";
+import SupportAssistantLauncher from "@/components/support/SupportAssistantLauncher";
 import StarRating from "@/components/StarRating";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth, type Teacher } from "@/context/AuthContext";
@@ -41,6 +42,7 @@ interface StoredCredential {
 type CredentialLoadState = "loading" | "ready" | "error";
 
 export default function TeacherProfile() {
+  const { support } = useLocalSearchParams<{ support?: string }>();
   const { user, refreshUser } = useAuth();
   const colors = useColors();
   const { t, numeric, space, radius, gutter } = useLayout();
@@ -134,6 +136,7 @@ export default function TeacherProfile() {
   };
 
   return (
+    <View style={{ flex: 1 }}>
     <ScrollView
       style={styles.screen}
       contentContainerStyle={[styles.container, {
@@ -282,6 +285,8 @@ export default function TeacherProfile() {
       </View>
 
     </ScrollView>
+    <SupportAssistantLauncher openOnMount={support === "1"} />
+    </View>
   );
 }
 

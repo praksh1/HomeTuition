@@ -1,8 +1,9 @@
 import { Feather } from "@expo/vector-icons";
 import { router, usePathname } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
+  ActivityIndicator,
   Modal,
   Platform,
   Pressable,
@@ -18,77 +19,214 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { elevation, HIT_SLOP_MIN, radius, space } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
+import { apiGet, apiPost } from "@/utils/api";
+import { useAuth } from "@/context/AuthContext";
 
 type Topic = {
   label: string;
   icon: React.ComponentProps<typeof Feather>["name"];
-  reason: "Payment Issue" | "Technical Failure" | "Inappropriate Behavior" | "Other";
+  question: string;
 };
 
 const TOPICS: readonly Topic[] = [
-  { label: "Payments", icon: "credit-card", reason: "Payment Issue" },
-  { label: "Classes", icon: "calendar", reason: "Technical Failure" },
-  { label: "Messages", icon: "message-circle", reason: "Technical Failure" },
-  { label: "Homework", icon: "edit-3", reason: "Technical Failure" },
-  { label: "Account", icon: "user", reason: "Other" },
-  { label: "Safety", icon: "shield", reason: "Inappropriate Behavior" },
+  { label: "Payments", icon: "credit-card", question: "I need help with a class payment or refund." },
+  { label: "Classes", icon: "calendar", question: "I cannot join my class or lesson." },
+  { label: "Messages", icon: "message-circle", question: "I need help with class or direct messages." },
+  { label: "Homework", icon: "edit-3", question: "I need help with homework or feedback." },
+  { label: "Account", icon: "user", question: "I need help with my account or profile." },
+  { label: "Safety", icon: "shield", question: "I need to report a safety concern." },
 ];
 
-type Bubble = { id: string; from: "assistant" | "user"; text: string };
+type Bubble = { id: string; from: "assistant" | "user"; text: string; source?: string; article?: string };
+type SavedMessage = { id: number; role: "assistant" | "user"; body: string; source: string };
+type Conversation = { id: number; title: string; ticketId: number | null };
+type SuggestedReply = { label: string; question: string };
+type SupportLesson = { id: number; topic: string; date: string };
+type CaseContext = { sessionId: number; title: string; facts: string[] };
 
 const WELCOME: Bubble = {
   id: "welcome",
   from: "assistant",
-  text: "Hi — I’m Fadko Support. Ask about classes, payments, homework, messages, or your account.",
+  text: "Hi — I’m Fadko’s automated support assistant. Tell me what happened and we’ll work through it together. I can check a class you select and prepare the details for a person when needed. Refunds and account restrictions always need human review.",
 };
 
 /**
- * Premium support entry point shared by teacher and student tabs.
- *
- * It is deliberately useful while AI is disabled: topic shortcuts go to the existing secure
- * support form, and typed questions are kept on-device until the user chooses a human request.
- * This avoids a fake chatbot that implies an answer was checked when no provider is running.
+ * The Profile support panel. Reviewed answers work without an AI key; unanswered questions
+ * offer a durable human handoff rather than a fabricated promise or a dead-end chatbot.
  */
-export default function SupportAssistantLauncher() {
+export default function SupportAssistantLauncher({ openOnMount = false }: { openOnMount?: boolean }) {
   const pathname = usePathname();
+  const { user } = useAuth();
   const colors = useColors();
   const { t, isExpanded } = useLayout();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(openOnMount);
   const [draft, setDraft] = useState("");
   const [bubbles, setBubbles] = useState<Bubble[]>([WELCOME]);
+  const [suggestedReplies, setSuggestedReplies] = useState<readonly SuggestedReply[]>([]);
+  const [recentConversations, setRecentConversations] = useState<Conversation[]>([]);
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const [ticketId, setTicketId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [sendingToHuman, setSendingToHuman] = useState(false);
+  const [error, setError] = useState("");
+  const [feedback, setFeedback] = useState<Record<string, boolean>>({});
+  const [lessons, setLessons] = useState<SupportLesson[]>([]);
+  const [lessonPicker, setLessonPicker] = useState(false);
+  const [lessonQuery, setLessonQuery] = useState("");
+  const [selectedLesson, setSelectedLesson] = useState<SupportLesson | null>(null);
+  const [caseContext, setCaseContext] = useState<CaseContext | null>(null);
+  const [showFacts, setShowFacts] = useState(false);
+  const generation = useRef(0);
+  const sendLock = useRef(false);
+  const transcript = useRef<ScrollView>(null);
+  const lastScrolledMessage = useRef("");
+  const activeUserId = useRef(user?.id);
+  activeUserId.current = user?.id;
+
+  useEffect(() => { if (openOnMount) setVisible(true); }, [openOnMount]);
+  useEffect(() => {
+    generation.current += 1;
+    lastScrolledMessage.current = "";
+    sendLock.current = false;
+    setConversationId(null);
+    setTicketId(null);
+    setBubbles([WELCOME]);
+    setSuggestedReplies([]);
+    setRecentConversations([]);
+    setLessons([]); setSelectedLesson(null); setCaseContext(null); setLessonPicker(false);
+    setDraft(""); setError(""); setFeedback({}); setBusy(false); setSendingToHuman(false);
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    const expected = activeUserId.current;
+    void apiGet<{ lessons: SupportLesson[] }>("/support/assistant/lessons").then((data) => {
+      if (!cancelled && activeUserId.current === expected) setLessons(data.lessons);
+    }).catch(() => { /* Describing a case remains possible without the optional lesson lookup. */ });
+    return () => { cancelled = true; };
+  }, [visible, user?.id]);
+
+  const loadRecent = useCallback(async () => {
+    const expectedUserId = activeUserId.current;
+    try {
+      const result = await apiGet<{ conversations: Conversation[] }>("/support/assistant/conversations");
+      if (activeUserId.current === expectedUserId) setRecentConversations(result.conversations ?? []);
+    } catch { /* New questions remain available if history cannot load. */ }
+  }, []);
+  useEffect(() => {
+    if (visible && conversationId === null) void loadRecent();
+  }, [visible, conversationId, loadRecent]);
+
+  const openConversation = async (item: Conversation) => {
+    setError("");
+    const expectedGeneration = ++generation.current;
+    sendLock.current = false; setBusy(false); setSendingToHuman(false);
+    const expectedUserId = activeUserId.current;
+    try {
+      const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[]; caseContext?: CaseContext | null }>(`/support/assistant/conversations/${item.id}`);
+      if (activeUserId.current !== expectedUserId || generation.current !== expectedGeneration) return;
+      lastScrolledMessage.current = "";
+      setConversationId(item.id);
+      setTicketId(item.ticketId);
+      setCaseContext(detail.caseContext ?? null);
+      setSelectedLesson(null); setShowFacts(false); setLessonPicker(false); setDraft("");
+      setSuggestedReplies(detail.suggestedReplies ?? []);
+      setBubbles(detail.messages.map((message) => ({
+        id: String(message.id), from: message.role, text: message.body, source: message.source,
+      })));
+    } catch { if (generation.current === expectedGeneration && activeUserId.current === expectedUserId) setError("Could not open this conversation. Please try again."); }
+  };
 
   const bottom = Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) + (isExpanded ? 92 : 88);
   const panelWidth = Math.min(width - space.md * 2, isExpanded ? 440 : 520);
-  const panelTitle = useMemo(() => (bubbles.length > 1 ? "Continue with Fadko Support" : "Fadko Support"), [bubbles.length]);
+  const hasConversation = bubbles.some((bubble) => bubble.id !== WELCOME.id);
 
   // The full Support tab already owns the form. Showing another launcher on it would feel like
   // a duplicate control and would make browser Back harder to understand.
   if (pathname === "/support") return null;
 
-  const openRequest = (topic?: Topic) => {
+  const openRequest = () => {
     setVisible(false);
-    if (topic) {
-      router.push({ pathname: "/support", params: { reason: topic.reason } });
-    } else {
-      router.push("/support");
-    }
+    router.push("/support");
   };
 
-  const sendDraft = () => {
-    const text = draft.trim();
-    if (!text) return;
-    setBubbles((current) => [
-      ...current,
-      { id: `user-${Date.now()}`, from: "user", text },
-      {
-        id: `assistant-${Date.now()}`,
-        from: "assistant",
-        text: "I can help you get this to the right place. Open a support request and the team will see your question with the correct category.",
-      },
-    ]);
+  const startFresh = () => {
+    generation.current += 1;
+    lastScrolledMessage.current = "";
+    sendLock.current = false;
+    setBusy(false); setSendingToHuman(false);
+    setConversationId(null);
+    setTicketId(null);
+    setBubbles([WELCOME]);
+    setSuggestedReplies([]);
     setDraft("");
+    setError("");
+    setCaseContext(null); setSelectedLesson(null); setLessonPicker(false); setShowFacts(false); setFeedback({});
+    void loadRecent();
+  };
+
+  const closePanel = () => { setVisible(false); startFresh(); };
+
+  const sendQuestion = async (value: string) => {
+    const text = value.trim();
+    if (!text || sendLock.current || ticketId) return;
+    sendLock.current = true;
+    const expectedGeneration = generation.current;
+    const expectedUser = activeUserId.current;
+    const current = () => generation.current === expectedGeneration && activeUserId.current === expectedUser;
+    setError("");
+    setBusy(true);
+    setDraft("");
+    try {
+      const result = await apiPost<{ conversationId: number; question: SavedMessage; reply: SavedMessage; article: { title: string } | null; suggestedReplies?: SuggestedReply[]; caseContext?: CaseContext | null }>(
+        "/support/assistant/messages", { message: text, conversationId, sessionId: selectedLesson?.id ?? caseContext?.sessionId }, { timeoutMs: 12_000 },
+      );
+      if (!current()) return;
+      setConversationId(result.conversationId);
+      setCaseContext(result.caseContext ?? null);
+      void loadRecent();
+      setSuggestedReplies(result.suggestedReplies ?? []);
+      setBubbles((current) => [...current.filter((bubble) => bubble.id !== WELCOME.id),
+        { id: String(result.question.id), from: "user", text: result.question.body },
+        { id: String(result.reply.id), from: "assistant", text: result.reply.body,
+          source: result.reply.source, article: result.article?.title },
+      ]);
+    } catch (cause) {
+      if (!current()) return;
+      setDraft(text);
+      setError(cause instanceof Error ? cause.message : "Your question was not sent. Try again.");
+    } finally { if (current()) { setBusy(false); sendLock.current = false; } }
+  };
+
+  const rateAnswer = async (id: string, helpful: boolean) => {
+    if (!/^\d+$/.test(id) || id in feedback) return;
+    try {
+      await apiPost(`/support/assistant/messages/${id}/feedback`, { helpful });
+      setFeedback((current) => ({ ...current, [id]: helpful }));
+    } catch { setError("Could not save your feedback. You can try again."); }
+  };
+
+  const handoff = async () => {
+    if (!conversationId) { openRequest(); return; }
+    if (sendingToHuman || ticketId) return;
+    const expectedGeneration = generation.current;
+    const expectedUser = activeUserId.current;
+    const current = () => generation.current === expectedGeneration && activeUserId.current === expectedUser;
+    setSendingToHuman(true);
+    setError("");
+    try {
+      const result = await apiPost<{ ticketId: number; ref: string }>(
+        `/support/assistant/conversations/${conversationId}/request`, {},
+      );
+      if (!current()) return;
+      setTicketId(result.ticketId);
+      setBubbles((current) => [...current, { id: `request-${result.ticketId}`, from: "assistant",
+        text: `Sent to Fadko Support as ${result.ref}. You can follow it in My requests.` }]);
+    } catch (cause) { if (current()) setError(cause instanceof Error ? cause.message : "Could not send this request."); }
+    finally { if (current()) setSendingToHuman(false); }
   };
 
   return (
@@ -98,7 +236,7 @@ export default function SupportAssistantLauncher() {
         accessibilityLabel="Open Fadko Support"
         testID="support-assistant-launcher"
         hitSlop={8}
-        onPress={() => setVisible(true)}
+        onPress={() => { startFresh(); setVisible(true); }}
         style={({ pressed }) => [
           styles.launcher,
           {
@@ -113,10 +251,10 @@ export default function SupportAssistantLauncher() {
       >
         <View style={[styles.launcherRing, { borderColor: colors.brand + "90" }]} />
         <Feather name="life-buoy" size={21} color={colors.primaryForeground} />
-        <View style={[styles.launcherDot, { backgroundColor: colors.online, borderColor: colors.primary }]} />
+        <View style={[styles.launcherDot, { backgroundColor: colors.brand, borderColor: colors.primary }]} />
       </Pressable>
 
-      <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={closePanel}>
         <KeyboardAvoidingView
           style={styles.modalRoot}
           behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -124,7 +262,7 @@ export default function SupportAssistantLauncher() {
           <Pressable
             accessibilityLabel="Close support"
             style={[styles.scrim, { backgroundColor: colors.scrim }]}
-            onPress={() => setVisible(false)}
+            onPress={closePanel}
           />
           <View
             testID="support-assistant-panel"
@@ -142,23 +280,28 @@ export default function SupportAssistantLauncher() {
             ]}
           >
             <View style={styles.panelHeader}>
-              <View style={[styles.supportMark, { backgroundColor: colors.primary }]}>
+              <View style={[styles.supportMark, { backgroundColor: colors.primary }, !isExpanded && { display: "none" }]}>
                 <Feather name="life-buoy" size={20} color={colors.primaryForeground} />
                 <View style={[styles.markDot, { backgroundColor: colors.brand }]} />
               </View>
               <View style={styles.headerCopy}>
-                <Text style={[t.title3, { color: colors.foreground }]}>{panelTitle}</Text>
+                <Text style={[t.title3, { color: colors.foreground }]}>Fadko Support</Text>
                 <View style={styles.statusLine}>
-                  <View style={[styles.statusDot, { backgroundColor: colors.online }]} />
-                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Quick answers · human help when needed</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Assistant · human help when needed</Text>
                 </View>
               </View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Start a new support conversation"
+                testID="support-new-question" onPress={startFresh}
+                style={({ pressed }) => [styles.newQuestion, { backgroundColor: colors.actionSoft }, pressed && styles.pressed]}>
+                <Feather name="plus" size={16} color={colors.primary} />
+                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>New question</Text>
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Close Fadko Support"
                 testID="support-assistant-close"
                 hitSlop={10}
-                onPress={() => setVisible(false)}
+                onPress={closePanel}
                 style={({ pressed }) => [styles.close, pressed && styles.pressed]}
               >
                 <Feather name="x" size={20} color={colors.mutedForeground} />
@@ -166,11 +309,47 @@ export default function SupportAssistantLauncher() {
             </View>
 
             <ScrollView
+              ref={transcript}
               style={styles.transcript}
               contentContainerStyle={styles.transcriptContent}
+              onContentSizeChange={() => {
+                const key = `${bubbles.length}:${bubbles.at(-1)?.id ?? ""}`;
+                if (lastScrolledMessage.current === key) return;
+                lastScrolledMessage.current = key;
+                transcript.current?.scrollToEnd({ animated: true });
+              }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {!ticketId && lessons.length > 0 && <View style={[styles.caseCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Choose a class for support" disabled={busy || !!conversationId}
+                  onPress={() => setLessonPicker((value) => !value)} style={styles.caseHeading}>
+                  <Feather name="book-open" size={18} color={colors.primary} />
+                  <View style={{ flex: 1 }}><Text style={[t.caption, { color: colors.mutedForeground }]}>Optional class context</Text>
+                    <Text numberOfLines={1} style={[t.caption, { color: colors.foreground, fontWeight: "600" }]}>{caseContext?.title ?? selectedLesson?.topic ?? "Choose the affected lesson"}</Text></View>
+                  {!conversationId && <Feather name={lessonPicker ? "chevron-up" : "chevron-down"} size={18} color={colors.primary} />}
+                </Pressable>
+                {lessonPicker && <>
+                  <TextInput accessibilityLabel="Search your classes" placeholder="Search your classes" value={lessonQuery} onChangeText={setLessonQuery}
+                    style={[t.body, styles.lessonSearch, { color: colors.foreground, borderColor: colors.border }]} />
+                  <ScrollView style={styles.lessonList} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    <Pressable accessibilityRole="button" onPress={() => { setSelectedLesson(null); setLessonPicker(false); }} style={styles.lessonRow}>
+                      <Text style={[t.caption, { color: colors.primary }]}>Not about a class</Text></Pressable>
+                    {lessons.filter((lesson) => lesson.topic.toLocaleLowerCase().includes(lessonQuery.toLocaleLowerCase())).map((lesson) =>
+                      <Pressable key={lesson.id} accessibilityRole="button" onPress={() => { setSelectedLesson(lesson); setLessonPicker(false); }} style={styles.lessonRow}>
+                        <Text numberOfLines={2} style={[t.caption, { color: colors.foreground }]}>{lesson.topic} · #{lesson.id}</Text>
+                      </Pressable>)}
+                  </ScrollView>
+                </>}
+              </View>}
+              {caseContext && <View style={[styles.caseCard, { borderColor: colors.border, backgroundColor: colors.actionSoft }]}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Show records checked for this case" onPress={() => setShowFacts((value) => !value)} style={styles.caseHeading}>
+                  <Feather name="check-circle" size={17} color={colors.primary} />
+                  <Text style={[t.caption, { color: colors.primary, flex: 1 }]}>Fadko records checked · lesson #{caseContext.sessionId}</Text>
+                  <Feather name={showFacts ? "chevron-up" : "chevron-down"} size={16} color={colors.primary} />
+                </Pressable>
+                {showFacts && caseContext.facts.map((fact, index) => <Text key={index} style={[t.caption, { color: colors.foreground }]}>{fact}</Text>)}
+              </View>}
               {bubbles.map((bubble) => (
                 <View
                   key={bubble.id}
@@ -184,17 +363,55 @@ export default function SupportAssistantLauncher() {
                   <Text style={[t.body, { color: bubble.from === "user" ? colors.primaryForeground : colors.foreground }]}>
                     {bubble.text}
                   </Text>
+                  {bubble.article && <Text style={[t.caption, { color: colors.mutedForeground }]}>From Fadko Help: {bubble.article}</Text>}
+                  {bubble.source === "ai" && <Text style={[t.caption, { color: colors.mutedForeground }]}>AI-assisted answer · verify important details</Text>}
+                  {(bubble.source === "faq" || bubble.source === "ai") && <View style={styles.feedbackRow}>
+                    <Text style={[t.caption, { color: colors.mutedForeground }]}>{bubble.id in feedback ? "Thanks for the feedback" : "Helpful?"}</Text>
+                    {!(bubble.id in feedback) && <>
+                      <Pressable accessibilityRole="button" accessibilityLabel="This answer helped" onPress={() => void rateAnswer(bubble.id, true)} hitSlop={8}>
+                        <Feather name="thumbs-up" size={16} color={colors.primary} />
+                      </Pressable>
+                      <Pressable accessibilityRole="button" accessibilityLabel="This answer did not help" onPress={() => void rateAnswer(bubble.id, false)} hitSlop={8}>
+                        <Feather name="thumbs-down" size={16} color={colors.primary} />
+                      </Pressable>
+                    </>}
+                  </View>}
                 </View>
               ))}
+              {suggestedReplies.length > 0 && !ticketId && <View style={styles.replyChoices}>
+                {suggestedReplies.map((choice) => <Pressable
+                  key={choice.question}
+                  accessibilityRole="button"
+                  accessibilityLabel={choice.label}
+                  disabled={busy}
+                  testID="support-suggested-reply"
+                  onPress={() => void sendQuestion(choice.question)}
+                  style={({ pressed }) => [styles.replyChoice,
+                    { backgroundColor: colors.card, borderColor: colors.primary },
+                    pressed && { backgroundColor: colors.actionSoft }]}
+                >
+                  <Text style={[t.caption, { color: colors.primary, fontWeight: "600" }]}>{choice.label}</Text>
+                  <Feather name="arrow-up-right" size={14} color={colors.primary} />
+                </Pressable>)}
+              </View>}
+              {hasConversation && !busy && <Pressable accessibilityRole="button" accessibilityLabel="Ask about a different topic"
+                testID="support-change-topic" onPress={startFresh}
+                style={({ pressed }) => [styles.changeTopic, { borderColor: colors.border }, pressed && styles.pressed]}>
+                <Feather name="plus-circle" size={17} color={colors.primary} />
+                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>Ask about a different topic</Text>
+              </Pressable>}
+              {busy && <ActivityIndicator size="small" color={colors.primary} accessibilityLabel="Fadko Support is answering" />}
+              {!!error && <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{error}</Text>}
 
-              <Text style={[t.caption, styles.sectionLabel, { color: colors.mutedForeground }]}>Choose a topic</Text>
+              {!hasConversation && <><Text style={[t.caption, styles.sectionLabel, { color: colors.mutedForeground }]}>Choose a topic</Text>
               <View style={styles.topicGrid}>
                 {TOPICS.map((topic) => (
                   <Pressable
                     key={topic.label}
                     accessibilityRole="button"
+                    disabled={busy || !!ticketId}
                     testID={`support-topic-${topic.label.toLowerCase()}`}
-                    onPress={() => openRequest(topic)}
+                    onPress={() => void sendQuestion(topic.question)}
                     style={({ pressed }) => [
                       styles.topic,
                       { backgroundColor: colors.card, borderColor: colors.border },
@@ -208,46 +425,73 @@ export default function SupportAssistantLauncher() {
                   </Pressable>
                 ))}
               </View>
+              {recentConversations.length > 0 && <View style={styles.recentSection}>
+                <Text style={[t.caption, styles.sectionLabel, { color: colors.mutedForeground }]}>Recent conversations</Text>
+                {recentConversations.slice(0, 5).map((item) => <Pressable key={item.id}
+                  accessibilityRole="button" accessibilityLabel={`Open previous conversation: ${item.title}`}
+                  onPress={() => void openConversation(item)}
+                  style={({ pressed }) => [styles.recentRow, { borderColor: colors.border }, pressed && styles.pressed]}>
+                  <Feather name="message-circle" size={16} color={colors.primary} />
+                  <Text numberOfLines={1} style={[t.caption, styles.recentTitle, { color: colors.foreground }]}>{item.title}</Text>
+                  <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+                </Pressable>)}
+              </View>}
+              </>}
             </ScrollView>
 
             <View style={[styles.composer, { borderColor: colors.border, backgroundColor: colors.muted }]}>
               <TextInput
+                ref={(node) => {
+                  if (Platform.OS !== "web" || !node) return;
+                  const input = node as unknown as HTMLInputElement;
+                  input.onkeydown = (event) => {
+                    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+                      event.preventDefault();
+                      void sendQuestion(input.value);
+                    }
+                  };
+                }}
                 testID="support-assistant-input"
                 value={draft}
                 onChangeText={setDraft}
-                placeholder="Ask a question…"
+                placeholder={ticketId ? "Request sent — start a new chat to ask more" : "Ask a question…"}
                 placeholderTextColor={colors.mutedForeground}
-                multiline
+                multiline={Platform.OS !== "web"}
                 maxLength={1200}
+                editable={!busy && !ticketId}
                 returnKeyType="send"
-                onSubmitEditing={sendDraft}
+                submitBehavior="submit"
+                onSubmitEditing={Platform.OS === "web" ? undefined : () => void sendQuestion(draft)}
                 style={[t.body, styles.input, { color: colors.foreground }]}
               />
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Send support question"
                 testID="support-assistant-send"
-                disabled={!draft.trim()}
-                onPress={sendDraft}
+                disabled={!draft.trim() || busy || !!ticketId}
+                onPress={() => void sendQuestion(draft)}
                 style={({ pressed }) => [
                   styles.send,
-                  { backgroundColor: draft.trim() ? colors.primary : colors.border },
+                  { backgroundColor: draft.trim() && !busy ? colors.primary : colors.border },
                   pressed && styles.pressed,
                 ]}
               >
-                <Feather name="arrow-up" size={18} color={draft.trim() ? colors.primaryForeground : colors.mutedForeground} />
+                <Feather name="arrow-up" size={18} color={draft.trim() && !busy ? colors.primaryForeground : colors.mutedForeground} />
               </Pressable>
             </View>
+
+            <Text style={[t.caption, styles.privacyNote, { color: colors.mutedForeground }]}>Do not share passwords, codes or payment numbers. Fadko never needs them here.</Text>
 
             <View style={styles.panelFooter}>
               <Pressable
                 accessibilityRole="button"
                 testID="support-assistant-open-request"
-                onPress={() => openRequest()}
+                disabled={busy || sendingToHuman || !!ticketId}
+                onPress={() => void handoff()}
                 style={({ pressed }) => [styles.footerAction, pressed && styles.pressed]}
               >
                 <Feather name="edit-2" size={15} color={colors.primary} />
-                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>Open a support request</Text>
+                <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>{ticketId ? "Sent to a person" : sendingToHuman ? "Sending…" : "Ask a person"}</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -267,6 +511,11 @@ export default function SupportAssistantLauncher() {
 }
 
 const styles = StyleSheet.create({
+  caseCard: { borderWidth: 1, borderRadius: radius.md, padding: space.sm, gap: space.xs },
+  caseHeading: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.xs },
+  lessonSearch: { borderWidth: 1, borderRadius: radius.sm, padding: space.sm },
+  lessonList: { maxHeight: 180 },
+  lessonRow: { minHeight: HIT_SLOP_MIN, justifyContent: "center", paddingVertical: space.xs },
   launcher: {
     position: "absolute",
     width: 56,
@@ -283,15 +532,23 @@ const styles = StyleSheet.create({
   scrim: { ...StyleSheet.absoluteFillObject },
   panel: { position: "absolute", borderRadius: radius.lg, borderWidth: 1, overflow: "hidden" },
   panelHeader: { flexDirection: "row", alignItems: "center", gap: space.sm, padding: space.md, borderBottomWidth: 1, borderBottomColor: "transparent" },
+  newQuestion: { minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, flexDirection: "row", alignItems: "center", gap: space.xxs, paddingHorizontal: space.sm },
   supportMark: { width: 42, height: 42, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
   markDot: { position: "absolute", right: 4, top: 4, width: 7, height: 7, borderRadius: radius.pill },
   headerCopy: { flex: 1, gap: 2 },
   statusLine: { flexDirection: "row", alignItems: "center", gap: space.xxs },
-  statusDot: { width: 6, height: 6, borderRadius: radius.pill },
   close: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
   transcript: { flexGrow: 0 },
   transcriptContent: { paddingHorizontal: space.md, paddingBottom: space.sm, gap: space.sm },
   bubble: { maxWidth: "88%", borderRadius: radius.md, borderWidth: 1, paddingHorizontal: space.sm, paddingVertical: space.sm },
+  feedbackRow: { flexDirection: "row", alignItems: "center", gap: space.sm, marginTop: space.xs },
+  replyChoices: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
+  replyChoice: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.xxs,
+    borderWidth: 1, borderRadius: radius.pill, paddingHorizontal: space.sm, paddingVertical: space.xs },
+  changeTopic: { minHeight: HIT_SLOP_MIN, borderWidth: 1, borderRadius: radius.md, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.xs },
+  recentSection: { gap: space.xs, marginTop: space.sm },
+  recentRow: { minHeight: HIT_SLOP_MIN, borderWidth: 1, borderRadius: radius.md, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: space.sm },
+  recentTitle: { flex: 1 },
   sectionLabel: { marginTop: space.xs, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 },
   topicGrid: { flexDirection: "row", flexWrap: "wrap", gap: space.xs },
   topic: { minHeight: HIT_SLOP_MIN, minWidth: "31%", flexGrow: 1, flexBasis: "30%", borderWidth: 1, borderRadius: radius.md, alignItems: "center", justifyContent: "center", gap: space.xxs, paddingHorizontal: space.xs, paddingVertical: space.xs },
@@ -299,6 +556,7 @@ const styles = StyleSheet.create({
   composer: { marginHorizontal: space.md, marginBottom: space.sm, borderWidth: 1, borderRadius: radius.md, flexDirection: "row", alignItems: "flex-end", padding: space.xs, gap: space.xs },
   input: { flex: 1, minHeight: 40, maxHeight: 90, paddingHorizontal: space.xs, paddingVertical: space.xs },
   send: { width: 40, height: 40, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
+  privacyNote: { paddingHorizontal: space.md, paddingBottom: space.xs },
   panelFooter: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: space.md, paddingBottom: space.md, gap: space.sm },
   footerAction: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.xxs, justifyContent: "center", paddingHorizontal: space.xs },
   pressed: { opacity: 0.72 },

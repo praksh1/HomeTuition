@@ -225,6 +225,9 @@ jobs:
       - name: Notification delivery and preferences
         run: pnpm --filter @workspace/api-server run test:notifications
 
+      - name: Fadko assistant review, privacy and human handoff
+        run: pnpm --filter @workspace/api-server run test:support-assistant
+
       # A UI-only preview cannot prove that a student's microphone is actually denied by the
       # provider. These drive the real API on both providers, inspect signed grants, and exercise
       # the server-owned speaking floor against a recording LiveKit control plane.

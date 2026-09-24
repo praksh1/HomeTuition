@@ -17,6 +17,7 @@ const built = await bundleForBrowser({
   alias: {
     "@/context/AuthContext": path.join(here, "auth.js"),
     "@/utils/api": path.join(here, "api.js"),
+    "@react-navigation/native": path.join(here, "navigation.js"),
     "@/components/SocialSignIn": path.join(here, "social.js"),
     "@/utils/openAttachment": path.join(here, "attachment.js"),
     "@/utils/uploadFile": path.join(here, "upload.js"),
@@ -45,6 +46,30 @@ try {
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
 
+    await page.goto(`${base}?screen=library`);
+    await page.getByTestId("help-starter-import").click();
+    await page.getByText("Starter payment guide", { exact: true }).waitFor();
+    check((await page.getByTestId("help-starter-notice").textContent()).includes("Review each answer"), `${width}: importing guides does not publish them`);
+    await page.getByTestId("help-library-search").fill("no such guide");
+    check(await page.getByText("No matching answers. Try another search.").isVisible(), `${width}: editorial search has an empty state`);
+    await page.getByTestId("help-library-search").fill("payment");
+    await page.getByText("Starter payment guide", { exact: true }).click();
+    await page.getByTestId("help-starter-review").waitFor();
+    // Capture the settled slide sheet, not an intermediate animation frame.
+    await page.waitForTimeout(400);
+    check(await page.getByTestId("help-starter-review").isVisible(), `${width}: source review checklist is visible before publishing`);
+    check(await page.getByTestId("help-starter-review").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: review checklist fits the viewport`);
+    await page.screenshot({ path: path.join(work, `${width}-support-library.png`), fullPage: true });
+    await page.getByTestId("help-article-publish").scrollIntoViewIfNeeded();
+    check(await page.getByTestId("help-article-publish").evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight + 1 && rect.height >= 44;
+    }), `${width}: publication action is reachable inside the editor`);
+    await page.getByRole("button", { name: "Close editor" }).click();
+    await page.getByTestId("help-starter-import").click();
+    await page.getByText("Starter drafts already exist. Your edits and publication choices were preserved.").waitFor();
+    check(await page.getByText("Starter payment guide", { exact: true }).count() === 1, `${width}: repeated import has no duplicate card`);
+
     await page.goto(`${base}?screen=student`);
     await page.getByText("MY FADKO PROFILE", { exact: true }).waitFor();
     await page.getByTestId("student-account-details").waitFor();
@@ -56,11 +81,62 @@ try {
     await page.getByTestId("profile-overflow-trigger").click();
     await page.getByTestId("profile-overflow-menu").waitFor();
     body = await page.locator("body").innerText();
-    check(body.includes("Fadko Support") && body.includes("Fadko assistant") && body.includes("Soon"), `${width}: student profile menu groups support and future assistant honestly`);
+    check(body.includes("Fadko Support") && body.includes("Ask Fadko") && body.includes("Quick answers"), `${width}: student profile menu offers working support and assistant`);
     check(await page.getByTestId("profile-overflow-menu").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: student profile menu stays inside the viewport`);
     const studentMenuText = await page.getByTestId("profile-overflow-menu").textContent();
     check(studentMenuText.includes("Account") && studentMenuText.includes("Learning") && studentMenuText.includes("Money") && studentMenuText.includes("Help"), `${width}: student menu has a real information hierarchy`);
     await page.getByRole("button", { name: "Close menu" }).last().click();
+    await page.getByTestId("support-assistant-launcher").click();
+    await page.getByTestId("support-assistant-panel").waitFor();
+    check(await page.getByTestId("support-assistant-panel").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: support panel fits the screen`);
+    check(await page.getByTestId("support-assistant-panel").evaluate((node) => node.getBoundingClientRect().top >= -1 && node.getBoundingClientRect().bottom <= innerHeight + 1), `${width}: support panel stays within viewport height`);
+    check(await page.getByTestId("support-topic-classes").isVisible(), `${width}: quick topics are available before the first question`);
+    check(await page.getByRole("button", { name: /Open previous conversation: Earlier class question/ }).isVisible(), `${width}: past chats are available without replacing a new topic`);
+    await page.getByTestId("support-assistant-input").fill("How do I join my class?");
+    await page.getByTestId("support-assistant-input").click();
+    // Exercise the input's native keydown handler directly; RN Web blurs this field on Enter.
+    await page.getByTestId("support-assistant-input").evaluate((node) => node.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    await page.getByText("Open Sessions and choose your lesson.", { exact: true }).waitFor();
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("How do I join my class?"), `${width}: Enter sends the question on web`);
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("From Fadko Help: Joining a booked class"), `${width}: reviewed answer is attributed`);
+    check(await page.getByTestId("support-topic-classes").count() === 0, `${width}: topic shortcuts give way to the conversation`);
+    check(await page.getByTestId("support-change-topic").isVisible(), `${width}: switching topics has an explicit action in the chat`);
+    await page.getByRole("button", { name: "Start a new support conversation" }).click();
+    await page.getByTestId("support-topic-classes").click();
+    await page.getByRole("button", { name: "Can't join a lesson" }).waitFor();
+    check(await page.getByTestId("support-suggested-reply").count() === 2, `${width}: a broad question has concise next-step choices`);
+    await page.getByRole("button", { name: "Can't join a lesson" }).click();
+    await page.getByText("Open Sessions and choose your lesson.", { exact: true }).waitFor();
+    check(await page.getByTestId("support-suggested-reply").count() === 0, `${width}: follow-up choices clear after a specific answer`);
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: path.join(work, `${width}-support-answer.png`) });
+    await page.getByTestId("support-assistant-open-request").click();
+    await page.getByText(/Sent to Fadko Support as FDK-17/).waitFor();
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("Sent to a person"), `${width}: human handoff confirms the request`);
+    await page.screenshot({ path: path.join(work, `${width}-support-handoff.png`) });
+    await page.getByTestId("support-assistant-close").click();
+    await page.getByTestId("support-assistant-launcher").click();
+    check(await page.getByTestId("support-topic-classes").isVisible(), `${width}: reopening Support starts at a fresh topic`);
+    await page.getByRole("button", { name: "Choose a class for support" }).click();
+    await page.getByRole("textbox", { name: "Search your classes" }).fill("Lesson 50");
+    await page.getByRole("button", { name: "Lesson 50 · #50", exact: true }).click();
+    await page.getByTestId("support-assistant-input").fill("My PDF is not visible");
+    await page.getByTestId("support-assistant-send").click();
+    await page.getByText("Which device are you using?", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Show records checked for this case" }).click();
+    await page.waitForTimeout(400);
+    check(await page.getByRole("button", { name: "Show records checked for this case" }).evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight;
+    }), `${width}: expanding long payment records does not jump away from the card`);
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("No real payment is established"), `${width}: selected lesson shows qualified account facts, not payment assumptions`);
+    check(await page.getByTestId("support-assistant-panel").evaluate((node) => node.getBoundingClientRect().top >= -1 && node.getBoundingClientRect().right <= innerWidth + 1), `${width}: class investigation fits with records expanded`);
+    await page.screenshot({ path: path.join(work, `${width}-support-investigation.png`) });
+    await page.getByRole("button", { name: "Start a new support conversation" }).click();
+    await page.getByRole("button", { name: /Open previous conversation: Earlier class question/ }).click();
+    await page.getByText("Earlier answer", { exact: true }).waitFor();
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("Earlier class question"), `${width}: past chat can be reopened deliberately`);
+    await page.getByTestId("support-assistant-close").click();
     check((await page.getByTestId("student-edit-account-details").boundingBox()).height >= 44, `${width}: student edit action meets touch floor`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: student profile has no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-student.png`), fullPage: true });

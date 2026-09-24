@@ -139,6 +139,10 @@ export async function apiPost<T>(path: string, body: unknown, options: ApiReques
   return apiRequest<T>(path, { method: "POST", body: JSON.stringify(body) }, options);
 }
 
+export async function apiPut<T>(path: string, body: unknown, options: ApiRequestOptions = {}): Promise<T> {
+  return apiRequest<T>(path, { method: "PUT", body: JSON.stringify(body) }, options);
+}
+
 export async function apiPatch<T>(path: string, body: unknown, options: ApiRequestOptions = {}): Promise<T> {
   return apiRequest<T>(path, { method: "PATCH", body: JSON.stringify(body) }, options);
 }

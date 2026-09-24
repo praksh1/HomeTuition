@@ -14,4 +14,6 @@ test("an English term is matched as a word rather than inside an innocent word",
 
 test("common Devanagari abusive text is sent to review", () => {
   assert.ok(flaggedTerms("तँ मुजी होस्").includes("मुजी"));
+  assert.ok(flaggedTerms("timi muji hau").includes("muji"));
+  assert.deepEqual(flaggedTerms("mujikund is a place"), []);
 });

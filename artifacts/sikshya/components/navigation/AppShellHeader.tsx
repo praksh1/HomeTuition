@@ -65,9 +65,9 @@ export function AppShellHeader({ role, routeName }: { role: ShellRole; routeName
     {
       section: "Help",
       icon: "zap",
-      label: "Fadko assistant",
-      detail: "Cost-controlled answers are being prepared",
-      disabled: true,
+      label: "Ask Fadko",
+      detail: "Quick answers and a person when needed",
+      onPress: () => go(`${profilePath}?support=1`),
     },
     {
       section: "Access",
