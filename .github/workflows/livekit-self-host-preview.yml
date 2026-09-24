@@ -67,7 +67,11 @@ jobs:
       - name: Existing real two-browser classroom media regression
         run: pnpm --filter @workspace/sikshya run test:livekit-live
       - name: Existing teacher-permission and reconnect regression
+        env:
+          EXPO_PUBLIC_API_URL: http://127.0.0.1:8080
+          EXPO_NO_DOTENV: '1'
         run: |
+          pnpm --filter @workspace/sikshya run build
           bash scripts/start-local-livekit-stack.sh
           pnpm --filter @workspace/sikshya run test:floor-live
       # Deliberately NO deployment, cloud credentials, production environment or private artifacts.

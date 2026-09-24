@@ -32,6 +32,10 @@ the Linux/real-server checks will use a disposable GitHub runner, not production
 
 ## Problems and surprises
 
+First CI run `36019306745` passed the kit/container/non-dev SFU and real-media suite, but the final
+full-classroom permission suite lacked its required web export in this new standalone workflow.
+Added an explicit disposable build pointing at localhost before that test; no app logic changed.
+
 Older CLAUDE/VIDEO documents describe Daily as the deployed provider despite the current accepted
 LiveKit Cloud release. Inspected the implementation rather than using those stale deployment claims.
 Existing provider accepts arbitrary configured LiveKit hosts; a new provider/rewrite is unnecessary.
