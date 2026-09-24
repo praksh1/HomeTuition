@@ -39,6 +39,7 @@ jobs:
       - run: pnpm run db:push
       - run: pnpm --filter @workspace/api-server run build
       - run: pnpm --filter @workspace/api-server run test:messages
+      - run: pnpm --filter @workspace/api-server run test:class-chat
       - run: pnpm --filter @workspace/api-server run test:floor
       - name: Install browser
         run: |

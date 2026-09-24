@@ -195,46 +195,52 @@ async function main() {
 
     console.log("\nA monthly course\n");
 
-    const plan = await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } });
+    // This is a separate conversation fixture. Sharing the single-class teacher above
+    // made the suite fail whenever the wall clock put that lesson across 17:00 Nepal.
+    // Keep schedule-conflict protection intact; isolate both course participants instead.
+    const courseTeacher = await register("teacher", "Course Teacher Rai");
+    sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${courseTeacher.user.id}`);
+    const courseStudent = await register("student", "Course Student Maya");
+    const plan = await api("/monthly/plan", { method: "POST", token: courseTeacher.token, body: { paymentMethod: "esewa" } });
     check("the teacher has a paid test plan", plan.status === 201 || plan.body?.alreadyHad === true,
       `status=${plan.status} ${JSON.stringify(plan.body).slice(0, 160)}`);
-    const klass = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
+    const klass = await api("/monthly/classes", { method: "POST", token: courseTeacher.token, body: {
       subject: "Maths", topic: "Daily algebra", startMinute: 17 * 60, durationMinutes: 60,
       timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20 } });
     const classId = klass.body?.id ?? klass.body?.class?.id;
     if (!classId) throw new Error(`monthly class was not created: ${klass.status} ${JSON.stringify(klass.body)}`);
-    const joined = await api(`/monthly/classes/${classId}/join`, { method: "POST", token: student.token, body: {
+    const joined = await api(`/monthly/classes/${classId}/join`, { method: "POST", token: courseStudent.token, body: {
       paymentMethod: "esewa" } });
     check("a student holds a place in the course", joined.status === 201, `status=${joined.status}`);
 
-    const courseKey = await upload(student.token);
-    const posted = await api(`/monthly/classes/${classId}/messages`, { method: "POST", token: student.token, body: {
+    const courseKey = await upload(courseStudent.token);
+    const posted = await api(`/monthly/classes/${classId}/messages`, { method: "POST", token: courseStudent.token, body: {
       body: "Sir, is this right?", fileKey: courseKey, fileType: "image/png", fileName: "q4.png" } });
     check("a file can be sent in the course conversation too", posted.status === 201,
       `status=${posted.status} ${JSON.stringify(posted.body).slice(0, 160)}`);
     check("and comes back on the message", posted.body?.attachments?.[0]?.fileKey === courseKey,
       JSON.stringify(posted.body?.attachments));
 
-    const courseThread = await api(`/monthly/classes/${classId}/messages`, { token: teacher.token });
+    const courseThread = await api(`/monthly/classes/${classId}/messages`, { token: courseTeacher.token });
     const courseBubble = (courseThread.body?.messages ?? []).find((m) => m.id === posted.body?.id);
     check("the teacher sees it in the course thread", !!courseBubble, JSON.stringify(courseThread.body).slice(0, 200));
     check("with the file on it", courseBubble?.attachments?.[0]?.fileKey === courseKey,
       JSON.stringify(courseBubble?.attachments));
-    const courseOpen = await openFile(courseKey, teacher.token);
+    const courseOpen = await openFile(courseKey, courseTeacher.token);
     check("and can open it", courseOpen.status === 200, `status=${courseOpen.status}`);
     const courseNosy = await openFile(courseKey, stranger.token);
     check("somebody not in the course cannot", courseNosy.status === 403, `status=${courseNosy.status}`);
 
     const courseReact = await api(`/monthly/classes/${classId}/messages/${posted.body?.id}/reaction`, {
-      method: "POST", token: teacher.token, body: { emoji: "🎉" } });
+      method: "POST", token: courseTeacher.token, body: { emoji: "🎉" } });
     check("reacting works in the course conversation", courseReact.body?.emoji === "🎉", JSON.stringify(courseReact.body));
 
     /*
      * A pinned message is the same row read a second way. A pinned photo of the timetable is
      * exactly the thing that must keep its file, and it is served by a different query.
      */
-    await api(`/monthly/messages/${posted.body?.id}/pin`, { method: "PATCH", token: teacher.token, body: { pinned: true } });
-    const pinnedThread = await api(`/monthly/classes/${classId}/messages`, { token: student.token });
+    await api(`/monthly/messages/${posted.body?.id}/pin`, { method: "PATCH", token: courseTeacher.token, body: { pinned: true } });
+    const pinnedThread = await api(`/monthly/classes/${classId}/messages`, { token: courseStudent.token });
     const pin = (pinnedThread.body?.pinned ?? [])[0];
     check("a pinned message keeps its file", pin?.attachments?.[0]?.fileKey === courseKey,
       JSON.stringify(pinnedThread.body?.pinned).slice(0, 200));
