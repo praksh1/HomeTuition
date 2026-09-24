@@ -3,7 +3,7 @@
 - Date: 2026-09-23
 - Agent: Codex
 - Branch: codex/classroom-whiteboard-ux
-- Status: in progress
+- Status: deployed and verified on Preview; physical iPhone acceptance remains
 
 ## Requested
 
@@ -79,6 +79,18 @@ The existing 25-page import and per-picture limits remain. No purchases or real 
   retired-HUD assertion (current and retired controls share a test ID). The check now requires
   exactly one matching legacy "call window" label and proves it hidden. Existing real call
   and floor-permission assertions passed before that selector error; no assertion was removed.
+- Final full local whiteboard regression passed 149/149 on the unchanged application build
+  with corrected test assertions. Final Preview candidate: 7c0dd55, workflow 35954798002.
+- Workflow 35954798002 succeeded and deployed 7c0dd5550ba4e68dc8c3bfda548eb55f48db2ce8:
+  real two-person LiveKit 48/48, complete classroom 69/69, whiteboard 149/149, phone layout
+  18/18. The full-class gate proves Zoom Done is unobstructed and closing both Zoom and page
+  management restores the hidden-call controls; the call stays mounted.
+- Post-deploy served asset/readiness check passed: new PDF/Zoom/hidden-media/overlay markers,
+  all startup bundles HTTP 200, staging API ready=ok, no production API reference. Entry bundle:
+  entry-5183aa4bc1f1d1c49264d1565687c1f4.js. Workflow also matched served HTML/bundles to its build.
+- The synthetic second-14-page-PDF regression passed 14/14 against deployed Preview, including
+  matching phone scale, Zoom/Fit, last-sheet visibility, remove/reimport and rotation. No real
+  accounts or database records were changed by the post-deployment check.
 
 ## Problems and surprises
 
@@ -108,8 +120,12 @@ Preview workflow 35948941690 was deliberately cancelled before deployment to inc
 visual toast correction; 35949582289 succeeded (1b36d98). Follow-up 35951412456 stopped on the
 real invisible-HUD obstruction. 35952793924 was cancelled before deployment to include the
 cancel-clear assertion correction. Run 35953632079 stopped on the strict selector collision.
-The app changes are in 51e7005; d8e6e9f only strengthens a test and updates this worklog.
-Verify served asset and API identity after successful deployment.
+Final workflow 35954798002 succeeded and verified Preview at 7c0dd55. The app changes are in
+51e7005; d8e6e9f and 7c0dd55 correct regression assertions and update this worklog. No production
+deployment was made. All local test servers/browser sessions started for this pass are closed.
+
+- Preview: https://hometuition-preview.praksh-dhakal.workers.dev
+- Release evidence: https://github.com/praksh1/HomeTuition/actions/runs/35954798002
 
 ## Physical-device acceptance still needed
 
