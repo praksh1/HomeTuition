@@ -53,6 +53,18 @@ The existing 25-page import and per-picture limits remain. No purchases or real 
 - Exact-build Zoom check at 320 / 390 / 1440: all controls at least 44 x 44 and tappable.
   Screenshot review caught the transient success notice visually covering the phone popup;
   custom panels now suppress the transient toast while open. Added a permanent regression.
+- After final panel correction: targeted repeated-PDF/Zoom regression 12/12; rebuilt app's
+  Zoom popup visibly clear and tappable at 320 / 390 / 1440. Supplemental student fit checks at
+  320 / 375 / 430 / 1440 passed against a 390-point teacher screen; idle teacher rotation sent
+  a fresh viewport and retained the student picture. These are Chromium, not physical Safari.
+- Preview run 35949582289 passed and deployed 1b36d98, including real two-person LiveKit and
+  complete classroom checks. Supplemental combined-layout QA then found that the teacher's
+  hidden-call rail could cover Zoom Done at 390px (the isolated component tests missed it).
+  Added onOverlayChange through web/native board bridge: board panels temporarily hide the
+  floating dock/video frame without unmounting the call; close restores the prior call view.
+  Added footer clearance for teacher media status, host-signal assertions and a real full-class
+  phone interaction check. Rebuilt/typechecked successfully. Combined local hit test now has
+  all five Zoom controls accessible and confirms the real teacher dock returns after closing.
 
 ## Problems and surprises
 
@@ -78,6 +90,8 @@ floor authorization. No claim of native LiveKit SDK or physical Safari testing.
 
 ## Remaining risks / next pickup point
 
-Finish full board/phone gates, latest hidden controls at narrow sizes, final typecheck. Push exact
-branch and run isolated Preview workflow; verify served asset and API identity afterwards.
+Commits 02275da and 1b36d98 are pushed to the existing branch. Preview workflow 35948941690
+was deliberately cancelled before deployment to include the visual toast correction. Workflow
+35949582289 succeeded. Final combined-layout follow-up is being verified before its own gated
+Preview release; verify served asset and API identity after that deployment.
 Owner should validate their own 14-page PDF on the two physical iPhones after deployment.

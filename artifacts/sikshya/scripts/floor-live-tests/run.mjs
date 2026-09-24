@@ -509,6 +509,32 @@ async function main() {
   const spoke = countOf("classroom.floor.spoke");
   check("no speech is invented either", spoke === 0, String(spoke));
 
+  console.log("\n[7c] A phone teacher can use board panels without floating controls covering them");
+  await t.page.setViewportSize({ width: 390, height: 844 });
+  await t.page.waitForTimeout(700);
+  await t.page.getByTestId("video-hide-btn").click();
+  await t.page.getByTestId("teacher-hidden-microphone").waitFor();
+  const statusBox = await t.page.getByTestId("teacher-hidden-media-status").boundingBox();
+  const pageBar = await t.page.locator(".sikshya-board__pages").boundingBox();
+  check("hidden-call status stays above board navigation", statusBox && pageBar && statusBox.y + statusBox.height <= pageBar.y);
+  await t.page.getByLabel("Whiteboard zoom", { exact: true }).click();
+  await t.page.getByTestId("classroom-control-dock").waitFor({ state: "detached" });
+  check("Zoom clears the floating control rail", await t.page.getByTestId("classroom-control-dock").count() === 0);
+  check("opening a board panel does not unmount the ongoing call", await t.page.getByTestId("livekit-embed").count() === 1);
+  const done = t.page.getByLabel("Close whiteboard zoom", { exact: true });
+  check("Zoom Done is actually unobstructed", await done.evaluate(node => {
+    const b = node.getBoundingClientRect(), top = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+    return top === node || node.contains(top);
+  }));
+  await done.click();
+  await t.page.getByTestId("teacher-hidden-microphone").waitFor();
+  check("closing Zoom restores the teacher controls", await t.page.getByTestId("teacher-hidden-camera").isVisible());
+  await t.page.getByLabel("Open board pages", { exact: true }).click();
+  await t.page.getByTestId("classroom-control-dock").waitFor({ state: "detached" });
+  await t.page.getByLabel("Close board page menu", { exact: true }).click();
+  await t.page.getByTestId("teacher-hidden-microphone").waitFor();
+  check("page management also restores the controls after closing", await t.page.getByTestId("teacher-hidden-camera").isVisible());
+
   console.log("\n[8] Nothing threw on any screen");
   check("no page error in the teacher's browser", t.errors.length === 0, t.errors[0] ?? "");
   check("no page error in the first student's browser", s.errors.length === 0, s.errors[0] ?? "");

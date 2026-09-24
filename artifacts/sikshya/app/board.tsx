@@ -139,6 +139,7 @@ export default function BoardPage() {
   );
 
   const handleClearAll = useCallback(() => postToHost({ type: "clear_out" }), [postToHost]);
+  const handleOverlayChange = useCallback((open: boolean) => postToHost({ type: "overlay_out", open }), [postToHost]);
 
   const handlePageCommand = useCallback((command: BoardPageCommand) => {
     postToHost({ type: "pages_out", command });
@@ -164,6 +165,7 @@ export default function BoardPage() {
     <View style={styles.root}>
       <SmartBoard
         classroomChrome={classroomChrome}
+        onOverlayChange={handleOverlayChange}
         readOnly={readOnly}
         sceneUpdates={updates}
         onConsumeUpdates={consume}

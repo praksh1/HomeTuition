@@ -26,6 +26,7 @@ import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardViewport, Scene
 
 interface Props {
   classroomChrome?: boolean;
+  onOverlayChange?: (open: boolean) => void;
   readOnly?: boolean;
   sceneUpdates: SceneDelta[];
   onConsumeUpdates: () => void;
@@ -64,6 +65,7 @@ const DELIVERY_DEADLINE_MS = 15_000;
 
 export default function SmartBoard({
   classroomChrome = false,
+  onOverlayChange,
   readOnly = false,
   sceneUpdates,
   onConsumeUpdates,
@@ -184,7 +186,7 @@ export default function SmartBoard({
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
-      let msg: { type?: string; key?: string; elements?: unknown[]; files?: unknown[]; pageId?: string; view?: BoardViewport; pages?: BoardPage[]; activePageId?: string; command?: BoardPageCommand; laser?: BoardLaserPoint | null };
+      let msg: { type?: string; open?: boolean; key?: string; elements?: unknown[]; files?: unknown[]; pageId?: string; view?: BoardViewport; pages?: BoardPage[]; activePageId?: string; command?: BoardPageCommand; laser?: BoardLaserPoint | null };
       try {
         msg = JSON.parse(event.nativeEvent.data);
       } catch {
@@ -215,6 +217,10 @@ export default function SmartBoard({
         }
         return;
       }
+      if (msg.type === "overlay_out" && typeof msg.open === "boolean") {
+        onOverlayChange?.(msg.open);
+        return;
+      }
       if (msg.type === "scene_out" && Array.isArray(msg.elements)) {
         onSceneChange(
           msg.elements,
@@ -239,8 +245,10 @@ export default function SmartBoard({
         onLaser?.(msg.laser);
       }
     },
-    [activePageId, post, readOnly, theme, classroomChrome, laser, onSceneChange, onViewportChange, onClearAll, onPageCommand, onLaser],
+    [activePageId, post, readOnly, theme, classroomChrome, laser, onSceneChange, onViewportChange, onClearAll, onPageCommand, onLaser, onOverlayChange],
   );
+
+  useEffect(() => () => { onOverlayChange?.(false); }, [onOverlayChange]);
 
   const source = useMemo(
     () => ({ uri: `${BOARD_ORIGIN}/board?embed=1&readOnly=${readOnly ? "1" : "0"}&theme=${theme}` }),

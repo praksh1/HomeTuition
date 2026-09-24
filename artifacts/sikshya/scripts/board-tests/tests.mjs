@@ -41,6 +41,7 @@ export const tests = [
       assert('first sheet is visibly rendered on both phones', beforeT.red>1000 && beforeS.red>1000);
       assert('matching phone canvases show matching PDF scale', Math.abs(beforeT.red-beforeS.red)<beforeT.red*0.03);
       await teacher.getByLabel('Whiteboard zoom',{exact:true}).click();
+      assert('opening Zoom asks the host to clear floating classroom controls', await teacher.evaluate(()=>window.__out.filter(m=>m.type==='overlay_out').at(-1)?.open===true));
       assert('temporary import notices do not cover the open Zoom panel', await teacher.locator('.Toast').evaluateAll(nodes=>nodes.every(node=>getComputedStyle(node).visibility==='hidden')));
       await teacher.getByLabel('Zoom in on whiteboard',{exact:true}).click();
       await teacher.waitForTimeout(450); await pump(teacher,student); await student.waitForTimeout(450);
@@ -51,6 +52,7 @@ export const tests = [
       await teacher.waitForTimeout(450); await pump(teacher,student); await student.waitForTimeout(450);
       assert('Fit returns the current sheet, not all fourteen tiny pages', (await ink(student)).red>1000);
       await teacher.getByLabel('Close whiteboard zoom').click();
+      assert('closing Zoom restores floating classroom controls', await teacher.evaluate(()=>window.__out.filter(m=>m.type==='overlay_out').at(-1)?.open===false));
       await teacher.getByLabel('Manage teaching materials').click();
       await teacher.getByLabel('Find PDF page 14 of 14 on board').click();
       await teacher.waitForTimeout(450); await pump(teacher,student); await student.waitForTimeout(450);
