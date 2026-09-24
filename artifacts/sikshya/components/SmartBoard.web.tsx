@@ -11,6 +11,7 @@ import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardTemplate, Board
 import { LASER_THROTTLE_MS, normalizeLaserPoint } from "../utils/whiteboardLaser";
 import { teachingLibrary } from "./boardLibrary";
 import { isShareableSize, shrinkForSharing } from "../utils/boardImage";
+import { boardScenePackets } from "../utils/boardScenePackets";
 import {
   protectBoardElementsFromEraser,
   rememberVisibleBoardElements,
@@ -125,6 +126,7 @@ function pageThumbnailStyle(template: BoardTemplate, active: boolean): React.CSS
 const BOARD_CSS = `
 .sikshya-board--hide-props .App-menu__left { display: none !important; }
 .sikshya-board .App-menu__left { max-height: calc(100% - 6rem); }
+.sikshya-board .Toast { bottom: 148px; max-width: calc(100% - 24px); left: 50%; margin-left: 0; transform: translateX(-50%); pointer-events: none; }
 
 /*
  * On a phone these two buttons must not be in the toolbar row.
@@ -154,6 +156,11 @@ const BOARD_CSS = `
 .sikshya-board__pages button { transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease, opacity 140ms ease; }
 .sikshya-board__pages button:not(:disabled):hover { transform: translateY(-1px); }
 .sikshya-board__pages button:disabled { cursor: default !important; opacity: 0.38; }
+@media (max-width: 600px) {
+  .sikshya-board__pages > button[aria-label="Previous board page"],
+  .sikshya-board__pages > button[aria-label="Next board page"] { display: none; }
+  .sikshya-board__page-label { min-width: 98px !important; }
+}
 @media (max-width: 360px) {
   .sikshya-board__thumb-toggle[aria-label="Show board page thumbnails"] { display: none !important; }
   .sikshya-board__page-label { min-width: 88px !important; max-width: 112px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -410,6 +417,8 @@ function SmartBoard({
   const [inkColor, setInkColor] = useState<string>(BOARD_INK_COLORS[0][1]);
   const [inkThickness, setInkThickness] = useState<1 | 2 | 4>(2);
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
+  const [zoomPercent, setZoomPercent] = useState(100);
   const [mediaElements, setMediaElements] = useState<ExcalidrawElement[]>([]);
   const pdfGroups = new Map<string, string[]>();
   for (const element of mediaElements) {
@@ -420,6 +429,7 @@ function SmartBoard({
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [pageSidebarOpen, setPageSidebarOpen] = useState(false);
   const [materialsOpen, setMaterialsOpen] = useState(false);
+  useEffect(() => { if (pageMenuOpen || materialsOpen) setZoomMenuOpen(false); }, [pageMenuOpen, materialsOpen]);
   const [laserMode, setLaserMode] = useState(false);
   const lastLaserSent = useRef(0);
   const activePage = pages.find((page) => page.id === activePageId) ?? pages[0];
@@ -428,6 +438,30 @@ function SmartBoard({
   /** Locking protects page content; it must never take the teacher's Unlock control away. */
   const canManagePages = !readOnly && Boolean(onPageCommand);
   const activePageIndex = Math.max(0, pages.findIndex((page) => page.id === activePage?.id));
+
+  function zoomBoard(factor: number) {
+    if (!api || readOnly) return;
+    const state = api.getAppState();
+    const previous = state.zoom.value;
+    const zoom = clamp(previous * factor, MIN_ZOOM, MAX_ZOOM);
+    // Zoom about the centre, not the top-left corner; students follow that same centre.
+    api.updateScene({ appState: { zoom: { value: zoom },
+      scrollX: state.scrollX + state.width / (2 * zoom) - state.width / (2 * previous),
+      scrollY: state.scrollY + state.height / (2 * zoom) - state.height / (2 * previous) } });
+    scheduleViewportPublish();
+  }
+
+  function fitCurrentSheet() {
+    if (!api) return;
+    const state = api.getAppState();
+    const cx = -state.scrollX + state.width / (2 * state.zoom.value);
+    const cy = -state.scrollY + state.height / (2 * state.zoom.value);
+    const pictures = api.getSceneElements().filter((element) => element.type === "image" && !element.isDeleted);
+    const distance = (element: ExcalidrawElement) => Math.hypot(Number(element.x) + Number(element.width) / 2 - cx, Number(element.y) + Number(element.height) / 2 - cy);
+    const nearest = pictures.sort((a, b) => distance(a) - distance(b))[0];
+    api.scrollToContent(nearest ? [nearest] : api.getSceneElements(), { fitToContent: true, animate: false, maxZoom: 1 });
+    scheduleViewportPublish();
+  }
 
   /** An explicit document list is easier to use than a browser right-click menu. */
   function changeMediaObjects(ids: string[], operation: "remove" | "lock" | "unlock") {
@@ -659,7 +693,22 @@ function SmartBoard({
           +
         </button>
       ) : null}
-      {pageMenuOpen || materialsOpen ? (
+      {!readOnly ? <button type="button" aria-label="Whiteboard zoom" aria-expanded={zoomMenuOpen}
+        onClick={() => { setZoomMenuOpen((open) => !open); setPageMenuOpen(false); setMaterialsOpen(false); }}
+        style={{ ...pageButtonStyle, minWidth: 56, color: colors.primary, fontSize: "small", fontVariantNumeric: "tabular-nums" }}>{zoomPercent}%</button> : null}
+      {zoomMenuOpen && !readOnly ? <div role="group" aria-label="Whiteboard zoom controls"
+        style={{ position: "absolute", left: 0, bottom: "calc(100% + 8px)", width: 250, padding: 12, display: "grid", gap: 10, border: `1px solid ${colors.border}`, borderRadius: 16, background: colors.card, boxShadow: "0 12px 32px rgba(15,23,42,0.18)" }}>
+        <strong style={{ color: colors.foreground, fontSize: "small" }}>Zoom for everyone</strong>
+        <span style={{ color: colors.mutedForeground, fontSize: "small", lineHeight: 1.4 }}>Students follow your view, fitted to their screen.</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" aria-label="Zoom out on whiteboard" disabled={zoomPercent <= 10} onClick={() => zoomBoard(0.8)} style={{ ...pageMenuButtonStyle, flex: 1 }}>−</button>
+          <button type="button" aria-label="Reset whiteboard zoom to 100 percent" onClick={() => zoomBoard(100 / zoomPercent)} style={{ ...pageMenuButtonStyle, flex: 2 }}>100%</button>
+          <button type="button" aria-label="Zoom in on whiteboard" disabled={zoomPercent >= 1000} onClick={() => zoomBoard(1.25)} style={{ ...pageMenuButtonStyle, flex: 1 }}>+</button>
+        </div>
+        <button type="button" onClick={fitCurrentSheet} style={pageMenuButtonStyle}>Fit current sheet</button>
+        <button type="button" aria-label="Close whiteboard zoom" onClick={() => setZoomMenuOpen(false)} style={pageMenuButtonStyle}>Done</button>
+      </div> : null}
+      {(!zoomMenuOpen && (pageMenuOpen || materialsOpen)) ? (
         <div style={{ position: "absolute", left: 0, bottom: "calc(100% + 8px)", width: 260, maxHeight: "min(70vh, 520px)", overflowY: "auto", padding: 10, display: "grid", gap: 8, border: "1px solid rgba(15,23,42,0.12)", borderRadius: 14, background: "rgba(255,255,255,0.98)", boxShadow: "0 12px 32px rgba(15,23,42,0.18)" }}>
           <div style={{ fontSize: "small", color: "var(--text-primary-color, black)", fontWeight: 700 }}>{materialsOpen ? "Teaching materials" : "Board pages"}</div>
           {materialsOpen ? <span style={{ fontSize: "small", lineHeight: 1.5, color: "var(--text-muted-color, slategray)" }}>
@@ -697,7 +746,7 @@ function SmartBoard({
             <div style={{ display: "grid", gap: 8, paddingTop: 8, borderTop: "1px solid rgba(15,23,42,0.12)" }}>
               {!materialsOpen && <strong style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>Pictures and PDF pages on this board page</strong>}
               {pageLocked ? <button type="button" onClick={() => onPageCommand?.({ op: "lock", pageId: activePageId, locked: false })} style={pageMenuButtonStyle}>Unlock board page to edit materials</button> : null}
-              {[...pdfGroups.entries()].filter(([, ids]) => ids.length > 1).map(([documentId, ids], index) => (
+              {[...pdfGroups.entries()].map(([documentId, ids], index) => (
                 <div key={documentId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: 7, borderRadius: 9, background: "rgba(29,78,216,0.06)" }}>
                   <span style={{ color: "var(--text-primary-color, black)", fontSize: "small" }}>PDF {index + 1} · {ids.length} pages</span>
                   <button type="button" disabled={pageLocked} aria-label={`Remove all pages of PDF ${index + 1}`} onClick={() => changeMediaObjects(ids, "remove")} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Remove all</button>
@@ -885,7 +934,9 @@ function SmartBoard({
       changed.push(el);
     }
 
-    if (changed.length > 0) onSceneChange(changed, files, activePageId);
+    for (const packet of boardScenePackets(changed, files, activePageId)) {
+      onSceneChange(packet.elements, packet.files, packet.pageId);
+    }
   }, [activePageId, api, boardReadOnly, onSceneChange, readyToShare]);
   flushRef.current = flush;
 
@@ -920,6 +971,7 @@ function SmartBoard({
       elements: readonly ExcalidrawElement[],
       appState?: ExcalidrawAppState,
     ) => {
+      if (appState?.zoom?.value) setZoomPercent(Math.round(appState.zoom.value * 100));
       const nextSelected = Object.entries(appState?.selectedElementIds ?? {})
         .filter(([, selected]) => selected)
         .map(([id]) => id);
@@ -975,6 +1027,22 @@ function SmartBoard({
     sentView.current = null;
     scheduleViewportPublish();
   }, [activePageId, api, boardReadOnly, scheduleViewportPublish]);
+
+  // Browser chrome/orientation can change the canvas independently of a drawing gesture.
+  // Publish the measured editor (not the stale pre-resize app state) even if the teacher is idle.
+  useEffect(() => {
+    const editor = boardRootRef.current?.querySelector(".sikshya-board__editor");
+    if (!api || readOnly || !editor) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { api.refresh(); scheduleViewportPublish(); }, 120);
+    };
+    const observer = new ResizeObserver(refresh);
+    observer.observe(editor);
+    window.visualViewport?.addEventListener("resize", refresh);
+    return () => { clearTimeout(timer); observer.disconnect(); window.visualViewport?.removeEventListener("resize", refresh); };
+  }, [api, readOnly, scheduleViewportPublish]);
 
   useEffect(() => {
     return () => {
@@ -1238,16 +1306,18 @@ function SmartBoard({
 
     let cancelled = false;
     let placed = false;
+    const controller = new AbortController();
 
     const load = (src: string) =>
-      new Promise<HTMLImageElement | null>((resolve) => {
+      new Promise<{ width: number; height: number }>((resolve, reject) => {
         const image = new window.Image();
-        image.onload = () => resolve(image);
-        image.onerror = () => resolve(null);
+        const timer = setTimeout(() => { image.src = ""; reject(new Error("Image decoding timed out")); }, 20000);
+        image.onload = () => { clearTimeout(timer); resolve({ width: image.naturalWidth, height: image.naturalHeight }); };
+        image.onerror = () => { clearTimeout(timer); reject(new Error("Image could not be decoded")); };
         image.src = src;
       });
 
-    const place = (entries: { image: HTMLImageElement; dataUrl: string }[]) => {
+    const place = (entries: { width: number; height: number; dataUrl: string }[]) => {
       const state = api.getAppState();
       const zoom = state.zoom?.value ?? 1;
       const viewW = (state.width || 800) / zoom;
@@ -1258,17 +1328,20 @@ function SmartBoard({
       const documentId = `document-${insertDocument.key}`;
       let cursorY = 0;
       let firstElement: Record<string, unknown> | null = null;
+      // A second document gets its own space rather than being piled over the first one.
+      const existing = api.getSceneElements().filter((element) => !element.isDeleted);
+      const startX = existing.length ? Math.max(...existing.map((element) => Number(element.x) + Number(element.width))) + 64 : null;
 
       entries.forEach((entry, index) => {
         // Every page gets the same treatment: fill most of the view without overflowing it.
         const scale = Math.min(
           1,
-          (viewW * 0.8) / entry.image.naturalWidth,
-          (viewH * 0.8) / entry.image.naturalHeight,
+          (viewW * 0.8) / entry.width,
+          (viewH * 0.8) / entry.height,
         );
-        const width = Math.max(1, Math.round(entry.image.naturalWidth * scale));
-        const height = Math.max(1, Math.round(entry.image.naturalHeight * scale));
-        const x = -state.scrollX + (viewW - width) / 2;
+        const width = Math.max(1, Math.round(entry.width * scale));
+        const height = Math.max(1, Math.round(entry.height * scale));
+        const x = startX ?? -state.scrollX + (viewW - width) / 2;
         const y = -state.scrollY + (viewH - height) / 2 + cursorY;
         // Pages stack down the canvas in reading order, so scrolling the board scrolls the
         // document.
@@ -1330,60 +1403,53 @@ function SmartBoard({
         if (firstElement) {
           api.scrollToContent([firstElement], { fitToContent: true, animate: false, maxZoom: 1 });
         }
-        flush();
+        flushRef.current();
+        // Fitting can happen while onChange is suppressed. Publish the final view explicitly.
+        scheduleViewportPublish();
       }, 0);
     };
 
     void (async () => {
-      let sources: string[] = [];
-
-      if (insertDocument.kind === "pdf") {
-        try {
+      try {
+        let entries: { width: number; height: number; dataUrl: string }[];
+        let truncated = false;
+        if (insertDocument.kind === "pdf") {
           api.setToast({ message: "Opening the PDF…", duration: 60000 });
           const { renderPdfToImages } = await import("../utils/pdfToImages");
-          const { pages, truncated } = await renderPdfToImages(insertDocument.dataUrl, ({ page, total }) => {
-            if (!cancelled) api.setToast({ message: `Adding page ${page} of ${total}…`, duration: 60000 });
-          });
+          const result = await renderPdfToImages(insertDocument.dataUrl, ({ page, total }) => {
+            if (!cancelled) api.setToast({ message: `Preparing PDF page ${page} of ${total}…`, duration: 60000 });
+          }, controller.signal);
           if (cancelled) return;
-          sources = pages;
-          api.setToast(
-            truncated
-              ? { message: `Added the first ${pages.length} pages — a whole textbook does not fit on one board.`, duration: 6000 }
-              : null,
-          );
-        } catch {
-          if (!cancelled) {
-            api.setToast({ message: "That PDF could not be opened. Try sharing a photo of the page.", duration: 5000 });
-          }
-          return;
+          truncated = result.truncated;
+          // pdf.js already knows every page's dimensions. Decoding 14 full-size Image objects
+          // again in parallel can exhaust an iPhone after the progress reaches the last page.
+          entries = result.pages.map((dataUrl, index) => ({ dataUrl, ...result.sizes[index] }));
+        } else {
+          entries = [{ dataUrl: insertDocument.dataUrl, ...await load(insertDocument.dataUrl) }];
         }
-      } else {
-        sources = [insertDocument.dataUrl];
+        if (cancelled) return;
+        if (!entries.length || entries.some((entry) => !(entry.width > 0 && entry.height > 0))) throw new Error("No readable pages");
+        place(entries);
+        placed = true;
+        api.setToast({ message: insertDocument.kind === "pdf"
+          ? `${truncated ? "First " : ""}${entries.length} PDF ${entries.length === 1 ? "page added" : "pages added"}. Open Files to find each sheet.${truncated ? " This board imports up to 25 pages at a time." : ""}`
+          : "Picture added to the board.", duration: 6500 });
+      } catch {
+        if (!cancelled) {
+          insertedImages.current.delete(insertDocument.key);
+          api.setToast({ message: "The file could not be added. Please try a smaller PDF or a photo. Your existing board is unchanged.", duration: 8000 });
+        }
       }
-
-      if (cancelled || sources.length === 0) return;
-
-      const loaded = await Promise.all(sources.map(load));
-      if (cancelled) return;
-      const usable = loaded
-        .map((image, index) => ({ image, dataUrl: sources[index] }))
-        .filter((entry): entry is { image: HTMLImageElement; dataUrl: string } => entry.image !== null);
-
-      if (usable.length === 0) {
-        api.setToast({ message: "That file could not be opened as a picture.", duration: 4000 });
-        return;
-      }
-      place(usable);
-      placed = true;
     })();
 
     return () => {
       cancelled = true;
+      controller.abort();
       // A teacher may switch pages while a PDF is still rendering. The next effect retries it
       // on the selected page; a completed placement keeps its key so it cannot be duplicated.
       if (!placed) insertedImages.current.delete(insertDocument.key);
     };
-  }, [api, boardReadOnly, insertDocument, activePageId, flush]);
+  }, [api, boardReadOnly, insertDocument, activePageId, scheduleViewportPublish]);
 
   const updateSelectedObjects = useCallback(
     (operation: "delete" | "duplicate" | "lock" | "unlock") => {

@@ -1316,6 +1316,7 @@ export default function StudentClassroom() {
                     remains read-only, and stays mounted while chat slides over it. */}
                 <SmartBoard
                   key={id}
+                  classroomChrome
                   readOnly
                   sceneUpdates={sceneUpdates}
                   onConsumeUpdates={consumeSceneUpdates}

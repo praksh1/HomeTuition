@@ -184,19 +184,26 @@ writeFileSync(
 import React from "react";
 import { createRoot } from "react-dom/client";
 import LiveKitEmbed from ${JSON.stringify(path.join(appRoot, "components", "LiveKitEmbed.web.tsx"))};
+import { ClassroomControlDock } from ${JSON.stringify(path.join(appRoot, "components", "classes", "ClassroomControlDock.tsx"))};
 
 window.__events = { left: 0, watchedLeft: 0 };
 let setControls;
 let requestCamera;
+let hideCall;
 
 function Harness() {
   const [controls, set] = React.useState(true);
   const [cameraRequest, setCameraRequest] = React.useState(0);
+  const [micRequest, setMicRequest] = React.useState(0);
+  const [hidden, setHidden] = React.useState(false);
+  const [connected, setConnected] = React.useState(false);
+  const [localMedia, setLocalMedia] = React.useState({micEnabled:false,cameraEnabled:false});
+  hideCall = setHidden;
   requestCamera = () => setCameraRequest((value) => value + 1);
   const lockedStudent = new URLSearchParams(window.location.search).get("role") === "locked-student";
   setControls = set;
   return React.createElement("div", { style: { position: "relative", width: "100vw", height: "100vh" } },
-    React.createElement(LiveKitEmbed, {
+    React.createElement('div', {style:{position:'absolute',inset:0,display:hidden?'none':'block'}}, React.createElement(LiveKitEmbed, {
       roomUrl: "wss://example.invalid",
       meetingToken: "test-token",
       displayName: "Sita Sharma",
@@ -207,26 +214,48 @@ function Harness() {
       canUseMicrophone: !lockedStudent,
       canUseCamera: !lockedStudent,
       cameraToggleRequest: cameraRequest,
-      onLocalMediaChange: (media) => { window.__localMedia = media; },
+      micToggleRequest: micRequest,
+      onConnectionChange: setConnected,
+      onLocalMediaChange: (media) => { window.__localMedia = media; setLocalMedia(media); },
       onLeft: () => { window.__events.left += 1; },
       onWatchedParticipantLeft: () => { window.__events.watchedLeft += 1; },
       showControls: controls,
-    }),
+    })),
+    hidden && !lockedStudent ? React.createElement(ClassroomControlDock, {
+      bottom:20,chatOpen:false,unreadCount:0,videoHidden:true,participantCount:40,
+      localMedia,mediaConnected:connected,onToggleParticipants:()=>{},onToggleChat:()=>{},
+      onToggleVideo:()=>setHidden(false),onLeave:()=>{},leaveLabel:'End class',
+      onToggleMicrophone:()=>setMicRequest(v=>v+1),onToggleCamera:()=>setCameraRequest(v=>v+1),
+    }) : null,
   );
 }
 createRoot(document.getElementById("root")).render(React.createElement(Harness));
 window.__showControls = (value) => setControls(Boolean(value));
 window.__requestCamera = () => requestCamera();
+window.__hideCall = (value) => hideCall(value);
 `,
 );
 
 const bundle = path.join(work, "bundle.js");
+const fontStub = path.join(work, 'expo-font.js');
+writeFileSync(fontStub, `
+const loaded=new Set();
+export async function loadAsync(name,source){
+ const entries=typeof name==='string'?[[name,source]]:Object.entries(name||{});
+ for(const [family,src] of entries){if(loaded.has(family))continue;
+ const url=typeof src==='string'?src:src?.uri||src?.default;if(!url)continue;
+ const style=document.createElement('style');style.textContent='@font-face{font-family:"'+family+'";src:url("'+url+'")}';document.head.appendChild(style);loaded.add(family);}
+}
+export function isLoaded(name){return loaded.has(name)} export function isLoading(){return false}
+export function useFonts(map){void loadAsync(map);return [true,null]}
+export function processFontFamily(name){return name} export function getLoadedFonts(){return [...loaded]}
+export default {loadAsync,isLoaded,isLoading,useFonts,processFontFamily,getLoadedFonts};`);
 
 // The one substitution: the real component, with the fake provider underneath it.
 const { ok: buildOk, error: buildError } = await bundleForBrowser({
   entry,
   outfile: bundle,
-  alias: { "@/lib/video": fakeProvider },
+  alias: { "@/lib/video": fakeProvider, "expo-font": fontStub },
 });
 if (!buildOk) {
   console.error(buildError);
@@ -339,6 +368,31 @@ async function run(chromium, viewport, label) {
   await p.evaluate(() => window.__requestCamera());
   await p.waitForTimeout(150);
   check(`${label}: the external board camera turns actual media on`, await p.evaluate(() => window.__localMedia?.cameraEnabled === true));
+  await p.evaluate(() => window.__hideCall(true));
+  await p.waitForTimeout(200);
+  for (const kind of ['microphone','camera']) {
+    const control=p.getByTestId('teacher-hidden-'+kind);
+    const box=await control.boundingBox();
+    check(`${label}: hidden-call ${kind} is tappable and inside the screen`,!!box && box.width>=44 && box.height>=44 && box.x>=0 && box.x+box.width<=viewport.width);
+    await control.click(); await p.waitForTimeout(150);
+    check(`${label}: hidden-call ${kind} changes provider state`,await p.evaluate(kind=>window.__localMedia[kind==='microphone'?'micEnabled':'cameraEnabled']===false,kind));
+    await control.click(); await p.waitForTimeout(150);
+    check(`${label}: hidden-call ${kind} switches back on`,await p.evaluate(kind=>window.__localMedia[kind==='microphone'?'micEnabled':'cameraEnabled']===true,kind));
+  }
+  const rects=await p.locator('[data-testid="teacher-floor-participants"], [data-testid^="teacher-hidden-microphone"], [data-testid^="teacher-hidden-camera"], [data-testid="video-show-call-btn"], [data-testid="classroom-dock-chat"], [data-testid="classroom-dock-more"]').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,right:r.right,y:r.y,bottom:r.bottom};}));
+  check(`${label}: hidden teacher controls do not overlap`,rects.every((r,i)=>rects.slice(i+1).every(s=>r.right<=s.x || s.right<=r.x || r.bottom<=s.y || s.bottom<=r.y)));
+  if(viewport.width<500) {
+    await p.setViewportSize({width:320,height:700}); await p.waitForTimeout(150);
+    const bounds=await p.getByTestId('classroom-control-dock').boundingBox();
+    check(`${label}: hidden teacher rail also fits a 320-point screen`,bounds.x>=0 && bounds.x+bounds.width<=320);
+    await p.setViewportSize(viewport);
+  }
+  await p.evaluate(() => window.__lk.drop()); await p.waitForTimeout(100);
+  check(`${label}: hidden media controls disable while reconnecting`,await p.getByTestId('teacher-hidden-microphone').getAttribute('aria-disabled')==='true');
+  await p.evaluate(() => window.__lk.recover()); await p.waitForTimeout(100);
+  check(`${label}: hidden media controls recover with the call`,await p.getByTestId('teacher-hidden-camera').getAttribute('aria-disabled')!=='true');
+  await p.screenshot({path:path.join(SHOTS,`${label}-teacher-hidden.png`)});
+  await p.getByTestId('video-show-call-btn').click();
   for (const id of ["livekit-mic", "livekit-camera", "livekit-share", "livekit-more", "livekit-leave"]) {
     const box = await p.locator(`[data-testid="${id}"]`).boundingBox();
     check(

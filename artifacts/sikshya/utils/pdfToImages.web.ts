@@ -31,6 +31,7 @@ export interface PdfRenderProgress {
 export interface PdfRenderResult {
   /** One JPEG data URL per rendered page, in order. */
   pages: string[];
+  sizes: { width: number; height: number }[];
   /** True when the document had more pages than are placed on the board. */
   truncated: boolean;
 }
@@ -76,29 +77,34 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
 export async function renderPdfToImages(
   dataUrl: string,
   onProgress?: (progress: PdfRenderProgress) => void,
+  signal?: AbortSignal,
 ): Promise<PdfRenderResult> {
   ensureWorker();
-
-  const doc = await pdfjs.getDocument({
+  if (signal?.aborted) throw new Error("PDF import cancelled");
+  const task = pdfjs.getDocument({
     data: dataUrlToBytes(dataUrl),
     // No scripting, no external fetches: this is a document being photographed, not run.
     isEvalSupported: false,
     disableAutoFetch: true,
-  }).promise;
-
-  const total = Math.min(doc.numPages, MAX_PAGES);
+  });
+  const abort = () => { void task.destroy().catch(() => {}); };
+  signal?.addEventListener("abort", abort, { once: true });
   const pages: string[] = [];
-
+  const sizes: { width: number; height: number }[] = [];
   try {
+    const doc = await task.promise;
+    const total = Math.min(doc.numPages, MAX_PAGES);
+    const truncated = doc.numPages > total;
     for (let pageNumber = 1; pageNumber <= total; pageNumber++) {
+      if (signal?.aborted) throw new Error("PDF import cancelled");
       onProgress?.({ page: pageNumber, total });
       const page = await doc.getPage(pageNumber);
+      const canvas = document.createElement("canvas");
       try {
         const base = page.getViewport({ scale: 1 });
         const scale = Math.min(3, TARGET_EDGE / Math.max(base.width, base.height));
         const viewport = page.getViewport({ scale: scale > 0 ? scale : 1 });
 
-        const canvas = document.createElement("canvas");
         canvas.width = Math.max(1, Math.round(viewport.width));
         canvas.height = Math.max(1, Math.round(viewport.height));
         const context = canvas.getContext("2d");
@@ -110,19 +116,25 @@ export async function renderPdfToImages(
         context.fillRect(0, 0, canvas.width, canvas.height);
 
         await page.render({ canvas, canvasContext: context, viewport }).promise;
-        pages.push(canvas.toDataURL("image/jpeg", JPEG_QUALITY));
+        if (signal?.aborted) throw new Error("PDF import cancelled");
+        const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+        if (!dataUrl.startsWith("data:image/jpeg;base64,")) throw new Error("This browser ran out of space to render the PDF.");
+        pages.push(dataUrl);
+        sizes.push({ width: canvas.width, height: canvas.height });
 
         // Release each page before starting the next; a long document rendered all at once is
         // what exhausts memory on a modest laptop.
+      } finally {
         canvas.width = 0;
         canvas.height = 0;
-      } finally {
         page.cleanup();
       }
+      // Let a phone paint progress and service the ongoing call between sheets.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
+    return { pages, sizes, truncated };
   } finally {
-    await doc.destroy();
+    signal?.removeEventListener("abort", abort);
+    await task.destroy();
   }
-
-  return { pages, truncated: doc.numPages > total };
 }

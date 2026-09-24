@@ -320,6 +320,10 @@ export default function Classroom() {
   const videoWindowSize: VideoWindowSize =
     callWindow.state === "compact" ? "small" : callWindow.state === "normal" ? "medium" : callWindow.state;
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [localMedia, setLocalMedia] = useState({ micEnabled: false, cameraEnabled: false });
+  const [mediaConnected, setMediaConnected] = useState(false);
+  const [micToggleRequest, setMicToggleRequest] = useState(0);
+  const [cameraToggleRequest, setCameraToggleRequest] = useState(0);
   /** Upload options stay folded away until asked for — they are occasional actions, and as
    * two permanent full-width buttons they were consuming screen the video should have. */
   const [materialMenuOpen, setMaterialMenuOpen] = useState(false);
@@ -1406,6 +1410,10 @@ export default function Classroom() {
           chatOpen={false}
           unreadCount={unreadChatCount}
           videoHidden={videoHidden}
+          localMedia={videoProvider === "livekit" && Platform.OS === "web" ? localMedia : undefined}
+          mediaConnected={mediaConnected}
+          onToggleMicrophone={() => setMicToggleRequest((count) => count + 1)}
+          onToggleCamera={() => setCameraToggleRequest((count) => count + 1)}
           participantCount={floor?.scope === "teacher" ? floor.participantCount : participantCount}
           raisedHands={floor?.scope === "teacher" ? floor.queue.length : 0}
           participantOpen={false}
@@ -1746,6 +1754,10 @@ export default function Classroom() {
                     grant pending rather than reporting it done; this is what tells it to finish.
                   */
                   onMediaReady={floorActions.mediaReady}
+                  onConnectionChange={setMediaConnected}
+                  onLocalMediaChange={setLocalMedia}
+                  micToggleRequest={micToggleRequest}
+                  cameraToggleRequest={cameraToggleRequest}
                   canScreenShare
                   isTeacher
                   teacherUserId={teacherParticipantId}
