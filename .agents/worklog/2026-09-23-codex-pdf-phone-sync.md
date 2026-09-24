@@ -73,6 +73,12 @@ The existing 25-page import and per-picture limits remain. No purchases or real 
   now emits two host-only overlay_out events. A separate browser reproduction confirmed these
   exact events and intact canvases. Cancellation still forbids every other event; regression
   now additionally compares the student's pixel count before and after cancellation.
+- Corrected cancel-clear regression: 7/7. Additional Chromium mobile context (390 x 844,
+  isMobile, hasTouch, deviceScaleFactor 3): all 14 repeat-PDF/Zoom/rotation checks passed.
+- Run 35953632079 stopped before deployment on a strict selector collision in the newly added
+  retired-HUD assertion (current and retired controls share a test ID). The check now requires
+  exactly one matching legacy "call window" label and proves it hidden. Existing real call
+  and floor-permission assertions passed before that selector error; no assertion was removed.
 
 ## Problems and surprises
 
@@ -98,8 +104,27 @@ floor authorization. No claim of native LiveKit SDK or physical Safari testing.
 
 ## Remaining risks / next pickup point
 
-Commits 02275da and 1b36d98 are pushed to the existing branch. Preview workflow 35948941690
-was deliberately cancelled before deployment to include the visual toast correction. Workflow
-35949582289 succeeded. Final combined-layout follow-up is being verified before its own gated
-Preview release; verify served asset and API identity after that deployment.
-Owner should validate their own 14-page PDF on the two physical iPhones after deployment.
+Preview workflow 35948941690 was deliberately cancelled before deployment to include the
+visual toast correction; 35949582289 succeeded (1b36d98). Follow-up 35951412456 stopped on the
+real invisible-HUD obstruction. 35952793924 was cancelled before deployment to include the
+cancel-clear assertion correction. Run 35953632079 stopped on the strict selector collision.
+The app changes are in 51e7005; d8e6e9f only strengthens a test and updates this worklog.
+Verify served asset and API identity after successful deployment.
+
+## Physical-device acceptance still needed
+
+Use Preview with the teacher on one iPhone and an enrolled student on another:
+
+1. Join the same lesson and import a short PDF. Compare what both phones show.
+2. Import the owner's 14-page PDF without removing the first. Its first sheet should appear;
+   Files must list all fourteen new sheets. Locate the last sheet from Files.
+3. Use the percentage control in the teacher's page navigator: zoom in/out, then Fit current
+   sheet. The student's view must follow automatically; they cannot detach from the lesson.
+4. Remove the second document through Files, import it again, and check both screens. Rotate
+   either phone and confirm the student retains the teacher's visible lesson content.
+5. Hide the teacher's call window. Toggle microphone/camera from the compact controls and show
+   the call again to confirm both sets of controls agree. Repeat with Zoom and Files open:
+   floating controls must clear the panel and return on close without reconnecting the call.
+
+Chromium phone viewport tests are not a claim of physical iPhone Safari verification. The
+owner's actual PDF/recordings were not received with this request; synthetic PDFs were used.
