@@ -36,6 +36,10 @@ Older CLAUDE/VIDEO documents describe Daily as the deployed provider despite the
 LiveKit Cloud release. Inspected the implementation rather than using those stale deployment claims.
 Existing provider accepts arbitrary configured LiveKit hosts; a new provider/rewrite is unnecessary.
 Current credentials diagnostic copy is Cloud-centric; the private preview probe is host-neutral.
+Self-hosted token revocation is NOT Cloud-equivalent (official token-lifecycle docs): cached/refreshed
+grants need explicit adversarial replay tests and media-admission enforcement before real-user release.
+This first private/synthetic pilot does not silently weaken or claim equivalence for production.
+Added LF normalization/attributes so generating the Linux helper from a Windows checkout is safe.
 One broad PowerShell `rg` wildcard path failed; explicit directory/file paths used instead.
 
 ## Fabrications found

@@ -178,6 +178,18 @@ The disposable CI SFU uses loopback rather than public-IP discovery. Public DNS,
 issuance, carrier-network TURN relay, load, VM restart and physical phone checks require the selected host.
 No workflow deploys this bundle or reads cloud secrets.
 
+### Security gate before any real-user or production migration
+
+Self-hosting is not security-identical to Cloud: LiveKit documents automatic token revocation as a
+Cloud-only feature. A cached/refreshed token can remain usable after removal or a permission change
+on a self-hosted server. Fadko starts students as audience and re-applies server-authoritative floor
+permissions, but that alone is not evidence that a modified client cannot reuse an older grant.
+Keep this first pilot private/synthetic. Before broader rollout, explicitly test cached-token replay
+after mute/revoke, account suspension, classroom end and participant removal; design enforcement at
+the media admission boundary, including refreshed tokens, and test it. Short TTLs reduce exposure
+but are not instant revocation. Do not weaken permissions or call this gate passed because normal
+reconnect UI works. [LiveKit token lifecycle](https://docs.livekit.io/frontends/reference/tokens-grants/).
+
 ## Upstream sources checked 24 September 2026
 
 - [LiveKit VM deployment](https://docs.livekit.io/transport/self-hosting/vm/)

@@ -57,6 +57,7 @@ test('write NEW private bundle and refuse accidental regeneration/key rotation',
     assert.throws(() => writeBundle(parent, settings), { code: 'EEXIST' });
     assert.equal(readFileSync(path.join(destination, 'livekit.yaml'), 'utf8'), original);
     assert.equal(readFileSync(path.join(destination, '.gitignore'), 'utf8'), '*\n');
+    assert.ok(!readFileSync(path.join(destination, 'previewctl.sh'), 'utf8').includes('\r'));
     if (process.platform !== 'win32') assert.equal(statSync(path.join(destination, 'livekit.yaml')).mode & 0o777, 0o600);
   } finally { rmSync(parent, { recursive: true, force: true }); }
 });

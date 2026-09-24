@@ -97,7 +97,7 @@ export function writeBundle(parent, settings) {
   for (const [name, contents] of Object.entries(bundle)) {
     writeFileSync(path.join(destination, name), contents, { mode: 0o600, flag: 'wx' });
   }
-  writeFileSync(path.join(destination, 'previewctl.sh'), readFileSync(path.join(here, 'previewctl.sh')),
+  writeFileSync(path.join(destination, 'previewctl.sh'), readFileSync(path.join(here, 'previewctl.sh'), 'utf8').replace(/\r\n/g, '\n'),
     { mode: 0o700, flag: 'wx' });
   return destination;
 }

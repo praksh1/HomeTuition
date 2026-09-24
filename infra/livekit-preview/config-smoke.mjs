@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { writeBundle } from './generate.mjs';
-import { readPreviewSettings } from './probe.mjs';
+import { readPreviewSettings, probe } from './probe.mjs';
 
 assert.ok(process.env.LIVEKIT_SERVER_BIN, 'LIVEKIT_SERVER_BIN is required; this test must not silently skip.');
 const require = createRequire(new URL('../../artifacts/api-server/package.json', import.meta.url));
@@ -40,6 +40,15 @@ try {
   if (!ready) throw new Error(`Generated LiveKit config failed to start: ${output.replaceAll(env.LIVEKIT_API_SECRET, '[redacted]').replaceAll(env.LIVEKIT_API_KEY, '[redacted]')}`);
   const rooms = new RoomServiceClient('http://127.0.0.1:7880', env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET);
   assert.deepEqual(await rooms.listRooms(), []);
+  const nativeFetch = globalThis.fetch;
+  try {
+    // Exercise the real probe against the local SFU. Only this disposable test rewrites
+    // transport; the shipping probe always requires public, certificate-verified HTTPS.
+    globalThis.fetch = (url, options) => nativeFetch(`http://127.0.0.1:7880${new URL(url).pathname}`, options);
+    const result = await probe(env);
+    assert.equal(result.ok, true, result.message);
+    assert.match(result.message, /Open rooms: 0/);
+  } finally { globalThis.fetch = nativeFetch; }
   const wrong = new RoomServiceClient('http://127.0.0.1:7880', 'devkey', 'secret');
   await assert.rejects(() => wrong.listRooms());
   const name = 'fadko-selfhost-preview-smoke';
