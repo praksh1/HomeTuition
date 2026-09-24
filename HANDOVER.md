@@ -732,6 +732,16 @@ was added.
 
 ## 8. What needs a decision — questions for the owner, not for an AI
 
+### Current: self-hosted LiveKit preview (24 September 2026)
+
+Owner approved preparing a self-hosted preview, keeping production on LiveKit Cloud and preserving
+the accepted classroom/backend. No purchases. Need an available Linux VM with public UDP networking,
+two controlled preview subdomains, and a hosting budget choice if no existing server is available.
+No hosting provider, domain or new charge has been selected. Setup kit and operator/owner checklist:
+`infra/livekit-preview/README.md`. Exact test/activation evidence is in
+`.agents/worklog/2026-09-24-codex-livekit-self-host-preview.md`. Earlier make-up, quiz, support and
+Messages cold-refresh tasks remain queued; this experiment is not their completion.
+
 ### Current: lesson remedies and teacher studio (24 September 2026)
 
 Owner approved production promotion of completed support and the teacher-workflow repairs, with no purchases or automatic AI refunds/bans. Current evidence: `.agents/worklog/2026-09-24-codex-teacher-studio.md`; current queue: `.agents/backlog/2026-09-24-teacher-studio-and-remedies.md`. Older checkout/tier paragraphs below are historical and must not override the current implementation or reactivate retired monthly rules.

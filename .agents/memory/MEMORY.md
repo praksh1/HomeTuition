@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Self-hosted LiveKit preview](livekit-self-host-preview.md) — owner wants an isolated, learnable VM pilot without changing production Cloud, current architecture or the pending product queue; no purchases, no mid-call provider switching.
+
 - [Classmate directory and private-message safeguards](classmates-directory-and-message-safety.md) — connected public names/ids only; keep moderation private, compose without leaving the call, shared enrollment and bilateral blocks enforced by the server.
 
 - [Production testing and teacher studio](teacher-studio-production-sep24.md) — 24 Sep: support production approved; preserve classroom/support TODOs; scheduling/booking reliability and simplified scalable teacher workspace next. Make-up policy is a proposal, not an automatic refund authorization.
