@@ -16,7 +16,7 @@ Owner request: 24 September 2026. Promote the verified support work to productio
 
 ## Carry-forward work (not forgotten)
 
-- Four classroom items remain in `2026-09-24-classroom-followups.md`: student count parity; clear-board access on teacher phone; usable participants sheet with 50 students/10 raised hands; authorized student participant directory/private messaging.
+- Four classroom items are implemented in `2026-09-24-classroom-followups.md`: student count parity; clear-board access on teacher phone; usable participants sheet with 50 students/10 raised hands; authorized student participant directory/private messaging. See the classroom-followups worklog for verified release state, not this checkbox alone.
 - Support roadmap remains in `docs/FADKO-SUPPORT-FREE-FIRST-2026-09-24.md`: review/publish private guides; independently reconcile provider payments; evidence attachments/vision with consent and access controls; deeper diagnostics; operator workspace; measured provider/pilot quality. Refunds and bans stay human-only. Production approval does not activate a paid provider or grant permission to send private evidence externally.
 
 ## Proposed make-up policy (discussion, NOT active policy)

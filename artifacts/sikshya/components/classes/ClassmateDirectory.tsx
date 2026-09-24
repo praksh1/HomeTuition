@@ -13,8 +13,8 @@ type Access = { canSend: boolean; blockedByYou: boolean; reason: string | null }
 
 /** Names only, from the authenticated classroom socket. Messaging is checked again by the API.
  * Compose in place: opening a classmate must never unmount the live classroom or its call. */
-export function ClassmateDirectory({ open, onClose, classmates, userId }: {
-  open: boolean; onClose: () => void; classmates: Person[]; userId: number;
+export function ClassmateDirectory({ open, onClose, classmates, userId, connected = true }: {
+  open: boolean; onClose: () => void; classmates: Person[]; userId: number; connected?: boolean;
 }) {
   const colors = useColors();
   const { t, numeric, space, radius, isCompact } = useLayout();
@@ -64,7 +64,7 @@ export function ClassmateDirectory({ open, onClose, classmates, userId }: {
       {person ? <Pressable accessibilityRole="button" accessibilityLabel="Back to classmates" onPress={() => setPerson(null)} style={{ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }}><Feather name="arrow-left" size={20} color={colors.primary} /></Pressable> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[t.title3, { color: colors.foreground }]} numberOfLines={1}>{person ? person.name : "Classmates here"}</Text>
-        <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>{person ? "Private message · your call stays connected" : `${classmates.length} students · includes you, not the teacher`}</Text>
+        <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>{person ? "Private message · classroom stays open" : connected ? `${classmates.length} ${classmates.length === 1 ? "student" : "students"} · includes you, not the teacher` : "Reconnecting to classmates…"}</Text>
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel="Close classmates" onPress={onClose} style={{ minWidth: 44, minHeight: 44, justifyContent: "center", alignItems: "center" }}><Feather name="x" size={20} color={colors.foreground} /></Pressable>
     </View>
@@ -80,13 +80,13 @@ export function ClassmateDirectory({ open, onClose, classmates, userId }: {
         <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{busy ? "Please wait…" : "Send privately"}</Text>
       </Pressable>
       {notice ? <Text accessibilityLiveRegion="polite" style={[t.callout, { color: colors.mutedForeground }]}>{notice}</Text> : null}
-      {access ? <Pressable accessibilityRole="button" disabled={busy} onPress={() => void toggleBlock()} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.callout, { color: colors.destructive }]}>{access.blockedByYou ? "Unblock this person" : "Block private messages from this person"}</Text></Pressable> : null}
+      {access ? <Pressable accessibilityRole="button" disabled={busy} aria-disabled={busy} onPress={() => void toggleBlock()} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.callout, { color: colors.destructive }]}>{access.blockedByYou ? "Unblock this person" : "Block private messages from this person"}</Text></Pressable> : null}
       <Text style={[t.caption, { color: colors.mutedForeground }]}>To report a conversation, open it in Messages and choose Safety & help. Your messages are kept for review.</Text>
     </ScrollView> : <>
       <TextInput accessibilityLabel="Search classmates" placeholder="Search classmates" placeholderTextColor={colors.inkFaint} value={query} onChangeText={setQuery}
         style={[t.body, { color: colors.foreground, minHeight: 44, backgroundColor: colors.surfaceSunk, padding: space.sm, borderRadius: radius.md }]} />
       <FlatList style={{ flex: 1, minHeight: 0 }} keyboardShouldPersistTaps="handled" data={classmates.filter(p => p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))} keyExtractor={p => String(p.userId)}
-        ListEmptyComponent={<Text style={[t.callout, { color: colors.mutedForeground }]}>No classmates match this view.</Text>}
+        ListEmptyComponent={<Text style={[t.callout, { color: colors.mutedForeground }]}>{connected ? "No classmates match this view." : "The live list will return when your classroom reconnects."}</Text>}
         renderItem={({ item }) => <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm, paddingVertical: space.sm, borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <Text style={[t.body, { flex: 1, minWidth: 0, color: colors.foreground }]} numberOfLines={2}>{item.name}{item.userId === userId ? " (you)" : ""}</Text>
           {item.userId !== userId ? <Pressable accessibilityRole="button" accessibilityLabel={`Message ${item.name} privately`} onPress={() => setPerson(item)} style={{ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: colors.actionSoft }}><Feather name="message-circle" size={20} color={colors.primary} /></Pressable> : null}

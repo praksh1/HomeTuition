@@ -193,7 +193,6 @@ export default function StudentClassroom() {
   const {
     connected,
     accessDenied,
-    presenceCount,
     messages,
     floatingReactions,
     sendReaction,
@@ -704,11 +703,10 @@ export default function StudentClassroom() {
   // don't fall back to enrolledCount before the socket connects, or a ghost count/avatar
   // shows up for a class nobody has actually joined yet.
   const [directoryOpen, setDirectoryOpen] = useState(false);
-  const livePresenceCount = connected
-    ? floor?.scope === "student"
-      ? floor.participantCount
-      : presenceCount
-    : 0;
+  // The generic presence packet counts sockets, including the teacher and duplicate tabs.
+  // Only the floor gives us the unique connected-student count promised by this label.
+  const classmatesReady = connected && floor?.scope === "student";
+  const livePresenceCount = classmatesReady ? floor.participantCount : 0;
 
   /** Students never author anything, so outgoing changes are dropped. */
   const noopSceneChange = useCallback(() => {}, []);
@@ -814,11 +812,11 @@ export default function StudentClassroom() {
               </Text>
             </View>
             <Pressable testID="student-classmates" accessibilityRole="button"
-              accessibilityLabel={connected ? `${livePresenceCount} students here, including you; teacher not counted. Open classmates.` : "Classmates reconnecting"}
-              disabled={!connected} aria-disabled={!connected} onPress={() => setDirectoryOpen(true)}
+              accessibilityLabel={classmatesReady ? `${livePresenceCount} ${livePresenceCount === 1 ? "student" : "students"} here, including you; teacher not counted. Open classmates.` : "Classmates reconnecting"}
+              disabled={!classmatesReady} aria-disabled={!classmatesReady} onPress={() => setDirectoryOpen(true)}
               style={{ minWidth: 44, minHeight: 44, flexDirection: "row", gap: space.xxs, alignItems: "center", justifyContent: "center" }}>
               <Feather name="users" size={16} color={colors.primary} />
-              <Text style={[t.caption, numeric, { color: colors.primary }]}>{connected ? livePresenceCount : "—"}</Text>
+              <Text style={[t.caption, numeric, { color: colors.primary }]}>{classmatesReady ? livePresenceCount : "—"}</Text>
             </Pressable>
             {classIsLive ? (
               <View
@@ -858,7 +856,7 @@ export default function StudentClassroom() {
         </View>
 
         <ClassmateDirectory open={directoryOpen} onClose={() => setDirectoryOpen(false)}
-          classmates={connected && floor?.scope === "student" ? floor.classmates ?? [] : []} userId={Number(user?.id ?? 0)} />
+          connected={classmatesReady} classmates={classmatesReady ? floor.classmates ?? [] : []} userId={Number(user?.id ?? 0)} />
 
         <View
           pointerEvents="box-none"
