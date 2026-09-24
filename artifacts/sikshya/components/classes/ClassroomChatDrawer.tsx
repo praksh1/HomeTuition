@@ -15,6 +15,7 @@ import {
 import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
+import { useVisibleViewport } from "@/hooks/useVisibleViewport";
 import type { ChatMessage } from "@/hooks/useClassroomSocket";
 import type { FloatingReaction } from "@/hooks/useClassroomSocket";
 import { CLASS_REACTIONS, REACTION_COOLDOWN_MS } from "@/utils/classroomReactions";
@@ -77,6 +78,8 @@ export function ClassroomChatDrawer({
 }: ClassroomChatDrawerProps) {
   const colors = useColors();
   const { t, numeric, isCompact, space, radius, elevation } = useLayout();
+  const visibleViewport = useVisibleViewport(open);
+  const shortViewport = visibleViewport.height < 500;
   const scrollRef = useRef<ScrollView>(null);
   const nearEndRef = useRef(true);
   const previousCountRef = useRef(messages.length);
@@ -101,6 +104,12 @@ export function ClassroomChatDrawer({
     const timer = setTimeout(() => scrollToLatest(false), 0);
     return () => clearTimeout(timer);
   }, [open, scrollToLatest]);
+
+  useEffect(() => {
+    if (!open || !nearEndRef.current) return;
+    const timer = setTimeout(() => scrollToLatest(false), 0);
+    return () => clearTimeout(timer);
+  }, [open, visibleViewport.height, reactionPicker, scrollToLatest]);
 
   useEffect(() => {
     const added = Math.max(0, messages.length - previousCountRef.current);
@@ -135,7 +144,7 @@ export function ClassroomChatDrawer({
       ]}
       testID="classroom-chat-drawer"
     >
-      {isCompact ? (
+      {isCompact && !shortViewport ? (
         <View style={[styles.handleWrap, { minHeight: space.lg }]}>
           <View style={{ width: 42, height: 4, borderRadius: radius.pill, backgroundColor: colors.border }} />
         </View>
@@ -156,9 +165,9 @@ export function ClassroomChatDrawer({
         <View style={[styles.headerIcon, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
           <Feather name="message-circle" size={18} color={colors.primary} />
         </View>
-        <View style={styles.grow}>
+        <View style={[styles.grow, { minWidth: 0 }]}>
           <Text style={[t.title3, { color: colors.foreground }]}>In-class messages</Text>
-          <Text style={[t.caption, { color: connected ? colors.mutedForeground : colors.warn }]}>{connected ? "Everyone in this class · Live" : "Reconnecting · your draft is saved here"}</Text>
+          <Text accessibilityLiveRegion="polite" aria-live="polite" style={[t.caption, { color: connected ? colors.mutedForeground : colors.warn }]}>{connected ? (shortViewport ? "Live class chat" : "Everyone in this class · Live") : "Reconnecting · your draft is saved here"}</Text>
         </View>
         <TouchableOpacity
           testID="classroom-chat-close"
@@ -274,7 +283,7 @@ export function ClassroomChatDrawer({
 
       {reactionPicker && onReaction ? (
         <View testID="classroom-reaction-picker" style={{ paddingHorizontal: space.md, paddingVertical: space.sm, gap: space.xs, borderTopWidth: 1, borderTopColor: colors.border }}>
-          <Text style={[t.overline, { color: colors.inkFaint }]}>React to the class</Text>
+          {!shortViewport ? <Text style={[t.overline, { color: colors.inkFaint }]}>React to the class</Text> : null}
           <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.xs }}>
             {CLASS_REACTIONS.map(({ emoji, label }) => <TouchableOpacity key={emoji}
               accessibilityRole="button" accessibilityLabel={`React: ${label}`}
@@ -284,7 +293,7 @@ export function ClassroomChatDrawer({
               <Text style={t.title2}>{emoji}</Text>
             </TouchableOpacity>)}
           </View>
-          <Text style={[t.caption, { color: colors.mutedForeground }]}>A quick reaction appears for everyone, then fades.</Text>
+          {!shortViewport ? <Text style={[t.caption, { color: colors.mutedForeground }]}>A quick reaction appears for everyone, then fades.</Text> : null}
         </View>
       ) : null}
 
@@ -295,7 +304,7 @@ export function ClassroomChatDrawer({
             gap: space.xs,
             paddingHorizontal: space.md,
             paddingTop: space.sm,
-            paddingBottom: isCompact ? space.md : space.sm,
+            paddingBottom: isCompact && !shortViewport ? space.md : space.sm,
             borderTopColor: colors.border,
             backgroundColor: colors.card,
           },
@@ -314,7 +323,7 @@ export function ClassroomChatDrawer({
           ]}
         >
           {onReaction ? <TouchableOpacity accessibilityRole="button" accessibilityLabel="Class reactions"
-            testID="classroom-reactions-toggle" accessibilityState={{ expanded: reactionPicker }}
+            testID="classroom-reactions-toggle" accessibilityState={{ expanded: reactionPicker }} aria-expanded={reactionPicker}
             onPress={() => setReactionPicker((open) => !open)}
             style={[styles.iconButton, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN }]}>
             <Feather name={reactionPicker ? "x" : "smile"} size={21} color={reactionPicker ? colors.primary : colors.inkFaint} />
@@ -331,25 +340,29 @@ export function ClassroomChatDrawer({
             onKeyPress={(event) => {
               const keyboardEvent = event as unknown as {
                 preventDefault?: () => void;
-                nativeEvent: { key?: string; shiftKey?: boolean; isComposing?: boolean };
+                nativeEvent: { key?: string; keyCode?: number; shiftKey?: boolean; isComposing?: boolean };
               };
               if (
                 Platform.OS === "web" &&
                 keyboardEvent.nativeEvent.key === "Enter" &&
                 !keyboardEvent.nativeEvent.isComposing &&
+                keyboardEvent.nativeEvent.keyCode !== 229 &&
                 !keyboardEvent.nativeEvent.shiftKey
               ) {
                 keyboardEvent.preventDefault?.();
                 submit();
               }
             }}
-            style={[t.body, styles.input, { color: colors.foreground }]}
+            // Use the readable 17px phone step without a heading's weight. Do not
+            // disable browser zoom to keep an input visible on a small screen.
+            style={[isCompact ? t.title3 : t.body, styles.input, { color: colors.foreground, fontFamily: t.body.fontFamily, letterSpacing: t.body.letterSpacing }]}
           />
           <TouchableOpacity
             testID="chat-send"
             accessibilityRole="button"
             accessibilityLabel="Send message"
             disabled={!value.trim() || !connected}
+            aria-disabled={!value.trim() || !connected}
             onPress={submit}
             activeOpacity={0.8}
             style={[
@@ -375,7 +388,7 @@ export function ClassroomChatDrawer({
     return (
       <View
         pointerEvents="auto"
-        style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 388, maxWidth: "38vw", zIndex: 240 } as object}
+        style={{ position: "fixed", top: visibleViewport.top, right: 0, height: visibleViewport.height, width: 388, maxWidth: "38vw", zIndex: 240 } as object}
       >
         {panel}
       </View>
@@ -388,9 +401,12 @@ export function ClassroomChatDrawer({
         testID="classroom-chat-scrim"
         accessibilityLabel="Close class messages"
         onPress={onClose}
-        style={{ flex: 1, justifyContent: "flex-end", backgroundColor: colors.scrim }}
+        style={[
+          { flex: 1, justifyContent: "flex-end", backgroundColor: colors.scrim },
+          Platform.OS === "web" ? { position: "absolute", top: visibleViewport.top, left: 0, right: 0, height: visibleViewport.height } : undefined,
+        ]}
       >
-        <Pressable onPress={() => {}} style={{ height: "82%", minHeight: 360 }}>
+        <Pressable onPress={() => {}} style={{ height: shortViewport ? "100%" : "82%", minHeight: 0 }}>
           {panel}
         </Pressable>
       </Pressable>
@@ -413,7 +429,7 @@ const styles = {
   senderLine: { flexDirection: "row", alignItems: "center" } as const,
   senderLineMe: { justifyContent: "flex-end" } as const,
   messageBody: { minWidth: 44 } as const,
-  newMessages: { position: "absolute", alignSelf: "center", minHeight: 36, flexDirection: "row", alignItems: "center", justifyContent: "center" } as const,
+  newMessages: { position: "absolute", alignSelf: "center", minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", justifyContent: "center" } as const,
   composer: { flexDirection: "row", alignItems: "flex-end", borderTopWidth: 1 } as const,
   inputShell: { flex: 1, flexDirection: "row", alignItems: "flex-end", borderWidth: 1 } as const,
   input: { flex: 1, minHeight: HIT_SLOP_MIN, maxHeight: 112, paddingTop: 12, paddingBottom: 10, outlineStyle: "none" } as object,

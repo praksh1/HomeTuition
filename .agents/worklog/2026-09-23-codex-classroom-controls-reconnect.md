@@ -4,7 +4,7 @@
 - Agent: Codex
 - Branch: codex/classroom-whiteboard-ux
 - Base commit: e9848d5
-- Status: local verification complete; Preview release pending
+- Status: deployed and verified on Preview; production unchanged
 
 ## Requested
 
@@ -60,6 +60,12 @@ Completed:
   Undo cannot bring the previous page's content into the new blank page.
 - App unit suite: 559/560; the sole remaining failure is the unchanged support-menu assertion
   described below. Current-class journey contracts pass 7/7.
+- Preview workflow 35932278266 passed all release gates, including a real two-party LiveKit
+  call (48/48) and the complete API-backed teacher/two-student permission flow (61/61).
+- Post-deployment checks against the actual isolated Preview: 38/38 across six toolbar widths,
+  real image pixels on catch-up, equal-version/empty snapshots and material unlock/remove/Undo.
+- Served HTML and all three initial JS bundles exactly matched the release build and targeted
+  the staging API. Staging `/api/readyz` returned HTTP 200 after deployment.
 - Screenshots inspected in temporary fadko-board-chrome, floor-shots and fadko-classroom-chat
   directories. Local fixtures use controlled provider/account state; they are not a physical
   iPhone or an actual two-person Cloud LiveKit call.
@@ -98,9 +104,20 @@ Production and the paused AI-support rollout.
 
 ## Remaining risks / next pickup point
 
-Commit `d545e9f401ab613d8443503132ab6f9bb5f5b55f` pushed to the classroom branch. Preview workflow
-run `35930879450` stopped at the assertion described above. Railway reports that same commit deployed successfully to service
-`hometuition-api-staging`; its `/api/readyz` returns HTTP 200 with `status: ok`.
+Application commit `d545e9f401ab613d8443503132ab6f9bb5f5b55f`, followed by test-only correction
+`dfbee5035382e1074c85ea49c8ed56ca1463fcd9`, pushed to `codex/classroom-whiteboard-ux`.
 
-Push the test-only correction and rerun the Preview Worker release gate. No production merge/deploy. Physical
-iPhone/Android camera/mic and dropped-call retry should be retested by the owner on Preview.
+- Successful release: https://github.com/praksh1/HomeTuition/actions/runs/35932278266
+- Preview: https://hometuition-preview.praksh-dhakal.workers.dev
+- Cloudflare Preview version: `f25f4628-72a9-4d47-b8ae-ba84c02cd96c`
+- Railway GitHub status confirms `dfbee5035382e1074c85ea49c8ed56ca1463fcd9` deployed successfully
+  to `hometuition-api-staging`, service `cc10a94f-b24b-47bc-ae5c-ec2a9307cfa0`, deployment
+  `64de0b90-03bc-4d34-8bb1-cb47e8265365`.
+
+No production merge/deploy. Physical iPhone/Android camera/mic and dropped-call retry should
+still be retested by the owner on Preview. Reload Preview before testing. The Files control
+manages the current board page; PDF sheets remain separate objects, not automatically separate
+whiteboard pages. Reactions are live/ephemeral, not a persisted message-reaction history.
+
+Release-result additions to this log are local handoff notes after the verified code push;
+they deliberately do not trigger another deployment just to record deployment metadata.
