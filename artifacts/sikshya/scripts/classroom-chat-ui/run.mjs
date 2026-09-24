@@ -43,9 +43,12 @@ function Harness() {
   const [open, setOpen] = React.useState(true);
   const [messages, setMessages] = React.useState(seed);
   const [value, setValue] = React.useState("");
+  const [connected, setConnected] = React.useState(true);
   window.__reactions = window.__reactions || [];
   window.__chat = {
+    state: { value, messages },
     open: () => setOpen(true),
+    connection: setConnected,
     push: (message) => setMessages((current) => [...current, message]),
     many: () => setMessages(Array.from({ length: 36 }, (_, index) => ({
       id: "old-" + index,
@@ -70,6 +73,7 @@ function Harness() {
   return React.createElement(ClassroomChatDrawer, {
     onReaction: (emoji) => window.__reactions.push(emoji),
     open,
+    connected,
     messages,
     value,
     onChangeText: setValue,
@@ -117,9 +121,29 @@ writeFileSync(pagePath, `<!doctype html><html><head><meta charset="utf-8"><style
 
 const chromium = await getChromium();
 const browser = await chromium.launch({ args: ["--no-sandbox"] });
-for (const viewport of [{ label: "phone", width: 390, height: 844 }, { label: "laptop", width: 1440, height: 900 }]) {
+for (const viewport of [
+  { label: "small-phone", width: 360, height: 640 },
+  { label: "phone", width: 390, height: 844 },
+  { label: "tablet", width: 768, height: 1024 },
+  { label: "landscape", width: 844, height: 390 },
+  { label: "small-laptop", width: 1366, height: 768 },
+  { label: "laptop", width: 1440, height: 900 },
+]) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
+  // Model the mobile-browser distinction: opening a software keyboard can shrink
+  // only the visual viewport, leaving window.innerHeight / fixed layout unchanged.
+  // This is a geometry regression fixture, not a claim of physical iOS testing.
+  await page.addInitScript(() => {
+    const viewport = new EventTarget();
+    Object.assign(viewport, { height: innerHeight, width: innerWidth, offsetTop: 0, offsetLeft: 0, scale: 1 });
+    Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true });
+    window.__visibleViewport = (height, offsetTop = 0) => {
+      Object.assign(viewport, { height, offsetTop });
+      viewport.dispatchEvent(new Event("resize"));
+      viewport.dispatchEvent(new Event("scroll"));
+    };
+  });
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   await page.goto(`file://${pagePath}`);
@@ -131,6 +155,13 @@ for (const viewport of [{ label: "phone", width: 390, height: 844 }, { label: "l
   check(`${viewport.label}: the participant name is grouped once`, (await page.getByText("Sita", { exact: true }).count()) === 1);
 
   const input = page.locator('[data-testid="chat-input"]');
+  check(`${viewport.label}: input text stays readable`, await input.evaluate((node) => parseFloat(getComputedStyle(node).fontSize) >= 16));
+  await input.fill("अभ्यास");
+  await input.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
+  const composingState = await page.evaluate(() => ({ value: window.__chat.state.value, sent: window.__chat.state.messages.some((message) => message.text === "अभ्यास") }));
+  check(`${viewport.label}: composing text is not accidentally sent`, composingState.value === "अभ्यास" && !composingState.sent, JSON.stringify(composingState));
+  await input.dispatchEvent("keydown", { key: "Enter", code: "Enter", keyCode: 229, isComposing: false });
+  check(`${viewport.label}: IME confirmation is not sent`, await page.evaluate(() => window.__chat.state.value === "अभ्यास" && !window.__chat.state.messages.some((message) => message.text === "अभ्यास")));
   await input.fill("A message sent with Enter");
   await input.press("Enter");
   await page.waitForTimeout(350);
@@ -151,18 +182,64 @@ for (const viewport of [{ label: "phone", width: 390, height: 844 }, { label: "l
 
   await page.evaluate(() => window.__chat.many());
   await page.waitForTimeout(350);
-  const scroller = page.locator('[data-testid="classroom-chat-drawer"] div').filter({ has: page.locator('text="Earlier class message 0"') }).first();
-  await page.evaluate(() => {
-    const candidates = [...document.querySelectorAll('[data-testid="classroom-chat-drawer"] div')];
-    const target = candidates.find((node) => node.scrollHeight > node.clientHeight + 100);
-    if (target) target.scrollTop = 0;
-  });
+  const scroller = page.getByTestId("classroom-chat-scroll");
+  await scroller.evaluate((node) => { node.scrollTop = 0; });
+  await page.waitForTimeout(100);
   await page.evaluate(() => window.__chat.push({ id: "new-below", senderName: "Sita", text: "A new message below", time: "now", isMe: false }));
   await page.waitForTimeout(350);
   check(`${viewport.label}: reading older messages is not yanked away`, (await page.locator('[data-testid="classroom-chat-new-messages"]').count()) === 1);
   await page.locator('[data-testid="classroom-chat-new-messages"]').click();
-  await page.waitForTimeout(250);
-  check(`${viewport.label}: the new-message control jumps to the latest reply`, (await page.getByText("A new message below").count()) === 1 && (await page.locator('[data-testid="classroom-chat-new-messages"]').count()) === 0);
+  // ScrollView uses a smooth browser scroll: wait for its position, not an assumed
+  // 250ms animation length, and assert clipping bounds rather than DOM presence.
+  const reachedLatest = await page.waitForFunction(() => {
+    const node = document.querySelector('[data-testid="classroom-chat-scroll"]');
+    return node && node.scrollHeight - node.scrollTop - node.clientHeight <= 2;
+  }, undefined, { timeout: 2000 }).then(() => true, () => false);
+  const latestBox = await page.getByText("A new message below", { exact: true }).boundingBox();
+  const historyBox = await scroller.boundingBox();
+  check(`${viewport.label}: the new-message control visibly jumps to the latest reply`, reachedLatest && latestBox && historyBox && latestBox.y >= historyBox.y && latestBox.y + latestBox.height <= historyBox.y + historyBox.height && (await page.locator('[data-testid="classroom-chat-new-messages"]').count()) === 0, JSON.stringify({ latestBox, historyBox, scroll: await scroller.evaluate((node) => [node.scrollTop, node.scrollHeight, node.clientHeight]) }));
+
+  await input.fill("Keep my unsent question");
+  await page.evaluate(() => window.__chat.connection(false));
+  await page.waitForTimeout(80);
+  check(`${viewport.label}: disconnected send is disabled`, await page.getByTestId("chat-send").isDisabled());
+  await input.press("Enter");
+  check(`${viewport.label}: a disconnected Enter preserves the draft`, await input.inputValue() === "Keep my unsent question");
+  await page.getByTestId("classroom-reactions-toggle").click();
+  check(`${viewport.label}: reactions also wait for connection`, await page.getByRole("button", { name: "React: Got it", exact: true }).isDisabled());
+  await page.getByTestId("classroom-reactions-toggle").click();
+  await page.getByTestId("classroom-chat-close").click();
+  await page.evaluate(() => window.__chat.open());
+  await page.waitForTimeout(350);
+  check(`${viewport.label}: closing and reopening keeps the draft`, await input.inputValue() === "Keep my unsent question");
+  await page.evaluate(() => window.__chat.connection(true));
+  check(`${viewport.label}: reconnect does not silently send a draft`, await input.inputValue() === "Keep my unsent question");
+  await input.press("Enter");
+  check(`${viewport.label}: reconnect allows one deliberate send`, await page.getByText("Keep my unsent question", { exact: true }).count() === 1 && await input.inputValue() === "");
+
+  if (viewport.label === "phone" || viewport.label === "tablet") {
+    await input.fill("A question with the keyboard open");
+    await page.evaluate(() => window.__visibleViewport(300, 44));
+    await page.waitForTimeout(250);
+    const withinKeyboardViewport = async (locator) => {
+      const box = await locator.boundingBox();
+      return box && box.y >= 44 && box.y + box.height <= 345 && box.x >= 0 && box.x + box.width <= viewport.width + 1;
+    };
+    check(`${viewport.label}: keyboard leaves the composer visible`, await withinKeyboardViewport(input));
+    check(`${viewport.label}: keyboard leaves Close visible`, await withinKeyboardViewport(page.getByTestId("classroom-chat-close")));
+    await page.getByTestId("classroom-reactions-toggle").click();
+    check(`${viewport.label}: keyboard and reactions leave Send visible`, await withinKeyboardViewport(page.getByTestId("chat-send")));
+    const visibleHistory = await page.getByTestId("classroom-chat-scroll").boundingBox();
+    check(`${viewport.label}: keyboard and reactions retain a readable message area`, visibleHistory && visibleHistory.height >= 72, JSON.stringify(visibleHistory));
+    await page.screenshot({ path: path.join(shots, viewport.label + "-keyboard-reactions.png") });
+    await page.getByTestId("chat-send").click();
+    check(`${viewport.label}: the visible Send button actually sends`, await input.inputValue() === "");
+    await page.getByTestId("classroom-reactions-toggle").click();
+    await page.evaluate((height) => window.__visibleViewport(height), viewport.height);
+    await page.waitForTimeout(150);
+    const restoredComposer = await input.boundingBox();
+    check(`${viewport.label}: dismissing keyboard restores the sheet`, restoredComposer && restoredComposer.y > 600 && restoredComposer.y + restoredComposer.height <= viewport.height);
+  }
 
   await page.locator('[data-testid="classroom-chat-close"]').click();
   await page.waitForTimeout(300);

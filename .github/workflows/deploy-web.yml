@@ -586,6 +586,8 @@ jobs:
           # the genuine media run below makes network timing part of the equation.
           pnpm --filter @workspace/sikshya run test:livekit
           pnpm --filter @workspace/sikshya run test:floor-ui
+          # Keep the composer reachable above phone keyboards and retain disconnected drafts.
+          pnpm --filter @workspace/sikshya run test:classroom-chat-ui
           # A genuine two-person call, against the real LiveKit SFU installed above.
           # Everything else about LiveKit is tested over a fake provider or with tokens nobody
           # sends anywhere; this is the only thing in the repository that proves media flows.

@@ -246,6 +246,9 @@ jobs:
           pnpm --filter @workspace/sikshya run test:livekit
           pnpm --filter @workspace/sikshya run test:floor-ui
 
+      - name: Keep classroom chat usable with keyboards and connection loss
+        run: pnpm --filter @workspace/sikshya run test:classroom-chat-ui
+
       - name: Render Program discovery and teacher profiles
         run: pnpm --filter @workspace/sikshya run test:discover
 
