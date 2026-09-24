@@ -37,3 +37,11 @@ test("stored choices reopen exactly and case brief distinguishes allegations fro
   assert.match(brief, /Missing records are not proof/);
   assert.ok(brief.length <= 4000);
 });
+
+test("long handoffs retain the initial report and latest corrections", () => {
+  const reports = Array.from({ length: 15 }, (_, i) => ({ role: "user", body: `Distinct detail ${i + 1}.` }));
+  const brief = buildSupportReviewBrief(reports);
+  assert.match(brief, /Distinct detail 1\./);
+  assert.match(brief, /Distinct detail 15\./);
+  assert.match(brief, /Additional reports remain/);
+});

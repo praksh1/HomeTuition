@@ -16,6 +16,8 @@ Branch `codex/support-investigation-sep24`, based on the accepted classroom/supp
 - No local psql/docker command is available. Focused GitHub workflow `35961543871` passed with disposable Postgres, AI disabled and no cloud credentials: full typecheck, unit tests, route/isolation checks, design lint and browser checks.
 - Follow-up serializes message writes and human handoff on the conversation row, with a parallel-request integration assertion. A subsequent local typecheck was blocked by missing `jose` and `livekit-server-sdk` modules in the shared dependency tree, not errors in the changed support code; fresh-install CI must verify this follow-up.
 - Provider requests in tests are mocks; no live AI answer-quality or vendor billing verification claimed.
+- Follow-up workflow `35962022947` passed on `4861324`, including the parallel message/handoff invariant and fresh-install typecheck. The local missing-module condition did not reproduce in clean CI.
+- The brief now retains the opening issue and latest corrections for long conversations, rather than only the earliest eight reports; focused pure tests 5/5 passed. Final source will be rechecked in the same isolated workflow.
 
 ## Limitations / next work
 Full detail: `docs/FADKO-SUPPORT-FREE-FIRST-2026-09-24.md`. Vision, recording analysis, provider activation, payment reconciliation, operator case redesign and real end-user acceptance remain. No claims of reading the supplied videos. No automatic recording, account suspension, refund, paid plan, or external transmission of real customer evidence occurred.

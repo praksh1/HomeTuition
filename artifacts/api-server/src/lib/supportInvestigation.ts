@@ -83,10 +83,12 @@ export function buildSupportReviewBrief(turns: readonly SupportTurn[], facts: re
   const bounded = turns.slice(-48);
   const reports = bounded.filter((turn) => turn.role === "user");
   const questions = bounded.filter((turn) => turn.role === "assistant");
+  // Preserve the initial issue and latest corrections instead of dropping newer evidence.
+  const selectedReports = reports.length > 8 ? [...reports.slice(0, 2), ...reports.slice(-6)] : reports;
   const lines = [
     "SUPPORT REVIEW BRIEF — human decision required",
     "User reports (not independently verified):",
-    ...reports.slice(0, 8).map((turn, i) => `${i + 1}. ${turn.body.slice(0, 240)}`),
+    ...selectedReports.map((turn) => `Report ${reports.indexOf(turn) + 1}: ${turn.body.slice(0, 240)}`),
     ...(reports.length > 8 ? ["Additional reports remain in the support conversation."] : []),
     "Fadko records checked:",
     ...(facts.length ? facts.slice(0, 8) : ["No class/payment record has been linked and verified in this conversation."]),
