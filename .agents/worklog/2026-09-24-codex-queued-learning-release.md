@@ -25,6 +25,8 @@ The first quiz browser run caught a teacher-only answer-key validation expressio
 
 While production run 36030750757 was still in its browser stage, a final review found editable question fields during a pending save. A held-request browser test reproduced this before the fix. Draft fields/navigation and student answers now lock during their request so a late response cannot overwrite intervening edits. The new 34-check browser run passed at both widths. Supersede the earlier web run with the corrected release rather than bypass the full gate. No API/financial behavior changed in this follow-up.
 
+Production run **36033198005** then passed the 34 quiz browser checks but stopped before deployment on a cold-refresh test navigation timeout, between an incomplete-profile fixture and a signed-out fixture. These simulated account states had reused the same mounted onboarding form. Each account-gate case now owns a fresh browser context and fixed auth response; all destination checks and error/external-request assertions remain. This is test isolation, not removal of the app's leave protection or an authentication change. The next full run must pass before promotion is reported.
+
 ## Fabrications found
 None. Capacity examples in the cost report are estimates, not load-test results.
 

@@ -8,6 +8,14 @@ Keep the working LiveKit Cloud production service. Try an Oracle Always Free ser
 
 “Free video” is not “the whole app is free”: Railway API, database, file storage, email and any AI usage remain separate. Their current invoices have not been audited here.
 
+The read-only LiveKit dashboard check reached a sign-out screen instead of project usage. No sign-out was submitted and no plan/account setting changed. Actual remaining allowance is therefore unverified; the calculator uses published plan allowances, not your account balance.
+
+## Also check legitimate startup credits
+
+LiveKit's [Startup Program](https://livekit.com/startups) currently offers approved startups a year of waived Cloud Scale base fees and $10,000 additional Cloud credits, expiring after 12 months or depletion. Its advertised total also includes separate partner inference credits, not interchangeable video credit. Requirements include incorporation/active incorporation, an identifiable founding team on a live website, early-stage size/funding limits and near-term launch. Existing free-plan projects may apply; acceptance is not guaranteed. Enrollment requires a card and Scale checkout. Do not activate it without checking overage/expiry billing and obtaining approval. No application was submitted. The owner confirmed **not yet incorporated** on 24 September; exclude these credits from the launch budget for now.
+
+This may be more useful than changing infrastructure solely to save money. It does not prevent learning self-hosting on an isolated free preview.
+
 ## Options
 
 | Option | Incremental video hosting cost | What to know | Decision |
@@ -23,6 +31,8 @@ Sources: [LiveKit pricing](https://livekit.io/pricing), [Oracle Always Free reso
 LiveKit's free allowance is a hard limit, shared across the user's free projects; extra projects do not multiply it. It resets monthly. Exhaustion can refuse new requests, so this is not an unlimited free production plan. [LiveKit quotas](https://docs.livekit.io/deploy/admin/quotas-and-limits/)
 
 Oracle may reclaim an idle free VM after a seven-day low-utilization period. Do not manufacture load to evade that rule. Region capacity may prevent signup/provisioning; confirm the Console's Always Free eligibility and estimate before creating anything. Older tutorials quoting 4 CPUs / 24 GB do not match the current page. A single VM also has no failover when it reboots. [Oracle conditions](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+
+The preview kit's pinned [LiveKit v1.13.6](https://hub.docker.com/v2/repositories/livekit/livekit-server/tags/v1.13.6) and [Caddy L4 v2.11.3](https://hub.docker.com/v2/repositories/livekit/caddyl4/tags/v2.11.3) both list `linux/arm64` images. This verifies image availability for ARM, not a successful Oracle deployment or capacity test.
 
 Hetzner Singapore includes 0.5–5 TB transfer depending on the plan and quotes $8.49/TB extra. Confirm the **specific** selected plan's allowance, IPv4, backups and tax at checkout; the base price alone is not the bill. [Singapore transfer pricing](https://www.hetzner.com/cloud-singapore/)
 
