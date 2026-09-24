@@ -4,6 +4,10 @@ Status: **setup kit, not an activated public server**. Production stays on LiveK
 This is a small, single-server rehearsal to learn the operational work before deciding to migrate.
 It is not a promise of free hosting, automatic failover, or production-scale capacity.
 
+Preparation verified at `05ea6c1`: [automated run](https://github.com/praksh1/HomeTuition/actions/runs/36019725512)
+passed 21 setup checks, server/container validation, 48 real-media checks and 78 full-classroom
+permission/reconnect checks. Public-host and physical-device acceptance remains pending.
+
 ## What changes — and what does not
 
 Only the **preview API's LiveKit address and credentials** will change after the host passes testing.
