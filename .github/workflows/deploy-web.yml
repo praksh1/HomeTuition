@@ -165,6 +165,11 @@ jobs:
           PGURL: postgres://postgres:postgres@127.0.0.1:5432/hometuition_ci
         run: pnpm --filter @workspace/api-server run test:programs
 
+      # Retain the teacher-studio regressions beyond their one-off feature branch: nearest-first
+      # pagination, all-conflict preflight, atomic test booking and ambiguous-response recovery.
+      - name: Teacher timetable and booking recovery
+        run: pnpm --filter @workspace/api-server run test:batch-booking
+
       # The size at which a shared picture stops reaching the class, and the size at which it
       # closes the teacher's board connection. Pinned down because a teacher hit both from an
       # iPhone and the app said nothing either time.
@@ -568,6 +573,8 @@ jobs:
           # a thirty-lesson class at both phone and laptop widths, and proves that an outage is
           # not presented to a student as an empty account.
           pnpm --filter @workspace/sikshya run test:sessions-ui
+          pnpm --filter @workspace/sikshya run test:class-setup
+          pnpm --filter @workspace/sikshya run test:batch-booking-ui
           # The file-storage check, driven from the button rather than the endpoint. It
           # exists because the owner was told to open the endpoint in their phone's browser
           # and got "Missing or invalid Authorization header" — the only thing it could ever
@@ -607,6 +614,8 @@ jobs:
           # token, and has no tab bar to click. Its API-level checks passed there and only the
           # browser half failed, which is exactly how that mistake hides.
           pnpm --filter @workspace/sikshya run test:messaging
+          # Includes the in-call private composer, 50-classmate search, blocking and reporting.
+          pnpm --filter @workspace/sikshya run test:messages-ui
           # Profile and the private account editor at phone and laptop widths. Nepal's long
           # location lists must stay searchable and bounded, and teacher documents must not
           # turn every visit to Profile into a several-screen upload form.
