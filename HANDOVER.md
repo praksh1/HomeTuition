@@ -732,6 +732,12 @@ was added.
 
 ## 8. What needs a decision — questions for the owner, not for an AI
 
+### Current: lesson remedies and teacher studio (24 September 2026)
+
+Owner approved production promotion of completed support and the teacher-workflow repairs, with no purchases or automatic AI refunds/bans. Current evidence: `.agents/worklog/2026-09-24-codex-teacher-studio.md`; current queue: `.agents/backlog/2026-09-24-teacher-studio-and-remedies.md`. Older checkout/tier paragraphs below are historical and must not override the current implementation or reactivate retired monthly rules.
+
+Make-up recommendation, not active policy: a free replacement linked to the original paid lesson, explicitly accepted by the student. Teacher non-delivery keeps refund review available; student no-show gets an optional teacher-approved courtesy request. Before activation, owner must choose offer expiry/scheduling windows and confirm the courtesy rule. Detailed scenarios, race protections and the separate teacher-reviewed quiz roadmap: `docs/FADKO-LESSON-REMEDIES-AND-QUIZZES-2026-09-24.md`.
+
 ### Batch checkout gate: changes after a student buys (11 September 2026)
 
 The owner also approved two learning formats: ongoing tuition in shared 30-day group periods,

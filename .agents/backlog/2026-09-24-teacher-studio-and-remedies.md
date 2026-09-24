@@ -4,13 +4,13 @@ Owner request: 24 September 2026. Promote the verified support work to productio
 
 ## Implementation queue
 
-- [ ] Make Dashboard Upcoming and Sessions Upcoming use the same nearest-first schedule semantics, including live/expired sessions and server time.
-- [ ] Reproduce and fix simulation/booking errors. Check duplicate clicks, stale quotes, cutoff races, capacity, account changes and actual server failures. Do not hide failures behind generic success or weaken atomic booking.
-- [ ] Identify all timetable conflicts before final publication; let the teacher correct every affected lesson in one place. Only offer other-class edit links when the server verifies ownership and editability. Recheck authoritatively at publish.
-- [ ] Simplify class creation for any subject/independent teacher; no assumption of a school curriculum or full-time professional. Use English / Nepali / Both / Other language choices with a required custom value for Other.
-- [ ] Require an explicit late-joining choice where supported, rather than a default easy-to-miss toggle. Preserve current eligibility/pricing rules; no silent late-join policy extension to fixed courses or sold offers.
-- [ ] Reorganize teacher classes for a full-time workload (e.g. eight classes daily): compact search/filter/grouping and a usable agenda, not an endless stack of expanded cards. Keep phone and laptop layouts purpose-built.
-- [ ] Before publishing, show the student-facing details and require confirmation that paid dates/commercial terms cannot be casually changed and the teacher must deliver purchased lessons.
+- [x] Dashboard Upcoming and Sessions Upcoming now share nearest-first server pagination and the same end/overtime cutoff. Real-API regression includes 181 lessons, exceeding both old page limits.
+- [x] Repair reproduced post-commit notification failures, ambiguous lost checkout responses, and stale-quote recovery. Existing atomic capacity, duplicate-booking, cutoff and student-conflict protections retained; 143 real-API booking checks pass. This is not a claim that every unspecified payment error has been reproduced.
+- [x] Read-only timetable preflight on the date step exposes every affected lesson (up to three conflicts per lesson); all lesson editors stay in one screen. Other-class links remain server-authorized/editability-gated; publish rechecks under its existing lock.
+- [x] English / Nepali / Both / Other choices with required custom value, optional course outline, independent-tutor copy. The four-step flow remains; no unsupported promise of a complete one-screen wizard replacement.
+- [x] Explicit joining decision required for new classes. Late joining is offered only for eligible ongoing tuition; fixed-course and purchased-promise rules unchanged.
+- [x] Search/filter/grouped date sets, compact laptop rows and phone-sized actions; schedule shortcut. List no longer launches a checkout/settlement read for every published card. Reassess density with the owner's actual full-time workload.
+- [x] Expanded publication confirmation shows description, language, price, capacity and exact lessons, with the paid-commitment warning.
 - [ ] Design one simple make-up/remedy workflow for student absence and teacher non-delivery. Product proposal first; no new automatic refund/forfeiture policy without owner approval. Preserve original entitlements and prevent duplicate refund plus replacement access.
 - [ ] Quiz import within Homework: parse a supplied document into draft questions/answers; teacher confirms every item before release; deterministic grading for supported question types. Do not pretend OCR/AI extraction is already available or free/unlimited. Separate from the urgent booking fixes.
 
@@ -22,3 +22,5 @@ Owner request: 24 September 2026. Promote the verified support work to productio
 ## Proposed make-up policy (discussion, NOT active policy)
 
 One case per original enrollment/lesson, with an optional replacement offer and explicit student acceptance. Original lesson and evidence remain unchanged. Teacher absence should not force a student to accept a new date; preserve the existing refund review route. A student no-show may request a teacher-approved courtesy replacement, but neither automatic refund nor guaranteed replacement is promised. Any replacement must be conflict-checked, capacity-aware, linked to its original entitlement and non-chargeable; accepting/holding/completing/refunding must be auditable and mutually consistent. Timeout and cancellation details require owner agreement before implementation.
+
+Detailed proposal and quiz boundary: `docs/FADKO-LESSON-REMEDIES-AND-QUIZZES-2026-09-24.md`. Completed boxes above mean implemented and verified in isolated tests; production release evidence belongs in `.agents/worklog/2026-09-24-codex-teacher-studio.md`, not inferred from this checklist.

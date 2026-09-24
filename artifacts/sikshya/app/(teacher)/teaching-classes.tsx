@@ -31,6 +31,7 @@ export default function TeachingClasses() {
   };
   const [items, setItems] = useState<TeachingClass[]>([]);
   const [loading, setLoading] = useState(true);
+  const [moreBusy, setMoreBusy] = useState(false);
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [search, setSearch] = useState("");
@@ -69,7 +70,7 @@ export default function TeachingClasses() {
     if (nextCursor === null || loading || loadingMore.current) return;
     loadingMore.current = true;
     const current = sequence.current;
-    setLoading(true);
+    setMoreBusy(true);
     try {
       const result = await apiGet<{
         classes: TeachingClass[];
@@ -85,7 +86,7 @@ export default function TeachingClasses() {
       );
     } finally {
       loadingMore.current = false;
-      if (current === sequence.current) setLoading(false);
+      setMoreBusy(false);
     }
   };
   useFocusEffect(
@@ -110,20 +111,16 @@ export default function TeachingClasses() {
           label="Dashboard"
           onPress={() => router.replace("/(teacher)")}
         />
-        <View style={{ gap: space.xs }}>
-          <Text style={[t.title1, { color: colors.foreground }]}>
-            My classes
-          </Text>
-          <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            Your teaching studio. Find a class here; see your next lesson in Schedule.
-          </Text>
+        <View style={{ flexDirection: isExpanded ? "row" : "column", alignItems: isExpanded ? "center" : "stretch", gap: space.md }}>
+          <View style={{ flex: isExpanded ? 1 : undefined, gap: space.xs }}>
+            <Text style={[t.title1, { color: colors.foreground }]}>My classes</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>
+              Your teaching studio. Find a class here; see your next lesson in Schedule.
+            </Text>
+          </View>
+          <ProgramButton label="Create a class" emphasis="primary" icon="plus"
+            onPress={() => router.push("/(teacher)/create-class")} />
         </View>
-        <ProgramButton
-          label="Create a class"
-          emphasis="primary"
-          icon="plus"
-          onPress={() => router.push("/(teacher)/create-class")}
-        />
         <View style={{ flexDirection: isExpanded ? "row" : "column", gap: space.sm }}>
           <TextInput accessibilityLabel="Search all your classes" placeholder="Search all your classes" value={search}
             onChangeText={setSearch} maxLength={100} placeholderTextColor={colors.mutedForeground}
@@ -142,7 +139,7 @@ export default function TeachingClasses() {
           </ProgramNotice>
         ) : items.length ? (
           groupTeachingClasses(items).map((group) => (
-            <ProgramCardShell key={group.key}>
+            <ProgramCardShell key={group.key} testID={`teaching-class-${group.items[0]!.batch.id}`}>
               <Text style={[t.title3, { color: colors.foreground }]}>
                 {group.title}
               </Text>
@@ -155,12 +152,16 @@ export default function TeachingClasses() {
                 <View
                   key={item.batch.id}
                   style={{
+                    flexDirection: isExpanded ? "row" : "column",
+                    alignItems: isExpanded ? "center" : "stretch",
                     gap: space.sm,
                     paddingTop: space.sm,
                     borderTopWidth: 1,
                     borderColor: colors.border,
                   }}
                 >
+                  <View style={{ flex: isExpanded ? 1 : undefined, minWidth: 0, gap: space.xs }}>
+                  <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: space.sm }}>
                   <ProgramChip
                     label={
                       item.batch.status === "closed"
@@ -173,8 +174,9 @@ export default function TeachingClasses() {
                     }
                   />
                   <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
-                    {item.batch.lessons.length} lessons · {item.teachingLanguage} · {item.batch.totalTuitionNpr ? `NPR ${item.batch.totalTuitionNpr.toLocaleString("en-NP")} / student` : "Price not set"}
+                    {item.batch.lessons.length} {item.batch.lessons.length === 1 ? "lesson" : "lessons"} · {item.teachingLanguage} · {item.batch.totalTuitionNpr ? `NPR ${item.batch.totalTuitionNpr.toLocaleString("en-NP")} / student` : "Price not set"}
                   </Text>
+                  </View>
                   {item.batch.tuitionPeriod ? (
                     <Text
                       style={[t.caption, { color: colors.mutedForeground }]}
@@ -183,6 +185,8 @@ export default function TeachingClasses() {
                       {dateLabel(item.batch.tuitionPeriod.endsAt)}
                     </Text>
                   ) : item.batch.lessons[0] ? <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Starts {dateLabel(item.batch.lessons[0].startsAt)}</Text> : null}
+                  </View>
+                  <View style={{ alignSelf: isExpanded ? "center" : "stretch" }}>
                   <ProgramButton
                     label={
                       item.batch.status === "draft"
@@ -197,6 +201,7 @@ export default function TeachingClasses() {
                       })
                     }
                   />
+                  </View>
                 </View>
               ))}
               {group.items.length > 1 ? <ProgramButton emphasis="quiet"
@@ -211,7 +216,7 @@ export default function TeachingClasses() {
           />
         )}
         {nextCursor !== null && !loading && !error ? (
-          <ProgramButton label="More classes" onPress={() => void more()} />
+          <ProgramButton label="More classes" busy={moreBusy} onPress={() => void more()} />
         ) : null}
       </ScrollView>
     </SafeAreaView>

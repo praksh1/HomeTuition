@@ -45,6 +45,7 @@ Found and fixed so far:
 
 | Screen | The fabrication |
 |---|---|
+| Class creation (24 Sep 2026) | Said joining/payment were unavailable although simulated checkout existed. Now distinguishes site payment mode and simulation without claiming real payments are enabled. |
 | Teacher dashboard | `sessionsThisMonth` — written to 0 at registration, never again. Every teacher saw "0/10 Sessions" forever, against a hardcoded 10 |
 | Teacher dashboard | `monthlyEarnings` — same dead column. "NPR 0k Earned" to everybody, forever |
 | Subscription | `PAYMENT_HISTORY` — three invented NPR 2,000 payments shown to every teacher, including one who registered that morning |

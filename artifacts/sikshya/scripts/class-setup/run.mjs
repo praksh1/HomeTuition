@@ -115,11 +115,22 @@ try {
     await home.getByText("SEE Maths evening tuition", { exact: true }).waitFor();
     check(await home.getByText("SEE Maths evening tuition", { exact: true }).count() === 1, `${width}: one class name for current and next dates`);
     check(await home.getByRole("button", { name: /^View dates for/ }).count() === 0, `${width}: older date sets stay compact until requested`);
+    const compactCard = await home.getByTestId("teaching-class-2").boundingBox();
+    if (width >= 1000) check(compactCard.height < 245, `${width}: a collapsed class is a compact laptop row, not a stretched phone card`);
+    check(await home.getByRole("button", { name: /^Continue setup for/ }).evaluate((node) => node.getBoundingClientRect().height >= 44), `${width}: compact class keeps a touch-sized action`);
     await home.getByRole("button", { name: "More date sets (1)", exact: true }).click();
     check(await home.getByRole("button", { name: /^Continue setup for/ }).count() === 1 && await home.getByRole("button", { name: /^View dates for/ }).count() === 1, `${width}: both date sets remain accessible`);
     check(await home.getByText(/Sep 15, 2026.*03:00 Nepal time until/).count() > 0, `${width}: class list pins early-morning boundaries to Nepal, not viewer timezone`);
     check(await home.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: grouped class list fits`);
     await home.screenshot({ path: path.join(work, `${width}-classes.png`) });
+    await home.getByLabel("Search all your classes", { exact: true }).fill("No such class");
+    await home.getByText("No matching classes", { exact: true }).waitFor();
+    check(await home.getByText("SEE Maths evening tuition", { exact: true }).count() === 0, `${width}: search removes nonmatching classes`);
+    await home.getByLabel("Search all your classes", { exact: true }).fill("");
+    await home.getByText("SEE Maths evening tuition", { exact: true }).waitFor();
+    await home.getByRole("button", { name: "Published", exact: true }).click();
+    await home.getByRole("button", { name: /^View dates for/ }).waitFor();
+    check(await home.getByRole("button", { name: /^Continue setup for/ }).count() === 0, `${width}: status filter removes drafts`);
     await home.close();
   }
   const single = await browser.newPage({ viewport: { width: 360, height: 640 } });
