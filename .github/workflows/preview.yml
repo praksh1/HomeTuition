@@ -325,6 +325,7 @@ jobs:
 
       - name: Keep the premium whiteboard intact around the replacement call
         run: |
+          node --experimental-strip-types --test artifacts/sikshya/utils/boardScenePackets.test.ts
           pnpm --filter @workspace/sikshya run test:board
           pnpm --filter @workspace/sikshya run test:phone
 

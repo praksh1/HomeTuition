@@ -35,6 +35,7 @@ npx.cmd playwright install chromium
 
 | Test | The failure it guards against |
 |---|---|
+| a second fourteen-page PDF appears and phone students follow teacher zoom | a finished import must place every sheet, not obscure the previous PDF, and match the student view through zoom, fit, rotation and reimport |
 | an erased stroke disappears for the student too | students kept every mistake the teacher rubbed out, stacked under whatever replaced it |
 | the student's view follows the teacher's | students opened on a different part of the infinite canvas and had to hunt for the lesson |
 | clearing the board clears it for the class | Excalidraw's own reset empties one screen and leaves everyone else's full |

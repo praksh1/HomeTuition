@@ -69,3 +69,29 @@ this classroom change (documented in the preceding worklog).
 Run final checks, push the exact classroom branch, and deploy using the existing gated isolated
 Preview workflow. Confirm the deployed build; retain physical iPhone/Android testing as a limit.
 The preceding pass's post-release worklog additions are included in this next legitimate change.
+
+### Device checks when the owner is available
+
+These are remaining manual checks, not completed evidence:
+
+1. On an iPhone or Android phone in a lesson, open In-class messages, type with the software
+   keyboard visible, open reactions, and verify both Close and Send remain tappable. Rotate the
+   phone and repeat. The board and call should remain available after closing chat.
+2. Draft a question, briefly disable connectivity, close/reopen the chat, then reconnect. The
+   draft should remain and should only send after the owner taps Send or presses Enter.
+3. On a laptop, read older messages while another participant sends a reply; tap the new-message
+   chip and confirm the reply scrolls into view. Shift+Enter inserts a line; IME confirmation
+   should not submit partially composed Nepali text.
+4. Retain the previous pass's real-device image-rejoin and camera/microphone checks. This follow-up
+   does not replace them or claim a physical Safari/WebKit test.
+
+### Supplemental verification after push
+
+- Media-preparation browser scenarios: 4/4 (new, returning, denied, skip).
+- Classroom chat/platform and current-journey contracts: 10/10.
+- Pushed source: `eac660e702c76f4cfe5bcd30ee4b4ab7c19809b4`.
+- Gated Preview run: https://github.com/praksh1/HomeTuition/actions/runs/35945610939 succeeded,
+  including real local LiveKit call/floor checks, rendered chat, whiteboard and bundle isolation.
+- Post-deploy HTTP verification: new keyboard-safe chat marker served, initial assets 200,
+  production API absent from Preview, staging readiness ok. Production unchanged.
+- Railway reported `HomeTuition - hometuition-api-staging` success for that exact commit.

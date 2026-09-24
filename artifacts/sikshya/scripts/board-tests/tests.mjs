@@ -8,8 +8,67 @@ import { ERASER, PEN, RED_PNG, TWO_PAGE_PDF, drawPath, ink, near, openBoard, pum
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { makePdf } from "./pdf-fixture.mjs";
 
 export const tests = [
+  {
+    name: "a second fourteen-page PDF appears and phone students follow teacher zoom",
+    why: "An import must be visible after preparation, not overwrite the previous document, and fit the same phone canvas on both sides.",
+    async run(ctx, baseUrl, assert) {
+      const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
+      const student = await openBoard(ctx, baseUrl, { readOnly: true });
+      for(const page of [teacher,student]) {
+        await page.setViewportSize({width:390,height:844});
+        await page.evaluate(()=>window.postMessage(JSON.stringify({type:'config',classroomChrome:true}),'*'));
+      }
+      const insert = async (key,pages) => {
+        await teacher.evaluate(document=>window.postMessage(JSON.stringify({type:'insert_document',document}),'*'),{key,kind:'pdf',dataUrl:makePdf(pages)});
+        await teacher.waitForFunction(count=>window.__out.filter(m=>m.type==='scene_out').flatMap(m=>m.elements).filter(e=>e.customData?.fadkoTotal===count).length>=count,pages,{timeout:60000});
+        await teacher.waitForTimeout(550);
+        const packets=await takeMessages(teacher);
+        await relayMessages(packets,student);
+        await student.waitForTimeout(700);
+        return packets.filter(m=>m.type==='scene_out');
+      };
+      const first=await insert('one-page',1);
+      const second=await insert('fourteen-pages',14);
+      const pictures=second.flatMap(m=>m.elements).filter(e=>e.type==='image');
+      assert('all fourteen new sheets are placed and shared', pictures.length===14 && second.flatMap(m=>m.files).length===14);
+      const original=first.flatMap(m=>m.elements).find(e=>e.type==='image');
+      assert('new PDF does not cover the old PDF', pictures.every(e=>e.x>original.x+original.width));
+      assert('each sheet retains its document and page number', new Set(pictures.map(e=>e.customData.fadkoPage)).size===14);
+      const beforeT=await ink(teacher), beforeS=await ink(student);
+      assert('first sheet is visibly rendered on both phones', beforeT.red>1000 && beforeS.red>1000);
+      assert('matching phone canvases show matching PDF scale', Math.abs(beforeT.red-beforeS.red)<beforeT.red*0.03);
+      await teacher.getByLabel('Whiteboard zoom',{exact:true}).click();
+      await teacher.getByLabel('Zoom in on whiteboard',{exact:true}).click();
+      await teacher.waitForTimeout(450); await pump(teacher,student); await student.waitForTimeout(450);
+      const afterT=await ink(teacher), afterS=await ink(student);
+      assert('teacher zoom visibly enlarges the PDF', afterT.red>beforeT.red*1.1);
+      assert('student follows the enlarged view without a gesture', Math.abs(afterT.red-afterS.red)<afterT.red*0.03);
+      await teacher.getByText('Fit current sheet',{exact:true}).click();
+      await teacher.waitForTimeout(450); await pump(teacher,student); await student.waitForTimeout(450);
+      assert('Fit returns the current sheet, not all fourteen tiny pages', (await ink(student)).red>1000);
+      await teacher.getByLabel('Close whiteboard zoom').click();
+      await teacher.getByLabel('Manage teaching materials').click();
+      await teacher.getByLabel('Find PDF page 14 of 14 on board').click();
+      await teacher.waitForTimeout(450); await pump(teacher,student); await student.waitForTimeout(450);
+      assert('last PDF sheet can be located and appears on the student board', (await ink(student)).red>1000);
+      await teacher.getByLabel('Close board page menu').click();
+      await teacher.getByLabel('Manage teaching materials').click();
+      await teacher.getByLabel('Remove all pages of PDF 2').click();
+      await teacher.getByLabel('Close board page menu').click();
+      await teacher.waitForTimeout(300); await pump(teacher,student);
+      const retry=await insert('fourteen-retry',14);
+      assert('removing and importing again adds a fresh complete PDF',retry.flatMap(m=>m.elements).filter(e=>!e.isDeleted && e.customData?.fadkoTotal===14).length===14);
+      const shots=path.join(tmpdir(),'fadko-pdf-phones'); mkdirSync(shots,{recursive:true});
+      await teacher.screenshot({path:path.join(shots,'teacher.png')});
+      await student.screenshot({path:path.join(shots,'student.png')});
+      await student.setViewportSize({width:844,height:390});
+      await student.waitForTimeout(800);
+      assert('rotating student phone still keeps the teacher sheet visible', (await ink(student)).red>1000);
+    },
+  },
   {
     name: "classroom toolbar stays together on phone and desktop",
     why: "Controls must be alongside the editor toolbar, inside the viewport and actually tappable.",

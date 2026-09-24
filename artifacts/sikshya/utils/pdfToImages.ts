@@ -20,6 +20,7 @@ export interface PdfRenderProgress {
 export interface PdfRenderResult {
   /** One JPEG data URL per rendered page, in order. */
   pages: string[];
+  sizes: { width: number; height: number }[];
   /** True when the document had more pages than are placed on the board. */
   truncated: boolean;
 }
@@ -31,6 +32,7 @@ export interface PdfRenderResult {
 export async function renderPdfToImages(
   _dataUrl: string,
   _onProgress?: (progress: PdfRenderProgress) => void,
+  _signal?: AbortSignal,
 ): Promise<PdfRenderResult> {
   throw new Error("A PDF must be rendered on the board itself, not in the app's own bundle.");
 }

@@ -635,7 +635,9 @@ jobs:
       # whiteboard now stops the deploy rather than annotating it. If one ever fails for a
       # reason that is not a real regression, fix the test — do not restore this exemption.
       - name: Whiteboard tests
-        run: pnpm --filter @workspace/sikshya run test:board
+        run: |
+          node --experimental-strip-types --test artifacts/sikshya/utils/boardScenePackets.test.ts
+          pnpm --filter @workspace/sikshya run test:board
 
       # The same board at the size it is actually taught on. These exist because the board
       # looked right on a laptop while a teacher on an iPhone had no Selection tool at all —

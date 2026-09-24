@@ -17,6 +17,10 @@ interface ClassroomControlDockProps {
   chatOpen: boolean;
   unreadCount: number;
   videoHidden: boolean;
+  localMedia?: { micEnabled: boolean; cameraEnabled: boolean };
+  mediaConnected?: boolean;
+  onToggleMicrophone?: () => void;
+  onToggleCamera?: () => void;
   participantCount?: number;
   raisedHands?: number;
   participantOpen?: boolean;
@@ -53,6 +57,10 @@ export function ClassroomControlDock({
   chatOpen,
   unreadCount,
   videoHidden,
+  localMedia,
+  mediaConnected = false,
+  onToggleMicrophone,
+  onToggleCamera,
   participantCount,
   raisedHands = 0,
   participantOpen = false,
@@ -204,7 +212,7 @@ export function ClassroomControlDock({
           s.primaryRail,
           elevation.sheet,
           {
-            gap: space.xxs,
+            gap: videoHidden && localMedia ? 0 : space.xxs,
             padding: space.xxs,
             borderRadius: radius.pill,
             borderColor: colors.border,
@@ -267,6 +275,18 @@ export function ClassroomControlDock({
             ) : null}
           </TouchableOpacity>
         ) : null}
+
+        {videoHidden && localMedia ? (['microphone', 'camera'] as const).map((kind) => {
+          const enabled = kind === 'microphone' ? localMedia.micEnabled : localMedia.cameraEnabled;
+          const label = kind === 'microphone' ? (enabled ? 'Mute microphone' : 'Unmute microphone') : (enabled ? 'Turn camera off' : 'Turn camera on');
+          return <TouchableOpacity key={kind} testID={`teacher-hidden-${kind}`} accessibilityRole="button"
+            accessibilityLabel={label} accessibilityState={{ disabled: !mediaConnected, selected: enabled }}
+            disabled={!mediaConnected} onPress={kind === 'microphone' ? onToggleMicrophone : onToggleCamera}
+            style={[s.primaryButton, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.pill,
+              opacity: mediaConnected ? 1 : 0.45, backgroundColor: enabled ? colors.actionSoft : colors.card }]}>
+            <Feather name={kind === 'microphone' ? (enabled ? 'mic' : 'mic-off') : (enabled ? 'video' : 'video-off')} size={19} color={enabled ? colors.primary : colors.mutedForeground} />
+          </TouchableOpacity>;
+        }) : null}
 
         {videoHidden ? (
           <TouchableOpacity
@@ -356,6 +376,10 @@ export function ClassroomControlDock({
           />
         </TouchableOpacity>
       </View>
+      {videoHidden && localMedia ? <Text testID="teacher-hidden-media-status" accessibilityLiveRegion="polite"
+        style={[t.caption, { color: colors.mutedForeground, marginTop: space.xs, paddingHorizontal: space.sm, maxWidth: 280, textAlign: "right" }]}>
+        {!mediaConnected ? "Call not connected · open call for details" : localMedia.micEnabled && localMedia.cameraEnabled ? "Microphone and camera on" : localMedia.micEnabled ? "Microphone on · camera off" : localMedia.cameraEnabled ? "Microphone muted · camera on" : "Microphone muted · camera off"}
+      </Text> : null}
     </View>
   );
 }

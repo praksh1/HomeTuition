@@ -146,6 +146,7 @@ interface Props {
   canUseMicrophone?: boolean;
   canUseCamera?: boolean;
   onLocalMediaChange?: (media: { micEnabled: boolean; cameraEnabled: boolean }) => void;
+  onConnectionChange?: (connected: boolean) => void;
   micToggleRequest?: number;
   cameraToggleRequest?: number;
 }
@@ -559,6 +560,7 @@ export default function LiveKitEmbed({
   canUseMicrophone = true,
   canUseCamera = false,
   onLocalMediaChange,
+  onConnectionChange,
   micToggleRequest = 0,
   cameraToggleRequest = 0,
 }: Props) {
@@ -598,6 +600,9 @@ export default function LiveKitEmbed({
   watchNameRef.current = watchUserName;
   onMediaReadyRef.current = onMediaReady;
   onLocalMediaChangeRef.current = onLocalMediaChange;
+  const onConnectionChangeRef = useRef(onConnectionChange);
+  onConnectionChangeRef.current = onConnectionChange;
+  useEffect(() => { onConnectionChangeRef.current?.(connection === "connected"); }, [connection]);
 
   /** Whether the watched person has ever been seen, so their absence means something. */
   const watchedSeen = useRef(false);
