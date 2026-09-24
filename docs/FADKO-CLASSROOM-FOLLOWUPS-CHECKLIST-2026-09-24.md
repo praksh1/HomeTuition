@@ -1,6 +1,6 @@
 # Classroom follow-up checks
 
-Release status: consult `.agents/worklog/2026-09-24-codex-classroom-followups.md`; do not assume a branch push is deployed.
+Live on production: **9e2c418**, 24 September 2026, after the full production gate passed. Detailed evidence: `.agents/worklog/2026-09-24-codex-classroom-followups.md`.
 
 1. **Teacher, phone:** open Participants. Search a student; use Hands to bring the raised-hand queue into view. The panel should fill the usable screen, its list should scroll, and Permissions should remain reachable with the keyboard open.
 2. **Teacher, whiteboard:** open Board pages → Clear this page. The confirmation names exactly what is removed. Cancel should change nothing. Confirm should clear only this whiteboard page for everyone; Undo should restore drawings and imported material for teacher and student.

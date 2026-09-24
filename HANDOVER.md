@@ -738,6 +738,8 @@ Owner approved production promotion of completed support and the teacher-workflo
 
 Make-up recommendation, not active policy: a free replacement linked to the original paid lesson, explicitly accepted by the student. Teacher non-delivery keeps refund review available; student no-show gets an optional teacher-approved courtesy request. Before activation, owner must choose offer expiry/scheduling windows and confirm the courtesy rule. Detailed scenarios, race protections and the separate teacher-reviewed quiz roadmap: `docs/FADKO-LESSON-REMEDIES-AND-QUIZZES-2026-09-24.md`.
 
+Classroom follow-ups are live in production at **9e2c418** (24 September 2026): matching student presence counts, phone clear-page with shared Undo, a usable large mobile roster, and a connected-classmate directory with private compose and bilateral message blocking. Exact release evidence is in `.agents/worklog/2026-09-24-codex-classroom-followups.md`. Public classmates contain display names/ids only, not contact or moderation details. The operator still decides any ban or refund. Owner check path: `docs/FADKO-CLASSROOM-FOLLOWUPS-CHECKLIST-2026-09-24.md`. A pre-existing signed-in cold-refresh return-route issue is recorded separately in the classroom backlog.
+
 ### Batch checkout gate: changes after a student buys (11 September 2026)
 
 The owner also approved two learning formats: ongoing tuition in shared 30-day group periods,

@@ -7,7 +7,9 @@ Owner accepted Preview on 24 September 2026 and requested production deployment.
 - [x] **Teacher mobile participants sheet:** nearly full visible height, safe-area/keyboard handling, scrolling permissions, compact filters, search and existing raised-hand priority. Tested with 50 students/10 raised hands and a keyboard-reduced screen, plus the existing 120-student fixture.
 - [x] **Student participant directory and private messages:** public connected names/ids only; private compose stays in the classroom, replies/history remain in Messages. Server enforces shared valid enrollment for student peers, suspended-account checks and bilateral blocks. Safety & help starts a support report; moderation/contact details and other private conversations are never exposed.
 
-Implemented on `codex/classroom-followups-sep24`; these boxes are not a production-deployment claim. Release/test evidence is in `.agents/worklog/2026-09-24-codex-classroom-followups.md`. Physical iPhone/Android follow-up remains useful; automated browser dimensions are not device hardware tests. New age/guardian/consent rules and automatic moderation were not invented.
+Deployed to production at **9e2c418**, 24 September 2026, after full gate **35991929478** passed. Release/test evidence is in `.agents/worklog/2026-09-24-codex-classroom-followups.md`. Physical iPhone/Android follow-up remains useful; automated browser dimensions are not device hardware tests. New age/guardian/consent rules and automatic moderation were not invented.
+
+- [ ] Separate navigation follow-up found during read-only release smoke checks: a signed-in cold refresh of `/messages` returns to Dashboard during auth hydration, both before and after this release. In-app Messages navigation works. Preserve the intended authenticated route on refresh; verify role/onboarding redirects before changing that boundary.
 
 Evidence supplied (not reviewed in this release pass):
 - `Screen Recording 2026-09-23 235758.mp4`
