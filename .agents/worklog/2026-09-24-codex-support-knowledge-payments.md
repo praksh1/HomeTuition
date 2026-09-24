@@ -21,7 +21,7 @@ The first payment evidence slice covers session-linked enrollment/refunds and ba
 Starter answers are drafts until an operator reviews and publishes. No new policy, refund deadline or guarantee is introduced. Existing server-side editor roles and audit trail are reused.
 
 ## Verification
-Pure payment/content/investigation tests pass locally; source-reference existence is tested. Design lint passes without baseline changes. Expanded phone/laptop browser checks and clean-install API integration/typecheck are running; record final results below.
+Pure payment/content/investigation tests: 13/13 locally. Source-reference existence is tested. Design lint passes without baseline changes. Clean-install CI `35963641988` passed on `d9144b7`: 730 unit tests, 60 support API checks, full typecheck, design lint and 124 browser checks. An additional local editor-scroll check brings phone/laptop coverage to 126 checks; rendered settled-sheet screenshots inspected. This is Chromium at 390/1440 widths, not physical iOS Safari.
 
 ## Problems and surprises
 Local API typecheck still lacks jose/livekit-server-sdk in the shared dependency tree; use clean-install CI, not a false green. Initial browser bundling was blocked by Windows sandbox directory access; rerun with approved escalation reached and passed the new phone checks.

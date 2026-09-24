@@ -55,9 +55,16 @@ try {
     await page.getByTestId("help-library-search").fill("payment");
     await page.getByText("Starter payment guide", { exact: true }).click();
     await page.getByTestId("help-starter-review").waitFor();
+    // Capture the settled slide sheet, not an intermediate animation frame.
+    await page.waitForTimeout(400);
     check(await page.getByTestId("help-starter-review").isVisible(), `${width}: source review checklist is visible before publishing`);
     check(await page.getByTestId("help-starter-review").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: review checklist fits the viewport`);
     await page.screenshot({ path: path.join(work, `${width}-support-library.png`), fullPage: true });
+    await page.getByTestId("help-article-publish").scrollIntoViewIfNeeded();
+    check(await page.getByTestId("help-article-publish").evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight + 1 && rect.height >= 44;
+    }), `${width}: publication action is reachable inside the editor`);
     await page.getByRole("button", { name: "Close editor" }).click();
     await page.getByTestId("help-starter-import").click();
     await page.getByText("Starter drafts already exist. Your edits and publication choices were preserved.").waitFor();
