@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Platform,
   ScrollView,
-  Switch,
   Text,
   TextInput,
   View,
@@ -28,6 +27,7 @@ import {
 } from "@/components/programs/ProgramPieces";
 import { BatchConfirmation } from "@/components/programs/BatchConfirmation";
 import { NativeTimePicker } from "./NativeTimePicker";
+import { TeachingLanguageChoice } from "./TeachingLanguageChoice";
 import { ScheduleConflictPanel } from "./ScheduleConflictPanel";
 import { BatchTestPanel } from "./BatchTestPanel";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
@@ -48,6 +48,7 @@ import {
   lessonDraft,
   type OwnerProgramBatch,
   type ProgramBatchLessonDraft,
+  type ScheduleConflict,
 } from "@/utils/programBatches";
 import {
   BATCH_WEEKDAYS,
@@ -108,6 +109,9 @@ export default function ClassSetup() {
   const [step, setStep] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [checkingDates, setCheckingDates] = useState(false);
+  const [lateChoiceMade, setLateChoiceMade] = useState(false);
+  const [review, setReview] = useState<{ key: string; conflicts: ScheduleConflict[] } | null>(null);
   const op = useRef(false);
   const [issues, setIssues] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
@@ -132,7 +136,8 @@ export default function ClassSetup() {
   const keyStorage = `fadko-class-create-${user?.id ?? "unknown"}`;
   const dirty = JSON.stringify(form) !== accepted;
   const scheduleFresh = !!item && JSON.stringify(form.lessons) === JSON.stringify(item.batch.lessons.map(lessonDraft));
-  const conflicts = scheduleFresh ? item?.batch.scheduleConflicts ?? [] : [];
+  const scheduleKey = JSON.stringify([item?.batch.id ?? null, form.lessons]);
+  const conflicts = review?.key === scheduleKey ? review.conflicts : scheduleFresh ? item?.batch.scheduleConflicts ?? [] : [];
   const conflictIndices = new Set(conflicts.flatMap((c) => [c.lessonIndex, ...(c.otherLessonIndex === null ? [] : [c.otherLessonIndex])]));
   const locked = busy || !editing || item?.batch.status === "closed" || item?.batch.bookingLocked === true;
   const published = !!item && classIsPublished(item) && !dirty;
@@ -165,6 +170,7 @@ export default function ClassSetup() {
     const next = formFromClass(value);
     setForm(next);
     setAccepted(JSON.stringify(next));
+    setLateChoiceMade(true);
   };
   const load = useCallback(async () => {
     setLoading(true);
@@ -174,6 +180,7 @@ export default function ClassSetup() {
     setWeekdays(null);
     setFocusLesson(null);
     setIndividual(false);
+    setReview(null);
     try {
       if (id) {
         const result = await apiGet<{ item: TeachingClass }>(
@@ -184,6 +191,7 @@ export default function ClassSetup() {
         formRef.current = next;
         setFormState(next);
         setAccepted(JSON.stringify(next));
+        setLateChoiceMade(true);
         setStep(result.item.batch.lessons.length ? 3 : 1);
         setEditing(!classIsPublished(result.item));
       } else {
@@ -199,6 +207,7 @@ export default function ClassSetup() {
         setAccepted(JSON.stringify(fresh));
         setStep(0);
         setEditing(true);
+        setLateChoiceMade(false);
         setNotice("");
         key.current = Crypto.randomUUID();
         await AsyncStorage.setItem(keyStorage, key.current);
@@ -235,7 +244,7 @@ export default function ClassSetup() {
     if (busy || !form.lessons[index]) return;
     setEditing(true);
     setIndividual(true);
-    setFocusLesson(index);
+    setFocusLesson(null);
     move(1);
   };
   const first = form.lessons[0]!;
@@ -258,7 +267,23 @@ export default function ClassSetup() {
     const value = lessonDraft({ startsAt: iso, durationMinutes: 60 });
     return `${dateLabel(value.date)} · ${value.time} Nepal time`;
   };
-  const nextStep = () => {
+  const checkSchedule = async () => {
+    if (op.current) return false;
+    const localIssues = [...batchScheduleIssues(form.lessons, Date.now()), ...draftPeriodIssues(period, form.lessons)];
+    if (localIssues.length) { setIssues(localIssues); return false; }
+    const checkingKey = scheduleKey;
+    op.current = true; setBusy(true); setCheckingDates(true); setIssues([]);
+    try {
+      const result = await apiPost<{ conflicts: ScheduleConflict[] }>("/teaching-classes/schedule-review", {
+        ...(item ? { batchId: item.batch.id } : {}), lessons: form.lessons,
+      });
+      setReview({ key: checkingKey, conflicts: result.conflicts });
+      if (result.conflicts.length) { setIndividual(true); setFocusLesson(null); }
+      return result.conflicts.length === 0;
+    } catch (error) { fail(error); return false; }
+    finally { op.current = false; setBusy(false); setCheckingDates(false); }
+  };
+  const nextStep = async () => {
     const errors =
       step === 0
         ? classDescriptionIssues(form)
@@ -267,12 +292,13 @@ export default function ClassSetup() {
               ...batchScheduleIssues(form.lessons, Date.now()),
               ...draftPeriodIssues(period, form.lessons),
             ]
-          : batchDetailsIssues(form.capacity, form.totalTuitionNpr);
+          : [...batchDetailsIssues(form.capacity, form.totalTuitionNpr), ...(!lateChoiceMade ? ["Choose when students may join this class."] : [])];
     if (errors.length) {
       setIssues(errors);
       scroll.current?.scrollTo({ y: 0, animated: false });
       return;
     }
+    if (step === 1 && !(await checkSchedule())) return;
     move(step + 1);
   };
   const fail = (error: unknown) => {
@@ -369,7 +395,7 @@ export default function ClassSetup() {
       choose(result.item);
       setEditing(false);
       setNotice(
-        "Class listing published. Joining and payment are not open in this preview.",
+        "Class published. Students can now view your description, dates and price. Checkout follows the site's current payment mode.",
       );
     } catch (error) {
       fail(error);
@@ -588,15 +614,8 @@ export default function ClassSetup() {
               multiline
               onChange={(summary) => setForm({ ...form, summary })}
             />
-            <ClassField
-              label="Teaching language"
-              hint="Example: Nepali and English"
-              value={form.teachingLanguage}
-              disabled={locked}
-              onChange={(teachingLanguage) =>
-                setForm({ ...form, teachingLanguage })
-              }
-            />
+            <TeachingLanguageChoice value={form.teachingLanguage} disabled={locked}
+              onChange={(teachingLanguage) => setForm({ ...form, teachingLanguage })} />
             <ProgramButton
               label={
                 outlineOpen
@@ -620,6 +639,10 @@ export default function ClassSetup() {
         ) : null}
         {step === 1 ? (
           <>
+            {conflicts.length ? <ScheduleConflictPanel conflicts={conflicts} formatDate={instantLabel} onEdit={editConflict} busy={busy}
+              onRefresh={() => void checkSchedule()}
+              onOpen={(source) => leave(() => source.kind === "class" ? router.push({ pathname: "/(teacher)/teaching-class/[id]", params: { id: String(source.id) } }) : router.push({ pathname: "/(teacher)/program-batches/[id]", params: { id: String(source.id) } }))} /> : null}
+            {review?.key === scheduleKey && !conflicts.length ? <ProgramNotice title="No overlapping lessons found" body="Checked against your current commitments. Fadko checks again when you publish." /> : null}
             {item?.batch.periodAnchorLocked && period ? (
               <ProgramNotice
                 title="Your next teaching dates"
@@ -793,6 +816,8 @@ export default function ClassSetup() {
                 onPress={() => { setFocusLesson(null); setIndividual(!individual); }}
               />
             </ProgramCardShell>
+            <ProgramButton label={checkingDates ? "Checking all lesson dates…" : "Check timetable availability"} emphasis="secondary" disabled={locked}
+              onPress={() => void checkSchedule()} />
           </>
         ) : null}
         {step === 2 ? (
@@ -823,18 +848,21 @@ export default function ClassSetup() {
               {classPriceBreakdown(Number(form.totalTuitionNpr), form.lessons.length)}
             </Text>
             <ClassEarningsEstimateCard estimate={earningsEstimate} />
-            {form.format === "ongoing" ? (
               <ProgramCardShell>
-                <Text style={[t.bodyStrong, { color: colors.foreground }]}>Allow late joining?</Text>
-                <Switch testID="class-late-joining" accessibilityLabel="Allow late joining" value={form.allowLateJoining} disabled={locked}
-                  onValueChange={(allowLateJoining) => setForm({ ...form, allowLateJoining })}
-                  trackColor={{ false: colors.border, true: colors.primary }} />
-                <Text style={[t.callout, { color: colors.mutedForeground }]}>When joining opens, new students will pay only for lessons that have not started, if a seat is available. Everyone keeps the same end date. Past lessons and individual catch-up teaching are not included. Off by default; choose again for each new period.</Text>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>When can students join? · Required</Text>
+                <ProgramButton label="Close joining when the class starts" disabled={locked}
+                  emphasis={lateChoiceMade && !form.allowLateJoining ? "secondary" : "quiet"}
+                  onPress={() => { setLateChoiceMade(true); setForm({ ...form, allowLateJoining: false }); }} />
+                {form.format === "ongoing" ? <>
+                  <ProgramButton testID="class-late-joining" label="Allow joining for remaining lessons" disabled={locked}
+                    emphasis={lateChoiceMade && form.allowLateJoining ? "secondary" : "quiet"}
+                    onPress={() => { setLateChoiceMade(true); setForm({ ...form, allowLateJoining: true }); }} />
+                  <Text style={[t.callout, { color: colors.mutedForeground }]}>Late joiners pay only for lessons that have not started, if a seat is available. Everyone keeps the same end date. Past lessons and individual catch-up teaching are not included.</Text>
+                </> : <Text style={[t.callout, { color: colors.mutedForeground }]}>One-off lessons and short courses currently require joining before the first lesson. Regular tuition also offers late joining.</Text>}
               </ProgramCardShell>
-            ) : null}
             <ProgramNotice
-              title="No money moves during this preview"
-              body="Students cannot join or pay for these listings yet. This step plans the price; it does not collect it."
+              title="Set the price, then review"
+              body="Saving or publishing never charges anyone. Simulated checkout, when enabled, creates test enrollment only — no real money moves."
             />
           </>
         ) : null}
@@ -893,9 +921,9 @@ export default function ClassSetup() {
               </ProgramCardShell>
             ) : null}
             {conflicts.length ? <ScheduleConflictPanel conflicts={conflicts} formatDate={instantLabel} onEdit={editConflict} busy={busy}
-              onRefresh={() => { if (dirty) void save(); else void load(); }}
+              onRefresh={() => void checkSchedule()}
               onOpen={(source) => leave(() => source.kind === "class" ? router.push({ pathname: "/(teacher)/teaching-class/[id]", params: { id: String(source.id) } }) : router.push({ pathname: "/(teacher)/program-batches/[id]", params: { id: String(source.id) } }))} /> : null}
-            {item && !scheduleFresh ? <ProgramNotice title="Dates changed" body="Save draft to check these times for overlaps." /> : null}
+            {item && !scheduleFresh && review?.key !== scheduleKey ? <ProgramNotice title="Dates changed" body="Return to the timetable to check all these times together before saving." /> : null}
             {!dirty && !conflicts.length && item?.batch.scheduleIssues?.length ? (
               <ProgramNotice title="Some dates need attention" tone="stopped">
                 {item.batch.scheduleIssues.map((message, i) => (
@@ -910,7 +938,7 @@ export default function ClassSetup() {
             ) : null}
             {item?.batch.testPilotEndsAt && item.batch.status === "published" ? <BatchTestPanel batchId={item.batch.id} teacher /> : <ProgramNotice
               title="Listing preview"
-              body="Publishing shows the description, dates and price. Student joining, payments and live lessons for this listing are not available yet."
+              body="Publishing shows your description, dates and price to students. Available joining options follow the site's current payment mode."
             />}
             {item?.batch.bookingLocked ? <ProgramNotice title="Booked details are locked" body="A student has a test place. Keep these dates and details as promised. Use a copy for another test class." /> : null}
             {item?.batch.status === "published" && form.format === "ongoing" && !item.batch.bookingLocked ? (
@@ -949,7 +977,7 @@ export default function ClassSetup() {
             }}
           >
             <Text style={[t.caption, { color: colors.mutedForeground }]}>
-              {busy
+              {checkingDates ? "Checking your timetable…" : busy
                 ? "Saving your change…"
                 : dirty
                   ? "Unsaved changes"
@@ -994,7 +1022,7 @@ export default function ClassSetup() {
                         published ? "Published — up to date" : "Publish class"
                       }
                       emphasis="primary"
-                      disabled={busy || published || item?.batch.bookingLocked === true}
+                      disabled={busy || published || conflicts.length > 0 || item?.batch.bookingLocked === true}
                       onPress={() => setConfirm("publish")}
                       grow
                     />
@@ -1046,7 +1074,9 @@ export default function ClassSetup() {
         title={confirmTitle}
         consequences={
           confirm === "publish"
-            ? classPublishSummary(Number(form.totalTuitionNpr), form.lessons.length, form.format === "ongoing")
+            ? [form.title, form.summary, `Taught in ${form.teachingLanguage} · up to ${form.capacity} students`,
+                ...classPublishSummary(Number(form.totalTuitionNpr), form.lessons.length, form.format === "ongoing"),
+                ...form.lessons.map((lesson, index) => `Lesson ${index + 1}: ${dateLabel(lesson.date)} · ${lesson.time} Nepal time · ${lesson.durationMinutes} min`)]
             : confirm === "replace"
               ? [
                   "This replaces the lesson dates currently in your draft. Nothing is saved until Save draft succeeds.",

@@ -1,0 +1,48 @@
+name: Teacher studio checks
+on:
+  push:
+    branches: [codex/teacher-studio-sep24]
+permissions:
+  contents: read
+concurrency:
+  group: teacher-studio-checks
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: teacher_studio_ci
+        ports: [5432:5432]
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/teacher_studio_ci
+      PGURL: postgres://postgres:postgres@127.0.0.1:5432/teacher_studio_ci
+      NODE_ENV: test
+      SESSION_SECRET: teacher-studio-ci-only-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm --filter @workspace/api-server run test
+      - run: pnpm --filter @workspace/sikshya run test
+      - run: pnpm --filter @workspace/sikshya run lint:design
+      - run: pnpm run db:push
+      - run: pnpm --filter @workspace/api-server run build
+      - run: pnpm --filter @workspace/api-server run test:batch-booking
+      - name: Install browser
+        run: |
+          npm i -g playwright
+          npx playwright install --with-deps chromium
+      - run: pnpm --filter @workspace/sikshya run test:class-setup
+      - run: pnpm --filter @workspace/sikshya run test:batch-booking-ui
+      - run: pnpm --filter @workspace/sikshya run test:sessions-ui

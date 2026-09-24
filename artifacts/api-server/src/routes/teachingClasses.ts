@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, lt } from "drizzle-orm";
+import { and, desc, eq, ne, lt, ilike } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import {
   db,
@@ -28,6 +28,7 @@ import { tuitionPeriod, tuitionPeriodIssues } from "../lib/tuitionPeriods";
 import {
   assertTeacherSchedule,
   lockTeacherSchedule,
+  teacherScheduleReview,
 } from "../lib/teacherSchedule";
 import { recordActivity } from "../lib/activityLog";
 import { flagContent } from "../lib/moderation";
@@ -70,6 +71,7 @@ async function owned(id: number, teacherId: number, reader: Reader = db) {
 async function view(
   row: NonNullable<Awaited<ReturnType<typeof owned>>>,
   reader: Reader = db,
+  reviewSchedule = true,
 ) {
   return {
     title: row.program.title ?? "",
@@ -77,7 +79,7 @@ async function view(
     teachingLanguage: row.program.teachingLanguage ?? "",
     outline: row.setup.outline,
     programUpdatedAt: row.program.updatedAt.toISOString(),
-    batch: await ownerBatch(row.batch, reader),
+    batch: await ownerBatch(row.batch, reader, reviewSchedule),
     publishedDescription: publishedSnapshotFor(row.program),
   };
 }
@@ -117,6 +119,11 @@ function activity(userId: number, id: number, action: string) {
 router.get("/teaching-classes", requireAuth, async (req, res) => {
   const teacherId = teacher(req, res);
   if (teacherId === null) return;
+  const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
+  const status = typeof req.query.status === "string" ? req.query.status : "";
+  if (status && !["draft", "published", "closed"].includes(status)) {
+    res.status(400).json({ error: "Choose a valid class filter." }); return;
+  }
   const before =
     req.query.before === undefined ? null : Number(req.query.before);
   if (before !== null && (!Number.isSafeInteger(before) || before <= 0)) {
@@ -141,6 +148,8 @@ router.get("/teaching-classes", requireAuth, async (req, res) => {
     .where(
       and(
         eq(learningProgramsTable.teacherId, teacherId),
+        query ? ilike(learningProgramsTable.title, `%${query.replace(/[\\%_]/g, "\\$&")}%`) : undefined,
+        status ? eq(learningProgramBatchesTable.status, status) : undefined,
         before === null
           ? undefined
           : lt(learningProgramBatchesTable.id, before),
@@ -149,9 +158,28 @@ router.get("/teaching-classes", requireAuth, async (req, res) => {
     .orderBy(desc(learningProgramBatchesTable.id))
     .limit(21);
   res.json({
-    classes: await Promise.all(rows.slice(0, 20).map((row) => view(row))),
+    classes: await Promise.all(rows.slice(0, 20).map((row) => view(row, db, false))),
     nextCursor: rows.length > 20 ? rows[19]!.batch.id : null,
   });
+});
+
+// Read-only preflight for an unsaved timetable. Publication still repeats the check under
+// the teacher's schedule lock; a green preview never reserves time or overrides paid terms.
+router.post("/teaching-classes/schedule-review", requireAuth, async (req, res) => {
+  const teacherId = teacher(req, res);
+  if (teacherId === null) return;
+  const batchId = req.body?.batchId === undefined ? undefined : Number(req.body.batchId);
+  if (batchId !== undefined && !(await owned(batchId, teacherId))) {
+    res.status(404).json({ error: "That class is not available." }); return;
+  }
+  const checked = validateProgramBatch({ capacity: 1, totalTuitionNpr: 1, lessons: req.body?.lessons }, 0);
+  if (!checked.ok) {
+    res.status(422).json({ error: "Check these lesson dates and times.", issues: checked.issues }); return;
+  }
+  const review = await teacherScheduleReview(db, teacherId, checked.lessons.map((lesson) => ({
+    startsAt: lesson.startsAt, durationMinutes: lesson.durationMinutes, label: `Lesson ${lesson.position + 1}`,
+  })), { batchId });
+  res.setHeader("Cache-Control", "no-store").json(review);
 });
 
 router.post("/teaching-classes", requireAuth, async (req, res) => {

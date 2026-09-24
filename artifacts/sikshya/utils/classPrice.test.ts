@@ -27,7 +27,9 @@ test("one-lesson tuition warning names the actual purchase", () => {
   const message = classPublishSummary(5000, 1, true).join(" ");
   assert.match(message, /1 lesson for NPR 5,000 per student/);
   assert.match(message, /single lesson/);
-  assert.match(message, /Joining and payment remain unavailable/);
+  assert.match(message, /responsible for delivering all paid lessons/);
+  assert.match(message, /promised details are locked/);
+  assert.match(message, /no real payment is collected/);
   assert.ok(!classPublishSummary(5000, 15, true).join(" ").includes("Only 1"));
   assert.ok(!classPublishSummary(5000, 1, false).join(" ").includes("30-day"));
 });

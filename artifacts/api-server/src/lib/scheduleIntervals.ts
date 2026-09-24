@@ -9,6 +9,7 @@ export function conflictDetails(proposed: TeachingSlot[], occupied: TeachingSlot
   const rows = [];
   for (let i = 0; i < proposed.length; i++) {
     const candidate = proposed[i]!;
+    let matches = 0;
     const others = [...proposed.slice(0, i).map((slot, index) => ({ slot, index })), ...occupied.map((slot) => ({ slot, index: null }))];
     for (const { slot, index } of others) {
       if (!overlaps(candidate, slot)) continue;
@@ -16,7 +17,9 @@ export function conflictDetails(proposed: TeachingSlot[], occupied: TeachingSlot
         startsAt: candidate.startsAt.toISOString(), durationMinutes: candidate.durationMinutes,
         otherStartsAt: slot.startsAt.toISOString(), otherDurationMinutes: slot.durationMinutes,
         otherTitle: slot.source?.title ?? slot.label, source: slot.source ?? null });
-      if (rows.length === 10) return rows;
+      // Show every affected lesson, even in a sixty-lesson timetable. Bound dense overlaps
+      // per lesson instead of hiding every later conflict after the tenth row.
+      if (++matches === 3) break;
     }
   }
   return rows;

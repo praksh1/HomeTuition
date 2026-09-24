@@ -22,7 +22,7 @@ export function ScheduleConflictPanel({ conflicts, formatDate, onEdit, onOpen, o
         : conflict.source?.locked === null && ["class", "batch"].includes(conflict.source.kind) ? <ProgramButton label="Keep this time · edit other schedule" emphasis="quiet" disabled={busy} onPress={() => onOpen(conflict.source!)} />
         : <Text style={[t.callout, { color: colors.mutedForeground }]}>Keep the other commitment. Change this lesson.</Text>}
     </View>)}
-    <Text style={[t.caption, { color: colors.mutedForeground }]}>Save after editing to recheck. Up to 10 overlaps shown.</Text>
+    <Text style={[t.caption, { color: colors.mutedForeground }]}>Every affected lesson is shown, with up to three overlapping commitments per lesson. Edit the dates below, then recheck.</Text>
     <ProgramButton label="Recheck dates" emphasis="quiet" disabled={busy} onPress={onRefresh} />
   </ProgramNotice>;
 }

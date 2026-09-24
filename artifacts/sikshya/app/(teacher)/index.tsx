@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -15,6 +15,7 @@ import Skeleton from "@/components/Skeleton";
 import { useNotifications } from "@/context/NotificationContext";
 import { useDates } from "@/context/DatePreferenceContext";
 import type { Teacher } from "@/context/AuthContext";
+import { teacherAgendaPath } from "@/utils/teacherAgenda";
 
 interface ApiSession {
   id: number;
@@ -66,6 +67,8 @@ export default function TeacherDashboard() {
   const [upcomingSessions, setUpcomingSessions] = useState<ApiSession[]>([]);
   const [expiredCount, setExpiredCount] = useState(0);
   const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState(false);
+  const sessionSequence = useRef(0);
   /**
    * The real allowance, from the server.
    *
@@ -89,6 +92,8 @@ export default function TeacherDashboard() {
       refreshNotifs();
       loadSessions();
       loadAllowance();
+      const timer = setInterval(() => void loadSessions(true), 15_000);
+      return () => { clearInterval(timer); sessionSequence.current += 1; };
     }, [teacher?.userId])
   );
 
@@ -104,28 +109,24 @@ export default function TeacherDashboard() {
     setAllowanceLoading(false);
   };
 
-  const loadSessions = async () => {
+  const loadSessions = async (quiet = false) => {
     if (!teacher?.userId) return;
-    setSessionsLoading(true);
+    const sequence = ++sessionSequence.current;
+    if (!quiet) setSessionsLoading(true);
     try {
-      /*
-       * More than five are asked for, because some of them are not upcoming.
-       *
-       * A class nobody started keeps `status = 'upcoming'` for ever, so the five newest could
-       * all be from last week — which is what a teacher was looking at: classes from days ago,
-       * each with a Start button that refuses when pressed. They are dropped here and shown in
-       * their own section on the Sessions tab instead.
-       */
-      const res = await apiGet<{ sessions: ApiSession[] }>(
-        `/sessions?teacherId=${teacher.userId}&status=upcoming&limit=40`
-      );
-      const stillToCome = (res.sessions ?? []).filter((session) => !session.expired);
-      setUpcomingSessions(
-        [...stillToCome].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).slice(0, 5),
-      );
-      setExpiredCount((res.sessions ?? []).length - stillToCome.length);
-    } catch {}
-    setSessionsLoading(false);
+      const [next, missed] = await Promise.all([
+        apiGet<{ sessions: ApiSession[] }>(teacherAgendaPath(teacher.userId, "upcoming", 5)),
+        apiGet<{ total: number }>(teacherAgendaPath(teacher.userId, "missed", 1)),
+      ]);
+      if (sequence !== sessionSequence.current) return;
+      setUpcomingSessions(next.sessions);
+      setExpiredCount(missed.total);
+      setSessionsError(false);
+    } catch {
+      if (sequence === sessionSequence.current) setSessionsError(true);
+    } finally {
+      if (sequence === sessionSequence.current) setSessionsLoading(false);
+    }
   };
 
   const startSession = async (session: ApiSession) => {
@@ -513,7 +514,11 @@ export default function TeacherDashboard() {
           </View>
         ))}
 
-      {!sessionsLoading && upcomingSessions.length === 0 && (
+      {sessionsError && <TouchableOpacity accessibilityRole="button" onPress={() => void loadSessions()}
+        style={{ padding: space.md, borderRadius: radius.md, backgroundColor: colors.warnSoft }}>
+        <Text style={[t.callout, { color: colors.warn }]}>Could not refresh your schedule. Tap to try again.</Text>
+      </TouchableOpacity>}
+      {!sessionsLoading && !sessionsError && upcomingSessions.length === 0 && (
         <View
           style={[
             styles.emptyCard,

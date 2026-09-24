@@ -4,9 +4,19 @@ let item;
 window.classRequests = [];
 export async function apiGet(url) {
   if (url === "/teachers/me/billing") return { teacherShareBps: 7000 };
-  return url === "/teaching-classes" ? { classes: window.classHomeFixtures ?? [], nextCursor: null } : { item: structuredClone(item) };
+  if (url.startsWith("/teaching-classes?")) {
+    const params = new URL(url, location.origin).searchParams;
+    window.lastClassSearch = url;
+    return { classes: (window.classHomeFixtures ?? []).filter((item) => item.title.toLowerCase().includes((params.get("q") ?? "").toLowerCase()) && (!params.get("status") || item.batch.status === params.get("status"))), nextCursor: null };
+  }
+  return { item: structuredClone(item) };
 }
 export async function apiPost(url, input) {
+  if (url.endsWith("/schedule-review")) {
+    window.scheduleReviews = (window.scheduleReviews ?? 0) + 1;
+    if (window.failScheduleReview) throw new ApiError("Could not check dates. Your entries are still here.");
+    return { conflicts: (window.conflictFixtures ?? []).filter((c) => input.lessons[c.lessonIndex] && new Date(`${input.lessons[c.lessonIndex].date}T${input.lessons[c.lessonIndex].time}:00+05:45`).toISOString() === c.startsAt) };
+  }
   window.classRequests.push({ url, input });
   await new Promise((r) => setTimeout(r, 100));
   if (window.failClassSave) throw new ApiError("Connection lost. Your entries are still here.");

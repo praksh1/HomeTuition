@@ -54,7 +54,7 @@ export async function periodFor(batchId: number, reader: { select: typeof db.sel
   return row ?? null;
 }
 
-export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db) {
+export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferSelect, reader: { select: typeof db.select } = db, reviewSchedule = true) {
   const [testContract] = await reader.select({ batchId: batchTestContractsTable.batchId }).from(batchTestContractsTable)
     .innerJoin(learningProgramBatchesTable, eq(learningProgramBatchesTable.id, batchTestContractsTable.batchId))
     .where(eq(learningProgramBatchesTable.programId, row.programId)).limit(1);
@@ -64,7 +64,7 @@ export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferS
   const anchor = linked?.group.anchorAt ?? lessons[0]?.startsAt;
   const period = linked && anchor ? tuitionPeriod(linked.group.id, linked.link.periodIndex, anchor) : null;
   const [program] = await reader.select({ version: learningProgramsTable.version, teacherId: learningProgramsTable.teacherId }).from(learningProgramsTable).where(eq(learningProgramsTable.id, row.programId)).limit(1);
-  const review = program ? await teacherScheduleReview(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : { issues: [], conflicts: [] };
+  const review = program && reviewSchedule ? await teacherScheduleReview(reader, program.teacherId, lessons.map((lesson) => ({ ...lesson, label: `Lesson ${lesson.position + 1}` })), { batchId: row.id }) : { issues: [], conflicts: [] };
   return {
     id: row.id,
     bookingLocked: !!testContract,
@@ -81,6 +81,7 @@ export async function ownerBatch(row: typeof learningProgramBatchesTable.$inferS
       ...(period ? tuitionPeriodIssues(period, lessons) : []),
     ],
     scheduleConflicts: review.conflicts,
+    scheduleReviewed: reviewSchedule,
     status: row.status,
     capacity: row.capacity,
     totalTuitionNpr: row.totalTuitionNpr,

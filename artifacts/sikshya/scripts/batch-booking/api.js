@@ -34,6 +34,9 @@ function participantReceipt() {
     ], accounting: { ...base.accounting, refundedGrossNpr: 3000 } };
 }
 export async function apiGet(path) {
+  window.bookingReads = (window.bookingReads ?? 0) + 1;
+  if (window.failBookingRead) throw new Error("Synthetic read failure");
+  if (window.confirmedBooking) return window.confirmedBooking;
   if (path === "/admin/batch-test-payments") return { receipts: [operatorReceipt()] };
   if (path === "/batch-tests/me/payments") return { receipts: [participantReceipt()] };
   if (location.search.includes("unavailable")) throw new Error("An operator must enable your student test access first.");
@@ -45,7 +48,8 @@ export async function apiGet(path) {
     receipts: [{ reference: "TEST-BATCH-1", accounting: { teacherPaidOutNpr: 0, actualMoneyMovedNpr: 0 },
       allocations: [{ position: 0, state: "future", teacherNpr: 2100 }, { position: 1, state: "future", teacherNpr: 2100 }] }],
     lessons: [{ position: 0, sessionId: 125, startsAt: "2026-10-01T10:15:00Z", durationMinutes: 60 }] };
-  return result();
+  return location.search.includes("stale") && window.bookingRequests
+    ? { ...result(), quoteKey: "b".repeat(64), quote: { ...result().quote, amountNpr: 6500 } } : result();
 }
 export async function apiPost(path, body) {
   window.bookingRequests = (window.bookingRequests ?? 0) + 1;
@@ -62,9 +66,12 @@ export async function apiPost(path, body) {
       detail: { note: body.note || null, paymentMoved: false }, createdAt: new Date(Date.UTC(2026, 9, 1, 10, 16 + operatorHistory.length)).toISOString() });
     return { notice: "TEST ONLY — no money moved." };
   }
-  if (location.search.includes("stale")) throw new Error("The dates or price changed. Review the current details before confirming.");
+  if (location.search.includes("stale") && body.quoteKey !== "b".repeat(64)) throw new Error("The dates or price changed. Review the current details before confirming.");
   if (body.outcome === "declined") throw new Error("Test payment declined. No money moved and no place was booked. You can try again.");
-  return { ...result(), booked: true, receipts: [{ reference: "TEST-BATCH-1", grossNpr: 6000,
+  const confirmed = { ...result(), booked: true, receipts: [{ reference: "TEST-BATCH-1", grossNpr: 6000,
     accounting: { refundedGrossNpr: 0, actualMoneyMovedNpr: 0 },
     allocations: [{ position: 0, state: "future", grossNpr: 3000 }, { position: 1, state: "future", grossNpr: 3000 }] }], lessons: [{ position: 0, sessionId: 125, startsAt: "2026-10-01T10:15:00Z", durationMinutes: 60 }] };
+  window.confirmedBooking = confirmed;
+  if (location.search.includes("lost-response")) throw new Error("Synthetic lost response after commit");
+  return confirmed;
 }

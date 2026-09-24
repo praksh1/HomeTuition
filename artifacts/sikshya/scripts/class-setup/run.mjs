@@ -37,7 +37,7 @@ try {
     check(await page.getByText("Class name needs a little more detail.", { exact: true }).isVisible(), `${width}: meaningful details required`);
     await page.getByLabel("Class name", { exact: true }).fill("SEE Maths evening tuition");
     await page.getByLabel("Tell students about your class", { exact: true }).fill("We solve school exercises together and make time for questions.");
-    await page.getByLabel("Teaching language", { exact: true }).fill("Nepali and English");
+    await button("Both").click();
     check(await button("Add a teaching plan (optional)").isVisible(), `${width}: formal learning path optional`);
     await page.screenshot({ path: path.join(work, `${width}-description.png`), fullPage: true });
     await button("Continue").click();
@@ -60,7 +60,9 @@ try {
     check(await page.getByText(/Before applicable taxes/).isVisible(), `${width}: estimate reserves tax and refund adjustments honestly`);
     check(!(await page.locator("body").innerText()).includes("70%"), `${width}: class pricing advertises no percentage split`);
     await page.screenshot({ path: path.join(work, `${width}-price.png`), fullPage: true });
-    await page.getByLabel("Allow late joining", { exact: true }).check();
+    await button("Review my class").click();
+    check(await page.getByText("Choose when students may join this class.", { exact: true }).isVisible(), `${width}: joining decision cannot be skipped`);
+    await button("Allow joining for remaining lessons").click();
     await button("Review my class").click();
     check(await page.getByText("NPR 3,000 per student for these 30 days", { exact: true }).isVisible(), `${width}: price has full scope`);
     check(await page.getByText("Your estimated earnings", { exact: true }).count() === 1, `${width}: review repeats one clear earnings estimate`);
@@ -112,6 +114,8 @@ try {
     await home.goto(`http://127.0.0.1:${server.address().port}/teaching-classes`);
     await home.getByText("SEE Maths evening tuition", { exact: true }).waitFor();
     check(await home.getByText("SEE Maths evening tuition", { exact: true }).count() === 1, `${width}: one class name for current and next dates`);
+    check(await home.getByRole("button", { name: /^View dates for/ }).count() === 0, `${width}: older date sets stay compact until requested`);
+    await home.getByRole("button", { name: "More date sets (1)", exact: true }).click();
     check(await home.getByRole("button", { name: /^Continue setup for/ }).count() === 1 && await home.getByRole("button", { name: /^View dates for/ }).count() === 1, `${width}: both date sets remain accessible`);
     check(await home.getByText(/Sep 15, 2026.*03:00 Nepal time until/).count() > 0, `${width}: class list pins early-morning boundaries to Nepal, not viewer timezone`);
     check(await home.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: grouped class list fits`);
@@ -123,7 +127,9 @@ try {
   const singleButton = (name) => single.getByRole("button", { name, exact: true });
   await single.getByLabel("Class name", { exact: true }).fill("SEE Maths evening tuition");
   await single.getByLabel("Tell students about your class", { exact: true }).fill("We solve school exercises together and make time for questions.");
-  await single.getByLabel("Teaching language", { exact: true }).fill("Nepali");
+  await singleButton("Other").click();
+  await single.getByLabel("Other teaching language", { exact: true }).fill("Korean");
+  await singleButton("Nepali").click();
   await singleButton("Continue").click();
   await single.getByRole("button", { name: /^Date:/ }).click();
   await single.getByTestId("bs-next-month").click(); await single.getByTestId("bs-day-3").click(); await single.getByTestId("bs-confirm").click();
@@ -131,6 +137,7 @@ try {
   await singleButton("Continue").click();
   await single.getByLabel("Maximum students", { exact: true }).fill("6");
   await single.getByLabel("Price for 30 days (NPR)", { exact: true }).fill("5000");
+  await singleButton("Close joining when the class starts").click();
   await singleButton("Review my class").click();
   check(await single.getByText("Only 1 lesson in these 30 days", { exact: true }).count() === 1, "single lesson warning rendered in review");
   await singleButton("Save draft").click(); await singleButton("Publish class").click();
@@ -148,8 +155,7 @@ try {
   ]; }, singleFixture.batch.lessons[0].startsAt);
   await singleButton("Edit details").click();
   await single.getByLabel("Class name", { exact: true }).fill("Maths conflict review class");
-  await singleButton("Continue").click(); await singleButton("Continue").click(); await singleButton("Review my class").click();
-  await singleButton("Save draft").click();
+  await singleButton("Continue").click(); await singleButton("Continue").click();
   const edits = single.getByRole("button", { name: "Edit lesson 1 time", exact: true });
   await edits.first().scrollIntoViewIfNeeded();
   check(await single.getByText("Students have paid for the other class. Change this lesson.", { exact: true }).count() === 1, "paid conflict explains why this lesson must move");
@@ -158,9 +164,14 @@ try {
   await edits.first().click();
   check(await single.getByText("Overlapping time · lesson 1", { exact: true }).isVisible(), "edit conflict jumps to highlighted lesson editor");
   check(await single.getByTestId("class-time-0").count() === 1, "exact affected time is editable");
-  await singleButton("Continue").click(); await singleButton("Review my class").click();
   await single.getByRole("button", { name: "Keep this time · edit other schedule", exact: true }).click();
-  check((await single.evaluate(() => window.lastNavigation))?.params?.id === "88", "other schedule link uses authenticated structured identity");
+  await single.getByTestId("warning-cancel").click();
+  check(await single.getByTestId("class-time-0").isVisible(), "leaving for another schedule protects unsaved changes");
+  await single.getByTestId("class-time-0").fill("19:15");
+  await singleButton("Check timetable availability").click();
+  check(await single.getByText("No overlapping lessons found", { exact: true }).isVisible(), "changed dates can be rechecked without saving or visiting publish");
+  await singleButton("Continue").click();
+  check(await single.getByLabel("Maximum students", { exact: true }).isVisible(), "only a clear timetable advances to pricing");
   await single.close();
 } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 console.log(`${checks} checks passed. Screenshots: ${work}`);

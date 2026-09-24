@@ -107,6 +107,23 @@ function nextSocketEvent(ws, predicate) {
 try {
   await start();
   const teacher = await account("teacher"), a = await account("student"), b = await account("student"), outsider = await account("student", false);
+  const agendaTeacher = await account("teacher");
+  const agendaAt = Math.ceil(Date.now() / 60000) * 60000 + 86400000;
+  await q(`INSERT INTO sessions (teacher_id,teacher_name,subject,topic,date,duration,status)
+    SELECT $1,'Synthetic agenda teacher','Maths','Agenda ' || n,$2::timestamptz + n * interval '1 day',60,'upcoming'
+    FROM generate_series(-120,60) n`, [agendaTeacher.user.id, new Date(agendaAt).toISOString()]);
+  const dash = await api(`/sessions?teacherId=${agendaTeacher.user.id}&status=upcoming&agenda=upcoming&limit=5`, agendaTeacher.token);
+  const sessions = await api(`/sessions?teacherId=${agendaTeacher.user.id}&status=upcoming&agenda=upcoming&limit=100`, agendaTeacher.token);
+  check("Dashboard and Sessions agree on the nearest lessons beyond the old forty-row limit", dash.status === 200 && dash.body.sessions.length === 5
+    && JSON.stringify(dash.body.sessions.map((row) => row.id)) === JSON.stringify(sessions.body.sessions.slice(0, 5).map((row) => row.id))
+    && dash.body.sessions.every((row, i, rows) => !row.expired && (!i || Date.parse(rows[i - 1].date) <= Date.parse(row.date))));
+  const missed = await api(`/sessions?teacherId=${agendaTeacher.user.id}&status=upcoming&agenda=missed&limit=1`, agendaTeacher.token);
+  check("missed-class count is not limited by pagination", missed.body.total > 100 && missed.body.sessions.length === 1 && missed.body.sessions[0].expired);
+  const proposed = Array.from({ length: 14 }, (_, i) => nepalLesson(agendaAt + (i + 1) * 86400000));
+  const conflictReview = await api("/teaching-classes/schedule-review", agendaTeacher.token, { lessons: proposed });
+  check("unsaved timetable reports all fourteen conflicts in one read-only preflight", conflictReview.status === 200 && new Set(conflictReview.body.conflicts.map((row) => row.lessonIndex)).size === 14);
+  check("students cannot read teacher schedule preflight", (await api("/teaching-classes/schedule-review", a.token, { lessons: proposed })).status === 403);
+  check("preflight never saves a draft", Number((await q("SELECT count(*) n FROM learning_programs WHERE teacher_id=$1", [agendaTeacher.user.id])).rows[0].n) === 0);
   const operator = await account("student", false);
   await q("UPDATE users SET role='admin' WHERE id=$1", [operator.user.id]);
   const operatorLogin = await api("/auth/login", null, { email: operator.user.email, password: "Synthetic-password-123!" });
@@ -127,8 +144,19 @@ try {
   check("declined simulation creates no access or booking", (await book(automaticClass.id, automaticStudent, automaticQuote.quoteKey, "declined")).status === 402
     && Number((await q("SELECT count(*) n FROM test_student_grants WHERE student_id=$1", [automaticStudent.user.id])).rows[0].n) === 0
     && Number((await q("SELECT count(*) n FROM batch_test_bookings WHERE batch_id=$1", [automaticClass.id])).rows[0].n) === 0);
-  const automaticBooking = await book(automaticClass.id, automaticStudent, automaticQuote.quoteKey);
+  let automaticBooking;
+  // Inject failure only into the post-commit homework-notification query. This isolated test
+  // database is never shared; restore the table even if the assertion/request fails.
+  await q("ALTER TABLE class_group_homework RENAME TO class_group_homework_notification_fault");
+  try { automaticBooking = await book(automaticClass.id, automaticStudent, automaticQuote.quoteKey); }
+  finally { await q("ALTER TABLE class_group_homework_notification_fault RENAME TO class_group_homework"); }
   check("verified student can complete simulated checkout without an operator", automaticBooking.status === 200 && automaticBooking.body.created === true);
+  check("notification failure cannot report a committed booking as failed", (await quote(automaticClass.id, automaticStudent)).booked === true);
+  check("another teacher cannot exclude a class they do not own from preflight", (await api("/teaching-classes/schedule-review", teacher.token, { batchId: automaticClass.id, lessons: proposed })).status === 404);
+  const searched = await api("/teaching-classes?q=SEE&status=published", automaticTeacher.token);
+  check("class search filters on the server within the authenticated owner", searched.status === 200 && searched.body.classes.length === 1 && searched.body.classes[0].batch.id === automaticClass.id);
+  check("literal search wildcard cannot reveal all classes", (await api("/teaching-classes?q=%25", automaticTeacher.token)).body.classes.length === 0);
+  check("class lists do not re-run every timetable check", searched.body.classes[0].batch.scheduleReviewed === false);
   const automaticTeacherGrant = (await q("SELECT granted_by,reason,valid_until FROM test_teaching_grants WHERE teacher_id=$1", [automaticTeacher.user.id])).rows;
   const automaticStudentGrant = (await q("SELECT granted_by,reason,valid_until FROM test_student_grants WHERE student_id=$1", [automaticStudent.user.id])).rows;
   check("successful simulation records bounded automatic access", automaticTeacherGrant.length === 1 && automaticStudentGrant.length === 1

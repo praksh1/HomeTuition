@@ -37,23 +37,43 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
   const [error, setError] = useState("");
   const [datesOpen, setDatesOpen] = useState(false);
   const gate = useRef(false);
+  const generation = useRef(0);
   async function request(confirm = false, outcome: "success" | "declined" = "success") {
     if (gate.current || (confirm && !result)) return;
+    const current = generation.current;
     gate.current = true; setBusy(true); setError("");
     try {
       const next = confirm ? await apiPost<TestBooking>(`/batch-tests/${batchId}`, { quoteKey: result!.quoteKey, gateway: "fadko_test", outcome }) : await apiGet<TestBooking>(`/batch-tests/${batchId}`);
+      if (current !== generation.current) return;
       setResult(next);
       if (confirm && next.booked) onBooked?.();
     } catch (e) {
-      setResult(null);
+      if (current !== generation.current) return;
+      if (confirm) {
+        // A lost response is not proof that enrollment failed. Read the authoritative record;
+        // NEVER retry the payment POST automatically or manufacture a successful receipt.
+        try {
+          const checked = await apiGet<TestBooking>(`/batch-tests/${batchId}`);
+          if (current !== generation.current) return;
+          setResult(checked);
+          if (checked.booked) { onBooked?.(); return; }
+        } catch {
+          if (current !== generation.current) return;
+          setResult(null);
+          setError("We couldn't confirm your booking status. Refresh test access before trying again. No real payment was taken.");
+          return;
+        }
+      }
       setError(e instanceof Error ? e.message : "Could not check test booking. Please try again.");
-    } finally { gate.current = false; setBusy(false); }
+    } finally { if (current === generation.current) { gate.current = false; setBusy(false); } }
   }
   // Re-read the server-owned booking whenever this signed-in view opens. A confirmed place
   // survives sign-out, but the component's local `result` does not; without this GET an
   // enrolled student was offered a new checkout again until they pressed it.
   useEffect(() => {
+    generation.current += 1; gate.current = false; setResult(null); setError(""); setDatesOpen(false);
     if (!accountRequired) void request();
+    return () => { generation.current += 1; gate.current = false; };
     // `request` intentionally stays local to this panel. A new batch/account gate is the only
     // reason to run this automatically; button presses own every later refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps

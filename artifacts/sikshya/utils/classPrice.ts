@@ -34,6 +34,8 @@ export function classPublishSummary(total: number, lessons: number, ongoing: boo
     `You are publishing ${lessons} ${lessons === 1 ? "lesson" : "lessons"} for NPR ${total.toLocaleString("en-NP")} per student.`,
     ...(ongoing && lessons === 1 ? ["Only 1 lesson is scheduled in this 30-day period. The full price buys that single lesson. Check that this is intentional."] : []),
     "I have checked the class description, every lesson date, duration and the full price per student.",
-    "This publishes a listing only. Joining and payment remain unavailable.",
+    "These details are exactly what students will see. Check every date and the total price before publishing.",
+    "Once a student books, the promised details are locked. You are responsible for delivering all paid lessons. Changes to booked lessons require the support process, not silent edits.",
+    "Publishing does not charge anyone. Simulated checkout creates a test booking only; no real payment is collected.",
   ];
 }

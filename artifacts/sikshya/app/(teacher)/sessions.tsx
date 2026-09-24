@@ -17,6 +17,7 @@ import { useDates } from "@/context/DatePreferenceContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
+import { teacherAgendaPath } from "@/utils/teacherAgenda";
 import { notificationClock, notificationGroupLabel, nepalDayKey } from "@/utils/notificationCenter";
 
 interface Session {
@@ -107,14 +108,16 @@ export default function TeacherSessions() {
     if (!quiet) setLoading(true);
     setLoadError(false);
     const read = (status: string) => apiGet<{ sessions: ApiSession[] }>(
-      `/sessions?teacherId=${teacher.userId}&status=${status}&limit=100`,
+      status === "upcoming" ? teacherAgendaPath(teacher.userId, "upcoming", 100)
+        : status === "missed" ? teacherAgendaPath(teacher.userId, "missed", 100)
+        : `/sessions?teacherId=${teacher.userId}&status=${status}&limit=100`,
     );
     try {
       if (mode === "history") {
         const [completed, cancelled, pending] = await Promise.all([
           read("completed"),
           read("cancelled"),
-          read("upcoming"),
+          read("missed"),
         ]);
         const history = [
           ...completed.sessions,
@@ -147,7 +150,7 @@ export default function TeacherSessions() {
     useCallback(() => {
       void loadSessions();
       const timer = setInterval(() => void loadSessions(true), SESSION_POLL_MS);
-      return () => clearInterval(timer);
+      return () => { clearInterval(timer); requestSequence.current += 1; };
     }, [loadSessions]),
   );
 

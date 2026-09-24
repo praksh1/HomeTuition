@@ -37,7 +37,6 @@ try {
     await page.getByRole("button", { name: "Try declined payment", exact: true }).click();
     await page.getByText("Test payment declined. No money moved and no place was booked. You can try again.", { exact: true }).waitFor();
     check(`${width}: decline has no booked message`, !(await page.locator("body").innerText()).includes("Test place booked"));
-    await page.getByRole("button", { name: "Try test checkout", exact: true }).click();
     const confirm = page.getByRole("button", { name: "Simulate successful payment", exact: true });
     await confirm.waitFor();
     check(`${width}: checkout clearly says pretend and quoted value`, (await page.locator("body").innerText()).includes("Pretend payment only") && (await page.locator("body").innerText()).includes("NPR 6,000"));
@@ -57,6 +56,14 @@ try {
     check(`${width}: existing session page, no time bypass`, await page.evaluate(() => JSON.stringify(window.lastNavigation)) === JSON.stringify({ pathname: "/session/[id]", params: { id: "125" } }));
     check(`${width}: no horizontal overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: path.join(work, `${width}-booked.png`), fullPage: true });
+    await page.evaluate(() => { window.failBookingRead = true; });
+    await page.getByRole("button", { name: "Refresh test access", exact: true }).click();
+    await page.getByText("Synthetic read failure", { exact: true }).waitFor();
+    check(`${width}: failed refresh does not erase confirmed enrollment`, await page.getByText("You're enrolled", { exact: true }).isVisible());
+    await page.goto(base + "?lost-response");
+    await page.getByRole("button", { name: "Simulate successful payment", exact: true }).click();
+    await page.getByText("You're enrolled", { exact: true }).waitFor();
+    check(`${width}: lost checkout response recovers by reading, never paying again`, await page.evaluate(() => window.bookingRequests === 1));
     await page.goto(base + "?persisted");
     await page.getByText("You're enrolled", { exact: true }).waitFor();
     check(`${width}: returning after sign-in restores the confirmed place`, await page.getByRole("button", { name: "Try test checkout", exact: true }).count() === 0 && await page.getByRole("button", { name: "Open class home", exact: true }).count() === 1);
@@ -74,7 +81,11 @@ try {
     await page.getByRole("button", { name: "Simulate successful payment", exact: true }).click();
     await page.getByText("Test booking unavailable", { exact: true }).waitFor();
     check(`${width}: failed booking never claims success`, !(await page.locator("body").innerText()).includes("Test place booked"));
-    check(`${width}: stale quote cannot be resubmitted without refresh`, await page.getByRole("button", { name: "Simulate successful payment", exact: true }).count() === 0);
+    check(`${width}: stale quote is refreshed without repeating checkout`, await page.evaluate(() => window.bookingRequests === 1 && window.bookingReads >= 2));
+    check(`${width}: changed price is displayed for a new explicit decision`, (await page.locator("body").innerText()).includes("NPR 6,500"));
+    await page.getByRole("button", { name: "Simulate successful payment", exact: true }).click();
+    await page.getByText("You're enrolled", { exact: true }).waitFor();
+    check(`${width}: reconfirmation uses the fresh server quote`, await page.evaluate(() => window.bookingPayload.body.quoteKey === "b".repeat(64)));
     await page.goto(base + "?operator");
     await page.getByRole("button", { name: "View test payments", exact: true }).click();
     await page.getByText("Synthetic SEE Maths", { exact: true }).waitFor();

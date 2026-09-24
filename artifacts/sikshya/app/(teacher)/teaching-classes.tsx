@@ -1,11 +1,11 @@
-import React, { useCallback, useState } from "react";
-import { ActivityIndicator, ScrollView, Text, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { useDates } from "@/context/DatePreferenceContext";
-import { marketplaceColumnMax } from "@/constants/layout";
+import { desktopWorkspaceMax, HIT_SLOP_MIN } from "@/constants/layout";
 import {
   ProgramBackControl,
   ProgramButton,
@@ -14,7 +14,6 @@ import {
   ProgramNotice,
 } from "@/components/programs/ProgramPieces";
 import { apiGet } from "@/utils/api";
-import { BatchTestPanel } from "@/components/classes/BatchTestPanel";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import {
   classIsPublished,
@@ -24,7 +23,7 @@ import {
 
 export default function TeachingClasses() {
   const colors = useColors();
-  const { t, space, gutter } = useLayout();
+  const { t, space, gutter, radius, numeric, isExpanded } = useLayout();
   const dates = useDates();
   const dateLabel = (iso: string) => {
     const wallClock = lessonDraft({ startsAt: iso, durationMinutes: 60 });
@@ -34,45 +33,65 @@ export default function TeachingClasses() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [nextCursor, setNextCursor] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const sequence = useRef(0);
+  const loadingMore = useRef(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const address = `/teaching-classes?q=${encodeURIComponent(query)}&status=${status}`;
   const load = useCallback(async () => {
+    const current = ++sequence.current;
     setLoading(true);
     setError("");
     try {
       const result = await apiGet<{
         classes: TeachingClass[];
         nextCursor: number | null;
-      }>("/teaching-classes");
+      }>(address);
+      if (current !== sequence.current) return;
       setItems(result.classes);
       setNextCursor(result.nextCursor);
     } catch {
+      if (current !== sequence.current) return;
       setError(
         "We could not load your classes. Your saved work has not been changed.",
       );
     } finally {
-      setLoading(false);
+      if (current === sequence.current) setLoading(false);
     }
-  }, []);
+  }, [address]);
   const more = async () => {
-    if (nextCursor === null || loading) return;
+    if (nextCursor === null || loading || loadingMore.current) return;
+    loadingMore.current = true;
+    const current = sequence.current;
     setLoading(true);
     try {
       const result = await apiGet<{
         classes: TeachingClass[];
         nextCursor: number | null;
-      }>(`/teaching-classes?before=${nextCursor}`);
-      setItems((old) => [...old, ...result.classes]);
+      }>(`${address}&before=${nextCursor}`);
+      if (current !== sequence.current) return;
+      setItems((old) => [...old, ...result.classes.filter((item) => !old.some((existing) => existing.batch.id === item.batch.id))]);
       setNextCursor(result.nextCursor);
     } catch {
+      if (current !== sequence.current) return;
       setError(
         "We could not load the next page. Try again to reload your classes.",
       );
     } finally {
-      setLoading(false);
+      loadingMore.current = false;
+      if (current === sequence.current) setLoading(false);
     }
   };
   useFocusEffect(
     useCallback(() => {
       void load();
+      return () => { sequence.current += 1; };
     }, [load]),
   );
   return (
@@ -82,7 +101,7 @@ export default function TeachingClasses() {
           padding: gutter,
           gap: space.lg,
           width: "100%",
-          maxWidth: marketplaceColumnMax,
+          maxWidth: desktopWorkspaceMax,
           alignSelf: "center",
         }}
       >
@@ -96,7 +115,7 @@ export default function TeachingClasses() {
             My classes
           </Text>
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
-            Your teaching, timetable and price — together in one place.
+            Your teaching studio. Find a class here; see your next lesson in Schedule.
           </Text>
         </View>
         <ProgramButton
@@ -105,6 +124,16 @@ export default function TeachingClasses() {
           icon="plus"
           onPress={() => router.push("/(teacher)/create-class")}
         />
+        <View style={{ flexDirection: isExpanded ? "row" : "column", gap: space.sm }}>
+          <TextInput accessibilityLabel="Search all your classes" placeholder="Search all your classes" value={search}
+            onChangeText={setSearch} maxLength={100} placeholderTextColor={colors.mutedForeground}
+            style={[t.body, { flex: isExpanded ? 1 : undefined, minHeight: HIT_SLOP_MIN, padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card, color: colors.foreground }]} />
+          <ProgramButton label="Open schedule" icon="calendar" onPress={() => router.push("/(teacher)/sessions")} />
+        </View>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
+          {[["", "All"], ["published", "Published"], ["draft", "Drafts"], ["closed", "Closed"]].map(([value, label]) =>
+            <ProgramButton key={value} label={label!} emphasis={status === value ? "secondary" : "quiet"} onPress={() => setStatus(value!)} />)}
+        </View>
         {loading ? (
           <ActivityIndicator color={colors.primary} />
         ) : error ? (
@@ -122,7 +151,7 @@ export default function TeachingClasses() {
                   ? "Regular tuition · shared 30-day dates"
                   : "Short course"}
               </Text>
-              {group.items.map((item) => (
+              {(expanded[group.key] ? group.items : group.items.slice(0, 1)).map((item) => (
                 <View
                   key={item.batch.id}
                   style={{
@@ -143,6 +172,9 @@ export default function TeachingClasses() {
                             : "Draft"
                     }
                   />
+                  <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+                    {item.batch.lessons.length} lessons · {item.teachingLanguage} · {item.batch.totalTuitionNpr ? `NPR ${item.batch.totalTuitionNpr.toLocaleString("en-NP")} / student` : "Price not set"}
+                  </Text>
                   {item.batch.tuitionPeriod ? (
                     <Text
                       style={[t.caption, { color: colors.mutedForeground }]}
@@ -150,7 +182,7 @@ export default function TeachingClasses() {
                       {dateLabel(item.batch.tuitionPeriod.startsAt)} until{" "}
                       {dateLabel(item.batch.tuitionPeriod.endsAt)}
                     </Text>
-                  ) : null}
+                  ) : item.batch.lessons[0] ? <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Starts {dateLabel(item.batch.lessons[0].startsAt)}</Text> : null}
                   <ProgramButton
                     label={
                       item.batch.status === "draft"
@@ -165,15 +197,17 @@ export default function TeachingClasses() {
                       })
                     }
                   />
-                  {item.batch.testPilotEndsAt && item.batch.status === "published" ? <BatchTestPanel batchId={item.batch.id} teacher /> : null}
                 </View>
               ))}
+              {group.items.length > 1 ? <ProgramButton emphasis="quiet"
+                label={expanded[group.key] ? "Collapse date sets" : `More date sets (${group.items.length - 1})`}
+                onPress={() => setExpanded((old) => ({ ...old, [group.key]: !old[group.key] }))} /> : null}
             </ProgramCardShell>
           ))
         ) : (
           <ProgramNotice
-            title="Start with the class you already teach"
-            body="Evening tuition, exam preparation, languages or a skill — describe it, choose your days and set one clear price."
+            title={query || status ? "No matching classes" : "Start with what you know"}
+            body={query || status ? "Try a different name or filter. Your other classes are still saved." : "Neighborhood tutoring, exam preparation, languages or a skill — describe who you can help, choose your days and set one clear price."}
           />
         )}
         {nextCursor !== null && !loading && !error ? (

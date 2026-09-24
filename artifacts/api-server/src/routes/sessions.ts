@@ -35,6 +35,7 @@ import {
   cutoffAt,
   isCreatableAt,
   isPastCutoff,
+  OVERTIME_CUTOFF_MINUTES,
   STUDENT_GRACE_MINUTES,
   studentDoorClosesAt,
 } from "../lib/sessionStart";
@@ -393,14 +394,27 @@ router.get("/public/classes", async (req: Request, res: Response): Promise<void>
 });
 
 router.get("/sessions", async (req, res): Promise<void> => {
-  const { teacherId, studentId, status, page = "1", limit = "20" } = req.query as Record<string, string>;
+  const { teacherId, studentId, status, agenda, page = "1", limit = "20" } = req.query as Record<string, string>;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const limitNum = Math.min(100, parseInt(limit, 10) || 20);
+  const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
   const offset = (pageNum - 1) * limitNum;
 
   const conditions = [];
   if (teacherId) conditions.push(eq(sessionsTable.teacherId, parseInt(teacherId, 10)));
   if (status) conditions.push(eq(sessionsTable.status, status));
+  if (agenda && (status !== "upcoming" || !["upcoming", "missed"].includes(agenda))) {
+    res.status(400).json({ error: "Choose an upcoming or missed-class agenda." });
+    return;
+  }
+  // Filter BEFORE pagination, using the same booked end + overtime cutoff as the classroom.
+  // An unstarted lesson stays `upcoming` in storage; it must not push future lessons off-page.
+  const now = Date.now();
+  if (agenda) {
+    const cutoff = sql`${sessionsTable.date} + (${sessionsTable.duration} + ${OVERTIME_CUTOFF_MINUTES}) * interval '1 minute'`;
+    conditions.push(agenda === "missed"
+      ? sql`${cutoff} <= ${new Date(now).toISOString()}::timestamptz`
+      : sql`${cutoff} > ${new Date(now).toISOString()}::timestamptz`);
+  }
 
   /**
    * Days of a monthly class are hidden from the browsing list, and only from that one.
@@ -495,7 +509,9 @@ router.get("/sessions", async (req, res): Promise<void> => {
   }
 
   const [sessions, [{ total }]] = await Promise.all([
-    db.select().from(sessionsTable).where(where).orderBy(desc(sessionsTable.date)).limit(limitNum).offset(offset),
+    db.select().from(sessionsTable).where(where).orderBy(
+      ...(agenda === "upcoming" ? [asc(sessionsTable.date), asc(sessionsTable.id)] : [desc(sessionsTable.date), desc(sessionsTable.id)]),
+    ).limit(limitNum).offset(offset),
     db.select({ total: sql<number>`count(*)::int` }).from(sessionsTable).where(where),
   ]);
 
@@ -520,7 +536,6 @@ router.get("/sessions", async (req, res): Promise<void> => {
    * `sessions` is also read with a bare select() in six routes, where a new column is a 500
    * until the schema is pushed by hand.
    */
-  const now = Date.now();
   const withState = withEnrolment.map((row) => ({
     ...row,
     expired:

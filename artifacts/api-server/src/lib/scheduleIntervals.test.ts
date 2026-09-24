@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { conflictMessages, overlaps, slotDescription } from "./scheduleIntervals.ts";
+import { conflictDetails, conflictMessages, overlaps, slotDescription } from "./scheduleIntervals.ts";
 const slot = (time: string, durationMinutes = 60, label = "Guitar") => ({ startsAt: new Date(`2030-01-01T${time}:00+05:45`), durationMinutes, label });
+test("structured review exposes all sixty affected lessons instead of truncating after ten", () => {
+  const lessons = Array.from({ length: 60 }, (_, index) => ({ ...slot("17:00"), startsAt: new Date(Date.UTC(2030, 0, index + 1)) }));
+  const details = conflictDetails(lessons, lessons.flatMap((lesson) => [lesson, lesson, lesson, lesson]));
+  assert.equal(new Set(details.map((row) => row.lessonIndex)).size, 60);
+  assert.equal(details.length, 180);
+  assert.equal(details.at(-1)?.lessonIndex, 59);
+});
 test("full interval overlap, identical, enclosed and unequal durations", () => {
   assert.ok(overlaps(slot("17:00"), slot("17:30")));
   assert.ok(overlaps(slot("17:00"), slot("17:00")));

@@ -457,6 +457,9 @@ router.all("/batch-tests/:id", requireAuth, async (req, res, next) => {
     await synchronizeBatchTestSettlements(id).catch((error) => req.log.warn({ error }, "could not refresh simulated settlement evidence"));
     const result = await run(id, req.user!.userId, req.method === "POST" ? req.body.quoteKey : undefined, req.body?.outcome);
     if (result.created) {
+      // Enrollment is committed. Auxiliary notification reads must never turn that success
+      // into a 500 that encourages another checkout. Retain a traceable warning for support.
+      try {
       recordActivity({ userId: req.user!.userId, action: "batch.test_booked", subjectType: "learning_program_batch", subjectId: id, detail: { testOnly: true, moneyCollected: false } });
       notifyInApp(result.teacherId, { kind: "session_booked", sessionId: result.lessons[0]!.sessionId,
         topic: result.classTitle, fromUserId: req.user!.userId, fromName: result.studentName,
@@ -481,6 +484,9 @@ router.all("/batch-tests/:id", requireAuth, async (req, res, next) => {
           topic: result.classTitle,
           dueAt: task.dueAt?.toISOString(),
         });
+      }
+      } catch (error) {
+        req.log.warn({ error, batchId: id, userId: req.user!.userId }, "test booking committed; notification preparation failed");
       }
     }
     res.setHeader("Cache-Control", "no-store").json(result);
