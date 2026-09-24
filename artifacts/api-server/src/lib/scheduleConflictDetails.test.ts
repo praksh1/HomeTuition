@@ -18,6 +18,11 @@ test("internal conflicts name both editable positions, adjacency is not conflict
   assert.equal(rows[0]?.otherLessonIndex, 0);
   assert.equal(rows[0]?.source, null);
 });
-test("conflict display is bounded without changing the underlying overlap rule", () => {
-  assert.equal(conflictDetails(Array.from({ length: 60 }, () => slot(0)), [slot(0)]).length, 10);
+test("conflict display is bounded per affected lesson, without hiding later lessons", () => {
+  const details = conflictDetails(Array.from({ length: 60 }, () => slot(0)), [slot(0)]);
+  assert.equal(new Set(details.map((row) => row.lessonIndex)).size, 60);
+  for (let index = 0; index < 60; index++) {
+    assert.ok(details.filter((row) => row.lessonIndex === index).length <= 3);
+  }
+  assert.equal(details.length, 177);
 });
