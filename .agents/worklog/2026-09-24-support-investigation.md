@@ -13,7 +13,8 @@ Branch `codex/support-investigation-sep24`, based on the accepted classroom/supp
 - 721 API unit tests passed locally before final follow-up assertions.
 - 114 profile/support browser assertions passed at 390px and 1440px. Rendered screenshots inspected; no clipping in the tested context card and panel. Desktop Chromium at phone size is not physical Safari.
 - API/app typechecks and design lint passed. The shared DB declaration needed rebuilding after the additive schema edit; first API typecheck correctly caught stale declarations, then passed after typecheck:libs.
-- No local psql/docker command is available. Added a focused GitHub workflow using disposable Postgres with AI disabled and no cloud credentials; route/isolation checks pending that run.
+- No local psql/docker command is available. Focused GitHub workflow `35961543871` passed with disposable Postgres, AI disabled and no cloud credentials: full typecheck, unit tests, route/isolation checks, design lint and browser checks.
+- Follow-up serializes message writes and human handoff on the conversation row, with a parallel-request integration assertion. A subsequent local typecheck was blocked by missing `jose` and `livekit-server-sdk` modules in the shared dependency tree, not errors in the changed support code; fresh-install CI must verify this follow-up.
 - Provider requests in tests are mocks; no live AI answer-quality or vendor billing verification claimed.
 
 ## Limitations / next work

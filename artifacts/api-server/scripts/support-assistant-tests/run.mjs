@@ -1,4 +1,4 @@
-/** Run only against a disposable test database: creates three accounts and one help article. */
+/** Run only against a disposable test database: creates synthetic accounts, a lesson and a help article. */
 import { execFileSync } from "node:child_process";
 
 const API = (process.env.API_URL ?? "http://127.0.0.1:8080").replace(/\/+$/, "");
@@ -113,4 +113,15 @@ check("human handoff links the session evidence and technical category", sent.st
 check("brief distinguishes user reports from verified records", /User reports \(not independently verified\)/.test(sql(`SELECT description FROM disputes WHERE id = ${Number(sent.body.ticketId)}`)));
 const afterHandoff = await api("/support/assistant/messages", { token: investigator.token, method: "POST", body: { message: "more", conversationId: investigate.body.conversationId } });
 check("a submitted conversation cannot silently diverge from its ticket", afterHandoff.status === 409);
+const racing = await api("/support/assistant/messages", { token: investigator.token, method: "POST", body: { message: "My microphone is not working", sessionId: lessonId } });
+check("race fixture conversation created", racing.status === 201);
+const racePath = `/support/assistant/conversations/${racing.body.conversationId}/request`;
+const [racingMessage, racingHandoff] = await Promise.all([
+  api("/support/assistant/messages", { token: investigator.token, method: "POST", body: { message: "Safari on my second phone also fails", conversationId: racing.body.conversationId } }),
+  api(racePath, { token: investigator.token, method: "POST", body: {} }),
+]);
+check("parallel handoff succeeds", racingHandoff.status === 201);
+check("parallel message is either saved or explicitly rejected", [201, 409].includes(racingMessage.status));
+const raceBrief = sql(`SELECT description FROM disputes WHERE id = ${Number(racingHandoff.body.ticketId)}`);
+check("no acknowledged message is lost from the handoff", racingMessage.status !== 201 || raceBrief.includes("Safari on my second phone also fails"));
 console.log(`\n${passed} support assistant checks passed`);

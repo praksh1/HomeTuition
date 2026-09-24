@@ -60,6 +60,7 @@ async function ownedConversation(conversationId: number, userId: number) {
 }
 
 class BudgetExhausted extends Error {}
+class ConversationChanged extends Error {}
 
 async function reserveProviderAttempt(provider: "workers-ai" | "groq"): Promise<boolean> {
   const raw = Number(process.env[provider === "groq" ? "SUPPORT_GROQ_DAILY_LIMIT" : "SUPPORT_WORKERS_AI_DAILY_LIMIT"] ?? 0);
@@ -235,6 +236,12 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
     if (investigation) { answer = investigation.answer; source = "local"; }
     const saved = await db.transaction(async (tx) => {
       let conversationId = requestedId;
+      if (conversationId) {
+        const [locked] = await tx.select().from(supportConversationsTable).where(and(
+          eq(supportConversationsTable.id, conversationId), eq(supportConversationsTable.userId, userId),
+        )).for("update");
+        if (!locked || locked.ticketId || locked.updatedAt.getTime() !== conversation?.updatedAt.getTime()) throw new ConversationChanged();
+      }
       if (!conversationId) {
         const [created] = await tx.insert(supportConversationsTable).values({
           userId, title: message.slice(0, 64),
@@ -268,6 +275,9 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
       suggestedReplies: investigation?.choices ?? followUp?.choices ?? [],
       article: source === "faq" && top ? { id: top.id, title: top.title } : null });
   } catch (error) {
+    if (error instanceof ConversationChanged) {
+      res.status(409).json({ error: "This conversation changed on another device or was sent to support. Reopen it before sending more." }); return;
+    }
     req.log.error({ err: error, userId }, "support assistant reply failed");
     res.status(503).json({ error: "I couldn't answer right now. Your existing support request form is still available." });
   }
@@ -303,21 +313,22 @@ router.post("/support/assistant/conversations/:id/request", requireAuth, async (
     }
     const allowance = await allowanceFor(userId);
     if (!allowance.ok) { res.status(429).json({ error: allowance.reason, nextAllowedAt: allowance.nextAllowedAt }); return; }
-    const messages = await db.select({ role: supportMessagesTable.role, body: supportMessagesTable.body })
-      .from(supportMessagesTable).where(eq(supportMessagesTable.conversationId, id))
-      .orderBy(desc(supportMessagesTable.id)).limit(48);
-    messages.reverse();
-    const caseContext = await linkedLesson(id, userId);
-    const description = buildSupportReviewBrief(messages, caseContext?.facts);
-    const topic = conversationTopic("general", messages.filter((item) => item.role === "user")
-      .map((item) => resolveSupport(item.body).classification.intent));
-    const safety = messages.some((item) => item.role === "user" && (resolveSupport(item.body).classification.intent === "safety" || supportToneResponse(item.body, flaggedTerms(item.body))?.kind === "report"));
-    const reason = safety ? "Inappropriate Behavior" : topic === "billing" ? "Payment Issue" : ["class_access", "messaging", "homework"].includes(topic) ? "Technical Failure" : "Other";
     const result = await db.transaction(async (tx) => {
       const [locked] = await tx.select().from(supportConversationsTable)
         .where(and(eq(supportConversationsTable.id, id), eq(supportConversationsTable.userId, userId))).for("update");
       if (!locked) return null;
       if (locked.ticketId) return { id: locked.ticketId };
+      // Read the transcript after locking the same row that message writes lock. Otherwise a
+      // concurrent send can be acknowledged to the user but missing from the human's brief.
+      const messages = (await tx.select({ role: supportMessagesTable.role, body: supportMessagesTable.body })
+        .from(supportMessagesTable).where(eq(supportMessagesTable.conversationId, id))
+        .orderBy(desc(supportMessagesTable.id)).limit(48)).reverse();
+      const caseContext = await linkedLesson(id, userId);
+      const description = buildSupportReviewBrief(messages, caseContext?.facts);
+      const topic = conversationTopic("general", messages.filter((item) => item.role === "user")
+        .map((item) => resolveSupport(item.body).classification.intent));
+      const safety = messages.some((item) => item.role === "user" && (resolveSupport(item.body).classification.intent === "safety" || supportToneResponse(item.body, flaggedTerms(item.body))?.kind === "report"));
+      const reason = safety ? "Inappropriate Behavior" : topic === "billing" ? "Payment Issue" : ["class_access", "messaging", "homework"].includes(topic) ? "Technical Failure" : "Other";
       const [created] = await tx.insert(disputesTable).values({
         userId, reason, description, evidenceUrl: null, sessionId: caseContext?.sessionId ?? null,
       }).returning({ id: disputesTable.id });
