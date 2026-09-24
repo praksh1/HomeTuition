@@ -63,7 +63,12 @@ try {
     await page.getByRole("button", { name: "Next", exact: true }).click();
     check(`${width}: second page question is editable`, await page.getByLabel("Question text").inputValue() === "Capital of Nepal?");
     await page.getByTestId("quiz-confirm-question").click();
+    await page.evaluate(() => { window.holdQuizRequest = true; });
     await page.getByTestId("quiz-save").click();
+    await page.waitForFunction(() => typeof window.releaseQuizRequest === "function");
+    check(`${width}: saving locks question and answer edits`, !(await page.getByLabel("Question text").isEditable()) && !(await page.getByLabel("Correct short answer").isEditable()));
+    check(`${width}: saving locks question navigation`, await page.getByRole("button", { name: "Previous", exact: true }).getAttribute("aria-disabled") === "true");
+    await page.evaluate(() => { window.releaseQuizRequest(); delete window.releaseQuizRequest; });
     await page.getByText("Draft saved", { exact: true }).waitFor();
     check(`${width}: draft persists all confirmed questions`, await page.evaluate(() => window.savedQuiz.questions.every(q => q.confirmed)));
     await page.getByLabel("Correct short answer").fill("Kathmandu City");
@@ -77,7 +82,10 @@ try {
     await page.screenshot({ path: path.join(work, `${width}-teacher-preview.png`), fullPage: true });
     await page.getByTestId("quiz-publish").click();
     check(`${width}: publication requires explicit confirmation`, await page.getByText("Ready for your students?", { exact: true }).isVisible());
+    await page.evaluate(() => { window.holdQuizRequest = true; });
     await page.getByTestId("quiz-confirm-action").click();
+    await page.waitForFunction(() => typeof window.releaseQuizRequest === "function");
+    await page.evaluate(() => { window.releaseQuizRequest(); delete window.releaseQuizRequest; });
     await page.getByRole("button", { name: "Student results", exact: true }).waitFor();
     check(`${width}: publish saved and editor locked`, (await page.getByLabel("Question text").count()) === 0);
     await page.getByRole("button", { name: "Student results", exact: true }).click();
@@ -92,7 +100,11 @@ try {
     check(`${width}: student reviews full answer set before final submission`, await page.getByText("Your final answers", { exact: true }).isVisible());
     await page.waitForTimeout(350);
     await page.screenshot({ path: path.join(work, `${width}-student-submit.png`), fullPage: true });
+    await page.evaluate(() => { window.holdQuizRequest = true; });
     await page.getByTestId("quiz-confirm-action").click();
+    await page.waitForFunction(() => typeof window.releaseQuizRequest === "function");
+    check(`${width}: submitted answers cannot change during the request`, !(await page.getByLabel("Your answer").isEditable()));
+    await page.evaluate(() => { window.releaseQuizRequest(); delete window.releaseQuizRequest; });
     await page.getByTestId("quiz-result").waitFor();
     check(`${width}: graded submission is locked`, (await page.getByTestId("quiz-submit").count()) === 0);
     check(`${width}: no horizontal overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

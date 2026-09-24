@@ -16,12 +16,14 @@ Current-source video cost report; role-correct shared-tab reload routing; privat
 Production remains on LiveKit Cloud. Self-host kit stays on its separate preview branch. No account, server, domain or paid provider purchase. Make-up rules remain a proposal until the owner answers the specific policy choice; no automatic refund or ban.
 
 ## Verification
-Local full typecheck passed. Server rules: 734 passed. App rules: 568 passed. Design-token baseline unchanged. Quiz browser harness: 28 checks passed at 390/1440 widths, including real two-page PDF extraction; screenshots inspected. Feature CI **36029838470** passed on **74a378d**, including **45 real-API quiz checks** and **56 built-app cold-refresh/account-gate checks**. Local Windows cold-refresh check also passed all 56 after its dialog handler was made explicit for the existing onboarding unsaved-form warning. No production runtime change followed the green feature run; only docs and this test-harness handling were added before promotion. Full production gate is pending; no live completion claim yet.
+Local full typecheck passed. Server rules: 734 passed. App rules: 568 passed. Design-token baseline unchanged. Initial quiz browser harness: 28 checks passed at 390/1440 widths, including real two-page PDF extraction; screenshots inspected. Feature CI **36029838470** passed on **74a378d**, including **45 real-API quiz checks** and **56 built-app cold-refresh/account-gate checks**. Local Windows cold-refresh check also passed all 56 after its dialog handler was made explicit for the existing onboarding unsaved-form warning. The final slow-request review added a UI safeguard and expanded the quiz browser harness to **34 passing checks**; app typecheck also passed. Full production gate is pending; no live completion claim yet.
 
 ## Problems and surprises
 Current Oracle documentation says 2 OCPUs/12 GB, not the older often-quoted 4/24. Hetzner published changed prices in June 2026; do not reuse older quotes.
 
 The first quiz browser run caught a teacher-only answer-key validation expression executing in the student view. Guarded it by editor mode and reran both roles successfully; student API responses still omit the key. Initial feature CI 36029500378 stopped because the synthetic teacher fixture lacked the required bio; fixed the fixture without weakening registration. A new notification test initially passed the whole notice rather than its data payload; corrected to the real call contract. All these failures happened before production promotion.
+
+While production run 36030750757 was still in its browser stage, a final review found editable question fields during a pending save. A held-request browser test reproduced this before the fix. Draft fields/navigation and student answers now lock during their request so a late response cannot overwrite intervening edits. The new 34-check browser run passed at both widths. Supersede the earlier web run with the corrected release rather than bypass the full gate. No API/financial behavior changed in this follow-up.
 
 ## Fabrications found
 None. Capacity examples in the cost report are estimates, not load-test results.
