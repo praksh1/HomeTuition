@@ -20,7 +20,7 @@ async function api(route, token, body, method = body === undefined ? "GET" : "PO
   return { status: r.status, body: await r.json(), cache: r.headers.get("cache-control") };
 }
 async function account(role) {
-  const r = await api("/auth/register", null, { name: `Quiz ${role}`, email: `${randomUUID()}@example.invalid`, password: "Synthetic-test-123!", role, subject: "Maths", grade: "10", dateOfBirth: "2000-01-01" });
+  const r = await api("/auth/register", null, { name: `Quiz ${role}`, email: `${randomUUID()}@example.invalid`, password: "Synthetic-test-123!", role, subject: "Maths", bio: "Synthetic quiz integration teacher.", grade: "10", dateOfBirth: "2000-01-01" });
   assert.ok(r.status < 300, JSON.stringify(r)); return r.body;
 }
 async function fixture(teacher, student) {
