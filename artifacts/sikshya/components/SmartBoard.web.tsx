@@ -222,6 +222,8 @@ interface ExcalidrawElement {
 
 interface Props {
   classroomChrome?: boolean;
+  /** Temporarily clear floating call controls while a board panel has focus. */
+  onOverlayChange?: (open: boolean) => void;
   /** Teachers draw; students watch. */
   readOnly?: boolean;
   /** Deltas arriving from the classroom socket. */
@@ -368,6 +370,7 @@ const RedoIcon = () => (
 
 function SmartBoard({
   classroomChrome = false,
+  onOverlayChange,
   readOnly = false,
   sceneUpdates,
   onConsumeUpdates,
@@ -430,6 +433,9 @@ function SmartBoard({
   const [pageMenuOpen, setPageMenuOpen] = useState(false);
   const [pageSidebarOpen, setPageSidebarOpen] = useState(false);
   const [materialsOpen, setMaterialsOpen] = useState(false);
+  const overlayOpen = zoomMenuOpen || pageMenuOpen || materialsOpen || colorMenuOpen || pageSidebarOpen || boardDialog !== null;
+  useEffect(() => { onOverlayChange?.(overlayOpen); }, [overlayOpen, onOverlayChange]);
+  useEffect(() => () => { onOverlayChange?.(false); }, [onOverlayChange]);
   useEffect(() => { if (pageMenuOpen || materialsOpen) setZoomMenuOpen(false); }, [pageMenuOpen, materialsOpen]);
   const [laserMode, setLaserMode] = useState(false);
   const lastLaserSent = useRef(0);
@@ -1896,6 +1902,7 @@ function boardPropsEqual(previous: Props, next: Props): boolean {
   return (
     previous.readOnly === next.readOnly &&
     previous.classroomChrome === next.classroomChrome &&
+    previous.onOverlayChange === next.onOverlayChange &&
     previous.sceneUpdates === next.sceneUpdates &&
     previous.onConsumeUpdates === next.onConsumeUpdates &&
     previous.onSceneChange === next.onSceneChange &&

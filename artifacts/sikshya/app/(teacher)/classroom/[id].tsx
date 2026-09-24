@@ -396,6 +396,7 @@ export default function Classroom() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pipDrag = useRef(new Animated.ValueXY()).current;
   const lastSeenIncomingRef = useRef(0);
+  const [boardOverlayOpen, setBoardOverlayOpen] = useState(false);
   const previousIncomingRef = useRef(0);
 
   /**
@@ -407,7 +408,7 @@ export default function Classroom() {
    * the bottom controls; and the PIP is clamped between them.
    */
   const boardToolbarBottom = insets.top + HIT_SLOP_MIN + space.md;
-  const hudBottom = insets.bottom + HIT_SLOP_MIN + space.md;
+  const hudBottom = insets.bottom + HIT_SLOP_MIN + space.md * 2;
   const pipBottomClearance = hudBottom + HIT_SLOP_MIN + space.lg;
 
   const videoHidden = videoWindowSize === "hidden";
@@ -1405,7 +1406,7 @@ export default function Classroom() {
           ) : null}
         </View>
 
-        {mode !== "chat" && mode !== "participants" ? <ClassroomControlDock
+        {!boardOverlayOpen && mode !== "chat" && mode !== "participants" ? <ClassroomControlDock
           bottom={hudBottom}
           chatOpen={false}
           unreadCount={unreadChatCount}
@@ -1598,7 +1599,7 @@ export default function Classroom() {
             // surface while it is open, so the call window becomes deliberately inert until the
             // teacher closes the list.
             pointerEvents={
-              mode === "chat" || mode === "participants" || videoHidden
+              mode === "chat" || mode === "participants" || videoHidden || boardOverlayOpen
                 ? "none"
                 : "auto"
             }
@@ -1616,7 +1617,7 @@ export default function Classroom() {
                 // Position comes from the shared model; the animated value only tracks a live drag.
                 transform: windowControls.canDrag ? pipDrag.getTranslateTransform() : [],
               },
-              ((isCompact && mode === "chat") || videoHidden) && s.videoAreaHidden,
+              ((isCompact && mode === "chat") || videoHidden || boardOverlayOpen) && s.videoAreaHidden,
             ]}
           >
             <View
@@ -2091,6 +2092,7 @@ export default function Classroom() {
                       <SmartBoard
                         key={id}
                         classroomChrome
+                        onOverlayChange={setBoardOverlayOpen}
                         sceneUpdates={sceneUpdates}
                         onConsumeUpdates={consumeSceneUpdates}
                         onSceneChange={sendSceneUpdate}
