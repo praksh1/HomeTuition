@@ -4,6 +4,7 @@ import { logger } from "./lib/logger";
 import { noteStorageConfig } from "./lib/fileStore";
 import { attachClassroomHub } from "./ws/classroomHub";
 import { describePaymentMode, paymentMode } from "./lib/payments";
+import { ensureMessageSafety } from "./lib/messageSafety";
 import {
   ensureNotificationPrefsTable,
   ensureSessionActivityTable,
@@ -65,6 +66,9 @@ server.listen(port, () => {
   void ensureOperatorAccounts();
   void ensureTeacherLeave();
   void ensureMessageExtras();
+  // Warm the additive block table without delaying startup. Message writes retry this check
+  // themselves and fail closed if it is unavailable; sign-in and classrooms stay independent.
+  void ensureMessageSafety().catch(err => logger.warn({ err }, "Private-message safety schema is not ready; writes remain protected"));
   void ensureSessionMessageExtras();
   void ensureAccountOnboardingTables();
   // Additive and failure-isolated: if this cannot run, classes are unaffected and the

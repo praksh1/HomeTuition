@@ -539,6 +539,12 @@ export const tests = [
       const teacher = await openBoard(ctx, baseUrl, { readOnly: false });
       const student = await openBoard(ctx, baseUrl, { readOnly: true });
 
+      await teacher.evaluate(dataUrl => window.postMessage(JSON.stringify({
+        type: "insert_document", document: { key: "clear-and-restore-material", dataUrl, kind: "image" },
+      }), "*"), RED_PNG);
+      await teacher.waitForTimeout(1600);
+      await pump(teacher, student);
+      assert("imported lesson material is visible before clearing", (await ink(student)).red > 200);
       await selectTool(teacher, PEN);
       for (const [x, y] of [[200, 250], [400, 500], [650, 300]]) {
         await stroke(teacher, x, y, x + 90, y + 70);
@@ -568,6 +574,7 @@ export const tests = [
       await pump(teacher, student);
       assert("Undo restores the whole cleared page for the teacher", (await ink(teacher)).n > 0);
       assert("Undo restores the page for the student too", (await ink(student)).n > 0);
+      assert("Undo restores the imported file pixels, not just its empty frame", (await ink(teacher)).red > 200 && (await ink(student)).red > 200);
       await teacher.setViewportSize({ width: 390, height: 844 });
       await teacher.getByLabel("Open board pages").click();
       await teacher.getByRole("button", { name: "Clear this page…", exact: true }).click();

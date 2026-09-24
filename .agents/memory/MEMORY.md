@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Classmate directory and private-message safeguards](classmates-directory-and-message-safety.md) — connected public names/ids only; keep moderation private, compose without leaving the call, shared enrollment and bilateral blocks enforced by the server.
+
 - [Production testing and teacher studio](teacher-studio-production-sep24.md) — 24 Sep: support production approved; preserve classroom/support TODOs; scheduling/booking reliability and simplified scalable teacher workspace next. Make-up policy is a proposal, not an automatic refund authorization.
 
 - [Profile contact, location and refund destination](profile-contact-location-and-refunds.md) — owner-approved Profile account-detail and original-payment-method refund rules; implementation is separately tracked.

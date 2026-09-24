@@ -460,8 +460,8 @@ router.get("/messages/:otherUserId", requireAuth, async (req, res): Promise<void
  */
 router.post("/messages/:messageId/reaction", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
-  const messageId = parseInt(String(req.params.messageId), 10);
-  if (isNaN(messageId)) { res.status(400).json({ error: "Invalid message id" }); return; }
+  const messageId = messageUserId(req.params.messageId);
+  if (!messageId) { res.status(400).json({ error: "Invalid message id" }); return; }
 
   const { emoji } = req.body as { emoji?: string };
   const chosen = typeof emoji === "string" ? emoji.trim() : "";
@@ -483,25 +483,29 @@ router.post("/messages/:messageId/reaction", requireAuth, async (req, res): Prom
   }
 
   await ensureMessageSafety();
-  const access = await messageAccess(db, userId, message.senderId === userId ? message.receiverId : message.senderId);
-  if (!access.canSend) { res.status(403).json({ error: access.reason }); return; }
+  const result = await db.transaction(async tx => {
+    const otherId = message.senderId === userId ? message.receiverId : message.senderId;
+    await lockMessagePair(tx, userId, otherId);
+    const access = await messageAccess(tx, userId, otherId);
+    if (!access.canSend) return { error: access.reason, emoji: null };
+    const [existing] = await tx
+      .select({ id: messageReactionsTable.id, emoji: messageReactionsTable.emoji })
+      .from(messageReactionsTable)
+      .where(and(eq(messageReactionsTable.messageId, messageId), eq(messageReactionsTable.userId, userId)));
 
-  const [existing] = await db
-    .select({ id: messageReactionsTable.id, emoji: messageReactionsTable.emoji })
-    .from(messageReactionsTable)
-    .where(and(eq(messageReactionsTable.messageId, messageId), eq(messageReactionsTable.userId, userId)));
-
-  if (existing && existing.emoji === chosen) {
-    await db.delete(messageReactionsTable).where(eq(messageReactionsTable.id, existing.id));
-    res.json({ emoji: null });
-    return;
-  }
-  if (existing) {
-    await db.update(messageReactionsTable).set({ emoji: chosen }).where(eq(messageReactionsTable.id, existing.id));
-  } else {
-    await db.insert(messageReactionsTable).values({ messageId, userId, emoji: chosen }).onConflictDoNothing();
-  }
-  res.json({ emoji: chosen });
+    if (existing && existing.emoji === chosen) {
+      await tx.delete(messageReactionsTable).where(eq(messageReactionsTable.id, existing.id));
+      return { error: null, emoji: null };
+    }
+    if (existing) {
+      await tx.update(messageReactionsTable).set({ emoji: chosen }).where(eq(messageReactionsTable.id, existing.id));
+    } else {
+      await tx.insert(messageReactionsTable).values({ messageId, userId, emoji: chosen }).onConflictDoNothing();
+    }
+    return { error: null, emoji: chosen };
+  });
+  if (result.error) { res.status(403).json({ error: result.error }); return; }
+  res.json({ emoji: result.emoji });
 });
 
 // POST /messages/:otherUserId — send a message to a user.
@@ -535,14 +539,14 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fadko-dm-rate'), ${userId})`);
     await lockMessagePair(tx, userId, otherUserId);
     const access = await messageAccess(tx, userId, otherUserId);
-    if (!access.canSend) return { error: access.reason, message: null };
+    if (!access.canSend) return { status: 403, error: access.reason, message: null };
     const [recent] = await tx.select({ total: sql<number>`count(*)::int` }).from(messagesTable)
       .where(and(eq(messagesTable.senderId, userId), gt(messagesTable.createdAt, new Date(Date.now() - 60_000))));
-    if (recent.total >= 30) return { error: "Please wait a moment before sending more messages.", message: null };
+    if (recent.total >= 30) return { status: 429, error: "Please wait a moment before sending more messages.", message: null };
     const [message] = await tx.insert(messagesTable).values({ senderId: userId, receiverId: otherUserId, body: (body ?? "").trim() }).returning();
-    return { error: null, message };
+    return { status: 201, error: null, message };
   });
-  if (!result.message) { res.status(403).json({ error: result.error }); return; }
+  if (!result.message) { res.status(result.status).json({ error: result.error }); return; }
   const message = result.message;
 
   /**
@@ -627,9 +631,9 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
  * the owner named. Enrolment is the one that matters in practice — a student who has paid for
  * your class is someone you must be able to reach, whether or not they ever tapped Follow.
  *
- * This is a convenience, not a gate: `POST /messages/:otherUserId` accepts any real user, and
- * narrowing that is a separate decision with its own consequences for the student-to-teacher
- * direction that already works.
+ * This is a convenience, not the authorization gate. Sending independently checks account
+ * status and bilateral blocking; student-to-student messages also require shared enrollment.
+ * The existing student-to-teacher discovery path remains available.
  */
 router.get("/message-recipients", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;

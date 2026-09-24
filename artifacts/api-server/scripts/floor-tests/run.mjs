@@ -9,7 +9,7 @@
  * - a mute that revoked a right and left the microphone open;
  * - a student whose teacher-authorised camera permission survives a media reconnect;
  * - a Monthly entitlement read from the wrong row;
- * - a student's payload carrying another student's name.
+ * - a student's public classmate directory leaking moderation or contact details.
  *
  * ## Against a recording LiveKit rather than a real one
  *
@@ -667,9 +667,15 @@ const grantCase = makeMonthlyClass();
   await act(sessionId, room, teacher, { type: "floor_allow", userId: twoId, scope: "mic+camera" });
   await act(sessionId, room, teacher, { type: "floor_mute", userId: twoId });
 
-  const everythingSita = JSON.stringify(one.inbox);
-  check("a student is never sent another student's name", !everythingSita.includes("Ram Bahadur"), everythingSita.slice(0, 300));
-  check("nor another student's account id", !everythingSita.includes(`"userId":${twoId}`), everythingSita.slice(0, 300));
+  const studentFrames = one.inbox.filter(frame => frame.type === "floor_state").map(frame => frame.floor);
+  check("students can find their connected classmates by database name and id",
+    one.floor()?.classmates?.some(person => person.userId === twoId && person.name === "Ram Bahadur"), JSON.stringify(one.floor()?.classmates));
+  check("every public classmate entry contains only name and id",
+    studentFrames.every(frame => frame.classmates.every(person => Object.keys(person).sort().join(",") === "name,userId")), JSON.stringify(one.floor()?.classmates));
+  check("no student frame exposes the teacher's moderation rows or named request queue",
+    studentFrames.every(frame => !("students" in frame) && !("queue" in frame)), JSON.stringify(one.floor()));
+  check("the viewer's own permissions do not change when a classmate is granted or muted",
+    studentFrames.every(frame => !frame.you.allowedMic && !frame.you.allowedCamera), JSON.stringify(one.floor()?.you));
   check("the teacher does see both, because it is their moderation list",
     (teacher.floor()?.students.length ?? 0) === 2, JSON.stringify(teacher.floor()?.students?.length));
   check("with the names the database holds, not names a client sent",

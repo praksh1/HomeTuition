@@ -23,13 +23,15 @@ Presence means connected students including the viewer, excluding the teacher; n
 
 ## Verification
 
-Full typecheck passes. API units 731/731, app units 562/562, design lint unchanged at 56 hex / 211 sizes. Local messaging UI 148 checks pass including block/report and 50-classmate search/send at phone and laptop width; screenshots inspected. Latest roster run and full whiteboard browser suite in progress. Real API message/membership/block checks require disposable PostgreSQL CI before promotion.
+Full typecheck passes. API units 731/731, app units 562/562, design lint unchanged at 56 hex / 211 sizes. Local messaging UI 148 checks pass including block/report and 50-classmate search/send at phone and laptop width; screenshots inspected. Local roster 360/360 and full whiteboard browser suite 152/152 pass. Strengthened clear/Undo regression additionally verifies imported file pixels: 12/12. CI run 35986533203 passed real PostgreSQL message/membership/block tests; its floor suite caught two obsolete assertions prohibiting even the newly authorized public names/ids. Replaced these with stricter allow-list and moderation privacy checks; rerun required before promotion.
 
 ## Problems and surprises
 
 The mobile roster was capped at 62% height. Student presence was explicitly desktop-only. Existing direct-message POST accepts arbitrary users and has no block controls; do not expose a classmate shortcut without addressing these safeguards.
 
 Initial roster harness retained the search/filter from the new stress case, hiding subsequent fixtures; isolated its state. A new horizontal filter row clipped the final filter in the narrow laptop drawer; replaced it with shorter wrapping filters and reran. Typechecks caught the auth id's string/number union and an untyped test navigation marker; both corrected. A PowerShell diff command lacked quotes around a parenthesized route and failed read-only; no files were changed by it.
+
+Review caught a block/reaction race: reactions now use the same pair transaction lock as sending and blocking. Added a failure-isolated startup warmup for the additive block table, with writes still failing closed if its schema is unavailable. Rate limiting returns HTTP 429 rather than an access-denied status.
 
 ## Fabrications found
 
