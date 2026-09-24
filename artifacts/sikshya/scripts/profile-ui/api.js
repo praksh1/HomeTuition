@@ -30,7 +30,7 @@ export async function apiPost(path, body) {
     conversationId: 31,
     question: { id: 1, role: "user", body: body.message, source: "user" },
     reply: { id: 2, role: "assistant", body: "Which device are you using?", source: "local" },
-    caseContext: { sessionId: body.sessionId, title: `Lesson ${body.sessionId}`, facts: ["Your enrollment record: test. No real payment is established."] },
+    caseContext: { sessionId: body.sessionId, title: `Lesson ${body.sessionId}`, facts: ["Your enrollment record: test. No real payment is established.", ...Array.from({ length: 12 }, (_, i) => `Refund record #${i + 1}: NPR 250, linked to a test/simulated enrollment; not proof of real money returned. Recorded 2026-09-24 (UTC).`)] },
   };
   if (path === "/support/assistant/messages" && body.message === "I cannot join my class or lesson.") return {
     conversationId: 31,

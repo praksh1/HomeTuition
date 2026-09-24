@@ -24,6 +24,7 @@ Starter answers are drafts until an operator reviews and publishes. No new polic
 Pure payment/content/investigation tests: 13/13 locally. Source-reference existence is tested. Design lint passes without baseline changes. Clean-install CI `35963641988` passed on `d9144b7`: 730 unit tests, 60 support API checks, full typecheck, design lint and 124 browser checks. An additional local editor-scroll check brings phone/laptop coverage to 126 checks; rendered settled-sheet screenshots inspected. This is Chromium at 390/1440 widths, not physical iOS Safari.
 
 ## Problems and surprises
+Long payment records exposed an unconditional transcript scroll: expanding checked facts moved the facts out of view. Scrolling now follows new messages only, with resets for account/conversation changes. Long-record expansion is covered at phone/laptop sizes (128 local browser checks). Preview run 35963882084 was cancelled before frontend deployment to include this fix.
 Local API typecheck still lacks jose/livekit-server-sdk in the shared dependency tree; use clean-install CI, not a false green. Initial browser bundling was blocked by Windows sandbox directory access; rerun with approved escalation reached and passed the new phone checks.
 
 ## Fabrications found

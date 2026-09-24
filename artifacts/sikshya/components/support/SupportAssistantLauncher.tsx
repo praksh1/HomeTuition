@@ -81,12 +81,14 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   const generation = useRef(0);
   const sendLock = useRef(false);
   const transcript = useRef<ScrollView>(null);
+  const lastScrolledMessage = useRef("");
   const activeUserId = useRef(user?.id);
   activeUserId.current = user?.id;
 
   useEffect(() => { if (openOnMount) setVisible(true); }, [openOnMount]);
   useEffect(() => {
     generation.current += 1;
+    lastScrolledMessage.current = "";
     sendLock.current = false;
     setConversationId(null);
     setTicketId(null);
@@ -126,6 +128,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
     try {
       const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[]; caseContext?: CaseContext | null }>(`/support/assistant/conversations/${item.id}`);
       if (activeUserId.current !== expectedUserId || generation.current !== expectedGeneration) return;
+      lastScrolledMessage.current = "";
       setConversationId(item.id);
       setTicketId(item.ticketId);
       setCaseContext(detail.caseContext ?? null);
@@ -152,6 +155,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
 
   const startFresh = () => {
     generation.current += 1;
+    lastScrolledMessage.current = "";
     sendLock.current = false;
     setBusy(false); setSendingToHuman(false);
     setConversationId(null);
@@ -308,7 +312,12 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
               ref={transcript}
               style={styles.transcript}
               contentContainerStyle={styles.transcriptContent}
-              onContentSizeChange={() => transcript.current?.scrollToEnd({ animated: true })}
+              onContentSizeChange={() => {
+                const key = `${bubbles.length}:${bubbles.at(-1)?.id ?? ""}`;
+                if (lastScrolledMessage.current === key) return;
+                lastScrolledMessage.current = key;
+                transcript.current?.scrollToEnd({ animated: true });
+              }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >

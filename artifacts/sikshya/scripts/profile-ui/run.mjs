@@ -124,6 +124,11 @@ try {
     await page.getByTestId("support-assistant-send").click();
     await page.getByText("Which device are you using?", { exact: true }).waitFor();
     await page.getByRole("button", { name: "Show records checked for this case" }).click();
+    await page.waitForTimeout(400);
+    check(await page.getByRole("button", { name: "Show records checked for this case" }).evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.top >= 0 && rect.bottom <= innerHeight;
+    }), `${width}: expanding long payment records does not jump away from the card`);
     check((await page.getByTestId("support-assistant-panel").innerText()).includes("No real payment is established"), `${width}: selected lesson shows qualified account facts, not payment assumptions`);
     check(await page.getByTestId("support-assistant-panel").evaluate((node) => node.getBoundingClientRect().top >= -1 && node.getBoundingClientRect().right <= innerWidth + 1), `${width}: class investigation fits with records expanded`);
     await page.screenshot({ path: path.join(work, `${width}-support-investigation.png`) });
