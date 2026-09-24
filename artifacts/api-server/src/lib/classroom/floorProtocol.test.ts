@@ -347,15 +347,19 @@ test("a student leaving discussion stops the track and returns to audience", () 
 
 /* --- what each side is told ----------------------------------------------- */
 
-test("a student is never told anything about another student", () => {
+test("a student directory exposes only connected names and ids, never another student's moderation state", () => {
   const f = room(true);
   did(f, { action: "ask" }, ctx({ actorId: OTHER }));
   did(f, { action: "allow", userId: OTHER, scope: "mic+camera", replace: false }, asTeacher());
   did(f, { action: "ask" }, ctx());
 
-  const mine = studentView(f, STUDENT);
-  const json = JSON.stringify(mine);
-  assert.equal(json.includes(String(OTHER)), false, `another student's id leaked: ${json}`);
+  f.students.get(OTHER)!.connected = true;
+  const mine = studentView(f, STUDENT, new Map(), new Map([[OTHER, "Classmate"]]));
+  assert.deepEqual(mine.classmates.find(person => person.userId === OTHER), { userId: OTHER, name: "Classmate" });
+  assert.ok(mine.classmates.every(person => Object.keys(person).sort().join(",") === "name,userId"));
+  assert.equal("students" in mine, false);
+  f.students.get(OTHER)!.connected = false;
+  assert.equal(studentView(f, STUDENT).classmates.some(person => person.userId === OTHER), false);
   assert.equal(mine.you.state, "requested");
   assert.equal(mine.handsUp, 1, "a count, with no names attached");
   assert.equal(mine.queuePosition, 1);

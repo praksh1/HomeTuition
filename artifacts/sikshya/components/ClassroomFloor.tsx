@@ -1,12 +1,15 @@
 import { Feather, FontAwesome5 } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import {
   Animated,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   PanResponder,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
@@ -14,6 +17,7 @@ import {
 import { HIT_SLOP_MIN } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
+import { useVisibleViewport } from "@/hooks/useVisibleViewport";
 import type {
   FloorActions,
   FloorRefusal,
@@ -434,6 +438,8 @@ function ParticipantSheet({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "hands" | "speaking" | "camera">("all");
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const viewport = useVisibleViewport(open);
+  const safeArea = useContext(SafeAreaInsetsContext);
   const sheetDrag = useRef(new Animated.Value(0)).current;
   const sheetPan = useMemo(
     () =>
@@ -555,14 +561,14 @@ function ParticipantSheet({
 
         <View style={[floorStyles.row, { gap: space.xs, flexWrap: "wrap" }]}>
           {([
-            ["all", "All"], ["hands", "Hands raised"], ["speaking", "Speaking"], ["camera", "Camera requests"],
+            ["all", `All (${rows.length})`], ["hands", `Hands (${floor.queue.length})`], ["speaking", "Speaking"], ["camera", "Camera"],
           ] as const).map(([value, label]) => (
             <Pressable
               key={value}
               testID={`participant-filter-${value}`}
               onPress={() => setFilter(value)}
               accessibilityRole="button"
-              accessibilityState={{ selected: filter === value }}
+              accessibilityState={{ selected: filter === value }} aria-selected={filter === value}
               style={{ minHeight: HIT_SLOP_MIN, justifyContent: "center", paddingHorizontal: space.sm, borderRadius: radius.pill, backgroundColor: filter === value ? colors.actionSoft : colors.card, borderWidth: 1, borderColor: filter === value ? colors.primary : colors.border }}
             >
               <Text style={[t.caption, { color: filter === value ? colors.primary : colors.mutedForeground }]}>{label}</Text>
@@ -572,10 +578,13 @@ function ParticipantSheet({
       </View>
 
       <FlatList
+        testID="participant-list"
+        style={{ flex: 1, minHeight: 0 }}
         data={filtered}
         keyExtractor={(row) => String(row.userId)}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={{ padding: space.md, gap: space.sm, flexGrow: filtered.length === 0 ? 1 : undefined }}
+        keyboardDismissMode="on-drag"
+        contentContainerStyle={{ padding: space.md, paddingBottom: space.xl, gap: space.sm, flexGrow: filtered.length === 0 ? 1 : undefined }}
         renderItem={({ item: row }) => (
           <ParticipantRow
             row={row}
@@ -594,14 +603,13 @@ function ParticipantSheet({
       />
 
       {permissionsOpen ? (
-        <View
+        <ScrollView
           testID="class-permissions-surface"
+          contentContainerStyle={{ gap: space.lg, padding: space.md, paddingBottom: space.xl }}
           style={{
             position: "absolute",
             inset: 0,
             zIndex: 5,
-            gap: space.lg,
-            padding: space.md,
             backgroundColor: colors.card,
           } as object}
         >
@@ -635,7 +643,7 @@ function ParticipantSheet({
               <PermissionRow label="Teacher approval required" detail="A student's camera stays off until you allow it" />
             </View>
           </View>
-        </View>
+        </ScrollView>
       ) : null}
     </View>
   );
@@ -653,21 +661,24 @@ function ParticipantSheet({
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable testID="participant-sheet-scrim" onPress={onClose} style={{ flex: 1, backgroundColor: colors.scrim, justifyContent: "flex-end" }}>
-        <Animated.View style={{ height: "62%", maxHeight: "92%", borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, overflow: "hidden", transform: [{ translateY: sheetDrag }] }}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
+      <View style={[{ backgroundColor: colors.scrim, justifyContent: "flex-end", flex: 1 }, Platform.OS === "web" ? { position: "absolute", top: viewport.top, height: viewport.height, left: 0, right: 0, paddingTop: "max(8px, env(safe-area-inset-top))", paddingBottom: "env(safe-area-inset-bottom)" } as object : { paddingTop: Math.max(safeArea?.top ?? 0, space.xs), paddingBottom: safeArea?.bottom ?? space.md }]}>
+        <Pressable testID="participant-sheet-scrim" accessibilityLabel="Close class list" onPress={onClose} style={{ position: "absolute", inset: 0 } as object} />
+        <Animated.View style={{ flex: 1, minHeight: 0, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, overflow: "hidden", transform: [{ translateY: sheetDrag }] }}>
           <Pressable
             onPress={() => {}}
             accessibilityLabel="Swipe down to close the class list"
-            style={{ minHeight: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", backgroundColor: colors.card }}
+            style={{ height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", backgroundColor: colors.card }}
             {...sheetPan.panHandlers}
           >
             <View style={{ width: 44, height: 4, borderRadius: radius.pill, backgroundColor: colors.border }} />
           </Pressable>
-          <Pressable onPress={() => {}} style={{ flex: 1, minHeight: 0 }}>
+          <View style={{ flex: 1, minHeight: 0 }}>
             {panel}
-          </Pressable>
+          </View>
         </Animated.View>
-      </Pressable>
+      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

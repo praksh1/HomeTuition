@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   PanResponder,
   Platform,
+  Pressable,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -42,6 +43,7 @@ import { aloneMessage } from "@/utils/aloneInCall";
 import { ExpiredClassRedirect } from "@/components/classes/ExpiredClassRedirect";
 import { canJoinSession } from "@/utils/sessionWindow";
 import { ClassroomControlDock } from "@/components/classes/ClassroomControlDock";
+import { ClassmateDirectory } from "@/components/classes/ClassmateDirectory";
 import { ClassroomChatDrawer } from "@/components/classes/ClassroomChatDrawer";
 import { ClassroomReactions } from "@/components/classes/ClassroomReactions";
 import { ClassroomMediaPreparation } from "@/components/classes/ClassroomMediaPreparation";
@@ -701,6 +703,7 @@ export default function StudentClassroom() {
   // Presence starts at 0 the instant the server clears stale entries on session start;
   // don't fall back to enrolledCount before the socket connects, or a ghost count/avatar
   // shows up for a class nobody has actually joined yet.
+  const [directoryOpen, setDirectoryOpen] = useState(false);
   const livePresenceCount = connected
     ? floor?.scope === "student"
       ? floor.participantCount
@@ -778,7 +781,7 @@ export default function StudentClassroom() {
         {/* Session context floats without becoming a touch-blocking header. */}
         <View pointerEvents="box-none" style={s.headerLayer}>
           <View
-            pointerEvents="none"
+            pointerEvents="auto"
             style={[
               s.sessionPill,
               elevation.card,
@@ -810,6 +813,13 @@ export default function StudentClassroom() {
                 {fmt(elapsed)}
               </Text>
             </View>
+            <Pressable testID="student-classmates" accessibilityRole="button"
+              accessibilityLabel={connected ? `${livePresenceCount} students here, including you; teacher not counted. Open classmates.` : "Classmates reconnecting"}
+              disabled={!connected} aria-disabled={!connected} onPress={() => setDirectoryOpen(true)}
+              style={{ minWidth: 44, minHeight: 44, flexDirection: "row", gap: space.xxs, alignItems: "center", justifyContent: "center" }}>
+              <Feather name="users" size={16} color={colors.primary} />
+              <Text style={[t.caption, numeric, { color: colors.primary }]}>{connected ? livePresenceCount : "—"}</Text>
+            </Pressable>
             {classIsLive ? (
               <View
                 style={[
@@ -847,30 +857,8 @@ export default function StudentClassroom() {
           </View>
         </View>
 
-        {livePresenceCount > 0 && !videoFull && !isCompact ? (
-          <View
-            pointerEvents="none"
-            style={[
-              s.presence,
-              elevation.card,
-              {
-                top: pipTop,
-                left: space.md,
-                gap: space.xs,
-                paddingHorizontal: space.sm,
-                paddingVertical: space.xs,
-                borderRadius: radius.pill,
-                backgroundColor: colors.successSoft,
-                borderColor: colors.success,
-              },
-            ]}
-          >
-            <View style={[s.presenceDot, { backgroundColor: colors.online }]} />
-            <Text style={[t.caption, numeric, { color: colors.success }]}>
-              {livePresenceCount} in session
-            </Text>
-          </View>
-        ) : null}
+        <ClassmateDirectory open={directoryOpen} onClose={() => setDirectoryOpen(false)}
+          classmates={connected && floor?.scope === "student" ? floor.classmates ?? [] : []} userId={Number(user?.id ?? 0)} />
 
         <View
           pointerEvents="box-none"

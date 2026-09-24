@@ -182,6 +182,8 @@ export interface StudentFloorView {
   /** This viewer's own place in that line, 1-based, or null when they are not in it. */
   queuePosition: number | null;
   participantCount: number;
+  /** Public connected-student directory, never teacher moderation records. Optional on old APIs. */
+  classmates?: { userId: number; name: string }[];
 }
 
 export type FloorView = TeacherFloorView | StudentFloorView;
@@ -341,6 +343,12 @@ function toFloorView(raw: unknown): FloorView | null {
       handsUp: typeof o.handsUp === "number" ? o.handsUp : 0,
       queuePosition: typeof o.queuePosition === "number" ? o.queuePosition : null,
       participantCount: typeof o.participantCount === "number" ? Math.max(0, o.participantCount) : 0,
+      classmates: Array.isArray(o.classmates) ? o.classmates.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const person = entry as Record<string, unknown>;
+        return Number.isSafeInteger(person.userId) && Number(person.userId) > 0 && typeof person.name === "string"
+          ? [{ userId: Number(person.userId), name: person.name.slice(0, 160) }] : [];
+      }) : [],
     };
   }
 

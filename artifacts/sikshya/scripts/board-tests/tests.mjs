@@ -560,9 +560,19 @@ export const tests = [
       await teacher.getByRole("dialog").getByRole("button", { name: "Clear page" }).click();
       await teacher.waitForTimeout(500);
       const sent = await pump(teacher, student);
-      assert("confirming tells the class", sent.includes("clear_out"));
+      assert("confirming sends undoable deletions to the class", sent.includes("scene_out") && !sent.includes("clear_out"));
       assert("the teacher's board is empty", (await ink(teacher)).n === 0);
       assert("and so is the student's", (await ink(student)).n === 0);
+      await teacher.getByLabel("Undo last board change").click();
+      await teacher.waitForTimeout(400);
+      await pump(teacher, student);
+      assert("Undo restores the whole cleared page for the teacher", (await ink(teacher)).n > 0);
+      assert("Undo restores the page for the student too", (await ink(student)).n > 0);
+      await teacher.setViewportSize({ width: 390, height: 844 });
+      await teacher.getByLabel("Open board pages").click();
+      await teacher.getByRole("button", { name: "Clear this page…", exact: true }).click();
+      assert("phone page menu opens the same precise confirmation", (await teacher.getByRole("dialog").innerText()).includes("images and PDF sheets"));
+      await teacher.getByRole("dialog").getByRole("button", { name: "Go back" }).click();
     },
   },
 

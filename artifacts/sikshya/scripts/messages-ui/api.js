@@ -81,7 +81,9 @@ function twoPagePdf() {
   return `data:application/pdf;base64,${btoa(pdf)}`;
 }
 
+let blocked = false;
 export async function apiGet(path) {
+  if (path.endsWith("/access")) return { canSend: !blocked, blockedByYou: blocked, reason: blocked ? "You blocked this person. Unblock to send messages." : null };
   if (location.search.includes("failure")) throw new Error("offline");
   if (path.startsWith("/storage/file")) {
     if (path.includes("study-guide")) return { url: twoPagePdf() };
@@ -136,6 +138,8 @@ export async function apiGet(path) {
 }
 
 export async function apiPost(path, body) {
+  if (path.endsWith("/block")) { blocked = body.blocked; return apiGet(path.replace(/block$/, "access")); }
+  if (blocked) throw new Error("You blocked this person. Unblock to send messages.");
   if (path.includes("reaction")) return {};
   if (path.startsWith("/class-groups/")) {
     if (path.endsWith("/read")) return {};

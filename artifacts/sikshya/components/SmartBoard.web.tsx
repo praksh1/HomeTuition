@@ -746,6 +746,9 @@ function SmartBoard({
                 <button type="button" onClick={() => onPageCommand?.({ op: "lock", pageId: activePage.id, locked: !activePage.locked })} style={pageMenuButtonStyle}>{activePage.locked ? "Unlock" : "Lock"}</button>
                 <button type="button" disabled={pages.length <= 1} onClick={deletePage} style={{ ...pageMenuButtonStyle, color: "var(--color-danger, firebrick)" }}>Delete</button>
               </div>
+              <button type="button" disabled={boardReadOnly} onClick={() => { setPageMenuOpen(false); setBoardDialog({ kind: "clear" }); }} style={{ ...pageMenuButtonStyle, minHeight: 44, color: "var(--color-danger, firebrick)" }}>
+                Clear this page…
+              </button>
             </>
           ) : null}
           <button type="button" aria-label="Close board page menu" onClick={() => { setPageMenuOpen(false); setMaterialsOpen(false); }} style={pageMenuButtonStyle}>Done</button>
@@ -1256,18 +1259,22 @@ function SmartBoard({
    */
   const performClearAll = useCallback(() => {
     if (!api || boardReadOnly) return;
-    sentVersions.current.clear();
-    sentFiles.current.clear();
+    // Keep tombstones and files in the editor's history. An empty snapshot plus a clear_out
+    // permanently destroyed Undo; normal versioned deletions also synchronize to classmates.
     visibleBeforeErase.current.clear();
+    const now = Date.now();
+    const elements = api.getSceneElementsIncludingDeleted().map((element) => element.isDeleted ? element : {
+      ...element, isDeleted: true, version: Math.max(1, Number(element.version) || 1) + 1,
+      versionNonce: Math.floor(Math.random() * 1_000_000_000), updated: now,
+    });
+    api.updateScene({ elements, captureUpdate: "IMMEDIATELY",
+      appState: { selectedElementIds: {}, activeTool: { ...api.getAppState().activeTool, type: "selection" } } });
     setMediaElements([]);
-    applyingRemote.current = true;
-    api.updateScene({ elements: [] });
-    setTimeout(() => { applyingRemote.current = false; }, 0);
-    onClearAll?.();
-    api.setToast({ message: "Board cleared", duration: 2000 });
-    setHistoryState({ undo: false, redo: false });
+    api.setToast({ message: "Page cleared. Use Undo to restore it.", duration: 4000 });
+    setHistoryState({ undo: true, redo: false });
+    setTimeout(() => flushRef.current(), 0);
     setBoardDialog(null);
-  }, [api, boardReadOnly, onClearAll]);
+  }, [api, boardReadOnly]);
 
   const clearAll = useCallback(() => {
     if (!api || boardReadOnly) return;
@@ -1822,7 +1829,7 @@ function SmartBoard({
                   ? "Use a short name students can recognize during class."
                   : boardDialog.kind === "delete"
                     ? "This removes the page and its board work from the class."
-                    : "This removes every object and note on the current page."}
+                    : "This clears all writing, shapes, images and PDF sheets on this page only. Other pages stay unchanged. Use Undo to restore this page if needed."}
               </span>
             </div>
             {boardDialog.kind === "rename" ? (

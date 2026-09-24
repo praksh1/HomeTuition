@@ -3,15 +3,16 @@
  *
  * The floor holds every student's request, invitation and permission. The teacher needs all of
  * that: it is their queue and their moderation panel. A student needs their own row and a few
- * facts about the room, and nothing whatever about anybody else's.
+ * facts about the room. The owner now permits a public directory of connected classmates;
+ * names and ids are separate from the teacher-only moderation rows below.
  *
  * ## Why that is a separate file rather than a filter at the send site
  *
  * Because the mistake it prevents is invisible. A hub that builds one payload and sends it to
  * everybody works perfectly, looks right in every screenshot, and quietly tells a fifteen-year-old
  * which of their classmates has their hand up and whose microphone the teacher just took away.
- * Nobody would notice until somebody read the frames. Two named functions with two shapes cannot
- * be got wrong by accident: `studentView` has no way to express another student.
+ * Nobody would notice until somebody read the frames. The public directory is an explicit
+ * allow-list of name/id only: no request times, permissions, email, phone or moderation history.
  *
  * ## The queue position is the one exception, and it is deliberate
  *
@@ -104,8 +105,9 @@ export interface StudentFloorView {
   handsUp: number;
   /** This viewer's place in that line, 1-based. Null when they are not in it. */
   queuePosition: number | null;
-  /** Same authoritative count the teacher receives; no names are exposed. */
+  /** Connected students, including the viewer; excludes the teacher. */
   participantCount: number;
+  classmates: { userId: number; name: string }[];
 }
 
 export type FloorView = TeacherFloorView | StudentFloorView;
@@ -148,6 +150,7 @@ export function studentView(
   floor: Floor,
   userId: number,
   provider: ReadonlyMap<number, ProviderState> = new Map(),
+  names: ReadonlyMap<number, string> = new Map(),
 ): StudentFloorView {
   const s = floor.students.get(userId);
   const queue = requestQueue(floor);
@@ -187,5 +190,8 @@ export function studentView(
     handsUp: queue.length,
     queuePosition: at === -1 ? null : at + 1,
     participantCount: [...floor.students.values()].filter((student) => student.connected).length,
+    classmates: [...floor.students.entries()].filter(([, student]) => student.connected)
+      .map(([id]) => ({ userId: id, name: names.get(id) ?? "Student" }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.userId - b.userId),
   };
 }

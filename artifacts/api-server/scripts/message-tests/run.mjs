@@ -389,6 +389,38 @@ async function main() {
       check("opening a conversation clears its unread count", read?.unreadCount === 0, String(read?.unreadCount));
     }
 
+    console.log("\nClassmate authorization and private-message safety\n");
+    const sendPeer = (from, to, body = "Classmate question") => api(`/messages/${to.user.id}`, { method: "POST", token: from.token, body: { body } });
+    check("unrelated students cannot start a private conversation", (await sendPeer(student, stranger)).status === 403);
+    const sharedId = Number(sql(`INSERT INTO sessions(teacher_id, teacher_name, subject, topic, date, price)
+      VALUES(${teacher.user.id}, 'Receiving Ram', 'Maths', 'Peer safety fixture', now(), 100) RETURNING id`).split(/\s/)[0]);
+    sql(`INSERT INTO session_enrollments(session_id, student_id, payment_status) VALUES
+      (${sharedId}, ${student.user.id}, 'paid'), (${sharedId}, ${stranger.user.id}, 'paid')`);
+    const peerMessage = await sendPeer(student, stranger);
+    check("paid classmates may send privately", peerMessage.status === 201, JSON.stringify(peerMessage.body));
+    const blocked = await api(`/messages/${student.user.id}/block`, { method: "POST", token: stranger.token, body: { blocked: true } });
+    check("blocking is stored for the account", blocked.body?.blockedByYou === true && blocked.body?.canSend === false);
+    check("blocked sender cannot send", (await sendPeer(student, stranger)).status === 403);
+    check("block stops messages in both directions", (await sendPeer(stranger, student)).status === 403);
+    const freshLogin = await api(`/messages/${student.user.id}/access`, { token: stranger.token });
+    check("another access read sees the durable block", freshLogin.body?.blockedByYou === true);
+    check("blocked reactions are refused too", (await api(`/messages/${peerMessage.body.id}/reaction`, { method: "POST", token: student.token, body: { emoji: "👍" } })).status === 403);
+    check("block does not erase evidence", (await api(`/messages/${stranger.user.id}`, { token: student.token })).body.some(message => message.id === peerMessage.body.id));
+    check("unblock can change only the caller's own block", (await api(`/messages/${stranger.user.id}/block`, { method: "POST", token: student.token, body: { blocked: false } })).body?.canSend === false);
+    await api(`/messages/${student.user.id}/block`, { method: "POST", token: stranger.token, body: { blocked: false } });
+    check("the blocker can restore messaging", (await sendPeer(student, stranger)).status === 201);
+    sql(`UPDATE session_enrollments SET payment_status = 'refunded' WHERE session_id = ${sharedId} AND student_id = ${stranger.user.id}`);
+    check("refunded enrollment cannot authorize further peer messages", (await sendPeer(student, stranger)).status === 403);
+    sql(`UPDATE session_enrollments SET payment_status = 'paid' WHERE session_id = ${sharedId}`);
+    sql(`UPDATE sessions SET status = 'cancelled' WHERE id = ${sharedId}`);
+    check("a cancelled class does not authorize peer messages", (await sendPeer(student, stranger)).status === 403);
+    check("malformed ids cannot target another account", (await api(`/messages/${teacher.user.id}extra`, { method: "POST", token: student.token, body: { body: "No" } })).status === 400);
+    check("non-text message input is rejected", (await sendPeer(student, teacher, { bad: true })).status === 400);
+    check("oversized message input is rejected", (await sendPeer(student, teacher, "x".repeat(5001))).status === 400);
+    sql(`UPDATE users SET suspended_at = now() WHERE id = ${stranger.user.id}`);
+    check("a suspended account cannot use a previously issued token to send", (await sendPeer(stranger, teacher)).status === 403);
+    sql(`UPDATE users SET suspended_at = NULL WHERE id = ${stranger.user.id}`);
+
     console.log(`\n${passed} passed, ${failed} failed\n`);
     if (failed) failures.forEach((f) => console.log(`  - ${f}`));
   } finally {

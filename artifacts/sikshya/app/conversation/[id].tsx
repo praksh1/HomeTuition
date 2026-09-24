@@ -75,6 +75,9 @@ export default function ConversationScreen() {
   const [pending, setPending] = useState<UploadableFile | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [picking, setPicking] = useState<number | null>(null);
+  const [safetyOpen, setSafetyOpen] = useState(false);
+  const [access, setAccess] = useState<{ canSend: boolean; blockedByYou: boolean; reason: string | null } | null>(null);
+  const [blocking, setBlocking] = useState(false);
   const listRef = useRef<FlatList<Message>>(null);
   const scrollAfterLayout = useRef(true);
   const scrollPass = useRef(0);
@@ -100,6 +103,7 @@ export default function ConversationScreen() {
   }, [id]);
 
   const load = useCallback(async () => {
+    void apiGet<NonNullable<typeof access>>(`/messages/${id}/access`).then(setAccess).catch(() => {});
     try {
       const next = await apiGet<Message[]>(`/messages/${id}`);
       if (!hasLoaded.current) scrollAfterLayout.current = true;
@@ -159,7 +163,7 @@ export default function ConversationScreen() {
 
   const send = async () => {
     const body = draft.trim();
-    if ((!body && !pending) || sending) return;
+    if ((!body && !pending) || sending || access?.canSend === false) return;
 
     setSending(true);
     setProblem(null);
@@ -188,6 +192,7 @@ export default function ConversationScreen() {
   };
 
   const react = async (messageId: number, emoji: string) => {
+    if (access?.canSend === false) return;
     setPicking(null);
     setMessages((previous) => previous.map((message) => (
       message.id === messageId
@@ -226,8 +231,29 @@ export default function ConversationScreen() {
             <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{displayName}</Text>
             <Text style={[t.caption, { color: colors.inkFaint }]}>Fadko conversation</Text>
           </View>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Safety & help" onPress={() => setSafetyOpen(value => !value)} style={{ minWidth: 44, minHeight: 44, alignItems: "center", justifyContent: "center" }}>
+            <Feather name="shield" size={20} color={colors.primary} />
+          </TouchableOpacity>
         </View>
       </View>
+
+      {safetyOpen ? <View style={{ padding: space.md, gap: space.sm, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>Safety & help</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>Blocking stops new private messages in both directions. Existing messages are kept as evidence. It does not remove anyone from a paid class.</Text>
+        <TouchableOpacity disabled={blocking || !access} accessibilityRole="button" onPress={async () => {
+          if (!access || blocking) return;
+          setBlocking(true);
+          try { setAccess(await apiPost(`/messages/${id}/block`, { blocked: !access.blockedByYou })); }
+          catch { setProblem("Could not change blocking. Please try again."); }
+          finally { setBlocking(false); }
+        }} style={{ minHeight: 44, justifyContent: "center" }}>
+          <Text style={[t.bodyStrong, { color: colors.destructive }]}>{blocking ? "Saving…" : access?.blockedByYou ? "Unblock this person" : "Block this person"}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" onPress={() => router.push({ pathname: "/support", params: { reason: "Inappropriate Behavior", reportedUserId: id } })} style={{ minHeight: 44, justifyContent: "center" }}>
+          <Text style={[t.bodyStrong, { color: colors.primary }]}>Report this conversation</Text>
+        </TouchableOpacity>
+        <TouchableOpacity accessibilityRole="button" onPress={() => setSafetyOpen(false)} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.callout, { color: colors.primary }]}>Close safety options</Text></TouchableOpacity>
+      </View> : null}
 
       <FlatList
         ref={listRef}
@@ -412,6 +438,7 @@ export default function ConversationScreen() {
         </View>
       ) : null}
 
+      {access?.canSend === false ? <View style={{ padding: space.md, backgroundColor: colors.surfaceSunk }}><Text accessibilityLiveRegion="polite" style={[t.callout, { color: colors.mutedForeground }]}>{access.reason}</Text></View> :
       <View style={[styles.composerShell, { paddingBottom: insets.bottom + space.xs, borderTopColor: colors.border, backgroundColor: colors.card }]}>
         <View style={[styles.composer, { maxWidth: marketplaceColumnMax, paddingHorizontal: gutter }]}>
           <TouchableOpacity
@@ -468,6 +495,7 @@ export default function ConversationScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      }
     </KeyboardAvoidingView>
   );
 }

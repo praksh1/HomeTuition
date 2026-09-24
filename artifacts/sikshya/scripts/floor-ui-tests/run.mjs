@@ -204,6 +204,7 @@ const asTeacher = (over = {}) => {
 
 const SIZES = [
   { label: "phone-390", width: 390, height: 844 },
+  { label: "phone-keyboard", width: 390, height: 440 },
   { label: "phone-412", width: 412, height: 915 },
   { label: "tablet-768", width: 768, height: 1024 },
   { label: "laptop-1440", width: 1440, height: 900 },
@@ -405,6 +406,30 @@ for (const size of SIZES) {
   check(`${L}: returning from permissions preserves the roster`, (await participantPanelOpen()) && (await seen("participant-row-11")));
   await tap("participant-sheet-close");
   check(`${L}: and closes when asked`, !(await participantPanelOpen()));
+
+  console.log(`\n[${L}] Fifty students and ten raised hands`);
+  const fifty = Array.from({ length: 50 }, (_, i) => row({ userId: 100 + i,
+    name: `Student ${String(i + 1).padStart(2, "0")}`,
+    ...(i >= 40 ? { state: "requested", requestedAt: NOW + i } : {}) }));
+  await show({ floor: asTeacher({ students: fifty, queue: fifty.slice(40).map(r => r.userId), participantCount: 50 }), participantOpen: true });
+  await p.waitForTimeout(350);
+  const roster = p.getByTestId("participant-list");
+  const bounds = await roster.boundingBox();
+  check(`${L}: roster keeps usable scrolling space`, bounds && bounds.height >= 96 && bounds.y + bounds.height <= size.height + 1, JSON.stringify(bounds));
+  await tap("participant-filter-hands");
+  check(`${L}: hand filter identifies all ten waiting students`, (await p.getByTestId("participant-filter-hands").innerText()).includes("(10)"));
+  await p.getByTestId("participant-search").fill("Student 50");
+  await tap("participant-row-149");
+  await tap("participant-149-allow-mic");
+  check(`${L}: the last raised hand is searchable and actionable`, (await sent()).some(a => a.name === "allow" && a.args[0] === 149));
+  await tap("participant-permissions");
+  await p.getByText("A student's camera stays off until you allow it", { exact: true }).scrollIntoViewIfNeeded();
+  const permissionBox = await p.getByText("A student's camera stays off until you allow it", { exact: true }).boundingBox();
+  check(`${L}: the final permission can scroll fully into view`, permissionBox && permissionBox.y >= 0 && permissionBox.y + permissionBox.height <= size.height + 1);
+  await tap("class-permissions-back");
+  await p.getByTestId("participant-search").fill("");
+  await tap("participant-filter-all");
+  await tap("participant-sheet-close");
 
   console.log(`\n[${L}] Rows the video has not caught up with`);
   /*

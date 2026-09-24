@@ -1,5 +1,6 @@
 import React from "react";
 import { View } from "react-native";
+export const SafeAreaInsetsContext = React.createContext(null);
 
 export function SafeAreaView(props) {
   return React.createElement(View, props);

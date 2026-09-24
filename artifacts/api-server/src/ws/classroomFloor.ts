@@ -237,7 +237,7 @@ function tell(state: RoomFloor, room: RoomPort, only: Set<number> | null): void 
       continue;
     }
     if (only !== null && !only.has(client.userId)) continue;
-    client.send({ type: "floor_state", floor: studentView(state.floor, client.userId, sync) });
+    client.send({ type: "floor_state", floor: studentView(state.floor, client.userId, sync, state.names) });
   }
 }
 
@@ -267,7 +267,7 @@ function tellOne(state: RoomFloor, client: FloorClient): void {
     type: "floor_state",
     floor: client.isSessionTeacher
       ? teacherView(state.floor, state.names, sync)
-      : studentView(state.floor, client.userId, sync),
+      : studentView(state.floor, client.userId, sync, state.names),
   });
 }
 

@@ -18,8 +18,37 @@ import {
 import { requireAuth } from "../middlewares/requireAuth";
 import { notify, syncConversation } from "../lib/notify";
 import { verifyUpload } from "../lib/fileStore";
+import { ensureMessageSafety, lockMessagePair, messageAccess } from "../lib/messageSafety";
 
 const router: IRouter = Router();
+
+const messageUserId = (value: unknown) => typeof value === "string" && /^[1-9]\d*$/.test(value) && Number(value) <= 2147483647 ? Number(value) : null;
+
+router.get("/messages/:otherUserId/access", requireAuth, async (req, res): Promise<void> => {
+  const otherId = messageUserId(req.params.otherUserId);
+  if (!otherId || otherId === req.user!.userId) { res.status(400).json({ error: "Choose another person." }); return; }
+  await ensureMessageSafety();
+  res.json(await messageAccess(db, req.user!.userId, otherId));
+});
+
+router.post("/messages/:otherUserId/block", requireAuth, async (req, res): Promise<void> => {
+  const otherId = messageUserId(req.params.otherUserId);
+  const userId = req.user!.userId;
+  if (!otherId || otherId === userId || typeof req.body?.blocked !== "boolean") { res.status(400).json({ error: "Choose another person and a block setting." }); return; }
+  await ensureMessageSafety();
+  const result = await db.transaction(async tx => {
+    await lockMessagePair(tx, userId, otherId);
+    const [other] = await tx.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, otherId));
+    if (!other) return null;
+    if (req.body.blocked) await tx.execute(sql`INSERT INTO message_blocks(user_id, blocked_user_id) VALUES (${userId}, ${otherId}) ON CONFLICT DO NOTHING`);
+    else await tx.execute(sql`DELETE FROM message_blocks WHERE user_id = ${userId} AND blocked_user_id = ${otherId}`);
+    return messageAccess(tx, userId, otherId);
+  });
+  if (!result) { res.status(404).json({ error: "This conversation is not available." }); return; }
+  syncConversation([userId], { fromUserId: otherId, at: new Date().toISOString() });
+  syncConversation([otherId], { fromUserId: userId, at: new Date().toISOString() });
+  res.json(result);
+});
 
 type DirectConversation = {
   otherUserId: number;
@@ -453,6 +482,10 @@ router.post("/messages/:messageId/reaction", requireAuth, async (req, res): Prom
     return;
   }
 
+  await ensureMessageSafety();
+  const access = await messageAccess(db, userId, message.senderId === userId ? message.receiverId : message.senderId);
+  if (!access.canSend) { res.status(403).json({ error: access.reason }); return; }
+
   const [existing] = await db
     .select({ id: messageReactionsTable.id, emoji: messageReactionsTable.emoji })
     .from(messageReactionsTable)
@@ -474,13 +507,14 @@ router.post("/messages/:messageId/reaction", requireAuth, async (req, res): Prom
 // POST /messages/:otherUserId — send a message to a user.
 router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
-  const otherUserId = parseInt(String(req.params.otherUserId), 10);
+  const otherUserId = messageUserId(req.params.otherUserId);
   const { body, fileKey, fileType, fileName } = req.body as {
     body?: string; fileKey?: string; fileType?: string; fileName?: string;
   };
   const attaching = typeof fileKey === "string" && fileKey.trim().length > 0;
 
-  if (isNaN(otherUserId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+  if (!otherUserId) { res.status(400).json({ error: "Invalid user id" }); return; }
+  if (body !== undefined && (typeof body !== "string" || body.length > 5000)) { res.status(400).json({ error: "Keep messages under 5,000 characters." }); return; }
   /**
    * A message needs words *or* a file.
    *
@@ -496,11 +530,20 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
   const [recipient] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, otherUserId));
   if (!recipient) { res.status(404).json({ error: "Recipient not found" }); return; }
 
-  const [message] = await db.insert(messagesTable).values({
-    senderId: userId,
-    receiverId: otherUserId,
-    body: (body ?? "").trim(),
-  }).returning();
+  await ensureMessageSafety();
+  const result = await db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fadko-dm-rate'), ${userId})`);
+    await lockMessagePair(tx, userId, otherUserId);
+    const access = await messageAccess(tx, userId, otherUserId);
+    if (!access.canSend) return { error: access.reason, message: null };
+    const [recent] = await tx.select({ total: sql<number>`count(*)::int` }).from(messagesTable)
+      .where(and(eq(messagesTable.senderId, userId), gt(messagesTable.createdAt, new Date(Date.now() - 60_000))));
+    if (recent.total >= 30) return { error: "Please wait a moment before sending more messages.", message: null };
+    const [message] = await tx.insert(messagesTable).values({ senderId: userId, receiverId: otherUserId, body: (body ?? "").trim() }).returning();
+    return { error: null, message };
+  });
+  if (!result.message) { res.status(403).json({ error: result.error }); return; }
+  const message = result.message;
 
   /**
    * The file, checked before it is allowed to be one.

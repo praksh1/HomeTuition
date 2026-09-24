@@ -177,6 +177,32 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: conversation has no horizontal overflow`);
     check(errors.length === 0, `${width}: no browser exceptions`);
     await page.screenshot({ path: path.join(work, `${width}-conversation.png`), fullPage: true });
+    await page.getByLabel("Safety & help", { exact: true }).click();
+    await page.getByText("Block this person", { exact: true }).click();
+    await page.getByText("Unblock this person", { exact: true }).waitFor();
+    check(await page.getByTestId("conversation-input").count() === 0, `${width}: blocking removes the composer, not the evidence`);
+    check(await page.getByText("See you in class.", { exact: true }).count() === 1, `${width}: blocked conversation preserves the messages`);
+    await page.getByText("Report this conversation", { exact: true }).click();
+    check(await page.evaluate(() => window.lastNavigation?.pathname === "/support" && window.lastNavigation?.params.reportedUserId === "11"), `${width}: report includes the conversation partner for support`);
+    await page.getByText("Unblock this person", { exact: true }).click();
+    await page.getByTestId("conversation-input").waitFor();
+
+    await page.goto(`${base}?classmates`);
+    await page.getByLabel("Search classmates").fill("Classmate 50");
+    await page.getByLabel("Message Classmate 50 privately").click();
+    await page.getByLabel("Private message to classmate").fill("Could you explain question 4?");
+    await page.getByLabel("Private message to classmate").press("Shift+Enter");
+    check((await page.getByLabel("Private message to classmate").inputValue()).endsWith("\n"), `${width}: private in-call composer preserves Shift+Enter`);
+    await page.getByLabel("Private message to classmate").press("Enter");
+    await page.getByText("Sent privately. Find this conversation and replies in Messages.").waitFor();
+    check(await page.evaluate(() => !window.lastNavigation), `${width}: private message does not navigate away from the live classroom`);
+    await page.setViewportSize({ width, height: 440 });
+    await page.getByText("Block private messages from this person", { exact: true }).click();
+    await page.getByText("Unblock this person", { exact: true }).waitFor();
+    check(await page.getByLabel("Send private message").getAttribute("aria-disabled") === "true", `${width}: in-call block disables sending at keyboard height`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: classmate directory does not overflow`);
+    await page.screenshot({ path: path.join(work, `${width}-classmates-keyboard.png`), fullPage: false });
+    await page.setViewportSize({ width, height: 844 });
 
     await page.goto(`${base}?class-chat`);
     await page.getByText("IELTS evening class", { exact: true }).waitFor();

@@ -79,7 +79,7 @@ export default function SupportScreen() {
    * record of what happened — who joined, when, and for how long. See the API's
    * lib/participation.ts.
    */
-  const { sessionId, reason: presetReason } = useLocalSearchParams<{ sessionId?: string; reason?: string }>();
+  const { sessionId, reason: presetReason, reportedUserId } = useLocalSearchParams<{ sessionId?: string; reason?: string; reportedUserId?: string }>();
   const [reason, setReason] = useState<Reason | null>(
     REASONS.includes(presetReason as Reason) ? (presetReason as Reason) : null,
   );
@@ -97,7 +97,8 @@ export default function SupportScreen() {
   const [sessionsKnown, setSessionsKnown] = useState(true);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [chosenSession, setChosenSession] = useState<number | null>(null);
-  const [description, setDescription] = useState("");
+  const [description, setDescription] = useState(reportedUserId && /^[1-9]\d*$/.test(reportedUserId)
+    ? `Please review my private conversation with user #${reportedUserId}.\n\nWhat happened: ` : "");
   const [file, setFile] = useState<PickedFile | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
