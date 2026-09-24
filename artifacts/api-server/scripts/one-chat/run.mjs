@@ -81,6 +81,7 @@ async function run() {
   const made = await api("/sessions", { method: "POST", token: teacher.token, body: {
     subject: "Maths", topic: "One-off", date: soon, duration: 60, maxStudents: 20, price: 500 } });
   const sessionId = made.body.id;
+  if (!sessionId) throw new Error(`one-off fixture refused: ${made.status} ${JSON.stringify(made.body)}`);
 
   await sayInRoom(sessionId, teacher.token, "Said during the lesson.");
   const kept = sql(`select count(*) from session_messages where session_id = ${sessionId} and body = 'Said during the lesson.'`);
@@ -93,14 +94,19 @@ async function run() {
 
   console.log("\nA monthly class\n");
 
+  // Independent chat fixtures must not depend on whether wall-clock now overlaps 17:00.
+  // Keep the real schedule conflict checks; use a distinct teacher for the course case.
+  const courseTeacher = await register("teacher");
+  sql(`update teacher_profiles set approval_status = 'approved' where user_id = ${courseTeacher.user.id}`);
   // The response was being discarded. When it is a refusal every later step fails for a
   // reason that looks nothing like the cause — see ../test-support/apiMode.mjs.
-  assertPlanPurchased(await api("/monthly/plan", { method: "POST", token: teacher.token, body: { paymentMethod: "esewa" } }));
-  const klass = await api("/monthly/classes", { method: "POST", token: teacher.token, body: {
+  assertPlanPurchased(await api("/monthly/plan", { method: "POST", token: courseTeacher.token, body: { paymentMethod: "esewa" } }));
+  const klass = await api("/monthly/classes", { method: "POST", token: courseTeacher.token, body: {
     subject: "Maths", topic: "Daily algebra", startMinute: 17 * 60, durationMinutes: 60,
     timeZone: "Asia/Kathmandu", monthlyPrice: 2000, maxStudents: 20 } });
   const klassId = klass.body?.id ?? klass.body?.class?.id;
   check("a monthly class exists", !!klassId, JSON.stringify(klass.body).slice(0, 160));
+  if (!klassId) throw new Error(`monthly fixture refused: ${klass.status} ${JSON.stringify(klass.body)}`);
 
   /*
    * Force today's class into existence rather than waiting for the sweep, then use it. The
@@ -109,12 +115,12 @@ async function run() {
   const dayId = sql(`select id from recurring_days where recurring_id = ${klassId} order by scheduled_for asc limit 1`);
   check("the class has a day to hold", !!dayId, `dayId=${dayId}`);
 
-  await api(`/monthly/classes/${klassId}`, { token: teacher.token });
+  await api(`/monthly/classes/${klassId}`, { token: courseTeacher.token });
   const daySession = sql(`select coalesce(session_id::text, '') from recurring_days where id = ${dayId}`);
   check("and that day has become a real class", !!daySession, `session_id=${daySession}`);
 
   if (daySession) {
-    await sayInRoom(Number(daySession), teacher.token, "Bring your compass tomorrow.");
+    await sayInRoom(Number(daySession), courseTeacher.token, "Bring your compass tomorrow.");
 
     /*
      * The whole point. A message said in one day's room belongs to the course, not to that
@@ -126,7 +132,7 @@ async function run() {
     const onDay = sql(`select count(*) from session_messages where session_id = ${daySession} and body = 'Bring your compass tomorrow.'`);
     check("and does not start a thread of its own for that day", onDay === "0", `rows=${onDay}`);
 
-    const courseThread = await api(`/monthly/classes/${klassId}/messages`, { token: teacher.token });
+    const courseThread = await api(`/monthly/classes/${klassId}/messages`, { token: courseTeacher.token });
     check("so it is there when the course chat is opened",
       JSON.stringify(courseThread.body).includes("Bring your compass tomorrow."),
       JSON.stringify(courseThread.body).slice(0, 220));

@@ -40,6 +40,21 @@ jobs:
       - run: pnpm --filter @workspace/api-server run build
       - run: pnpm --filter @workspace/api-server run test:messages
       - run: pnpm --filter @workspace/api-server run test:class-chat
+      - name: Class conversation fixtures and legacy schedule compatibility
+        run: |
+          set -euo pipefail
+          PORT=8080 node artifacts/api-server/dist/index.mjs > /tmp/classroom-api.log 2>&1 &
+          test_api_pid=$!
+          trap 'kill "$test_api_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8080/api/healthz >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then cat /tmp/classroom-api.log; exit 1; fi
+            sleep 1
+          done
+          pnpm --filter @workspace/api-server run test:one-chat
+          pnpm --filter @workspace/api-server run test:late-joiner
+          pnpm --filter @workspace/api-server run test:teacher-leave
+          pnpm --filter @workspace/api-server run test:monthly
       - run: pnpm --filter @workspace/api-server run test:floor
       - name: Install browser
         run: |
