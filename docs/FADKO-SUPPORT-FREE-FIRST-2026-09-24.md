@@ -2,7 +2,7 @@
 
 ## Owner's goal and authority
 
-One human agent initially. Let the assistant resolve safe technical questions, collect missing information once, and prepare decision-ready payment and safety cases. No AI-issued refunds, payouts, bans, role changes or enrollment changes. No purchases or automatic paid fallback. Automated assistance must not pretend to be a human. Classroom production approval does not authorize releasing the paused support feature to production.
+One human agent initially. Let the assistant resolve safe technical questions, collect missing information once, and prepare decision-ready payment and safety cases. No AI-issued refunds, payouts, bans, role changes or enrollment changes. No purchases or automatic paid fallback. Automated assistance must not pretend to be a human. **Update 24 September:** the owner explicitly approved production promotion of completed support work, superseding the earlier support pause. Release 811cfee passed full production gate 35970765228; the served bundle and API readiness were independently verified. This does not imply that the unimplemented or unactivated capabilities below are live.
 
 ## Implemented in this development slice
 
@@ -23,13 +23,13 @@ One human agent initially. Let the assistant resolve safe technical questions, c
 This is not yet the complete autonomous support product. There is no claim that it can diagnose every issue or resolve most tickets; that must be measured in a pilot.
 
 1. **Reviewed content:** the ten source-linked starter drafts still need operator review/publication. They have not been imported or published in a live database by this implementation. Context-aware conversation does not repair an empty published knowledge base. Existing local navigation guides remain; unknown policy is not invented.
-2. **Live provider activation:** verify the actual free plans, model availability, data controls, allowed end-user ages/regions, notice/consent requirements and account limits. Store keys only in staging Railway. Keep inference disabled until this review and sample-answer tests pass. Do not paste keys into chat.
+2. **New provider activation:** verify the actual free plans, model availability, data controls, allowed end-user ages/regions, notice/consent requirements and account limits. Trial new providers with server-only staging credentials first; keep each new adapter disabled until this review and sample-answer tests pass. Existing primary-provider configuration was not changed by the support promotion. Do not paste keys into chat.
 3. **Evidence attachments / vision:** the existing support form securely accepts evidence; the assistant does not yet inspect images or recordings. Build an explicit evidence selector, ownership checks, consent, retention/deletion and a reviewed vision/transcription adapter before doing that. Never download arbitrary user-supplied URLs (SSRF), treat screenshot instructions as data, and preserve original evidence separately from extracted text and uncertain interpretations.
 4. **Safety review:** human-only review queue, restricted evidence access, policy citations, uncertainty and conflicting evidence. No inferred guilt from missing attendance. No automatic recording or silent collection of classes/DMs. Obtain appropriate permission for submitted recordings; do not change the existing no-automatic-recording decision.
 5. **Payment reconciliation:** the read-only slice covers session enrollment/refunds and matching frozen batch test receipts, not independent provider settlement, aggregate teacher earnings, recurring refunds without a lesson, or every historical learning-program ledger. Those mappings remain work to do. Any approved refund uses the original payment method; changes go to the human agent.
 6. **Deeper diagnostics:** add allowlisted current-device tests and session quality evidence with clear provenance. Read-only checks first. No arbitrary SQL, shell execution, model-selected internal endpoints or unreviewed remediation actions.
 7. **Operator workspace:** compact case tabs for overview, facts, claims, timeline and evidence; clear missing-info checklist; actions remain existing audited human controls. Persistent source links, not a polished unsourced paragraph.
-8. **Pilot and rollout:** adversarial multi-account tests, English/Nepali quality cases, provider outage/quota tests, phone keyboard/focus and large-queue usability. Staging acceptance before a separate support production release.
+8. **Pilot and rollout:** completed support was approved and promoted to production on 24 September. Continue adversarial multi-account tests, English/Nepali quality cases, provider outage/quota tests, phone keyboard/focus and large-queue usability before claiming broad autonomous resolution quality. New evidence/provider capabilities still require their own acceptance tests.
 
 ## Free-provider research — checked 24 September 2026
 
