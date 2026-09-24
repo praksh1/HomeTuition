@@ -299,6 +299,34 @@ async function main() {
     Boolean(roster && roster.first === 1 && roster.second === 1 && !/\bStudent\b/.test(roster.text)),
     roster ? roster.text.slice(0, 200) : "no sheet");
 
+  console.log("\n[1c2] Students can find and privately message a classmate without leaving the classroom");
+  for (const width of [360, 1440]) {
+    await s.page.setViewportSize({ width, height: 844 });
+    const count = s.page.getByTestId("student-classmates");
+    await count.waitFor({ state: "visible" });
+    check(`[${width}] the header count names connected students including self, not the teacher`,
+      (await count.getAttribute("aria-label"))?.startsWith("2 students here, including you; teacher not counted.") === true);
+    const bounds = await count.boundingBox();
+    check(`[${width}] the count fits the header with a finger-sized target`,
+      Boolean(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width && bounds.width >= 44 && bounds.height >= 44), JSON.stringify(bounds));
+    const classroomUrl = s.page.url();
+    await count.click();
+    const directory = s.page.getByTestId("classmate-directory");
+    check(`[${width}] classmates show both public names`, (await directory.innerText()).includes(student.name) && (await directory.innerText()).includes(second.name));
+    if (width === 360) {
+      await s.page.getByRole("button", { name: `Message ${second.name} privately`, exact: true }).click();
+      const composer = s.page.getByLabel("Private message to classmate");
+      await composer.fill("Private classroom check");
+      await s.page.getByRole("button", { name: "Send private message", exact: true }).click();
+      await s.page.getByText("Sent privately. Find this conversation and replies in Messages.", { exact: true }).waitFor();
+      const received = await api(`/messages/${student.user.id}`, { token: second.token });
+      check("the other enrolled student receives the persisted private message", received.status === 200 && received.body.some(message => message.body === "Private classroom check"));
+    }
+    await s.page.getByRole("button", { name: "Close classmates", exact: true }).click();
+    check(`[${width}] closing classmates returns to the same live classroom`, s.page.url() === classroomUrl && (await s.page.getByTestId("student-floor-ask").count()) === 1);
+  }
+  await s.page.setViewportSize({ width: 390, height: 844 });
+
   console.log("\n[1d] Both students begin as listeners with no microphone permission");
   check("the retired Invite all control stays retired",
     (await t.page.locator('[data-testid="teacher-floor-invite-all"]').count()) === 0);
