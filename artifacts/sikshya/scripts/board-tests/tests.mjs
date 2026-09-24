@@ -41,6 +41,7 @@ export const tests = [
       assert('first sheet is visibly rendered on both phones', beforeT.red>1000 && beforeS.red>1000);
       assert('matching phone canvases show matching PDF scale', Math.abs(beforeT.red-beforeS.red)<beforeT.red*0.03);
       await teacher.getByLabel('Whiteboard zoom',{exact:true}).click();
+      assert('temporary import notices do not cover the open Zoom panel', await teacher.locator('.Toast').evaluateAll(nodes=>nodes.every(node=>getComputedStyle(node).visibility==='hidden')));
       await teacher.getByLabel('Zoom in on whiteboard',{exact:true}).click();
       await teacher.waitForTimeout(450); await pump(teacher,student); await student.waitForTimeout(450);
       const afterT=await ink(teacher), afterS=await ink(student);

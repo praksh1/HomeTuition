@@ -127,6 +127,7 @@ const BOARD_CSS = `
 .sikshya-board--hide-props .App-menu__left { display: none !important; }
 .sikshya-board .App-menu__left { max-height: calc(100% - 6rem); }
 .sikshya-board .Toast { bottom: 148px; max-width: calc(100% - 24px); left: 50%; margin-left: 0; transform: translateX(-50%); pointer-events: none; }
+.sikshya-board--panel-open .Toast { visibility: hidden; }
 
 /*
  * On a phone these two buttons must not be in the toolbar row.
@@ -1701,7 +1702,7 @@ function SmartBoard({
   return (
     <div
       ref={boardRootRef}
-      className={`sikshya-board${showProps ? "" : " sikshya-board--hide-props"}${classroomChrome ? " sikshya-board--classroom" : ""}`}
+      className={`sikshya-board${showProps ? "" : " sikshya-board--hide-props"}${classroomChrome ? " sikshya-board--classroom" : ""}${zoomMenuOpen || pageMenuOpen || materialsOpen || colorMenuOpen ? " sikshya-board--panel-open" : ""}`}
       style={{ position: "absolute", inset: 0, overflow: "hidden",
         "--color-primary": colors.primary, "--color-primary-light": colors.actionSoft,
         "--color-danger": colors.destructive, "--text-primary-color": colors.foreground,
