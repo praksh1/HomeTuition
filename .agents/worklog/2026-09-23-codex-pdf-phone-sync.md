@@ -69,6 +69,10 @@ The existing 25-page import and per-picture limits remain. No purchases or real 
   opacity-zero HUD still intercepted Zoom Done through its pointer-events:auto child.
   Teacher and student retired HUDs now use display:none; lobby test targets the actual visible
   call-window Hide button, not the obsolete transparent control. No gate was bypassed.
+- Full local suite identified an outdated cancel-clear assertion: opening/closing the dialog
+  now emits two host-only overlay_out events. A separate browser reproduction confirmed these
+  exact events and intact canvases. Cancellation still forbids every other event; regression
+  now additionally compares the student's pixel count before and after cancellation.
 
 ## Problems and surprises
 

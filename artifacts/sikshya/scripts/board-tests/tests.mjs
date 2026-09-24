@@ -547,10 +547,14 @@ export const tests = [
       assert("there is a lesson on the board", (await ink(student)).n > 0);
 
       // Cancelling must leave the lesson alone — this is a destructive, class-wide action.
+      const studentInkBeforeCancel = (await ink(student)).n;
       await teacher.locator('button[aria-label="Clear this page for the whole class"]').click();
       await teacher.getByRole("dialog").getByRole("button", { name: "Go back" }).click();
       assert("cancelling the confirmation changes nothing", (await ink(teacher)).n > 0);
-      assert("and sends nothing", (await pump(teacher, student)).length === 0);
+      // The host is told to clear/restore its floating dock around the dialog. These visibility
+      // events never go to classmates; cancellation must still emit no lesson-changing event.
+      assert("cancelling sends no lesson changes", (await pump(teacher, student)).every(type => type === "overlay_out"));
+      assert("the student's lesson is unchanged after cancellation", (await ink(student)).n === studentInkBeforeCancel);
 
       await teacher.locator('button[aria-label="Clear this page for the whole class"]').click();
       await teacher.getByRole("dialog").getByRole("button", { name: "Clear page" }).click();
