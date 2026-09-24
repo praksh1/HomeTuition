@@ -17,6 +17,7 @@ const built = await bundleForBrowser({
   alias: {
     "@/context/AuthContext": path.join(here, "auth.js"),
     "@/utils/api": path.join(here, "api.js"),
+    "@react-navigation/native": path.join(here, "navigation.js"),
     "@/components/SocialSignIn": path.join(here, "social.js"),
     "@/utils/openAttachment": path.join(here, "attachment.js"),
     "@/utils/uploadFile": path.join(here, "upload.js"),
@@ -44,6 +45,23 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
+
+    await page.goto(`${base}?screen=library`);
+    await page.getByTestId("help-starter-import").click();
+    await page.getByText("Starter payment guide", { exact: true }).waitFor();
+    check((await page.getByTestId("help-starter-notice").textContent()).includes("Review each answer"), `${width}: importing guides does not publish them`);
+    await page.getByTestId("help-library-search").fill("no such guide");
+    check(await page.getByText("No matching answers. Try another search.").isVisible(), `${width}: editorial search has an empty state`);
+    await page.getByTestId("help-library-search").fill("payment");
+    await page.getByText("Starter payment guide", { exact: true }).click();
+    await page.getByTestId("help-starter-review").waitFor();
+    check(await page.getByTestId("help-starter-review").isVisible(), `${width}: source review checklist is visible before publishing`);
+    check(await page.getByTestId("help-starter-review").evaluate((node) => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: review checklist fits the viewport`);
+    await page.screenshot({ path: path.join(work, `${width}-support-library.png`), fullPage: true });
+    await page.getByRole("button", { name: "Close editor" }).click();
+    await page.getByTestId("help-starter-import").click();
+    await page.getByText("Starter drafts already exist. Your edits and publication choices were preserved.").waitFor();
+    check(await page.getByText("Starter payment guide", { exact: true }).count() === 1, `${width}: repeated import has no duplicate card`);
 
     await page.goto(`${base}?screen=student`);
     await page.getByText("MY FADKO PROFILE", { exact: true }).waitFor();

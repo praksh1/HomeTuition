@@ -45,3 +45,13 @@ test("long handoffs retain the initial report and latest corrections", () => {
   assert.match(brief, /Distinct detail 15\./);
   assert.match(brief, /Additional reports remain/);
 });
+
+test("linked payment cases skip asking for the class again and long briefs retain caveats", () => {
+  const next = supportInvestigation({ topic: "billing", history: [], question: "Still not working", candidate: "Unknown", candidateSource: "handoff", hasLinkedLesson: true });
+  assert.match(next!.answer, /When did this happen/);
+  assert.doesNotMatch(next!.answer, /Which class/);
+  const brief = buildSupportReviewBrief(Array.from({ length: 24 }, () => ({ role: "user", body: "report ".repeat(200) })), Array(16).fill("fact ".repeat(150)));
+  assert.ok(brief.length <= 4000);
+  assert.match(brief, /Missing records are not proof/);
+  assert.match(brief, /Human alone decides refund/);
+});

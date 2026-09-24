@@ -16,6 +16,7 @@ import { allowanceFor, nameOf, recordOpened } from "../lib/ticketStore";
 import { ticketRef } from "../lib/tickets";
 import { buildSupportReviewBrief, conversationTopic, investigationChoices, supportInvestigation } from "../lib/supportInvestigation";
 import { listSupportLessons, readSupportLesson } from "../lib/supportCaseContext";
+import { SUPPORT_STARTER_ARTICLES, SUPPORT_STARTER_VERSION, starterReviewFor } from "../lib/supportStarterArticles";
 
 const router: IRouter = Router();
 const FALLBACK = "I don't have a confirmed answer yet. You can ask in another way or send this to Fadko Support. Your question will travel with the request.";
@@ -232,7 +233,7 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
       ? supportFollowUp(message, resolved.classification.intent) : null;
     if (followUp) answer = followUp.prompt;
     const investigation = !toneReply && !localReply && !followUp
-      ? supportInvestigation({ topic, history, question: message, candidate: answer, candidateSource: source }) : null;
+      ? supportInvestigation({ topic, history, question: message, candidate: answer, candidateSource: source, hasLinkedLesson: !!caseContext }) : null;
     if (investigation) { answer = investigation.answer; source = "local"; }
     const saved = await db.transaction(async (tx) => {
       let conversationId = requestedId;
@@ -368,8 +369,23 @@ function articleInput(value: unknown): { slug: string; title: string; intent: st
 router.get("/admin/support/articles", requireAuth, requireAdmin, async (_req, res): Promise<void> => {
   try {
     const rows = await db.select().from(supportArticlesTable).orderBy(desc(supportArticlesTable.updatedAt)).limit(300);
-    res.json({ articles: rows });
+    res.json({ articles: rows.map((row) => ({ ...row, starterReview: starterReviewFor(row.slug, row.answer) })) });
   } catch { res.status(503).json({ error: "Could not load help articles." }); }
+});
+
+router.post("/admin/support/articles/starter-drafts", requireAuth, requireAdmin, async (req, res): Promise<void> => {
+  try {
+    const created = await db.transaction(async (tx) => {
+      const rows = await tx.insert(supportArticlesTable).values(SUPPORT_STARTER_ARTICLES.map(({ sources, reviewCheck, ...article }) => ({
+        ...article, locale: "en", status: "draft", reviewedBy: null, publishedAt: null,
+      }))).onConflictDoNothing({ target: [supportArticlesTable.slug, supportArticlesTable.locale] }).returning({ id: supportArticlesTable.id });
+      if (rows.length) await tx.insert(activityLogTable).values({ userId: req.user!.userId,
+        action: "support.starter_drafts.imported", subjectType: "support_library", subjectId: null,
+        detail: { version: SUPPORT_STARTER_VERSION, created: rows.length } });
+      return rows.length;
+    });
+    res.status(200).json({ created, version: SUPPORT_STARTER_VERSION });
+  } catch { res.status(503).json({ error: "Starter drafts could not be added. Existing answers have not been replaced." }); }
 });
 
 router.post("/admin/support/articles", requireAuth, requireAdmin, async (req, res): Promise<void> => {

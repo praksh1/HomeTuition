@@ -42,7 +42,7 @@ const HUMAN_REQUEST = /\b(human|real person|agent|customer service|send (?:this|
 
 export function supportInvestigation(input: {
   topic: InvestigationTopic; history: readonly SupportTurn[]; question: string;
-  candidate: string; candidateSource: string;
+  candidate: string; candidateSource: string; hasLinkedLesson?: boolean;
 }): { answer: string; choices: InvestigationStep["choices"]; readyForHuman: boolean } | null {
   const history = input.history.slice(-48);
   const replies = history.filter((turn) => turn.role === "assistant");
@@ -58,7 +58,7 @@ export function supportInvestigation(input: {
   const repeat = replies.some((turn) => turn.body === input.candidate);
   if (!alreadyInvestigating && !repeat && !REPORTED_FAILURE.test(input.question) && input.candidateSource !== "handoff" && input.topic !== "safety") return null;
   const reported = [...history.filter((turn) => turn.role === "user").map((turn) => turn.body), input.question].join(" ");
-  const supplied = (key: string) => key === "device" && /\b(iphone|ipad|android|laptop|windows|macbook)\b/i.test(reported) && /\b(safari|chrome|firefox|edge)\b/i.test(reported);
+  const supplied = (key: string) => (key === "payment_record" && input.hasLinkedLesson) || (key === "device" && /\b(iphone|ipad|android|laptop|windows|macbook)\b/i.test(reported) && /\b(safari|chrome|firefox|edge)\b/i.test(reported));
   const next = steps.find((item) => !supplied(item.key) && !replies.some((turn) => turn.body === item.prompt));
   if (next) return { answer: next.prompt, choices: next.choices, readyForHuman: input.topic === "safety" };
   return {
@@ -88,14 +88,13 @@ export function buildSupportReviewBrief(turns: readonly SupportTurn[], facts: re
   const lines = [
     "SUPPORT REVIEW BRIEF — human decision required",
     "User reports (not independently verified):",
-    ...selectedReports.map((turn) => `Report ${reports.indexOf(turn) + 1}: ${turn.body.slice(0, 240)}`),
+    ...selectedReports.map((turn) => `Report ${reports.indexOf(turn) + 1}: ${turn.body.slice(0, 160)}`),
     ...(reports.length > 8 ? ["Additional reports remain in the support conversation."] : []),
     "Fadko records checked:",
-    ...(facts.length ? facts.slice(0, 8) : ["No class/payment record has been linked and verified in this conversation."]),
+    ...(facts.length ? facts.slice(0, 12).map((fact) => fact.slice(0, 240)) : ["No class/payment record has been linked and verified in this conversation."]),
     "Questions / guidance already given:",
     ...questions.slice(-3).map((turn) => `- ${turn.body.slice(0, 160)}`),
-    "Unverified: payment-provider settlement, cause of technical failure, image/recording contents and any allegation of misconduct. Missing records are not proof an event did not happen.",
-    "Next: check the linked session evidence and original payment records; compare with the user's account; request only missing evidence. Human alone decides refund or moderation action. No money moved and no account was restricted by this assistant.",
   ];
-  return lines.join("\n").slice(0, 4_000);
+  const caution = "Unverified: payment-provider settlement, cause of technical failure, image/recording contents and any allegation of misconduct. Missing records are not proof an event did not happen.\nThis is a bounded summary; review the full conversation and linked records. Human alone decides refund or moderation action. No money moved and no account was restricted by this assistant.";
+  return `${lines.join("\n").slice(0, 3999 - caution.length)}\n${caution}`;
 }

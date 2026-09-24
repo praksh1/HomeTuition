@@ -11,7 +11,7 @@ import { apiGet, apiPost, apiPut } from "@/utils/api";
 import { confirm } from "@/utils/alerts";
 
 type Intent = "billing" | "class_access" | "messaging" | "homework" | "account" | "safety" | "general";
-type Article = { id: number; slug: string; title: string; answer: string; intent: Intent; keywords: string[]; status: "draft" | "published" | "archived"; updatedAt: string };
+type Article = { id: number; slug: string; title: string; answer: string; intent: Intent; keywords: string[]; status: "draft" | "published" | "archived"; updatedAt: string; starterReview?: { version: string; check: string; sources: string[] } | null };
 type Editor = { id: number | null; title: string; answer: string; intent: Intent; keywords: string; slug: string; status: Article["status"] };
 const INTENTS: { id: Intent; label: string }[] = [
   { id: "class_access", label: "Classes" }, { id: "billing", label: "Payments" },
@@ -33,6 +33,9 @@ export default function HelpLibrary() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [query, setQuery] = useState("");
   const wide = width >= 820;
 
   const load = useCallback(async () => {
@@ -44,6 +47,19 @@ export default function HelpLibrary() {
     finally { setLoading(false); }
   }, []);
   useFocusEffect(useCallback(() => { void load(); }, [load]));
+
+  const importDrafts = async () => {
+    if (importing) return;
+    setImporting(true); setNotice("");
+    try {
+      const result = await apiPost<{ created: number }>("/admin/support/articles/starter-drafts", {});
+      setNotice(result.created ? `${result.created} starter drafts added. Review each answer before publishing.` : "Starter drafts already exist. Your edits and publication choices were preserved.");
+      await load();
+    } catch { setNotice("Could not add starter drafts. Please try again; existing answers were not replaced."); }
+    finally { setImporting(false); }
+  };
+  const visibleArticles = articles.filter((article) => `${article.title} ${article.intent} ${article.status}`.toLocaleLowerCase().includes(query.toLocaleLowerCase().trim()));
+  const review = articles.find((article) => article.id === editor?.id)?.starterReview;
 
   const open = (article?: Article) => {
     setError("");
@@ -96,6 +112,17 @@ export default function HelpLibrary() {
             <Text style={[t.body, { color: colors.primary, fontWeight: "700" }]}>Write an answer</Text>
           </Pressable>
         </View>
+        <View style={{ gap: space.sm }}>
+          <Pressable accessibilityRole="button" testID="help-starter-import" disabled={importing || loading || !!loadError} onPress={() => void importDrafts()}
+            style={[styles.action, { flex: 0, borderColor: colors.border, borderRadius: radius.md, flexDirection: "row", gap: space.sm, padding: space.sm }]}>
+            <Feather name="book-open" size={18} color={colors.primary} />
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>{importing ? "Adding drafts…" : "Add Fadko starter guides"}</Text>
+          </Pressable>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>Source-linked drafts for common questions. Nothing goes live until you review and publish it.</Text>
+          {!!notice && <Text accessibilityRole="alert" testID="help-starter-notice" style={[t.callout, { color: colors.foreground }]}>{notice}</Text>}
+          <TextInput accessibilityLabel="Search help library" testID="help-library-search" placeholder="Search answers, topics or status" value={query} onChangeText={setQuery}
+            placeholderTextColor={colors.mutedForeground} style={fieldStyle} />
+        </View>
         <View style={styles.sectionHeading}>
           <View>
             <Text style={[t.title3, { color: colors.foreground }]}>Answers</Text>
@@ -113,7 +140,8 @@ export default function HelpLibrary() {
             <Text style={[t.body, { color: colors.mutedForeground, textAlign: "center" }]}>The assistant will say when it does not know and offer you a human request. Add verified answers as common questions emerge.</Text>
           </View> :
           <View style={[styles.cards, { flexDirection: wide ? "row" : "column" }]}>
-            {articles.map((article) => <Pressable key={article.id} accessibilityRole="button" onPress={() => open(article)}
+            {!visibleArticles.length && <Text style={[t.body, { color: colors.mutedForeground }]}>No matching answers. Try another search.</Text>}
+            {visibleArticles.map((article) => <Pressable key={article.id} accessibilityRole="button" onPress={() => open(article)}
               style={({ pressed }) => [styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, width: wide ? "48.5%" : "100%" }, pressed && { opacity: 0.76 }]}>
               <View style={styles.cardTop}>
                 <Text style={[t.caption, { color: article.status === "published" ? colors.success : colors.mutedForeground, fontWeight: "700" }]}>{article.status.toUpperCase()}</Text>
@@ -136,6 +164,11 @@ export default function HelpLibrary() {
               <Pressable accessibilityRole="button" accessibilityLabel="Close editor" onPress={() => setEditor(null)}><Feather name="x" size={22} color={colors.foreground} /></Pressable>
             </View>
             <ScrollView contentContainerStyle={{ padding: space.md, gap: space.md }} keyboardShouldPersistTaps="handled">
+              {!!review && <View testID="help-starter-review" style={{ padding: space.md, gap: space.sm, backgroundColor: colors.actionSoft, borderRadius: radius.md }}>
+                <Text style={[t.bodyStrong, { color: colors.primary }]}>Before publishing</Text>
+                <Text style={[t.body, { color: colors.foreground }]}>{review.check}</Text>
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>Starter version {review.version}. Verify any changes you make; this checklist is not approval.</Text>
+              </View>}
               <Text style={[t.caption, { color: colors.foreground, fontWeight: "700" }]}>Question or title</Text>
               <TextInput testID="help-article-title" value={editor?.title ?? ""} onChangeText={(title) => setEditor((current) => current && { ...current, title })}
                 placeholder="How do I join my class?" placeholderTextColor={colors.mutedForeground} style={fieldStyle} maxLength={140} />
