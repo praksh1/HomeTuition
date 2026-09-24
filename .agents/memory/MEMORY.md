@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Production testing and teacher studio](teacher-studio-production-sep24.md) — 24 Sep: support production approved; preserve classroom/support TODOs; scheduling/booking reliability and simplified scalable teacher workspace next. Make-up policy is a proposal, not an automatic refund authorization.
+
 - [Profile contact, location and refund destination](profile-contact-location-and-refunds.md) — owner-approved Profile account-detail and original-payment-method refund rules; implementation is separately tracked.
 
 - [Public share history and bookability](public-share-history-and-bookability.md) — shared-page
