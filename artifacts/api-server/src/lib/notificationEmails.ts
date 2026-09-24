@@ -17,6 +17,7 @@ export type NotificationKind =
   | "program_published"
   | "class_message"
   | "class_homework_set"
+  | "class_quiz_published"
   | "class_homework_submitted"
   | "class_homework_feedback"
   | "session_live"
@@ -38,6 +39,7 @@ export interface NotificationEvent {
   programTitle?: string;
   batchId?: number;
   homeworkId?: number;
+  quizId?: number;
   homeworkTitle?: string;
   dueAt?: string;
   /** What was paid, for the notifications about money arriving or going back. */
@@ -97,6 +99,10 @@ export function emailFor(event: NotificationEvent, recipientName: string): { sub
           (link ? `\nOpen the class conversation: ${link}\n` : "") +
           signoff,
       };
+    }
+    case "class_quiz_published": {
+      const link = appUrl(`/class-quizzes?id=${event.batchId ?? ""}`);
+      return { subject: `New practice quiz: ${event.homeworkTitle ?? "Quiz"}`, text: `${hello}\n\nA new practice quiz is ready in “${event.topic ?? "your class"}”. Your results are private to you and your teacher.\n${link ? `\nOpen quizzes: ${link}\n` : ""}${signoff}` };
     }
     case "class_homework_set": {
       const link = appUrl(`/class-homework?id=${event.batchId ?? ""}`);

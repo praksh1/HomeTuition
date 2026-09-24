@@ -24,6 +24,12 @@ const item = (overrides: Partial<AppNotification> = {}): AppNotification => ({
   ...overrides,
 });
 
+test("quiz notices open the enrolled class quiz space, not homework or a paid route", () => {
+  const notice = item({ data: { type: "class_quiz_published", batchId: "18", quizId: "7" } });
+  assert.deepEqual(notificationDestination(notice.data!), { pathname: "/class-quizzes", params: { id: "18" } });
+  assert.equal(notificationPresentation(notice).label, "Practice quiz");
+});
+
 test("opening one notification leaves every other unread item unread", () => {
   const result = markOnlyNotificationRead([item(), item({ id: "two" })], "one");
   assert.equal(result[0]?.read, true);

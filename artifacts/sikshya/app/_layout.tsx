@@ -6,7 +6,7 @@ import {
   useFonts,
 } from "@expo-google-fonts/inter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack, useRouter, useSegments } from "expo-router";
+import { Stack, useGlobalSearchParams, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { applyWebViewportFix } from "@/utils/webViewport";
 import { NotificationProvider } from "@/context/NotificationContext";
 import { DatePreferenceProvider } from "@/context/DatePreferenceContext";
+import { sharedTabRoute } from "@/utils/sharedTabRoute";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -53,6 +54,7 @@ const SHARED_SCREENS = [
   { name: "class-students", segment: "class-students" },
   { name: "class-chat", segment: "class-chat" },
   { name: "class-homework", segment: "class-homework" },
+  { name: "class-quizzes", segment: "class-quizzes" },
   { name: "class-materials", segment: "class-materials" },
   // What somebody has reported, and what happened to it. Shared because both roles report
   // things and both need to follow the answer — and because without this the guard below
@@ -70,6 +72,7 @@ function AuthGuard() {
   const { user, isLoading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+  const params = useGlobalSearchParams();
 
   useEffect(() => {
     if (isLoading) return;
@@ -107,8 +110,12 @@ function AuthGuard() {
     } else if ((user.role === "teacher" || user.role === "student") && !user.onboardingComplete) {
       if (!onOnboarding) router.replace("/onboarding" as never);
     } else if (user.role === "teacher") {
+      const sharedTab = sharedTabRoute(user.role, segments);
+      if (sharedTab) { router.replace({ pathname: sharedTab, params } as never); return; }
       if (!inTeacherGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen && !onOnboarding) router.replace("/(teacher)");
     } else if (user.role === "student") {
+      const sharedTab = sharedTabRoute(user.role, segments);
+      if (sharedTab) { router.replace({ pathname: sharedTab, params } as never); return; }
       if (!inStudentGroup && !inAuthGroup && !onSharedScreen && !onAccountScreen && !onOnboarding) router.replace("/(student)");
     } else if (user.role === "admin") {
       // An agent has one place to be. They are not a teacher or a student, and the screens for

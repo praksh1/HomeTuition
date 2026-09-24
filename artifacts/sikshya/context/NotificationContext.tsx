@@ -239,6 +239,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           }, event.inboxId);
         } else if (
           (event.kind === "class_homework_set" ||
+            event.kind === "class_quiz_published" ||
             event.kind === "class_homework_submitted" ||
             event.kind === "class_homework_feedback") &&
           event.batchId != null
@@ -246,7 +247,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
           if (!preferences.push.homework) return;
           await notifyClassHomework({
             kind:
-              event.kind === "class_homework_set"
+              event.kind === "class_quiz_published" ? "quiz" : event.kind === "class_homework_set"
                 ? "set"
                 : event.kind === "class_homework_submitted"
                   ? "submitted"

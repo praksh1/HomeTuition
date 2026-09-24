@@ -17,6 +17,7 @@ export interface UserEvent {
     | "follower"
     | "program_published"
     | "class_homework_set"
+    | "class_quiz_published"
     | "class_homework_submitted"
     | "class_homework_feedback"
     | "session_live"

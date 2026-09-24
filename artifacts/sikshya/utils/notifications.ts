@@ -194,7 +194,7 @@ export async function notifyClassMessage(msg: {
 }
 
 type ClassHomeworkNotice = {
-  kind: "set" | "submitted" | "feedback";
+  kind: "set" | "submitted" | "feedback" | "quiz";
   batchId: number | string;
   homeworkId?: number | string;
   homeworkTitle?: string;
@@ -206,18 +206,18 @@ type ClassHomeworkNotice = {
 export async function notifyClassHomework(notice: ClassHomeworkNotice, serverId?: number): Promise<void> {
   const homework = notice.homeworkTitle ?? "Homework";
   const className = notice.classTitle ?? "Your class";
-  const title = notice.kind === "set"
+  const title = notice.kind === "quiz" ? "New practice quiz" : notice.kind === "set"
     ? "New homework"
     : notice.kind === "submitted"
       ? `${notice.personName ?? "A student"} handed in homework`
       : "Homework feedback is ready";
-  const body = notice.kind === "set"
+  const body = notice.kind === "set" || notice.kind === "quiz"
     ? `“${homework}” · ${className}`
     : notice.kind === "submitted"
       ? `“${homework}” · ${className}`
       : `${notice.personName ?? "Your teacher"} returned “${homework}” · ${className}`;
   const data = {
-    type: `class_homework_${notice.kind}`,
+    type: notice.kind === "quiz" ? "class_quiz_published" : `class_homework_${notice.kind}`,
     batchId: String(notice.batchId),
     homeworkId: notice.homeworkId == null ? undefined : String(notice.homeworkId),
   };

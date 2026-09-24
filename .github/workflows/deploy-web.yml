@@ -170,6 +170,9 @@ jobs:
       - name: Teacher timetable and booking recovery
         run: pnpm --filter @workspace/api-server run test:batch-booking
 
+      - name: Private quizzes, review and server grading
+        run: node artifacts/api-server/scripts/quiz-tests/run.mjs
+
       # The size at which a shared picture stops reaching the class, and the size at which it
       # closes the teacher's board connection. Pinned down because a teacher hit both from an
       # iPhone and the app said nothing either time.
@@ -616,6 +619,8 @@ jobs:
           pnpm --filter @workspace/sikshya run test:messaging
           # Includes the in-call private composer, 50-classmate search, blocking and reporting.
           pnpm --filter @workspace/sikshya run test:messages-ui
+          node artifacts/sikshya/scripts/quiz-ui/run.mjs
+          node artifacts/sikshya/scripts/shared-tab-reload/run.mjs
           # Profile and the private account editor at phone and laptop widths. Nepal's long
           # location lists must stay searchable and bounded, and teacher documents must not
           # turn every visit to Profile into a several-screen upload form.

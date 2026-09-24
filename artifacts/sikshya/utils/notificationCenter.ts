@@ -69,6 +69,8 @@ export function notificationDestination(
   const programId = value(data, "programId");
   const conversationWith = value(data, "conversationWith");
 
+  if (batchId && kind === "class_quiz_published") return { pathname: "/class-quizzes", params: { id: batchId } };
+
   if (batchId && kind?.startsWith("class_homework_")) {
     return { pathname: "/class-homework", params: { id: batchId } };
   }
@@ -101,6 +103,7 @@ export function notificationDestination(
 
 export function notificationPresentation(notification: AppNotification): NotificationPresentation {
   const kind = value(notification.data, "type");
+  if (kind === "class_quiz_published") return { icon: "check-circle", label: "Practice quiz", tone: "action" };
   if (kind === "message" || kind === "class_message" || kind === "session_message") {
     return { icon: "message-circle", label: "Message", tone: "action" };
   }

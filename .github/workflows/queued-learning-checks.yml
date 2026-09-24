@@ -1,0 +1,50 @@
+name: Queued learning checks
+on:
+  push:
+    branches: [codex/queued-learning-release]
+permissions:
+  contents: read
+concurrency:
+  group: queued-learning-checks
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: learning_ci
+        ports: [5432:5432]
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/learning_ci
+      PGURL: postgres://postgres:postgres@127.0.0.1:5432/learning_ci
+      NODE_ENV: test
+      EXPO_PUBLIC_API_URL: http://127.0.0.1:8126
+      EXPO_EXPORT_MAX_WORKERS: "1"
+      NODE_OPTIONS: --max-old-space-size=1024
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm --filter @workspace/api-server run test
+      - run: pnpm --filter @workspace/sikshya run test
+      - run: pnpm --filter @workspace/sikshya run lint:design
+      - run: pnpm run db:push
+      - run: pnpm --filter @workspace/api-server run build
+      - run: node artifacts/api-server/scripts/quiz-tests/run.mjs
+      - name: Install browser
+        run: |
+          npm i -g playwright
+          npx playwright install --with-deps chromium
+      - run: node artifacts/sikshya/scripts/quiz-ui/run.mjs
+      - run: pnpm --filter @workspace/sikshya run build
+      - run: node artifacts/sikshya/scripts/shared-tab-reload/run.mjs

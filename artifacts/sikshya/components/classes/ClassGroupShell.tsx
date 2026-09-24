@@ -11,10 +11,12 @@ export function ClassGroupShell({
   title,
   eyebrow,
   children,
+  onBack,
 }: {
   title: string;
   eyebrow: string;
   children: ReactNode;
+  onBack?: () => void;
 }) {
   const colors = useColors();
   const { t, gutter, space } = useLayout();
@@ -35,7 +37,7 @@ export function ClassGroupShell({
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel="Go back"
-          onPress={() => router.back()}
+          onPress={onBack ?? (() => router.back())}
           style={{
             minHeight: 44,
             minWidth: 44,

@@ -1,4 +1,4 @@
-import { useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Text, TextInput, View } from "react-native";
 import { ClassGroupShell } from "@/components/classes/ClassGroupShell";
@@ -136,6 +136,7 @@ export default function ClassHomeworkScreen() {
 
   return (
     <ClassGroupShell title="Homework" eyebrow={view?.title ?? "Your class"}>
+      <ProgramButton label="Practice quizzes" icon="check-square" onPress={() => router.push({ pathname: "/class-quizzes", params: { id: String(batchId) } } as never)} />
       {!view && !problem ? <ActivityIndicator color={colors.primary} /> : null}
       {problem ? <ProgramNotice tone="stopped" title="Homework unavailable" body={problem} /> : null}
       {view?.isTeacher ? (

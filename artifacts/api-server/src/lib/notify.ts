@@ -27,6 +27,7 @@ const PREF_KEY: Record<NotificationKind, PrefKind> = {
   message: "messages",
   class_message: "messages",
   class_homework_set: "homework",
+  class_quiz_published: "homework",
   class_homework_submitted: "homework",
   class_homework_feedback: "homework",
   follower: "followers",
