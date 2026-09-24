@@ -65,6 +65,10 @@ The existing 25-page import and per-picture limits remain. No purchases or real 
   Added footer clearance for teacher media status, host-signal assertions and a real full-class
   phone interaction check. Rebuilt/typechecked successfully. Combined local hit test now has
   all five Zoom controls accessible and confirms the real teacher dock returns after closing.
+- Full-class gate on 7af6035 correctly stopped release: the new dock cleared, but a retired
+  opacity-zero HUD still intercepted Zoom Done through its pointer-events:auto child.
+  Teacher and student retired HUDs now use display:none; lobby test targets the actual visible
+  call-window Hide button, not the obsolete transparent control. No gate was bypassed.
 
 ## Problems and surprises
 
