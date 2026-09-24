@@ -33,6 +33,13 @@ try {
       return route.fulfill({ status: 503, json: { error: "Secondary reads are outside this fixture" } });
     });
     const page = await context.newPage();
+    // A deliberately expired token may show the existing session-expired alert while the
+    // router leaves the page. Own its dismissal so Chromium teardown cannot race auto-dismiss.
+    page.on("dialog", dialog => {
+      // Onboarding's unsaved-form protection is legitimate; this fixture intentionally leaves
+      // without entering any details to test the next account gate.
+      void (dialog.type() === "beforeunload" ? dialog.accept() : dialog.dismiss()).catch(() => {});
+    });
     page.on("pageerror", e => errors.push(String(e)));
     for (const tab of ["messages", "sessions", "profile"]) {
       const target = tab === "messages" ? "new-message-button" : tab === "profile" ? "notification-settings-link" : role === "teacher" ? "teacher-schedule-list" : "student-classes-list";

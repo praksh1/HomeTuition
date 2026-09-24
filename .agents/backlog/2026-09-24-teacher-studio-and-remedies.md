@@ -12,7 +12,7 @@ Owner request: 24 September 2026. Promote the verified support work to productio
 - [x] Search/filter/grouped date sets, compact laptop rows and phone-sized actions; schedule shortcut. List no longer launches a checkout/settlement read for every published card. Reassess density with the owner's actual full-time workload.
 - [x] Expanded publication confirmation shows description, language, price, capacity and exact lessons, with the paid-commitment warning.
 - [ ] Design one simple make-up/remedy workflow for student absence and teacher non-delivery. Product proposal first; no new automatic refund/forfeiture policy without owner approval. Preserve original entitlements and prevent duplicate refund plus replacement access.
-- [ ] Quiz import within Homework: parse a supplied document into draft questions/answers; teacher confirms every item before release; deterministic grading for supported question types. Do not pretend OCR/AI extraction is already available or free/unlimited. Separate from the urgent booking fixes.
+- [x] Quiz first release implemented and feature-tested: local text-based PDF/text conversion inside Homework, private drafts, per-question confirmation, immutable publication, one server-graded practice attempt, hidden open answer key, paged teacher results and notifications. See `docs/FADKO-QUIZZES-2026-09-24.md` for limits (no OCR/essays/answer variants; PDF conversion on web) and `.agents/worklog/2026-09-24-codex-queued-learning-release.md` for deployment evidence. A checked box here is not itself a live-release claim.
 
 ## Carry-forward work (not forgotten)
 

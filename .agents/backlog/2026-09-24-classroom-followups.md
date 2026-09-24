@@ -9,7 +9,7 @@ Owner accepted Preview on 24 September 2026 and requested production deployment.
 
 Deployed to production at **9e2c418**, 24 September 2026, after full gate **35991929478** passed. Release/test evidence is in `.agents/worklog/2026-09-24-codex-classroom-followups.md`. Physical iPhone/Android follow-up remains useful; automated browser dimensions are not device hardware tests. New age/guardian/consent rules and automatic moderation were not invented.
 
-- [ ] Separate navigation follow-up found during read-only release smoke checks: a signed-in cold refresh of `/messages` returns to Dashboard during auth hydration, both before and after this release. In-app Messages navigation works. Preserve the intended authenticated route on refresh; verify role/onboarding redirects before changing that boundary.
+- [x] Separate navigation follow-up implemented: cold refresh of shared Messages, Sessions and Profile resolves to the signed-in role without losing the intended screen/query. Unverified, incomplete and signed-out gates are unchanged. Feature CI 36029838470 passed 56 built-app refresh/gate checks; production evidence is tracked in the queued-learning-release worklog.
 
 Evidence supplied (not reviewed in this release pass):
 - `Screen Recording 2026-09-23 235758.mp4`
