@@ -510,6 +510,8 @@ async function main() {
   check("no speech is invented either", spoke === 0, String(spoke));
 
   console.log("\n[7c] A phone teacher can use board panels without floating controls covering them");
+  check("the retired teacher control bar is absent from layout", await t.page.getByTestId("video-visibility-btn").isHidden());
+  check("the retired student control bar is absent from layout", await s.page.getByTestId("video-visibility-btn").isHidden());
   await t.page.setViewportSize({ width: 390, height: 844 });
   await t.page.waitForTimeout(700);
   await t.page.getByTestId("video-hide-btn").click();

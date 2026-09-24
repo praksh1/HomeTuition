@@ -339,7 +339,7 @@ async function main() {
 
       // Hide and Show are their own control, and the call is never torn down by any of it.
       const roomCalls = await page.evaluate(() => window.__roomCalls ?? 0);
-      const hidePress = await press("video-visibility-btn");
+      const hidePress = await press("video-hide-btn");
       check(`[${label}] Hide is its own control and can be pressed`,
         hidePress.pressed, hidePress.blockedBy);
       await page.waitForTimeout(500);

@@ -2259,7 +2259,8 @@ const s = StyleSheet.create({
     justifyContent: "center",
     borderWidth: 1,
   },
-  overlayHidden: { opacity: 0 },
+  // Retired HUD stays out of layout and hit testing; opacity alone leaves invisible buttons.
+  overlayHidden: { display: "none" },
   contentArea: { flex: 1, position: "relative" },
   videoArea: {
     position: "absolute",
