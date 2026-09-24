@@ -32,13 +32,15 @@ test("both roles share the premium identity hero and descriptive action rows", (
   assert.doesNotMatch(studentProfile, /No saved payment method/);
 });
 
-test("both roles expose the same premium profile menu without pretending an AI agent exists", () => {
+test("both roles expose the working support assistant with automation and human-review disclosure", () => {
   assert.match(appShellHeader, /<ProfileOverflowMenu items=\{items\}/);
   assert.match(appShellHeader, /role === "teacher"/);
   assert.match(profileMenu, />Menu</);
-  assert.match(appShellHeader, /Fadko assistant/);
-  assert.match(appShellHeader, /disabled: true/);
-  assert.match(profileMenu, />Soon</);
+  assert.match(appShellHeader, /label: "Ask Fadko"/);
+  assert.match(appShellHeader, /go\(`\$\{profilePath\}\?support=1`\)/);
+  const assistant = read("components/support/SupportAssistantLauncher.tsx");
+  assert.match(assistant, /automated support assistant/);
+  assert.match(assistant, /Refunds and account restrictions always need human review/);
 });
 
 test("teacher credentials stay compact until the teacher asks to manage them", () => {
