@@ -50,6 +50,9 @@ The existing 25-page import and per-picture limits remain. No purchases or real 
   each below the unchanged 4 MiB limit. Progress toast moved above navigation, pointer-transparent.
 - Visual inspection of teacher/student phone canvas screenshots confirms matching PDF bounds.
 - Design lint unchanged baseline: 56 hex literals / 211 font sizes. git diff --check clean.
+- Exact-build Zoom check at 320 / 390 / 1440: all controls at least 44 x 44 and tappable.
+  Screenshot review caught the transient success notice visually covering the phone popup;
+  custom panels now suppress the transient toast while open. Added a permanent regression.
 
 ## Problems and surprises
 
