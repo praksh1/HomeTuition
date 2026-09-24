@@ -2,6 +2,7 @@ const completeOnboarding = { phone: "+977 9800000000", province: "Bagmati Provin
 const incompleteLegacyOnboarding = { ...completeOnboarding, phone: null };
 const syntheticLegacyOnboarding = { phone: "9801234567", province: "Bagmati", district: "Kathmandu", localLevel: "Kathmandu", locality: "Synthetic staging fixture", institutionName: "Synthetic Staging School", affiliationStatus: "not_specified", profilePhotoKey: null };
 export async function apiGet(path) {
+  if (path === "/support/assistant/lessons") return { lessons: Array.from({ length: 50 }, (_, i) => ({ id: i + 1, topic: `Lesson ${i + 1}`, date: "2026-09-24" })) };
   if (path === "/support/assistant/conversations") return { conversations: [{ id: 9, title: "Earlier class question", ticketId: null }] };
   if (path === "/support/assistant/conversations/9") return { messages: [
     { id: 91, role: "user", body: "Earlier class question", source: "user" },
@@ -18,6 +19,12 @@ export async function apiGet(path) {
 }
 export async function apiPatch() { return {}; }
 export async function apiPost(path, body) {
+  if (path === "/support/assistant/messages" && body.sessionId) return {
+    conversationId: 31,
+    question: { id: 1, role: "user", body: body.message, source: "user" },
+    reply: { id: 2, role: "assistant", body: "Which device are you using?", source: "local" },
+    caseContext: { sessionId: body.sessionId, title: `Lesson ${body.sessionId}`, facts: ["Your enrollment record: test. No real payment is established."] },
+  };
   if (path === "/support/assistant/messages" && body.message === "I cannot join my class or lesson.") return {
     conversationId: 31,
     question: { id: 3, role: "user", body: body.message, source: "user" },

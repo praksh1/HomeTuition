@@ -1,0 +1,57 @@
+name: Support investigation checks
+on:
+  push:
+    branches: [codex/support-investigation-sep24]
+permissions:
+  contents: read
+concurrency:
+  group: support-investigation-checks
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: support_ci
+        ports: [5432:5432]
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/support_ci
+      PGURL: postgres://postgres:postgres@127.0.0.1:5432/support_ci
+      API_URL: http://127.0.0.1:8080
+      SESSION_SECRET: support-ci-only-not-a-real-secret
+      NODE_ENV: test
+      SUPPORT_AI_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm --filter @workspace/api-server run test
+      - run: pnpm --filter @workspace/sikshya run lint:design
+      - name: Start isolated test API (no deployment or provider credentials)
+        run: |
+          set -euo pipefail
+          pnpm run db:push
+          pnpm --filter @workspace/api-server run build
+          PORT=8080 nohup node artifacts/api-server/dist/index.mjs > /tmp/support-api.log 2>&1 &
+          for attempt in $(seq 1 40); do
+            if curl -fsS "$API_URL/api/healthz" >/dev/null; then exit 0; fi
+            sleep 0.5
+          done
+          cat /tmp/support-api.log
+          exit 1
+      - run: pnpm --filter @workspace/api-server run test:support-assistant
+      - name: Install browser
+        run: |
+          npm i -g playwright
+          npx playwright install --with-deps chromium
+      - run: pnpm --filter @workspace/sikshya run test:profile-ui

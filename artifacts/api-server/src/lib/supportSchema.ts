@@ -17,6 +17,10 @@ export const SUPPORT_DDL = [
     CONSTRAINT "support_conversations_ticket_id_disputes_id_fk" FOREIGN KEY ("ticket_id") REFERENCES "disputes"("id") ON DELETE SET NULL
   )`,
   `CREATE INDEX IF NOT EXISTS "support_conversations_user_idx" ON "support_conversations" ("user_id", "updated_at")`,
+  `CREATE TABLE IF NOT EXISTS "support_case_links" (
+    "conversation_id" integer PRIMARY KEY REFERENCES "support_conversations"("id") ON DELETE CASCADE,
+    "session_id" integer NOT NULL REFERENCES "sessions"("id") ON DELETE CASCADE
+  )`,
   `CREATE TABLE IF NOT EXISTS "support_messages" (
     "id" serial PRIMARY KEY, "conversation_id" integer NOT NULL, "role" text NOT NULL,
     "body" text NOT NULL, "source" text NOT NULL, "article_id" integer, "helpful" text,

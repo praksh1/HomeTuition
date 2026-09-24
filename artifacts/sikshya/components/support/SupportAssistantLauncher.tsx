@@ -41,11 +41,13 @@ type Bubble = { id: string; from: "assistant" | "user"; text: string; source?: s
 type SavedMessage = { id: number; role: "assistant" | "user"; body: string; source: string };
 type Conversation = { id: number; title: string; ticketId: number | null };
 type SuggestedReply = { label: string; question: string };
+type SupportLesson = { id: number; topic: string; date: string };
+type CaseContext = { sessionId: number; title: string; facts: string[] };
 
 const WELCOME: Bubble = {
   id: "welcome",
   from: "assistant",
-  text: "Hi — I can search Fadko’s reviewed answers. If I’m not sure, you can send your question to a person.",
+  text: "Hi — I’m Fadko’s automated support assistant. Tell me what happened and we’ll work through it together. I can check a class you select and prepare the details for a person when needed. Refunds and account restrictions always need human review.",
 };
 
 /**
@@ -70,18 +72,40 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   const [sendingToHuman, setSendingToHuman] = useState(false);
   const [error, setError] = useState("");
   const [feedback, setFeedback] = useState<Record<string, boolean>>({});
+  const [lessons, setLessons] = useState<SupportLesson[]>([]);
+  const [lessonPicker, setLessonPicker] = useState(false);
+  const [lessonQuery, setLessonQuery] = useState("");
+  const [selectedLesson, setSelectedLesson] = useState<SupportLesson | null>(null);
+  const [caseContext, setCaseContext] = useState<CaseContext | null>(null);
+  const [showFacts, setShowFacts] = useState(false);
+  const generation = useRef(0);
+  const sendLock = useRef(false);
   const transcript = useRef<ScrollView>(null);
   const activeUserId = useRef(user?.id);
   activeUserId.current = user?.id;
 
   useEffect(() => { if (openOnMount) setVisible(true); }, [openOnMount]);
   useEffect(() => {
+    generation.current += 1;
+    sendLock.current = false;
     setConversationId(null);
     setTicketId(null);
     setBubbles([WELCOME]);
     setSuggestedReplies([]);
     setRecentConversations([]);
+    setLessons([]); setSelectedLesson(null); setCaseContext(null); setLessonPicker(false);
+    setDraft(""); setError(""); setFeedback({}); setBusy(false); setSendingToHuman(false);
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    const expected = activeUserId.current;
+    void apiGet<{ lessons: SupportLesson[] }>("/support/assistant/lessons").then((data) => {
+      if (!cancelled && activeUserId.current === expected) setLessons(data.lessons);
+    }).catch(() => { /* Describing a case remains possible without the optional lesson lookup. */ });
+    return () => { cancelled = true; };
+  }, [visible, user?.id]);
 
   const loadRecent = useCallback(async () => {
     const expectedUserId = activeUserId.current;
@@ -96,17 +120,21 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
 
   const openConversation = async (item: Conversation) => {
     setError("");
+    const expectedGeneration = ++generation.current;
+    sendLock.current = false; setBusy(false); setSendingToHuman(false);
     const expectedUserId = activeUserId.current;
     try {
-      const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[] }>(`/support/assistant/conversations/${item.id}`);
-      if (activeUserId.current !== expectedUserId) return;
+      const detail = await apiGet<{ messages: SavedMessage[]; suggestedReplies?: SuggestedReply[]; caseContext?: CaseContext | null }>(`/support/assistant/conversations/${item.id}`);
+      if (activeUserId.current !== expectedUserId || generation.current !== expectedGeneration) return;
       setConversationId(item.id);
       setTicketId(item.ticketId);
+      setCaseContext(detail.caseContext ?? null);
+      setSelectedLesson(null); setShowFacts(false); setLessonPicker(false); setDraft("");
       setSuggestedReplies(detail.suggestedReplies ?? []);
       setBubbles(detail.messages.map((message) => ({
         id: String(message.id), from: message.role, text: message.body, source: message.source,
       })));
-    } catch { setError("Could not open this conversation. Please try again."); }
+    } catch { if (generation.current === expectedGeneration && activeUserId.current === expectedUserId) setError("Could not open this conversation. Please try again."); }
   };
 
   const bottom = Math.max(insets.bottom, Platform.OS === "web" ? space.sm : space.xs) + (isExpanded ? 92 : 88);
@@ -123,12 +151,16 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   };
 
   const startFresh = () => {
+    generation.current += 1;
+    sendLock.current = false;
+    setBusy(false); setSendingToHuman(false);
     setConversationId(null);
     setTicketId(null);
     setBubbles([WELCOME]);
     setSuggestedReplies([]);
     setDraft("");
     setError("");
+    setCaseContext(null); setSelectedLesson(null); setLessonPicker(false); setShowFacts(false); setFeedback({});
     void loadRecent();
   };
 
@@ -136,15 +168,21 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
 
   const sendQuestion = async (value: string) => {
     const text = value.trim();
-    if (!text || busy || ticketId) return;
+    if (!text || sendLock.current || ticketId) return;
+    sendLock.current = true;
+    const expectedGeneration = generation.current;
+    const expectedUser = activeUserId.current;
+    const current = () => generation.current === expectedGeneration && activeUserId.current === expectedUser;
     setError("");
     setBusy(true);
     setDraft("");
     try {
-      const result = await apiPost<{ conversationId: number; question: SavedMessage; reply: SavedMessage; article: { title: string } | null; suggestedReplies?: SuggestedReply[] }>(
-        "/support/assistant/messages", { message: text, conversationId }, { timeoutMs: 12_000 },
+      const result = await apiPost<{ conversationId: number; question: SavedMessage; reply: SavedMessage; article: { title: string } | null; suggestedReplies?: SuggestedReply[]; caseContext?: CaseContext | null }>(
+        "/support/assistant/messages", { message: text, conversationId, sessionId: selectedLesson?.id ?? caseContext?.sessionId }, { timeoutMs: 12_000 },
       );
+      if (!current()) return;
       setConversationId(result.conversationId);
+      setCaseContext(result.caseContext ?? null);
       void loadRecent();
       setSuggestedReplies(result.suggestedReplies ?? []);
       setBubbles((current) => [...current.filter((bubble) => bubble.id !== WELCOME.id),
@@ -153,9 +191,10 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
           source: result.reply.source, article: result.article?.title },
       ]);
     } catch (cause) {
+      if (!current()) return;
       setDraft(text);
       setError(cause instanceof Error ? cause.message : "Your question was not sent. Try again.");
-    } finally { setBusy(false); }
+    } finally { if (current()) { setBusy(false); sendLock.current = false; } }
   };
 
   const rateAnswer = async (id: string, helpful: boolean) => {
@@ -169,17 +208,21 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
   const handoff = async () => {
     if (!conversationId) { openRequest(); return; }
     if (sendingToHuman || ticketId) return;
+    const expectedGeneration = generation.current;
+    const expectedUser = activeUserId.current;
+    const current = () => generation.current === expectedGeneration && activeUserId.current === expectedUser;
     setSendingToHuman(true);
     setError("");
     try {
       const result = await apiPost<{ ticketId: number; ref: string }>(
         `/support/assistant/conversations/${conversationId}/request`, {},
       );
+      if (!current()) return;
       setTicketId(result.ticketId);
       setBubbles((current) => [...current, { id: `request-${result.ticketId}`, from: "assistant",
         text: `Sent to Fadko Support as ${result.ref}. You can follow it in My requests.` }]);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not send this request."); }
-    finally { setSendingToHuman(false); }
+    } catch (cause) { if (current()) setError(cause instanceof Error ? cause.message : "Could not send this request."); }
+    finally { if (current()) setSendingToHuman(false); }
   };
 
   return (
@@ -240,7 +283,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
               <View style={styles.headerCopy}>
                 <Text style={[t.title3, { color: colors.foreground }]}>Fadko Support</Text>
                 <View style={styles.statusLine}>
-                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Reviewed answers</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground }]}>Assistant · human help when needed</Text>
                 </View>
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Start a new support conversation"
@@ -269,6 +312,35 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+              {!ticketId && lessons.length > 0 && <View style={[styles.caseCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Choose a class for support" disabled={busy || !!conversationId}
+                  onPress={() => setLessonPicker((value) => !value)} style={styles.caseHeading}>
+                  <Feather name="book-open" size={18} color={colors.primary} />
+                  <View style={{ flex: 1 }}><Text style={[t.caption, { color: colors.mutedForeground }]}>Optional class context</Text>
+                    <Text numberOfLines={1} style={[t.caption, { color: colors.foreground, fontWeight: "600" }]}>{caseContext?.title ?? selectedLesson?.topic ?? "Choose the affected lesson"}</Text></View>
+                  {!conversationId && <Feather name={lessonPicker ? "chevron-up" : "chevron-down"} size={18} color={colors.primary} />}
+                </Pressable>
+                {lessonPicker && <>
+                  <TextInput accessibilityLabel="Search your classes" placeholder="Search your classes" value={lessonQuery} onChangeText={setLessonQuery}
+                    style={[t.body, styles.lessonSearch, { color: colors.foreground, borderColor: colors.border }]} />
+                  <ScrollView style={styles.lessonList} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                    <Pressable accessibilityRole="button" onPress={() => { setSelectedLesson(null); setLessonPicker(false); }} style={styles.lessonRow}>
+                      <Text style={[t.caption, { color: colors.primary }]}>Not about a class</Text></Pressable>
+                    {lessons.filter((lesson) => lesson.topic.toLocaleLowerCase().includes(lessonQuery.toLocaleLowerCase())).map((lesson) =>
+                      <Pressable key={lesson.id} accessibilityRole="button" onPress={() => { setSelectedLesson(lesson); setLessonPicker(false); }} style={styles.lessonRow}>
+                        <Text numberOfLines={2} style={[t.caption, { color: colors.foreground }]}>{lesson.topic} · #{lesson.id}</Text>
+                      </Pressable>)}
+                  </ScrollView>
+                </>}
+              </View>}
+              {caseContext && <View style={[styles.caseCard, { borderColor: colors.border, backgroundColor: colors.actionSoft }]}>
+                <Pressable accessibilityRole="button" accessibilityLabel="Show records checked for this case" onPress={() => setShowFacts((value) => !value)} style={styles.caseHeading}>
+                  <Feather name="check-circle" size={17} color={colors.primary} />
+                  <Text style={[t.caption, { color: colors.primary, flex: 1 }]}>Fadko records checked · lesson #{caseContext.sessionId}</Text>
+                  <Feather name={showFacts ? "chevron-up" : "chevron-down"} size={16} color={colors.primary} />
+                </Pressable>
+                {showFacts && caseContext.facts.map((fact, index) => <Text key={index} style={[t.caption, { color: colors.foreground }]}>{fact}</Text>)}
+              </View>}
               {bubbles.map((bubble) => (
                 <View
                   key={bubble.id}
@@ -405,6 +477,7 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
               <Pressable
                 accessibilityRole="button"
                 testID="support-assistant-open-request"
+                disabled={busy || sendingToHuman || !!ticketId}
                 onPress={() => void handoff()}
                 style={({ pressed }) => [styles.footerAction, pressed && styles.pressed]}
               >
@@ -429,6 +502,11 @@ export default function SupportAssistantLauncher({ openOnMount = false }: { open
 }
 
 const styles = StyleSheet.create({
+  caseCard: { borderWidth: 1, borderRadius: radius.md, padding: space.sm, gap: space.xs },
+  caseHeading: { minHeight: HIT_SLOP_MIN, flexDirection: "row", alignItems: "center", gap: space.xs },
+  lessonSearch: { borderWidth: 1, borderRadius: radius.sm, padding: space.sm },
+  lessonList: { maxHeight: 180 },
+  lessonRow: { minHeight: HIT_SLOP_MIN, justifyContent: "center", paddingVertical: space.xs },
   launcher: {
     position: "absolute",
     width: 56,

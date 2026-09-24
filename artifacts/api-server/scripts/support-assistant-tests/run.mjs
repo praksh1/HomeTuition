@@ -70,7 +70,7 @@ const again = await api(`/support/assistant/conversations/${conversationId}/requ
 check("retry returns the same ticket", again.status === 200 && again.body.ticketId === first.body.ticketId);
 check("handoff did not create a duplicate ticket", Number(sql(`SELECT count(*) FROM disputes WHERE user_id = ${Number(owner.user.id)} AND id = ${first.body.ticketId}`)) === 1);
 const unknown = await api("/support/assistant/messages", { token: outsider.token, method: "POST", body: { message: "Tell me about a policy that Fadko has not published." } });
-check("unanswered question is not fabricated", unknown.status === 201 && unknown.body.source === "handoff");
+check("unanswered question becomes an investigation rather than an invented policy", unknown.status === 201 && /trying to do/.test(unknown.body.reply.body));
 let lastStatus = 0;
 for (let index = 0; index < 12; index += 1) {
   const next = await api("/support/assistant/messages", { token: outsider.token, method: "POST", body: {
@@ -91,4 +91,26 @@ check("a student reporting abuse is not admonished", reported.status === 201 && 
 check("a report is labeled separately from abuse by the reporter", Number(sql(`SELECT count(*) FROM moderation_flags WHERE user_id = ${Number(owner.user.id)} AND surface = 'support_safety_report'`)) >= 1);
 const bullying = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "My teacher bullied me" } });
 check("bullying without a quoted curse goes to human review", bullying.status === 201 && /Ask a person/.test(bullying.body.reply.body) && Number(sql(`SELECT count(*) FROM moderation_flags WHERE user_id = ${Number(owner.user.id)} AND surface = 'support_safety_report'`)) >= 2);
+console.log("\nAccount-scoped lesson investigation");
+const investigator = await register("Support Lesson Investigator");
+const lessonId = Number(sql(`INSERT INTO sessions (teacher_id, teacher_name, subject, topic, date, duration, price, status) VALUES (${Number(operator.user.id)}, 'Support fixture teacher', 'Maths', 'Private lesson fixture', now(), 60, 500, 'upcoming') RETURNING id`).split("\n")[0]);
+sql(`INSERT INTO session_enrollments (session_id, student_id, payment_status) VALUES (${lessonId}, ${Number(investigator.user.id)}, 'test')`);
+const ownLessons = await api("/support/assistant/lessons", { token: investigator.token });
+check("own test enrollment is available for investigation", ownLessons.body.lessons?.some((item) => item.id === lessonId));
+const otherLessons = await api("/support/assistant/lessons", { token: owner.token });
+check("another student's lesson is not listed", !otherLessons.body.lessons?.some((item) => item.id === lessonId));
+const deniedLesson = await api("/support/assistant/messages", { token: owner.token, method: "POST", body: { message: "Investigate this class", sessionId: lessonId } });
+check("forged lesson id is rejected server-side", deniedLesson.status === 404);
+const investigate = await api("/support/assistant/messages", { token: investigator.token, method: "POST", body: { message: "My whiteboard is broken", sessionId: lessonId } });
+check("selected lesson facts identify test enrollment without inventing payment", investigate.status === 201 && investigate.body.caseContext?.facts?.some((fact) => /no real payment/i.test(fact)), JSON.stringify(investigate.body));
+const follow = await api("/support/assistant/messages", { token: investigator.token, method: "POST", body: { message: "Still not working", conversationId: investigate.body.conversationId } });
+check("follow-up retains linked lesson", follow.body.caseContext?.sessionId === lessonId);
+check("follow-up advances instead of repeating", follow.body.reply.body !== investigate.body.reply.body);
+const reloaded = await api(`/support/assistant/conversations/${investigate.body.conversationId}`, { token: investigator.token });
+check("case context survives reopening", reloaded.body.caseContext?.sessionId === lessonId);
+const sent = await api(`/support/assistant/conversations/${investigate.body.conversationId}/request`, { token: investigator.token, method: "POST", body: {} });
+check("human handoff links the session evidence and technical category", sent.status === 201 && sql(`SELECT session_id || ':' || reason FROM disputes WHERE id = ${Number(sent.body.ticketId)}`) === `${lessonId}:Technical Failure`);
+check("brief distinguishes user reports from verified records", /User reports \(not independently verified\)/.test(sql(`SELECT description FROM disputes WHERE id = ${Number(sent.body.ticketId)}`)));
+const afterHandoff = await api("/support/assistant/messages", { token: investigator.token, method: "POST", body: { message: "more", conversationId: investigate.body.conversationId } });
+check("a submitted conversation cannot silently diverge from its ticket", afterHandoff.status === 409);
 console.log(`\n${passed} support assistant checks passed`);

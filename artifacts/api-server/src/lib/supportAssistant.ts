@@ -207,7 +207,7 @@ export const SUPPORT_BLOCKED_TOOLS = [
 
 const INTENT_TERMS: Record<SupportIntent, readonly string[]> = {
   billing: ["payment", "pay", "paid", "price", "fee", "refund", "receipt", "charge", "payout", "money"],
-  class_access: ["join", "class", "lesson", "session", "room", "video", "call", "schedule", "enrol", "enroll"],
+  class_access: ["join", "class", "lesson", "session", "room", "video", "call", "schedule", "enrol", "enroll", "whiteboard", "pdf", "camera", "microphone", "sound", "connection"],
   messaging: ["message", "messages", "chat", "conversation", "notification", "notifications", "inbox", "reply", "send"],
   homework: ["homework", "assignment", "submission", "feedback", "question sheet", "marked copy"],
   account: ["login", "log in", "sign in", "password", "profile", "phone", "email", "province", "district", "account"],
@@ -273,6 +273,11 @@ export function localSupportReply(value: unknown): string | null {
 
 export function classifySupportQuery(value: unknown): SupportClassification {
   const query = normaliseSupportQuery(value);
+  // Safety takes priority over incidental class/payment words; quoted abuse is a report, not a
+  // verdict against the person asking for help. No automatic moderation action follows this.
+  if (/\b(unsafe|harassment|harassed|bullying|bullied|threatened|threat|inappropriate|abuse)\b|धम्की|दुर्व्यवहार|हेप/.test(query.toLocaleLowerCase())) {
+    return { intent: "safety", confidence: "high", queryLength: query.length };
+  }
   const queryTokens = new Set(tokens(query));
   let best: SupportIntent = "general";
   let bestScore = 0;

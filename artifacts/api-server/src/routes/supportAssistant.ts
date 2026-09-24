@@ -3,7 +3,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   activityLogTable, db, disputesTable, moderationFlagsTable, supportAiUsageTable, supportArticlesTable,
-  supportConversationsTable, supportMessagesTable,
+  supportConversationsTable, supportMessagesTable, supportCaseLinksTable,
 } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import {
@@ -14,12 +14,24 @@ import { readSupportAIConfig, redactSupportQuestion, supportAIProviderFromEnv } 
 import { flagContent, flaggedTerms } from "../lib/moderation";
 import { allowanceFor, nameOf, recordOpened } from "../lib/ticketStore";
 import { ticketRef } from "../lib/tickets";
+import { buildSupportReviewBrief, conversationTopic, investigationChoices, supportInvestigation } from "../lib/supportInvestigation";
+import { listSupportLessons, readSupportLesson } from "../lib/supportCaseContext";
 
 const router: IRouter = Router();
 const FALLBACK = "I don't have a confirmed answer yet. You can ask in another way or send this to Fadko Support. Your question will travel with the request.";
 const MAX_ARTICLES = 200;
 const MAX_MESSAGE_LENGTH = 1_200;
 const MAX_ARTICLE_ANSWER = 3_000;
+
+router.get("/support/assistant/lessons", requireAuth, async (req, res): Promise<void> => {
+  try { res.json({ lessons: await listSupportLessons(req.user!.userId) }); }
+  catch { res.status(503).json({ error: "Your classes could not be loaded. You can still describe the issue." }); }
+});
+
+async function linkedLesson(conversationId: number, userId: number) {
+  const [link] = await db.select().from(supportCaseLinksTable).where(eq(supportCaseLinksTable.conversationId, conversationId));
+  return link ? readSupportLesson(userId, link.sessionId) : null;
+}
 
 let articleCache: { until: number; articles: SupportArticle[] } | null = null;
 async function publishedArticles(): Promise<SupportArticle[]> {
@@ -48,6 +60,19 @@ async function ownedConversation(conversationId: number, userId: number) {
 }
 
 class BudgetExhausted extends Error {}
+
+async function reserveProviderAttempt(provider: "workers-ai" | "groq"): Promise<boolean> {
+  const raw = Number(process.env[provider === "groq" ? "SUPPORT_GROQ_DAILY_LIMIT" : "SUPPORT_WORKERS_AI_DAILY_LIMIT"] ?? 0);
+  if (!Number.isSafeInteger(raw) || raw < 1 || raw > 1_000) return false;
+  const day = new Date().toISOString().slice(0, 10);
+  const subject = `provider:${provider}`;
+  const result = await db.execute(sql`
+    INSERT INTO support_ai_usage (day, subject, used) VALUES (${day}, ${subject}, 1)
+    ON CONFLICT (day, subject) DO UPDATE SET used = support_ai_usage.used + 1
+    WHERE support_ai_usage.used < ${raw} RETURNING used
+  `);
+  return result.rows.length === 1;
+}
 
 /** Daily and minute counters are reserved atomically, across API instances and restarts. */
 async function reserveMessageBudget(userId: number): Promise<boolean> {
@@ -136,8 +161,9 @@ router.get("/support/assistant/conversations/:id", requireAuth, async (req, res)
     const lastQuestion = messages.at(-2);
     const followUp = lastReply?.role === "assistant" && ["handoff", "local"].includes(lastReply.source) && lastQuestion?.role === "user"
       ? supportFollowUp(lastQuestion.body, resolveSupport(lastQuestion.body).classification.intent) : null;
-    res.json({ conversation, messages,
-      suggestedReplies: followUp && followUp.prompt === lastReply?.body ? followUp.choices : [] });
+    const caseContext = await linkedLesson(id, req.user!.userId);
+    res.json({ conversation, messages, caseContext,
+      suggestedReplies: followUp && followUp.prompt === lastReply?.body ? followUp.choices : investigationChoices(lastReply?.body ?? "") });
   } catch {
     res.status(503).json({ error: "Could not load this conversation right now." });
   }
@@ -157,14 +183,27 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
   }
   const userId = req.user!.userId;
   try {
-    if (requestedId && !(await ownedConversation(requestedId, userId))) {
+    const conversation = requestedId ? await ownedConversation(requestedId, userId) : null;
+    if (requestedId && !conversation) {
       res.status(404).json({ error: "Conversation not found." }); return;
     }
+    if (conversation?.ticketId) {
+      res.status(409).json({ error: "This conversation has been sent to support. Open My requests or start a new question." }); return;
+    }
+    const selectedId = req.body?.sessionId == null ? null : idFrom(req.body.sessionId);
+    if (req.body?.sessionId != null && !selectedId) { res.status(400).json({ error: "Choose a valid lesson." }); return; }
+    const caseContext = selectedId ? await readSupportLesson(userId, selectedId) : requestedId ? await linkedLesson(requestedId, userId) : null;
+    if (selectedId && !caseContext) { res.status(404).json({ error: "This lesson is not available for your account." }); return; }
+    const history = requestedId ? (await db.select({ role: supportMessagesTable.role, body: supportMessagesTable.body })
+      .from(supportMessagesTable).where(eq(supportMessagesTable.conversationId, requestedId))
+      .orderBy(desc(supportMessagesTable.id)).limit(48)).reverse() : [];
     if (!(await reserveMessageBudget(userId))) {
       res.status(429).json({ error: "That is a lot of questions at once. Please wait a little, or open a support request." }); return;
     }
     const articles = await publishedArticles();
     const resolved = resolveSupport(message, articles);
+    const topic = conversationTopic(resolved.classification.intent,
+      history.filter((turn) => turn.role === "user").map((turn) => resolveSupport(turn.body).classification.intent));
     const top = resolved.articles[0];
     const localReply = localSupportReply(message);
     const toneReply = supportToneResponse(message, flaggedTerms(message));
@@ -173,21 +212,27 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
     let source: "local" | "faq" | "ai" | "handoff" = toneReply || localReply || (guideReply && resolved.mode !== "faq")
       ? "local" : resolved.mode === "faq" && top ? "faq" : "handoff";
     const config = readSupportAIConfig(process.env);
-    const aiAllowedIntent = !["billing", "account", "safety"].includes(resolved.classification.intent);
+    // Linked account diagnostics stay on Fadko, never in an external inference request.
+    const aiAllowedIntent = !caseContext && !["billing", "account", "safety"].includes(topic);
     if (!toneReply && source === "handoff" && config.enabled && aiAllowedIntent && resolved.articles.length > 0) {
       if (await reserveAiBudget(userId, req.ip ?? "unknown")) {
-        const result = await supportAIProviderFromEnv().generateResponse({
+        const result = await supportAIProviderFromEnv(process.env, fetch, reserveProviderAttempt).generateResponse({
           question: message,
           knowledge: resolved.articles.map((article) => `${article.title}: ${article.answer}`),
           role: req.user!.role === "teacher" || req.user!.role === "student" ? req.user!.role : "unknown",
           locale: "en",
+          history: history.filter((turn) => turn.role === "user" || turn.role === "assistant")
+            .slice(-6).map((turn) => ({ role: turn.role as "user" | "assistant", body: turn.body })),
         });
         if (result.kind === "answer") { answer = result.text; source = "ai"; }
       }
     }
-    const followUp = !toneReply && !guideReply && (source === "handoff" || source === "local")
+    const followUp = history.length === 0 && !toneReply && !guideReply && (source === "handoff" || source === "local")
       ? supportFollowUp(message, resolved.classification.intent) : null;
     if (followUp) answer = followUp.prompt;
+    const investigation = !toneReply && !localReply && !followUp
+      ? supportInvestigation({ topic, history, question: message, candidate: answer, candidateSource: source }) : null;
+    if (investigation) { answer = investigation.answer; source = "local"; }
     const saved = await db.transaction(async (tx) => {
       let conversationId = requestedId;
       if (!conversationId) {
@@ -196,6 +241,8 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
         }).returning({ id: supportConversationsTable.id });
         conversationId = created!.id;
       }
+      if (caseContext) await tx.insert(supportCaseLinksTable).values({ conversationId, sessionId: caseContext.sessionId })
+        .onConflictDoUpdate({ target: supportCaseLinksTable.conversationId, set: { sessionId: caseContext.sessionId } });
       const [question] = await tx.insert(supportMessagesTable).values({
         conversationId, role: "user", body: message, source: "user",
       }).returning();
@@ -217,8 +264,8 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
         catch { /* The user can still open a support request. */ }
       }
     }
-    res.status(201).json({ ...saved, source, suggestedActions: resolved.suggestedActions,
-      suggestedReplies: followUp?.choices ?? [],
+    res.status(201).json({ ...saved, source, caseContext, suggestedActions: resolved.suggestedActions,
+      suggestedReplies: investigation?.choices ?? followUp?.choices ?? [],
       article: source === "faq" && top ? { id: top.id, title: top.title } : null });
   } catch (error) {
     req.log.error({ err: error, userId }, "support assistant reply failed");
@@ -258,16 +305,21 @@ router.post("/support/assistant/conversations/:id/request", requireAuth, async (
     if (!allowance.ok) { res.status(429).json({ error: allowance.reason, nextAllowedAt: allowance.nextAllowedAt }); return; }
     const messages = await db.select({ role: supportMessagesTable.role, body: supportMessagesTable.body })
       .from(supportMessagesTable).where(eq(supportMessagesTable.conversationId, id))
-      .orderBy(desc(supportMessagesTable.id)).limit(8);
-    const description = messages.reverse().map((item) => `${item.role === "user" ? "You" : "Fadko Support"}: ${item.body}`)
-      .join("\n\n").slice(0, 4_000);
+      .orderBy(desc(supportMessagesTable.id)).limit(48);
+    messages.reverse();
+    const caseContext = await linkedLesson(id, userId);
+    const description = buildSupportReviewBrief(messages, caseContext?.facts);
+    const topic = conversationTopic("general", messages.filter((item) => item.role === "user")
+      .map((item) => resolveSupport(item.body).classification.intent));
+    const safety = messages.some((item) => item.role === "user" && (resolveSupport(item.body).classification.intent === "safety" || supportToneResponse(item.body, flaggedTerms(item.body))?.kind === "report"));
+    const reason = safety ? "Inappropriate Behavior" : topic === "billing" ? "Payment Issue" : ["class_access", "messaging", "homework"].includes(topic) ? "Technical Failure" : "Other";
     const result = await db.transaction(async (tx) => {
       const [locked] = await tx.select().from(supportConversationsTable)
         .where(and(eq(supportConversationsTable.id, id), eq(supportConversationsTable.userId, userId))).for("update");
       if (!locked) return null;
       if (locked.ticketId) return { id: locked.ticketId };
       const [created] = await tx.insert(disputesTable).values({
-        userId, reason: "Other", description, evidenceUrl: null,
+        userId, reason, description, evidenceUrl: null, sessionId: caseContext?.sessionId ?? null,
       }).returning({ id: disputesTable.id });
       await recordOpened(created!.id, userId, req.user!.role, await nameOf(userId), tx);
       await tx.insert(activityLogTable).values({

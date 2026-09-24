@@ -1,6 +1,13 @@
 import { index, integer, pgTable, serial, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { disputesTable } from "./disputes";
+import { sessionsTable } from "./sessions";
+
+/** Optional selected lesson; no new columns on existing live tables. */
+export const supportCaseLinksTable = pgTable("support_case_links", {
+  conversationId: integer("conversation_id").primaryKey().references(() => supportConversationsTable.id, { onDelete: "cascade" }),
+  sessionId: integer("session_id").notNull().references(() => sessionsTable.id, { onDelete: "cascade" }),
+});
 
 /** Editorial content is never public until an operator explicitly reviews and publishes it. */
 export const supportArticlesTable = pgTable("support_articles", {

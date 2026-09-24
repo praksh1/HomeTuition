@@ -92,6 +92,17 @@ try {
     await page.getByTestId("support-assistant-close").click();
     await page.getByTestId("support-assistant-launcher").click();
     check(await page.getByTestId("support-topic-classes").isVisible(), `${width}: reopening Support starts at a fresh topic`);
+    await page.getByRole("button", { name: "Choose a class for support" }).click();
+    await page.getByRole("textbox", { name: "Search your classes" }).fill("Lesson 50");
+    await page.getByRole("button", { name: "Lesson 50 · #50", exact: true }).click();
+    await page.getByTestId("support-assistant-input").fill("My PDF is not visible");
+    await page.getByTestId("support-assistant-send").click();
+    await page.getByText("Which device are you using?", { exact: true }).waitFor();
+    await page.getByRole("button", { name: "Show records checked for this case" }).click();
+    check((await page.getByTestId("support-assistant-panel").innerText()).includes("No real payment is established"), `${width}: selected lesson shows qualified account facts, not payment assumptions`);
+    check(await page.getByTestId("support-assistant-panel").evaluate((node) => node.getBoundingClientRect().top >= -1 && node.getBoundingClientRect().right <= innerWidth + 1), `${width}: class investigation fits with records expanded`);
+    await page.screenshot({ path: path.join(work, `${width}-support-investigation.png`) });
+    await page.getByRole("button", { name: "Start a new support conversation" }).click();
     await page.getByRole("button", { name: /Open previous conversation: Earlier class question/ }).click();
     await page.getByText("Earlier answer", { exact: true }).waitFor();
     check((await page.getByTestId("support-assistant-panel").innerText()).includes("Earlier class question"), `${width}: past chat can be reopened deliberately`);

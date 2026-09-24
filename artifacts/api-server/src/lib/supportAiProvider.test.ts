@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   CloudflareSupportAIProvider, NullSupportAIProvider, readSupportAIConfig,
   redactSupportQuestion, supportAIProviderFromEnv,
+  BudgetedSupportFallback, GroqSupportAIProvider,
 } from "./supportAiProvider.ts";
 
 test("AI is disabled unless both the flag and a known provider are explicit", () => {
@@ -42,6 +43,60 @@ test("the null provider gives a user-safe fallback", async () => {
     locale: "en",
   });
   assert.deepEqual(result, { kind: "unavailable", reason: "disabled" });
+});
+
+test("free fallback reserves each provider once, skips quota failure, never loops", async () => {
+  const calls: string[] = [];
+  const reservations: string[] = [];
+  const provider = new BudgetedSupportFallback([
+    { id: "workers-ai", provider: { generateResponse: async () => { calls.push("workers-ai"); return { kind: "unavailable", reason: "rate_limit" }; } } },
+    { id: "groq", provider: { generateResponse: async () => { calls.push("groq"); return { kind: "answer", text: "Reviewed help" }; } } },
+  ], async (id) => { reservations.push(id); return true; }, new Map());
+  const context = { question: "join", knowledge: ["help"], role: "student", locale: "en" } as const;
+  assert.equal((await provider.generateResponse(context)).kind, "answer");
+  assert.deepEqual(calls, ["workers-ai", "groq"]);
+  assert.deepEqual(reservations, calls);
+  await provider.generateResponse(context);
+  assert.deepEqual(calls, ["workers-ai", "groq", "groq"], "rate-limited primary is cooled down, not retried on every question");
+});
+
+test("exhausted budgets, cancelled requests and failed reservations make no inference calls", async () => {
+  let calls = 0;
+  const entries = [{ id: "groq" as const, provider: { generateResponse: async () => { calls++; return { kind: "answer" as const, text: "bad" }; } } }];
+  const context = { question: "join", knowledge: ["help"], role: "student", locale: "en" } as const;
+  const denied = new BudgetedSupportFallback(entries, async () => false, new Map());
+  assert.equal((await denied.generateResponse(context)).kind, "unavailable");
+  const failed = new BudgetedSupportFallback(entries, async () => { throw new Error("database unavailable"); }, new Map());
+  assert.equal((await failed.generateResponse(context)).kind, "unavailable");
+  const cancelled = new AbortController(); cancelled.abort();
+  assert.equal((await failed.generateResponse(context, cancelled.signal)).kind, "unavailable");
+  assert.equal(calls, 0);
+});
+
+test("secondary processor is disabled until privacy, free-account and reservation gates are present", async () => {
+  let calls = 0;
+  const env = { SUPPORT_AI_ENABLED: "true", SUPPORT_AI_PROVIDER: "workers-ai", SUPPORT_AI_FALLBACK_PROVIDER: "groq", SUPPORT_GROQ_API_KEY: "test" };
+  const request = (async () => { calls++; throw new Error("not allowed"); }) as typeof fetch;
+  const context = { question: "join", knowledge: ["help"], role: "student", locale: "en" } as const;
+  await supportAIProviderFromEnv(env, request, async () => true).generateResponse(context);
+  await supportAIProviderFromEnv({ ...env, SUPPORT_AI_FREE_ACCOUNTS_VERIFIED: "true", SUPPORT_GROQ_PRIVACY_REVIEWED: "true" }, request).generateResponse(context);
+  assert.equal(calls, 0);
+});
+
+test("Groq uses a fixed endpoint and bounded redacted question, without conversation history", async () => {
+  let wire = "";
+  const request = (async (url, init) => {
+    assert.equal(url, "https://api.groq.com/openai/v1/chat/completions");
+    wire = String(init?.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: "Check permissions" } }] }) } as Response;
+  }) as typeof fetch;
+  const provider = new GroqSupportAIProvider("test", readSupportAIConfig({ SUPPORT_AI_ENABLED: "true", SUPPORT_AI_PROVIDER: "workers-ai" }), request);
+  const result = await provider.generateResponse({ question: "camera alice@example.com", knowledge: ["Check permissions"], role: "student", locale: "en",
+    history: [{ role: "user", body: "Private earlier conversation" }] });
+  assert.equal(result.kind, "answer");
+  assert.equal(wire.includes("alice@example.com"), false);
+  assert.equal(wire.includes("Private earlier"), false);
+  assert.equal(JSON.parse(wire).max_completion_tokens, 300);
 });
 
 test("a missing server-side key never calls Workers AI", async () => {
