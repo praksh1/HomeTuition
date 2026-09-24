@@ -510,8 +510,12 @@ async function main() {
   check("no speech is invented either", spoke === 0, String(spoke));
 
   console.log("\n[7c] A phone teacher can use board panels without floating controls covering them");
-  check("the retired teacher control bar is absent from layout", await t.page.getByTestId("video-visibility-btn").isHidden());
-  check("the retired student control bar is absent from layout", await s.page.getByTestId("video-visibility-btn").isHidden());
+  // The current menu legitimately shares the legacy test ID. Its label is "Hide call";
+  // only the retired HUD says "Hide/Show call window". Check that exact control, not both.
+  for (const [role, page] of [["teacher", t.page], ["student", s.page]]) {
+    const retired = page.locator('[data-testid="video-visibility-btn"][aria-label$="call window"]');
+    check(`the retired ${role} control bar is absent from layout`, await retired.count() === 1 && await retired.isHidden());
+  }
   await t.page.setViewportSize({ width: 390, height: 844 });
   await t.page.waitForTimeout(700);
   await t.page.getByTestId("video-hide-btn").click();
