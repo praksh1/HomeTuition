@@ -8,6 +8,8 @@ Keep the working LiveKit Cloud production service. Try an Oracle Always Free ser
 
 “Free video” is not “the whole app is free”: Railway API, database, file storage, email and any AI usage remain separate. Their current invoices have not been audited here.
 
+The prepared self-host pilot covers the current web classroom, including iPhone/Android browsers and laptops. It does not silently migrate installed native apps, which still have a separate Daily SDK path; that migration needs a separate build and test pass. The whiteboard, saved work and Fadko API remain on their existing services.
+
 The read-only LiveKit dashboard check reached a sign-out screen instead of project usage. No sign-out was submitted and no plan/account setting changed. Actual remaining allowance is therefore unverified; the calculator uses published plan allowances, not your account balance.
 
 ## Also check legitimate startup credits
