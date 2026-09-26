@@ -28,4 +28,6 @@ An empty attendance result was labelled Nobody opened this class. Changed to exp
 Live deployment, server purchase, AI-provider activation, private-guide publication, financial/remedy policy, refunds/bans, private evidence transmission and native video migration.
 
 ## Remaining risks / next pickup point
-Finish final browser rerun and review. Then commit and run full deployment gates before production promotion. Make-up policy still needs owner agreement; support guide review, deeper diagnostics, consented evidence analysis and provider reconciliation remain open. No claim all pending work is complete.
+Isolated CI 36272519395 passed on application commit 25e6ecf: full typecheck, server unit tests, 60 real-API support checks, 128 profile/support browser checks and 34 operator case checks. Local app suite also passed 568 tests. Full production gate must still pass before claiming deployment.
+
+Owner approved the make-up policy during this turn: one courtesy replacement, seven-day offer expiry, thirty-day replacement window, missed replacements manually reviewed, and teacher non-delivery preserves refund review. Policy documents and handoff updated; financial implementation is not activated. Guide review/publication, deeper diagnostics, consented evidence analysis and provider reconciliation remain open. No claim all pending work is complete.

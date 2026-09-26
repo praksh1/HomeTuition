@@ -1,6 +1,12 @@
 # One missed lesson, one clear resolution
 
-24 September 2026. Product proposal for the owner, **not an active refund policy or implemented feature**. No purchases, automatic refunds or automatic bans.
+24 September 2026 proposal; launch policy approved by the owner on 26 September 2026. **Not yet an implemented or activated feature.** No purchases, automatic refunds or automatic bans.
+
+## Approved launch policy — 26 September
+
+The owner explicitly approved: one teacher-approved courtesy replacement per missed student lesson; offers expire after seven days; replacements must occur within thirty days; missed replacements go to manual review; teacher non-delivery always preserves the student's refund-review option. No automatic refunds or forfeiture.
+
+Implementation must keep the original enrollment/lesson immutable, avoid replacement chains, and serialize refund approval against replacement acceptance. Expiry is not cancellation of rights. The exact time anchors (offer creation for seven days; proposed original lesson end for thirty days) must be explicit in the UX/specification before activation, not silently inferred from browser time.
 
 ## Recommended student experience
 
@@ -33,7 +39,7 @@ Students receive a dated offer with **Accept this time** and **This time does no
 - Show the linked original lesson on payment history and any later adjustment. Keep internal platform custody/fees out of student/teacher earnings summaries.
 - AI can gather facts and summarize contradictions; it cannot determine that a lesson was delivered merely from a join event, promise a refund, impose a ban or decide disputed responsibility.
 
-## Owner decisions needed before activating
+## Earlier policy questions (answered in principle above; implementation not active)
 
 1. Is one teacher-approved courtesy replacement per missed student lesson acceptable, without a guaranteed entitlement?
 2. What response window should replacement offers have, and how long may a replacement be scheduled into the future? Expiry should send the case to review, not silently erase the student's rights.

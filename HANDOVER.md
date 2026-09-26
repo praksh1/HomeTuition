@@ -734,6 +734,8 @@ was added.
 
 ### Current: lesson remedies and teacher studio (24 September 2026)
 
+**26 September update:** owner approved one teacher-approved courtesy replacement per missed student lesson; offers expire after seven days, replacements occur within thirty days, missed replacements receive manual review, and teacher non-delivery preserves refund review. No automatic refunds or forfeiture. This supersedes the unapproved-policy status below, not the requirement for implementation and acceptance tests. DigitalOcean purchase remains deferred until nearer public launch; LiveKit Cloud production is unchanged. Current continuation: `.agents/worklog/2026-09-26-codex-support-case-workspace.md`.
+
 Owner approved production promotion of completed support and the teacher-workflow repairs, with no purchases or automatic AI refunds/bans. Current evidence: `.agents/worklog/2026-09-24-codex-teacher-studio.md`; current queue: `.agents/backlog/2026-09-24-teacher-studio-and-remedies.md`. Older checkout/tier paragraphs below are historical and must not override the current implementation or reactivate retired monthly rules.
 
 Make-up recommendation, not active policy: a free replacement linked to the original paid lesson, explicitly accepted by the student. Teacher non-delivery keeps refund review available; student no-show gets an optional teacher-approved courtesy request. Before activation, owner must choose offer expiry/scheduling windows and confirm the courtesy rule. Detailed scenarios, race protections and the separate teacher-reviewed quiz roadmap: `docs/FADKO-LESSON-REMEDIES-AND-QUIZZES-2026-09-24.md`.
