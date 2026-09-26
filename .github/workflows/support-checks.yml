@@ -1,7 +1,7 @@
 name: Support investigation checks
 on:
   push:
-    branches: [codex/support-investigation-sep24]
+    branches: [codex/support-investigation-sep24, codex/support-case-workspace]
 permissions:
   contents: read
 concurrency:
@@ -55,3 +55,4 @@ jobs:
           npm i -g playwright
           npx playwright install --with-deps chromium
       - run: pnpm --filter @workspace/sikshya run test:profile-ui
+      - run: node artifacts/sikshya/scripts/support-case-ui/run.mjs

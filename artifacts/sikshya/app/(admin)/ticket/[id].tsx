@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -89,19 +89,30 @@ export default function AdminTicket() {
   const [saving, setSaving] = useState(false);
   const [internal, setInternal] = useState(false);
   const [refunding, setRefunding] = useState(false);
+  const [section, setSection] = useState<"overview" | "records" | "timeline" | "decision">("overview");
+  const requestVersion = useRef(0);
 
   const load = useCallback(async () => {
+    const version = ++requestVersion.current;
     try {
       const res = await apiGet<TicketDetail>(`/admin/tickets/${id}`);
-      setData(res);
+      if (version === requestVersion.current) setData(res);
     } catch {
-      setData(null);
+      if (version === requestVersion.current) setData(null);
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }, [id]);
 
-  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    setLoading(true);
+    setData(null);
+    setSection("overview");
+    setResolution("");
+    setInternal(false);
+    void load();
+    return () => { requestVersion.current += 1; };
+  }, [load]));
 
   /**
    * The note is the reason, so it has to exist before the money does.
@@ -212,6 +223,9 @@ export default function AdminTicket() {
     return (
       <View style={[styles.centre, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <Text style={{ color: colors.mutedForeground }}>This ticket could not be loaded.</Text>
+        <TouchableOpacity accessibilityRole="button" testID="admin-ticket-retry" onPress={() => { setLoading(true); void load(); }} style={{ minHeight: HIT_SLOP_MIN, justifyContent: "center" }}>
+          <Text style={[t.bodyStrong, { color: colors.primary }]}>Try again</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -242,14 +256,26 @@ export default function AdminTicket() {
       }]}
     >
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to support queue" onPress={() => router.back()} activeOpacity={0.7} style={{ minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, justifyContent: "center" }}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
         <Text style={[t.title3, { color: colors.foreground }]}>{ticket.ref}</Text>
         <View style={{ width: 22 }} />
       </View>
 
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
+        {([ ["overview", "Overview"], ["records", "Class records"], ["timeline", "Timeline"], ["decision", "Decision"] ] as const).map(([key, label]) => (
+          <TouchableOpacity key={key} accessibilityRole="button" accessibilityState={{ selected: section === key }} aria-pressed={section === key}
+            testID={`admin-case-${key}`} onPress={() => setSection(key)}
+            style={{ minHeight: HIT_SLOP_MIN, justifyContent: "center", paddingHorizontal: space.md, borderRadius: radius.pill, backgroundColor: section === key ? colors.actionSoft : colors.card, borderWidth: 1, borderColor: section === key ? colors.primary : colors.border }}>
+            <Text style={[t.caption, { color: section === key ? colors.primary : colors.mutedForeground }]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {section === "overview" && <>
       <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}>
+        <Text style={[t.overline, { color: colors.mutedForeground }]}>REPORTER'S ACCOUNT · NOT A VERIFIED FINDING</Text>
         <View style={styles.reasonRow}>
           <Text style={[styles.reason, { color: colors.primary }]}>{ticket.reason}</Text>
           <Text
@@ -296,7 +322,19 @@ export default function AdminTicket() {
         )}
       </View>
 
-      {session && (
+      <View testID="admin-case-gaps" style={[styles.card, { backgroundColor: colors.warnSoft, borderColor: colors.border }]}>
+        <Text style={[t.title3, { color: colors.foreground }]}>Before deciding</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>Compare the report with the class records and timeline. Attendance alone does not establish lesson quality or decide a refund.</Text>
+        {!session && <Text style={[t.callout, { color: colors.warn }]}>No lesson is linked. Ask which class and date are affected if this request concerns a lesson.</Text>}
+        {session && !attendance.known && <Text style={[t.callout, { color: colors.warn }]}>Attendance could not be read. Do not interpret this as an absence.</Text>}
+        {session && !caseNarrative && <Text style={[t.callout, { color: colors.warn }]}>The session summary is unavailable. Review the available records before drawing conclusions.</Text>}
+        {caseNarrative?.unavailable.map((line) => <Text key={line} style={[t.callout, { color: colors.warn }]}>• {line}</Text>)}
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>Refunds and account restrictions remain human decisions. This checklist does not approve either.</Text>
+      </View>
+      </>}
+
+      {section === "records" && !session && <Text style={[t.body, { color: colors.mutedForeground }]}>No lesson is linked to this request. No class records are available here.</Text>}
+      {section === "records" && session && (
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}>
           <Text style={[t.title3, { color: colors.foreground }]}>The class</Text>
           <Text style={[t.body, { color: colors.foreground }]}>{session.topic} · {session.subject}</Text>
@@ -361,7 +399,7 @@ export default function AdminTicket() {
               The attendance record could not be read. That is not the same as nobody attending.
             </Text>
           ) : attendance.rows.length === 0 ? (
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>Nobody opened this class.</Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>No attendance entries were returned. This alone does not prove that nobody attended.</Text>
           ) : (
             attendance.rows.map((row) => (
               <Text key={row.userId} style={[t.caption, numeric, { color: colors.mutedForeground }]}>
@@ -389,7 +427,7 @@ export default function AdminTicket() {
         </View>
       )}
 
-      {messages.length > 0 && (
+      {section === "records" && messages.length > 0 && (
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>What was said about this class</Text>
           {messages.map((message, i) => (
@@ -403,7 +441,7 @@ export default function AdminTicket() {
         </View>
       )}
 
-      {caseNarrative && caseNarrative.timeline.length > 0 && (
+      {section === "timeline" && caseNarrative && caseNarrative.timeline.length > 0 && (
         <View
           testID="admin-session-timeline"
           style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: radius.md, padding: space.md, gap: space.sm }]}
@@ -430,7 +468,7 @@ export default function AdminTicket() {
         </View>
       )}
 
-      {reporterActivity.rows.length > 0 && (
+      {section === "timeline" && reporterActivity.rows.length > 0 && (
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>What the reporter has been doing</Text>
           {reporterActivity.rows.slice(0, 12).map((row) => (
@@ -452,7 +490,7 @@ export default function AdminTicket() {
         situations" — so the reason typed above is what is stored against it, and refusing
         without one is the server's rule, not this screen's.
       */}
-      {session && ticket.reporterId !== null && ticket.reporterRole === "student" && (
+      {section === "decision" && session && ticket.reporterId !== null && ticket.reporterRole === "student" && (
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Refund this student in full</Text>
           <Text style={[styles.caveat, { color: colors.mutedForeground }]}>
@@ -462,7 +500,7 @@ export default function AdminTicket() {
           </Text>
           <TouchableOpacity
             testID="admin-grant-refund"
-            style={[styles.action, { borderColor: colors.destructive }]}
+            style={[styles.action, { borderColor: colors.destructive, flexBasis: "auto", flexGrow: 0 }]}
             onPress={() => void grantRefund()}
             disabled={refunding}
             activeOpacity={0.8}
@@ -475,7 +513,7 @@ export default function AdminTicket() {
         </View>
       )}
 
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      {section === "decision" && <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your decision</Text>
         <TextInput
           testID="admin-resolution"
@@ -561,7 +599,7 @@ export default function AdminTicket() {
             <Text style={[styles.link, { color: colors.secondary }]}>Take this on →</Text>
           </TouchableOpacity>
         ) : null}
-      </View>
+      </View>}
 
       {/*
         The trail.
@@ -570,7 +608,7 @@ export default function AdminTicket() {
         never absent: what the previous agent did, and why, is the difference between a decision
         and a second opinion formed from scratch.
       */}
-      <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+      {section === "timeline" && <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.sectionTitle, { color: colors.foreground }]}>What has happened</Text>
         {history.map((event) => (
           <View key={event.id} style={styles.event} testID={`admin-event-${event.status}`}>
@@ -596,7 +634,7 @@ export default function AdminTicket() {
             ) : null}
           </View>
         ))}
-      </View>
+      </View>}
     </ScrollView>
   );
 }
@@ -608,7 +646,7 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: 17, fontFamily: "Inter_600SemiBold" },
   card: { borderRadius: 16, borderWidth: 1, padding: 16, gap: 8 },
   reason: { fontSize: 12, fontFamily: "Inter_600SemiBold", textTransform: "uppercase", letterSpacing: 0.4 },
-  reasonRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  reasonRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 },
   statusChip: { fontSize: 11, fontFamily: "Inter_600SemiBold", borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2, overflow: "hidden" },
   // The row is one control, so the whole row carries the minimum height rather than the 16px
   // icon inside it.
@@ -642,13 +680,13 @@ const styles = StyleSheet.create({
   msg: { gap: 2, marginBottom: 6 },
   msgWho: { fontSize: 11, fontFamily: "Inter_600SemiBold" },
   input: { borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 90, fontSize: 14, fontFamily: "Inter_400Regular" },
-  actions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
   // `paddingVertical` alone left "Save note" at 34px high on a phone, because the padding is
   // added to a 14px line rather than to a minimum. `minHeight` sets the floor and the padding
   // still grows it wherever the type scale is larger; `justifyContent` keeps the label centred
   // when the floor is doing the work.
   action: {
-    flex: 1, alignItems: "center", justifyContent: "center", borderRadius: 12, borderWidth: 1,
+    flexGrow: 1, flexBasis: 120, alignItems: "center", justifyContent: "center", borderRadius: 12, borderWidth: 1,
     paddingVertical: 12, minHeight: HIT_SLOP_MIN,
   },
   actionText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },

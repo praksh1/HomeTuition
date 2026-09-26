@@ -138,10 +138,13 @@ await desk.waitForTimeout(2000);
 await desk.goto(`${siteUrl}/(admin)/ticket/${filed.body.id}`, { waitUntil: "networkidle" });
 await desk.waitForTimeout(3500);
 deskBody = await desk.evaluate(() => document.body.innerText);
+await desk.getByTestId("admin-case-timeline").click();
+deskBody = await desk.evaluate(() => document.body.innerText);
 check("opening it at the desk records that a human looked",
   /Opened by an agent/i.test(deskBody), deskBody.slice(0, 400).replace(/\n/g, " | "));
 
 // A note for other agents, then the decision for the reporter.
+await desk.getByTestId("admin-case-decision").click();
 await desk.locator('[data-testid="admin-internal-toggle"]').first().click();
 await desk.locator('[data-testid="admin-resolution"]').first().fill("Checked the ledger, this one is genuine.");
 await desk.locator('[data-testid="admin-note"]').first().click();

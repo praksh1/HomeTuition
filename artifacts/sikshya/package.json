@@ -34,7 +34,7 @@
     "test:calendar": "node scripts/calendar-tests/run.mjs",
     "test:monthly-browser": "node scripts/monthly-browser/run.mjs",
     "test:dashboard": "node scripts/dashboard-tests/run.mjs",
-    "test:tickets": "node scripts/ticket-browser/run.mjs",
+    "test:tickets": "node scripts/support-case-ui/run.mjs && node scripts/ticket-browser/run.mjs",
     "test:filters": "node scripts/sessions-filters/run.mjs",
     "test:sessions-ui": "node scripts/sessions-ui/run.mjs",
     "test:storage-check": "node scripts/storage-check/run.mjs",

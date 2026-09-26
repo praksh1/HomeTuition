@@ -560,6 +560,7 @@ async function main() {
     sql(`select status from disputes where id = ${ticket.body.id}`) === "opened",
     sql(`select status from disputes where id = ${ticket.body.id}`));
 
+  await agentPage.getByTestId("admin-case-decision").click();
   await agentPage.locator('[data-testid="admin-resolution"]').fill("Refunded; teacher warned.");
   await agentPage.locator('[data-testid="admin-move-resolved"]').click({ timeout: 10000 });
   await agentPage.waitForTimeout(3000);
