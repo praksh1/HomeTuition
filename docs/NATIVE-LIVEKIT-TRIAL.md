@@ -1,5 +1,17 @@
 # Native LiveKit trial (not deployed)
 
+## Update: isolated native adapter, still not a release candidate
+
+The trial branch now replaces native Daily packages with the official LiveKit React Native SDK, WebRTC module and Expo plugin. The old native Daily implementation is archived as text under artifacts/sikshya/_unused. This change is only in the isolated branch; the current shipping phone app is untouched.
+
+The new native adapter joins with a server token, manages the native audio session, renders a stage and participant strip, reports microphone/camera status, handles teacher presence, and uses Fadko's class chat. Native screen-sharing parity is not implemented yet.
+
+Two independent switches remain off by default. The trial API needs VIDEO_PROVIDER=livekit and VIDEO_NATIVE_LIVEKIT_TRIAL=1. A purpose-built trial binary needs EXPO_PUBLIC_NATIVE_LIVEKIT_TRIAL=1 to send its native capability header. Old builds omit the header and continue receiving Daily. This trial binary intentionally cannot open a Daily room, so it must not be installed against the ordinary API.
+
+TypeScript, 568 frontend unit tests, Android and iOS JavaScript exports, Expo Android prebuild, LiveKit Android Java/Kotlin compilation, and direct web export passed. A full Android APK is still unverified: Worklets and Screens CMake tasks on this Windows worktree cannot launch their generated prefab command files. This Windows host cannot build an iOS binary. No physical-device call has been tested.
+
+Hard gate: do not merge, deploy or distribute this native trial until Android and iOS development binaries build and real-device teacher/student calls pass, including permissions, speaker/audio route, reconnection, long calls, whiteboard, chat and screen sharing. Phone-browser tests do not satisfy the installed-app gate.
+
 This isolated branch starts from `codex/support-case-workspace`. The current public web build uses LiveKit when configured, while installed iOS/Android builds use Daily. A phone browser is web; it is not evidence that an installed app works.
 
 Release conditions for changing that routing:

@@ -38,6 +38,11 @@ export function hasNativeLiveKit(raw: unknown): boolean {
   return typeof raw === "string" && raw.trim().toLowerCase() === "livekit-native-v1";
 }
 
+/** The server must explicitly opt in as well; a capable app header alone changes nothing. */
+export function liveKitPlatforms(nativeTrialFlag: unknown): readonly ("web" | "ios" | "android")[] {
+  return nativeTrialFlag === "1" ? ["web", "ios", "android"] : ["web"];
+}
+
 /**
  * The provider a given client can actually use.
  *

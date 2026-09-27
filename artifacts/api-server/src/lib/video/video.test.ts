@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { hasNativeLiveKit, providerForPlatform, readClientPlatform, selectProvider } from "./select.ts";
+import { hasNativeLiveKit, liveKitPlatforms, providerForPlatform, readClientPlatform, selectProvider } from "./select.ts";
 import { PROVIDER_USER_ID_MAX_LENGTH, providerUserId } from "./participantIdentity.ts";
 import type { VideoProvider } from "./types.ts";
 
@@ -142,6 +142,13 @@ test("a provider may say it cannot share a screen, so the app stops offering it"
  */
 
 const webOnly: VideoProvider = { ...daily, name: "livekit", platforms: ["web"] };
+
+test("native LiveKit support requires an exact server-side trial flag", () => {
+  for (const disabled of [null, undefined, "", "0", "true", "yes"]) {
+    assert.deepEqual(liveKitPlatforms(disabled), ["web"]);
+  }
+  assert.deepEqual(liveKitPlatforms("1"), ["web", "ios", "android"]);
+});
 
 test("a browser gets the provider that was configured", () => {
   assert.equal(providerForPlatform(webOnly, "web", daily).name, "livekit");

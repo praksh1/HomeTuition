@@ -67,8 +67,7 @@
     "@babel/traverse": "7.29.0",
     "@config-plugins/react-native-webrtc": "^13.0.0",
     "@daily-co/daily-js": "^0.91.0",
-    "@daily-co/react-native-daily-js": "^0.86.0",
-    "@daily-co/react-native-webrtc": "124.0.6-daily.2",
+    "@livekit/react-native-expo-plugin": "1.0.3",
     "@expo-google-fonts/inter": "^0.4.0",
     "@expo/cli": "54.0.23",
     "@expo/ngrok": "^4.1.0",
@@ -116,6 +115,8 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "@livekit/react-native": "3.0.0",
+    "@livekit/react-native-webrtc": "144.2.0",
     "@excalidraw/excalidraw": "0.18.1",
     "@react-native-community/datetimepicker": "8.4.4",
     "@react-navigation/native": "7.2.5",

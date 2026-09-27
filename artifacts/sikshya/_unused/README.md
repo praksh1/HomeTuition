@@ -1,5 +1,12 @@
 # Unused / scratch screens
 
+2026-09-27 trial update: the original native Daily component, the VideoRoom and
+VideoAntenna experiments, and the old Daily contract test are archived here as
+plain-text files. The native LiveKit trial cannot include Daily's competing
+WebRTC module. The historical notes below describe the earlier shipping build,
+not this trial branch. Do not rename archived source back to TypeScript or
+reintroduce native Daily dependencies in the LiveKit trial.
+
 Nothing in this folder is part of the app. It is kept outside `app/` on purpose: Expo Router
 turns every file under `app/` into a live route and bundles it, and these files break the web
 build.

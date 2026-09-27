@@ -1,0 +1,9 @@
+import React from 'react';
+import Daily from '@daily-co/react-native-daily-js';
+
+export default function VideoAntenna() {
+  // This tells the app to turn on the magic walkie-talkie!
+  let callObject = Daily.createCallObject();
+
+  return null;
+}

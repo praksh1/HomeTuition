@@ -75,7 +75,7 @@
           "microphonePermission": "Allow the app to access your microphone for audio sessions."
         }
       ],
-      "./plugins/withDailyAndroid",
+      "@livekit/react-native-expo-plugin",
       [
         "expo-build-properties",
         {

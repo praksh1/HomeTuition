@@ -1,5 +1,13 @@
 # Native LiveKit migration trial
 
+## Progress update after the first checkpoint
+
+Replaced native Daily packages and Expo plugin with the official LiveKit React Native SDK, its WebRTC module and Expo plugin on this isolated branch. Archived the previous native Daily component and unused experiments as text. Built a native LiveKit room adapter with token join, audio session, camera/microphone permissions and controls, watched-teacher callbacks, local media state and Fadko class chat. Added a server opt-in (VIDEO_NATIVE_LIVEKIT_TRIAL=1) and a build opt-in (EXPO_PUBLIC_NATIVE_LIVEKIT_TRIAL=1), both default-off; the exact native capability header is still required and grants no class rights.
+
+Verification for this slice: frontend typecheck and 568/568 unit tests passed; backend typecheck and full 736/736 suite passed; Android and iOS JS exports, Expo Android prebuild, direct web export and LiveKit Android native module compilation passed. The existing browser LiveKit journey passed 135/135 checks at phone and laptop widths. The normal web build script requires a deployment domain absent from this isolated worktree. Full Android assembleDebug remains unverified after a Windows CMake command-launch failure in unrelated Worklets and Screens tasks; the initial SDK-location error was fixed using ignored local.properties. No physical-device test, Preview/production deployment, purchase or real payment occurred.
+
+Do not distribute this trial binary: its native Daily entry is deliberately unavailable and the ordinary API still routes phones to Daily. Native screen sharing and full device call parity remain unfinished. Resolve the Android build path, make iOS and Android development binaries, then run real teacher/student calls against a separately opted-in trial API before considering release. The earlier sections below record the first checkpoint and should not be mistaken for current completion.
+
 - Date: 2026-09-27
 - Agent: Codex
 - Branch: codex/native-livekit-trial

@@ -63,6 +63,7 @@ export class ApiError extends Error {
  * have been handed honestly. Every right still comes from the server's own membership check.
  */
 export const PLATFORM_HEADER = "X-Fadko-Platform";
+const NATIVE_MEDIA_CAPABILITY_HEADER = "X-Fadko-Native-Media";
 
 /**
  * The headers every call sends.
@@ -76,6 +77,12 @@ async function baseHeaders(contentType = "application/json"): Promise<Record<str
     "Content-Type": contentType,
     [PLATFORM_HEADER]: Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "web",
   };
+  // Only a purpose-built native trial binary advertises LiveKit support. Today's installed
+  // phone builds and mobile browsers do not send this, so they continue receiving Daily.
+  if (
+    (Platform.OS === "ios" || Platform.OS === "android") &&
+    process.env.EXPO_PUBLIC_NATIVE_LIVEKIT_TRIAL === "1"
+  ) headers[NATIVE_MEDIA_CAPABILITY_HEADER] = "livekit-native-v1";
   if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
 }

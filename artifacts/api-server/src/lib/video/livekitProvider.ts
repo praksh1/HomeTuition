@@ -3,6 +3,7 @@
 import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 import { logger } from "../logger";
 import { providerUserId } from "./participantIdentity";
+import { liveKitPlatforms } from "./select";
 import { roomNameForSession } from "./roomName";
 import type { JoinOptions, MediaStop, ProviderApply, VideoProvider } from "./types";
 
@@ -169,7 +170,9 @@ export const livekitProvider: VideoProvider = {
    * this, gives a browser LiveKit and a phone Daily, and nobody has to remember not to set the
    * variable.
    */
-  platforms: ["web"],
+  // Off by default. Even when the trial flag is on, select.ts also requires the native
+  // build's explicit capability header; older phone apps continue using Daily.
+  platforms: liveKitPlatforms(process.env.VIDEO_NATIVE_LIVEKIT_TRIAL),
 
   capabilities: {
     /**
