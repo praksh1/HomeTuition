@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Laptop web and installed mobile-app launch](mobile-app-launch-policy.md) — phone browsers remain available during testing; laptop web is first-class; the owner wants app-directed phone access after iOS and Android store releases are proven.
+
 - [Classmate directory and private-message safeguards](classmates-directory-and-message-safety.md) — connected public names/ids only; keep moderation private, compose without leaving the call, shared enrollment and bilateral blocks enforced by the server.
 
 - [Production testing and teacher studio](teacher-studio-production-sep24.md) — 24 Sep: support production approved; preserve classroom/support TODOs; scheduling/booking reliability and simplified scalable teacher workspace next. Make-up policy is a proposal, not an automatic refund authorization.

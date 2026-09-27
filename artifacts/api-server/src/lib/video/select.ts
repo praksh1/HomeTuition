@@ -33,21 +33,27 @@ export function readClientPlatform(raw: unknown): "web" | "ios" | "android" | nu
   return value === "web" || value === "ios" || value === "android" ? value : null;
 }
 
+/** Exact capability advertised by a build that actually contains the native LiveKit SDK. */
+export function hasNativeLiveKit(raw: unknown): boolean {
+  return typeof raw === "string" && raw.trim().toLowerCase() === "livekit-native-v1";
+}
+
 /**
  * The provider a given client can actually use.
  *
  * The configured one when it runs there; otherwise the fallback, which by construction runs
  * everywhere. This is what makes `VIDEO_PROVIDER=livekit` safe to set on a deployment that also
- * serves phones: a browser gets the trial, a phone keeps Daily, and neither is asked to run
- * something its build does not contain.
+ * serves phones: a browser gets the trial, while an older native app keeps Daily.
  *
- * An unknown platform gets the fallback too. That covers the case that actually matters — an
- * app build from before this header existed, which is a phone far more often than not, and
- * which must not be handed a room it cannot open.
+ * An unknown platform gets the fallback too. A native LiveKit-capable build must additionally
+ * announce that capability; old installed Daily builds cannot open a LiveKit room even after a
+ * new app release. This compatibility hint cannot grant room access or moderator rights.
  */
 export function providerForPlatform<
   T extends { name: string; platforms: readonly string[] },
->(chosen: T, platform: string | null, fallback: T): T {
+>(chosen: T, platform: string | null, fallback: T, nativeLiveKitCapable = false): T {
   if (platform === null) return fallback;
+  if ((platform === "ios" || platform === "android") && chosen.name === "livekit" && !nativeLiveKitCapable)
+    return fallback;
   return chosen.platforms.includes(platform) ? chosen : fallback;
 }

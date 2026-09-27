@@ -133,6 +133,8 @@ export const CLIENT_PLATFORMS: readonly ClientPlatform[] = ["web", "ios", "andro
  * the safe thing forever. One constant, and the mismatch cannot happen again.
  */
 export const PLATFORM_HEADER = "x-fadko-platform";
+/** Compatibility only, never authority. A future installed build sends this after shipping the SDK. */
+export const NATIVE_MEDIA_CAPABILITY_HEADER = "x-fadko-native-media";
 
 export interface VideoProvider {
   /** Named in the room payload so the app knows which call UI to mount. */

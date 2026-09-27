@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { providerForPlatform, readClientPlatform, selectProvider } from "./select.ts";
+import { hasNativeLiveKit, providerForPlatform, readClientPlatform, selectProvider } from "./select.ts";
 import { PROVIDER_USER_ID_MAX_LENGTH, providerUserId } from "./participantIdentity.ts";
 import type { VideoProvider } from "./types.ts";
 
@@ -150,6 +150,18 @@ test("a browser gets the provider that was configured", () => {
 test("a phone gets the provider its build can actually run", () => {
   assert.equal(providerForPlatform(webOnly, "ios", daily).name, "daily");
   assert.equal(providerForPlatform(webOnly, "android", daily).name, "daily");
+});
+
+test("a future native LiveKit build opts in without changing older Daily builds", () => {
+  const allPlatforms: VideoProvider = { ...webOnly, platforms: ["web", "ios", "android"] };
+  assert.equal(providerForPlatform(allPlatforms, "ios", daily).name, "daily");
+  assert.equal(providerForPlatform(allPlatforms, "android", daily).name, "daily");
+  assert.equal(providerForPlatform(allPlatforms, "ios", daily, hasNativeLiveKit("livekit-native-v1")).name, "livekit");
+  assert.equal(providerForPlatform(allPlatforms, "android", daily, hasNativeLiveKit(" LIVEKIT-NATIVE-V1 ")).name, "livekit");
+  assert.equal(providerForPlatform(webOnly, "android", daily, true).name, "daily", "server support stays off until native SDK is ready");
+  assert.equal(providerForPlatform(allPlatforms, null, daily, true).name, "daily");
+  for (const invalid of [null, undefined, "", "livekit", "livekit-native-v2", ["livekit-native-v1"]])
+    assert.equal(hasNativeLiveKit(invalid), false);
 });
 
 test("a client that does not say what it is gets the one that runs everywhere", () => {

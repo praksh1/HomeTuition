@@ -25,7 +25,7 @@ import { chargeForSession, verifyWebhookSignature, webhookSecret } from "../lib/
 import { ordinaryTeachingAccess } from "../lib/teachingAccess";
 import { flagContent } from "../lib/moderation";
 import { broadcastSessionStatus, resetBoardFor } from "../ws/classroomHub";
-import { PLATFORM_HEADER, videoProvider } from "../lib/video";
+import { NATIVE_MEDIA_CAPABILITY_HEADER, PLATFORM_HEADER, videoProvider } from "../lib/video";
 import { expireLeftOverSessions, otherRunningSessions } from "../lib/sessionLifecycle";
 import { notify, notifyMany } from "../lib/notify";
 import { activityFor, markSessionEnded } from "../lib/sessionLifecycle";
@@ -961,7 +961,7 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
     is ask for the provider it could have asked for honestly. Rights still come from
     `lib/membership.ts`, and the token is still minted here.
   */
-  const video = videoProvider(req.get(PLATFORM_HEADER) ?? null);
+  const video = videoProvider(req.get(PLATFORM_HEADER) ?? null, req.get(NATIVE_MEDIA_CAPABILITY_HEADER) ?? null);
   try {
     const roomUrl = await video.ensureRoom(id);
     // Only this session's teacher gets an owner token, and only the server can mint one, so
@@ -1398,7 +1398,7 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
       pre-creating nothing.
     */
     try {
-      await videoProvider(req.get(PLATFORM_HEADER) ?? null).ensureRoom(id);
+      await videoProvider(req.get(PLATFORM_HEADER) ?? null, req.get(NATIVE_MEDIA_CAPABILITY_HEADER) ?? null).ensureRoom(id);
     } catch (err) {
       req.log.error({ err, sessionId: id }, "could not pre-create the video room on session start");
     }
