@@ -6,7 +6,7 @@ On 2026-09-27, a disposable local clone of commit `39d479d` at `C:\Users\missk\A
 
 An earlier disposable build with `nodeLinker: hoisted` is **not** release evidence: this project documents a startup crash with that layout, and the temporary installation proved incomplete. Do not copy that setting into the branch. A mapped `L:` drive did not shorten Gradle's canonicalized paths; a physically shorter checkout did.
 
-The APK is a compilation artifact only, not a tested or distributable app. No Android device or emulator was attached on this host, no iOS binary was built, and no installed-app teacher/student call, reconnection, screen share, whiteboard or chat journey was verified. Keep both trial switches off in deployed environments and keep the native trial unmerged until the hard gates below pass.
+The APK is a compilation artifact only, not a tested or distributable app. This packaging run intentionally omitted `EXPO_PUBLIC_API_URL`/`EXPO_PUBLIC_DOMAIN`; without an explicit API origin a native client falls back to relative `/api` and cannot sign in or join a room. No Android device or emulator was attached on this host, no iOS binary was built, and no installed-app teacher/student call, reconnection, screen share, whiteboard or chat journey was verified. A later device-test binary needs an explicitly chosen, isolated trial API origin and both trial switches, then a real-device test against that API. Keep both trial switches off in deployed environments and keep the native trial unmerged until the hard gates below pass.
 
 ## Update: isolated native adapter, still not a release candidate
 
