@@ -20,7 +20,7 @@ import { requireAuth } from "../middlewares/requireAuth";
 import { classGroupAccess } from "../lib/classGroupAccess";
 import { readHomeworkDeadline } from "../lib/classHomeworkDeadline";
 import { notifyMany, syncConversation } from "../lib/notify";
-import { verifyUpload } from "../lib/fileStore";
+import { readBoardObject, verifyUpload } from "../lib/fileStore";
 
 const router = Router();
 const MAX_BODY = 2_000;
@@ -876,6 +876,36 @@ router.get("/class-groups/:id/materials", requireAuth, async (req, res) => {
       file: files.find((file) => file.materialId === material.id) ?? null,
     })),
   });
+});
+
+/** Bring a teacher's saved handout onto the live shared board without making R2 public. */
+router.get("/class-groups/:id/materials/:materialId/board-source", requireAuth, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const access = await accessOrReply(req, res);
+  if (!access) return;
+  if (!access.isTeacher) { res.status(403).json({ error: "Only this class's teacher can place a handout on the board." }); return; }
+  const materialId = idParam(req, "materialId");
+  if (!materialId) { res.status(400).json({ error: "Choose a saved class material." }); return; }
+  const [saved] = await db.select({ fileKey: classGroupMaterialFilesTable.fileKey,
+    fileType: classGroupMaterialFilesTable.fileType })
+    .from(classGroupMaterialsTable)
+    .innerJoin(classGroupMaterialFilesTable, eq(classGroupMaterialFilesTable.materialId, classGroupMaterialsTable.id))
+    .where(and(eq(classGroupMaterialsTable.id, materialId), eq(classGroupMaterialsTable.batchId, access.batchId)))
+    .limit(1);
+  if (!saved) { res.status(404).json({ error: "That file is not saved in this class." }); return; }
+  const kind = saved.fileType === "application/pdf" ? "pdf" :
+    ["image/jpeg", "image/png", "image/webp"].includes(saved.fileType) ? "image" : null;
+  if (!kind) { res.status(415).json({ error: "Only saved PDFs, JPEGs, PNGs and WebP images can be placed on the board." }); return; }
+  try {
+    const maxBytes = 8 * 1024 * 1024;
+    const bytes = await readBoardObject(saved.fileKey, maxBytes);
+    if (!bytes) { res.status(503).json({ error: "Saved files are temporarily unavailable." }); return; }
+    res.json({ kind, dataUrl: `data:${saved.fileType};base64,${bytes.toString("base64")}` });
+  } catch (error) {
+    if (error instanceof RangeError) { res.status(413).json({ error: "That file is too large for the live board. Open it from Class materials instead." }); return; }
+    req.log.error({ err: error, materialId, batchId: access.batchId }, "could not load a saved board material");
+    res.status(503).json({ error: "Could not load this saved material. Try again from the tray." });
+  }
 });
 
 router.post("/class-groups/:id/materials", requireAuth, async (req, res) => {

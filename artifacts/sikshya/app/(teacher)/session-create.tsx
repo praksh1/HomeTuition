@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { router } from "expo-router";
+import { Redirect, router } from "expo-router";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -39,7 +39,13 @@ interface InvitableStudent {
   pastStudent: boolean;
 }
 
+// Keep the legacy implementation for historical test contracts, but never present its
+// retired teacher-plan purchase flow to someone following an old /session-create link.
 export default function SessionCreate() {
+  return <Redirect href="/(teacher)/create-class" />;
+}
+
+export function LegacySessionCreate() {
   const { user } = useAuth();
   const colors = useColors();
   const { t, numeric, gutter, space, radius, elevation, isCompact } = useLayout();

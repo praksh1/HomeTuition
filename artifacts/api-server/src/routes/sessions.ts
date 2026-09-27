@@ -13,6 +13,9 @@ import {
   usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
+import { requireReadyAccount } from "../middlewares/requireReadyAccount";
+import { identityEligible } from "../lib/identityEligibility";
+import { requireTeachingIdentity } from "../middlewares/requireTeachingIdentity";
 import { assertTeacherSchedule, lockTeacherSchedule } from "../lib/teacherSchedule";
 import {
   JOIN_WINDOW_MINUTES,
@@ -63,6 +66,7 @@ import {
 import { refundsTable, scheduleChangesTable } from "@workspace/db";
 import { isRecurringDay, notARecurringDay } from "../lib/monthlyStore";
 import { mayCreateClassAt } from "../lib/sessionAllowance";
+import { legacyStandaloneCreationOpen } from "../lib/teacherBilling";
 import { batchTestForSession } from "../lib/batchTestStore";
 import {
   TEST_BOOKING_LABEL,
@@ -394,7 +398,7 @@ router.get("/public/classes", async (req: Request, res: Response): Promise<void>
 });
 
 router.get("/sessions", async (req, res): Promise<void> => {
-  const { teacherId, studentId, status, agenda, page = "1", limit = "20" } = req.query as Record<string, string>;
+  const { teacherId, studentId, status, agenda, catalog, page = "1", limit = "20" } = req.query as Record<string, string>;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
   const offset = (pageNum - 1) * limitNum;
@@ -426,7 +430,12 @@ router.get("/sessions", async (req, res): Promise<void> => {
    * Asked *with* a teacher or a student it is somebody's own list of classes, where these
    * belong: the student paid for them and the teacher is teaching them.
    */
-  if (!teacherId && !studentId) conditions.push(notARecurringDay);
+  // A public teacher profile is also a storefront, not the teacher's own timetable.
+  // Exclude generated lessons BEFORE pagination so they cannot crowd out real listings.
+  if ((!teacherId && !studentId) || catalog === "standalone") {
+    conditions.push(notARecurringDay);
+    conditions.push(sql`not exists (select 1 from ${batchTestSessionsTable} where ${batchTestSessionsTable.sessionId} = ${sessionsTable.id})`);
+  }
 
   /**
    * How this student stands with each of their classes, so the list can label them.
@@ -508,9 +517,22 @@ router.get("/sessions", async (req, res): Promise<void> => {
     return;
   }
 
+  // A student's first page must contain the nearest lessons, not the furthest-future
+  // recurrence or an old archive row. The client loads later pages on demand.
+  const studentCutoff = sql`${sessionsTable.date} + (${sessionsTable.duration} + ${OVERTIME_CUTOFF_MINUTES}) * interval '1 minute'`;
+  const today = new Date(now).toISOString();
+  const studentOrder = studentId && !status && !agenda
+    ? [
+        sql`case when ${studentCutoff} > ${today}::timestamptz then 0 else 1 end`,
+        asc(sql`case when ${studentCutoff} > ${today}::timestamptz then ${sessionsTable.date} end`),
+        desc(sql`case when ${studentCutoff} <= ${today}::timestamptz then ${sessionsTable.date} end`),
+        asc(sessionsTable.id),
+      ]
+    : agenda === "upcoming" ? [asc(sessionsTable.date), asc(sessionsTable.id)] : [desc(sessionsTable.date), desc(sessionsTable.id)];
+
   const [sessions, [{ total }]] = await Promise.all([
     db.select().from(sessionsTable).where(where).orderBy(
-      ...(agenda === "upcoming" ? [asc(sessionsTable.date), asc(sessionsTable.id)] : [desc(sessionsTable.date), desc(sessionsTable.id)]),
+      ...studentOrder,
     ).limit(limitNum).offset(offset),
     db.select({ total: sql<number>`count(*)::int` }).from(sessionsTable).where(where),
   ]);
@@ -627,10 +649,21 @@ router.get("/sessions/invitable-students", requireAuth, async (req, res): Promis
   res.json({ students: [...byId.values()].sort((a, b) => a.name.localeCompare(b.name)) });
 });
 
-router.post("/sessions", requireAuth, async (req, res): Promise<void> => {
+router.post("/sessions", requireAuth, requireReadyAccount, requireTeachingIdentity, async (req, res): Promise<void> => {
   const user = req.user!;
   if (user.role !== "teacher") {
     res.status(403).json({ error: "Only teachers can create sessions" });
+    return;
+  }
+  // Existing standalone lessons and their contracts remain readable and teachable. This
+  // historical creation endpoint, however, still charges against a teacher-paid tier.
+  // Keep it solely for isolated legacy regression fixtures; all live creation uses
+  // /teaching-classes and never asks a teacher to purchase a plan.
+  if (!legacyStandaloneCreationOpen()) {
+    res.status(410).json({
+      error: "This older class creator has been retired. Open Create a class to prepare a new class without buying a plan.",
+      code: "LEGACY_CLASS_CREATOR_RETIRED",
+    });
     return;
   }
 
@@ -826,7 +859,8 @@ router.get("/sessions/:id", async (req, res): Promise<void> => {
   const [tagged] = await tagTestClasses([{ ...session, endedAt: activity.endedAt }]);
   // Entry screens use this instead of the handset clock. A wrong device clock must never open
   // an expired room or shut a punctual student out of a live class.
-  res.json({ ...tagged, serverTime: new Date().toISOString() });
+  const [withClassGroup] = await tagClassGroupLessons([tagged]);
+  res.json({ ...withClassGroup, serverTime: new Date().toISOString() });
 });
 
 /**
@@ -970,7 +1004,7 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
       .select({ name: usersTable.name })
       .from(usersTable)
       .where(eq(usersTable.id, req.user!.userId));
-    const token = await video.joinToken(id, {
+    const signJoinToken = () => video.joinToken(id, {
       isOwner: membership!.isSessionTeacher,
       userName: userRow?.name ?? "Guest",
       // From the authenticated request, never from the body. It identifies the participant in the
@@ -1000,6 +1034,13 @@ router.get("/sessions/:id/room", requireAuth, async (req, res): Promise<void> =>
        */
       expiresAt: cutoffAt({ ...session, endedAt: null }) ?? undefined,
     });
+    // LiveKit signs locally. Serialize it against closure without holding a DB lock over Daily HTTP.
+    const token = video.name === 'livekit'
+      ? await (await import('../lib/accountTokenIssue')).issueActiveAccountToken(req.user!.userId, req.user!.role, signJoinToken)
+      : await signJoinToken();
+    if (video.name === 'livekit' && !token) {
+      res.status(403).json({ error: 'Your classroom access could not be confirmed. Return to your account and try again.' }); return;
+    }
     /**
      * `roomUrl`, `token` and `isOwner` keep their names.
      *
@@ -1772,6 +1813,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
 
       // Capacity only blocks genuinely new enrolments; upgrading a leftover pending row does
       // not consume another seat because it already holds one.
+      if (!await identityEligible(session.teacherId, "teacher", tx)) return { kind: "identity_teacher" as const };
       if (!existing && locked.enrolledCount >= locked.maxStudents) return { kind: "full" as const };
 
       /**
@@ -1861,6 +1903,8 @@ async function bookSession(req: Request, res: Response): Promise<void> {
     });
 
     switch (result.kind) {
+      case "identity_teacher":
+        res.status(403).json({ code: "TEACHER_IDENTITY_REQUIRED", error: "This teacher's private verification must be approved before new bookings. No payment was taken." }); return;
       case "gone":
         res.status(404).json({ error: "Session not found" });
         return;
@@ -1948,9 +1992,9 @@ async function bookSession(req: Request, res: Response): Promise<void> {
   }
 }
 
-router.post("/sessions/:id/book", requireAuth, bookSession);
+router.post("/sessions/:id/book", requireAuth, requireReadyAccount, bookSession);
 // The app shipped against this path, so it stays and performs the same atomic booking.
-router.post("/sessions/:id/enroll", requireAuth, bookSession);
+router.post("/sessions/:id/enroll", requireAuth, requireReadyAccount, bookSession);
 
 /**
  * Payment provider webhook — the only route to "paid" in production.

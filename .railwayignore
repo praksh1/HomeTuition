@@ -1,0 +1,6 @@
+# Local audit captures and static web exports are not API source.
+.ux-audit/
+artifacts/sikshya/.ux-audit/
+artifacts/sikshya/operator-web-build/
+artifacts/sikshya/web-build/
+.agents/worklog/

@@ -11,6 +11,7 @@ import {
 
 import { hashPassword, verifyPassword } from "./auth";
 import { isEmailConfigured, sendEmail } from "./mailer";
+import { hasRequiredProfile } from "./onboardingRules";
 
 export const EMAIL_VERIFY_HOURS = 24;
 export const PASSWORD_RESET_MINUTES = 30;
@@ -38,8 +39,7 @@ function safeEmail(value: string): string {
 }
 
 /**
- * Accounts created before verification existed have no row and are grandfathered as verified.
- * New registrations always create the row in the same transaction as the user.
+ * Missing verification evidence is not a verified email, even for an older account.
  */
 export async function emailVerifiedFor(userId: number): Promise<boolean> {
   const [state] = await db
@@ -47,7 +47,7 @@ export async function emailVerifiedFor(userId: number): Promise<boolean> {
     .from(accountSecurityTable)
     .where(eq(accountSecurityTable.userId, userId))
     .limit(1);
-  return state ? state.verifiedAt !== null : true;
+  return state?.verifiedAt != null;
 }
 
 export async function passwordAuthFor(userId: number): Promise<boolean> {
@@ -180,10 +180,9 @@ export async function consumeVerificationToken(token: string): Promise<number | 
       .for("update");
     if (!row) return null;
     await tx.update(accountTokensTable).set({ usedAt: new Date() }).where(eq(accountTokensTable.id, row.id));
-    await tx
-      .update(accountSecurityTable)
-      .set({ emailVerifiedAt: new Date(), updatedAt: new Date() })
-      .where(eq(accountSecurityTable.userId, row.userId));
+    // Older accounts may not have a security row. A consumed, valid link establishes it.
+    await tx.insert(accountSecurityTable).values({ userId: row.userId, emailVerifiedAt: new Date() })
+      .onConflictDoUpdate({ target: accountSecurityTable.userId, set: { emailVerifiedAt: new Date(), updatedAt: new Date() } });
     return row.userId;
   });
 }
@@ -306,11 +305,8 @@ export async function externalProvidersFor(userId: number): Promise<string[]> {
   return rows.map((row) => row.provider);
 }
 
-/** Legacy accounts predate onboarding and remain usable; new accounts have a security row. */
+/** Re-evaluate required evidence rather than trusting a historic completion timestamp alone. */
 export async function onboardingCompleteFor(userId: number): Promise<boolean> {
-  const [[security], [onboarding]] = await Promise.all([
-    db.select({ userId: accountSecurityTable.userId }).from(accountSecurityTable).where(eq(accountSecurityTable.userId, userId)).limit(1),
-    db.select({ completedAt: userOnboardingTable.completedAt }).from(userOnboardingTable).where(eq(userOnboardingTable.userId, userId)).limit(1),
-  ]);
-  return security ? onboarding?.completedAt !== null && onboarding?.completedAt !== undefined : true;
+  const [onboarding] = await db.select({ completedAt: userOnboardingTable.completedAt, profilePhotoKey: userOnboardingTable.profilePhotoKey, phone: userOnboardingTable.phone }).from(userOnboardingTable).where(eq(userOnboardingTable.userId, userId)).limit(1);
+  return hasRequiredProfile(onboarding);
 }

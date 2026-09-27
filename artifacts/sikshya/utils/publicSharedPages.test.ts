@@ -24,7 +24,7 @@ test("shared class pages identify signed-out visitors before checkout", () => {
   assert.match(programPage, /onOpenHome=\{\(\) => router\.push\("\/welcome"\)\}/);
   assert.match(programPage, /onBackToTeacher=\{\(\) => backToTeacher\(program\.teacher\.id\)\}/);
   const guard = bookingPanel.indexOf("if (accountRequired)");
-  const requestButton = bookingPanel.indexOf("Try test checkout");
+  const requestButton = bookingPanel.indexOf("Review enrollment");
   assert.ok(guard >= 0 && guard < requestButton, `${appRoot}: account guard must precede checkout`);
   assert.match(bookingPanel, /Sign in to join/);
   assert.match(bookingPanel, /Create a student account/);

@@ -17,6 +17,7 @@ import { apiGet, apiPatch } from "@/utils/api";
 import { onNetworkResume } from "@/utils/networkResume";
 import {
   getNotifications,
+  addInAppNotification,
   markAllRead,
   markNotificationRead,
   markNotificationsForServerIds,
@@ -209,7 +210,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       if (seen.current.size > 300) seen.current = new Set([...seen.current].slice(-150));
 
       try {
-        if (event.kind === "message" && event.fromUserId != null) {
+        if (event.kind === "identity_status") {
+          await addInAppNotification({ serverId: event.inboxId, title: "Verification update", body: "There is an update to your private verification. Open it to see the next step.", type: "credential", data: { type: "identity_status" } });
+        } else if (event.kind === "message" && event.fromUserId != null) {
           await notifyNewMessage({
             senderName: event.fromName ?? "Someone",
             body: event.preview ?? "",

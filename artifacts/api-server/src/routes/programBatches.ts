@@ -14,6 +14,8 @@ import {
 } from "@workspace/db";
 
 import { requireAuth } from "../middlewares/requireAuth";
+import { requireReadyAccount } from "../middlewares/requireReadyAccount";
+import { requireTeachingIdentity } from "../middlewares/requireTeachingIdentity";
 import { recordActivity } from "../lib/activityLog";
 import { assertTeacherSchedule, lockTeacherSchedule, teacherScheduleReview } from "../lib/teacherSchedule";
 import { publishedSnapshotFor } from "../lib/learningProgramState";
@@ -123,7 +125,7 @@ router.get("/learning-programs/:programId/batches", requireAuth, async (req, res
   res.json({ batches: await Promise.all(rows.map((row) => ownerBatch(row))) });
 });
 
-router.post("/learning-programs/:programId/batches", requireAuth, async (req, res): Promise<void> => {
+router.post("/learning-programs/:programId/batches", requireAuth, requireReadyAccount, async (req, res): Promise<void> => {
   const ownerId = teacherId(req, res);
   if (ownerId === null) return;
   const programId = readId(req.params.programId);
@@ -219,7 +221,7 @@ router.patch("/learning-program-batches/:id", requireAuth, async (req, res): Pro
   res.json({ batch: updated });
 });
 
-router.post("/learning-program-batches/:id/publish", requireAuth, async (req, res): Promise<void> => {
+router.post("/learning-program-batches/:id/publish", requireAuth, requireReadyAccount, requireTeachingIdentity, async (req, res): Promise<void> => {
   const owned = await ownedBatch(req, res);
   if (!owned) return;
   // The same Batch lock as PATCH: read one complete draft, and serialize repeated publication.
@@ -305,7 +307,7 @@ router.post("/learning-program-batches/:id/publish", requireAuth, async (req, re
 });
 
 /** Preparation, not enrolment renewal: no money, seats or student access are created. */
-router.post("/learning-program-batches/:id/next-period", requireAuth, async (req, res): Promise<void> => {
+router.post("/learning-program-batches/:id/next-period", requireAuth, requireReadyAccount, async (req, res): Promise<void> => {
   const owned = await ownedBatch(req, res);
   if (!owned) return;
   const next = await db.transaction(async (tx) => {

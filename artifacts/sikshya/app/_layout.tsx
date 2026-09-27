@@ -66,7 +66,7 @@ const SHARED_SCREENS = [
   { name: "desk", segment: "desk" },
 ] as const;
 
-const ACCOUNT_SCREENS = ["check-email", "verify-email", "forgot-password", "reset-password"] as const;
+const ACCOUNT_SCREENS = ["check-email", "verify-email", "forgot-password", "reset-password", "identity-verification"] as const;
 
 function AuthGuard() {
   const { user, isLoading } = useAuth();

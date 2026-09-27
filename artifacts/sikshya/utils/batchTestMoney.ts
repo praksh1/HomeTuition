@@ -6,10 +6,13 @@ export interface ParticipantTestReceipt {
   studentName?: string;
   recordedAt: string;
   grossNpr?: number;
+  fadkoNpr?: number;
+  teacherNpr?: number;
   allocations: Array<{
     position: number;
     grossNpr?: number;
     teacherNpr?: number;
+    fadkoNpr?: number;
     state: string;
     stateChangedAt?: string;
   }>;
@@ -31,6 +34,17 @@ export interface ParticipantTestTotals {
 }
 
 const pendingEarningStates = new Set(["future", "delivered_pending", "eligible"]);
+
+export function teacherReceiptBreakdown(receipt: ParticipantTestReceipt): {
+  tuitionNpr: number; fadkoFeeNpr: number; teacherShareNpr: number;
+} | null {
+  const tuitionNpr = receipt.grossNpr;
+  const fadkoFeeNpr = receipt.fadkoNpr;
+  const teacherShareNpr = receipt.teacherNpr;
+  if (![tuitionNpr, fadkoFeeNpr, teacherShareNpr].every((value) => Number.isSafeInteger(value) && value! >= 0)) return null;
+  if (tuitionNpr! !== fadkoFeeNpr! + teacherShareNpr!) return null;
+  return { tuitionNpr: tuitionNpr!, fadkoFeeNpr: fadkoFeeNpr!, teacherShareNpr: teacherShareNpr! };
+}
 
 /** One arithmetic definition for the student and teacher summaries. */
 export function participantTestTotals(receipts: ParticipantTestReceipt[]): ParticipantTestTotals {
@@ -110,7 +124,7 @@ export function participantMoneyStatement(
           occurredAt: receipt.recordedAt,
           amountNpr: payment,
           direction: "debit",
-          status: "Paid",
+          status: "Test checkout recorded",
         });
       }
       for (const allocation of receipt.allocations.filter((row) => row.state === "refund_owed" || row.state === "refunded")) {
@@ -125,7 +139,7 @@ export function participantMoneyStatement(
           occurredAt: allocation.stateChangedAt ?? receipt.recordedAt,
           amountNpr: refund,
           direction: "credit",
-          status: posted ? "Refunded" : "Refund pending",
+          status: posted ? "Test refund recorded" : "Test refund approved (not sent)",
         });
       }
       continue;
@@ -161,7 +175,7 @@ export function participantMoneyStatement(
     teacherRow("pending", pending, "pending", "neutral", "Pending");
     teacherRow("review", review, "pending", "neutral", "Under review");
     teacherRow("reversal-pending", reversalPending, "pending", "debit", "Reversal pending");
-    teacherRow("paid", paid, "posted", "credit", "Paid to you");
+    teacherRow("paid", paid, "posted", "credit", "Test payout recorded");
     teacherRow("reversed", reversed, "posted", "debit", "Reversed after refund");
   }
   return {
@@ -178,7 +192,7 @@ export function participantReceiptStatus(
   if (states.has("disputed")) return "Support review in progress";
   if (states.has("refund_owed")) return "Refund approved in this test";
   if (states.size === 1 && states.has("refunded")) return role === "teacher" ? "Test earnings reversed" : "Test refund completed";
-  if (states.size === 1 && states.has("paid_out")) return role === "teacher" ? "Test-paid" : "Lessons completed";
+  if (states.size === 1 && states.has("paid_out")) return role === "teacher" ? "Test payout recorded" : "Lessons completed";
   if (states.has("replacement_pending")) return "Replacement or refund needed";
   if (states.has("delivered_pending")) return "Lesson review period";
   if (states.has("eligible")) return role === "teacher" ? "Ready for test payout" : "Lesson completed";

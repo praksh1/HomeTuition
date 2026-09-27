@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { Router } from "express";
 import { db, learningProgramsTable, learningProgramBatchesTable, teacherProfilesTable, usersTable,
   userOnboardingTable, testTeachingGrantsTable, testStudentGrantsTable, batchTestContractsTable,
   batchTestBookingsTable, batchTestPaymentsTable, batchTestLedgerEntriesTable, batchTestSessionsTable,
-  classGroupHomeworkTable, sessionsTable, sessionEnrollmentsTable, sessionParticipationTable, disputesTable, testClassesTable } from "@workspace/db";
+  classGroupHomeworkTable, sessionsTable, sessionActivityTable, sessionEnrollmentsTable, sessionParticipationTable, disputesTable, testClassesTable } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
-import { emailVerifiedFor } from "../lib/accountSecurity";
+import { emailVerifiedFor, onboardingCompleteFor } from "../lib/accountSecurity";
+import { identityEligible } from "../lib/identityEligibility";
+import { hasRequiredProfile } from "../lib/onboardingRules";
 import { testPilotDeadline } from "../lib/testPilot";
 import { testTeachingAllowed } from "../lib/testTeachingAccess";
 import { testStudentAllowed } from "../lib/testStudentAccess";
@@ -52,7 +54,7 @@ function receiptView(receipt: SimulatedBatchReceipt, entries: BatchLedgerRow[]) 
   };
 }
 
-/** Remove platform/internal allocations before a participant response leaves the server. */
+/** Expose only the participant's own receipt, including the teacher-facing fee breakdown. */
 function participantReceiptView(
   role: "student" | "teacher",
   receipt: SimulatedBatchReceipt,
@@ -65,7 +67,8 @@ function participantReceiptView(
       const latest = entries.filter((entry) => entry.position === allocation.position).at(-1);
       const stateChangedAt = latest?.createdAt.toISOString();
       return role === "teacher"
-        ? { position: allocation.position, state: allocation.state, teacherNpr: allocation.teacherNpr, stateChangedAt }
+        ? { position: allocation.position, state: allocation.state, grossNpr: allocation.grossNpr,
+            fadkoNpr: allocation.fadkoNpr, teacherNpr: allocation.teacherNpr, stateChangedAt }
         : { position: allocation.position, state: allocation.state, grossNpr: allocation.grossNpr, stateChangedAt };
     }),
     accounting: role === "teacher"
@@ -73,7 +76,9 @@ function participantReceiptView(
       : { refundedGrossNpr: full.accounting.refundedGrossNpr, actualMoneyMovedNpr: 0 },
   };
   return role === "teacher"
-    ? { ...common }
+    ? { ...common, grossNpr: full.grossNpr,
+        fadkoNpr: full.allocations.reduce((sum, allocation) => sum + allocation.fadkoNpr, 0),
+        teacherNpr: full.allocations.reduce((sum, allocation) => sum + allocation.teacherNpr, 0) }
     : { ...common, grossNpr: full.grossNpr };
 }
 
@@ -85,11 +90,13 @@ const ACTIVE_COMPLAINT_STATUSES = ["open", "opened", "assigned", "processing", "
  * This never decides a complaint and never confirms a payout/refund. Its only inputs are the
  * session row, recorded teacher participation, the server clock and an actual support case.
  */
-async function synchronizeBatchTestSettlements(batchId?: number): Promise<void> {
+async function synchronizeBatchTestSettlements(batchId?: number, bookingIds?: number[]): Promise<void> {
+  if (bookingIds && bookingIds.length === 0) return;
   const bookings = await db.select({ bookingId: batchTestPaymentsTable.bookingId, batchId: batchTestBookingsTable.batchId, studentId: batchTestBookingsTable.studentId })
     .from(batchTestPaymentsTable)
     .innerJoin(batchTestBookingsTable, eq(batchTestBookingsTable.id, batchTestPaymentsTable.bookingId))
-    .where(batchId === undefined ? undefined : eq(batchTestBookingsTable.batchId, batchId))
+    .where(and(batchId === undefined ? undefined : eq(batchTestBookingsTable.batchId, batchId),
+      bookingIds === undefined ? undefined : inArray(batchTestPaymentsTable.bookingId, bookingIds)))
     .orderBy(asc(batchTestPaymentsTable.bookingId))
     .limit(50);
 
@@ -105,8 +112,10 @@ async function synchronizeBatchTestSettlements(batchId?: number): Promise<void> 
         status: sessionsTable.status,
         startsAt: sessionsTable.date,
         durationMinutes: sessionsTable.duration,
+        endedAt: sessionActivityTable.endedAt,
       }).from(batchTestSessionsTable)
         .innerJoin(sessionsTable, eq(sessionsTable.id, batchTestSessionsTable.sessionId))
+        .leftJoin(sessionActivityTable, eq(sessionActivityTable.sessionId, sessionsTable.id))
         .where(eq(batchTestSessionsTable.batchId, target.batchId));
       if (!lessons.length) return;
       const sessionIds = lessons.map((lesson) => lesson.sessionId);
@@ -132,6 +141,7 @@ async function synchronizeBatchTestSettlements(batchId?: number): Promise<void> 
           sessionStatus: lesson.status,
           scheduledStartMs: lesson.startsAt.getTime(),
           durationMinutes: lesson.durationMinutes,
+          actualEndMs: lesson.endedAt?.getTime(),
           teacherPresenceRecorded: present.has(lesson.sessionId),
           activeComplaint: complained.has(lesson.sessionId),
           nowMs: Date.now(),
@@ -193,8 +203,12 @@ router.get("/batch-tests/me/payments", requireAuth, async (req, res, next) => {
     res.status(403).json({ error: "This payment view belongs to students and teachers." });
     return;
   }
+  const cursor = req.query.cursor === undefined ? null : Number(req.query.cursor);
+  if (cursor !== null && (!Number.isSafeInteger(cursor) || cursor <= 0)) {
+    res.status(400).json({ error: "Choose a valid receipt page." }); return;
+  }
   try {
-    const rows = await db.select({
+    const fetched = await db.select({
       bookingId: batchTestPaymentsTable.bookingId,
       receipt: batchTestPaymentsTable.receipt,
       recordedAt: batchTestPaymentsTable.createdAt,
@@ -208,19 +222,20 @@ router.get("/batch-tests/me/payments", requireAuth, async (req, res, next) => {
       .innerJoin(learningProgramBatchesTable, eq(learningProgramBatchesTable.id, batchTestBookingsTable.batchId))
       .innerJoin(learningProgramsTable, eq(learningProgramsTable.id, learningProgramBatchesTable.programId))
       .innerJoin(usersTable, eq(usersTable.id, batchTestBookingsTable.studentId))
-      .where(role === "student"
+      .where(and(role === "student"
         ? eq(batchTestBookingsTable.studentId, req.user!.userId)
-        : eq(learningProgramsTable.teacherId, req.user!.userId))
+        : eq(learningProgramsTable.teacherId, req.user!.userId),
+        cursor === null ? undefined : lt(batchTestPaymentsTable.bookingId, cursor)))
       .orderBy(desc(batchTestPaymentsTable.bookingId))
-      .limit(50);
-    // Refresh only this participant's classes. Refreshing the global rehearsal ledger every time
-    // any student opened Sessions would turn a read-only convenience into avoidable database work.
-    for (const batchId of new Set(rows.map((row) => row.batchId))) {
-      await synchronizeBatchTestSettlements(batchId).catch((error) =>
-        req.log.warn({ error, batchId }, "could not refresh participant simulated settlement evidence"),
-      );
-    }
+      .limit(51);
+    const rows = fetched.slice(0, 50);
+    const nextCursor = fetched.length > 50 ? rows.at(-1)!.bookingId : null;
     const bookingIds = rows.map((row) => row.bookingId);
+    // Refresh exactly the receipts on this page, including older bookings beyond the first
+    // 50 in a popular class. Never sweep another participant's records on a read.
+    await synchronizeBatchTestSettlements(undefined, bookingIds).catch((error) =>
+      req.log.warn({ error }, "could not refresh participant simulated settlement evidence"),
+    );
     const history = bookingIds.length
       ? await db.select().from(batchTestLedgerEntriesTable)
         .where(inArray(batchTestLedgerEntriesTable.bookingId, bookingIds))
@@ -229,6 +244,7 @@ router.get("/batch-tests/me/payments", requireAuth, async (req, res, next) => {
     res.setHeader("Cache-Control", "no-store").json({
       testOnly: true,
       role,
+      nextCursor,
       receipts: rows.map((row) => ({
         ...participantReceiptView(
           role,
@@ -257,6 +273,11 @@ router.post("/admin/batch-test-payments/:bookingId/allocations/:position/events"
   }
   if (EVENTS_REQUIRING_NOTE.has(event as ProgramAllocationEvent) && !note) {
     res.status(400).json({ error: "Write the reason for that complaint or refund decision." }); return;
+  }
+  // A state change alone is not a replacement lesson. Until a real, booking-linked session
+  // and student acceptance have been stored atomically, this event must not release the hold.
+  if (event === "replacement_scheduled") {
+    res.status(409).json({ error: "A replacement must be linked to the original booking and accepted by the student before this lesson can move forward. No replacement was recorded." }); return;
   }
   try {
     const entry = await db.transaction(async (tx) => {
@@ -302,7 +323,7 @@ async function readOffer(batchId: number) {
 async function eligibility(tx: Tx, teacherId: number, viewerId: number) {
   const [teacher] = await tx.select().from(usersTable).where(eq(usersTable.id, teacherId)).for("share");
   const [profile] = await tx.select().from(teacherProfilesTable).where(eq(teacherProfilesTable.userId, teacherId)).for("share");
-  if (!teacher || teacher.role !== "teacher" || teacher.suspendedAt || profile?.approvalStatus !== "approved" || !await emailVerifiedFor(teacherId)) {
+  if (!teacher || teacher.role !== "teacher" || teacher.suspendedAt || profile?.approvalStatus !== "approved" || !await emailVerifiedFor(teacherId) || !await onboardingCompleteFor(teacherId)) {
     throw new Refusal(403, "This teacher is not approved for testing.");
   }
   const [teacherGrant] = await tx.select().from(testTeachingGrantsTable).where(and(eq(testTeachingGrantsTable.teacherId, teacherId), isNull(testTeachingGrantsTable.revokedAt), gt(testTeachingGrantsTable.validUntil, sql`now()`))).for("share");
@@ -310,7 +331,7 @@ async function eligibility(tx: Tx, teacherId: number, viewerId: number) {
   // Serializes two different batch bookings by the same student before checking their timetable.
   const [viewer] = await tx.select().from(usersTable).where(eq(usersTable.id, viewerId)).for("update");
   const [onboarding] = await tx.select().from(userOnboardingTable).where(eq(userOnboardingTable.userId, viewerId));
-  if (!viewer || viewer.role !== "student" || viewer.suspendedAt || !onboarding?.completedAt || !await emailVerifiedFor(viewerId)) {
+  if (!viewer || viewer.role !== "student" || viewer.suspendedAt || !hasRequiredProfile(onboarding) || !await emailVerifiedFor(viewerId)) {
     throw new Refusal(403, "Complete and verify an active student account before testing booking.");
   }
   const [studentGrant] = await tx.select().from(testStudentGrantsTable).where(and(eq(testStudentGrantsTable.studentId, viewerId), isNull(testStudentGrantsTable.revokedAt), gt(testStudentGrantsTable.validUntil, sql`now()`))).for("share");
@@ -380,6 +401,7 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
     const quoteKey = createHash("sha256").update(JSON.stringify({ snapshot, amount: quote.amountNpr, positions: quote.lessonPositions })).digest("hex");
     if (confirm !== undefined && isTeacher) throw new Refusal(403, "Teachers cannot book their own class.");
     if (confirm !== undefined && !already) {
+      if (!await identityEligible(program.teacherId, "teacher", tx)) throw new Refusal(403, "This teacher's private verification must be approved before new bookings. No money moved.");
       if (quote.status === "closed" || quote.amountNpr === null || Date.now() >= Date.parse(snapshot.enrollmentClosesAt)) throw new Refusal(409, "Joining has closed for these dates.");
       if (confirm !== quoteKey) throw new Refusal(409, "The dates or price changed. Review the current details before confirming.");
       if (outcome === "declined") throw new Refusal(402, "Test payment declined. No money moved and no place was booked. You can try again.");

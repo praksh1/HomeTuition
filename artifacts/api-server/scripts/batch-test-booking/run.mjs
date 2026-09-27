@@ -291,6 +291,8 @@ try {
   const material = await api(`/class-groups/${c.id}/materials`, teacher.token, { title: "Revision notes", note: "Read before class.", url: "https://example.com/notes" });
   check("teacher can share a safe class material link", material.status === 201 && material.body.url === "https://example.com/notes");
   check("student sees the shared class material", (await api(`/class-groups/${c.id}/materials`, a.token)).body.materials.some((m) => m.id === material.body.id));
+  check("student cannot fetch a saved file for live board placement", (await api(`/class-groups/${c.id}/materials/${material.body.id}/board-source`, a.token)).status === 403);
+  check("a link-only handout is not mistaken for a board file", (await api(`/class-groups/${c.id}/materials/${material.body.id}/board-source`, teacher.token)).status === 404);
   // Prove the conflict while the original lesson is still scheduled. Later in this
   // journey that lesson is intentionally completed, at which point it should no
   // longer block a student's timetable.

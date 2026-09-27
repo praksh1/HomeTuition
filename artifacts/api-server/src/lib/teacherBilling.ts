@@ -3,9 +3,13 @@ import { batchTestPilotEndsAt } from "./testPilot.ts";
 
 /** Sale controls never grant teaching, membership, or money permissions. */
 export function legacyTeacherPlanSalesOpen(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.LEGACY_TEACHER_PLAN_SALES === "paused") return false;
-  if (env.LEGACY_TEACHER_PLAN_SALES === "enabled") return true;
-  // Existing isolated regression suites exercise the preserved legacy product.
+  // Historical contracts remain readable, but no deployed environment may sell another
+  // teacher plan. An old Railway variable must not silently reopen the obsolete checkout.
+  return env.NODE_ENV === "test" && env.LEGACY_TEACHER_PLAN_SALES !== "paused";
+}
+
+/** The old POST /sessions exists only to replay historical contracts in isolated tests. */
+export function legacyStandaloneCreationOpen(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV === "test";
 }
 

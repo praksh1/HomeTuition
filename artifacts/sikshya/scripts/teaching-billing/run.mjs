@@ -33,10 +33,12 @@ try {
     await page.goto(base);
     await page.getByRole("button", { name: "Prepare a class", exact: true }).waitFor();
     const text = await page.locator("body").innerText();
-    check(!text.includes("70%") && !text.includes("30%"), `${width}: overview advertises no percentage split`);
+    check(text.includes("Fadko commission (30%)") && text.includes("Your share (70%)"), `${width}: fee split appears on a specific receipt`);
     check(text.includes("estimated earnings") && text.includes("before applicable taxes"), `${width}: overview sends price-specific estimates to class setup`);
+    check(text.includes("When will I get paid?") && text.includes("not money you can withdraw") && text.includes("Eligible earnings are not yet a bank transfer") && text.includes("publish the payout schedule"), `${width}: payout expectations distinguish simulation from real transfers`);
     check(text.includes("Pending test earnings") && text.includes("Transaction history"), `${width}: earnings statement is on the Profile destination`);
-    check(!text.includes("Held by Fadko") && !text.includes("Fadko earned") && !text.includes("Fadko fee"), `${width}: participant view exposes no platform custody or earnings`);
+    check(text.includes("SEE Maths") && text.includes("Asha") && text.includes("TEST-TEACH-1"), `${width}: receipt identifies class and paying student`);
+    check(!text.includes("Held by Fadko") && !text.includes("Fadko earned"), `${width}: receipt does not claim platform custody or earned fees`);
     check(text.includes("Listings only") && text.includes("does not yet collect payment"), `${width}: no fake checkout promise`);
     check(!text.includes("Tier 1") && !text.includes("Choose a plan"), `${width}: old tier picker hidden`);
     check(!text.includes("Open existing monthly class") && !text.includes("View existing sessions"), `${width}: obsolete teaching shortcuts hidden`);
@@ -56,5 +58,27 @@ try {
     check(errors.length === 0, `${width}: no browser exceptions`);
     await page.close();
   }
+  const many = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await many.goto(`http://127.0.0.1:${server.address().port}/?many`);
+  await many.getByText("Showing 8 of 25 matching loaded receipts", { exact: true }).waitFor();
+  check(await many.getByTestId(/^teacher-receipt-/).count() === 8, "many receipts initially stay compact");
+  await many.getByRole("button", { name: "Show more receipts (17)", exact: true }).click();
+  check(await many.getByTestId(/^teacher-receipt-/).count() === 16, "teacher can progressively reveal more receipts");
+  await many.getByLabel("Search receipts by class, student or reference", { exact: true }).fill("Special Student");
+  check(await many.getByTestId(/^teacher-receipt-/).count() === 1 && await many.getByText("Showing 1 of 1 matching loaded receipts", { exact: true }).isVisible(), "teacher can find a specific student's receipt");
+  await many.getByLabel("Search receipts by class, student or reference", { exact: true }).fill("not a real class");
+  check(await many.getByText("No loaded receipts match that search.", { exact: true }).isVisible(), "receipt search has a clear empty state");
+  check(await many.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "large receipt list fits a phone");
+  await many.close();
+  const paged = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await paged.goto(`http://127.0.0.1:${server.address().port}/?paged`);
+  await paged.getByRole("button", { name: "Load older receipts", exact: true }).waitFor();
+  check(await paged.getByText(/Amounts and search below cover loaded records only/).isVisible(), "partial totals are disclosed before older history loads");
+  await paged.getByRole("button", { name: "Load older receipts", exact: true }).click();
+  await paged.getByText("Showing 8 of 55 matching loaded receipts", { exact: true }).waitFor();
+  check(await paged.getByRole("button", { name: "Load older receipts", exact: true }).count() === 0, "receipt pagination reaches older records without silently truncating history");
+  await paged.getByLabel("Search receipts by class, student or reference", { exact: true }).fill("Oldest Student");
+  check(await paged.getByText("Showing 1 of 1 matching loaded receipts", { exact: true }).isVisible(), "older receipt is searchable after loading");
+  await paged.close();
 } finally { await browser.close(); server.close(); }
 console.log(`${passed} checks passed. Screenshots: ${work}`);

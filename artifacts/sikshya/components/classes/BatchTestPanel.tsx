@@ -36,6 +36,7 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
   const [busy, setBusy] = useState(!accountRequired);
   const [error, setError] = useState("");
   const [datesOpen, setDatesOpen] = useState(false);
+  const [testOptionsOpen, setTestOptionsOpen] = useState(false);
   const gate = useRef(false);
   const generation = useRef(0);
   async function request(confirm = false, outcome: "success" | "declined" = "success") {
@@ -71,7 +72,7 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
   // survives sign-out, but the component's local `result` does not; without this GET an
   // enrolled student was offered a new checkout again until they pressed it.
   useEffect(() => {
-    generation.current += 1; gate.current = false; setResult(null); setError(""); setDatesOpen(false);
+    generation.current += 1; gate.current = false; setResult(null); setError(""); setDatesOpen(false); setTestOptionsOpen(false);
     if (!accountRequired) void request();
     return () => { generation.current += 1; gate.current = false; };
     // `request` intentionally stays local to this panel. A new batch/account gate is the only
@@ -103,25 +104,25 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
     <ProgramButton label="Create a student account" emphasis="secondary" onPress={() => router.push("/(auth)/register?role=student")} />
   </View>;
   return <View testID={`batch-test-${batchId}`} style={{ gap: space.sm }}>
-    <Text style={[t.caption, { color: colors.mutedForeground }]}>Simulated checkout · no money collected</Text>
-    <ProgramButton label={busy ? "Checking your place…" : result ? "Refresh test access" : teacher ? "Open test lessons" : "Try test checkout"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />
+    <ProgramButton label={busy ? "Checking your place…" : result ? "Refresh enrollment" : teacher ? "Open class lessons" : "Review enrollment"} disabled={busy} emphasis={result ? "quiet" : "primary"} onPress={() => void request()} />
     {error ? <ProgramNotice title="Test booking unavailable" body={error} tone="stopped" /> : null}
     {result?.isTeacher && !result.lessons.length ? <ProgramNotice title="Waiting for a student" body="A verified student must complete the simulated checkout first. Its lesson links will then appear here. Refresh after they book." /> : null}
-    {result && !result.isTeacher && !result.booked ? <ProgramNotice title="Fadko test checkout">
+    {result && !result.isTeacher && !result.booked ? <ProgramNotice title="Review your enrollment">
       <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>{result.quote.remainingLessonCount} lessons · NPR {result.quote.amountNpr?.toLocaleString("en-NP") ?? "—"}</Text>
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>Pretend payment only. No wallet, card or PIN needed. No real money moves.</Text>
       {result.offerLessons[0] ? <Text style={[t.callout, numeric, { color: colors.foreground }]}>First included lesson: {dateLabel(result.offerLessons[0].startsAt)}</Text> : null}
       <ProgramButton emphasis="quiet" label={datesOpen ? "Hide included dates" : "Check included dates"} onPress={() => setDatesOpen(!datesOpen)} />
       {datesOpen ? result.offerLessons.map((lesson) => <Text key={lesson.position} style={[t.caption, numeric, { color: colors.foreground }]}>Lesson {lesson.position + 1} · {dateLabel(lesson.startsAt)} · {lesson.durationMinutes} min</Text>) : null}
-      <Text style={[t.callout, { color: colors.foreground }]}>Confirming reserves your test place and locks these class details. Past lessons are not included.</Text>
-      <ProgramButton emphasis="primary" label="Simulate successful payment" disabled={busy || result.quote.status === "closed" || result.quote.amountNpr === null} onPress={() => void request(true)} />
-      <ProgramButton emphasis="quiet" label="Try declined payment" disabled={busy || result.quote.status === "closed" || result.quote.amountNpr === null} onPress={() => void request(true, "declined")} />
+      <Text style={[t.callout, { color: colors.foreground }]}>Confirming reserves your place and locks these class details. Past lessons are not included.</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>Practice checkout: no card, wallet or PIN is requested, and no money is charged.</Text>
+      <ProgramButton emphasis="primary" label="Confirm practice enrollment — no charge" disabled={busy || result.quote.status === "closed" || result.quote.amountNpr === null} onPress={() => void request(true)} />
+      <ProgramButton emphasis="quiet" label={testOptionsOpen ? "Hide test outcomes" : "Test other outcomes"} disabled={busy} onPress={() => setTestOptionsOpen(!testOptionsOpen)} />
+      {testOptionsOpen ? <ProgramButton emphasis="quiet" label="Try declined payment" disabled={busy || result.quote.status === "closed" || result.quote.amountNpr === null} onPress={() => void request(true, "declined")} /> : null}
       <ProgramButton emphasis="quiet" label="Cancel checkout" disabled={busy} onPress={() => { setResult(null); setDatesOpen(false); }} />
     </ProgramNotice> : null}
     {classReady ? <ProgramNotice title={result!.isTeacher ? "Class ready for testing" : "You're enrolled"}>
       <Text accessibilityLiveRegion="polite" style={[t.callout, { color: colors.foreground }]}>{result.isTeacher
-        ? "A student has a test place. No real payment was collected."
-        : "Your test place is confirmed. No real payment was taken."}</Text>
+        ? "A student has enrolled for this practice class. No payment was received."
+        : "Your place is confirmed. This was a practice enrollment; no payment was processed."}</Text>
       <ProgramButton label="Open class home" emphasis="primary" onPress={() => router.push({ pathname: "/class-home", params: { id: String(batchId) } })} />
       {firstLesson ? <View style={{ gap: space.xxs }}>
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Next lesson</Text>
@@ -129,9 +130,9 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
         <ProgramButton label="Open next lesson" emphasis="secondary" onPress={() => router.push({ pathname: "/session/[id]", params: { id: String(firstLesson.sessionId) } })} />
       </View> : null}
       <Text style={[t.callout, numeric, { color: colors.foreground }]}>{result.isTeacher
-        ? `Expected test earnings: ${money(teacherExpected)}${teacherPaid ? ` · Test-paid: ${money(teacherPaid)}` : ""}`
-        : `Test payment: ${money(studentPaid)}${studentRefunded ? ` · Refunded: ${money(studentRefunded)}` : ""}`}</Text>
-      <Text style={[t.caption, { color: colors.mutedForeground }]}>Receipt {result.receipts[0]?.reference ?? "recorded"} · rehearsal record only</Text>
+        ? `Illustrative teacher share: ${money(teacherExpected)}${teacherPaid ? ` · Simulated payout: ${money(teacherPaid)}` : ""}`
+        : `Listed tuition: ${money(studentPaid)}${studentRefunded ? ` · Simulated refund: ${money(studentRefunded)}` : ""}`}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>Record {result.receipts[0]?.reference ?? "recorded"} · practice only, not proof of payment</Text>
       <ProgramButton label={result.isTeacher ? "View earnings history" : "View payment history"} emphasis="quiet" onPress={() => router.push(result.isTeacher ? "/subscription" : "/(student)/payments")} />
     </ProgramNotice> : null}
     {result?.lessons.length ? <View style={{ gap: space.sm }}>

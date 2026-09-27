@@ -297,13 +297,13 @@ export default function TeacherDetail() {
 
       const [upcomingRes, liveRes, pastRes, revRes] = await Promise.all([
         apiGet<{ sessions: ApiSession[] }>(
-          `/sessions?teacherId=${apiTeacher.userId}&status=upcoming${highlightSessionId ? "&limit=100" : ""}`,
+          `/sessions?teacherId=${apiTeacher.userId}&status=upcoming&agenda=upcoming&catalog=standalone${highlightSessionId ? "&limit=100" : ""}`,
         ),
         apiGet<{ sessions: ApiSession[] }>(
-          `/sessions?teacherId=${apiTeacher.userId}&status=live`,
+          `/sessions?teacherId=${apiTeacher.userId}&status=live&catalog=standalone`,
         ),
         apiGet<{ sessions: ApiSession[] }>(
-          `/sessions?teacherId=${apiTeacher.userId}&status=completed`,
+          `/sessions?teacherId=${apiTeacher.userId}&status=completed&catalog=standalone`,
         ),
         apiGet<{ reviews: ApiReview[] }>(`/teachers/${id}/reviews?limit=10`),
       ]);
@@ -1037,7 +1037,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
           <View style={{ flex: 1, width: "100%" }}>
             <TeacherProgramsSection teacherProfileId={String(teacher.id)} />
             <Text style={[t.title2, { color: colors.foreground }]}>
-              Book a class
+              Standalone classes
             </Text>
             <Text
               style={[
@@ -1049,8 +1049,8 @@ You can join from your Sessions tab — the class opens a few minutes before it 
                 },
               ]}
             >
-              These are pay-per-class bookings. Each price covers one scheduled
-              class; monthly courses are a separate product.
+              Each listing below is one independently bookable class. For a course
+              or a series of lessons, choose its listing above.
             </Text>
 
             {detailsLoadState === "loading" && (

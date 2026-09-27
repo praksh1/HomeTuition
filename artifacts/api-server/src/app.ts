@@ -6,6 +6,7 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { logActivity } from "./middlewares/activityLog";
 import { MAX_UPLOAD_BYTES } from "./lib/fileStore";
+import { IDENTITY_MAX_BYTES } from "./lib/identityPolicy";
 
 const app: Express = express();
 
@@ -84,9 +85,10 @@ app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   // The one a person can act on, phrased the way the upload route phrases it so the two cannot
   // drift into saying different things about the same limit.
   if (status === 413 || type === "entity.too.large") {
+    const maxBytes = /^\/api\/identity-verification\/\d+\/document\/?$/.test(req.path) ? IDENTITY_MAX_BYTES : MAX_UPLOAD_BYTES;
     res.status(413).json({
-      error: `That file is larger than ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.`,
-      maxBytes: MAX_UPLOAD_BYTES,
+      error: `That file is larger than ${Math.floor(maxBytes / (1024 * 1024))} MB.`,
+      maxBytes,
     });
     return;
   }

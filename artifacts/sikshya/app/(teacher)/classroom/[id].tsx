@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   PanResponder,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -16,6 +17,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useVisibleViewport } from "@/hooks/useVisibleViewport";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import type { Teacher } from "@/context/AuthContext";
@@ -77,6 +79,13 @@ interface SessionData {
   date: string;
   startedAt?: string | null;
   endedAt?: string | null;
+  classGroup?: { batchId: number; title: string; lessonPosition: number; lessonCount: number };
+}
+
+interface SavedClassMaterial {
+  id: number;
+  title: string;
+  file: { fileType: string; fileName: string | null } | null;
 }
 
 function WhiteboardFallback({ resetError }: ErrorFallbackProps) {
@@ -245,6 +254,9 @@ export default function Classroom() {
     elevation,
   } = useLayout();
   const insets = useSafeAreaInsets();
+  // The iPhone browser's bottom chrome is outside the visual viewport, even when the
+  // React Native layout viewport still extends underneath it.
+  const visibleViewport = useVisibleViewport(true);
   const { user } = useAuth();
   const teacher = user as Teacher;
   /**
@@ -327,6 +339,10 @@ export default function Classroom() {
   /** Upload options stay folded away until asked for — they are occasional actions, and as
    * two permanent full-width buttons they were consuming screen the video should have. */
   const [materialMenuOpen, setMaterialMenuOpen] = useState(false);
+  const [savedMaterials, setSavedMaterials] = useState<SavedClassMaterial[]>([]);
+  const [savedMaterialsBusy, setSavedMaterialsBusy] = useState(false);
+  const [placingSavedMaterialId, setPlacingSavedMaterialId] = useState<number | null>(null);
+  const [savedMaterialsError, setSavedMaterialsError] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
   /**
    * The next picture to place on the whiteboard. A new `key` is what triggers the placement,
@@ -426,13 +442,13 @@ export default function Classroom() {
   const viewport: Viewport = useMemo(
     () => ({
       width,
-      height,
+      height: Math.min(height, visibleViewport.top + visibleViewport.height),
       insets,
       reservedTop: boardToolbarBottom - insets.top + HIT_SLOP_MIN + (isLandscapeLayout ? space.xs : space.lg),
       reservedBottom: pipBottomClearance - insets.bottom,
       hitSlopMin: HIT_SLOP_MIN,
     }),
-    [width, height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
+    [width, height, visibleViewport.top, visibleViewport.height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
   );
 
   const rect = windowRect(callWindow.state, viewport, callWindow.offset);
@@ -648,6 +664,39 @@ export default function Classroom() {
       return current;
     } catch {
       return null;
+    }
+  };
+
+  useEffect(() => {
+    const batchId = session?.classGroup?.batchId;
+    if (!materialMenuOpen || !batchId) return;
+    let active = true;
+    setSavedMaterialsBusy(true);
+    setSavedMaterials([]);
+    setSavedMaterialsError("");
+    void apiGet<{ materials: SavedClassMaterial[] }>(`/class-groups/${batchId}/materials`)
+      .then((result) => { if (active) setSavedMaterials(result.materials); })
+      .catch(() => { if (active) setSavedMaterialsError("Saved handouts could not load. Your current board is unchanged."); })
+      .finally(() => { if (active) setSavedMaterialsBusy(false); });
+    return () => { active = false; };
+  }, [materialMenuOpen, session?.classGroup?.batchId]);
+
+  const placeSavedMaterial = async (materialId: number) => {
+    const batchId = session?.classGroup?.batchId;
+    if (!batchId || placingSavedMaterialId !== null) return;
+    setPlacingSavedMaterialId(materialId);
+    setSavedMaterialsError("");
+    try {
+      const source = await apiGet<{ kind: "image" | "pdf"; dataUrl: string }>(
+        `/class-groups/${batchId}/materials/${materialId}/board-source`,
+        { timeoutMs: 35_000 },
+      );
+      applyUploadedFile(source.dataUrl, source.kind);
+      setMaterialMenuOpen(false);
+    } catch (error) {
+      setSavedMaterialsError(error instanceof Error ? error.message : "Could not place that handout. Your current board is unchanged.");
+    } finally {
+      setPlacingSavedMaterialId(null);
     }
   };
 
@@ -2020,6 +2069,33 @@ export default function Classroom() {
                         </>
                       )}
                     </View>
+                    {session?.classGroup?.batchId ? (
+                      <View style={{ gap: space.xxs }}>
+                        <Text style={[t.caption, { color: colors.mutedForeground }]}>Saved in this class</Text>
+                        {savedMaterialsBusy ? <ActivityIndicator color={colors.primary} /> : null}
+                        {savedMaterialsError ? <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{savedMaterialsError}</Text> : null}
+                        {!savedMaterialsBusy && !savedMaterialsError && !savedMaterials.some((item) =>
+                          item.file && (item.file.fileType === "application/pdf" || ["image/jpeg", "image/png", "image/webp"].includes(item.file.fileType))) ? (
+                          <Text style={[t.caption, { color: colors.mutedForeground }]}>No board-ready PDFs or images yet. Add them from Class materials before your next lesson.</Text>
+                        ) : null}
+                        <ScrollView style={{ maxHeight: 132 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+                          {savedMaterials.filter((item) => item.file &&
+                            (item.file.fileType === "application/pdf" || ["image/jpeg", "image/png", "image/webp"].includes(item.file.fileType)))
+                            .map((item) => (
+                              <TouchableOpacity key={item.id} testID={`saved-board-material-${item.id}`}
+                                disabled={placingSavedMaterialId !== null}
+                                accessibilityRole="button"
+                                accessibilityLabel={`Place ${item.title} on the shared board`}
+                                onPress={() => void placeSavedMaterial(item.id)}
+                                style={{ minHeight: HIT_SLOP_MIN, paddingHorizontal: space.sm, flexDirection: "row", alignItems: "center", gap: space.xs, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+                                <Feather name={item.file?.fileType === "application/pdf" ? "file-text" : "image"} size={16} color={colors.primary} />
+                                <Text numberOfLines={1} style={[t.caption, { color: colors.foreground, flex: 1 }]}>{item.title}</Text>
+                                {placingSavedMaterialId === item.id ? <ActivityIndicator color={colors.primary} /> : <Feather name="plus" size={16} color={colors.primary} />}
+                              </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                      </View>
+                    ) : null}
                     {/* A way out that is not the browser's Back button. Without it the only exit
                     from this menu was Back, which a teacher reasonably feared would drop them
                     out of the class they were teaching. */}

@@ -8,6 +8,9 @@ interface Props {
   style?: StyleProp<ViewStyle>;
   /** Web reader zoom; native WebView supplies its own pinch zoom. */
   zoom?: number;
+  onReady?: () => void;
+  onProblem?: () => void;
+  privateReview?: boolean;
 }
 
 /**

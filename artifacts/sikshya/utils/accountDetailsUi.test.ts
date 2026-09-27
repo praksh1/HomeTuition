@@ -46,7 +46,10 @@ test("both roles expose the working support assistant with automation and human-
 test("teacher credentials stay compact until the teacher asks to manage them", () => {
   assert.match(teacherProfile, /showDocuments &&/);
   assert.match(teacherProfile, /teacher-credentials-toggle/);
-  assert.match(teacherProfile, /Identity & credentials/);
+  assert.match(teacherProfile, /Teaching qualifications/);
+  assert.match(teacherProfile, /Open private identity verification/);
+  assert.match(teacherProfile, /router\.push\("\/identity-verification"\)/);
+  assert.match(teacherProfile, /Citizenship belongs in private identity verification, not here\./);
 });
 
 test("the login email is visible but cannot be silently changed", () => {

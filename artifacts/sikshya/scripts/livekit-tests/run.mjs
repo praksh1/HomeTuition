@@ -272,6 +272,8 @@ writeFileSync(
 );
 
 const PHONE = { width: 390, height: 844 };
+// iPhone 16 Pro Max CSS viewport: the larger phone must not reveal off-screen controls.
+const LARGE_PHONE = { width: 440, height: 956 };
 const LAPTOP = { width: 1440, height: 900 };
 
 async function run(chromium, viewport, label) {
@@ -612,6 +614,7 @@ async function run(chromium, viewport, label) {
 async function main() {
   const chromium = await getChromium();
   await run(chromium, PHONE, "phone-390");
+  await run(chromium, LARGE_PHONE, "phone-440");
   await run(chromium, LAPTOP, "laptop-1440");
 
   console.log(`\nScreenshots: ${SHOTS}`);

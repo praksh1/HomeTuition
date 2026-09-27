@@ -70,6 +70,11 @@ router.patch("/onboarding/me", requireAuth, async (req, res): Promise<void> => {
   const guardianRelationship = text("guardianRelationship");
   const [existing] = await db.select().from(userOnboardingTable).where(eq(userOnboardingTable.userId, user.userId));
 
+  if ((user.role === "teacher" || user.role === "student") && !existing?.profilePhotoKey) {
+    res.status(400).json({ error: "Upload your profile photo before finishing your account details.", field: "profilePhoto" });
+    return;
+  }
+
   if (!phone || !province || !district || !localLevel) {
     res.status(400).json({ error: "Phone, province, district, and municipality/local level are required." });
     return;
@@ -118,9 +123,7 @@ router.patch("/onboarding/me", requireAuth, async (req, res): Promise<void> => {
     guardianEmail: user.role === "student" ? (guardianEmail ?? existing?.guardianEmail)?.toLocaleLowerCase() ?? null : null,
     guardianPhone: user.role === "student" ? guardianPhone ?? existing?.guardianPhone ?? null : null,
     guardianRelationship: user.role === "student" ? guardianRelationship ?? existing?.guardianRelationship ?? null : null,
-    // Editing a legacy-but-complete account must not send it back through onboarding merely
-    // because the old row predates profile-photo storage. New teachers still need the photo;
-    // completed teachers keep the completion decision already recorded for them.
+    // Required photos apply to both roles, including previously completed accounts.
     completedAt: completedAccountAt({
       existingCompletedAt: existing?.completedAt,
       hasProfilePhoto: Boolean(existing?.profilePhotoKey),

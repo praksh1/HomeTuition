@@ -5,6 +5,8 @@ import { eq } from "drizzle-orm";
 import { db, sessionMessagesTable, usersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
 import { verifyToken, type JwtPayload } from "../lib/auth";
+import { activeAccount } from "../lib/activeAccount";
+import { watchSocketAccount } from "./accountWatch";
 import { getSessionMembership, canAccessSession } from "../lib/membership";
 import { threadTargetFor } from "../lib/monthlyStore";
 import { addUserChannel } from "./userHub";
@@ -462,6 +464,9 @@ async function authorizeMembership(url: URL): Promise<Membership | null> {
   }
 
   // Shared with GET /sessions/:id/room so the video door and the board door always agree.
+  const current = await activeAccount(payload);
+  if (!current) return null;
+  payload = current;
   const membership = await getSessionMembership(sessionId, payload.userId);
   if (!canAccessSession(membership)) return null;
   const isSessionTeacher = membership!.isSessionTeacher;
@@ -645,15 +650,30 @@ export function attachClassroomHub(server: http.Server): void {
         socket.destroy();
         return;
       }
-      if (socket.destroyed) return;
-      const userId = payload.userId;
-      wss.handleUpgrade(req, socket, head, (ws) => {
-        const remove = addUserChannel(ws, userId);
-        watchHeartbeat(ws);
-        logger.info({ userId }, "ws user channel open");
-        ws.on("close", remove);
-        ws.on("error", () => remove());
-      });
+      void (async () => {
+        try {
+          const current = await activeAccount(payload);
+          if (socket.destroyed) return;
+          if (!current) {
+            socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+            socket.destroy(); return;
+          }
+          const userId = current.userId;
+          wss.handleUpgrade(req, socket, head, (ws) => {
+            const remove = addUserChannel(ws, userId);
+            watchHeartbeat(ws);
+            watchSocketAccount(ws, async () => Boolean(await activeAccount(verifyToken(token))));
+            logger.info({ userId }, "ws user channel open");
+            ws.on("close", remove);
+            ws.on("error", () => remove());
+          });
+        } catch {
+          if (!socket.destroyed) {
+            socket.write("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n");
+            socket.destroy();
+          }
+        }
+      })();
       return;
     }
 
@@ -675,7 +695,14 @@ export function attachClassroomHub(server: http.Server): void {
 
       if (socket.destroyed) return;
       const approved = member;
-      wss.handleUpgrade(req, socket, head, (ws) => handleConnection(ws, approved));
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        const token = url.searchParams.get("token") ?? "";
+        watchSocketAccount(ws, async () => {
+          const current = await activeAccount(verifyToken(token));
+          return Boolean(current && current.role === approved.role);
+        });
+        handleConnection(ws, approved);
+      });
     })();
   });
 

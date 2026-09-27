@@ -3,7 +3,10 @@ export class ApiError extends Error {}
 let item;
 window.classRequests = [];
 export async function apiGet(url) {
-  if (url === "/teachers/me/billing") return { teacherShareBps: 7000 };
+  if (url === "/teachers/me/billing") {
+    if (new URLSearchParams(location.search).get("billing") === "fail" && !window.billingRecovered) throw new ApiError("Teaching terms unavailable");
+    return { teacherShareBps: 7000 };
+  }
   if (url.startsWith("/teaching-classes?")) {
     const params = new URL(url, location.origin).searchParams;
     window.lastClassSearch = url;

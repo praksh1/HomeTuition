@@ -1,4 +1,5 @@
 import { createHash, randomInt } from "node:crypto";
+import { accountClosureCompleted } from "../lib/accountClosureStore";
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
@@ -21,6 +22,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
+import { identityEligible, identityEnforcementEnabled } from "../lib/identityEligibility";
 import { recordActivity, readActivity } from "../lib/activityLog";
 import { attendanceFor, enrolledStudents } from "../lib/participation";
 import { findingsFor } from "../lib/sessionEvidence";
@@ -865,11 +867,11 @@ router.get("/admin/users/:id", async (req, res): Promise<void> => {
     await db
       .update(teacherCredentialsTable)
       .set({ status: "opened", openedAt: new Date(), openedBy: req.user!.userId, updatedAt: new Date() })
-      .where(and(eq(teacherCredentialsTable.teacherId, id), eq(teacherCredentialsTable.status, "submitted")));
+      .where(and(eq(teacherCredentialsTable.teacherId, id), eq(teacherCredentialsTable.status, "submitted"), sql`${teacherCredentialsTable.documentType} <> 'citizenship'`));
     credentials = await db
       .select()
       .from(teacherCredentialsTable)
-      .where(and(eq(teacherCredentialsTable.teacherId, id), sql`${teacherCredentialsTable.status} <> 'withdrawn'`))
+      .where(and(eq(teacherCredentialsTable.teacherId, id), sql`${teacherCredentialsTable.status} <> 'withdrawn'`, sql`${teacherCredentialsTable.documentType} <> 'citizenship'`))
       .orderBy(asc(teacherCredentialsTable.documentType), desc(teacherCredentialsTable.id));
   }
 
@@ -1207,10 +1209,13 @@ router.post("/admin/users/:id/unsuspend", async (req, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid user id" }); return; }
 
-  await db
-    .update(usersTable)
-    .set({ suspendedAt: null, suspendedReason: null, suspendedBy: null })
-    .where(eq(usersTable.id, id));
+  const restored = await db.transaction(async tx => {
+    await tx.select({id:usersTable.id}).from(usersTable).where(eq(usersTable.id,id)).for("update");
+    if (await accountClosureCompleted(id,tx)) return false;
+    await tx.update(usersTable).set({ suspendedAt: null, suspendedReason: null, suspendedBy: null }).where(eq(usersTable.id,id));
+    return true;
+  });
+  if (!restored) { res.status(409).json({error:"This account was closed at its owner's request. Removing a suspension cannot reopen it."}); return; }
 
   recordActivity({
     userId: req.user!.userId,
@@ -1356,12 +1361,16 @@ router.post("/admin/teachers/:userId/decision", async (req, res): Promise<void> 
     .from(teacherCredentialsTable)
     .where(eq(teacherCredentialsTable.teacherId, userId));
   if (decision === "approved") {
+    if (identityEnforcementEnabled() && !await identityEligible(userId, "teacher")) {
+      res.status(409).json({ error: "An authorised identity reviewer must approve the private identity submission before teaching access can be approved." }); return;
+    }
     const active = credentials.filter((row) => row.status !== "withdrawn" && row.status !== "rejected");
-    if (active.length === 0) {
+    const qualifications = active.filter(row => row.type !== "citizenship");
+    if (active.length === 0 && !identityEnforcementEnabled()) {
       res.status(409).json({ error: "Open and approve the teacher's submitted identity documents before approving the account." });
       return;
     }
-    if (active.some((row) => row.status !== "approved")) {
+    if ((identityEnforcementEnabled() ? qualifications : active).some((row) => row.status !== "approved")) {
       res.status(409).json({ error: "Every submitted document must be approved or rejected before the teacher account can be approved." });
       return;
     }
@@ -1436,6 +1445,7 @@ router.post("/admin/teacher-credentials/:id/decision", async (req, res): Promise
     .innerJoin(usersTable, eq(usersTable.id, teacherCredentialsTable.teacherId))
     .where(eq(teacherCredentialsTable.id, id));
   if (!existing || existing.status === "withdrawn") { res.status(404).json({ error: "Document not found." }); return; }
+  if (existing.documentType === "citizenship") { res.status(409).json({ error: "Citizenship decisions belong in the restricted private identity review area. This older upload needs migration review." }); return; }
 
   const [updated] = await db
     .update(teacherCredentialsTable)

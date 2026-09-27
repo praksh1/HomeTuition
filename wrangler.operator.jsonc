@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fadko-operator",
+  "compatibility_date": "2026-09-27",
+  "assets": {
+    "directory": "artifacts/sikshya/operator-web-build",
+    "not_found_handling": "single-page-application"
+  },
+  "env": {
+    "preview": {
+      "name": "fadko-operator-preview",
+      "assets": {
+        "directory": "artifacts/sikshya/operator-web-build",
+        "not_found_handling": "single-page-application"
+      }
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { mayOpenHomeworkFile } from "../lib/homeworkAccess";
 import { mayOpenMessageFile } from "../lib/messageAccess";
 import { mayOpenClassMessageFile } from "../lib/classMessageAccess";
 import { mayOpenClassMaterialFile } from "../lib/classMaterialAccess";
+import { isLegacyIdentityFile } from "../lib/legacyIdentityFiles";
 import {
   ALLOWED_UPLOAD_TYPES,
   MAX_UPLOAD_BYTES,
@@ -206,6 +207,11 @@ router.get("/storage/file", requireAuth, async (req: Request, res: Response) => 
   const user = req.user!;
   const uploader = ownerOf(key);
   if (uploader === null) { res.status(400).json({ error: "That is not a file we hold." }); return; }
+  // Before owner/admin/message shortcuts: old citizenship uploads are not general attachments.
+  if (await isLegacyIdentityFile(key)) {
+    res.set("Cache-Control", "no-store");
+    res.status(403).json({ error: "Use the private identity area for identity documents. This older attachment is restricted." }); return;
+  }
 
   let allowed = uploader === user.userId || user.role === "admin";
 

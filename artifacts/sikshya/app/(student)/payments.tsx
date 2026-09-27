@@ -29,7 +29,7 @@ export default function StudentPayments() {
     <ProgramBackControl label="Back to Profile" testID="payments-back" onPress={() => router.replace("/(student)/profile")} />
     <View style={{ gap: space.xs }}>
       <Text accessibilityRole="header" style={[t.title1, { color: colors.foreground }]}>Payments & receipts</Text>
-      <Text style={[t.callout, { color: colors.mutedForeground }]}>What you paid, what was refunded, and every receipt—without internal accounting details.</Text>
+      <Text style={[t.callout, { color: colors.mutedForeground }]}>Your booking records, lesson reviews and refund status together—without internal accounting details.</Text>
     </View>
     <BatchTestMoneySummary role="student" />
     <ProgramCardShell>

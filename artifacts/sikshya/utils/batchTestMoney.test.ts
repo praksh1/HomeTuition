@@ -4,6 +4,7 @@ import {
   participantMoneyStatement,
   participantReceiptStatus,
   participantTestTotals,
+  teacherReceiptBreakdown,
   testReceiptNepalTime,
   type ParticipantTestReceipt,
 } from "./batchTestMoney.ts";
@@ -17,6 +18,8 @@ function receipt(over: Partial<ParticipantTestReceipt> = {}): ParticipantTestRec
     studentName: "Asha",
     recordedAt: "2026-09-12T00:00:00.000Z",
     grossNpr: 1_000,
+    fadkoNpr: 300,
+    teacherNpr: 700,
     allocations: [
       { position: 0, grossNpr: 500, teacherNpr: 350, state: "future" },
       { position: 1, grossNpr: 500, teacherNpr: 350, state: "paid_out", stateChangedAt: "2026-09-13T00:00:00.000Z" },
@@ -29,6 +32,14 @@ function receipt(over: Partial<ParticipantTestReceipt> = {}): ParticipantTestRec
     ...over,
   };
 }
+
+test("teacher receipt shows a balanced student tuition, Fadko fee and teacher share", () => {
+  assert.deepEqual(teacherReceiptBreakdown(receipt()), {
+    tuitionNpr: 1_000, fadkoFeeNpr: 300, teacherShareNpr: 700,
+  });
+  assert.equal(teacherReceiptBreakdown(receipt({ fadkoNpr: 400 })), null);
+  assert.equal(teacherReceiptBreakdown(receipt({ grossNpr: undefined })), null);
+});
 
 test("participant summary adds student payments and teacher pending, paid and reversed shares", () => {
   const totals = participantTestTotals([
@@ -101,7 +112,7 @@ test("teacher statement puts pending earnings before posted payouts and reversal
   assert.deepEqual(statement.pending.map((row) => [row.status, row.amountNpr]), [["Pending", 350]]);
   assert.deepEqual(statement.posted.map((row) => [row.status, row.amountNpr]), [
     ["Reversed after refund", 420],
-    ["Paid to you", 350],
+    ["Test payout recorded", 350],
   ]);
 });
 
@@ -113,10 +124,10 @@ test("student statement keeps the original payment and each class refund as sepa
     ],
     accounting: { refundedGrossNpr: 500, actualMoneyMovedNpr: 0 },
   })], "student");
-  assert.deepEqual(statement.pending.map((row) => [row.status, row.amountNpr]), [["Refund pending", 500]]);
+  assert.deepEqual(statement.pending.map((row) => [row.status, row.amountNpr]), [["Test refund approved (not sent)", 500]]);
   assert.deepEqual(statement.posted.map((row) => [row.status, row.amountNpr]), [
-    ["Refunded", 500],
-    ["Paid", 1_000],
+    ["Test refund recorded", 500],
+    ["Test checkout recorded", 1_000],
   ]);
   assert.match(statement.posted[0].detail, /Lesson 2.*TEST-1/);
   assert.equal(statement.posted[0].title, "SEE Maths");

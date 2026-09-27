@@ -24,6 +24,11 @@ const item = (overrides: Partial<AppNotification> = {}): AppNotification => ({
   ...overrides,
 });
 
+test("identity update opens private verification, never a public profile or conversation", () => {
+  for (const role of ["teacher", "student"] as const) assert.deepEqual(notificationDestination({ type: "identity_status" }, role), { pathname: "/identity-verification" });
+  assert.equal(notificationMatchesReadTarget(item({ data: { type: "identity_status" } }), { kind: "direct_message", conversationWith: 1 }), false);
+});
+
 test("quiz notices open the enrolled class quiz space, not homework or a paid route", () => {
   const notice = item({ data: { type: "class_quiz_published", batchId: "18", quizId: "7" } });
   assert.deepEqual(notificationDestination(notice.data!), { pathname: "/class-quizzes", params: { id: "18" } });

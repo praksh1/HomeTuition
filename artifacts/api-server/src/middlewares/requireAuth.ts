@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { verifyToken, type JwtPayload } from "../lib/auth";
+import { activeAccount } from "../lib/activeAccount";
 
 declare global {
   namespace Express {
@@ -9,19 +10,29 @@ declare global {
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith("Bearer ")) {
     res.status(401).json({ error: "Missing or invalid Authorization header" });
     return;
   }
   const token = authHeader.slice(7);
+  let payload: JwtPayload;
   try {
-    req.user = verifyToken(token);
-    next();
+    payload = verifyToken(token);
   } catch {
     res.status(401).json({ error: "Invalid or expired token" });
+    return;
   }
+  try {
+    const current = await activeAccount(payload);
+    if (!current) { res.status(403).json({ error: "This account cannot access Fadko. Please contact support.", code: "ACCOUNT_UNAVAILABLE" }); return; }
+    req.user = current;
+  } catch {
+    res.status(503).json({ error: "Could not check your access. Please try again." });
+    return;
+  }
+  next();
 }
 
 /**
@@ -34,11 +45,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
  * Never rejects. A bad or expired token is treated exactly like no token at all, because on
  * these routes there is nothing to protect: the answer for a stranger is already the safe one.
  */
-export function attachUserIfPresent(req: Request, _res: Response, next: NextFunction): void {
+export async function attachUserIfPresent(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ")) {
     try {
-      req.user = verifyToken(authHeader.slice(7));
+      req.user = (await activeAccount(verifyToken(authHeader.slice(7)))) ?? undefined;
     } catch {
       // Signed out is a valid way to read a public page.
     }
@@ -78,6 +89,19 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
       // confirms that an admin area exists and that this account is not in it.
       res.status(403).json({ error: "You do not have access to this." });
       return;
+    }
+    if (process.env.OPERATOR_SITE_ENFORCEMENT_ENABLED === "true") {
+      const { operatorByUserId } = await import("../lib/operatorStore");
+      const operator = await operatorByUserId(userId);
+      if (!operator || operator.disabledAt) {
+        res.status(403).json({ error: "This operator account cannot access the desk." });
+        return;
+      }
+      const bootstrapRoute = /^\/api\/operator\/(me|password)\/?$/.test(req.originalUrl.split("?")[0] ?? "");
+      if (operator.mustChangePassword && !bootstrapRoute) {
+        res.status(403).json({ error: "Change your one-time password before opening the desk.", code: "OPERATOR_PASSWORD_CHANGE_REQUIRED" });
+        return;
+      }
     }
     next();
   } catch {

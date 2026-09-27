@@ -199,7 +199,7 @@ export default function ClassHomeScreen() {
       icon: "credit-card" as HomeCard["icon"],
       label: home.isTeacher ? "Earnings history" : "Payments & receipts",
       note: home.isTeacher
-        ? "Payouts and payment records"
+        ? "Lesson earnings and receipts"
         : "Charges, receipts and refunds",
       path: home.isTeacher ? "/subscription" : "/(student)/payments",
       unread: 0,

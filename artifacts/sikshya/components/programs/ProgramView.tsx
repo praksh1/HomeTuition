@@ -277,13 +277,13 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
           </>
         ) : testEnrollmentUnavailable ? (
           <>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Your test place could not be checked</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>The class is available to read, but Fadko could not confirm your simulated enrolment. Try this page again.</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Your enrollment could not be checked</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>The class is available to read, but Fadko could not confirm your place. Refresh this page before trying again.</Text>
           </>
         ) : (
           <>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Simulated checkout" : program.presentation === "class" ? "Preview only" : "Joining a program is not open yet"}</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Signed-in, verified students can rehearse booking the classes above. No real money moves." : "Joining and payment are not open yet."}</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Ready to join?" : program.presentation === "class" ? "Enrollment not open yet" : "Joining a program is not open yet"}</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Choose a class above to review its dates, tuition and enrollment details." : "Joining and payment are not open yet."}</Text>
           </>
         )}
       </View> : null}

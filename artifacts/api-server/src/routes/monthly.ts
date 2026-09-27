@@ -14,6 +14,9 @@ import {
   type RecurringSession,
 } from "@workspace/db";
 import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
+import { requireReadyAccount } from "../middlewares/requireReadyAccount";
+import { requireTeachingIdentity } from "../middlewares/requireTeachingIdentity";
+import { identityEligible } from "../lib/identityEligibility";
 import { chargeForMonthly } from "../lib/payments";
 import { mayBuyTeacherPlan } from "../lib/teachingAccess";
 import { flagContent } from "../lib/moderation";
@@ -672,7 +675,7 @@ router.post("/monthly/classes/:id/makeups", requireAuth, async (req: Request, re
  * two minutes later must be quoted against a real count of real classes, not against an
  * assumption that a cycle holds thirty.
  */
-router.post("/monthly/classes", requireAuth, async (req: Request, res: Response) => {
+router.post("/monthly/classes", requireAuth, requireReadyAccount, requireTeachingIdentity, async (req: Request, res: Response) => {
   const user = req.user!;
   if (user.role !== "teacher") {
     res.status(403).json({ error: "Only teachers can create a monthly class." });
@@ -841,7 +844,7 @@ router.get("/monthly/classes/:id", attachUserIfPresent, async (req: Request, res
  * a read that may be minutes old, and a class held in between would mean charging for a class
  * that has already happened.
  */
-router.post("/monthly/classes/:id/join", requireAuth, async (req: Request, res: Response) => {
+router.post("/monthly/classes/:id/join", requireAuth, requireReadyAccount, async (req: Request, res: Response) => {
   const id = idParam(req);
   if (id === null) {
     res.status(400).json({ error: "Invalid class id" });
@@ -849,6 +852,8 @@ router.post("/monthly/classes/:id/join", requireAuth, async (req: Request, res: 
   }
   const user = req.user!;
   const { paymentMethod } = req.body as { paymentMethod?: string };
+
+  if (user.role !== "student") { res.status(403).json({ error: "Only students can book a class." }); return; }
 
   const klass = await classById(id);
   if (!klass || klass.status !== "active") {
@@ -877,6 +882,7 @@ router.post("/monthly/classes/:id/join", requireAuth, async (req: Request, res: 
     const result = await db.transaction(async (tx) => {
       const held = await enrolmentFor(klass.id, user.userId, cycle.index, tx);
       if (held && held.status === "active") return { kind: "already" as const, enrolment: held };
+      if (!await identityEligible(klass.teacherId, "teacher", tx)) return { kind: "identity_teacher" as const };
 
       const enrolled = await countEnrolled(klass.id, cycle.index, tx);
       const room = canEnrol(enrolled);
@@ -924,6 +930,8 @@ router.post("/monthly/classes/:id/join", requireAuth, async (req: Request, res: 
     });
 
     switch (result.kind) {
+      case "identity_teacher":
+        res.status(403).json({ error: "This teacher must complete private identity approval before new bookings. No payment was taken." }); return;
       case "already":
         res.json({ enrolment: result.enrolment, alreadyHad: true });
         return;

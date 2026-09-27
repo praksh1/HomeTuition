@@ -80,9 +80,9 @@ test("the document label never doubles the word document", () => {
 test("teacher access approval points at the real next step", () => {
   const notice = teacherAccessDecisionNotice({ decision: "approved", recipientName: "Asha Gurung" });
   assert.match(notice.body, /teacher account has been approved/);
-  // The old copy said "You can schedule classes now", which was false: a plan comes first.
-  assert.match(notice.body, /choose a teaching plan/);
-  assert.match(notice.preview, /choose a teaching plan/);
+  assert.match(notice.body, /do not need to buy a teaching plan/);
+  assert.match(notice.body, /private teacher verification/);
+  assert.doesNotMatch(notice.preview, /choose a teaching plan/);
 });
 
 test("account approval and document acceptance are different messages", () => {
@@ -95,9 +95,9 @@ test("account approval and document acceptance are different messages", () => {
 
   assert.notEqual(document.subject, account.subject);
   assert.notEqual(document.preview, account.preview);
-  // The document message must not mention the plan step; the account one must.
+  // Accepting one document does not approve the account or reopen teacher-plan sales.
   assert.doesNotMatch(document.body, /teaching plan/);
-  assert.match(account.body, /teaching plan/);
+  assert.match(account.body, /do not need to buy a teaching plan/);
 });
 
 test("a rejected account carries the operator's note", () => {

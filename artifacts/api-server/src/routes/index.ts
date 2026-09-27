@@ -24,10 +24,14 @@ import batchTestingRouter from "./batchTesting";
 import classGroupsRouter from "./classGroups";
 import supportAssistantRouter from "./supportAssistant";
 import classQuizzesRouter from "./classQuizzes";
+import identityVerificationRouter from "./identityVerification";
+import accountClosureRouter from "./accountClosure";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(identityVerificationRouter);
+router.use(accountClosureRouter);
 router.use(authRouter);
 router.use(teachersRouter);
 router.use(sessionsRouter);

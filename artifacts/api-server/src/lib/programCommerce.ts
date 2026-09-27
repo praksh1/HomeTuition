@@ -1,10 +1,10 @@
 /**
  * Provider- and database-independent money model for a future Learning Program purchase.
  *
- * This is intentionally not a checkout and has no rates or dates baked into it. The owner has
- * not approved a commission, student service fee, complaint window, payout day or gateway. What
- * is settled is the accounting shape: one confirmed program payment is divided across its paid
- * lessons, and each lesson earns or returns only its own allocation.
+ * This is intentionally not a real checkout. The owner approved a 70/30 teacher/platform
+ * beta split and a 48-hour lesson review window; a transfer provider and actual payout date
+ * are not confirmed. One program payment is divided across its paid lessons, and each lesson
+ * earns or returns only its own allocation.
  *
  * Existing Single Class and Monthly payment code must not import this until there is an explicit
  * migration contract. Today this module is a calculator and an executable specification only.

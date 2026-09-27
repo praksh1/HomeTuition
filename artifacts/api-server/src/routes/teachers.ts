@@ -394,6 +394,10 @@ router.get("/teachers/me/plan-eligibility", requireAuth, async (req, res): Promi
     res.status(403).json({ error: "Only teachers buy teaching plans" });
     return;
   }
+  if (!legacyTeacherPlanSalesOpen()) {
+    res.json({ allowed: false, ...LEGACY_PLAN_PAUSED });
+    return;
+  }
   const access = await mayBuyTeacherPlan(user.userId);
   res.json(
     access.allowed
@@ -408,7 +412,10 @@ router.get("/teachers/me/billing", requireAuth, (req, res): void => {
 });
 
 router.get("/subscription-tiers", (_req, res): void => {
-  res.json({ tiers: SUBSCRIPTION_TIERS });
+  // Older clients must not receive a purchasable-looking catalogue after plan sales retire.
+  res.json(legacyTeacherPlanSalesOpen()
+    ? { tiers: SUBSCRIPTION_TIERS, legacyPlanSalesOpen: true }
+    : { tiers: [], legacyPlanSalesOpen: false });
 });
 
 const CREDENTIAL_TYPES = ["citizenship", "teaching_license", "university_degree", "professional_certificate"] as const;
@@ -426,13 +433,16 @@ router.get("/teachers/me/credentials", requireAuth, async (req, res): Promise<vo
     .from(teacherCredentialsTable)
     .where(eq(teacherCredentialsTable.teacherId, req.user!.userId))
     .orderBy(asc(teacherCredentialsTable.documentType), desc(teacherCredentialsTable.id));
-  res.json({ credentials: rows.filter((row) => row.status !== "withdrawn") });
+  res.json({ credentials: rows.filter((row) => row.status !== "withdrawn" && row.documentType !== "citizenship") });
 });
 
 router.post("/teachers/me/credentials", requireAuth, async (req, res): Promise<void> => {
   const user = req.user!;
   if (user.role !== "teacher") { res.status(403).json({ error: "Only teachers can submit credentials." }); return; }
   const documentType = credentialType(req.body?.documentType);
+  if (documentType === "citizenship") {
+    res.status(409).json({ error: "Submit citizenship only through Profile → Private identity verification. Do not attach it as a teaching qualification.", code: "PRIVATE_IDENTITY_REQUIRED" }); return;
+  }
   const fileKey = typeof req.body?.fileKey === "string" ? req.body.fileKey.trim() : "";
   const originalName = typeof req.body?.originalName === "string" ? req.body.originalName.trim().slice(0, 180) : "";
   const contentType = typeof req.body?.contentType === "string" ? req.body.contentType.trim() : "";
@@ -482,6 +492,7 @@ router.delete("/teachers/me/credentials/:id", requireAuth, async (req, res): Pro
     .where(and(eq(teacherCredentialsTable.id, id), eq(teacherCredentialsTable.teacherId, req.user!.userId)))
     .limit(1);
   if (!row) { res.status(404).json({ error: "Document not found." }); return; }
+  if (row.documentType === "citizenship") { res.status(409).json({ error: "This older identity document is restricted pending private retention review." }); return; }
   if (row.status !== "submitted") {
     res.status(409).json({ error: "An operator has opened this document, so it can no longer be deleted." });
     return;

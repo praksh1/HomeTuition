@@ -155,6 +155,21 @@ test("full fills the safe area and nothing more", () => {
   assert.ok(rect.top + rect.height <= PHONE.height - PHONE.insets.bottom, "never under the home bar");
 });
 
+test("a Pro Max browser call keeps its frame and bottom controls above Safari chrome", () => {
+  // The layout viewport may still be 956 high while the visual viewport ends at 818.
+  // Both classrooms pass that visible boundary to this shared geometry helper.
+  const visible: Viewport = {
+    width: 440, height: 818,
+    insets: { top: 59, bottom: 34, left: 0, right: 0 },
+    reservedTop: 88, reservedBottom: 120, hitSlopMin: 44,
+  };
+  const full = windowRect("full", visible);
+  assert.ok(full.top + full.height <= 818 - visible.insets.bottom);
+  assert.ok(full.height - visible.hitSlopMin >= 44, "the LiveKit body keeps a tappable control row");
+  const compact = windowRect("compact", visible);
+  assert.ok(compact.top + compact.height <= 818 - visible.insets.bottom - visible.reservedBottom + 8);
+});
+
 test("a parked window sits in the bottom-right, clear of the board's own controls", () => {
   for (const v of [PHONE, LAPTOP]) {
     const rect = windowRect("compact", v);

@@ -9,6 +9,7 @@ export interface BatchTestSettlementFacts {
   sessionStatus: string;
   scheduledStartMs: number;
   durationMinutes: number;
+  actualEndMs?: number | null;
   teacherPresenceRecorded: boolean;
   activeComplaint: boolean;
   nowMs: number;
@@ -36,7 +37,10 @@ export function automaticBatchTestEvents(facts: BatchTestSettlementFacts): Progr
   }
 
   const scheduledEndMs = facts.scheduledStartMs + facts.durationMinutes * 60_000;
-  const complaintClosesMs = scheduledEndMs + PROGRAM_BETA_COMPLAINT_WINDOW_HOURS * 60 * 60_000;
+  // A late-running class must not lose review time because its planned slot has passed.
+  // Historical sessions without an end record retain the scheduled-end fallback.
+  const reviewStartsMs = Math.max(scheduledEndMs, facts.actualEndMs ?? scheduledEndMs);
+  const complaintClosesMs = reviewStartsMs + PROGRAM_BETA_COMPLAINT_WINDOW_HOURS * 60 * 60_000;
   if (state === "delivered_pending" && facts.nowMs >= complaintClosesMs) {
     events.push("complaint_window_closed");
   }

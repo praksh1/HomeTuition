@@ -151,6 +151,19 @@ export async function apiDelete<T>(path: string, options: ApiRequestOptions = {}
   return apiRequest<T>(path, { method: "DELETE" }, options);
 }
 
+/** Authenticated, non-cacheable private document bytes. Never create a public or presigned URL. */
+export async function identityReviewDocument(id: number): Promise<Blob> {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Invalid identity review.");
+  return withinRequestDeadline(async signal => {
+    const headers = await baseHeaders();
+    const res = await fetch(`${getApiBase()}/identity-review/${id}/document`, { method: "POST", headers, signal, cache: "no-store" });
+    if (!res.ok) { const data = await readJson(res); throw new ApiError(res.status, typeof data.error === "string" ? data.error : "Document unavailable."); }
+    const blob = await res.blob();
+    if (!["image/jpeg", "image/png", "application/pdf"].includes(blob.type) || !blob.size || blob.size > 8 * 1024 * 1024) throw new Error("This document cannot be previewed safely.");
+    return blob;
+  }, 35_000);
+}
+
 /**
  * A link that opens one attachment, good for a few minutes.
  *

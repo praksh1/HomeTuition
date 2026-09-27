@@ -11,8 +11,8 @@
  * The second problem was the same sentence doing two jobs. Accepting a document and approving a
  * teacher account are separate decisions, and an operator can do the first while the second stays
  * pending. The old wording ("Your teaching credentials have been approved. You can schedule
- * classes now.") announced both at once and was wrong about the consequence as well: an approved
- * teacher still cannot schedule anything until they hold a teaching plan.
+ * classes now.") announced both at once. Teacher-plan purchases have since been retired;
+ * private verification remains a separate prerequisite before a published class can take bookings.
  *
  * Pure string composition with no imports, so the wording can be unit-tested without a database,
  * a mail provider, or a running server. That is also why the tests can assert on the exact
@@ -45,7 +45,7 @@ export const FORBIDDEN_PHRASES: readonly { phrase: string; because: string }[] =
   },
   {
     phrase: "you can schedule classes now",
-    because: "an approved teacher still needs a teaching plan first",
+    because: "account approval alone does not establish private verification or booking readiness",
   },
 ];
 
@@ -112,8 +112,7 @@ export function documentDecisionNotice(input: {
 /**
  * A decision about the teacher account itself — the one that governs access.
  *
- * The approval says what genuinely comes next. Choosing a teaching plan is the actual next step,
- * and `mayBuyTeacherPlan()` on the server is what this decision unlocks.
+ * Account approval and private verification are separate. Neither requires buying a plan.
  */
 export function teacherAccessDecisionNotice(input: {
   decision: "approved" | "rejected";
@@ -123,12 +122,13 @@ export function teacherAccessDecisionNotice(input: {
 }): AccountNotice {
   if (input.decision === "approved") {
     return {
-      preview: "Your Fadko teacher account has been approved. You may now choose a teaching plan.",
+      preview: "Your Fadko teacher account has been approved. Teaching plans are not required.",
       subject: "Your Fadko teacher account has been approved",
       body:
         `${greeting(input.recipientName)}\n\n` +
-        `Your Fadko teacher account has been approved. You may now choose a teaching plan, ` +
-        `after which you can schedule classes.` +
+        `Your Fadko teacher account has been approved. You do not need to buy a teaching plan. ` +
+        `You can prepare classes now. Before students can book, your private teacher verification ` +
+        `must also be approved. Check your Profile for its status.` +
         SIGN_OFF,
     };
   }

@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, ScrollView, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -18,11 +18,25 @@ import {
 
 export default function CheckEmail() {
   const params = useLocalSearchParams<{ email?: string; sent?: string; configured?: string }>();
-  const { user } = useAuth();
+  const { user, refreshUser, logout } = useAuth();
   const colors = useColors();
   const { t, gutter, space, radius } = useLayout();
   const insets = useSafeAreaInsets();
   const [sending, setSending] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [checked, setChecked] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  useEffect(() => {
+    if (!cooldown) return;
+    const timer = setTimeout(() => setCooldown(value => Math.max(0, value - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [cooldown]);
+  useEffect(() => { if (user?.emailVerified) router.replace("/"); }, [user?.emailVerified]);
+  const checkVerification = async () => {
+    setChecking(true);
+    try { await refreshUser(); } catch { /* Keep recovery controls available after a network failure. */ }
+    finally { setChecked(true); setChecking(false); }
+  };
 
   /**
    * What a resend told us, once one has been attempted. `null` until then.
@@ -64,6 +78,7 @@ export default function CheckEmail() {
   };
 
   const resend = async () => {
+    if (sending || cooldown) return;
     setSending(true);
     try {
       // The body matters: the route answers 200 with { verified: true, sent: false } for an address
@@ -71,6 +86,8 @@ export default function CheckEmail() {
       // never sent.
       const body = await apiPost<{ verified?: boolean; sent?: boolean }>("/auth/verification/resend", {});
       setResent(noticeFromResend(body));
+      if (body.sent) setCooldown(60);
+      if (body.verified) await refreshUser();
     } catch (error) {
       setResent(noticeFromResendError(error));
     } finally {
@@ -139,10 +156,11 @@ export default function CheckEmail() {
         {!alreadyVerified && (
           <TouchableOpacity
             onPress={() => void resend()}
-            disabled={sending}
+            disabled={sending || cooldown > 0}
             activeOpacity={0.85}
             accessibilityRole="button"
-            accessibilityState={{ disabled: sending }}
+            accessibilityState={{ disabled: sending || cooldown > 0 }}
+            aria-disabled={sending || cooldown > 0}
             testID="verification-resend"
             style={{
               width: "100%",
@@ -156,19 +174,26 @@ export default function CheckEmail() {
             {sending ? (
               <ActivityIndicator color={colors.primaryForeground} />
             ) : (
-              <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Send another link</Text>
+              <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{cooldown ? `Send again in ${cooldown}s` : "Send another link"}</Text>
             )}
           </TouchableOpacity>
         )}
 
         <TouchableOpacity
-          onPress={() => router.replace("/")}
+          onPress={() => void checkVerification()}
+          disabled={checking}
+          aria-disabled={checking}
           activeOpacity={0.75}
           accessibilityRole="button"
           testID="verification-continue"
           style={{ padding: space.sm }}
         >
-          <Text style={[t.bodyStrong, { color: colors.primary }]}>Continue to my account</Text>
+          <Text style={[t.bodyStrong, { color: colors.primary }]}>{checking ? "Checking…" : "I’ve verified my email"}</Text>
+        </TouchableOpacity>
+        {checked && !user?.emailVerified ? <Text accessibilityRole="alert" style={[t.caption, { color: colors.mutedForeground }]}>Verification is not confirmed here yet. Open the link in your email, then check again. If your connection failed, try again when you are online.</Text> : null}
+        <Text style={[t.caption, { color: colors.mutedForeground, textAlign: "center" }]}>Verify your email before continuing. Check your spam folder too. Wrong address or using another account? Sign out below to return to sign in. Your saved account will not be deleted.</Text>
+        <TouchableOpacity accessibilityRole="button" testID="verification-signout" onPress={async () => { await logout(); router.replace("/welcome"); }} style={{ minHeight: 48, padding: space.sm, justifyContent: "center" }}>
+          <Text style={[t.bodyStrong, { color: colors.primary }]}>Sign out</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>

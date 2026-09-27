@@ -17,6 +17,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useVisibleViewport } from "@/hooks/useVisibleViewport";
 import { useAuth } from "@/context/AuthContext";
 import type { Student } from "@/context/AuthContext";
 import { ApiError, apiGet } from "@/utils/api";
@@ -179,6 +180,9 @@ export default function StudentClassroom() {
     elevation,
   } = useLayout();
   const insets = useSafeAreaInsets();
+  // Safari can report a layout viewport taller than the area above its browser chrome.
+  // Keep the full-size call (including LiveKit's bottom controls) inside what is visible.
+  const visibleViewport = useVisibleViewport(true);
   const { user } = useAuth();
   const student = user as Student;
   /**
@@ -316,13 +320,13 @@ export default function StudentClassroom() {
   const viewport: Viewport = useMemo(
     () => ({
       width,
-      height,
+      height: Math.min(height, visibleViewport.top + visibleViewport.height),
       insets,
       reservedTop: boardToolbarBottom - insets.top + HIT_SLOP_MIN + (isLandscapeLayout ? space.xs : space.lg),
       reservedBottom: pipBottomClearance - insets.bottom,
       hitSlopMin: HIT_SLOP_MIN,
     }),
-    [width, height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
+    [width, height, visibleViewport.top, visibleViewport.height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
   );
 
   const rect = windowRect(callWindow.state, viewport, callWindow.offset);

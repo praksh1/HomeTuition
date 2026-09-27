@@ -8,6 +8,10 @@ The owner explicitly approved: one teacher-approved courtesy replacement per mis
 
 Implementation must keep the original enrollment/lesson immutable, avoid replacement chains, and serialize refund approval against replacement acceptance. Expiry is not cancellation of rights. The exact time anchors (offer creation for seven days; proposed original lesson end for thirty days) must be explicit in the UX/specification before activation, not silently inferred from browser time.
 
+For implementation, the seven-day response clock starts when the server records the teacher's offer. Acceptance closes at the earlier of its seven-day expiry or the proposed replacement start. The replacement must start after the original lesson's scheduled end and finish no later than thirty days after that end, measured in UTC instants while displayed in Nepal time. Expiry, a declined offer, or a missed replacement sends the same original case to human review; none automatically forfeits the student's claim, refunds a payment, or releases the teacher's held share.
+
+Current implementation status: the pure offer validator and a guard against ledger-only `replacement_scheduled` exist locally. There is **no** persistent offer/acceptance/session linkage, student decision screen, or operator resolution flow yet. Do not turn the guard into a claim that make-up booking works. The durable record must join original booking ID, original session ID and allocation position to one replacement session ID, carry who offered/accepted/declined and when, and retain the original lesson and evidence. Creating that record and moving the affected allocation must be one serialized transaction, and the replacement lesson must never create a second charge.
+
 ## Recommended student experience
 
 Open the lesson and choose **Get help with this lesson**. The app already knows the class, teacher, purchased schedule, receipt and recorded attendance; do not ask the student to retype these. Ask what happened, then show only relevant choices.

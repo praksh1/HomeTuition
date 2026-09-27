@@ -31,6 +31,15 @@ test("the review stays open until exactly 48 hours after the scheduled finish", 
   assert.deepEqual(automaticBatchTestEvents({ ...base, state: "delivered_pending", nowMs: scheduledEnd + 48 * HOUR }), ["complaint_window_closed"]);
 });
 
+test("a lesson that ends late keeps the student's full 48-hour review window", () => {
+  const scheduledEnd = base.scheduledStartMs + HOUR;
+  const actualEnd = scheduledEnd + 3 * HOUR;
+  assert.deepEqual(automaticBatchTestEvents({ ...base, sessionStatus: "completed", teacherPresenceRecorded: true, actualEndMs: actualEnd, nowMs: scheduledEnd + 48 * HOUR }), ["lesson_delivered"]);
+  assert.deepEqual(automaticBatchTestEvents({ ...base, state: "delivered_pending", actualEndMs: actualEnd, nowMs: scheduledEnd + 48 * HOUR }), []);
+  assert.deepEqual(automaticBatchTestEvents({ ...base, state: "delivered_pending", actualEndMs: actualEnd, nowMs: actualEnd + 48 * HOUR - 1 }), []);
+  assert.deepEqual(automaticBatchTestEvents({ ...base, state: "delivered_pending", actualEndMs: actualEnd, nowMs: actualEnd + 48 * HOUR }), ["complaint_window_closed"]);
+});
+
 test("a student complaint freezes a delivered or eligible lesson", () => {
   assert.deepEqual(automaticBatchTestEvents({ ...base, state: "delivered_pending", activeComplaint: true }), ["complaint_opened"]);
   assert.deepEqual(automaticBatchTestEvents({ ...base, state: "eligible", activeComplaint: true }), ["complaint_opened"]);

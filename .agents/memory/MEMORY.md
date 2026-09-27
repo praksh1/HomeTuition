@@ -1,5 +1,9 @@
 # Memory Index
 
+- [Laptop web and installed mobile-app launch](mobile-app-launch-policy.md) — phone browsers remain available for testing before store release; laptop web is a first-class product; installed iOS/Android apps are the intended phone experience, with app-directed access only after the native release is proven.
+
+- [Identity documents and first-use audit](identity-documents-and-first-use-audit.md) — 27 Sep correction: student/parent citizenship is not required or collected in the active product; teacher citizenship and operator approval remain required before bookings. Private retention and incomplete implementation boundaries are recorded here.
+
 - [Classmate directory and private-message safeguards](classmates-directory-and-message-safety.md) — connected public names/ids only; keep moderation private, compose without leaving the call, shared enrollment and bilateral blocks enforced by the server.
 
 - [Production testing and teacher studio](teacher-studio-production-sep24.md) — 24 Sep: support production approved; preserve classroom/support TODOs; scheduling/booking reliability and simplified scalable teacher workspace next. Make-up policy is a proposal, not an automatic refund authorization.

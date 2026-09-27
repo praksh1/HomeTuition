@@ -92,6 +92,16 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: student classes have no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-student-classes.png`), fullPage: true });
 
+    await page.goto(`http://127.0.0.1:${server.address().port}?role=student&large=1`);
+    await page.getByTestId("student-class-group-801").waitFor();
+    check(await page.getByTestId("student-load-more-classes").count() === 1, `${width}: older lessons are available without flooding the initial screen`);
+    check(await page.getByTestId("student-class-group-805").count() === 0, `${width}: fifth class waits for the next page`);
+    await page.getByTestId("student-load-more-classes").click();
+    await page.getByTestId("student-class-group-805").waitFor();
+    check(await page.getByTestId("student-class-group-805").count() === 1, `${width}: later classes remain reachable`);
+    check(await page.getByTestId("student-load-more-classes").count() === 0, `${width}: no false extra page after all 140 lessons`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: many classes do not overflow`);
+
     await page.goto(`http://127.0.0.1:${server.address().port}?role=student&fail=1`);
     await page.getByText("Your classes could not be loaded", { exact: true }).waitFor();
     const failureBody = await page.locator("body").innerText();

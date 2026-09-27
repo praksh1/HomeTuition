@@ -11,6 +11,8 @@ import {
 } from "@workspace/db";
 
 import { requireAuth } from "../middlewares/requireAuth";
+import { requireReadyAccount } from "../middlewares/requireReadyAccount";
+import { requireTeachingIdentity } from "../middlewares/requireTeachingIdentity";
 import { flagContent } from "../lib/moderation";
 import { recordActivity } from "../lib/activityLog";
 import { notifyMany, type NotificationEvent } from "../lib/notify";
@@ -359,7 +361,7 @@ router.get("/learning-programs", requireAuth, async (req: Request, res: Response
  * must name its exam, and a guitar program must not be pushed through a school form. Everything
  * else may arrive later; saving an incomplete draft is explicitly allowed.
  */
-router.post("/learning-programs", requireAuth, async (req: Request, res: Response): Promise<void> => {
+router.post("/learning-programs", requireAuth, requireReadyAccount, async (req: Request, res: Response): Promise<void> => {
   const teacherId = teacherOnly(req, res);
   if (teacherId === null) return;
 
@@ -689,7 +691,7 @@ router.patch("/learning-programs/:id", requireAuth, async (req: Request, res: Re
  * The row, the approval and the modules are all read under the same lock, so the snapshot is one
  * whole draft and the version it is stamped with is the one immediately after the row's own.
  */
-router.post("/learning-programs/:id/publish", requireAuth, async (req: Request, res: Response): Promise<void> => {
+router.post("/learning-programs/:id/publish", requireAuth, requireReadyAccount, requireTeachingIdentity, async (req: Request, res: Response): Promise<void> => {
   await mutate(req, res, "publish", async (tx, row) => {
     const [profile] = await tx
       .select({ approvalStatus: teacherProfilesTable.approvalStatus })

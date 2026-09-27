@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SocialSignIn } from "@/components/SocialSignIn";
 import { AccountDetailsCard } from "@/components/profile/AccountDetailsCard";
+import { IdentityStatusCard } from "@/components/profile/IdentityStatusCard";
 import { ProfileActionRow } from "@/components/profile/ProfileActionRow";
 import { ProfileHero } from "@/components/profile/ProfileHero";
 import SupportAssistantLauncher from "@/components/support/SupportAssistantLauncher";
@@ -22,7 +23,6 @@ import { openAttachment } from "@/utils/openAttachment";
 import { uploadFile, type UploadableFile } from "@/utils/uploadFile";
 
 const CREDENTIAL_TYPES = [
-  { id: "citizenship", label: "National ID / Citizenship" },
   { id: "teaching_license", label: "Teaching License" },
   { id: "university_degree", label: "University Degree" },
   { id: "professional_certificate", label: "Professional Certificate" },
@@ -59,7 +59,7 @@ export default function TeacherProfile() {
     setCredentialLoadState("loading");
     try {
       const result = await apiGet<{ credentials: StoredCredential[] }>("/teachers/me/credentials");
-      setCredentials(result.credentials ?? []);
+      setCredentials((result.credentials ?? []).filter(credential => credential.documentType !== "citizenship"));
       setCredentialLoadState("ready");
     } catch {
       setCredentialLoadState("error");
@@ -181,11 +181,12 @@ export default function TeacherProfile() {
       </View>
 
       <AccountDetailsCard email={teacher.email} role="teacher" />
+      <IdentityStatusCard />
 
       <View style={styles.card}>
         <TouchableOpacity
           accessibilityRole="button"
-          accessibilityLabel={`${showDocuments ? "Hide" : "Manage"} identity and credentials`}
+          accessibilityLabel={`${showDocuments ? "Hide" : "Manage"} teaching qualifications`}
           accessibilityState={{ expanded: showDocuments }}
           onPress={() => setShowDocuments((current) => !current)}
           activeOpacity={0.72}
@@ -196,7 +197,7 @@ export default function TeacherProfile() {
             <Feather name={needsDocumentAttention ? "alert-circle" : "shield"} size={19} color={needsDocumentAttention ? colors.destructive : colors.primary} />
           </View>
           <View style={styles.credentialDisclosureCopy}>
-            <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Identity & credentials</Text>
+            <Text accessibilityRole="header" style={[t.title3, styles.primaryText]}>Teaching qualifications</Text>
             <Text style={[t.caption, styles.secondaryText]}>
               {credentialLoadState === "loading" ? "Checking your documents…"
                 : needsDocumentAttention ? "A document needs your attention"
@@ -210,6 +211,9 @@ export default function TeacherProfile() {
           <Text style={[t.callout, styles.secondaryText]}>
             Fadko Support reviews each file before it can be approved. You can replace a rejected file; a file already opened for review stays locked.
           </Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open private identity verification" onPress={() => router.push("/identity-verification")} style={styles.retryButton}>
+            <Text style={[t.callout, { color: colors.primary }]}>Citizenship belongs in private identity verification, not here.</Text>
+          </TouchableOpacity>
           <Text style={[t.bodyStrong, styles.primaryText]}>Documents</Text>
 
           {credentialLoadState === "loading" && <View style={styles.loadState} accessibilityRole="progressbar" accessibilityLabel="Loading documents">
@@ -271,7 +275,7 @@ export default function TeacherProfile() {
         <ProfileActionRow
           icon="credit-card"
           title="Teaching & earnings"
-          detail="Payouts, pending earnings and records"
+          detail="Lesson earnings, holds and receipts"
           onPress={() => router.push("/(teacher)/subscription")}
           testID="subscription-link"
         />

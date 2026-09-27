@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -18,12 +18,10 @@ import { useAuth } from "@/context/AuthContext";
 import { ApiError } from "@/utils/api";
 import { useColors } from "@/hooks/useColors";
 
-const SUBJECTS = [
-  "Mathematics", "Science", "English", "Nepali", "Social Studies",
-  "Computer Science", "History", "Geography", "Economics", "Accountancy",
-];
-
-const GRADES = ["Grade 8", "Grade 9", "Grade 10", "Grade 11", "Grade 12", "College"];
+import { SUBJECT_SUGGESTIONS as SUBJECTS, LEARNER_LEVELS as GRADES, registrationAge, registrationErrors } from "@/utils/registration";
+import { readingWidth } from "@/constants/layout";
+import { useLayout } from "@/hooks/useLayout";
+import { DateOfBirthField } from "@/components/DateOfBirthField";
 
 export default function Register() {
   const { role } = useLocalSearchParams<{ role: "teacher" | "student" }>();
@@ -31,6 +29,7 @@ export default function Register() {
   const { register: doRegister } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { t, space } = useLayout();
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -38,7 +37,7 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [subject, setSubject] = useState("");
   const [bio, setBio] = useState("");
-  const [grade, setGrade] = useState("Grade 10");
+  const [grade, setGrade] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [guardianName, setGuardianName] = useState("");
   const [guardianEmail, setGuardianEmail] = useState("");
@@ -49,34 +48,28 @@ export default function Register() {
 
   const isTeacher = resolvedRole === "teacher";
   const accentColor = isTeacher ? colors.primary : colors.secondary;
-  const birthYear = Number(dateOfBirth.slice(0, 4));
-  const isMinor = !isTeacher && /^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth) && new Date().getFullYear() - birthYear < 18;
+  const [attempts, setAttempts] = useState(0);
+  const [focusField, setFocusField] = useState("");
+  const scroll = useRef<ScrollView>(null);
+  const age = registrationAge(dateOfBirth);
+  const isMinor = !isTeacher && age !== null && age < 18;
+  const values = { name, email, password, confirmPassword, subject, bio, grade, dateOfBirth, guardianName, guardianEmail, guardianPhone, guardianRelationship };
+  const fieldErrors = attempts ? registrationErrors(values, isTeacher) : {};
+  const fieldProps = (key: keyof typeof values) => ({
+    fieldError: fieldErrors[key],
+    focusRequest: focusField === key ? attempts : 0,
+    onInvalidFocus: (input: TextInput) => {
+      const inner = scroll.current?.getInnerViewNode();
+      if (inner) input.measureLayout(inner, (_x, y) => scroll.current?.scrollTo({ y: Math.max(0, y - space.huge), animated: true }), () => {});
+    },
+  });
 
   const handleRegister = async () => {
-    if (!name.trim() || !email.trim() || !password.trim()) {
-      setError("Please fill all required fields");
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
-    if (isTeacher && !subject) {
-      setError("Please select your subject specialization");
-      return;
-    }
-    if (isTeacher && !bio.trim()) {
-      setError("Please write a short bio so students know why to learn with you");
-      return;
-    }
-    if (!isTeacher && !/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
-      setError("Please enter the student's date of birth as YYYY-MM-DD");
-      return;
-    }
-    if (isMinor && (!guardianName.trim() || !guardianEmail.trim() || !guardianPhone.trim() || !guardianRelationship.trim())) {
-      setError("A parent or guardian must complete all guardian fields for a student under 18");
-      return;
-    }
+    if (loading) return;
+    setAttempts(count => count + 1);
+    const invalid = registrationErrors(values, isTeacher);
+    const first = Object.keys(invalid)[0];
+    if (first) { setFocusField(first); setError(""); return; }
     setLoading(true);
     setError("");
     try {
@@ -103,12 +96,12 @@ export default function Register() {
 
   return (
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-      <ScrollView
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 24 }]}
+      <ScrollView ref={scroll}
+        contentContainerStyle={[styles.container, { paddingTop: insets.top + 20, paddingBottom: insets.bottom + 24, width: "100%", maxWidth: readingWidth, alignSelf: "center" }]}
         keyboardShouldPersistTaps="handled"
         style={{ backgroundColor: colors.background }}
       >
-        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.replace({ pathname: "/login", params: { role: resolvedRole } })}>
           <Feather name="arrow-left" size={22} color={colors.foreground} />
         </TouchableOpacity>
 
@@ -118,7 +111,7 @@ export default function Register() {
         <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
           {isTeacher
             ? "Create your account to start teaching on Fadko"
-            : "Join thousands of students learning with Nepal's best teachers"}
+            : "Find a teacher and learn in live classes."}
         </Text>
 
         {isTeacher && (
@@ -131,32 +124,35 @@ export default function Register() {
         )}
 
         <View style={styles.form}>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>All fields are required. Use an email you can open—we’ll ask you to verify it.</Text>
           {!isTeacher && (
             <>
-              <Field label="Student's Date of Birth *" icon="calendar" value={dateOfBirth} onChange={setDateOfBirth} placeholder="YYYY-MM-DD" colors={colors} />
-              <Text style={[styles.infoText, { color: colors.mutedForeground }]}>We ask this first because a parent or guardian must create the account for a student under 18.</Text>
+              <DateOfBirthField label="Student’s date of birth" {...fieldProps("dateOfBirth")} value={dateOfBirth} onChange={setDateOfBirth} editable={!loading} />
+              <Text style={[styles.infoText, { color: colors.mutedForeground }]}>Use the student’s birth date. A parent or guardian must create the account for a student under 18.</Text>
               {isMinor && (
                 <View style={[styles.guardianBox, { borderColor: colors.border, backgroundColor: colors.card }]}>
                   <Text style={[styles.label, { color: colors.foreground }]}>Parent or guardian details</Text>
-                  <Field label="Guardian's full name *" icon="user" value={guardianName} onChange={setGuardianName} placeholder="Full name" colors={colors} />
-                  <Field label="Guardian's email *" icon="mail" value={guardianEmail} onChange={setGuardianEmail} placeholder="parent@example.com" keyboardType="email-address" colors={colors} />
-                  <Field label="Guardian's phone *" icon="phone" value={guardianPhone} onChange={setGuardianPhone} placeholder="+977…" keyboardType="phone-pad" colors={colors} />
-                  <Field label="Relationship *" icon="users" value={guardianRelationship} onChange={setGuardianRelationship} placeholder="Parent, guardian, aunt…" colors={colors} />
+                  <Field label="Guardian's full name *" icon="user" {...fieldProps("guardianName")} value={guardianName} onChange={setGuardianName} placeholder="Full name" colors={colors} />
+                  <Field label="Guardian's email *" icon="mail" {...fieldProps("guardianEmail")} value={guardianEmail} onChange={setGuardianEmail} placeholder="parent@example.com" keyboardType="email-address" colors={colors} />
+                  <Field label="Guardian's phone *" icon="phone" {...fieldProps("guardianPhone")} value={guardianPhone} onChange={setGuardianPhone} placeholder="+977…" keyboardType="phone-pad" colors={colors} />
+                  <Field label="Relationship *" icon="users" {...fieldProps("guardianRelationship")} value={guardianRelationship} onChange={setGuardianRelationship} placeholder="Parent, guardian, aunt…" colors={colors} />
                 </View>
               )}
             </>
           )}
-          <Field label="Full Name" icon="user" value={name} onChange={setName} placeholder="Your full name" colors={colors} />
-          <Field label="Email Address" icon="mail" value={email} onChange={setEmail} placeholder="your@email.com" keyboardType="email-address" colors={colors} />
-          <Field label="Password" icon="lock" value={password} onChange={setPassword} placeholder="Create a strong password" secure colors={colors} />
-          <Field label="Confirm Password" icon="lock" value={confirmPassword} onChange={setConfirmPassword} placeholder="Repeat your password" secure colors={colors} />
+          <Field label="Full Name" icon="user" {...fieldProps("name")} value={name} onChange={setName} placeholder="Your full name" colors={colors} />
+          <Field label="Email Address" icon="mail" {...fieldProps("email")} value={email} onChange={setEmail} placeholder="your@email.com" keyboardType="email-address" colors={colors} />
+          <Field label="Password" icon="lock" {...fieldProps("password")} value={password} onChange={setPassword} placeholder="Create a strong password" secure colors={colors} />
+          <Field label="Confirm Password" icon="lock" {...fieldProps("confirmPassword")} value={confirmPassword} onChange={setConfirmPassword} placeholder="Repeat your password" secure colors={colors} />
 
           {isTeacher && (
             <>
+              <Field {...fieldProps("subject")} label="What do you teach? *" icon="book" value={subject} onChange={setSubject} placeholder="Search or type any subject" colors={colors} />
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>Choose a suggestion or keep your own subject—including languages, skills and exam preparation.</Text>
               <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { color: colors.foreground }]}>Subject Specialization *</Text>
+                <Text style={[styles.label, { color: colors.foreground }]}>Suggestions</Text>
                 <View style={styles.chipGrid}>
-                  {SUBJECTS.map((s) => (
+                  {SUBJECTS.filter(s => s.toLowerCase().includes(subject.toLowerCase())).slice(0, 6).map((s) => (
                     <TouchableOpacity
                       key={s}
                       style={[styles.chip, { borderColor: subject === s ? accentColor : colors.border, backgroundColor: subject === s ? accentColor + "15" : colors.muted }]}
@@ -168,28 +164,13 @@ export default function Register() {
                   ))}
                 </View>
               </View>
-              <View style={styles.fieldGroup}>
-                <Text style={[styles.label, { color: colors.foreground }]}>Brief Bio *</Text>
-                <Text style={[styles.infoText, { color: colors.mutedForeground }]}>Students use this to decide whether your experience and teaching style fit them.</Text>
-                <View style={[styles.inputWrapper, { backgroundColor: colors.muted, borderColor: colors.border }]}>
-                  <TextInput
-                    style={[styles.input, styles.textArea, { color: colors.foreground }]}
-                    placeholder="Tell students about your experience and teaching style..."
-                    placeholderTextColor={colors.mutedForeground}
-                    value={bio}
-                    onChangeText={setBio}
-                    multiline
-                    numberOfLines={4}
-                    textAlignVertical="top"
-                  />
-                </View>
-              </View>
+              <Field {...fieldProps("bio")} label="About your teaching *" icon="edit-3" value={bio} onChange={setBio} placeholder="Tell students about your experience and teaching style…" colors={colors} multiline />
             </>
           )}
 
           {!isTeacher && (
             <View style={styles.fieldGroup}>
-              <Text style={[styles.label, { color: colors.foreground }]}>Current Grade / Level *</Text>
+              <Text style={[styles.label, { color: colors.foreground }]}>Current learning level *</Text>
               <View style={styles.chipGrid}>
                 {GRADES.map((g) => (
                   <TouchableOpacity
@@ -205,6 +186,8 @@ export default function Register() {
             </View>
           )}
 
+          {fieldErrors.grade && <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>{fieldErrors.grade}</Text>}
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>Password: use at least 8 characters. A longer, unique password is better.</Text>
           {!!error && (
             <View style={[styles.errorBox, { backgroundColor: colors.destructive + "10" }]}>
               <Feather name="alert-circle" size={14} color={colors.destructive} />
@@ -238,19 +221,22 @@ export default function Register() {
 }
 
 function Field({
-  label, icon, value, onChange, placeholder, secure = false, keyboardType = "default", colors, multiline = false,
+  label, icon, value, onChange, placeholder, secure = false, keyboardType = "default", colors, multiline = false, fieldError, focusRequest = 0, onInvalidFocus,
 }: {
+  fieldError?: string; focusRequest?: number; onInvalidFocus?: (input: TextInput) => void;
   label: string; icon: string; value: string; onChange: (v: string) => void;
   placeholder: string; secure?: boolean; keyboardType?: string; colors: ReturnType<typeof import("@/hooks/useColors").useColors>; multiline?: boolean;
 }) {
   const [show, setShow] = useState(false);
+  const input = useRef<TextInput>(null);
+  useEffect(() => { if (focusRequest && input.current) { input.current.focus(); onInvalidFocus?.(input.current); } }, [focusRequest]);
   return (
     <View style={styles.fieldGroup}>
       <Text style={[styles.label, { color: colors.foreground }]}>{label}</Text>
-      <View style={[styles.inputWrapper, { backgroundColor: colors.muted, borderColor: colors.border }]}>
+      <View style={[styles.inputWrapper, { backgroundColor: colors.muted, borderColor: fieldError ? colors.destructive : colors.border }]}>
         <Feather name={icon as "user"} size={18} color={colors.mutedForeground} />
-        <TextInput
-          style={[styles.input, { color: colors.foreground }]}
+        <TextInput ref={input} accessibilityLabel={label} aria-invalid={!!fieldError}
+          style={[styles.input, multiline && styles.textArea, { color: colors.foreground }]}
           placeholder={placeholder}
           placeholderTextColor={colors.mutedForeground}
           value={value}
@@ -267,6 +253,7 @@ function Field({
           </TouchableOpacity>
         )}
       </View>
+      {fieldError ? <Text accessibilityRole="alert" style={[styles.errorText, { color: colors.destructive }]}>{fieldError}</Text> : null}
     </View>
   );
 }
@@ -286,7 +273,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: 16, fontFamily: "Inter_400Regular" },
   textArea: { minHeight: 80, paddingTop: 4 },
   chipGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 7 },
+  chip: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 12, minHeight: 48 },
   chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
   errorBox: { flexDirection: "row", alignItems: "center", gap: 8, borderRadius: 10, padding: 12 },
   errorText: { flex: 1, fontSize: 13, fontFamily: "Inter_400Regular" },

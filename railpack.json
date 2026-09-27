@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "build": {
+      "inputs": [{ "step": "install" }],
+      "commands": ["pnpm --filter @workspace/api-server run build"]
+    }
+  },
+  "deploy": {
+    "startCommand": "node artifacts/api-server/dist/index.mjs"
+  }
+}

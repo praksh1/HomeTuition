@@ -32,11 +32,19 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
       {failed ? <ProgramButton label="Try again" onPress={retry} /> : null}
     </ProgramNotice> : <>
       <ProgramCardShell>
-        <Text style={[t.title2, { color: colors.foreground }]}>Teach without buying a tier</Text>
-        <Text style={[t.body, { color: colors.foreground }]}>Prepare your class and set its price. New teacher-plan purchases are paused while we connect student payments.</Text>
-        <Text style={[t.body, { color: colors.foreground }]}>When you enter a class price and lesson dates, Fadko shows your estimated earnings for each enrolled student and the approximate amount per lesson.</Text>
-        <Text style={[t.caption, { color: colors.mutedForeground }]}>Estimates are shown before applicable taxes. Final earnings can change after an approved refund or adjustment. Students pay upfront; eligible earnings are released after lesson delivery and the complaint window.</Text>
+        <Text style={[t.title2, { color: colors.foreground }]}>Your teaching, your earnings</Text>
+        <Text style={[t.body, { color: colors.foreground }]}>Set your tuition when you create a class. Students pay to enroll; creating and publishing a class costs you nothing.</Text>
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>You receive {policy.teacherShareBps / 100}% of the tuition. Fadko's commission is {policy.platformShareBps / 100}%.</Text>
+        <Text style={[t.body, { color: colors.foreground }]}>Before you publish, you'll see the estimated earnings per student and per lesson.</Text>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>Estimates are before applicable taxes. Approved refunds or adjustments can change the final amount.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
+      </ProgramCardShell>
+      <ProgramCardShell>
+        <Text style={[t.title2, { color: colors.foreground }]}>When will I get paid?</Text>
+        <Text style={[t.body, { color: colors.foreground }]}>During testing, students rehearse checkout without paying. Test earnings are not money you can withdraw.</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>For real payments, each lesson's share stays pending until delivery is recorded and the student's 48-hour review window ends. A dispute holds the affected lesson's share for human review. Make-up requests are currently handled by Support.</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>Eligible earnings are not yet a bank transfer. Fadko will publish the payout schedule, transfer method and processing time before accepting real payments.</Text>
+        <ProgramButton label="Ask about earnings" onPress={() => router.push("/support")} />
       </ProgramCardShell>
       <ProgramNotice title={policy.testPilotEndsAt ? "Simulated checkout is open" : "Listings only for now"} tone="waiting">
         <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "Signed-in, verified students can rehearse booking published classes without payment. Lesson links appear after the first simulated booking. Test activity creates no real earnings or payouts." : "Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms."}</Text>

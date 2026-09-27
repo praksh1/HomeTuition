@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet } from "react-native";
 import type { StyleProp, ViewStyle } from "react-native";
 
@@ -8,6 +8,9 @@ interface Props {
   uri: string;
   style?: StyleProp<ViewStyle>;
   zoom?: number;
+  onReady?: () => void;
+  onProblem?: () => void;
+  privateReview?: boolean;
 }
 
 interface PdfViewport { width: number; height: number }
@@ -28,10 +31,13 @@ interface PdfDocumentProxy {
 
 const MAX_PREVIEW_PAGES = 100;
 
-function PdfPage({ document, pageNumber, total }: {
+function PdfPage({ document, pageNumber, total, onRendered, onProblem, privateReview }: {
   document: PdfDocumentProxy;
   pageNumber: number;
   total: number;
+  onRendered: (page: number) => void;
+  onProblem: () => void;
+  privateReview?: boolean;
 }) {
   const colors = useColors();
   const stage = useRef<HTMLDivElement | null>(null);
@@ -79,8 +85,9 @@ function PdfPage({ document, pageNumber, total }: {
         canvas.current.height = Math.max(1, Math.round(viewport.height));
         task = page.render({ canvas: canvas.current, canvasContext: context, viewport });
         await task.promise;
+        if (!cancelled) { setProblem(false); onRendered(pageNumber); }
       } catch (error) {
-        if (!cancelled && (error as { name?: string })?.name !== "RenderingCancelledException") setProblem(true);
+        if (!cancelled && (error as { name?: string })?.name !== "RenderingCancelledException") { setProblem(true); onProblem(); }
       }
     })();
 
@@ -89,7 +96,7 @@ function PdfPage({ document, pageNumber, total }: {
       try { task?.cancel(); } catch { /* already finished */ }
       page?.cleanup();
     };
-  }, [document, near, pageNumber]);
+  }, [document, near, pageNumber, onRendered, onProblem]);
 
   return (
     <div
@@ -100,7 +107,7 @@ function PdfPage({ document, pageNumber, total }: {
       <canvas ref={canvas} aria-label={`Page ${pageNumber} of ${total}`} style={{ width: "100%", height: "100%", display: "block" }} />
       {problem ? (
         <div role="alert" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: colors.destructive, padding: 24, textAlign: "center" }}>
-          Page {pageNumber} could not be displayed. You can still download the document.
+          Page {pageNumber} could not be displayed. {privateReview ? "Request a readable replacement before approval." : "You can still download the document."}
         </div>
       ) : null}
       <span style={{ position: "absolute", right: 10, bottom: 8, borderRadius: 999, background: colors.secondary, color: colors.onInverse, padding: "3px 8px", font: "12px system-ui" }}>
@@ -117,10 +124,20 @@ function PdfPage({ document, pageNumber, total }: {
  * pages itself from Fadko's worker. Only nearby pages are rasterized so a long handout does
  * not become dozens of full-size canvases in phone memory.
  */
-export default function PdfViewer({ uri, style, zoom = 1 }: Props) {
+export default function PdfViewer({ uri, style, zoom = 1, onReady, onProblem, privateReview }: Props) {
   const flat = (StyleSheet.flatten(style) as React.CSSProperties) ?? {};
   const [document, setDocument] = useState<PdfDocumentProxy | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const callbacks = useRef({ onReady, onProblem });
+  callbacks.current = { onReady, onProblem };
+  const rendered = useRef(new Set<number>());
+  const pageFailure = useRef(false);
+  const expected = useRef(0);
+  const renderedPage = useCallback((page: number) => {
+    rendered.current.add(page);
+    if (!pageFailure.current && expected.current > 0 && rendered.current.size === expected.current) callbacks.current.onReady?.();
+  }, []);
+  const failedPage = useCallback(() => { pageFailure.current = true; callbacks.current.onProblem?.(); }, []);
 
   useEffect(() => {
     let alive = true;
@@ -128,6 +145,7 @@ export default function PdfViewer({ uri, style, zoom = 1 }: Props) {
     let loadingTask: { promise: Promise<PdfDocumentProxy>; destroy?(): Promise<void> } | null = null;
     setDocument(null);
     setProblem(null);
+    rendered.current.clear(); pageFailure.current = false; expected.current = 0;
 
     void (async () => {
       try {
@@ -137,9 +155,12 @@ export default function PdfViewer({ uri, style, zoom = 1 }: Props) {
         }
         loadingTask = pdfjs.getDocument({ url: uri, isEvalSupported: false, disableAutoFetch: true }) as unknown as typeof loadingTask;
         loaded = await loadingTask!.promise;
-        if (alive) setDocument(loaded);
+        if (alive) {
+          expected.current = loaded.numPages; setDocument(loaded);
+          if (loaded.numPages > MAX_PREVIEW_PAGES) failedPage();
+        }
       } catch {
-        if (alive) setProblem("This PDF could not be displayed. You can still download it.");
+        if (alive) { setProblem(privateReview ? "This PDF could not be read. Request a readable replacement." : "This PDF could not be displayed. You can still download it."); failedPage(); }
       }
     })();
 
@@ -148,7 +169,7 @@ export default function PdfViewer({ uri, style, zoom = 1 }: Props) {
       if (loadingTask?.destroy) void loadingTask.destroy();
       else void loaded?.destroy();
     };
-  }, [uri]);
+  }, [uri, privateReview, failedPage]);
 
   const total = Math.min(document?.numPages ?? 0, MAX_PREVIEW_PAGES);
   return (
@@ -158,11 +179,11 @@ export default function PdfViewer({ uri, style, zoom = 1 }: Props) {
       {document ? (
         <div style={{ width: `${Math.round(Math.max(0.75, zoom) * 100)}%`, minWidth: "100%", display: "flex", flexDirection: "column", gap: 12, padding: 12, boxSizing: "border-box" }}>
           {Array.from({ length: total }, (_, index) => (
-            <PdfPage key={index + 1} document={document} pageNumber={index + 1} total={document.numPages} />
+            <PdfPage key={index + 1} document={document} pageNumber={index + 1} total={document.numPages} onRendered={renderedPage} onProblem={failedPage} privateReview={privateReview} />
           ))}
           {document.numPages > MAX_PREVIEW_PAGES ? (
             <div style={{ padding: 16, textAlign: "center" }}>
-              Previewing the first {MAX_PREVIEW_PAGES} pages. Download the file to see the rest.
+              Previewing the first {MAX_PREVIEW_PAGES} pages. {privateReview ? "Request a shorter document before approval." : "Download the file to see the rest."}
             </div>
           ) : null}
         </div>

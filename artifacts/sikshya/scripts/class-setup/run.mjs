@@ -38,7 +38,7 @@ try {
     await page.getByLabel("Class name", { exact: true }).fill("SEE Maths evening tuition");
     await page.getByLabel("Tell students about your class", { exact: true }).fill("We solve school exercises together and make time for questions.");
     await button("Both").click();
-    check(await button("Add a teaching plan (optional)").isVisible(), `${width}: formal learning path optional`);
+    check(await button("Add a lesson outline (optional)").isVisible(), `${width}: lesson outline optional`);
     await page.screenshot({ path: path.join(work, `${width}-description.png`), fullPage: true });
     await button("Continue").click();
     await page.getByRole("button", { name: /^Date:/ }).click();
@@ -52,13 +52,13 @@ try {
     await page.getByLabel("Price for 30 days (NPR)", { exact: true }).fill("3000");
     check(await page.getByText(/approximately NPR .* per lesson/).isVisible(), `${width}: price shows lesson average`);
     check(await page.getByText("Your estimated earnings", { exact: true }).isVisible(), `${width}: price step shows teacher earnings estimate`);
-    check(await page.getByText("NPR 2,100", { exact: true }).isVisible(), `${width}: estimate names earnings per enrolled student without advertising a percentage`);
+    check(await page.getByText("NPR 2,100", { exact: true }).isVisible(), `${width}: estimate names earnings per enrolled student`);
     const priceBreakdown = await page.getByText(/Includes \d+ live lessons/).innerText();
     const lessonCount = Number(priceBreakdown.match(/Includes (\d+) live lessons/)?.[1]);
     const expectedPerLesson = (2100 / lessonCount).toLocaleString("en-NP", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     check(await page.getByText(`NPR ${expectedPerLesson}`, { exact: true }).isVisible(), `${width}: estimate uses the actual lesson count`);
     check(await page.getByText(/Before applicable taxes/).isVisible(), `${width}: estimate reserves tax and refund adjustments honestly`);
-    check(!(await page.locator("body").innerText()).includes("70%"), `${width}: class pricing advertises no percentage split`);
+    check((await page.locator("body").innerText()).includes("Fadko's 30% commission") && (await page.locator("body").innerText()).includes("your 70% share"), `${width}: class pricing makes the 70/30 split explicit`);
     await page.screenshot({ path: path.join(work, `${width}-price.png`), fullPage: true });
     await button("Review my class").click();
     check(await page.getByText("Choose when students may join this class.", { exact: true }).isVisible(), `${width}: joining decision cannot be skipped`);
@@ -184,5 +184,31 @@ try {
   await singleButton("Continue").click();
   check(await single.getByLabel("Maximum students", { exact: true }).isVisible(), "only a clear timetable advances to pricing");
   await single.close();
+
+  const unavailable = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await unavailable.goto(`http://127.0.0.1:${server.address().port}/create-class?billing=fail`);
+  const unavailableButton = (name) => unavailable.getByRole("button", { name, exact: true });
+  await unavailable.getByLabel("Class name", { exact: true }).fill("SEE Maths evening tuition");
+  await unavailable.getByLabel("Tell students about your class", { exact: true }).fill("We solve school exercises together and make time for questions.");
+  await unavailableButton("Both").click();
+  await unavailableButton("Continue").click();
+  await unavailable.getByRole("button", { name: /^Date:/ }).click();
+  await unavailable.getByTestId("bs-next-month").click(); await unavailable.getByTestId("bs-day-3").click(); await unavailable.getByTestId("bs-confirm").click();
+  await unavailable.getByTestId("class-time-0").fill("16:15");
+  await unavailableButton("Continue").click();
+  await unavailable.getByText("Teaching terms unavailable", { exact: true }).waitFor();
+  check(await unavailableButton("Reload teaching terms").isVisible(), "failed billing load offers a retry on the price step");
+  await unavailable.getByLabel("Maximum students", { exact: true }).fill("6");
+  await unavailable.getByLabel("Price for 30 days (NPR)", { exact: true }).fill("3000");
+  await unavailableButton("Allow joining for remaining lessons").click();
+  await unavailableButton("Review my class").click();
+  check(await unavailable.getByText("Current teaching terms could not be confirmed. Reload them before reviewing your price.", { exact: true }).isVisible(), "unconfirmed commission blocks price review");
+  check((await unavailable.evaluate(() => window.classRequests)).length === 0, "unconfirmed commission cannot create a listing");
+  await unavailable.evaluate(() => { window.billingRecovered = true; });
+  await unavailableButton("Reload teaching terms").click();
+  await unavailable.getByText("Your estimated earnings", { exact: true }).waitFor();
+  await unavailableButton("Review my class").click();
+  check(await unavailableButton("Save draft").isVisible(), "successful billing retry restores the normal review path");
+  await unavailable.close();
 } finally { await browser.close(); await new Promise((resolve) => server.close(resolve)); }
 console.log(`${checks} checks passed. Screenshots: ${work}`);

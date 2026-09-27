@@ -75,7 +75,7 @@ export default function AdminTickets() {
     const sure = await confirm("Sign out of the support desk?", "You will need your password to get back in.");
     if (!sure) return;
     await logout();
-    router.replace("/welcome");
+    router.replace(process.env.EXPO_PUBLIC_OPERATOR_SITE === "true" ? "/" as never : "/welcome");
   };
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["id"]>("active");
   const [whose, setWhose] = useState<(typeof WHOSE)[number]["id"]>("");
@@ -84,6 +84,12 @@ export default function AdminTickets() {
   const [counts, setCounts] = useState<{ openTickets: number; pendingTeachers: number; openModeration: number; suspendedAccounts: number; known: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [identityAccess, setIdentityAccess] = useState(false);
+  useFocusEffect(useCallback(() => {
+    let current = true;
+    void apiGet<{ allowed: boolean }>("/identity-review/access").then(result => { if (current) setIdentityAccess(result.allowed); }).catch(() => { if (current) setIdentityAccess(false); });
+    return () => { current = false; setIdentityAccess(false); };
+  }, []));
 
   const load = useCallback(async () => {
     setFailed(false);
@@ -166,7 +172,17 @@ export default function AdminTickets() {
           <Text style={[styles.reason, { color: colors.primary }]}>Teacher sign-ups and moderation</Text>
           <Feather name="chevron-right" size={16} color={colors.primary} />
         </View>
-        <Text style={[styles.body, { color: colors.mutedForeground }]}>Review identity documents, account applications, and flagged profile or class text in People.</Text>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Review teacher applications and flagged profile or class text in People. Private identity reviews have separate access.</Text>
+      </TouchableOpacity>
+
+      {identityAccess && <TouchableOpacity accessibilityRole="button" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/identity-review")} activeOpacity={0.8} testID="admin-identity-review-link">
+        <View style={styles.cardHead}><Text style={[styles.reason, { color: colors.primary }]}>Private identity reviews</Text><Feather name="shield" size={20} color={colors.primary} /></View>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Restricted document review. Every document access and decision is recorded.</Text>
+      </TouchableOpacity>}
+
+      <TouchableOpacity accessibilityRole="button" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/account-closures")} activeOpacity={0.8} testID="admin-account-closures-link">
+        <View style={styles.cardHead}><Text style={[styles.reason, { color: colors.primary }]}>Account closure requests</Text><Feather name="user-x" size={20} color={colors.primary} /></View>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Review outstanding commitments before an account can close. No automatic refunds or cancellations.</Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/help-library")} activeOpacity={0.8} testID="admin-help-library-link">

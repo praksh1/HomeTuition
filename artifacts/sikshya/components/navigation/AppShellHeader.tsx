@@ -35,6 +35,10 @@ export function AppShellHeader({ role, routeName }: { role: ShellRole; routeName
 
   const common: ProfileMenuItem[] = [
     {
+      section: "Account", icon: "user-x", label: "Account closure",
+      detail: "Request a Support review", onPress: () => go('/account-closure'),
+    },
+    {
       section: "Account",
       icon: "edit-3",
       label: "Personal information",
@@ -106,7 +110,7 @@ export function AppShellHeader({ role, routeName }: { role: ShellRole; routeName
           section: "Money",
           icon: "credit-card",
           label: "Teaching & earnings",
-          detail: "Pending earnings and payout records",
+          detail: "Lesson earnings, holds and receipts",
           onPress: () => go("/(teacher)/subscription"),
         },
       ]

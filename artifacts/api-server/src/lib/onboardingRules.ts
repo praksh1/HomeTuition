@@ -13,16 +13,21 @@ export function ageOn(dateOfBirth: string, today = new Date()): number | null {
   return age;
 }
 
-/** Preserve an earlier completion decision while enforcing the photo rule for new teachers. */
+/** Both teaching and learning accounts need a photo, including older accounts. */
 export function completedAccountAt(input: {
   existingCompletedAt: Date | null | undefined;
   hasProfilePhoto: boolean;
   role: string;
   now?: Date;
 }): Date | null {
+  if (!input.hasProfilePhoto) return null;
   if (input.existingCompletedAt) return input.existingCompletedAt;
-  if (input.role === "student" || input.hasProfilePhoto) return input.now ?? new Date();
+  if (input.role === "student" || input.role === "teacher") return input.now ?? new Date();
   return null;
+}
+
+export function hasRequiredProfile(row: { completedAt?: Date | null; profilePhotoKey?: string | null; phone?: string | null } | undefined): boolean {
+  return !!row?.completedAt && !!row.profilePhotoKey?.trim() && validNepalPhone(row.phone ?? "");
 }
 
 /** Accept Nepal mobile and landline formats while rejecting an 11-digit local number. */

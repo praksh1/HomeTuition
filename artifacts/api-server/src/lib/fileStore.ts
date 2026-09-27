@@ -5,6 +5,7 @@ import { logger } from "./logger";
 import { describeStorageFailure, type StorageFailure } from "./storageErrors";
 import { resolveEndpoint } from "./storageEndpoint";
 import { ALLOWED_UPLOAD_TYPES, downloadDisposition, extensionFor } from "./fileStoreFormats";
+import { isLegacyIdentityFile } from "./legacyIdentityFiles";
 
 // Re-exported so callers have one place to import storage things from.
 export { describeStorageFailure, type StorageFailure };
@@ -232,6 +233,7 @@ export async function putObject(args: {
 export async function signView(key: string, downloadName?: string): Promise<string | null> {
   const c = client();
   if (!c) return null;
+  if (await isLegacyIdentityFile(key)) throw new Error("Private identity files cannot use ordinary attachment links.");
   const disposition = downloadDisposition(downloadName);
   return getSignedUrl(
     c.client,
@@ -242,6 +244,36 @@ export async function signView(key: string, downloadName?: string): Promise<stri
     }),
     { expiresIn: VIEW_URL_MINUTES * 60 },
   );
+}
+
+/**
+ * Bounded, server-authorized read for placing an existing handout on a live board.
+ * Never use this for identity files or arbitrary attachments. The route checks both the
+ * class and material owner before calling it; a size cap protects the small API server.
+ */
+export async function readBoardObject(key: string, maxBytes: number): Promise<Buffer | null> {
+  const c = client();
+  if (!c) return null;
+  if (await isLegacyIdentityFile(key)) throw new Error("Private identity files cannot be used as board materials.");
+  const object = await c.client.send(
+    new GetObjectCommand({ Bucket: c.config.bucket, Key: key }),
+    { abortSignal: AbortSignal.timeout(30_000) },
+  );
+  if (object.ContentLength !== undefined && object.ContentLength > maxBytes) {
+    throw new RangeError("This material is too large for the live board.");
+  }
+  if (!object.Body) throw new Error("The saved material is empty.");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of object.Body as AsyncIterable<Uint8Array>) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      throw new RangeError("This material is too large for the live board.");
+    }
+    chunks.push(Buffer.from(chunk));
+  }
+  if (!size) throw new Error("The saved material is empty.");
+  return Buffer.concat(chunks, size);
 }
 
 export interface UploadFacts {
@@ -293,6 +325,7 @@ export async function verifyUpload(key: string, userId: number): Promise<UploadV
   if (ownerOf(key) !== userId) {
     return { ok: false, reason: "That file does not belong to you." };
   }
+  if (await isLegacyIdentityFile(key)) return { ok: false, reason: "Identity documents cannot be reused as messages, profile photos, homework or support attachments." };
   const facts = await describeUpload(key);
   if (!facts) return { ok: false, reason: "File uploads are not set up on this server." };
   if (!facts.exists) return { ok: false, reason: "That file did not finish uploading." };

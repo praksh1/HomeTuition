@@ -68,6 +68,13 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     return;
   }
 
+  // Enable only after the separate Desk site and administrator-issued accounts have been
+  // verified. Until then the legacy admin login remains available for a safe migration.
+  if (user.role === "admin" && process.env.OPERATOR_SITE_ENFORCEMENT_ENABLED === "true") {
+    res.status(403).json({ error: "Use the private Fadko Desk address to sign in as an operator.", code: "OPERATOR_LOGIN_REQUIRED" });
+    return;
+  }
+
   /**
    * A suspended account cannot sign in, and is told so.
    *
@@ -125,6 +132,9 @@ router.post("/auth/social", async (req, res): Promise<void> => {
     const [user] = await db.select(AUTH_COLUMNS).from(usersTable).where(eq(usersTable.id, identity.userId));
     if (!user) { res.status(401).json({ error: "The linked Fadko account no longer exists." }); return; }
     if (user.suspendedAt) { res.status(403).json({ error: "This account has been suspended." }); return; }
+    if (user.role === "admin" && process.env.OPERATOR_SITE_ENFORCEMENT_ENABLED === "true") {
+      res.status(403).json({ error: "Use the private Fadko Desk address to sign in as an operator.", code: "OPERATOR_LOGIN_REQUIRED" }); return;
+    }
     const token = signToken({ userId: user.id, email: user.email, role: user.role });
     res.json({ token, user: await buildUserProfile(user) });
   } catch (error) {
@@ -176,6 +186,15 @@ router.post("/auth/register", async (req, res): Promise<void> => {
   if (!name || !email || !password || !role) {
     res.status(400).json({ error: "name, email, password, and role are required" });
     return;
+  }
+  if (typeof name !== "string" || !name.trim()) {
+    res.status(400).json({ error: "Enter your full name.", field: "name" }); return;
+  }
+  if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    res.status(400).json({ error: "Enter a valid email address you can open.", field: "email" }); return;
+  }
+  if (typeof password !== "string") {
+    res.status(400).json({ error: "Enter a password with at least 8 characters.", field: "password" }); return;
   }
   if (!["teacher", "student"].includes(role)) {
     res.status(400).json({ error: "role must be teacher or student" });

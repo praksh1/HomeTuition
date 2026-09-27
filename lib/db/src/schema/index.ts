@@ -28,6 +28,7 @@ export * from "./recurringEnrollments";
 export * from "./homework";
 export * from "./accountSecurity";
 export * from "./onboarding";
+export * from "./identityVerification";
 export * from "./testTeachingGrants";
 export * from "./testStudentAccess";
 export * from "./sessionProofAggregates";

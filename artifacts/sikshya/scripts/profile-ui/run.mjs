@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import { bundleForBrowser } from "../bundle-for-browser.mjs";
 import { getChromium } from "../board-tests/harness.mjs";
+import { makePdf } from "../board-tests/pdf-fixture.mjs";
+import { createRequire } from "node:module";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const work = mkdtempSync(path.join(tmpdir(), "fadko-profile-ui-"));
@@ -21,6 +23,7 @@ const built = await bundleForBrowser({
     "@/components/SocialSignIn": path.join(here, "social.js"),
     "@/utils/openAttachment": path.join(here, "attachment.js"),
     "@/utils/uploadFile": path.join(here, "upload.js"),
+    "@/utils/identityVerification": path.join(here, "identity-upload.js"),
     "expo-router": path.join(here, "router.js"),
     "react-native-safe-area-context": path.join(here, "context.js"),
     "expo-document-picker": path.join(here, "document-picker.js"),
@@ -31,6 +34,8 @@ const built = await bundleForBrowser({
 assert.ok(built.ok, built.error);
 
 const server = createServer((req, res) => {
+  if (req.url === "/synthetic-pages.pdf") { res.setHeader("Content-Type", "application/pdf"); res.end(Buffer.from(makePdf(4).split(",")[1], "base64")); return; }
+  if (req.url === "/pdf.worker.min.js") { res.setHeader("Content-Type", "application/javascript; charset=utf-8"); res.end(readFileSync(createRequire(import.meta.url).resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs"))); return; }
   res.setHeader("Content-Type", req.url === "/bundle.js" ? "application/javascript; charset=utf-8" : "text/html; charset=utf-8");
   res.end(req.url === "/bundle.js" ? readFileSync(bundle) : '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{height:100%;margin:0}</style><div id="root"></div><script src="/bundle.js"></script>');
 });
@@ -44,7 +49,112 @@ try {
     const base = `http://127.0.0.1:${server.address().port}`;
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
+    page.on("dialog", dialog => dialog.accept());
     page.on("pageerror", (error) => errors.push(String(error)));
+
+    await page.goto(`${base}?screen=closure`);
+    await page.getByRole('button',{name:'Request account closure',exact:true}).click();
+    check(!await page.evaluate(()=>Boolean(window.closureRequested)),`${width}: closure requires explicit second confirmation`);
+    await page.getByRole('button',{name:'Confirm closure request',exact:true}).click();
+    await page.getByText('Your request is with Support',{exact:true}).waitFor();
+    check(await page.evaluate(()=>window.closureRequested.confirmed===true),`${width}: deliberate request sent`);
+    await page.getByRole('button',{name:'Keep my account — cancel request',exact:true}).click();
+    check(await page.evaluate(()=>window.closureCancelled.version===0),`${width}: cancellation carries review version`);
+    await page.screenshot({path:path.join(work,`closure-${width}.png`),fullPage:true});
+    await page.goto(`${base}?screen=closures`);
+    await page.getByRole('button',{name:'Review commitments',exact:true}).click();
+    await page.getByText('Some payment history needs reconciliation. These counts are not an all-clear.',{exact:true}).waitFor();
+    check((await page.locator('body').innerText()).includes('Final closure is not enabled yet'),`${width}: operator cannot mistake preflight for completion`);
+    check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${width}: closure review has no horizontal overflow`);
+    await page.screenshot({path:path.join(work,`closure-review-${width}.png`),fullPage:true});
+    await page.goto(`${base}?screen=closures&closure-ready=1`);
+    await page.getByRole('button',{name:'Review commitments',exact:true}).click();
+    await page.getByRole('button',{name:'Close reviewed account',exact:true}).click();
+    check(!await page.evaluate(()=>Boolean(window.closureCompleted)),`${width}: operator must confirm permanent closure separately`);
+    await page.getByRole('button',{name:'Confirm permanent closure',exact:true}).click();
+    await page.getByText('Account sign-in is closed. Video disconnection is queued; verify it before considering access cleanup finished.',{exact:true}).waitFor();
+    check(await page.evaluate(()=>window.closureCompleted.version===3&&window.closureCompleted.confirmed===true),`${width}: closure uses the reviewed version and states unfinished media work honestly`);
+
+    await page.goto(`${base}?screen=review`);
+    await page.getByTestId("identity-review-item-77").waitFor();
+    check(!(await page.locator("body").innerText()).includes("Synthetic Parent Fixture"), `${width}: queue keeps legal identity details private`);
+    await page.getByTestId("identity-review-item-77").click();
+    await page.getByText("Synthetic Parent Fixture", { exact: true }).waitFor();
+    check(await page.getByRole("button", { name: "Approve identity", exact: true }).isDisabled(), `${width}: cannot approve before document review`);
+    check((await page.getByTestId("identity-review-details").innerText()).includes("not the student"), `${width}: parent identity is clearly distinguished from student`);
+    await page.getByRole("button", { name: "Open private document", exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="identity-review-confirm"]')?.getAttribute("aria-disabled") !== "true");
+    await page.getByTestId("identity-review-confirm").click();
+    await page.getByRole("button", { name: "Approve identity", exact: true }).click();
+    check(!await page.evaluate(() => window.identityDecision), `${width}: approval requires a second deliberate confirmation`);
+    await page.screenshot({ path: path.join(work, `${width}-private-review.png`), fullPage: true });
+    check(await page.getByTestId("identity-review-details").evaluate(node => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: private record fits viewport`);
+    await page.getByRole("button", { name: "Save review decision", exact: true }).click();
+    await page.getByText(/Review saved/).waitFor();
+    check((await page.evaluate(() => window.identityDecision)).decision === "approved", `${width}: confirmed approval is submitted`);
+    check(!await page.getByTestId("identity-review-details").count(), `${width}: private fields clear after decision`);
+
+    await page.goto(`${base}?screen=review&pdf=1`);
+    await page.getByTestId("identity-review-item-77").click();
+    await page.getByRole("button", { name: "Open private document", exact: true }).click();
+    await page.getByTestId("pdf-page-4").waitFor();
+    await page.getByTestId("identity-review-confirm").click();
+    for (let number = 1; number <= 4; number++) {
+      await page.getByTestId(`pdf-page-${number}`).scrollIntoViewIfNeeded();
+      await page.waitForFunction(n => { const canvas = document.querySelector(`[data-testid="pdf-page-${n}"] canvas`); return canvas && canvas.width > 1; }, number);
+    }
+    await page.getByRole("button", { name: "Approve identity", exact: true }).click();
+    check(await page.getByTestId("identity-review-decision").isVisible(), `${width}: a real multipage PDF can be reviewed before approval`);
+    check(!await page.evaluate(() => window.identityDecision), `${width}: merely reviewing PDF pages does not approve a document`);
+    await page.getByRole("button", { name: "Close private record", exact: true }).click();
+    check(!await page.getByTestId("identity-review-preview").count(), `${width}: closing review removes the PDF and private metadata`);
+
+    await page.goto(`${base}?screen=review&broken=1`);
+    await page.getByTestId("identity-review-item-77").click();
+    await page.getByRole("button", { name: "Open private document", exact: true }).click();
+    await page.getByText("This image could not be displayed.", { exact: true }).waitFor();
+    await page.getByTestId("identity-review-confirm").click();
+    check(await page.getByRole("button", { name: "Approve identity", exact: true }).isDisabled(), `${width}: an unreadable preview cannot be approved`);
+    await page.getByRole("radio", { name: "Document is unreadable" }).click();
+    await page.getByRole("button", { name: "Request a correction", exact: true }).click();
+    await page.getByRole("button", { name: "Save review decision", exact: true }).click();
+    await page.getByText(/Review saved/).waitFor();
+    check((await page.evaluate(() => window.identityDecision)).rejectionCode === "unreadable", `${width}: an unreadable file can receive a specific correction request`);
+
+    await page.goto(`${base}?screen=review&denied=1`);
+    await page.getByText("You do not have identity-review access.", { exact: true }).waitFor();
+    check(!await page.getByTestId("identity-review-item-77").count(), `${width}: denied operator sees no review records`);
+
+    await page.goto(`${base}?screen=holds`);
+    await page.getByTestId("identity-hold-number").fill("77");
+    await page.getByRole("button", { name: "Load preservation status", exact: true }).click();
+    await page.getByTestId("identity-hold-record").waitFor();
+    check(!(await page.locator("body").innerText()).includes("Synthetic Parent Fixture"), `${width}: preservation workspace does not fetch or expose legal details`);
+    await page.getByTestId("identity-hold-case").fill("3");
+    await page.getByRole("button", { name: "Preserve for investigation", exact: true }).click();
+    check(!await page.evaluate(() => window.identityHoldMutation), `${width}: a hold requires explicit confirmation`);
+    await page.getByRole("button", { name: "Confirm preservation action", exact: true }).click();
+    await page.getByText("Preservation active", { exact: true }).waitFor();
+    check((await page.evaluate(() => window.identityHoldMutation)).caseId === 3, `${width}: preservation is linked to an explicit case`);
+    await page.getByRole("button", { name: "Keep hold after review", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm preservation action", exact: true }).click();
+    await page.waitForFunction(() => window.identityHoldMutation?.action === "review");
+    check((await page.evaluate(() => window.identityHoldMutation)).version === 1, `${width}: periodic review uses current revision`);
+    await page.getByRole("button", { name: "Release preservation hold", exact: true }).click();
+    check((await page.getByTestId("identity-hold-confirmation").innerText()).includes("Already-due data may be deleted"), `${width}: releasing a hold warns about original retention deadlines`);
+    await page.screenshot({ path: path.join(work, `${width}-identity-holds.png`), fullPage: true });
+    check(await page.getByTestId("identity-hold-record").evaluate(node => node.getBoundingClientRect().right <= innerWidth + 1), `${width}: preservation controls fit viewport`);
+    await page.getByRole("button", { name: "Confirm preservation action", exact: true }).click();
+    await page.getByText("No active hold", { exact: true }).waitFor();
+    check((await page.evaluate(() => window.identityHoldMutation)).action === "release", `${width}: release remains an operator action`);
+    await page.goto(`${base}?screen=holds&stale=1`);
+    await page.getByTestId("identity-hold-number").fill("77");
+    await page.getByRole("button", { name: "Load preservation status", exact: true }).click();
+    await page.getByTestId("identity-hold-case").fill("3");
+    await page.getByRole("button", { name: "Preserve for investigation", exact: true }).click();
+    await page.getByRole("button", { name: "Confirm preservation action", exact: true }).click();
+    await page.getByText("This hold changed. Reload the record before deciding.", { exact: true }).waitFor();
+    check(!await page.getByTestId("identity-hold-record").count(), `${width}: stale action requires a fresh record instead of silent retry`);
 
     await page.goto(`${base}?screen=library`);
     await page.getByTestId("help-starter-import").click();
@@ -157,8 +267,10 @@ try {
     check(!body.includes("National ID / Citizenship"), `${width}: teacher document forms start collapsed`);
     check((await page.getByTestId("teacher-credentials-toggle").boundingBox()).height >= 44, `${width}: credentials disclosure meets touch floor`);
     await page.getByTestId("teacher-credentials-toggle").click();
-    await page.getByText("National ID / Citizenship", { exact: true }).waitFor();
-    check((await page.locator("body").innerText()).includes("1 approved · 1 submitted"), `${width}: credential summary stays visible`);
+    await page.getByText("Teaching License", { exact: true }).waitFor();
+    check((await page.locator("body").innerText()).includes("0 approved · 0 submitted"), `${width}: citizenship is not counted as a teaching qualification`);
+    check(!await page.getByText("National ID / Citizenship", { exact: true }).count(), `${width}: no citizenship upload shortcut in general qualifications`);
+    check(await page.getByRole("button", { name: "Open private identity verification", exact: true }).isVisible(), `${width}: identity has a dedicated private route`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: teacher profile has no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-teacher.png`), fullPage: true });
 
@@ -178,6 +290,19 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: account editor has no horizontal overflow`);
     check(errors.length === 0, `${width}: profile flows have no browser exceptions`);
     await page.screenshot({ path: path.join(work, `${width}-editor.png`), fullPage: true });
+
+    await page.goto(`${base}?screen=editor&profile=load-error`);
+    await page.getByTestId("account-load-error").waitFor();
+    check(await page.getByTestId("account-save").count() === 0, `${width}: load failure cannot expose a blank save form`);
+    check(await page.getByTestId("account-phone").count() === 0, `${width}: load failure cannot overwrite saved phone details`);
+    check((await page.getByTestId("account-load-retry").boundingBox()).height >= 44, `${width}: retry meets touch target floor`);
+    await page.screenshot({ path: path.join(work, `${width}-editor-retry.png`), fullPage: true });
+    await page.evaluate(() => { window.retryAccountLoad = true; });
+    await page.getByTestId("account-load-retry").click();
+    await page.getByTestId("account-phone").waitFor();
+    check(await page.getByTestId("account-phone").inputValue() === "+977 9800000000", `${width}: retry restores saved account data`);
+    check(await page.getByTestId("account-load-error").count() === 0, `${width}: successful retry clears error state`);
+    check(!await page.evaluate(() => !!window.lastSavedAccount), `${width}: retry does not write account data`);
 
     await page.goto(`${base}?screen=editor&profile=incomplete`);
     await page.getByText("Contact", { exact: true }).waitFor();
@@ -212,6 +337,66 @@ try {
     check((await page.getByTestId("account-institution").count()) === 0, `${width}: institution input waits for an affiliation choice`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: confirmation guidance does not create horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-editor-fixture.png`), fullPage: true });
+    for (const role of ["teacher", "student"]) {
+      await page.goto(`${base}?screen=editor&role=${role}`);
+      await page.getByTestId("account-save").click();
+      check(await page.getByText("Select and upload a profile photo before saving.", { exact: true }).isVisible(), `${width}: ${role} must upload a photo even in edit mode`);
+      check(!await page.evaluate(() => !!window.lastSavedAccount), `${width}: ${role} missing photo does not submit details`);
+      await page.evaluate(() => window.testPhotoSelected = true);
+      await page.getByText("Select photo", { exact: true }).click();
+      await page.getByText("Upload selected photo", { exact: true }).click();
+      await page.getByText("Photo uploaded — choose a replacement", { exact: true }).waitFor();
+      check(await page.evaluate(() => window.photoUploaded === "fixture"), `${width}: ${role} upload uses the profile-photo endpoint`);
+      await page.getByTestId("account-save").click();
+      check(await page.evaluate(() => window.lastSavedAccount?.path === "/onboarding/me"), `${width}: ${role} valid account can save after photo upload`);
+    }
+    await page.goto(`${base}?screen=identity&identity=new&role=student`);
+    await page.getByText("No citizenship document needed", { exact: true }).waitFor();
+    check(await page.getByTestId("identity-submit").count() === 0, `${width}: student identity upload is not offered`);
+    check(await page.evaluate(() => !window.identityStatusReads && !window.identityPrepared), `${width}: student route does not request or prepare identity records`);
+    await page.goto(`${base}?screen=identity&identity=disabled&role=teacher`);
+    await page.getByText("Identity upload is not open yet", { exact: true }).waitFor();
+    check(await page.getByTestId("identity-submit").count() === 0, `${width}: disabled identity collection has no upload form`);
+    await page.goto(`${base}?screen=identity&identity=failure&role=teacher`);
+    await page.getByRole("button", { name: "Try again", exact: true }).waitFor();
+    check(await page.getByTestId("identity-submit").count() === 0, `${width}: status failure never masquerades as missing identity`);
+    await page.goto(`${base}?screen=identity&identity=rejected&role=teacher`);
+    await page.getByText("Needs a correction", { exact: true }).waitFor();
+    check((await page.locator("body").innerText()).includes("sharper photo"), `${width}: rejected document has an actionable correction`);
+    await page.goto(`${base}?screen=identity&identity=new&role=teacher`);
+    check(await page.getByTestId("identity-holder-parent").count() === 0, `${width}: teacher can submit only their own citizenship`);
+    await page.getByTestId("identity-submit").click();
+    check(await page.getByTestId("identity-legalName-error").isVisible(), `${width}: missing identity field has an inline error and is brought into view`);
+    check(!await page.evaluate(() => window.identityPrepared), `${width}: invalid form never starts an upload`);
+    check(await page.getByTestId("identity-dateOfBirth-bs").getAttribute("aria-checked") === "true", `${width}: private DOB defaults to Nepali BS`);
+    await page.getByTestId("identity-dateOfBirth").fill("2000-01-01");
+    check((await page.getByTestId("identity-dateOfBirth-equivalent").innerText()).includes("1943-04-14"), `${width}: private DOB shows the exact equivalent`);
+    await page.getByTestId("identity-dateOfBirth-ad").click();
+    check(await page.getByTestId("identity-dateOfBirth").inputValue() === "1943-04-14", `${width}: private DOB calendar switch preserves the birthday`);
+    for (const [key, value] of Object.entries({ legalName: "Synthetic Teacher", documentNumber: "NOT-A-REAL-ID", dateOfBirth: "1980-01-01", issuingDistrict: "Kathmandu", issuingMunicipality: "Kathmandu" })) await page.getByTestId(`identity-${key}`).fill(value);
+    await page.evaluate(() => { window.testIdentitySelected = true; window.failIdentityUpload = true; });
+    await page.getByTestId("identity-file").click();
+    await page.getByTestId("identity-consent").click();
+    await page.getByTestId("identity-submit").click();
+    await page.getByText("Your form has been saved privately. Retry the upload without re-entering the details.", { exact: true }).waitFor();
+    check(await page.getByTestId("identity-legalName").inputValue() === "Synthetic Teacher", `${width}: failed upload preserves form details`);
+    check(await page.evaluate(() => window.identityPrepared.holder === "self" && window.identityPrepared.consent), `${width}: teacher holder and consent are sent explicitly`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: private identity form has no horizontal overflow`);
+    await page.screenshot({ path: path.join(work, `${width}-identity-form.png`), fullPage: true });
+    await page.evaluate(() => { window.failIdentityUpload = false; });
+    await page.getByTestId("identity-submit").click();
+    await page.getByTestId("identity-status").waitFor();
+    check(await page.evaluate(() => window.identityPreparationCount === 1 && window.identityUploadAttempts === 2), `${width}: upload retry reuses the prepared request`);
+    check((await page.getByTestId("identity-status").innerText()).includes("prepare your classes"), `${width}: pending teacher review does not block class preparation`);
+    check(await page.getByTestId("identity-legalName").count() === 0, `${width}: submitted legal details are cleared from the rendered form`);
+    await page.goto(`${base}?screen=identity&identity=submitted&role=teacher`);
+    await page.getByTestId("identity-status").waitFor();
+    check((await page.getByTestId("identity-status").innerText()).includes("prepare your classes"), `${width}: pending teachers get clear preparation versus booking guidance`);
+    await page.goto(`${base}?screen=identity&identity=approved&role=teacher`);
+    await page.getByTestId("identity-status").waitFor();
+    check((await page.getByTestId("identity-status").innerText()).includes("teacher account must also be approved"), `${width}: identity approval does not promise teacher account approval`);
+    await page.screenshot({ path: path.join(work, `${width}-identity-approved.png`), fullPage: true });
+    check(errors.length === 0, `${width}: private identity flows have no browser exceptions`);
     await page.close();
   }
 } finally {

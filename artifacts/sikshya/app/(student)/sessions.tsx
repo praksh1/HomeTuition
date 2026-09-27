@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
@@ -61,12 +61,32 @@ type SessionListItem =
       teacherName: string;
       session: Session;
       lessonCount: number;
+      loadedCount: number;
       remainingCount: number;
       testBooking: boolean;
     };
 
 /** How often the session list re-checks for classes going live while the screen is open. */
 const SESSION_POLL_MS = 15000;
+const SESSION_PAGE_SIZE = 100;
+
+type SessionResponseRow = { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] };
+type SessionPage = { sessions: SessionResponseRow[]; total?: number };
+
+function mapSession(s: SessionResponseRow): Session {
+  return {
+    id: String(s.id), teacherId: "", teacherName: s.teacherName, subject: s.subject,
+    topic: s.topic, date: s.date, duration: s.duration, maxStudents: s.maxStudents,
+    enrolledStudents: Array(s.enrolledCount).fill(""), price: s.price,
+    status: s.status as Session["status"], enrolment: (s.enrolment as Session["enrolment"]) ?? null,
+    testClass: s.testClass === true, testClassLabel: s.testClassLabel, classGroup: s.classGroup,
+  };
+}
+
+function mergeSessions(fresh: Session[], older: Session[]): Session[] {
+  const seen = new Set(fresh.map((session) => session.id));
+  return [...fresh, ...older.filter((session) => !seen.has(session.id))];
+}
 
 export default function StudentSessions() {
   const { user } = useAuth();
@@ -76,6 +96,11 @@ export default function StudentSessions() {
   const insets = useSafeAreaInsets();
   const student = user as Student;
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [total, setTotal] = useState(0);
+  const [nextPage, setNextPage] = useState(2);
+  const loadedMore = useRef(false);
+  const [moreBusy, setMoreBusy] = useState(false);
+  const [moreError, setMoreError] = useState("");
   /**
    * A ticking clock, so a class that runs out while this screen is open moves itself out of
    * Upcoming rather than sitting there until the next fetch.
@@ -98,6 +123,9 @@ export default function StudentSessions() {
   // Re-fetching on an interval keeps the Join button honest.
   useFocusEffect(
     useCallback(() => {
+      loadedMore.current = false;
+      setNextPage(2);
+      setTotal(0);
       loadSessions();
       const timer = setInterval(loadSessions, SESSION_POLL_MS);
       return () => clearInterval(timer);
@@ -115,31 +143,9 @@ export default function StudentSessions() {
 
   const loadSessions = async () => {
     try {
-      const [myRes] = await Promise.all([
-        student?.userId
-          ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] }[] }>(
-              `/sessions?studentId=${student.userId}&limit=100`
-            )
-          : Promise.resolve({ sessions: [] }),
-      ]);
-
-      const mapSession = (s: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] }): Session => ({
-        id: String(s.id),
-        teacherId: "",
-        teacherName: s.teacherName,
-        subject: s.subject,
-        topic: s.topic,
-        date: s.date,
-        duration: s.duration,
-        maxStudents: s.maxStudents,
-        enrolledStudents: Array(s.enrolledCount).fill(""),
-        price: s.price,
-        status: s.status as Session["status"],
-        enrolment: (s.enrolment as Session["enrolment"]) ?? null,
-        testClass: s.testClass === true,
-        testClassLabel: s.testClassLabel,
-        classGroup: s.classGroup,
-      });
+      const myRes = student?.userId
+        ? await apiGet<SessionPage>(`/sessions?studentId=${student.userId}&limit=${SESSION_PAGE_SIZE}&page=1`)
+        : { sessions: [], total: 0 };
 
       /**
        * Only classes this student actually holds.
@@ -151,7 +157,9 @@ export default function StudentSessions() {
        *
        * Classes to buy belong in Discover. This screen is the ones they own.
        */
-      setSessions(myRes.sessions.map(mapSession));
+      const firstPage = myRes.sessions.map(mapSession);
+      setSessions(old => loadedMore.current ? mergeSessions(firstPage, old) : firstPage);
+      setTotal(myRes.total ?? firstPage.length);
       setLoadError(false);
     } catch (_e) {
       // Offline: fall through to whatever was last known rather than emptying the list.
@@ -159,6 +167,20 @@ export default function StudentSessions() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadMore = async () => {
+    if (!student?.userId || moreBusy || sessions.length >= total) return;
+    setMoreBusy(true); setMoreError("");
+    try {
+      const page = await apiGet<SessionPage>(`/sessions?studentId=${student.userId}&limit=${SESSION_PAGE_SIZE}&page=${nextPage}`);
+      loadedMore.current = true;
+      setSessions(old => mergeSessions(old, page.sessions.map(mapSession)));
+      setNextPage(old => old + 1);
+      if (typeof page.total === "number") setTotal(page.total);
+    } catch {
+      setMoreError("Could not load more lessons. Your classes are still saved; try again.");
+    } finally { setMoreBusy(false); }
   };
 
   /**
@@ -238,6 +260,7 @@ export default function StudentSessions() {
         teacherName: session.teacherName,
         session,
         lessonCount: session.classGroup?.lessonCount ?? classSessions.length,
+        loadedCount: classSessions.length,
         remainingCount: classSessions.filter((item) => !isOver(item)).length,
         testBooking: classSessions.some((item) => item.enrolment === "test"),
       });
@@ -288,7 +311,7 @@ export default function StudentSessions() {
             <Text style={[t.overline, { color: group === "live" ? colors.brand : colors.primary }]}>{status}</Text>
           </View>
         </View>
-        {group !== "history" ? (
+        {group !== "history" && item.loadedCount >= item.lessonCount ? (
           <View style={{ padding: space.sm, gap: space.xxs, borderRadius: radius.sm, backgroundColor: group === "live" ? colors.brandSoft : colors.muted }}>
             <Text style={[t.overline, { color: group === "live" ? colors.brand : colors.mutedForeground }]}>{group === "live" ? "Happening now" : "Your next lesson"}</Text>
             <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>
@@ -304,7 +327,9 @@ export default function StudentSessions() {
         ) : null}
         <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
           <Text style={[t.caption, numeric, { flex: 1, color: colors.mutedForeground }]}>
-            {group === "history"
+            {item.loadedCount < item.lessonCount
+              ? `${item.lessonCount} lessons in this class · open for the full schedule`
+              : group === "history"
               ? `${item.lessonCount} lessons · records saved`
               : `${item.remainingCount} of ${item.lessonCount} lessons remaining${item.testBooking ? " · test booking" : ""}`}
           </Text>
@@ -413,6 +438,14 @@ export default function StudentSessions() {
           </View>
           )
         }
+        ListFooterComponent={sessions.length < total ? <View style={{ gap: space.xs, paddingTop: space.md }}>
+          <Text style={[t.caption, { color: colors.mutedForeground, textAlign: "center" }]}>{sessions.length} of {total} lessons loaded · classes stay grouped above</Text>
+          {moreError ? <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive, textAlign: "center" }]}>{moreError}</Text> : null}
+          <Pressable testID="student-load-more-classes" accessibilityRole="button" disabled={moreBusy} onPress={() => void loadMore()}
+            style={{ minHeight: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>{moreBusy ? "Loading more…" : "Load more lessons"}</Text>
+          </Pressable>
+        </View> : null}
       />
     </View>
   );

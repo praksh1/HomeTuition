@@ -66,7 +66,7 @@ const titles = [
   "Ready for students?",
 ];
 
-function ClassEarningsEstimateCard({ estimate }: { estimate: EarningsEstimate | null }) {
+function ClassEarningsEstimateCard({ estimate, tuitionNpr, teacherShareBps }: { estimate: EarningsEstimate | null; tuitionNpr: number; teacherShareBps: number | null }) {
   const colors = useColors();
   const { t, space, numeric } = useLayout();
   if (!estimate) return null;
@@ -76,6 +76,7 @@ function ClassEarningsEstimateCard({ estimate }: { estimate: EarningsEstimate | 
   });
   return <ProgramCardShell>
     <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Your estimated earnings</Text>
+    {teacherShareBps !== null && <Text style={[t.callout, { color: colors.mutedForeground }]}>Each student pays NPR {amount(tuitionNpr)} tuition. Fadko's {amount((10_000 - teacherShareBps) / 100, 0)}% commission is NPR {amount(tuitionNpr - estimate.totalNpr)}; your {amount(teacherShareBps / 100, 0)}% share is shown below. No teacher plan fee.</Text>}
     <View style={{ gap: space.sm }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md }}>
         <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>For each enrolled student</Text>
@@ -99,6 +100,8 @@ export default function ClassSetup() {
   const dates = useDates();
   const [item, setItem] = useState<TeachingClass | null>(null);
   const [teacherShareBps, setTeacherShareBps] = useState<number | null>(null);
+  const [billingBusy, setBillingBusy] = useState(true);
+  const billingSequence = useRef(0);
   const [form, setFormState] = useState<ClassForm>(emptyClassForm);
   const formRef = useRef(form);
   const setForm = (next: ClassForm) => {
@@ -223,17 +226,17 @@ export default function ClassSetup() {
   useEffect(() => {
     void load();
   }, [load]);
-  useEffect(() => {
-    let alive = true;
-    apiGet<{ teacherShareBps?: number }>("/teachers/me/billing")
-      .then((policy) => {
-        if (!alive) return;
-        const share = policy.teacherShareBps;
-        setTeacherShareBps(Number.isInteger(share) && (share ?? 0) > 0 && (share ?? 0) <= 10_000 ? share! : null);
-      })
-      .catch(() => { if (alive) setTeacherShareBps(null); });
-    return () => { alive = false; };
-  }, []);
+  const loadBilling = async () => {
+    const current = ++billingSequence.current;
+    setBillingBusy(true);
+    try {
+      const policy = await apiGet<{ teacherShareBps?: number }>("/teachers/me/billing");
+      const share = policy.teacherShareBps;
+      if (current === billingSequence.current) setTeacherShareBps(Number.isInteger(share) && (share ?? 0) > 0 && (share ?? 0) <= 10_000 ? share! : null);
+    } catch { if (current === billingSequence.current) setTeacherShareBps(null); }
+    finally { if (current === billingSequence.current) setBillingBusy(false); }
+  };
+  useEffect(() => { void loadBilling(); return () => { billingSequence.current += 1; }; }, []);
   const move = (next: number) => {
     setStep(next);
     setIssues([]);
@@ -292,7 +295,7 @@ export default function ClassSetup() {
               ...batchScheduleIssues(form.lessons, Date.now()),
               ...draftPeriodIssues(period, form.lessons),
             ]
-          : [...batchDetailsIssues(form.capacity, form.totalTuitionNpr), ...(!lateChoiceMade ? ["Choose when students may join this class."] : [])];
+          : [...batchDetailsIssues(form.capacity, form.totalTuitionNpr), ...(!lateChoiceMade ? ["Choose when students may join this class."] : []), ...(teacherShareBps === null ? ["Current teaching terms could not be confirmed. Reload them before reviewing your price."] : [])];
     if (errors.length) {
       setIssues(errors);
       scroll.current?.scrollTo({ y: 0, animated: false });
@@ -381,6 +384,7 @@ export default function ClassSetup() {
   };
   const publish = async () => {
     if (!item || op.current || dirty || published) return;
+    if (teacherShareBps === null) { setIssues(["Current teaching terms could not be confirmed. Reload them before publishing."]); return; }
     op.current = true;
     setBusy(true);
     setIssues([]);
@@ -619,8 +623,8 @@ export default function ClassSetup() {
             <ProgramButton
               label={
                 outlineOpen
-                  ? "Hide optional teaching plan"
-                  : "Add a teaching plan (optional)"
+                  ? "Hide optional lesson outline"
+                  : "Add a lesson outline (optional)"
               }
               emphasis="quiet"
               onPress={() => setOutlineOpen(!outlineOpen)}
@@ -847,7 +851,10 @@ export default function ClassSetup() {
             <Text style={[t.callout, numeric, { color: colors.foreground }]}>
               {classPriceBreakdown(Number(form.totalTuitionNpr), form.lessons.length)}
             </Text>
-            <ClassEarningsEstimateCard estimate={earningsEstimate} />
+            <ClassEarningsEstimateCard estimate={earningsEstimate} tuitionNpr={Number(form.totalTuitionNpr)} teacherShareBps={teacherShareBps} />
+            {teacherShareBps === null ? <ProgramNotice title={billingBusy ? "Checking current teaching terms" : "Teaching terms unavailable"} body={billingBusy ? "Your earnings estimate will appear here shortly." : "Your class details are saved locally. Reload the current commission before reviewing or publishing a price."} tone="waiting">
+              {!billingBusy ? <ProgramButton label="Reload teaching terms" onPress={() => void loadBilling()} /> : null}
+            </ProgramNotice> : null}
               <ProgramCardShell>
                 <Text style={[t.bodyStrong, { color: colors.foreground }]}>When can students join? · Required</Text>
                 <ProgramButton label="Close joining when the class starts" disabled={locked}
@@ -896,7 +903,8 @@ export default function ClassSetup() {
                 </Text>
               ) : null}
             </ProgramCardShell>
-            <ClassEarningsEstimateCard estimate={earningsEstimate} />
+            <ClassEarningsEstimateCard estimate={earningsEstimate} tuitionNpr={Number(form.totalTuitionNpr)} teacherShareBps={teacherShareBps} />
+            {teacherShareBps === null ? <ProgramNotice title="Teaching terms unavailable" body="Reload the current commission before publishing. Your class draft remains saved." tone="waiting"><ProgramButton label="Reload teaching terms" onPress={() => void loadBilling()} /></ProgramNotice> : null}
             <ProgramCardShell>
               <Text style={[t.title3, { color: colors.foreground }]}>
                 Timetable · Nepal time
@@ -913,7 +921,7 @@ export default function ClassSetup() {
             {form.outline ? (
               <ProgramCardShell>
                 <Text style={[t.title3, { color: colors.foreground }]}>
-                  Your teaching plan
+                  Your lesson outline
                 </Text>
                 <Text style={[t.callout, { color: colors.foreground }]}>
                   {form.outline}
@@ -1022,7 +1030,7 @@ export default function ClassSetup() {
                         published ? "Published — up to date" : "Publish class"
                       }
                       emphasis="primary"
-                      disabled={busy || published || conflicts.length > 0 || item?.batch.bookingLocked === true}
+                      disabled={busy || published || teacherShareBps === null || conflicts.length > 0 || item?.batch.bookingLocked === true}
                       onPress={() => setConfirm("publish")}
                       grow
                     />

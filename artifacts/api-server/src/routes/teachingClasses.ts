@@ -13,6 +13,8 @@ import {
   usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
+import { requireReadyAccount } from "../middlewares/requireReadyAccount";
+import { requireTeachingIdentity } from "../middlewares/requireTeachingIdentity";
 import { readClassDescription } from "../lib/simpleTeachingClass";
 import {
   simpleClassSnapshot,
@@ -182,7 +184,7 @@ router.post("/teaching-classes/schedule-review", requireAuth, async (req, res) =
   res.setHeader("Cache-Control", "no-store").json(review);
 });
 
-router.post("/teaching-classes", requireAuth, async (req, res) => {
+router.post("/teaching-classes", requireAuth, requireReadyAccount, async (req, res) => {
   const teacherId = teacher(req, res);
   if (teacherId === null) return;
   const checked = input(req.body);
@@ -386,7 +388,7 @@ router.patch("/teaching-classes/:id", requireAuth, async (req, res) => {
   res.json({ item: result });
 });
 
-router.post("/teaching-classes/:id/publish", requireAuth, async (req, res) => {
+router.post("/teaching-classes/:id/publish", requireAuth, requireReadyAccount, requireTeachingIdentity, async (req, res) => {
   const teacherId = teacher(req, res);
   if (teacherId === null) return;
   const row = await owned(Number(req.params.id) || 0, teacherId);

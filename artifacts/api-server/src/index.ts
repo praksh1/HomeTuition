@@ -5,6 +5,9 @@ import { noteStorageConfig } from "./lib/fileStore";
 import { attachClassroomHub } from "./ws/classroomHub";
 import { describePaymentMode, paymentMode } from "./lib/payments";
 import { ensureMessageSafety } from "./lib/messageSafety";
+import { startIdentityRetentionScheduler } from "./lib/identityRetentionScheduler";
+import { ensureAccountClosureSchema } from "./lib/accountClosureStore";
+import { startClosureMediaWorker } from "./lib/accountClosureMedia";
 import {
   ensureNotificationPrefsTable,
   ensureSessionActivityTable,
@@ -44,9 +47,19 @@ if (Number.isNaN(port) || port <= 0) {
 
 const server = http.createServer(app);
 attachClassroomHub(server);
+let stopIdentityRetention = () => {};
+let stopClosureMedia = () => {};
+let shuttingDown = false;
+server.on("close", () => { shuttingDown=true; stopIdentityRetention(); stopClosureMedia(); });
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
+  stopIdentityRetention = startIdentityRetentionScheduler();
+  if (process.env.ACCOUNT_CLOSURE_MEDIA_ENABLED === 'true') {
+    void ensureAccountClosureSchema().then(() => {
+      if (!shuttingDown) stopClosureMedia=startClosureMediaWorker(() => logger.warn('Account closure media work needs retry; no success assumed'));
+    }).catch(() => logger.warn('Account closure media queue unavailable; completion must remain disabled'));
+  }
   // Deliberately after listen and deliberately not awaited: the server must come up whatever
   // the database is doing. See lib/ensureSchema.ts for why this exists at all.
   void ensureNotificationPrefsTable();

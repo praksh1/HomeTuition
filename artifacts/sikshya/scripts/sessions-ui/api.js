@@ -36,6 +36,14 @@ const studentClass = Array.from({ length: 30 }, (_, index) =>
   }),
 );
 
+const largeStudentClasses = Array.from({ length: 140 }, (_, index) => {
+  const classNumber = Math.floor(index / 28);
+  return row(1000 + index, `Course ${classNumber + 1}`, now + (index + 1) * hour, "upcoming", {
+    enrolment: "paid",
+    classGroup: { batchId: 801 + classNumber, title: `Course ${classNumber + 1}`, lessonPosition: index % 28, lessonCount: 28 },
+  });
+});
+
 export async function apiGet(url) {
   if (new URLSearchParams(location.search).get("fail") === "1") {
     throw new Error("synthetic connection failure");
@@ -52,6 +60,12 @@ export async function apiGet(url) {
     }
     return { sessions: teacherUpcoming };
   }
-  if (url.includes("studentId=")) return { sessions: studentClass };
+  if (url.includes("studentId=")) {
+    if (new URLSearchParams(location.search).get("large") === "1") {
+      const page = Number(new URL(url, "http://localhost").searchParams.get("page") ?? 1);
+      return { sessions: largeStudentClasses.slice((page - 1) * 100, page * 100), total: largeStudentClasses.length };
+    }
+    return { sessions: studentClass, total: studentClass.length };
+  }
   throw new Error(`Unexpected sessions request: ${url}`);
 }
