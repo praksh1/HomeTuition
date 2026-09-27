@@ -34,4 +34,4 @@ Release conditions for changing that routing:
 
 Official SDK setup: https://docs.livekit.io/transport/sdk-platforms/expo/
 
-The first safe server slice is implemented on this trial branch: `X-Fadko-Native-Media: livekit-native-v1` is parsed strictly and passed into both room join and teacher-start provider selection. A missing/invalid capability keeps Daily. Even a valid capability still keeps Daily until the native LiveKit provider is explicitly marked as supporting iOS/Android. No released app sends this header, and no deployed configuration changed.
+The server selection gate on this trial branch parses `X-Fadko-Native-Media: livekit-native-v1` strictly for room join and teacher start. A missing/invalid capability keeps Daily. A valid capability receives native LiveKit only when `VIDEO_PROVIDER=livekit` and `VIDEO_NATIVE_LIVEKIT_TRIAL=1` are set on that API; both conditions are required. No released app sends this header, and no deployed configuration changed.

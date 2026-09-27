@@ -8,11 +8,10 @@ import { useLayout } from "@/hooks/useLayout";
 /**
  * The call, whoever is carrying it.
  *
- * Every classroom screen mounts this rather than a named provider. Daily.co is the only
- * implementation today and behaves exactly as it did; the seam exists because replacing it is
- * decided future work — forty-five people in a daily ninety-minute call does not survive
- * per-participant-minute pricing — and a swap should be one new file rather than an edit to
- * every screen that shows a lesson.
+ * Every classroom screen mounts this rather than a named provider. Daily remains the released
+ * native implementation. This isolated trial branch also contains a native LiveKit adapter,
+ * while the web implementation can use LiveKit independently. The seam keeps classroom screens
+ * unaware of which provider the server selected.
  *
  * The props are the ones any provider needs: where to join, a token, who you are, and the
  * handful of things this app does around the edges of a call. Nothing Daily-shaped is in the
@@ -99,15 +98,10 @@ export default function VideoCall({ provider = "daily", ...props }: VideoCallPro
       );
 
     /**
-     * Under trial, and browser-only.
-     *
-     * The two providers stay separate components rather than being merged behind one imperative
-     * module, because merging would mean rewriting Daily — and Daily is what the class runs on
-     * today. `lib/video` gives LiveKit the provider-agnostic verbs; this switch is what keeps
-     * every screen from knowing either name. See VIDEO.md.
-     *
-     * On Android and iOS `LiveKitEmbed` resolves to a stub that says video is unavailable,
-     * because both SDKs ship the same native WebRTC library and cannot share a build.
+     * LiveKit runs on the web and in this isolated native trial. Native Daily cannot coexist with
+     * LiveKit's WebRTC module, so the trial's DailyEmbed is an explicit unavailable screen. The
+     * released phone app still carries Daily; do not distribute this trial until its dedicated
+     * API and real-device media journeys pass. See docs/NATIVE-LIVEKIT-TRIAL.md.
      */
     case "livekit":
       return (
