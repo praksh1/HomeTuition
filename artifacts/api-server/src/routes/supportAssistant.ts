@@ -10,7 +10,7 @@ import {
   localSupportGuide, localSupportReply, normaliseSupportQuery, resolveSupport, searchSupportArticles, supportFollowUp, supportToneResponse,
   type SupportArticle, type SupportIntent,
 } from "../lib/supportAssistant";
-import { readSupportAIConfig, redactSupportQuestion, supportAIProviderFromEnv } from "../lib/supportAiProvider";
+import { externalSupportTopic, readSupportAIConfig, redactSupportQuestion, supportAIProviderFromEnv } from "../lib/supportAiProvider";
 import { flagContent, flaggedTerms } from "../lib/moderation";
 import { allowanceFor, nameOf, recordOpened } from "../lib/ticketStore";
 import { ticketRef } from "../lib/tickets";
@@ -215,7 +215,7 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
       ? "local" : resolved.mode === "faq" && top ? "faq" : "handoff";
     const config = readSupportAIConfig(process.env);
     // Linked account diagnostics stay on Fadko, never in an external inference request.
-    const aiAllowedIntent = !caseContext && !["billing", "account", "safety"].includes(topic);
+    const aiAllowedIntent = !caseContext && !["billing", "account", "safety"].includes(topic) && externalSupportTopic(message) !== null;
     if (!toneReply && source === "handoff" && config.enabled && aiAllowedIntent && resolved.articles.length > 0) {
       if (await reserveAiBudget(userId, req.ip ?? "unknown")) {
         const result = await supportAIProviderFromEnv(process.env, fetch, reserveProviderAttempt).generateResponse({
@@ -223,8 +223,6 @@ router.post("/support/assistant/messages", requireAuth, async (req, res): Promis
           knowledge: resolved.articles.map((article) => `${article.title}: ${article.answer}`),
           role: req.user!.role === "teacher" || req.user!.role === "student" ? req.user!.role : "unknown",
           locale: "en",
-          history: history.filter((turn) => turn.role === "user" || turn.role === "assistant")
-            .slice(-6).map((turn) => ({ role: turn.role as "user" | "assistant", body: turn.body })),
         });
         if (result.kind === "answer") { answer = result.text; source = "ai"; }
       }

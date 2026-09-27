@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   CloudflareSupportAIProvider, NullSupportAIProvider, readSupportAIConfig,
-  redactSupportQuestion, supportAIProviderFromEnv,
+  externalSupportTopic, redactSupportQuestion, supportAIProviderFromEnv,
   BudgetedSupportFallback, GroqSupportAIProvider,
 } from "./supportAiProvider.ts";
 
@@ -83,7 +83,7 @@ test("secondary processor is disabled until privacy, free-account and reservatio
   assert.equal(calls, 0);
 });
 
-test("Groq uses a fixed endpoint and bounded redacted question, without conversation history", async () => {
+test("Groq uses a fixed endpoint and technical topic, without conversation history", async () => {
   let wire = "";
   const request = (async (url, init) => {
     assert.equal(url, "https://api.groq.com/openai/v1/chat/completions");
@@ -95,7 +95,9 @@ test("Groq uses a fixed endpoint and bounded redacted question, without conversa
     history: [{ role: "user", body: "Private earlier conversation" }] });
   assert.equal(result.kind, "answer");
   assert.equal(wire.includes("alice@example.com"), false);
+  assert.equal(wire.includes("camera alice"), false);
   assert.equal(wire.includes("Private earlier"), false);
+  assert.equal(wire.includes("camera or video in a live class"), true);
   assert.equal(JSON.parse(wire).max_completion_tokens, 300);
 });
 
@@ -110,7 +112,7 @@ test("a missing server-side key never calls Workers AI", async () => {
   assert.equal(called, false);
 });
 
-test("Workers AI receives only bounded, redacted question and reviewed excerpts", async () => {
+test("Workers AI receives only a fixed technical topic and reviewed excerpts", async () => {
   let requestBody: Record<string, unknown> | null = null;
   const request = (async (_url: string | URL | Request, init?: RequestInit) => {
     requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -126,11 +128,40 @@ test("Workers AI receives only bounded, redacted question and reviewed excerpts"
   const wire = JSON.stringify(requestBody);
   assert.equal(wire.includes("alice@example.com"), false);
   assert.equal(wire.includes("9812345678"), false);
-  assert.equal(wire.includes("[email]"), true);
-  assert.equal(wire.includes("[phone]"), true);
+  assert.equal(wire.includes("joining a scheduled class"), true);
+  assert.equal(wire.includes("I am"), false);
   assert.equal(redactSupportQuestion("my mail is alice@example.com"), "my mail is [email]");
   assert.equal(redactSupportQuestion("card 4111 1111 1111 1111"), "card [payment number]");
   assert.equal(redactSupportQuestion("OTP: 123456 and password=abc123"), "OTP [secret] and password [secret]");
+});
+
+test("external AI never receives private identity questions or raw conversation history", async () => {
+  assert.equal(externalSupportTopic("How do I upload my citizenship?"), null);
+  assert.equal(externalSupportTopic("मेरो नागरिकता कहाँ राख्ने?"), null);
+  assert.equal(externalSupportTopic("My date of birth is 2055-01-01 and the camera fails"), null);
+  assert.equal(externalSupportTopic("Camera does not work; my ID number is 123456"), null);
+  assert.equal(externalSupportTopic("Camera does not work; 2055-01-01"), "Help troubleshoot camera or video in a live class using only the reviewed help.");
+
+  let calls = 0;
+  const request = (async (_url: string | URL | Request, init?: RequestInit) => {
+    calls++;
+    const wire = String(init?.body);
+    assert.equal(wire.includes("2055-01-01"), false);
+    assert.equal(wire.includes("Synthetic Legal Name"), false);
+    return { ok: true, json: async () => ({ success: true, result: { response: "Check camera access." }, choices: [{ message: { content: "Check camera access." } }] }) } as Response;
+  }) as typeof fetch;
+  const config = readSupportAIConfig({ SUPPORT_AI_ENABLED: "true", SUPPORT_AI_PROVIDER: "workers-ai" });
+  const context = { question: "Camera does not work; 2055-01-01", knowledge: ["Check camera access."], role: "student" as const, locale: "en" as const,
+    history: [{ role: "user" as const, body: "Synthetic Legal Name" }] };
+  const primary = new CloudflareSupportAIProvider("account", "secret", config, "@cf/zai-org/glm-4.7-flash", request);
+  const secondary = new GroqSupportAIProvider("secret", config, request);
+  assert.equal((await primary.generateResponse(context)).kind, "answer");
+  assert.equal((await secondary.generateResponse(context)).kind, "answer");
+  assert.equal(calls, 2);
+  for (const provider of [primary, secondary]) {
+    assert.equal((await provider.generateResponse({ ...context, question: "My citizenship number is 123456 and my camera fails" })).kind, "unavailable");
+  }
+  assert.equal(calls, 2);
 });
 
 test("provider errors and ungrounded calls fail closed", async () => {
@@ -141,6 +172,6 @@ test("provider errors and ungrounded calls fail closed", async () => {
   const empty = await provider.generateResponse({ question: "unknown", knowledge: [], role: "unknown", locale: "en" });
   assert.deepEqual(empty, { kind: "unavailable", reason: "disabled" });
   assert.equal(calls, 0);
-  const malformed = await provider.generateResponse({ question: "unknown", knowledge: ["reviewed"], role: "unknown", locale: "en" });
+  const malformed = await provider.generateResponse({ question: "How do I join?", knowledge: ["reviewed"], role: "unknown", locale: "en" });
   assert.deepEqual(malformed, { kind: "unavailable", reason: "provider_error" });
 });
