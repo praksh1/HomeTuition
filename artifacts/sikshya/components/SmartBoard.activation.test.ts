@@ -7,6 +7,16 @@ import test from "node:test";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const smartBoardSource = readFileSync(path.join(here, "SmartBoard.web.tsx"), "utf8");
 
+test("the native board route does not import the web-only editor at runtime", () => {
+  const route = readFileSync(path.join(here, "..", "app", "board.tsx"), "utf8");
+  const nativeBoundary = readFileSync(path.join(here, "BoardRouteEditor.tsx"), "utf8");
+  const webBoundary = readFileSync(path.join(here, "BoardRouteEditor.web.tsx"), "utf8");
+  assert.match(route, /from ["']\.\.\/components\/BoardRouteEditor["']/);
+  assert.doesNotMatch(route, /from ["']\.\.\/components\/SmartBoard\.web["']/);
+  assert.doesNotMatch(nativeBoundary, /^import (?!type ).*SmartBoard\.web/m);
+  assert.match(webBoundary, /export \{ default \} from ["']\.\/SmartBoard\.web["']/);
+});
+
 test("the active whiteboard does not automatically convert freehand ink", () => {
   assert.doesNotMatch(smartBoardSource, /from\s+["']\.\/recognition\//);
   assert.doesNotMatch(smartBoardSource, /\brecognizeShape\s*\(/);

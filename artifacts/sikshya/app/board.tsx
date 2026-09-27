@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import SmartBoard from "../components/SmartBoard.web";
+import SmartBoard from "../components/BoardRouteEditor";
 import type { BoardLaserPoint, BoardPage, BoardPageCommand, BoardViewport, SceneDelta } from "../hooks/useClassroomSocket";
 
 /**
