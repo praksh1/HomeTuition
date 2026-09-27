@@ -8,6 +8,8 @@ Verification for this slice: frontend typecheck and 568/568 unit tests passed; b
 
 Do not distribute this trial binary: its native Daily entry is deliberately unavailable and the ordinary API still routes phones to Daily. Native screen sharing and full device call parity remain unfinished. Resolve the Android build path, make iOS and Android development binaries, then run real teacher/student calls against a separately opted-in trial API before considering release. The earlier sections below record the first checkpoint and should not be mistaken for current completion.
 
+Retry after checkpoint: mapped this exact worktree temporarily to `L:` and ran `assembleDebug --no-daemon` from that shorter path. Gradle still canonicalized the dependency task paths back to the long checkout and failed with `CreateProcess error=2` when launching generated `prefab_command.bat` for React Native Screens (the earlier run also implicated Worklets). The temporary drive mapping was removed. This does not establish a LiveKit SDK failure or produce an installable APK; a physically short checkout or clean native CI build remains necessary.
+
 - Date: 2026-09-27
 - Agent: Codex
 - Branch: codex/native-livekit-trial

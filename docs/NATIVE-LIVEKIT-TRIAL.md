@@ -10,6 +10,8 @@ Two independent switches remain off by default. The trial API needs VIDEO_PROVID
 
 TypeScript, 568 frontend unit tests, Android and iOS JavaScript exports, Expo Android prebuild, LiveKit Android Java/Kotlin compilation, and direct web export passed. A full Android APK is still unverified: Worklets and Screens CMake tasks on this Windows worktree cannot launch their generated prefab command files. This Windows host cannot build an iOS binary. No physical-device call has been tested.
 
+A retry through a temporary short `L:` drive alias hit the same CMake helper launch failure because Gradle resolved the long dependency paths. The alias was removed. Do not treat this as an APK pass or a LiveKit-specific compilation failure; use a genuinely short checkout or clean native CI environment for the next build attempt.
+
 Hard gate: do not merge, deploy or distribute this native trial until Android and iOS development binaries build and real-device teacher/student calls pass, including permissions, speaker/audio route, reconnection, long calls, whiteboard, chat and screen sharing. Phone-browser tests do not satisfy the installed-app gate.
 
 This isolated branch starts from `codex/support-case-workspace`. The current public web build uses LiveKit when configured, while installed iOS/Android builds use Daily. A phone browser is web; it is not evidence that an installed app works.
