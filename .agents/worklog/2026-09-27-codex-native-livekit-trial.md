@@ -1,5 +1,11 @@
 # Native LiveKit migration trial
 
+## Clean Android packaging check after the first checkpoint
+
+A disposable clone of commit `39d479d` under the physically shorter `%TEMP%\f27` path used the committed, non-hoisted pnpm configuration. Offline frozen-lockfile install, Expo Android prebuild, and arm64 `assembleDebug` completed successfully. Verified `app-debug.apk` exists (86,793,952 bytes). The build did not require changing the trial branch or deploying anything. No device or emulator was available, so this is packaging evidence only. iOS compilation and real installed-app teacher/student call, screen-share, whiteboard, chat, permission, audio-route, and reconnect journeys remain unverified. Keep the trial off in deployed environments.
+
+The first disposable build used a hoisted package layout and failed later native compilation; the hoisted layout also has a documented app-startup crash and must not be adopted. Its result is not release evidence. The successful check used normal dependencies and a genuinely shorter checkout rather than a `subst` alias.
+
 ## Progress update after the first checkpoint
 
 Replaced native Daily packages and Expo plugin with the official LiveKit React Native SDK, its WebRTC module and Expo plugin on this isolated branch. Archived the previous native Daily component and unused experiments as text. Built a native LiveKit room adapter with token join, audio session, camera/microphone permissions and controls, watched-teacher callbacks, local media state and Fadko class chat. Added a server opt-in (VIDEO_NATIVE_LIVEKIT_TRIAL=1) and a build opt-in (EXPO_PUBLIC_NATIVE_LIVEKIT_TRIAL=1), both default-off; the exact native capability header is still required and grants no class rights.
