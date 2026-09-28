@@ -46,6 +46,19 @@ export function teacherReceiptBreakdown(receipt: ParticipantTestReceipt): {
   return { tuitionNpr: tuitionNpr!, fadkoFeeNpr: fadkoFeeNpr!, teacherShareNpr: teacherShareNpr! };
 }
 
+/** Presentation allocation of the recorded Fadko fee, never an additional charge or vendor expense. */
+export function fadkoFeeAllocation(feeNpr: number): {
+  platformNpr: number; serverNpr: number; maintenanceNpr: number;
+} | null {
+  if (!Number.isSafeInteger(feeNpr) || feeNpr < 0 || feeNpr > 1_000_000_000) return null;
+  // Allocate rupee rounding within the existing fee. For NPR 210 this is 154 + 42 + 14.
+  const platformNpr = Math.round(feeNpr * 11 / 15);
+  const serverNpr = Math.round(feeNpr / 5);
+  const maintenanceNpr = feeNpr - platformNpr - serverNpr;
+  if (maintenanceNpr < 0) return null;
+  return { platformNpr, serverNpr, maintenanceNpr };
+}
+
 /** One arithmetic definition for the student and teacher summaries. */
 export function participantTestTotals(receipts: ParticipantTestReceipt[]): ParticipantTestTotals {
   return receipts.reduce<ParticipantTestTotals>((totals, receipt) => {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  fadkoFeeAllocation,
   participantMoneyStatement,
   participantReceiptStatus,
   participantTestTotals,
@@ -39,6 +40,19 @@ test("teacher receipt shows a balanced student tuition, Fadko fee and teacher sh
   });
   assert.equal(teacherReceiptBreakdown(receipt({ fadkoNpr: 400 })), null);
   assert.equal(teacherReceiptBreakdown(receipt({ grossNpr: undefined })), null);
+});
+
+test("the fee detail allocates recorded rupees without creating an extra deduction", () => {
+  assert.deepEqual(fadkoFeeAllocation(210), {
+    platformNpr: 154, serverNpr: 42, maintenanceNpr: 14,
+  });
+  for (let fee = 0; fee <= 1000; fee++) {
+    const parts = fadkoFeeAllocation(fee)!;
+    assert.equal(parts.platformNpr + parts.serverNpr + parts.maintenanceNpr, fee);
+    assert.ok(parts.maintenanceNpr >= 0);
+  }
+  assert.equal(fadkoFeeAllocation(-1), null);
+  assert.equal(fadkoFeeAllocation(1.5), null);
 });
 
 test("participant summary adds student payments and teacher pending, paid and reversed shares", () => {

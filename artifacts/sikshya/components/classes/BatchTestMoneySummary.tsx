@@ -6,6 +6,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
 import {
+  fadkoFeeAllocation,
   participantMoneyStatement,
   participantReceiptStatus,
   participantTestTotals,
@@ -175,6 +176,7 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Showing {Math.min(visibleReceipts, matchingReceipts.length)} of {matchingReceipts.length} matching loaded receipts{nextCursor ? " · Older receipts available" : ""}</Text>
         {matchingReceipts.slice(0, visibleReceipts).map((receipt) => {
           const breakdown = teacherReceiptBreakdown(receipt);
+          const feeAllocation = breakdown ? fadkoFeeAllocation(breakdown.fadkoFeeNpr) : null;
           const expanded = expandedReceiptIds.has(receipt.bookingId);
           const feeExpanded = expandedFeeIds.has(receipt.bookingId);
           return <View key={receipt.bookingId} testID={`teacher-receipt-${receipt.bookingId}`} style={{ padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, gap: space.xxs }}>
@@ -184,8 +186,9 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
             {breakdown ? <>
               <Text style={[t.body, { color: colors.foreground }]}>Class price: NPR {breakdown.tuitionNpr.toLocaleString("en-NP")}</Text>
               <Text style={[t.body, { color: colors.foreground }]}>Less Fadko fee: − NPR {breakdown.fadkoFeeNpr.toLocaleString("en-NP")}</Text>
+              <Text style={[t.body, { color: colors.foreground }]}>Less government tax: NPR 0</Text>
               <Text style={[t.bodyStrong, { color: colors.foreground }]}>Estimated teacher earnings: NPR {breakdown.teacherShareNpr.toLocaleString("en-NP")}</Text>
-              <Text style={[t.caption, { color: colors.mutedForeground }]}>Government tax deducted in this practice receipt: NPR 0. Live tax rules are not configured.</Text>
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>This is a practice receipt. Live tax rules are not configured.</Text>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={feeExpanded ? "Hide Fadko fee details" : "Show Fadko fee details"}
@@ -197,8 +200,12 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
                 <Feather name={feeExpanded ? "chevron-up" : "chevron-down"} size={17} color={colors.primary} />
               </Pressable>
               {feeExpanded ? <View style={{ padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.surfaceSunk, gap: space.xxs }}>
-                <Text style={[t.body, { color: colors.foreground }]}>Platform operations · Video and server hosting · App maintenance</Text>
-                <Text style={[t.caption, { color: colors.mutedForeground }]}>These are covered by the one Fadko fee, not extra deductions. An itemized rupee allocation is not yet set, so this receipt does not invent one.</Text>
+                {feeAllocation ? <>
+                  <Text style={[t.body, { color: colors.foreground }]}>Platform fee: NPR {feeAllocation.platformNpr.toLocaleString("en-NP")}</Text>
+                  <Text style={[t.body, { color: colors.foreground }]}>Video and server fee: NPR {feeAllocation.serverNpr.toLocaleString("en-NP")}</Text>
+                  <Text style={[t.body, { color: colors.foreground }]}>Maintenance fee: NPR {feeAllocation.maintenanceNpr.toLocaleString("en-NP")}</Text>
+                </> : <Text style={[t.body, { color: colors.foreground }]}>Fee details are unavailable for this receipt.</Text>}
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>These parts allocate the recorded Fadko fee. They are not extra deductions or measured vendor expenses.</Text>
               </View> : null}
               <ProgramButton label={`${expanded ? "Hide" : "View"} lesson breakdown (${receipt.allocations.length})`} onPress={() => toggleReceipt(receipt.bookingId)} />
               {expanded ? receipt.allocations.map((allocation) => {

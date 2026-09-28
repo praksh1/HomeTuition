@@ -15,15 +15,15 @@ Fix the teacher class-creation timetable, conflict links, publish/discard loop a
 
 ## Changed
 
-- Teacher earnings overview and receipts now present recorded rupee amounts without visible commission percentages. Receipts can expand actual per-lesson allocations. Simulated tax remains explicitly test-only; no live tax or fee-subcategory charges were invented.
-- The fee has a small accessible, expandable explanation of covered services. It deliberately does not invent platform/server/maintenance rupee allocations.
+- Teacher earnings overview and receipts now present recorded rupee amounts without visible commission percentages. Receipts can expand actual per-lesson allocations. Simulated tax remains explicitly test-only; no live tax charge was invented.
+- The recorded Fadko fee has an accessible, expandable rupee allocation for platform, video/server, and maintenance, following the owner's NPR 210 example (NPR 154 + 42 + 14). It always adds to the one recorded fee and explicitly says it is not extra deductions or measured vendor expenses.
 - Class Home now expands all upcoming dates and has a separate previous-lesson list. Teacher Home earnings opens the actual earnings page, the lesson's Class Home link is easier to see, and My Classes groups active/open/past/draft/closed with a clearer details action.
 - The class wizard places lesson count and total price at the start, offers exact-count recurrence choices, focuses the selected conflict editor, reconciles lost create/publish responses, and permits deletion only of a never-published, unbooked draft. API refuses deletion of booked, formerly published, or enrolled classes.
 - Notification counts use parentheses. Direct messages show signed avatars to authorized participants, silently suppress blocked senders' later messages and reactions from the recipient while retaining records, and offer a short private report that reaches an operator queue. Discover personalization ranks current enrolments, followed teachers, coarse subject/grade/district matches, then newest, with a rank-aware page cursor.
 
 ## Decisions and assumptions
 
-- The example platform/server/maintenance sub-fee amounts are not treated as booked expenses or charges without an accounting policy. The existing single Fadko fee remains the recorded charge.
+- The platform/server/maintenance split is presentation allocation of the already recorded Fadko fee, not actual provider spending or three separate charges. There is no live tax formula yet.
 - Deployment target is the isolated Preview Worker and staging Railway API, not Production.
 
 ## Verification
