@@ -4,7 +4,10 @@
 - Agent: Codex (root with class-creation, class-navigation and inbox/discovery agents)
 - Branch: `codex/support-case-workspace`
 - Base commit: `0960532`
-- Status: verified locally; Preview deployment pending
+- Status: committed, deployed to Preview, and verified; not promoted to Production
+- Code commit: `915cc7f` (pushed to `origin/codex/support-case-workspace`)
+- Staging API deployment: `5e8da651-3500-455f-a846-2a9602763eb4` on `hometuition-api-staging`
+- Preview Worker version: `fb9048cf-62a1-429a-8e9a-647c8b5ffc44` on `hometuition-preview`
 
 ## Requested
 
@@ -32,6 +35,8 @@ Fix the teacher class-creation timetable, conflict links, publish/discard loop a
 - Final workspace typecheck passed, app design lint passed, API unit suite 797/797 passed, app unit suite 589/589 passed, API bundle compiled, and `git diff --check` passed. A stale class-price test expectation was corrected after the first combined run.
 - Final browser reruns passed: class wizard 129/129, class home 38/38, teaching billing 42/42, teacher class list 10/10, dashboard 33/33, notifications 40/40, messages 148/148, Discover 250/250. These cover phone and laptop widths, with the wizard also at 360px.
 - Staging API `/api/healthz` returned HTTP 200 `{"status":"ok"}`. Railway CLI showed the linked `hometuition-api-staging` service online.
+- After the new deployment, Railway reported SUCCESS; `/api/healthz` again returned HTTP 200. Public `/api/programs?limit=1&presentation=class&personalized=1` returned HTTP 200, one result and a page cursor.
+- The Preview web build used `EXPO_NO_DOTENV=1` and the exact staging API URL. Its assets contained that URL and no production API URL. Wrangler Preview dry-run and deploy succeeded; `verify-preview.mjs` verified served HTML and three exact bundles against the staging API.
 
 ## Problems and surprises
 
@@ -50,4 +55,4 @@ Fix the teacher class-creation timetable, conflict links, publish/discard loop a
 
 ## Remaining risks / next pickup point
 
-- Build against the verified staging API; deploy API and Preview Worker; verify served bundle and staging behavior. Do not present this as completed until those checks pass. Real-DB message and draft-deletion integration remain unverified unless a dedicated local test database is provided. A source-level review corrected the class-list delete race by returning full rows in one query.
+- The owner can now test the Preview flows on phone and laptop. Do not promote to Production from these mock-browser checks alone. Authenticated Discover ranking, blocked-message suppression and draft deletion still need a controlled end-to-end pass using synthetic Preview accounts; local PostgreSQL was unavailable, and no staging test writes were made in this release run. A source-level review corrected the class-list delete race by returning full rows in one query. A speed claim requires a browser trace once Chrome DevTools MCP is available.
