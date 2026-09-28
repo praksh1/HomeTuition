@@ -5,9 +5,9 @@
 - Branch: `codex/support-case-workspace`
 - Base commit: `0960532`
 - Status: committed, deployed to Preview, and verified; not promoted to Production
-- Code commit: `915cc7f` (pushed to `origin/codex/support-case-workspace`)
+- Core code commit: `915cc7f`; receipt follow-up: `2f1a4e2` (both pushed to `origin/codex/support-case-workspace`)
 - Staging API deployment: `5e8da651-3500-455f-a846-2a9602763eb4` on `hometuition-api-staging`
-- Preview Worker version: `fb9048cf-62a1-429a-8e9a-647c8b5ffc44` on `hometuition-preview`
+- Final Preview Worker version: `1eed597c-822d-4998-9fed-497389695696` on `hometuition-preview`
 
 ## Requested
 
@@ -29,14 +29,15 @@ Fix the teacher class-creation timetable, conflict links, publish/discard loop a
 ## Verification
 
 - Reviewed temporary contact sheets extracted from all three recordings. The recordings reproduced a long timetable, a stale-review publish loop, retained saved data after Leave without saving, and overlap edit controls that required scrolling.
-- Teacher earnings browser suite after fee disclosure: 42 checks passed at 390px and 1440px. Receipt arithmetic unit suite: 8 passed.
+- Teacher earnings browser suite after fee disclosure: 42 checks passed at 390px and 1440px. Receipt arithmetic suite includes an exact NPR 210 = NPR 154 + 42 + 14 allocation test and exhaustive fee conservation for NPR 0–1,000; final app unit suite 590/590 passed.
 - Class-home browser suite: 38/38 at 390px and 1440px after correcting a screenshot-found completed/cancelled classification defect; helper and contract unit tests: 17/17.
 - Teacher class-list browser suite: 10/10 at 390px and 1440px; dashboard navigation: 33/33. Class wizard browser suite: 129/129 at 360px, 390px and 1440px, including retry/discard/delete cases.
-- Final workspace typecheck passed, app design lint passed, API unit suite 797/797 passed, app unit suite 589/589 passed, API bundle compiled, and `git diff --check` passed. A stale class-price test expectation was corrected after the first combined run.
+- Final workspace typecheck passed, app design lint passed, API unit suite 797/797 passed, app unit suite 590/590 passed, API bundle compiled, and `git diff --check` passed. A stale class-price test expectation was corrected after the first combined run.
 - Final browser reruns passed: class wizard 129/129, class home 38/38, teaching billing 42/42, teacher class list 10/10, dashboard 33/33, notifications 40/40, messages 148/148, Discover 250/250. These cover phone and laptop widths, with the wizard also at 360px.
 - Staging API `/api/healthz` returned HTTP 200 `{"status":"ok"}`. Railway CLI showed the linked `hometuition-api-staging` service online.
 - After the new deployment, Railway reported SUCCESS; `/api/healthz` again returned HTTP 200. Public `/api/programs?limit=1&presentation=class&personalized=1` returned HTTP 200, one result and a page cursor.
-- The Preview web build used `EXPO_NO_DOTENV=1` and the exact staging API URL. Its assets contained that URL and no production API URL. Wrangler Preview dry-run and deploy succeeded; `verify-preview.mjs` verified served HTML and three exact bundles against the staging API.
+- A read-only query using the explicitly selected `hometuition-api-staging` service environment confirmed the three additive staging tables `message_delivery_suppressions`, `message_reaction_suppressions` and `user_reports` exist. No table contents or credentials were printed.
+- Both Preview web builds used `EXPO_NO_DOTENV=1` and the exact staging API URL. The final assets contained that URL and no production API URL. Wrangler Preview dry-run and deploy succeeded after the fee follow-up; `verify-preview.mjs` verified served HTML and three exact bundles against the staging API.
 
 ## Problems and surprises
 
