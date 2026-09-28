@@ -70,6 +70,16 @@ export const tests = [
       await student.setViewportSize({width:844,height:390});
       await student.waitForTimeout(800);
       assert('rotating student phone still keeps the teacher sheet visible', (await ink(student)).red>1000);
+      await student.getByRole('button', {name:'Whiteboard view options'}).click();
+      const readable=student.getByRole('button', {name:"Make the teacher's board easier to read"});
+      const fit=student.getByRole('button', {name:"Fit the teacher's full board on my screen"});
+      assert('landscape student starts with a readable local view', await readable.getAttribute('aria-pressed')==='true');
+      await fit.click();
+      assert('student can fit the entire teacher board without moving the teacher', await fit.getAttribute('aria-pressed')==='true');
+      await readable.click();
+      await student.getByRole('button', {name:'Zoom in on my board'}).click();
+      assert('student can locally enlarge the PDF', await student.getByLabel('Your zoom 125 percent').count()===1);
+      assert('local zoom sends no competing teacher view', !(await takeMessages(student)).some(m=>m.type==='view_out'));
     },
   },
   {

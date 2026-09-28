@@ -149,6 +149,8 @@ export default function TeacherProfile() {
         eyebrow="MY TEACHING PROFILE"
         initials={initials}
         name={teacher.name}
+        avatarUrl={teacher.avatarUrl}
+        userId={teacher.userId}
         subtitle={teacher.subject || "Subject not added yet"}
         status={{ icon: statusIcon, label: statusLabel, color: statusColor, background: statusBackground }}
       >

@@ -246,6 +246,20 @@ export async function signView(key: string, downloadName?: string): Promise<stri
   );
 }
 
+// A profile can appear in a header, a class card and a teacher listing during one visit.
+// Reuse its safe, short-lived URL so those surfaces can use the browser's same-image cache
+// instead of presigning and fetching a camera original again on every account refresh.
+const profileViewCache = new Map<string, { url: string; until: number }>();
+export async function signProfilePhoto(key: string): Promise<string | null> {
+  const hit = profileViewCache.get(key);
+  if (hit && hit.until > Date.now()) return hit.url;
+  const url = await signView(key); // Keeps the historical identity-document guard.
+  if (!url) return null;
+  profileViewCache.set(key, { url, until: Date.now() + 8 * 60_000 });
+  if (profileViewCache.size > 512) profileViewCache.delete(profileViewCache.keys().next().value!);
+  return url;
+}
+
 /**
  * Bounded, server-authorized read for placing an existing handout on a live board.
  * Never use this for identity files or arbitrary attachments. The route checks both the

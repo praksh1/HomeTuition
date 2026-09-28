@@ -26,6 +26,7 @@ import StarRating from "@/components/StarRating";
 import SessionCard from "@/components/SessionCard";
 import PaymentSheet, { type PaymentMethod } from "@/components/PaymentSheet";
 import TeacherProgramsSection from "@/components/programs/TeacherProgramsSection";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { PublicFadkoHome } from "@/components/PublicFadkoHome";
 import { TEST_BOOKING_LABEL } from "@/utils/testAccess";
 import type { Teacher, Student } from "@/context/AuthContext";
@@ -896,6 +897,7 @@ You can join from your Sessions tab — the class opens a few minutes before it 
           ]}
         >
           <Text style={[t.display, { color: colors.primary }]}>{initials}</Text>
+          <ProfilePhoto uri={teacher.avatarUrl} userId={(teacher as Teacher & { userId: number }).userId} />
         </View>
         <Text style={[t.title1, onNavy, { textAlign: "center" }]}>
           {teacher.name}
@@ -1801,6 +1803,7 @@ const styles = StyleSheet.create({
     height: 88,
     justifyContent: "center",
     alignItems: "center",
+    overflow: "hidden",
   },
   heroSubjectTag: { minHeight: 28, justifyContent: "center" },
   heroRating: { flexDirection: "row", alignItems: "center" },

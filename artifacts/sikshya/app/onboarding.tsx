@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SearchableSelectionField } from "@/components/profile/SearchableSelectionField";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
+import { prepareProfilePhoto } from "@/utils/profilePhotoUpload";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost } from "@/utils/api";
@@ -117,11 +118,19 @@ export default function Onboarding() {
     if (!photo) return;
     setSaving(true);
     try {
-      const fileKey = await uploadFile(photo);
-      await apiPost("/onboarding/me/profile-photo", { fileKey });
+      const prepared = await prepareProfilePhoto(photo);
+      try {
+        const fileKey = await uploadFile(prepared.file);
+        await apiPost("/onboarding/me/profile-photo", { fileKey });
+      } finally {
+        prepared.release();
+      }
       setPhoto(null);
       setPhotoUploaded(true);
       setPhotoError(false);
+      // The upload already succeeded. A transient profile refresh must not tell the person
+      // their photo failed to save; the next account refresh can fetch its signed view URL.
+      try { await refreshUser(); } catch { /* Preserve the successful upload result. */ }
       notify("Photo uploaded", "Your profile photo has been saved.");
     } catch (error) {
       notify("Photo not uploaded", error instanceof Error ? error.message : "Please try again.");

@@ -297,7 +297,7 @@ function StudentFloor({
       </View>
 
       <Text testID="student-media-status" accessibilityLiveRegion="polite"
-        style={[t.overline, { color: microphoneOn || cameraOn ? colors.success : colors.inkFaint, textAlign: "center", paddingHorizontal: space.sm }]}>
+        style={[t.overline, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.pill, textAlign: "center", paddingHorizontal: space.sm, paddingVertical: space.xxs, alignSelf: "center", overflow: "hidden" }]}>
         {mediaStatus}
       </Text>
       {floor.you.state === "muted-by-teacher" ? (

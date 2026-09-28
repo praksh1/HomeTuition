@@ -423,6 +423,9 @@ function SmartBoard({
   const [colorMenuOpen, setColorMenuOpen] = useState(false);
   const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
   const [zoomPercent, setZoomPercent] = useState(100);
+  const [studentViewOpen, setStudentViewOpen] = useState(false);
+  const [studentViewMode, setStudentViewMode] = useState<"fit" | "readable">("readable");
+  const [studentZoom, setStudentZoom] = useState(1);
   const [mediaElements, setMediaElements] = useState<ExcalidrawElement[]>([]);
   const pdfGroups = new Map<string, string[]>();
   for (const element of mediaElements) {
@@ -1084,10 +1087,15 @@ function SmartBoard({
 
       const viewW = Math.max(1, view.maxX - view.minX);
       const viewH = Math.max(1, view.maxY - view.minY);
-      // Fit the teacher's rectangle inside ours. Their screen is rarely the same shape as a
-      // student's, and fitting rather than copying guarantees everything they can see is on
-      // screen here too, with the spare room going to the axis that has it.
-      const zoom = clamp(Math.min(w / viewW, h / viewH), MIN_ZOOM, MAX_ZOOM);
+      // A portrait phone's tall viewport fitted into a landscape laptop made an entire PDF
+      // look like a narrow thumbnail. Readable view enlarges that cross-aspect fit, following
+      // the teacher's centre as they move. The learner can choose Fit all for the full view.
+      const fitZoom = Math.min(w / viewW, h / viewH);
+      const aspectDifference = (w / h) / (viewW / viewH);
+      const readability = studentViewMode === "readable" && aspectDifference > 1.35
+        ? Math.min(1.6, aspectDifference)
+        : 1;
+      const zoom = clamp(fitZoom * readability * studentZoom, MIN_ZOOM, MAX_ZOOM);
       const centerX = (view.minX + view.maxX) / 2;
       const centerY = (view.minY + view.maxY) / 2;
       const scrollX = w / (2 * zoom) - centerX;
@@ -1099,7 +1107,7 @@ function SmartBoard({
       api.updateScene({ appState: { scrollX, scrollY, zoom: { value: zoom } } });
       setTimeout(() => { applyingRemote.current = false; }, 0);
     },
-    [api],
+    [api, studentViewMode, studentZoom],
   );
 
   useEffect(() => {
@@ -1780,6 +1788,24 @@ function SmartBoard({
       </div>
 
       {!readOnly ? pageNavigator : null}
+      {readOnly && classroomChrome && viewport ? (
+        <div style={{ position: "absolute", left: 12, bottom: 12, zIndex: 9, fontFamily: "system-ui, sans-serif" }}>
+          {studentViewOpen ? (
+            <div role="group" aria-label="Your whiteboard view" style={{ width: 220, display: "grid", gap: 8, padding: 12, marginBottom: 8, border: `1px solid ${colors.border}`, borderRadius: 16, background: colors.card, boxShadow: "0 12px 32px rgba(15,23,42,0.18)" }}>
+              <strong style={{ color: colors.foreground, fontSize: "small" }}>Your view only</strong>
+              <span style={{ color: colors.mutedForeground, fontSize: "small", lineHeight: 1.4 }}>The teacher controls the page. Zooming here changes only your screen.</span>
+              <button type="button" aria-label="Fit the teacher's full board on my screen" aria-pressed={studentViewMode === "fit"} onClick={() => { setStudentViewMode("fit"); setStudentZoom(1); }} style={{ ...pageMenuButtonStyle, background: studentViewMode === "fit" ? colors.actionSoft : colors.card }}>Fit full board</button>
+              <button type="button" aria-label="Make the teacher's board easier to read" aria-pressed={studentViewMode === "readable"} onClick={() => { setStudentViewMode("readable"); setStudentZoom(1); }} style={{ ...pageMenuButtonStyle, background: studentViewMode === "readable" ? colors.actionSoft : colors.card }}>Readable view</button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button type="button" aria-label="Zoom out on my board" onClick={() => setStudentZoom((value) => Math.max(0.65, value / 1.25))} style={{ ...pageMenuButtonStyle, flex: 1 }}>−</button>
+                <span aria-label={`Your zoom ${Math.round(studentZoom * 100)} percent`} style={{ alignSelf: "center", minWidth: 42, textAlign: "center", color: colors.foreground, fontSize: "small" }}>{Math.round(studentZoom * 100)}%</span>
+                <button type="button" aria-label="Zoom in on my board" onClick={() => setStudentZoom((value) => Math.min(2.4, value * 1.25))} style={{ ...pageMenuButtonStyle, flex: 1 }}>+</button>
+              </div>
+            </div>
+          ) : null}
+          <button type="button" aria-label="Whiteboard view options" aria-expanded={studentViewOpen} onClick={() => setStudentViewOpen((open) => !open)} style={{ ...pageButtonStyle, minWidth: 72, padding: "0 12px", borderRadius: 16, color: colors.primary, background: colors.card, boxShadow: "0 8px 24px rgba(15,23,42,0.14)" }}>View</button>
+        </div>
+      ) : null}
       {!classroomChrome || !wideToolbar ? historyControls : null}
       {selectionToolbar}
 

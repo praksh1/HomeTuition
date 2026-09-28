@@ -42,6 +42,7 @@ import RescheduleClass from "@/components/RescheduleClass";
 
 interface SessionDetail {
   id: number;
+  classGroup?: { batchId: number; title: string; lessonPosition: number; lessonCount: number };
   teacherId: number;
   teacherName: string;
   subject: string;
@@ -251,6 +252,24 @@ export default function SessionPage() {
           <Text style={[styles.description, { color: colors.mutedForeground }]}>{session.description}</Text>
         ) : null}
       </View>
+
+      {session.classGroup ? (
+        <TouchableOpacity
+          testID="session-open-class-home"
+          accessibilityRole="link"
+          accessibilityLabel={`Open ${session.classGroup.title} class home`}
+          onPress={() => router.push({ pathname: "/class-home", params: { id: String(session.classGroup!.batchId) } })}
+          activeOpacity={0.75}
+          style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, flexDirection: "row", alignItems: "center", gap: 12 }]}
+        >
+          <Feather name="book-open" size={20} color={colors.primary} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Open class home</Text>
+            <Text style={[styles.muted, { color: colors.mutedForeground }]}>Materials, homework, messages and all lesson dates</Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.primary} />
+        </TouchableOpacity>
+      ) : null}
 
       {/* The student's half: has the teacher turned up, and what to do if not. */}
       {!isTeacher && waiting && session.status !== "completed" && (

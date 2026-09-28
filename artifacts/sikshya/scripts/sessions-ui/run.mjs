@@ -78,10 +78,11 @@ try {
     const studentBody = await page.locator("body").innerText();
     check(studentBody.includes("30 of 30 lessons remaining"), `${width}: class progress is concise and truthful`);
     check(!studentBody.includes("Monthly Classes"), `${width}: student library has no retired product`);
-    for (const id of ["upcoming", "live", "history"]) {
+    for (const id of ["active", "past"]) {
       const box = await page.getByTestId(`student-group-${id}`).boundingBox();
       check(box && box.height >= 44, `${width}: student ${id} filter meets the touch floor`);
     }
+    check(studentBody.includes("Active (1)") && studentBody.includes("Past (0)"), `${width}: student class counts use parentheses`);
     const studentContent = await page.getByTestId("student-classes-content").boundingBox();
     check(
       studentContent && (width >= 1024
@@ -105,7 +106,7 @@ try {
     await page.goto(`http://127.0.0.1:${server.address().port}?role=student&fail=1`);
     await page.getByText("Your classes could not be loaded", { exact: true }).waitFor();
     const failureBody = await page.locator("body").innerText();
-    check(!failureBody.includes("No upcoming classes"), `${width}: a connection failure never pretends the student owns nothing`);
+    check(!failureBody.includes("No active classes yet"), `${width}: a connection failure never pretends the student owns nothing`);
     check(errors.length === 0, `${width}: no browser exceptions`);
     await page.close();
   }

@@ -6,6 +6,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
 import { apiGet } from "@/utils/api";
 import { useAuth } from "@/context/AuthContext";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 
 /**
  * The teachers a student has chosen to follow.
@@ -21,8 +22,10 @@ import { useAuth } from "@/context/AuthContext";
 
 interface FollowedTeacher {
   id: number;
+  userId: number;
   name: string;
   subject?: string | null;
+  avatarUrl?: string | null;
 }
 
 export default function FollowedTeachers() {
@@ -101,6 +104,7 @@ export default function FollowedTeachers() {
             <Text style={[styles.avatarText, { color: colors.primary }]}>
               {teacher.name.charAt(0).toUpperCase()}
             </Text>
+            <ProfilePhoto uri={teacher.avatarUrl} userId={teacher.userId} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[styles.name, { color: colors.foreground }]}>{teacher.name}</Text>
@@ -119,7 +123,7 @@ const styles = StyleSheet.create({
   loading: { marginVertical: 24 },
   list: { gap: 10, paddingHorizontal: 20, paddingTop: 12 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, borderRadius: 14, borderWidth: 1, padding: 12 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   avatarText: { fontSize: 16, fontFamily: "Inter_600SemiBold" },
   name: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
   subject: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },

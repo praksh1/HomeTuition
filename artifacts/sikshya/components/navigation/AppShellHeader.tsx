@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { FadkoLogo } from "@/components/FadkoLogo";
 import { ProfileOverflowMenu, type ProfileMenuItem } from "@/components/profile/ProfileOverflowMenu";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { HIT_SLOP_MIN, radius, space } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
@@ -183,6 +184,7 @@ export function AppShellHeader({ role, routeName }: { role: ShellRole; routeName
               style={({ pressed }) => [styles.avatar, { backgroundColor: colors.actionSoft, borderColor: colors.border }, pressed && styles.pressed]}
             >
               <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>{initials}</Text>
+              <ProfilePhoto uri={user && "avatarUrl" in user ? user.avatarUrl : undefined} userId={user?.userId} self />
             </Pressable>
           </>
         )}
@@ -196,6 +198,6 @@ const styles = StyleSheet.create({
   brand: { minHeight: HIT_SLOP_MIN, justifyContent: "center" },
   utilities: { flexDirection: "row", alignItems: "center", gap: space.xs },
   utility: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.pill },
-  avatar: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1 },
+  avatar: { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, borderWidth: 1, overflow: "hidden" },
   pressed: { opacity: 0.72, transform: [{ scale: 0.97 }] },
 });

@@ -577,7 +577,7 @@ export function teacherRowButtons(row: FloorRow, view: TeacherFloorView): Teache
     }
     out.push({
       id: "spotlight",
-      label: view.spotlight === row.userId ? "Stop featuring" : "Feature",
+      label: view.spotlight === row.userId ? "Unpin video" : "Pin video",
       spoken:
         view.spotlight === row.userId
           ? `Stop making ${row.name}'s picture the big one`

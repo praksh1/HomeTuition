@@ -7,6 +7,7 @@ import { numeric } from "@/constants/typography";
 import StarRating from "./StarRating";
 import type { PublicTeacher } from "@/utils/teacherDiscovery";
 import type { Teacher } from "@/context/AuthContext";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 
 interface TeacherCardProps {
   teacher: PublicTeacher | Teacher;
@@ -57,6 +58,7 @@ export default function TeacherCard({ teacher, onPress, compact }: TeacherCardPr
       <View style={[styles.topRow, { gap: space.sm }]}>
         <View style={[styles.avatar, { backgroundColor: colors.actionSoft, borderRadius: radius.pill }]}>
           <Text style={[t.title3, { color: colors.primary }]}>{initials}</Text>
+          <ProfilePhoto uri={teacher.avatarUrl} userId={teacher.userId} />
         </View>
 
         <View style={{ flex: 1, gap: 3 }}>
@@ -156,7 +158,7 @@ export default function TeacherCard({ teacher, onPress, compact }: TeacherCardPr
 const styles = StyleSheet.create({
   card: { borderWidth: StyleSheet.hairlineWidth },
   topRow: { flexDirection: "row", alignItems: "flex-start" },
-  avatar: { width: 52, height: 52, justifyContent: "center", alignItems: "center" },
+  avatar: { width: 52, height: 52, justifyContent: "center", alignItems: "center", overflow: "hidden" },
   nameRow: { flexDirection: "row", alignItems: "center", gap: 5 },
   ratingRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   chips: { flexDirection: "row", flexWrap: "wrap" },

@@ -7,6 +7,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
 import SessionCard from "@/components/SessionCard";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { useColors } from "@/hooks/useColors";
 import type { Student } from "@/context/AuthContext";
 import { studentClassSection, studentSessionSection } from "@/utils/studentSessionGroups";
@@ -51,6 +52,7 @@ interface Session {
 }
 
 type ViewMode = "upcoming" | "live" | "history";
+type LibraryMode = "active" | "past";
 type SessionListItem =
   | { kind: "session"; key: string; session: Session }
   | {
@@ -70,12 +72,12 @@ type SessionListItem =
 const SESSION_POLL_MS = 15000;
 const SESSION_PAGE_SIZE = 100;
 
-type SessionResponseRow = { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] };
+type SessionResponseRow = { id: number; teacherId?: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] };
 type SessionPage = { sessions: SessionResponseRow[]; total?: number };
 
 function mapSession(s: SessionResponseRow): Session {
   return {
-    id: String(s.id), teacherId: "", teacherName: s.teacherName, subject: s.subject,
+    id: String(s.id), teacherId: String(s.teacherId ?? ""), teacherName: s.teacherName, subject: s.subject,
     topic: s.topic, date: s.date, duration: s.duration, maxStudents: s.maxStudents,
     enrolledStudents: Array(s.enrolledCount).fill(""), price: s.price,
     status: s.status as Session["status"], enrolment: (s.enrolment as Session["enrolment"]) ?? null,
@@ -132,9 +134,9 @@ export default function StudentSessions() {
     }, [student?.userId])
   );
 
-  // The first useful screen is what is ahead, not a forty-five-row archive. Live and History
-  // remain one tap away and carry counts, like a timetable rather than a database table.
-  const [group, setGroup] = useState<ViewMode>("upcoming");
+  // A student's primary library is their enrolled classes, not a flattened lesson agenda.
+  // Live and upcoming lessons remain together in Active; each class owns its detailed schedule.
+  const [group, setGroup] = useState<LibraryMode>("active");
 
   useEffect(() => {
     const timer = setInterval(() => setTick(Date.now()), 30_000);
@@ -277,15 +279,20 @@ export default function StudentSessions() {
   const liveRows = rowsFor("live");
   const upcomingRows = rowsFor("upcoming");
   const historyRows = rowsFor("history");
-  const visibleRows = group === "live" ? liveRows : group === "history" ? historyRows : upcomingRows;
-  const groups: Array<{ id: ViewMode; label: string; count: number }> = [
-    { id: "upcoming", label: "Upcoming", count: upcomingRows.length },
-    { id: "live", label: "Live", count: liveRows.length },
-    { id: "history", label: "History", count: historyRows.length + dropped.length },
+  const activeRows = [...liveRows, ...upcomingRows];
+  const pastRows: SessionListItem[] = [
+    ...historyRows,
+    ...dropped.map((session): SessionListItem => ({ kind: "session", key: `dropped-${session.id}`, session })),
+  ];
+  const visibleRows = group === "past" ? pastRows : activeRows;
+  const groups: Array<{ id: LibraryMode; label: string; count: number }> = [
+    { id: "active", label: "Active", count: activeRows.length },
+    { id: "past", label: "Past", count: pastRows.length },
   ];
 
   const renderClass = (item: Extract<SessionListItem, { kind: "class" }>) => {
-    const status = group === "live" ? "Live now" : group === "history" ? "Past class" : "Next lesson";
+    const live = item.session.status === "live" && !isOver(item.session);
+    const status = live ? "Live now" : group === "past" ? "Past class" : "Next lesson";
     const elapsedCount = Math.max(0, item.lessonCount - item.remainingCount);
     return (
       <Pressable
@@ -297,29 +304,33 @@ export default function StudentSessions() {
           padding: space.md,
           gap: space.sm,
           borderWidth: 1,
-          borderColor: group === "live" ? colors.brand : colors.border,
+          borderColor: live ? colors.brand : colors.border,
           borderRadius: radius.md,
           backgroundColor: colors.card,
         }}
       >
         <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.sm }}>
+          <View style={{ width: 44, height: 44, borderRadius: radius.pill, backgroundColor: colors.actionSoft, alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+            <Text style={[t.caption, { color: colors.primary }]}>{item.teacherName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase()}</Text>
+            {item.session.teacherId ? <ProfilePhoto userId={Number(item.session.teacherId)} loadIfMissing /> : null}
+          </View>
           <View style={{ flex: 1, gap: space.xxs }}>
             <Text style={[t.title3, { color: colors.foreground }]} numberOfLines={2}>{item.title}</Text>
             <Text style={[t.caption, { color: colors.mutedForeground }]}>with {item.teacherName}</Text>
           </View>
-          <View style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: group === "live" ? colors.brandSoft : colors.actionSoft }}>
-            <Text style={[t.overline, { color: group === "live" ? colors.brand : colors.primary }]}>{status}</Text>
+          <View style={{ paddingHorizontal: space.xs, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: live ? colors.brandSoft : colors.actionSoft }}>
+            <Text style={[t.overline, { color: live ? colors.brand : colors.primary }]}>{status}</Text>
           </View>
         </View>
-        {group !== "history" && item.loadedCount >= item.lessonCount ? (
-          <View style={{ padding: space.sm, gap: space.xxs, borderRadius: radius.sm, backgroundColor: group === "live" ? colors.brandSoft : colors.muted }}>
-            <Text style={[t.overline, { color: group === "live" ? colors.brand : colors.mutedForeground }]}>{group === "live" ? "Happening now" : "Your next lesson"}</Text>
+        {group !== "past" && item.loadedCount >= item.lessonCount ? (
+          <View style={{ padding: space.sm, gap: space.xxs, borderRadius: radius.sm, backgroundColor: live ? colors.brandSoft : colors.muted }}>
+            <Text style={[t.overline, { color: live ? colors.brand : colors.mutedForeground }]}>{live ? "Happening now" : "Your next lesson"}</Text>
             <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>
               {dates.format(item.session.date, { withWeekday: true, withTime: true })}
             </Text>
           </View>
         ) : null}
-        {group !== "history" ? (
+        {group !== "past" ? (
           <View accessibilityLabel={`${elapsedCount} lessons passed, ${item.remainingCount} remaining`} style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}>
             {elapsedCount > 0 ? <View style={{ flex: elapsedCount, height: 4, borderRadius: radius.pill, backgroundColor: colors.primary }} /> : null}
             {item.remainingCount > 0 ? <View style={{ flex: item.remainingCount, height: 4, borderRadius: radius.pill, backgroundColor: colors.muted }} /> : null}
@@ -329,7 +340,7 @@ export default function StudentSessions() {
           <Text style={[t.caption, numeric, { flex: 1, color: colors.mutedForeground }]}>
             {item.loadedCount < item.lessonCount
               ? `${item.lessonCount} lessons in this class · open for the full schedule`
-              : group === "history"
+              : group === "past"
               ? `${item.lessonCount} lessons · records saved`
               : `${item.remainingCount} of ${item.lessonCount} lessons remaining${item.testBooking ? " · test booking" : ""}`}
           </Text>
@@ -344,9 +355,7 @@ export default function StudentSessions() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <FlatList
         testID="student-classes-list"
-        data={group === "history"
-          ? [...visibleRows, ...dropped.map((session): SessionListItem => ({ kind: "session", key: `dropped-${session.id}`, session }))]
-          : visibleRows}
+        data={visibleRows}
         keyExtractor={(item) => item.key}
         contentContainerStyle={{
           width: "100%",
@@ -361,7 +370,7 @@ export default function StudentSessions() {
           <View testID="student-classes-content" style={{ gap: space.lg, marginBottom: space.md }}>
             <View style={{ gap: space.xxs }}>
               <Text style={[t.title1, { color: colors.foreground }]}>My classes</Text>
-              <Text style={[t.callout, { color: colors.mutedForeground }]}>Everything you joined, kept together by class.</Text>
+              <Text style={[t.callout, { color: colors.mutedForeground }]}>Choose a class to see its lessons, materials, homework and messages.</Text>
             </View>
             <View testID="student-filter-row" style={{ flexDirection: "row", gap: space.xxs, padding: space.xxs, borderRadius: radius.pill, backgroundColor: colors.muted }}>
               {groups.map((g) => {
@@ -377,7 +386,7 @@ export default function StudentSessions() {
                     style={{ minHeight: HIT_SLOP_MIN, flex: 1, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: active ? colors.card : colors.muted }}
                   >
                     <Text style={[t.caption, { color: active ? colors.primary : colors.mutedForeground }]}>
-                      {g.label}{g.count > 0 ? ` ${g.count}` : ""}
+                      {`${g.label} (${g.count})`}
                     </Text>
                   </Pressable>
                 );
@@ -423,10 +432,10 @@ export default function StudentSessions() {
               <Feather name="book-open" size={25} color={colors.primary} />
             </View>
             <Text style={[t.title2, { color: colors.foreground, textAlign: "center" }]}>
-              {group === "history" ? "No class history yet" : group === "live" ? "Nothing live right now" : "No upcoming classes"}
+              {group === "past" ? "No past classes yet" : "No active classes yet"}
             </Text>
             <Text style={[t.callout, { maxWidth: 360, color: colors.mutedForeground, textAlign: "center" }]}>
-              {group === "upcoming" ? "Find a class or teacher and reserve your place." : "Use Upcoming to see what is next."}
+              {group === "active" ? "Find a teacher or class that fits what you want to learn." : "Classes you have finished or left will appear here."}
             </Text>
             <Pressable
               accessibilityRole="button"

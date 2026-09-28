@@ -182,6 +182,7 @@ try {
 
     await page.goto(`${base}?screen=student`);
     await page.getByText("MY FADKO PROFILE", { exact: true }).waitFor();
+    check(await page.getByTestId("profile-photo").count() >= 1, `${width}: student's uploaded photo appears on Profile`);
     await page.getByTestId("student-account-details").waitFor();
     let body = await page.locator("body").innerText();
     check(body.includes("Account & payments"), `${width}: student account actions have a clear section`);
@@ -253,6 +254,7 @@ try {
 
     await page.goto(`${base}?screen=teacher&role=teacher`);
     await page.getByText("MY TEACHING PROFILE", { exact: true }).waitFor();
+    check(await page.getByTestId("profile-photo").count() >= 1, `${width}: teacher's uploaded photo appears on Profile`);
     await page.getByTestId("teacher-account-details").waitFor();
     body = await page.locator("body").innerText();
     check(body.includes("Teaching tools"), `${width}: teacher tools are grouped`);

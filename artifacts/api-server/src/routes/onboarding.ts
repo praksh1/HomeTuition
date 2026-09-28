@@ -10,7 +10,7 @@ import {
 
 import locationData from "../data/nepalEducationFacilities.json";
 import { requireAuth } from "../middlewares/requireAuth";
-import { deleteUpload, signView, verifyUpload } from "../lib/fileStore";
+import { deleteUpload, signProfilePhoto, verifyUpload } from "../lib/fileStore";
 import { flagContent } from "../lib/moderation";
 import { ageOn, completedAccountAt, validNepalPhone } from "../lib/onboardingRules";
 import { NEPAL_PROVINCES, validNepalProvinceDistrict } from "../lib/nepalLocationRules";
@@ -160,6 +160,15 @@ router.post("/onboarding/me/profile-photo", requireAuth, async (req, res): Promi
   res.json({ onboarding: saved });
 });
 
+router.get("/onboarding/me/profile-photo/view", requireAuth, async (req, res): Promise<void> => {
+  const [row] = await db.select({ key: userOnboardingTable.profilePhotoKey })
+    .from(userOnboardingTable).where(eq(userOnboardingTable.userId, req.user!.userId));
+  if (!row?.key) { res.status(404).json({ error: "No profile photo." }); return; }
+  const url = await signProfilePhoto(row.key).catch(() => null);
+  if (!url) { res.status(503).json({ error: "Profile photos are not available." }); return; }
+  res.json({ url });
+});
+
 router.get("/profiles/:userId/photo", async (req, res): Promise<void> => {
   const userId = Number(req.params.userId);
   if (!Number.isInteger(userId)) { res.status(400).json({ error: "Invalid profile." }); return; }
@@ -169,7 +178,7 @@ router.get("/profiles/:userId/photo", async (req, res): Promise<void> => {
     .innerJoin(usersTable, eq(usersTable.id, userOnboardingTable.userId))
     .where(and(eq(userOnboardingTable.userId, userId), eq(usersTable.role, "teacher")));
   if (!row?.key) { res.status(404).json({ error: "No profile photo." }); return; }
-  const url = await signView(row.key);
+  const url = await signProfilePhoto(row.key).catch(() => null);
   if (!url) { res.status(503).json({ error: "Profile photos are not available." }); return; }
   res.json({ url });
 });

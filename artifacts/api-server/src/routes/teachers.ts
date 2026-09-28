@@ -8,7 +8,7 @@ import { mayBuyTeacherPlan } from "../lib/teachingAccess";
 import { legacyTeacherPlanSalesOpen, teacherBillingPolicy, LEGACY_PLAN_PAUSED } from "../lib/teacherBilling";
 import { allowanceSummary } from "../lib/sessionAllowance";
 import { SUBSCRIPTION_TIERS, isTierKey, type SubscriptionTierKey } from "../lib/tierLimits";
-import { deleteUpload, verifyUpload } from "../lib/fileStore";
+import { deleteUpload, signProfilePhoto, verifyUpload } from "../lib/fileStore";
 import { flagContent } from "../lib/moderation";
 
 const router: IRouter = Router();
@@ -137,6 +137,7 @@ router.get("/teachers", async (req, res): Promise<void> => {
         rating: teacherProfilesTable.rating,
         reviewCount: teacherProfilesTable.reviewCount,
         avatarUrl: teacherProfilesTable.avatarUrl,
+        profilePhotoKey: userOnboardingTable.profilePhotoKey,
         province: userOnboardingTable.province,
         localLevel: userOnboardingTable.localLevel,
         institutionName: userOnboardingTable.institutionName,
@@ -157,7 +158,13 @@ router.get("/teachers", async (req, res): Promise<void> => {
       .where(where),
   ]);
 
-  res.json({ teachers, total, page: pageNum, limit: limitNum });
+  // Directory pages are bounded (12 in Discover). Sign only the visible teachers' photos;
+  // never make the private R2 bucket public or send storage keys to the client.
+  const visibleTeachers = await Promise.all(teachers.map(async ({ profilePhotoKey, ...teacher }) => ({
+    ...teacher,
+    avatarUrl: profilePhotoKey ? await signProfilePhoto(profilePhotoKey).catch(() => null) ?? teacher.avatarUrl : teacher.avatarUrl,
+  })));
+  res.json({ teachers: visibleTeachers, total, page: pageNum, limit: limitNum });
 });
 
 router.get("/teachers/:id", attachUserIfPresent, async (req, res): Promise<void> => {
@@ -183,6 +190,7 @@ router.get("/teachers/:id", attachUserIfPresent, async (req, res): Promise<void>
       rating: teacherProfilesTable.rating,
       reviewCount: teacherProfilesTable.reviewCount,
       avatarUrl: teacherProfilesTable.avatarUrl,
+      profilePhotoKey: userOnboardingTable.profilePhotoKey,
       province: userOnboardingTable.province,
       localLevel: userOnboardingTable.localLevel,
       institutionName: userOnboardingTable.institutionName,
@@ -225,7 +233,8 @@ router.get("/teachers/:id", attachUserIfPresent, async (req, res): Promise<void>
     isFollowing = !!follow;
   }
 
-  res.json({ ...row, isFollowing });
+  const { profilePhotoKey, ...teacher } = row;
+  res.json({ ...teacher, avatarUrl: profilePhotoKey ? await signProfilePhoto(profilePhotoKey).catch(() => null) ?? teacher.avatarUrl : teacher.avatarUrl, isFollowing });
 });
 
 router.patch("/teachers/:id", requireAuth, async (req, res): Promise<void> => {
@@ -626,13 +635,18 @@ router.get("/students/:id/followed-teachers", requireAuth, async (req, res): Pro
       reviewCount: teacherProfilesTable.reviewCount,
       avatarUrl: teacherProfilesTable.avatarUrl,
       isOnline: teacherProfilesTable.isOnline,
+      profilePhotoKey: userOnboardingTable.profilePhotoKey,
     })
     .from(studentTeacherSubscriptionsTable)
     .innerJoin(teacherProfilesTable, eq(studentTeacherSubscriptionsTable.teacherId, teacherProfilesTable.userId))
     .innerJoin(usersTable, eq(teacherProfilesTable.userId, usersTable.id))
+    .leftJoin(userOnboardingTable, eq(userOnboardingTable.userId, usersTable.id))
     .where(eq(studentTeacherSubscriptionsTable.studentId, studentId));
 
-  res.json({ teachers });
+  res.json({ teachers: await Promise.all(teachers.map(async ({ profilePhotoKey, ...teacher }) => ({
+    ...teacher,
+    avatarUrl: profilePhotoKey ? await signProfilePhoto(profilePhotoKey).catch(() => null) ?? teacher.avatarUrl : teacher.avatarUrl,
+  }))) });
 });
 
 router.get("/teachers/:id/reviews", attachUserIfPresent, async (req, res): Promise<void> => {

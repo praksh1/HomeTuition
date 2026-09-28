@@ -42,6 +42,8 @@ export default function StudentProfile() {
         eyebrow="MY FADKO PROFILE"
         initials={initials}
         name={student.name}
+        avatarUrl={student.avatarUrl}
+        userId={student.userId}
         subtitle={student.grade || "Grade not added yet"}
         status={{
           icon: student.emailVerified ? "check-circle" : "mail",
