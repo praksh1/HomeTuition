@@ -38,6 +38,7 @@ import {
 } from "@/utils/conversationList";
 import { loadDrafts, type Drafts } from "@/utils/drafts";
 import { classConversationDestination } from "@/utils/conversationRoute";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 
 function initials(name: string) {
   return name.split(" ").map((part) => part[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -305,6 +306,7 @@ export default function ConversationList({ title }: { title: string }) {
                   ) : (
                     <Text style={[t.bodyStrong, { color: isUnread ? colors.primaryForeground : colors.primary }]}>{initials(thread.otherUserName)}</Text>
                   )}
+                  {thread.kind === "direct" ? <ProfilePhoto uri={thread.otherUserPhotoUrl} /> : null}
                 </View>
                 <View style={styles.rowCopy}>
                   <View style={styles.rowTop}>

@@ -11,6 +11,7 @@ import { useNotifications } from "@/context/NotificationContext";
 import { apiGet } from "@/utils/api";
 import { classHomeworkOverview } from "@/utils/classHomeworkOverview";
 import { classLessonJourney } from "@/utils/classLessonJourney";
+import type { ClassJourneyDisplayLesson } from "@/utils/classLessonJourney";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import { serverNow } from "@/utils/sessionClock";
 
@@ -23,6 +24,7 @@ interface Home {
     sessionId: number;
     startsAt: string;
     durationMinutes: number;
+    status?: string;
   }>;
   counts: {
     messages: number;
@@ -50,11 +52,13 @@ export default function ClassHomeScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const batchId = Number(id);
   const colors = useColors();
-  const { t, space, numeric } = useLayout();
+  const { t, space, numeric, radius } = useLayout();
   const dates = useDates();
   const { lastEvent } = useNotifications();
   const [home, setHome] = useState<Home | null>(null);
   const [problem, setProblem] = useState("");
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [showPrevious, setShowPrevious] = useState(false);
   const receivedAt = useRef(Date.now());
   const [tick, setTick] = useState(Date.now());
   const load = useCallback(async () => {
@@ -121,7 +125,9 @@ export default function ClassHomeScreen() {
     });
     return `${dates.format(batchDateValue(local.date)!)} · ${local.time} Nepal time`;
   };
-  const when = focusLesson
+  const when = journey.stage === "finished"
+    ? "No upcoming date"
+    : focusLesson
     ? (() => {
         return formatLesson(focusLesson);
       })()
@@ -132,13 +138,13 @@ export default function ClassHomeScreen() {
       : journey.stage === "upcoming"
         ? "NEXT LESSON"
         : journey.stage === "finished"
-          ? "SCHEDULE COMPLETE"
+        ? "NO UPCOMING LESSONS"
           : "NO LESSONS SCHEDULED";
   const heroContext =
     journey.focusNumber && journey.stage !== "finished"
       ? `Lesson ${journey.focusNumber} of ${home.lessons.length}`
       : journey.stage === "finished"
-        ? `All ${journey.passedDates} scheduled ${journey.passedDates === 1 ? "date has" : "dates have"} passed`
+        ? "Review earlier and closed lesson dates below"
         : "The teacher has not added lesson dates yet";
   const cards: HomeCard[] = [
     ...(home.isTeacher
@@ -201,7 +207,7 @@ export default function ClassHomeScreen() {
       note: home.isTeacher
         ? "Lesson earnings and receipts"
         : "Charges, receipts and refunds",
-      path: home.isTeacher ? "/subscription" : "/(student)/payments",
+      path: home.isTeacher ? "/(teacher)/subscription" : "/(student)/payments",
       unread: 0,
       badgeLabel: "",
       withBatch: false,
@@ -216,6 +222,57 @@ export default function ClassHomeScreen() {
       withBatch: false,
     },
   ];
+  const lessonRows = (lessons: ClassJourneyDisplayLesson[]) => (
+    <View
+      style={{
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: radius.md,
+        backgroundColor: colors.card,
+        overflow: "hidden",
+      }}
+    >
+      {lessons.map((lesson, index) => {
+        const isCurrent =
+          journey.stage === "current" &&
+          lesson.sessionId === journey.focusLesson?.sessionId;
+        const stateLabel = lesson.status === "completed"
+          ? "Completed"
+          : lesson.status === "cancelled"
+            ? "Cancelled"
+            : journey.previousLessons.some((past) => past.sessionId === lesson.sessionId)
+              ? "Date passed"
+              : isCurrent ? "Now" : "";
+        return (
+          <View
+            key={lesson.sessionId}
+            style={{
+              minHeight: 58,
+              paddingHorizontal: space.md,
+              paddingVertical: space.sm,
+              borderTopWidth: index ? 1 : 0,
+              borderTopColor: colors.border,
+              flexDirection: "row",
+              alignItems: "center",
+              gap: space.sm,
+            }}
+          >
+            <View style={{ flex: 1, gap: space.xxs }}>
+              <Text style={[t.bodyStrong, { color: colors.foreground }]}>Lesson {lesson.displayNumber}</Text>
+              <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+                {formatLesson(lesson)}
+              </Text>
+            </View>
+            {stateLabel ? (
+              <View style={{ paddingHorizontal: space.sm, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: colors.surfaceSunk }}>
+                <Text style={[t.caption, { color: colors.primary }]}>{stateLabel}</Text>
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
   return (
     <ClassGroupShell
       title={home.title}
@@ -224,7 +281,7 @@ export default function ClassHomeScreen() {
       <View
         style={{
           padding: space.lg,
-          borderRadius: 16,
+          borderRadius: radius.md,
           backgroundColor: colors.primary,
           gap: space.sm,
         }}
@@ -250,7 +307,7 @@ export default function ClassHomeScreen() {
             style={{
               minHeight: 48,
               backgroundColor: colors.background,
-              borderRadius: 12,
+              borderRadius: radius.sm,
               alignItems: "center",
               justifyContent: "center",
             }}
@@ -261,91 +318,53 @@ export default function ClassHomeScreen() {
           </TouchableOpacity>
         ) : null}
       </View>
-      {journey.visibleLessons.length ? (
+      {journey.upcomingLessons.length || journey.previousLessons.length ? (
         <View style={{ gap: space.sm }}>
           <View style={{ gap: space.xxs }}>
             <Text
               accessibilityRole="header"
               style={[t.title3, { color: colors.foreground }]}
             >
-              Schedule
+              Upcoming lessons
             </Text>
             <Text style={[t.caption, { color: colors.mutedForeground }]}>
-              {journey.stage === "finished"
-                ? "Most recent scheduled dates"
-                : `${journey.remainingDates} scheduled ${journey.remainingDates === 1 ? "date" : "dates"} remaining`}
+              {journey.upcomingLessons.length
+                ? `${journey.remainingDates} scheduled ${journey.remainingDates === 1 ? "date" : "dates"} remaining`
+                : "No upcoming lesson dates"}
             </Text>
           </View>
-          <View
-            style={{
-              borderWidth: 1,
-              borderColor: colors.border,
-              borderRadius: 14,
-              backgroundColor: colors.card,
-              overflow: "hidden",
-            }}
-          >
-            {journey.visibleLessons.map((lesson, index) => {
-              const isCurrent =
-                journey.stage === "current" &&
-                lesson.sessionId === journey.focusLesson?.sessionId;
-              return (
-                <View
-                  key={lesson.sessionId}
-                  style={{
-                    minHeight: 58,
-                    paddingHorizontal: space.md,
-                    paddingVertical: space.sm,
-                    borderTopWidth: index ? 1 : 0,
-                    borderTopColor: colors.border,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: space.sm,
-                  }}
-                >
-                  <View style={{ flex: 1, gap: space.xxs }}>
-                    <Text style={[t.bodyStrong, { color: colors.foreground }]}>
-                      Lesson {lesson.displayNumber}
-                    </Text>
-                    <Text
-                      style={[
-                        t.caption,
-                        numeric,
-                        { color: colors.mutedForeground },
-                      ]}
-                    >
-                      {formatLesson(lesson)}
-                    </Text>
-                  </View>
-                  {isCurrent ? (
-                    <View
-                      style={{
-                        paddingHorizontal: space.sm,
-                        paddingVertical: space.xxs,
-                        borderRadius: 999,
-                        backgroundColor: colors.surfaceSunk,
-                      }}
-                    >
-                      <Text style={[t.caption, { color: colors.primary }]}>
-                        Now
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              );
-            })}
-          </View>
-          {journey.hiddenDates ? (
-            <Text
-              style={[
-                t.caption,
-                numeric,
-                { color: colors.mutedForeground, textAlign: "center" },
-              ]}
+          {journey.upcomingLessons.length
+            ? lessonRows(showAllUpcoming ? journey.upcomingLessons : journey.upcomingLessons.slice(0, 3))
+            : null}
+          {journey.upcomingLessons.length > 3 ? (
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={showAllUpcoming ? "Show fewer upcoming dates" : `Show all ${journey.upcomingLessons.length} upcoming dates`}
+              onPress={() => setShowAllUpcoming((shown) => !shown)}
+              style={{ minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.xs }}
             >
-              + {journey.hiddenDates} more scheduled{" "}
-              {journey.hiddenDates === 1 ? "date" : "dates"}
-            </Text>
+              <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>
+                {showAllUpcoming ? "Show fewer dates" : `+ ${journey.upcomingLessons.length - 3} more scheduled ${journey.upcomingLessons.length - 3 === 1 ? "date" : "dates"}`}
+              </Text>
+              <Feather name={showAllUpcoming ? "chevron-up" : "chevron-down"} size={17} color={colors.primary} />
+            </TouchableOpacity>
+          ) : null}
+          {journey.previousLessons.length ? (
+            <View style={{ gap: space.sm, marginTop: space.sm }}>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={`${showPrevious ? "Hide" : "Show"} ${journey.previousLessons.length} previous lesson dates`}
+                onPress={() => setShowPrevious((shown) => !shown)}
+                style={{ minHeight: 48, paddingHorizontal: space.md, borderRadius: radius.sm, backgroundColor: colors.actionSoft, flexDirection: "row", alignItems: "center", gap: space.sm }}
+              >
+                <Feather name="clock" size={18} color={colors.primary} />
+                <Text style={[t.bodyStrong, { flex: 1, color: colors.primary }]}>
+                  Previous lessons ({journey.previousLessons.length})
+                </Text>
+                <Feather name={showPrevious ? "chevron-up" : "chevron-down"} size={18} color={colors.primary} />
+              </TouchableOpacity>
+              {showPrevious ? lessonRows(journey.previousLessons) : null}
+            </View>
           ) : null}
         </View>
       ) : null}
@@ -367,7 +386,7 @@ export default function ClassHomeScreen() {
             style={{
               minHeight: 76,
               padding: space.md,
-              borderRadius: 14,
+              borderRadius: radius.md,
               borderWidth: 1,
               borderColor: colors.border,
               backgroundColor: colors.card,
@@ -380,7 +399,7 @@ export default function ClassHomeScreen() {
               style={{
                 width: 44,
                 height: 44,
-                borderRadius: 12,
+                borderRadius: radius.sm,
                 alignItems: "center",
                 justifyContent: "center",
                 backgroundColor: colors.surfaceSunk,
@@ -403,7 +422,7 @@ export default function ClassHomeScreen() {
                   minWidth: 24,
                   height: 24,
                   paddingHorizontal: 6,
-                  borderRadius: 12,
+                  borderRadius: radius.pill,
                   alignItems: "center",
                   justifyContent: "center",
                   backgroundColor: colors.brand,

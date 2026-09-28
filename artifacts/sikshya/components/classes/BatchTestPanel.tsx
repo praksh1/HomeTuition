@@ -130,7 +130,7 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
         <ProgramButton label="Open next lesson" emphasis="secondary" onPress={() => router.push({ pathname: "/session/[id]", params: { id: String(firstLesson.sessionId) } })} />
       </View> : null}
       <Text style={[t.callout, numeric, { color: colors.foreground }]}>{result.isTeacher
-        ? `Illustrative teacher share: ${money(teacherExpected)}${teacherPaid ? ` · Simulated payout: ${money(teacherPaid)}` : ""}`
+        ? `Estimated teacher earnings: ${money(teacherExpected)}${teacherPaid ? ` · Simulated payout: ${money(teacherPaid)}` : ""}`
         : `Listed tuition: ${money(studentPaid)}${studentRefunded ? ` · Simulated refund: ${money(studentRefunded)}` : ""}`}</Text>
       <Text style={[t.caption, { color: colors.mutedForeground }]}>Record {result.receipts[0]?.reference ?? "recorded"} · practice only, not proof of payment</Text>
       <ProgramButton label={result.isTeacher ? "View earnings history" : "View payment history"} emphasis="quiet" onPress={() => router.push(result.isTeacher ? "/subscription" : "/(student)/payments")} />

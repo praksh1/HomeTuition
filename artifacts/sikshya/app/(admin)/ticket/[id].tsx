@@ -58,6 +58,7 @@ interface TicketDetail {
     sessionId: number | null; assignedTo: number | null;
     reporterId: number | null; reporterName: string | null; reporterEmail: string | null;
     reporterRole: string | null; reporterSuspendedAt: string | null;
+    reportedUserId?: number | null;
   };
   /** Everything that has happened to it, internal notes included — this is the agents' view. */
   history: TicketEvent[];
@@ -300,6 +301,11 @@ export default function AdminTicket() {
             <Text style={[styles.link, { color: colors.secondary }]}>Open this person's record →</Text>
           </TouchableOpacity>
         )}
+        {ticket.reportedUserId ? (
+          <TouchableOpacity onPress={() => router.push(`/(admin)/person/${ticket.reportedUserId}`)} activeOpacity={0.75}>
+            <Text style={[styles.link, { color: colors.secondary }]}>Reported user #{ticket.reportedUserId} · Open account record →</Text>
+          </TouchableOpacity>
+        ) : null}
         {/*
           The attachment, openable rather than printed.
           

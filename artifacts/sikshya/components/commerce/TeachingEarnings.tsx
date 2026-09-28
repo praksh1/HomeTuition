@@ -34,9 +34,8 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
       <ProgramCardShell>
         <Text style={[t.title2, { color: colors.foreground }]}>Your teaching, your earnings</Text>
         <Text style={[t.body, { color: colors.foreground }]}>Set your tuition when you create a class. Students pay to enroll; creating and publishing a class costs you nothing.</Text>
-        <Text style={[t.bodyStrong, { color: colors.foreground }]}>You receive {policy.teacherShareBps / 100}% of the tuition. Fadko's commission is {policy.platformShareBps / 100}%.</Text>
-        <Text style={[t.body, { color: colors.foreground }]}>Before you publish, you'll see the estimated earnings per student and per lesson.</Text>
-        <Text style={[t.caption, { color: colors.mutedForeground }]}>Estimates are before applicable taxes. Approved refunds or adjustments can change the final amount.</Text>
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>Before you publish, you'll see the class price, Fadko fee and your estimated earnings per student and per lesson in rupees.</Text>
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>The fee supports the platform, hosting and maintenance; these are not separate charges. Live tax deductions are not configured yet. Approved refunds or adjustments can change the final amount.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
       </ProgramCardShell>
       <ProgramCardShell>

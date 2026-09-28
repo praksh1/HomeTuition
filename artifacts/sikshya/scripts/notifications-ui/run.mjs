@@ -47,7 +47,7 @@ try {
 
     const body = await page.locator("body").innerText();
     check(body.includes("30 updates are waiting for you."), `${width}: truthful unread summary is prominent`);
-    check(body.includes("All 60") && body.includes("Unread 30"), `${width}: All and Unread counts are visible`);
+    check(body.includes("All (60)") && body.includes("Unread (30)"), `${width}: All and Unread counts are visible`);
     check(body.includes("Nepal time"), `${width}: notification times are explicitly Nepal time`);
     check(body.toLowerCase().includes("message"), `${width}: event type uses a human label`);
     check((await page.getByTestId("notifications-back").boundingBox()).height >= 44, `${width}: Back meets the touch floor`);

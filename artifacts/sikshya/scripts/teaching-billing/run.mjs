@@ -33,11 +33,16 @@ try {
     await page.goto(base);
     await page.getByRole("button", { name: "Prepare a class", exact: true }).waitFor();
     const text = await page.locator("body").innerText();
-    check(text.includes("Fadko commission (30%)") && text.includes("Your share (70%)"), `${width}: fee split appears on a specific receipt`);
-    check(text.includes("estimated earnings") && text.includes("before applicable taxes"), `${width}: overview sends price-specific estimates to class setup`);
+    check(text.includes("Class price: NPR 1,000") && text.includes("Less Fadko fee: − NPR 300") && text.includes("Estimated teacher earnings: NPR 700"), `${width}: receipt shows the recorded amount-led fee split`);
+    check(text.includes("estimated earnings per student and per lesson") && text.includes("Live tax deductions are not configured yet"), `${width}: overview explains estimates without inventing live tax rules`);
+    check(!text.includes("Fadko commission (30%)") && !text.includes("Your share (70%)"), `${width}: teacher-facing amounts do not display percentages`);
     check(text.includes("When will I get paid?") && text.includes("not money you can withdraw") && text.includes("Eligible earnings are not yet a bank transfer") && text.includes("publish the payout schedule"), `${width}: payout expectations distinguish simulation from real transfers`);
     check(text.includes("Pending test earnings") && text.includes("Transaction history"), `${width}: earnings statement is on the Profile destination`);
     check(text.includes("SEE Maths") && text.includes("Asha") && text.includes("TEST-TEACH-1"), `${width}: receipt identifies class and paying student`);
+    await page.getByRole("button", { name: "Show Fadko fee details" }).click();
+    check(await page.getByText("Platform operations · Video and server hosting · App maintenance", { exact: true }).isVisible(), `${width}: fee information is visible on demand without fictitious extra deductions`);
+    await page.getByRole("button", { name: "View lesson breakdown (1)", exact: true }).click();
+    check(await page.getByText("Lesson 1", { exact: true }).isVisible() && await page.getByText("Price NPR 1,000 · Fadko fee − NPR 300 · Teacher earnings NPR 700", { exact: true }).isVisible(), `${width}: lesson allocation is available on demand`);
     check(!text.includes("Held by Fadko") && !text.includes("Fadko earned"), `${width}: receipt does not claim platform custody or earned fees`);
     check(text.includes("Listings only") && text.includes("does not yet collect payment"), `${width}: no fake checkout promise`);
     check(!text.includes("Tier 1") && !text.includes("Choose a plan"), `${width}: old tier picker hidden`);

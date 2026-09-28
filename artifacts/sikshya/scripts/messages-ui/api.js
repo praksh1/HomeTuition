@@ -139,6 +139,7 @@ export async function apiGet(path) {
 
 export async function apiPost(path, body) {
   if (path.endsWith("/block")) { blocked = body.blocked; return apiGet(path.replace(/block$/, "access")); }
+  if (path.endsWith("/report")) { globalThis.lastReport = { path, body }; return { ref: "HT-000321", id: 321 }; }
   if (blocked) throw new Error("You blocked this person. Unblock to send messages.");
   if (path.includes("reaction")) return {};
   if (path.startsWith("/class-groups/")) {

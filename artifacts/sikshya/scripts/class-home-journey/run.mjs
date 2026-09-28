@@ -71,6 +71,12 @@ try {
       current.includes("+ 1 more scheduled date"),
       `${width}: long schedule stays compact`,
     );
+    await page.getByRole("button", { name: "Show all 4 upcoming dates" }).click();
+    check(
+      (await page.locator("body").innerText()).includes("Lesson 4"),
+      `${width}: remaining dates expand without leaving class home`,
+    );
+    await page.getByRole("button", { name: "Show fewer upcoming dates" }).click();
     check(
       current.includes("Payments & receipts"),
       `${width}: student records are one tap away`,
@@ -112,11 +118,11 @@ try {
     );
 
     await page.goto(`${base}?finished`);
-    await page.getByText("SCHEDULE COMPLETE", { exact: true }).waitFor();
+    await page.getByText("NO UPCOMING LESSONS", { exact: true }).waitFor();
     const finished = await page.locator("body").innerText();
     check(
-      finished.includes("All 4 scheduled dates have passed"),
-      `${width}: completed schedule says what passed`,
+      finished.includes("Review earlier and closed lesson dates below"),
+      `${width}: finished schedule points to status details`,
     );
     check(
       !finished.includes("NEXT LESSON") &&
@@ -125,6 +131,16 @@ try {
           .count()),
       `${width}: completed schedule invents no next lesson`,
     );
+    await page.getByRole("button", { name: "Show 4 previous lesson dates" }).click();
+    check(
+      (await page.locator("body").innerText()).includes("Date passed"),
+      `${width}: elapsed but unfinished lesson is not called completed`,
+    );
+
+    await page.goto(`${base}?previous`);
+    await page.getByRole("button", { name: "Show 3 previous lesson dates" }).click();
+    const previous = await page.locator("body").innerText();
+    check(previous.includes("Completed") && previous.includes("Cancelled"), `${width}: earlier lessons show actual status`);
 
     await page.goto(`${base}?teacher`);
     const students = page.getByRole("button", { name: /Students/ });
@@ -136,7 +152,7 @@ try {
     await earnings.waitFor();
     await earnings.click();
     check(
-      await page.evaluate(() => window.lastNavigation === "/subscription"),
+      await page.evaluate(() => window.lastNavigation === "/(teacher)/subscription"),
       `${width}: teacher earnings destination is correct`,
     );
     check(errors.length === 0, `${width}: no browser exceptions`);

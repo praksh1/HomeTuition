@@ -19,6 +19,7 @@ import {
   testTeachingGrantsTable,
   testStudentGrantsTable,
   userOnboardingTable,
+  userReportsTable,
   usersTable,
 } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
@@ -40,6 +41,7 @@ import { TICKET_STATUSES, displayStatus, nextStatuses, statusLabel, ticketRef } 
 import { historyFor, moveTicket, nameOf } from "../lib/ticketStore";
 import { isEmailConfigured, sendEmail } from "../lib/mailer";
 import { isUserConnected } from "../ws/userHub";
+import { ensureMessageSafety } from "../lib/messageSafety";
 import {
   deliveryLine,
   documentDecisionNotice,
@@ -220,6 +222,7 @@ router.post("/admin/moderation/:id/decision", async (req, res): Promise<void> =>
  * from after that.
  */
 router.get("/admin/tickets", async (req, res): Promise<void> => {
+  await ensureMessageSafety();
   const status = String(req.query.status ?? "");
   const mine = String(req.query.assigned ?? "");
   const category = String(req.query.category ?? "");
@@ -241,6 +244,8 @@ router.get("/admin/tickets", async (req, res): Promise<void> => {
   } as const;
   if (category in reasonsByCategory) {
     filters.push(inArray(disputesTable.reason, [...reasonsByCategory[category as keyof typeof reasonsByCategory]]));
+  } else if (category === "reported_user") {
+    filters.push(sql`EXISTS (SELECT 1 FROM user_reports report WHERE report.ticket_id = ${disputesTable.id})`);
   }
 
   const assignee = alias(usersTable, "assignee");
@@ -258,8 +263,10 @@ router.get("/admin/tickets", async (req, res): Promise<void> => {
       reporterRole: usersTable.role,
       assignedTo: disputesTable.assignedTo,
       assigneeName: assignee.name,
+      reportedUserId: userReportsTable.reportedUserId,
     })
     .from(disputesTable)
+    .leftJoin(userReportsTable, eq(userReportsTable.ticketId, disputesTable.id))
     .leftJoin(usersTable, eq(usersTable.id, disputesTable.userId))
     .leftJoin(assignee, eq(assignee.id, disputesTable.assignedTo))
     .where(filters.length ? and(...filters) : sql`true`)
@@ -286,6 +293,7 @@ router.get("/admin/tickets", async (req, res): Promise<void> => {
 router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
   const id = parseInt(String(req.params.id), 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid ticket id" }); return; }
+  await ensureMessageSafety();
 
   const [ticket] = await db
     .select({
@@ -303,8 +311,10 @@ router.get("/admin/tickets/:id", async (req, res): Promise<void> => {
       reporterEmail: usersTable.email,
       reporterRole: usersTable.role,
       reporterSuspendedAt: usersTable.suspendedAt,
+      reportedUserId: userReportsTable.reportedUserId,
     })
     .from(disputesTable)
+    .leftJoin(userReportsTable, eq(userReportsTable.ticketId, disputesTable.id))
     .leftJoin(usersTable, eq(usersTable.id, disputesTable.userId))
     .where(eq(disputesTable.id, id));
 

@@ -3,6 +3,7 @@ export type ClassJourneyLesson = {
   sessionId: number;
   startsAt: string;
   durationMinutes: number;
+  status?: string;
 };
 
 export type ClassJourneyDisplayLesson = ClassJourneyLesson & {
@@ -18,6 +19,8 @@ export type ClassLessonJourney = {
   remainingDates: number;
   visibleLessons: ClassJourneyDisplayLesson[];
   hiddenDates: number;
+  upcomingLessons: ClassJourneyDisplayLesson[];
+  previousLessons: ClassJourneyDisplayLesson[];
 };
 
 const startMs = (lesson: ClassJourneyLesson) =>
@@ -25,6 +28,9 @@ const startMs = (lesson: ClassJourneyLesson) =>
 
 const endMs = (lesson: ClassJourneyLesson) =>
   startMs(lesson) + lesson.durationMinutes * 60_000;
+
+const isTerminal = (lesson: ClassJourneyLesson) =>
+  lesson.status === "completed" || lesson.status === "cancelled";
 
 /**
  * Derive the class-home clock from one server-calibrated instant. "Passed" means
@@ -52,36 +58,47 @@ export function classLessonJourney(
       remainingDates: 0,
       visibleLessons: [],
       hiddenDates: 0,
+      upcomingLessons: [],
+      previousLessons: [],
     };
   }
 
+  const displayLessons = ordered.map((lesson, index) => ({
+    ...lesson,
+    displayNumber: index + 1,
+  }));
+  const upcomingLessons = displayLessons.filter((lesson) =>
+    !isTerminal(lesson) && (endMs(lesson) > nowMs || lesson.status === "live"),
+  );
+  const previousLessons = displayLessons.filter((lesson) =>
+    isTerminal(lesson) || (endMs(lesson) <= nowMs && lesson.status !== "live"),
+  ).reverse();
   const passedDates = ordered.filter((lesson) => endMs(lesson) <= nowMs).length;
   const current = ordered.find(
-    (lesson) => startMs(lesson) <= nowMs && nowMs < endMs(lesson),
+    (lesson) => lesson.status === "live" || (!isTerminal(lesson) && startMs(lesson) <= nowMs && nowMs < endMs(lesson)),
   );
-  const upcoming = ordered.find((lesson) => startMs(lesson) > nowMs);
+  const upcoming = upcomingLessons.find((lesson) => startMs(lesson) > nowMs);
   const focusLesson = current ?? upcoming ?? ordered.at(-1)!;
-  const focusNumber = ordered.indexOf(focusLesson) + 1;
+  const focusNumber = ordered.findIndex((lesson) => lesson.sessionId === focusLesson.sessionId) + 1;
   const stage = current ? "current" : upcoming ? "upcoming" : "finished";
   const relevant =
     stage === "finished"
-      ? ordered.slice(-3)
-      : ordered.filter((lesson) => endMs(lesson) > nowMs).slice(0, 3);
+      ? [...previousLessons].reverse().slice(-3)
+      : upcomingLessons.slice(0, 3);
   const relevantTotal =
     stage === "finished"
-      ? ordered.length
-      : ordered.filter((lesson) => endMs(lesson) > nowMs).length;
+      ? previousLessons.length
+      : upcomingLessons.length;
 
   return {
     stage,
     focusLesson,
     focusNumber,
     passedDates,
-    remainingDates: ordered.length - passedDates,
-    visibleLessons: relevant.map((lesson) => ({
-      ...lesson,
-      displayNumber: ordered.indexOf(lesson) + 1,
-    })),
+    remainingDates: upcomingLessons.length,
+    visibleLessons: relevant,
     hiddenDates: Math.max(0, relevantTotal - relevant.length),
+    upcomingLessons,
+    previousLessons,
   };
 }

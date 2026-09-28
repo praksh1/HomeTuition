@@ -134,6 +134,7 @@ export default function Discover() {
         const params = new URLSearchParams();
         params.set("limit", "20");
         params.set("presentation", "program");
+        params.set("personalized", "1");
         if (q.trim().length > 0) params.set("q", q.trim());
         if (type !== "all") params.set("type", type);
         if (cursor) params.set("cursor", cursor);
@@ -211,6 +212,7 @@ export default function Discover() {
         const params = new URLSearchParams();
         params.set("limit", "20");
         params.set("presentation", "class");
+        params.set("personalized", "1");
         if (q.trim().length > 0) params.set("q", q.trim());
         if (cursor) params.set("cursor", cursor);
         const answer = await apiGet<{ programs: PublicProgramSummary[]; nextCursor: string | null }>(

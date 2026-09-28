@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import MessageAttachment from "@/components/MessageAttachment";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
 import { ATTACHMENT_PICKER_TYPES } from "@/utils/attachmentTypes";
 import { useAuth } from "@/context/AuthContext";
@@ -76,13 +77,20 @@ export default function ConversationScreen() {
   const [problem, setProblem] = useState<string | null>(null);
   const [picking, setPicking] = useState<number | null>(null);
   const [safetyOpen, setSafetyOpen] = useState(false);
-  const [access, setAccess] = useState<{ canSend: boolean; blockedByYou: boolean; reason: string | null } | null>(null);
+  const [access, setAccess] = useState<{
+    canSend: boolean; blockedByYou: boolean; reason: string | null;
+    otherUserName?: string | null; otherUserPhotoUrl?: string | null;
+  } | null>(null);
   const [blocking, setBlocking] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportText, setReportText] = useState("");
+  const [reporting, setReporting] = useState(false);
+  const [reportRef, setReportRef] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   const scrollAfterLayout = useRef(true);
   const scrollPass = useRef(0);
   const hasLoaded = useRef(false);
-  const displayName = name?.trim() || "Conversation";
+  const displayName = access?.otherUserName?.trim() || name?.trim() || "Conversation";
 
   const settleAtNewest = useCallback(() => {
     const pass = ++scrollPass.current;
@@ -206,6 +214,23 @@ export default function ConversationScreen() {
     }
   };
 
+  const reportPerson = async () => {
+    const description = reportText.trim();
+    if (reporting || description.length < 10) return;
+    setReporting(true);
+    setProblem(null);
+    try {
+      const created = await apiPost<{ ref: string }>(`/messages/${id}/report`, { description });
+      setReportRef(created.ref);
+      setReportOpen(false);
+      setReportText("");
+    } catch (error) {
+      setProblem(error instanceof Error && error.message ? error.message : "Could not send your report. Please try again.");
+    } finally {
+      setReporting(false);
+    }
+  };
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -226,6 +251,7 @@ export default function ConversationScreen() {
           </TouchableOpacity>
           <View style={[styles.headerAvatar, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
             <Text style={[t.caption, { color: colors.primary }]}>{initials(displayName)}</Text>
+            <ProfilePhoto uri={access?.otherUserPhotoUrl} />
           </View>
           <View style={styles.headerCopy}>
             <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{displayName}</Text>
@@ -239,19 +265,48 @@ export default function ConversationScreen() {
 
       {safetyOpen ? <View style={{ padding: space.md, gap: space.sm, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border }}>
         <Text style={[t.bodyStrong, { color: colors.foreground }]}>Safety & help</Text>
-        <Text style={[t.callout, { color: colors.mutedForeground }]}>Blocking stops new private messages in both directions. Existing messages are kept as evidence. It does not remove anyone from a paid class.</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>Blocking hides this person's new private messages and notifications from you. Their messages remain privately stored for support review. It does not remove anyone from a class.</Text>
         <TouchableOpacity disabled={blocking || !access} accessibilityRole="button" onPress={async () => {
           if (!access || blocking) return;
           setBlocking(true);
-          try { setAccess(await apiPost(`/messages/${id}/block`, { blocked: !access.blockedByYou })); }
+          try {
+            const changed = await apiPost<Pick<NonNullable<typeof access>, "canSend" | "blockedByYou" | "reason">>(`/messages/${id}/block`, { blocked: !access.blockedByYou });
+            setAccess((current) => current ? { ...current, ...changed } : changed);
+          }
           catch { setProblem("Could not change blocking. Please try again."); }
           finally { setBlocking(false); }
         }} style={{ minHeight: 44, justifyContent: "center" }}>
           <Text style={[t.bodyStrong, { color: colors.destructive }]}>{blocking ? "Saving…" : access?.blockedByYou ? "Unblock this person" : "Block this person"}</Text>
         </TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" onPress={() => router.push({ pathname: "/support", params: { reason: "Inappropriate Behavior", reportedUserId: id } })} style={{ minHeight: 44, justifyContent: "center" }}>
-          <Text style={[t.bodyStrong, { color: colors.primary }]}>Report this conversation</Text>
-        </TouchableOpacity>
+        {messages.length > 0 ? <TouchableOpacity accessibilityRole="button" onPress={() => { setReportOpen(value => !value); setReportRef(null); }} style={{ minHeight: 44, justifyContent: "center" }}>
+          <Text style={[t.bodyStrong, { color: colors.primary }]}>Report this person</Text>
+        </TouchableOpacity> : null}
+        {reportOpen ? <View style={{ gap: space.xs }}>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Tell the Fadko Help Desk what happened. Your report is private; it does not automatically include the conversation or block this person.</Text>
+          <TextInput
+            value={reportText}
+            onChangeText={setReportText}
+            multiline
+            maxLength={3000}
+            placeholder="What happened?"
+            placeholderTextColor={colors.inkFaint}
+            accessibilityLabel="Describe why you are reporting this person"
+            testID="message-report-description"
+            style={[t.body, { minHeight: 104, padding: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, color: colors.foreground, backgroundColor: colors.background, textAlignVertical: "top" }]}
+          />
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityState={{ disabled: reporting || reportText.trim().length < 10 }}
+            aria-disabled={reporting || reportText.trim().length < 10}
+            disabled={reporting || reportText.trim().length < 10}
+            onPress={() => void reportPerson()}
+            testID="message-report-submit"
+            style={{ minHeight: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary, opacity: reporting || reportText.trim().length < 10 ? 0.55 : 1 }}
+          >
+            <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{reporting ? "Sending…" : "Send report"}</Text>
+          </TouchableOpacity>
+        </View> : null}
+        {reportRef ? <Text accessibilityLiveRegion="polite" style={[t.callout, { color: colors.success }]}>Report {reportRef} sent to the Fadko Help Desk.</Text> : null}
         <TouchableOpacity accessibilityRole="button" onPress={() => setSafetyOpen(false)} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.callout, { color: colors.primary }]}>Close safety options</Text></TouchableOpacity>
       </View> : null}
 

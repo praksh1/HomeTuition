@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, messageAttachmentsTable, messagesTable } from "@workspace/db";
+import { directMessageVisibleTo, ensureMessageSafety } from "./messageSafety";
 
 /**
  * May this person open a file that was sent in a conversation?
@@ -26,11 +27,12 @@ import { db, messageAttachmentsTable, messagesTable } from "@workspace/db";
  * refuses it.
  */
 export async function mayOpenMessageFile(key: string, userId: number): Promise<boolean> {
+  await ensureMessageSafety();
   const rows = await db
     .select({ senderId: messagesTable.senderId, receiverId: messagesTable.receiverId })
     .from(messageAttachmentsTable)
     .innerJoin(messagesTable, eq(messagesTable.id, messageAttachmentsTable.messageId))
-    .where(eq(messageAttachmentsTable.fileKey, key));
+    .where(and(eq(messageAttachmentsTable.fileKey, key), directMessageVisibleTo(userId)));
 
   // A key can hang off more than one message — the same photo sent on to somebody else. Any
   // one of them being yours is enough, and `some` says that more plainly than a cleverer

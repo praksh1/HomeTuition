@@ -26,6 +26,7 @@ interface Ticket {
   reporterRole: string | null;
   assignedTo: number | null;
   assigneeName: string | null;
+  reportedUserId?: number | null;
 }
 
 /**
@@ -56,6 +57,7 @@ const CATEGORIES = [
   { id: "payment", label: "Payment" },
   { id: "technical", label: "Technical" },
   { id: "safety", label: "Safety / harassment" },
+  { id: "reported_user", label: "Reported users" },
   { id: "other", label: "Other" },
 ] as const;
 
@@ -273,6 +275,11 @@ export default function AdminTickets() {
                   <Text style={[styles.pillText, { color: colors.mutedForeground }]}>About a class</Text>
                 </View>
               )}
+              {ticket.reportedUserId ? (
+                <View style={[styles.pill, { backgroundColor: colors.actionSoft, marginLeft: 0 }]}>
+                  <Text style={[styles.pillText, { color: colors.primary }]}>Reported user #{ticket.reportedUserId}</Text>
+                </View>
+              ) : null}
               {/*
                 The state, and who holds it. Both, because "somebody is on this" and "nobody has
                 picked this up" are the two things an agent scanning a queue needs to tell apart.

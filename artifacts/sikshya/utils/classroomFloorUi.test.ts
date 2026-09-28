@@ -242,10 +242,10 @@ test("a speaking student can be turned off, featured, or sent back", () => {
   assert.ok(buttons.includes("return"));
 });
 
-test("featuring somebody already featured offers to stop", () => {
+test("a pinned student's video offers a clear unpin control", () => {
   const speaking = row({ state: "speaking", allowedMic: true });
   const view = teacher({ students: [speaking], spotlight: 11 });
-  assert.match(teacherRowButtons(speaking, view).find((b) => b.id === "spotlight")?.label ?? "", /Stop featuring/);
+  assert.equal(teacherRowButtons(speaking, view).find((b) => b.id === "spotlight")?.label, "Unpin video");
 });
 
 test("a student whose connection dropped is shown, and offered nothing", () => {

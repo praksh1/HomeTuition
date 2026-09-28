@@ -159,6 +159,12 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
         </Pressable>
       </View>
 
+      {catalog === "class" && state.kind === "ready" ? (
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>
+          Your classes appear first, then classes from teachers you follow. Other classes use subjects you have studied, grade or district when available, then newest first.
+        </Text>
+      ) : null}
+
       {catalog === "course" ? <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

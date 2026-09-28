@@ -268,7 +268,7 @@ export default function NotificationsScreen() {
                     }}
                   >
                     <Text style={[t.bodyStrong, numeric, { color: selected ? colors.primary : colors.mutedForeground }]}>
-                      {option === "all" ? `All ${notifications.length}` : `Unread ${unreadCount}`}
+                      {option === "all" ? `All (${notifications.length})` : `Unread (${unreadCount})`}
                     </Text>
                   </Pressable>
                 );

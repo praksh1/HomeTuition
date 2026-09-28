@@ -43,7 +43,7 @@ try {
     await page.getByRole("button", { name: "Schedule", exact: true }).click();
     check(await page.evaluate(() => window.lastNavigation === "/(teacher)/sessions"), `${width}: schedule is explicitly named`);
     await page.getByTestId("teacher-earnings-entry").click();
-    check(await page.evaluate(() => window.lastNavigation === "/payments"), `${width}: earnings opens existing records`);
+    check(await page.evaluate(() => window.lastNavigation === "/(teacher)/subscription"), `${width}: earnings opens existing records`);
     check(await page.evaluate(() => !(window.requests || []).some(x => x.includes("allowance"))), `${width}: no retired plan request`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `first-use-${width}.png`), fullPage: true });

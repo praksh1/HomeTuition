@@ -1,3 +1,4 @@
+const earlierState = location.search.includes("previous") || location.search.includes("finished");
 const lessons = [
   [0, 101, "2026-09-13T10:00:00.000Z"],
   [1, 102, "2026-09-14T10:00:00.000Z"],
@@ -8,11 +9,16 @@ const lessons = [
   sessionId,
   startsAt,
   durationMinutes: 60,
+  status: earlierState
+    ? sessionId === 101 || sessionId === 102 ? "completed" : sessionId === 103 ? "cancelled" : "upcoming"
+    : sessionId === 101 && !location.search.includes("upcoming") ? "live" : "upcoming",
 }));
 
 export async function apiGet() {
   const serverNow = location.search.includes("finished")
     ? "2026-09-17T10:00:00.000Z"
+    : location.search.includes("previous")
+      ? "2026-09-15T12:00:00.000Z"
     : location.search.includes("upcoming")
       ? "2026-09-13T09:00:00.000Z"
       : "2026-09-13T10:30:00.000Z";

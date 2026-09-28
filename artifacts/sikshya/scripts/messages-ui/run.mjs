@@ -182,8 +182,11 @@ try {
     await page.getByText("Unblock this person", { exact: true }).waitFor();
     check(await page.getByTestId("conversation-input").count() === 0, `${width}: blocking removes the composer, not the evidence`);
     check(await page.getByText("See you in class.", { exact: true }).count() === 1, `${width}: blocked conversation preserves the messages`);
-    await page.getByText("Report this conversation", { exact: true }).click();
-    check(await page.evaluate(() => window.lastNavigation?.pathname === "/support" && window.lastNavigation?.params.reportedUserId === "11"), `${width}: report includes the conversation partner for support`);
+    await page.getByText("Report this person", { exact: true }).click();
+    await page.getByTestId("message-report-description").fill("This person sent repeated unwanted messages.");
+    await page.getByTestId("message-report-submit").click();
+    await page.getByText("Report HT-000321 sent to the Fadko Help Desk.", { exact: true }).waitFor();
+    check(await page.evaluate(() => window.lastReport?.path === "/messages/11/report" && window.lastReport?.body.description === "This person sent repeated unwanted messages." && !window.lastNavigation), `${width}: private report submits the described user to the Help Desk without navigating away`);
     await page.getByText("Unblock this person", { exact: true }).click();
     await page.getByTestId("conversation-input").waitFor();
 

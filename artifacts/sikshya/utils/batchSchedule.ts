@@ -2,6 +2,7 @@ import type { ProgramBatchLessonDraft, TuitionPeriod } from "./programBatches.ts
 
 export const BATCH_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 export const BATCH_MAX_LESSONS = 60;
+export type ClassFrequency = "daily" | "weekly" | "twice_weekly" | "every_two_weeks" | "alternate" | "weekdays" | "own";
 
 /** Calendar arithmetic, not device-local instants: DST abroad must not move Nepal lessons. */
 export function calendarDay(value: string): Date | null {
@@ -41,6 +42,48 @@ export function repeatPeriodLessons(first: ProgramBatchLessonDraft, weekdays: nu
   if (firstAt < start || firstAt + first.durationMinutes * 60000 > end) return { ok: false, message: "Choose a first lesson inside this 30-day period." };
   const lessons = repeated.lessons.filter((lesson) => Date.parse(`${lesson.date}T${lesson.time}:00+05:45`) + lesson.durationMinutes * 60000 <= end);
   return lessons.length ? { ok: true, lessons } : { ok: false, message: "No complete lesson fits inside this period." };
+}
+
+/** A class always has the teacher's exact number of lessons; a 30-day period is not a lesson count. */
+export function prepareClassLessons(
+  first: ProgramBatchLessonDraft,
+  count: number,
+  frequency: ClassFrequency,
+  weekdays: number[],
+  period: TuitionPeriod | null,
+): ReturnType<typeof repeatLessons> {
+  const firstDay = calendarDay(first.date);
+  if (!firstDay) return { ok: false, message: "Choose the first lesson date from the calendar." };
+  if (!validLessonTime(first.time)) return { ok: false, message: "Choose a start time in Nepal time." };
+  if (![30, 45, 60, 90].includes(first.durationMinutes)) return { ok: false, message: "Choose a lesson duration." };
+  if (!Number.isInteger(count) || count < 1 || count > BATCH_MAX_LESSONS) return { ok: false, message: "Choose 1 to 60 lessons." };
+  if (period && Date.parse(`${first.date}T${first.time}:00+05:45`) < Date.parse(period.startsAt))
+    return { ok: false, message: "Start inside this 30-day period." };
+  if (frequency === "own") return { ok: true, lessons: [first, ...Array.from({ length: count - 1 }, () => ({ ...first, date: "" }))] };
+  if ((frequency === "weekly" || frequency === "every_two_weeks") && (weekdays.length !== 1 || weekdays[0] !== firstDay.getUTCDay()))
+    return { ok: false, message: "For weekly or every-two-weeks lessons, select the first lesson's weekday." };
+  if (frequency === "twice_weekly" && (weekdays.length !== 2 || !weekdays.includes(firstDay.getUTCDay())))
+    return { ok: false, message: "For twice-weekly lessons, select two weekdays including the first lesson's day." };
+  if (frequency === "weekdays" && (!weekdays.length || !weekdays.includes(firstDay.getUTCDay())))
+    return { ok: false, message: "Choose teaching weekdays that include the first lesson's day." };
+  const chosenDays = frequency === "daily" ? [0, 1, 2, 3, 4, 5, 6] : weekdays;
+  const lessons: ProgramBatchLessonDraft[] = [];
+  const day = new Date(firstDay);
+  const end = period ? Date.parse(period.endsAt) : Infinity;
+  while (lessons.length < count) {
+    const elapsed = Math.round((day.getTime() - firstDay.getTime()) / 86_400_000);
+    const matches = frequency === "alternate" ? elapsed % 2 === 0
+      : frequency === "every_two_weeks" ? elapsed % 14 === 0 : chosenDays.includes(day.getUTCDay());
+    if (matches) {
+      const date = day.toISOString().slice(0, 10);
+      const startsAt = Date.parse(`${date}T${first.time}:00+05:45`);
+      if (startsAt + first.durationMinutes * 60_000 > end)
+        return { ok: false, message: `Only ${lessons.length} ${lessons.length === 1 ? "lesson fits" : "lessons fit"} in these 30 days. Choose fewer lessons or a more frequent pattern.` };
+      lessons.push({ ...first, date });
+    }
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  return { ok: true, lessons };
 }
 
 export function batchDetailsIssues(capacity: string, price: string): string[] {

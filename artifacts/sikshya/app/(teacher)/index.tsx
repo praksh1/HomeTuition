@@ -455,7 +455,7 @@ export default function TeacherDashboard() {
         testID="teacher-earnings-entry"
         accessibilityRole="button"
         accessibilityLabel="Earnings history. Payment records and payout information"
-        onPress={() => router.push("/payments")}
+        onPress={() => router.push("/(teacher)/subscription")}
         style={[styles.monthlyEntry, { borderColor: colors.border, backgroundColor: colors.card, borderRadius: radius.md, padding: space.md, gap: space.sm }]}
       >
         <Feather name="credit-card" size={20} color={colors.primary} />

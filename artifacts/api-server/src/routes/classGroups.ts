@@ -194,6 +194,7 @@ router.get("/class-groups/:id", requireAuth, async (req, res) => {
       sessionId: batchTestSessionsTable.sessionId,
       startsAt: sessionsTable.date,
       durationMinutes: sessionsTable.duration,
+      status: sessionsTable.status,
     })
     .from(batchTestSessionsTable)
     .innerJoin(

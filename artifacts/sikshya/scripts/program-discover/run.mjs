@@ -334,6 +334,33 @@ for (const size of SIZES) {
   check(`${L}: every class-catalogue control reaches the touch floor`,
     (await smallTargets()).length === 0, (await smallTargets()).join(", "));
 
+  const rankedClass = (id, title) => summary({
+    id, presentation: "class", type: "custom", title,
+    summary: "Scheduled teaching class.", outcome: "", intendedLearner: "", moduleCount: 0,
+  });
+  const rankedFirstPage = [
+    rankedClass(201, "Enrolled mathematics"),
+    rankedClass(202, "Enrolled science"),
+    rankedClass(203, "Followed teacher English"),
+  ];
+  const rankedSecondPage = [
+    rankedClass(204, "Related subject writing"),
+    rankedClass(205, "Newest other class"),
+  ];
+  const rankedIds = () => p.evaluate(() => [...document.querySelectorAll('[role="link"][data-testid^="class-card-"]')]
+    .map((item) => Number(item.getAttribute("data-testid").replace("class-card-", ""))));
+  await show({ screen: "list", props: listState({ catalog: "class", programs: rankedFirstPage, hasMore: true }) });
+  check(`${L}: class cards preserve enrolled-then-followed server order`,
+    JSON.stringify(await rankedIds()) === JSON.stringify([201, 202, 203]));
+  await p.evaluate(() => { window.__sent = []; });
+  await p.locator('[data-testid="class-discover-more"]').click();
+  check(`${L}: Show more requests the next ranked page`,
+    (await p.evaluate(() => window.__sent)).some((event) => event.name === "onLoadMore"));
+  await show({ screen: "list", props: listState({ catalog: "class", programs: [...rankedFirstPage, ...rankedSecondPage], hasMore: false }) });
+  check(`${L}: appended page keeps enrolled, followed, related, then newest order`,
+    JSON.stringify(await rankedIds()) === JSON.stringify([201, 202, 203, 204, 205]));
+  check(`${L}: final ranked page has no more-results action`, !(await seen("class-discover-more")));
+
   /* ----------------------------------------------------- find a known teacher */
 
   console.log(`\n[${L}] Discover: Find my teacher`);

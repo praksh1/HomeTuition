@@ -61,13 +61,13 @@ test("class home uses the server clock and never falls back to a past lesson", (
   assert.match(home, /serverNow: string/);
   assert.match(home, /serverNow\(home\.serverNow/);
   assert.match(home, /journey\.stage !== "finished"/);
-  assert.match(home, /SCHEDULE COMPLETE/);
+  assert.match(home, /NO UPCOMING LESSONS/);
   assert.doesNotMatch(home, /home\.lessons\.at\(-1\)/);
 });
 
 test("class home keeps money records one tap away without showing platform allocation", () => {
   assert.match(home, /"\/(student\/)payments"|"\/\(student\)\/payments"/);
-  assert.match(home, /"\/subscription"/);
+  assert.match(home, /"\/\(teacher\)\/subscription"/);
   assert.doesNotMatch(home, /Held by Fadko|70%|platform fee/i);
 });
 

@@ -5,6 +5,9 @@ import {
   type ProgramBatchLessonDraft,
 } from "./programBatches.ts";
 export interface TeachingClass {
+  /** Present on My Classes list responses; older saved fixtures omit these fields. */
+  enrolledCount?: number;
+  nextLessonAt?: string | null;
   title: string;
   summary: string;
   teachingLanguage: string;

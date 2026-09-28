@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
+import { radius } from "@/constants/layout";
 import { apiGet } from "@/utils/api";
 import { notify } from "@/utils/alerts";
 import { countdown, humanDuration, serverNow, waitingState } from "@/utils/sessionClock";
@@ -260,11 +261,13 @@ export default function SessionPage() {
           accessibilityLabel={`Open ${session.classGroup.title} class home`}
           onPress={() => router.push({ pathname: "/class-home", params: { id: String(session.classGroup!.batchId) } })}
           activeOpacity={0.75}
-          style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, flexDirection: "row", alignItems: "center", gap: 12 }]}
+          style={[styles.card, { backgroundColor: colors.actionSoft, borderColor: colors.primary, flexDirection: "row", alignItems: "center", gap: 12 }]}
         >
-          <Feather name="book-open" size={20} color={colors.primary} />
+          <View style={{ width: 40, height: 40, borderRadius: radius.sm, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" }}>
+            <Feather name="book-open" size={20} color={colors.primaryForeground} />
+          </View>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Open class home</Text>
+            <Text style={[styles.sectionTitle, { color: colors.primary }]}>Open class home</Text>
             <Text style={[styles.muted, { color: colors.mutedForeground }]}>Materials, homework, messages and all lesson dates</Text>
           </View>
           <Feather name="chevron-right" size={18} color={colors.primary} />

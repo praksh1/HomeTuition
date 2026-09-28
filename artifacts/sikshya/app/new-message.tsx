@@ -18,12 +18,14 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
 import { matches } from "@/utils/search";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 
 interface Recipient {
   userId: number;
   name: string;
   role: string | null;
   note: string;
+  photoUrl?: string | null;
 }
 
 function initials(name: string) {
@@ -192,6 +194,7 @@ export default function NewMessageScreen() {
               >
                 <View style={[styles.avatar, { borderRadius: radius.pill, backgroundColor: colors.actionSoft }]}>
                   <Text style={[t.bodyStrong, { color: colors.primary }]}>{initials(person.name)}</Text>
+                  <ProfilePhoto uri={person.photoUrl} />
                 </View>
                 <View style={styles.personCopy}>
                   <Text style={[t.bodyStrong, { color: colors.foreground }]} numberOfLines={1}>{person.name}</Text>

@@ -54,7 +54,7 @@ export function ClassmateDirectory({ open, onClose, classmates, userId, connecte
     setBusy(true);
     try {
       const next = await apiPost<Access>(`/messages/${person.userId}/block`, { blocked: !access.blockedByYou });
-      if (version === generation.current) { setAccess(next); setNotice(next.blockedByYou ? "Blocked. Neither of you can send new private messages to the other. Existing messages are kept." : "Unblocked."); }
+      if (version === generation.current) { setAccess(next); setNotice(next.blockedByYou ? "Blocked. New private messages from this person will not reach you. Existing messages are kept." : "Unblocked."); }
     } catch { if (version === generation.current) setNotice("Could not change blocking. Please try again."); }
     finally { setBusy(false); }
   };

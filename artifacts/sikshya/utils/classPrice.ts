@@ -1,7 +1,7 @@
 /** Display-only average. Payment amounts must come from the server, never this helper. */
 export function classPriceBreakdown(total: number, lessons: number): string {
   if (!Number.isSafeInteger(total) || total < 1 || !Number.isInteger(lessons) || lessons < 1)
-    return "Choose lesson dates and a full price to see the breakdown.";
+    return "Choose a lesson count and full price to see the breakdown.";
   const average = (total / lessons).toLocaleString("en-NP", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return `Includes ${lessons} live ${lessons === 1 ? "lesson" : "lessons"} · approximately NPR ${average} per lesson. Full payment upfront, not pay-per-lesson.`;
 }
