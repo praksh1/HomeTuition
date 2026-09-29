@@ -29,12 +29,15 @@ const browser = await (await getChromium()).launch({ headless: true });
 let passed = 0;
 const check = (ok, description) => { assert.ok(ok, description); passed++; console.log(`PASS ${description}`); };
 
-const at = "2026-09-29T15:00:00.000Z";
+const current = new Date();
+const at = current.toISOString();
+const periodStart = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1)).toISOString();
+const periodEnd = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1)).toISOString();
 const snapshot = {
   checkedAt: at,
   providers: [
-    { id: "railway", name: "Railway", scope: "Hobby workspace", status: "connected", checkedAt: at, observedAt: at, dashboardUrl: "https://railway.com/workspace/usage", note: "Provider-reported usage.", setup: [], meters: [{ id: "compute", label: "Compute", used: 8.5, limit: 10, unit: "USD", periodStart: "2026-09-01T00:00:00Z", periodEnd: "2026-09-30T00:00:00Z", source: "provider" }], cost: { amountUsd: 8.5, projectedUsd: 12, periodStart: "2026-09-01T00:00:00Z", periodEnd: "2026-09-30T00:00:00Z", basis: "provider_estimate", note: "Includes only compute." } },
-    { id: "neon:staging", name: "Neon", scope: "Staging project", status: "partial", checkedAt: at, observedAt: at, dashboardUrl: "https://console.neon.tech/app/projects", note: "Free usage is visible but no dollar cost is reported.", setup: ["NEON_API_KEY"], meters: [{ id: "cu", label: "Compute", used: 80.1, limit: 100, unit: "CU-hours", periodStart: "2026-09-01T00:00:00Z", periodEnd: "2026-10-01T00:00:00Z", source: "provider" }], cost: null },
+    { id: "railway", name: "Railway", scope: "Hobby workspace", status: "connected", checkedAt: at, observedAt: at, dashboardUrl: "https://railway.com/workspace/usage", note: "Provider-reported usage.", setup: [], meters: [{ id: "compute", label: "Compute", used: 8.5, limit: 10, unit: "USD", periodStart, periodEnd, source: "provider" }], cost: { amountUsd: 8.5, projectedUsd: 12, periodStart, periodEnd, basis: "provider_estimate", note: "Includes only compute." } },
+    { id: "neon:staging", name: "Neon", scope: "Staging project", status: "partial", checkedAt: at, observedAt: at, dashboardUrl: "https://console.neon.tech/app/projects", note: "Free usage is visible but no dollar cost is reported.", setup: ["NEON_API_KEY"], meters: [{ id: "cu", label: "Compute", used: 80.1, limit: 100, unit: "CU-hours", periodStart, periodEnd, source: "provider" }], cost: null },
     { id: "cloudflare-workers", name: "Cloudflare", scope: "Workers Free", status: "not_connected", checkedAt: at, observedAt: null, dashboardUrl: "https://dash.cloudflare.com", note: "No cost reading.", setup: ["CLOUDFLARE_API_TOKEN"], meters: [], cost: null },
     { id: "brevo", name: "Brevo", scope: "Free account", status: "not_connected", checkedAt: at, observedAt: null, dashboardUrl: "https://app.brevo.com", note: "No cost reading.", setup: ["BREVO_API_KEY"], meters: [], cost: null },
   ],
@@ -45,7 +48,7 @@ const dashboard = {
   snapshot,
   warnings: [{ key: "neon-compute", severity: "attention", title: "Neon compute is near its limit", detail: "80.1 of 100 CU-hours used.", providerId: "neon" }, { key: "coverage:neon", severity: "attention", title: "Neon coverage partial", detail: "Provider connection still needs setup.", providerId: "neon" }],
   summary: { knownSpendUsd: 8.5, projectedSpendUsd: null, complete: false, note: "Only Railway reports cost. Billing periods differ." },
-  monitoring: { enabled: true, intervalMinutes: 60, lastAttemptAt: at, lastSuccessAt: at, nextCheckAt: "2026-09-29T16:00:00Z", refreshing: false, emailConfigured: true, alertRecipient: "synthetic@example.invalid", lastEmailAt: null, lastEmailStatus: null, limitation: "An outage of this monitor can delay alerts." },
+  monitoring: { enabled: true, intervalMinutes: 60, lastAttemptAt: at, lastSuccessAt: at, nextCheckAt: new Date(current.getTime() + 3_600_000).toISOString(), refreshing: false, emailConfigured: true, alertRecipient: "synthetic@example.invalid", lastEmailAt: null, lastEmailStatus: null, limitation: "An outage of this monitor can delay alerts." },
   history: [{ checkedAt: at, knownSpendUsd: 8.5 }],
 };
 
@@ -93,12 +96,15 @@ try {
     check((await page.getByTestId("cost-health-known-spend").innerText()) === "USD $8.50", `${width}: known spend is labeled USD`);
     check((await page.getByTestId("cost-health-projection").innerText()) === "Not available", `${width}: incomplete combined projection stays unavailable`);
     check((await page.getByTestId("cost-health-cost-neon:staging").innerText()) === "Not available", `${width}: missing Neon cost is not zero`);
-    check(await page.getByTestId("cost-health-provider-neon:staging").getByText("Alert budget: USD $15.00 / month").count() === 1, `${width}: project cards inherit the provider alert budget`);
+    check(await page.getByTestId("cost-health-provider-neon:staging").getByText("Dollar warning target: USD $15.00 / month").count() === 1, `${width}: project cards inherit the saved provider dollar target`);
+    check(await page.getByTestId("cost-health-provider-neon:staging").getByText("Dollar alerts unavailable", { exact: false }).count() === 1, `${width}: missing Neon charges are marked reference-only`);
+    check(await page.getByTestId("cost-health-provider-railway").getByText("Active for reported resource usage").count() === 1, `${width}: current Railway resource dollar warning is active`);
     check(await page.getByTestId("cost-health-provider-railway").getByText("Trend projection (estimate): USD $12.00").count() === 1, `${width}: trend estimate is shown without implying a combined projection`);
     check((await page.getByTestId("cost-health-coverage-summary").innerText()).includes("1 connection needs setup"), `${width}: connection coverage is summarized once`);
     check(await page.getByText("Neon coverage partial").count() === 0, `${width}: connection coverage does not duplicate the attention card`);
-    check((await page.getByTestId("cost-health-budget-overall").inputValue()) === "", `${width}: overall budget remains unset`);
+    check(await page.getByTestId("cost-health-budget-overall").count() === 0, `${width}: overall dollar budget cannot be entered`);
     check((await page.getByTestId("cost-health-budget-brevo").inputValue()) === "15", `${width}: per-provider alert budget is visible`);
+    check(await page.getByText("Monthly dollar warning targets").count() === 1, `${width}: saved targets are labelled as dollar warnings`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: no horizontal overflow`);
 
     await page.getByTestId("cost-health-budget-railway").fill("18");

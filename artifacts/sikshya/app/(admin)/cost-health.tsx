@@ -9,7 +9,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost, ApiError } from "@/utils/api";
 import {
-  BUDGET_PROVIDERS, budgetDraft, measuredAt, meterFraction, parseBudget, periodLabel, providerBudgetId,
+  BUDGET_PROVIDERS, budgetDraft, hasCurrentDollarReading, measuredAt, meterFraction, parseBudget, periodLabel, providerBudgetId,
   usd, visibleSummary, type CostHealthDashboard, type CostHealthSettings,
   type ProviderReading, type HealthCheck,
 } from "@/utils/costHealth";
@@ -204,7 +204,7 @@ function OwnerCostHealth() {
           <View style={{ gap: space.sm }}>
             <View style={{ gap: space.xs }}><Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Providers</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>Each card uses its provider's own period and reading time. Missing data stays missing.</Text>{coverageCount > 0 ? <Text testID="cost-health-coverage-summary" style={[t.callout, { color: colors.warn }]}>{coverageCount} {coverageCount === 1 ? "connection needs setup or has" : "connections need setup or have"} partial coverage. See the provider cards below.</Text> : null}</View>
             {dashboard.snapshot ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.md }} testID="cost-health-providers">
-              {dashboard.snapshot.providers.map(provider => <ProviderCard key={provider.id} provider={provider} alertBudget={dashboard.settings.providerBudgetsUsd[providerBudgetId(provider.id)] ?? null} wide={isExpanded} />)}
+              {dashboard.snapshot.providers.map(provider => <ProviderCard key={provider.id} provider={provider} alertBudget={dashboard.settings.providerBudgetsUsd[providerBudgetId(provider.id)] ?? null} now={now} wide={isExpanded} />)}
             </View> : <View style={card}><Text style={[t.callout, { color: colors.mutedForeground }]}>No provider check has completed yet. Run a check when you are ready.</Text></View>}
           </View>
 
@@ -243,7 +243,7 @@ function OwnerCostHealth() {
   </ScrollView>;
 }
 
-function ProviderCard({ provider, alertBudget, wide }: { provider: ProviderReading; alertBudget: number | null; wide: boolean }) {
+function ProviderCard({ provider, alertBudget, now, wide }: { provider: ProviderReading; alertBudget: number | null; now: number; wide: boolean }) {
   const colors = useColors(); const { t, numeric, space, radius } = useLayout();
   const [showConnectionDetails, setShowConnectionDetails] = useState(false);
   const statusText = { connected: "Connected", partial: "Partial", not_connected: "Not connected", unavailable: "Unavailable" }[provider.status];
@@ -258,7 +258,8 @@ function ProviderCard({ provider, alertBudget, wide }: { provider: ProviderReadi
       <Text style={[t.caption, { color: colors.mutedForeground }]}>{provider.cost ? `${periodLabel(provider.cost.periodStart, provider.cost.periodEnd)} · ${provider.cost.basis === "provider_estimate" ? "Provider estimate" : provider.cost.basis === "manual" ? "Manual entry" : "Measured"}` : "No cost reading available"}</Text>
       {provider.cost?.projectedUsd !== null && provider.cost?.projectedUsd !== undefined ? <Text style={[t.caption, numeric, { color: colors.foreground }]}>Trend projection (estimate): {usd(provider.cost.projectedUsd)}</Text> : null}
       {provider.cost?.note ? <Text style={[t.callout, { color: colors.mutedForeground }]}>{provider.cost.note}</Text> : null}
-      <Text style={[t.caption, numeric, { color: colors.warn }]}>Alert budget: {usd(alertBudget)}{alertBudget !== null ? " / month" : ""}</Text>
+      <Text style={[t.caption, numeric, { color: colors.warn }]}>Dollar warning target: {usd(alertBudget)}{alertBudget !== null ? " / month" : ""}</Text>
+      <Text style={[t.caption, { color: colors.mutedForeground }]}>{alertBudget === null ? "No dollar target saved" : hasCurrentDollarReading(provider, now) ? "Active for reported resource usage" : "Dollar alerts unavailable · target saved for reference"}</Text>
     </View>
     {provider.meters.map(meter => {
       const fraction = meterFraction(meter);
@@ -283,14 +284,12 @@ function HealthCard({ check, wide }: { check: HealthCheck; wide: boolean }) {
 
 function BudgetForm({ settings, busy, onSave }: { settings: CostHealthSettings; busy: boolean; onSave: (next: CostHealthSettings) => Promise<void> }) {
   const colors = useColors(); const { t, space, radius, isExpanded } = useLayout();
-  const [total, setTotal] = useState(budgetDraft(settings.monthlyBudgetUsd));
   const [providers, setProviders] = useState<Record<string, string>>(() => Object.fromEntries(BUDGET_PROVIDERS.map(item => [item.id, budgetDraft(settings.providerBudgetsUsd[item.id])])));
   const [email, setEmail] = useState(settings.emailAlertsEnabled);
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (editing) return;
-    setTotal(budgetDraft(settings.monthlyBudgetUsd));
     setProviders(Object.fromEntries(BUDGET_PROVIDERS.map(item => [item.id, budgetDraft(settings.providerBudgetsUsd[item.id])])));
     setEmail(settings.emailAlertsEnabled);
   }, [settings, editing]);
@@ -301,7 +300,7 @@ function BudgetForm({ settings, busy, onSave }: { settings: CostHealthSettings; 
         const amount = parseBudget(providers[item.id] ?? "");
         if (amount === null) delete nextBudgets[item.id]; else nextBudgets[item.id] = amount;
       }
-      const next = { monthlyBudgetUsd: parseBudget(total), providerBudgetsUsd: nextBudgets, emailAlertsEnabled: email };
+      const next = { monthlyBudgetUsd: null, providerBudgetsUsd: nextBudgets, emailAlertsEnabled: email };
       setError(null);
       await onSave(next);
       setEditing(false);
@@ -309,8 +308,8 @@ function BudgetForm({ settings, busy, onSave }: { settings: CostHealthSettings; 
   };
   const input = (label: string, value: string, change: (value: string) => void, id: string) => <View style={{ flexBasis: isExpanded ? "48%" : "100%", flexGrow: 1, minWidth: 250, gap: space.xxs }} key={id}><Text style={[t.caption, { color: colors.foreground }]}>{label}</Text><TextInput testID={`cost-health-budget-${id}`} accessibilityLabel={`${label} in US dollars`} inputMode="decimal" keyboardType="decimal-pad" value={value} onChangeText={text => { change(text); setEditing(true); }} placeholder="No alert budget" placeholderTextColor={colors.inkFaint} style={[t.body, { minHeight: 44, borderColor: colors.lineStrong, borderWidth: 1, borderRadius: radius.xs, paddingHorizontal: space.sm, color: colors.foreground, backgroundColor: colors.card }]} /></View>;
   return <View style={{ backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: space.md, gap: space.md }}>
-    <View style={{ gap: space.xs }}><Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Monthly alert budgets</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>These thresholds send warnings only. Choose a monthly warning amount for each provider. LiveKit is excluded for now; leave the overall amount empty unless you choose one.</Text></View>
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.md }}>{BUDGET_PROVIDERS.map(item => input(item.name, providers[item.id] ?? "", value => setProviders(current => ({ ...current, [item.id]: value })), item.id))}{input("Overall (optional)", total, setTotal, "overall")}</View>
+    <View style={{ gap: space.xs }}><Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Monthly dollar warning targets</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>Railway can trigger dollar warnings when connected. Neon, Cloudflare and Brevo targets are saved for reference; this dashboard cannot yet read their dollar charges. Available allowance warnings are separate. These are alerts, not spending caps. LiveKit is excluded for now.</Text></View>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.md }}>{BUDGET_PROVIDERS.map(item => input(item.name, providers[item.id] ?? "", value => setProviders(current => ({ ...current, [item.id]: value })), item.id))}</View>
     <Pressable accessibilityRole="switch" accessibilityState={{ checked: email, disabled: busy }} aria-checked={email} aria-disabled={busy} disabled={busy} onPress={() => { setEmail(current => !current); setEditing(true); }} style={{ minHeight: 44, flexDirection: "row", gap: space.sm, alignItems: "center" }}><Feather name={email ? "check-square" : "square"} size={22} color={colors.primary} /><Text style={[t.body, { color: colors.foreground, flex: 1 }]}>Email alerts enabled</Text></Pressable>
     {error ? <Text style={[t.callout, { color: colors.destructive }]}>{error}</Text> : null}
     <Pressable testID="cost-health-save-settings" accessibilityRole="button" accessibilityState={{ disabled: busy }} aria-disabled={busy} disabled={busy} onPress={() => void save()} style={{ minHeight: 44, alignSelf: "flex-start", justifyContent: "center", paddingHorizontal: space.md, backgroundColor: colors.primary, borderRadius: radius.sm }}><Text style={[t.caption, { color: colors.primaryForeground }]}>{busy ? "Saving…" : "Save alert settings"}</Text></Pressable>
