@@ -4,7 +4,7 @@
 - Agent: Codex with chart-data and browser-QA agents
 - Branch: codex/owner-cost-health-release
 - Base: e3ce313 (verified origin/main)
-- Status: implementation and verification in progress; not yet deployed
+- Status: complete; redesigned frontend deployed to Production
 
 ## Requested
 
@@ -33,6 +33,7 @@ Owner rejected the dense Cost & Health page and requested a premium investment-d
 - 612 isolated browser checks pass at 320/390/768/1440 px, repeated after final chart-sizing adjustment. Tests cover coordinate taps, clipped ancestors, navigation, empty data, 1D/7D/30D filters, selected-reading identity during polling, grouped-source labels, settings, denial before reads and after a settings 403, and unchanged refresh cadence. All API responses in this suite are synthetic; no real email/settings changes.
 - Phone and desktop screenshots inspected; final screenshots are in the local temporary `sikshya-cost-health-OOt4EK` folder. They contain labelled synthetic test-account data, not the owner's actual bill.
 - Cloudflare dry-run passes on the existing production Worker configuration.
+- Production Worker `hometuition` version `45c346af-314d-4afd-8306-26ef1fb63518` serves the tested source implementation `5fa18d3`. `node scripts/verify-owner-cost-health.mjs` confirms all three exact deployed bundle hashes, production API target, new dashboard labels and live anonymous owner-data rejection. No backend changes or new provider calls/email tests were needed for deployment verification.
 
 ## Problems and surprises
 
@@ -51,4 +52,4 @@ Provider integrations, server billing behavior, owner-access policy, plans, quot
 
 ## Remaining risks / next pickup point
 
-Finish rendered responsive/access/interaction checks and inspect screenshots, then deploy exact verified frontend artifacts and verify Production. Existing missing provider credentials remain separate from the layout work; do not report dollar coverage as complete.
+Dashboard redesign is deployed and verified at the existing `/cost-health` URL; refresh an already-open page to load it. Existing missing provider credentials remain separate from the layout work; dollar coverage is not complete. Chart histories cannot yet establish same-provider billing trends. No full-app payment/classroom regression rerun or physical iOS/Android device validation is claimed for this owner-only UI change. Full workspace compile, app unit tests and responsive owner-browser checks passed. The prior complete CI workflow failed its unrelated app-against-server gate; this manual frontend release does not claim that full workflow passed.
