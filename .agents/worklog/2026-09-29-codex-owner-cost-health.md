@@ -57,3 +57,7 @@ Billing plans, provider hard limits, LiveKit budget, customer learning/payment f
 The backend, website, owner privacy checks and one test-email submission are verified live. Provider credentials remain a blocking setup gap: the browser helper still fails before opening its signed-in surfaces, and Railway's workspace API key is broader than read-only. Restore provider-browser access or use securely entered dedicated credentials before claiming Neon/Railway/Cloudflare live coverage. Cloudflare analytics are not dollar billing even when connected; unknown costs remain unknown. No total-cost forecast is currently available. The app's hourly scheduler runs while the API is online; that is separate from whether a Codex turn is running. Keep independent provider alerts enabled.
 
 Latest full production workflow on pre-feature `a4d4ba9` had a pre-existing failure in its app-against-server gate; do not report that workflow as passing. Cost-specific local/live checks above passed. The new CI gates still need their positive loopback execution on the next CI run.
+
+## Post-release source synchronization
+
+Production-only release was pushed to `main` as `e3ce313`. CI run `36629395693` passed package typechecks and the new actual-HTTP cost suite against its throwaway Postgres; the broader workflow was still running at the last check. The verified cost changes and tests were also carried back to `codex/owner-cost-health` without promoting its unrelated Preview features. Source app typecheck passed; existing user-owned untracked audit directories remain untouched.
