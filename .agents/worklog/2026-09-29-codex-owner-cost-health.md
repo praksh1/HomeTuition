@@ -61,3 +61,5 @@ Latest full production workflow on pre-feature `a4d4ba9` had a pre-existing fail
 ## Post-release source synchronization
 
 Production-only release was pushed to `main` as `e3ce313`. CI run `36629395693` passed package typechecks and the new actual-HTTP cost suite against its throwaway Postgres; the broader workflow was still running at the last check. The verified cost changes and tests were also carried back to `codex/owner-cost-health` without promoting its unrelated Preview features. Source app typecheck passed; existing user-owned untracked audit directories remain untouched.
+
+Railway's main-triggered deployment `0b939595-4e1b-4610-9b7c-2efefc8907d9` subsequently reached SUCCESS. A second live smoke at 20:59 UTC reconfirmed exact-owner access, private responses, four USD 15 targets, active scheduling and healthy liveness checks; no second test email was sent. The public site again matched all three verified bundle hashes. Provider connection gaps remain unchanged.
