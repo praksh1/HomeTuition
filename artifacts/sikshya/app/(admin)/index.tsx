@@ -84,6 +84,12 @@ export default function AdminTickets() {
   const [counts, setCounts] = useState<{ openTickets: number; pendingTeachers: number; openModeration: number; suspendedAccounts: number; known: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
+  const [ownerAccess, setOwnerAccess] = useState(false);
+  useFocusEffect(useCallback(() => {
+    let current = true;
+    void apiGet<{ allowed: boolean }>("/owner/access").then(result => { if (current) setOwnerAccess(result.allowed === true); }).catch(() => { if (current) setOwnerAccess(false); });
+    return () => { current = false; setOwnerAccess(false); };
+  }, []));
 
   const load = useCallback(async () => {
     setFailed(false);
@@ -168,6 +174,12 @@ export default function AdminTickets() {
         </View>
         <Text style={[styles.body, { color: colors.mutedForeground }]}>Review identity documents, account applications, and flagged profile or class text in People.</Text>
       </TouchableOpacity>
+
+      {ownerAccess && <TouchableOpacity accessibilityRole="button" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/cost-health")} activeOpacity={0.8} testID="admin-cost-health-link">
+        <View style={styles.cardHead}><Text style={[styles.reason, { color: colors.primary }]}>Cost & Health</Text><Feather name="activity" size={20} color={colors.primary} /></View>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Owner-only provider usage, service checks and monthly alert budgets.</Text>
+      </TouchableOpacity>}
+
 
       <TouchableOpacity style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/help-library")} activeOpacity={0.8} testID="admin-help-library-link">
         <View style={styles.cardHead}>

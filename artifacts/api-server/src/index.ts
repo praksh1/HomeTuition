@@ -1,5 +1,6 @@
 import http from "http";
 import app from "./app";
+import { startCostHealthScheduler } from "./lib/costHealth/service";
 import { logger } from "./lib/logger";
 import { noteStorageConfig } from "./lib/fileStore";
 import { attachClassroomHub } from "./ws/classroomHub";
@@ -44,9 +45,12 @@ if (Number.isNaN(port) || port <= 0) {
 
 const server = http.createServer(app);
 attachClassroomHub(server);
+let stopCostHealth = () => {};
+server.on("close", () => { stopCostHealth(); });
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
+  stopCostHealth = startCostHealthScheduler();
   // Deliberately after listen and deliberately not awaited: the server must come up whatever
   // the database is doing. See lib/ensureSchema.ts for why this exists at all.
   void ensureNotificationPrefsTable();
