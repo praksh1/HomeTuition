@@ -110,9 +110,13 @@ try {
     await page.getByText("Test email accepted for delivery.", { exact: false }).waitFor();
     check(emailTests === 1, `${width}: email test asks the authenticated server`);
     check(errors.length === 0, `${width}: no browser runtime errors`);
-    const screenshot = path.join(screenshots, `cost-health-${width}.png`);
-    await page.screenshot({ path: screenshot, fullPage: true });
+    const screenshot = path.join(screenshots, `cost-health-${width}-details.png`);
+    await page.screenshot({ path: screenshot });
     console.log(`SCREENSHOT ${screenshot}`);
+    await page.getByTestId("cost-health-known-spend").scrollIntoViewIfNeeded();
+    const topScreenshot = path.join(screenshots, `cost-health-${width}-top.png`);
+    await page.screenshot({ path: topScreenshot });
+    console.log(`SCREENSHOT ${topScreenshot}`);
     await page.close();
   }
 } finally { await browser.close(); server.close(); }
