@@ -56,6 +56,16 @@ export function providerBudgetId(readingId: string): string {
   return readingId.split(/[:-]/, 1)[0];
 }
 
+/** Match the API's eligibility rule before calling a dollar target active. */
+export function hasCurrentDollarReading(provider: ProviderReading, now = Date.now()): boolean {
+  const cost = provider.cost;
+  const observed = provider.observedAt ? Date.parse(provider.observedAt) : Number.NaN;
+  return cost !== null && provider.status !== "unavailable" && provider.status !== "not_connected" &&
+    Number.isFinite(observed) && now - observed < 2 * 3_600_000 &&
+    now >= Date.parse(cost.periodStart) && now < Date.parse(cost.periodEnd) &&
+    Number.isFinite(cost.amountUsd) && cost.amountUsd >= 0;
+}
+
 export function usd(value: number | null | undefined): string {
   return value === null || value === undefined || !Number.isFinite(value)
     ? "Not available"
