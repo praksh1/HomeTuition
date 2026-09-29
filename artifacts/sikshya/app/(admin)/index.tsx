@@ -87,10 +87,12 @@ export default function AdminTickets() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [identityAccess, setIdentityAccess] = useState(false);
+  const [ownerAccess, setOwnerAccess] = useState(false);
   useFocusEffect(useCallback(() => {
     let current = true;
     void apiGet<{ allowed: boolean }>("/identity-review/access").then(result => { if (current) setIdentityAccess(result.allowed); }).catch(() => { if (current) setIdentityAccess(false); });
-    return () => { current = false; setIdentityAccess(false); };
+    void apiGet<{ allowed: boolean }>("/owner/access").then(result => { if (current) setOwnerAccess(result.allowed === true); }).catch(() => { if (current) setOwnerAccess(false); });
+    return () => { current = false; setIdentityAccess(false); setOwnerAccess(false); };
   }, []));
 
   const load = useCallback(async () => {
@@ -180,6 +182,11 @@ export default function AdminTickets() {
       {identityAccess && <TouchableOpacity accessibilityRole="button" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/identity-review")} activeOpacity={0.8} testID="admin-identity-review-link">
         <View style={styles.cardHead}><Text style={[styles.reason, { color: colors.primary }]}>Private identity reviews</Text><Feather name="shield" size={20} color={colors.primary} /></View>
         <Text style={[styles.body, { color: colors.mutedForeground }]}>Restricted document review. Every document access and decision is recorded.</Text>
+      </TouchableOpacity>}
+
+      {ownerAccess && <TouchableOpacity accessibilityRole="button" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/cost-health")} activeOpacity={0.8} testID="admin-cost-health-link">
+        <View style={styles.cardHead}><Text style={[styles.reason, { color: colors.primary }]}>Cost & Health</Text><Feather name="activity" size={20} color={colors.primary} /></View>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Owner-only provider usage, service checks and monthly alert budgets.</Text>
       </TouchableOpacity>}
 
       <TouchableOpacity accessibilityRole="button" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/account-closures")} activeOpacity={0.8} testID="admin-account-closures-link">

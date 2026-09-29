@@ -1,5 +1,6 @@
 import http from "http";
 import app from "./app";
+import { startCostHealthScheduler } from "./lib/costHealth/service";
 import { logger } from "./lib/logger";
 import { noteStorageConfig } from "./lib/fileStore";
 import { attachClassroomHub } from "./ws/classroomHub";
@@ -49,11 +50,13 @@ const server = http.createServer(app);
 attachClassroomHub(server);
 let stopIdentityRetention = () => {};
 let stopClosureMedia = () => {};
+let stopCostHealth = () => {};
 let shuttingDown = false;
-server.on("close", () => { shuttingDown=true; stopIdentityRetention(); stopClosureMedia(); });
+server.on("close", () => { shuttingDown=true; stopIdentityRetention(); stopClosureMedia(); stopCostHealth(); });
 
 server.listen(port, () => {
   logger.info({ port }, "Server listening");
+  stopCostHealth = startCostHealthScheduler();
   stopIdentityRetention = startIdentityRetentionScheduler();
   if (process.env.ACCOUNT_CLOSURE_MEDIA_ENABLED === 'true') {
     void ensureAccountClosureSchema().then(() => {

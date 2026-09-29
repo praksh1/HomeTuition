@@ -42,3 +42,4 @@ export * from "./batchTesting";
 export * from "./classGroups";
 export * from "./classQuizzes";
 export * from "./support";
+export * from "./costHealth";

@@ -13,6 +13,7 @@
     "build": "node scripts/build.js",
     "build:operator": "node scripts/build-operator.js",
     "test:operator-ui": "node scripts/operator-ui/run.mjs",
+    "test:cost-health-ui": "node scripts/cost-health-ui/run.mjs",
     "prebuild:assets": "node scripts/copy-pdf-worker.js",
     "serve": "node server/serve.js",
     "typecheck": "node scripts/router-types.js && tsc -p tsconfig.json --noEmit",
