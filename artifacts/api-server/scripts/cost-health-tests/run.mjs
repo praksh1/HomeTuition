@@ -1,5 +1,6 @@
 /** Real PostgreSQL + actual cost-health HTTP route, isolated in a disposable schema.
- * Run only with: railway run --service hometuition-api-staging -- node scripts/cost-health-tests/run.mjs
+ * Default: railway run --service hometuition-api-staging -- node scripts/cost-health-tests/run.mjs
+ * CI may opt in only with its exact loopback hometuition_ci PGURL.
  * No provider or email network calls occur; those adapters are synthetic.
  */
 import { createRequire } from "node:module";
@@ -17,17 +18,37 @@ const dbRequire = createRequire(path.join(repo, "lib/db/package.json"));
 const { Pool } = dbRequire("pg");
 const stagingServiceId = "cc10a94f-b24b-47bc-ae5c-ec2a9307cfa0";
 const stagingUrl = "https://hometuition-preview.praksh-dhakal.workers.dev";
-if (process.env.RAILWAY_SERVICE_ID !== stagingServiceId || process.env.PUBLIC_APP_URL !== stagingUrl ||
-    !process.env.DATABASE_URL) {
+const localCi = process.env.CI === "true" && process.env.COST_HEALTH_TEST_LOCAL === "true";
+if (!localCi && (process.env.RAILWAY_SERVICE_ID !== stagingServiceId || process.env.PUBLIC_APP_URL !== stagingUrl ||
+    !process.env.DATABASE_URL)) {
   throw Error("Refusing cost-health integration tests: verified staging service and database are required.");
 }
-const connection = new URL(process.env.DATABASE_URL);
-if (connection.protocol !== "postgres:" && connection.protocol !== "postgresql:") throw Error("Expected PostgreSQL staging database");
-if (!connection.hostname.endsWith(".neon.tech")) throw Error("Expected Neon staging database");
-// Neon transaction pooling does not retain the child process's session search_path.
-// The direct endpoint remains the same database, and only a random test schema is touched.
-connection.hostname = connection.hostname.replace(/-pooler\./, ".");
-connection.searchParams.set("sslmode", "verify-full");
+if (localCi && (!process.env.PGURL || !process.env.DATABASE_URL || process.env.RAILWAY_SERVICE_ID)) {
+  throw Error("Refusing cost-health local CI tests: exact throwaway PGURL and no Railway service are required.");
+}
+let connection;
+try { connection = new URL(process.env.DATABASE_URL); }
+catch { throw Error("Refusing cost-health integration tests: invalid database URL."); }
+if (connection.protocol !== "postgres:" && connection.protocol !== "postgresql:") {
+  throw Error(localCi ? "Expected PostgreSQL local CI database" : "Expected PostgreSQL staging database");
+}
+if (localCi) {
+  let expected;
+  try { expected = new URL(process.env.PGURL); }
+  catch { throw Error("Refusing cost-health local CI tests: invalid PGURL."); }
+  if (process.env.DATABASE_URL !== process.env.PGURL || connection.href !== expected.href ||
+      !["localhost", "127.0.0.1"].includes(connection.hostname) ||
+      connection.port !== "5432" || connection.pathname !== "/hometuition_ci" ||
+      connection.search || connection.hash) {
+    throw Error("Refusing cost-health local CI tests: PGURL must be the exact loopback hometuition_ci database.");
+  }
+} else {
+  if (!connection.hostname.endsWith(".neon.tech")) throw Error("Expected Neon staging database");
+  // Neon transaction pooling does not retain the child process's session search_path.
+  // The direct endpoint remains the same database, and only a random test schema is touched.
+  connection.hostname = connection.hostname.replace(/-pooler\./, ".");
+  connection.searchParams.set("sslmode", "verify-full");
+}
 const schema = `fadko_cost_health_test_${randomUUID().replaceAll("-", "")}`;
 if (!/^fadko_cost_health_test_[a-f0-9]{32}$/.test(schema)) throw Error("Invalid test schema");
 const pool = new Pool({ connectionString: connection.href, connectionTimeoutMillis: 5_000, statement_timeout: 15_000 });
