@@ -196,6 +196,42 @@ test("provider family budget aggregates CF services without multiplying owner bu
     /\$15.00/,
   );
 });
+test("only known Railway dollars warn; Neon quota still warns with incomplete cost coverage", () => {
+  const readings = snapshot([
+    p(), // $12 known resource usage against the $15 Railway warning target.
+    p({
+      id: "neon:staging",
+      name: "Neon",
+      cost: null,
+      meters: [{
+        id: "compute-cu-hours",
+        label: "Compute",
+        used: 80.1,
+        limit: 100,
+        unit: "CU-hours",
+        periodStart: start,
+        periodEnd: end,
+        source: "provider",
+      }],
+    }),
+    p({ id: "cloudflare-workers", name: "Cloudflare Workers", cost: null }),
+    p({ id: "brevo", name: "Brevo", cost: null }),
+  ]);
+  const summary = summarize(readings, now);
+  assert.equal(summary.knownSpendUsd, 12);
+  assert.equal(summary.complete, false);
+  const warnings = warningsFor(readings, DEFAULT_SETTINGS, now);
+  const dollarWarnings = warnings.filter((w) => w.key.startsWith("budget:"));
+  assert.equal(dollarWarnings.length, 1);
+  assert.match(dollarWarnings[0]!.key, /^budget:railway:/);
+  assert.match(dollarWarnings[0]!.detail, /\$12\.00 against your \$15\.00/);
+  assert.ok(emailWorthy(dollarWarnings[0]!));
+  const quota = warnings.find((w) => w.key.startsWith("quota:neon:staging:compute-cu-hours:"));
+  assert.ok(quota);
+  assert.match(quota.detail, /80\.1 of 100 CU-hours/);
+  assert.ok(emailWorthy(quota));
+  assert.ok(!warnings.some((w) => /^(budget:neon|budget:cloudflare|budget:brevo|total:)/.test(w.key)));
+});
 test("LiveKit carries no default dollar budget, setup gaps do not spam email", () => {
   const warnings = warningsFor(
     snapshot([

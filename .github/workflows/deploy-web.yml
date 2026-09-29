@@ -110,6 +110,15 @@ jobs:
       - name: App rules
         run: pnpm --filter @workspace/sikshya run test
 
+      # The owner-only cost page must read and write only an isolated disposable schema.
+      # This opt-in CI mode accepts only the job's exact loopback hometuition_ci PGURL;
+      # the runner's ordinary mode still requires the verified staging Neon service.
+      - name: Cost and health against throwaway Postgres
+        env:
+          CI: "true"
+          COST_HEALTH_TEST_LOCAL: "true"
+        run: DATABASE_URL="$PGURL" node artifacts/api-server/scripts/cost-health-tests/run.mjs
+
       # Build before starting any API process. Metro's Excalidraw transform and the complete
       # integration server suite each fit on the standard runner, but their memory peaks do
       # not fit at the same time. The browser tests below still run against the real local API;
@@ -644,6 +653,11 @@ jobs:
       # the localhost build above. That was reproduced deliberately before it was fixed.
       - name: Build the web app for deploy
         run: pnpm --filter @workspace/sikshya run build
+
+      # The owner page and its access gate in the built app, using synthetic API data.
+      # No account or provider is contacted by these synthetic browser checks.
+      - name: Cost and health owner screen
+        run: COST_HEALTH_UI_BUILD=web-build node artifacts/sikshya/scripts/cost-health-ui/run.mjs
 
       # The whiteboard is the product, and its failures are invisible in the code and obvious
       # on screen — so these drive the real board in a real browser and compare pixels.

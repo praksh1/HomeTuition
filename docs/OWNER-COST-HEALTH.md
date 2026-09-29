@@ -6,6 +6,8 @@ The private `/cost-health` page is linked from Support **only for the configured
 
 Initial warning budgets: USD 15/month each for Railway, Neon, Cloudflare and Brevo. No total budget is inferred. LiveKit is excluded from the dollar budget until the owner chooses one. The email recipient is a deployment secret/configuration value; it is deliberately absent from source.
 
+These are saved warning targets, not guaranteed active dollar monitoring. Railway can trigger dollar alerts when its workspace connection reports resource charges. The current Neon, Cloudflare and Brevo adapters do not report dollar charges: their USD 15 targets are saved for reference, while supported quota warnings remain separate. The page labels this explicitly and does not offer an overall-budget editor whose coverage cannot be met. This release is not yet a complete cross-provider billing console.
+
 Warnings are generated at 70%, 85%, 95% and 100% of an available quota or budget. Only the highest crossed threshold is sent on a check. Threshold keys include the provider period, so subsequent refreshes do not repeat the same warning. Forecasts above an individual budget also warn. A failed provider request does not become zero usage.
 
 ## What “live” means
@@ -13,7 +15,7 @@ Warnings are generated at 70%, 85%, 95% and 100% of an available quota or budget
 - The open page fetches the latest saved readings every minute and requests a provider refresh every five minutes while visible.
 - Server refreshes are limited to one every five minutes across processes. Background checks default to once per hour to avoid keeping a Free Neon compute awake continuously.
 - Provider reporting delay still applies. Every reading shows its check time, observation time, scope and period. The page cannot make delayed billing instantaneous.
-- Unknown dollar amounts are not added as zero. A combined forecast requires complete, comparable periods. Railway's separate forecast is a **resource-only straight-line estimate**, not an invoice; subscriptions, credits and taxes are excluded.
+- Unknown dollar amounts are not added as zero. A combined forecast requires complete, comparable periods and is unavailable with current partial provider coverage. Railway's separate forecast is a **resource-only straight-line estimate**, not an invoice; subscriptions, credits and taxes are excluded.
 - Retrieval timestamps show when a provider response was obtained, not a guarantee that its billing data is up to the second. Missing HTTP date headers use the successful local check time.
 - Cloudflare analytics are account-wide, sampled event counts, **not** invoice amounts. R2 operation totals alone cannot determine its bill. AI event counts do not determine billed neurons. Keep Cloudflare's own billable-usage alerts enabled.
 - Brevo reports transactional email requests. The Free plan's published 300/day allowance is shared with marketing emails. This meter is not a complete marketing-plus-transactional send ledger.
