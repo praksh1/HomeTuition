@@ -2,6 +2,15 @@
 
 The private `/cost-health` page is linked from Support **only for the configured owner**. This feature does not purchase anything, change provider limits, terminate services, or expose billing to teachers, students or other support administrators.
 
+## Dashboard navigation
+
+- **Overview:** reported spend, recorded-usage chart, provider watchlist, service pulse and the most urgent saved warning.
+- **Providers:** select a compact row to reveal all usage meters, reading periods, connection instructions and the provider's own dashboard link. Multi-product providers show source coverage on the watchlist, not a falsely combined metric.
+- **Alerts:** usage/service warnings and incomplete connections in separate sections.
+- **Settings:** individual dollar warning targets, email preferences, test email and monitoring cadence.
+
+The 1D/7D/30D chart filters actual recorded checks. The server returns the latest 48 checks, not necessarily a full range. Historical amounts do not identify their component providers or billing periods, so the chart displays independent readings rather than a continuous line, percentage growth or invented forecast. Select a reading below the plot for its amount and timestamp. Missing data remains empty, never zero. A genuine zero is still a real reading.
+
 ## Approved alert settings
 
 Initial warning budgets: USD 15/month each for Railway, Neon, Cloudflare and Brevo. No total budget is inferred. LiveKit is excluded from the dollar budget until the owner chooses one. The email recipient is a deployment secret/configuration value; it is deliberately absent from source.
@@ -47,8 +56,8 @@ Existing owner accounts can use the current private admin login during the separ
 
 1. Sign in as the configured owner and open Cost & Health from Support. Ordinary admins must not see the link and must receive HTTP 403 from the direct endpoint.
 2. Press Refresh. Unconnected providers show their setup gap, never an invented dollar total.
-3. Confirm each connected card belongs to the intended account/project and period.
-4. Review budgets, then Send test email. “Accepted” means accepted by the mail provider, not proof it arrived in the inbox. Tests are rate-limited to one per fifteen minutes.
+3. Open Providers and select a row; confirm its usage belongs to the intended account/project and period.
+4. Open Settings, review budgets, then Send test email. “Accepted” means accepted by the mail provider, not proof it arrived in the inbox. Tests are rate-limited to one per fifteen minutes.
 5. Keep provider alerts enabled independently. Existing Railway hard limits can take services offline before an alert-only Fadko budget is reached.
 
 ### Important outage boundary
@@ -70,4 +79,4 @@ Three additive tables (`owner_cost_health`, `owner_cost_health_history`, `owner_
 - [Cloudflare GraphQL analytics](https://developers.cloudflare.com/analytics/graphql-api/) and [R2 metrics](https://developers.cloudflare.com/r2/platform/metrics-analytics/).
 - [Brevo account API](https://developers.brevo.com/reference/get-account) and [transactional reports](https://developers.brevo.com/reference/get-smtp-report).
 
-Deployment evidence and remaining connection gaps belong in `.agents/worklog/2026-09-29-codex-owner-cost-health.md`; this document alone is not proof of a live rollout.
+Original deployment evidence and connection gaps belong in `.agents/worklog/2026-09-29-codex-owner-cost-health.md`; dashboard redesign verification is in `.agents/worklog/2026-09-29-codex-cost-dashboard-redesign.md`. This document alone is not proof of a live rollout.

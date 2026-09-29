@@ -25,12 +25,12 @@ for (const asset of expected) {
   const live = Buffer.from(await response.arrayBuffer());
   assert.equal(fingerprint(live), fingerprint(await readFile(path.join(build, asset))), `Live asset differs: ${asset}`);
   hasApi ||= live.includes(api);
-  hasCostPage ||= live.includes("cost-health-known-spend") && live.includes("Dollar alerts unavailable");
+  hasCostPage ||= live.includes("cost-health-known-spend") && live.includes("Dollar alerts unavailable") && live.includes("Provider watchlist") && live.includes("cost-health-chart-empty") && live.includes("cost-health-panel-settings");
 }
 assert(hasApi && hasCostPage, "Expected production API or verified cost-page labels missing");
 const denied = await get(`${api}/api/owner/cost-health`);
 assert.equal(denied.status, 401, "Anonymous access must be rejected");
 await denied.body?.cancel();
 console.log(`PASS production cost page serves ${expected.length} exact verified bundles`);
-console.log("PASS production API target and honest dollar-alert labels present");
+console.log("PASS production API target, redesigned dashboard and honest dollar-alert labels present");
 console.log("PASS live anonymous owner-data access denied");

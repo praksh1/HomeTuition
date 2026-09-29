@@ -2,16 +2,16 @@ import { Feather } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ActivityIndicator, AppState, Linking, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { AppState, Linking, Platform, Pressable, Text, TextInput, View } from "react-native";
+import { CostHealthWorkspace } from "@/components/owner/CostHealthWorkspace";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost, ApiError } from "@/utils/api";
 import {
   BUDGET_PROVIDERS, budgetDraft, hasCurrentDollarReading, measuredAt, meterFraction, parseBudget, periodLabel, providerBudgetId,
-  usd, visibleSummary, type CostHealthDashboard, type CostHealthSettings,
-  type ProviderReading, type HealthCheck,
+  usd, type CostHealthDashboard, type CostHealthSettings,
+  type ProviderReading,
 } from "@/utils/costHealth";
 
 const CACHE_POLL_MS = 60_000;
@@ -29,9 +29,6 @@ export default function CostHealthScreen() {
 }
 
 function OwnerCostHealth() {
-  const colors = useColors();
-  const { t, numeric, gutter, space, radius, isExpanded } = useLayout();
-  const insets = useSafeAreaInsets();
   const [access, setAccess] = useState<"checking" | "allowed" | "denied">("checking");
   const [dashboard, setDashboard] = useState<CostHealthDashboard | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -144,112 +141,35 @@ function OwnerCostHealth() {
   };
 
   const disabledRefresh = busy !== null || refreshInFlight.current || (dashboard?.monitoring.refreshing ?? false) || now < cooldownUntil;
-  const urgentWarnings = dashboard?.warnings.filter(warning => !warning.key.startsWith("coverage:")) ?? [];
-  const coverageCount = dashboard?.warnings.filter(warning => warning.key.startsWith("coverage:")).length ?? 0;
-  const button = (label: string, action: () => void, disabled = false, primary = false, id?: string) => (
-    <Pressable
-      testID={id} accessibilityRole="button" accessibilityState={{ disabled }} aria-disabled={disabled}
-      disabled={disabled} onPress={action}
-      style={{ minHeight: 44, alignSelf: "flex-start", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: space.md, paddingVertical: space.xs, borderRadius: radius.sm, borderWidth: 1, borderColor: primary ? colors.primary : colors.lineStrong, backgroundColor: primary ? colors.primary : colors.card }}
-    >
-      <Text style={[t.caption, { color: primary ? colors.primaryForeground : colors.primary }]}>{label}</Text>
-    </Pressable>
-  );
-
-  const card = { backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: space.md, gap: space.sm } as const;
-
-  return <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ paddingTop: insets.top + space.xl, paddingBottom: insets.bottom + 112, paddingHorizontal: gutter, gap: space.lg }}>
-    <View style={{ maxWidth: 1120, width: "100%", alignSelf: "center", gap: space.lg }}>
-      <View style={{ gap: space.xs }}>
-        {button("← Support desk", () => router.replace("/(admin)"))}
-        <Text accessibilityRole="header" style={[t.title1, { color: colors.foreground }]}>Cost & Health</Text>
-        <Text style={[t.callout, { color: colors.mutedForeground }]}>Private owner view · provider usage, service checks and alert settings in one place.</Text>
-      </View>
-
-      {access === "checking" ? <View testID="cost-health-access-checking" style={{ padding: space.xxl, alignItems: "center", gap: space.sm }}><ActivityIndicator color={colors.primary} /><Text style={[t.callout, { color: colors.mutedForeground }]}>Checking owner access…</Text></View> : null}
-      {access === "denied" ? <View testID="cost-health-access-denied" style={card}><Text style={[t.title3, { color: colors.foreground }]}>Owner access required</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>This page is only available to the account owner. Return to the support desk if you need help.</Text></View> : null}
-
-      {access === "allowed" ? <>
-        {problem ? <View testID="cost-health-error" style={[card, { backgroundColor: colors.warnSoft }]}><Text style={[t.bodyStrong, { color: colors.warn }]}>Could not update this view</Text><Text style={[t.callout, { color: colors.foreground }]}>{problem}</Text>{button("Try loading again", () => void loadCached())}</View> : null}
-        {!dashboard && !problem ? <View style={{ padding: space.xxl, alignItems: "center", gap: space.sm }}><ActivityIndicator color={colors.primary} /><Text style={[t.callout, { color: colors.mutedForeground }]}>Loading the latest saved readings…</Text></View> : null}
-        {dashboard ? <>
-          <View style={[card, { backgroundColor: colors.secondary, borderColor: colors.secondary, padding: space.xl, gap: space.md }]}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md, flexWrap: "wrap" }}>
-              <View style={{ gap: space.xs, flex: 1, minWidth: 220 }}>
-                <Text style={[t.overline, { color: colors.onInverseMuted }]}>Known metered usage</Text>
-                <Text testID="cost-health-known-spend" style={[t.display, numeric, { color: colors.onInverse }]}>{visibleSummary(dashboard).known}</Text>
-                <Text style={[t.callout, { color: colors.onInverseMuted }]}>{dashboard.summary.complete ? "All configured provider cost readings included" : "Partial view · some costs are unavailable"}</Text>
-              </View>
-              <View style={{ gap: space.xs, minWidth: 180 }}>
-                <Text style={[t.overline, { color: colors.onInverseMuted }]}>Combined projection</Text>
-                <Text testID="cost-health-projection" style={[t.title2, numeric, { color: colors.onInverse }]}>{visibleSummary(dashboard).projection}</Text>
-                <Text style={[t.caption, { color: colors.onInverseMuted }]}>Shown only with a complete comparable picture</Text>
-              </View>
-            </View>
-            <Text style={[t.callout, { color: colors.onInverseMuted }]}>{visibleSummary(dashboard).detail}</Text>
-            <Text style={[t.caption, { color: colors.onInverseMuted }]}>Resource charges only where reported; fixed fees, taxes and missing providers are not included.</Text>
-            <Text style={[t.caption, { color: colors.onInverseMuted }]}>Last saved check: {measuredAt(dashboard.snapshot?.checkedAt)}</Text>
-          </View>
-
-          <View style={[card, { backgroundColor: colors.actionSoft }]}>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>An alert budget is not a spending cap</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>This view warns you about usage. It cannot stop charges at Railway, Cloudflare, Neon or Brevo. Each provider controls its own billing and service limits.</Text>
-          </View>
-
-          {urgentWarnings.length > 0 ? <View style={{ gap: space.sm }} testID="cost-health-warnings">
-            <Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Needs attention</Text>
-            {urgentWarnings.map(warning => <View key={warning.key} style={[card, { backgroundColor: warning.severity === "critical" ? colors.destructiveSoft : colors.warnSoft }]}><Text style={[t.bodyStrong, { color: warning.severity === "critical" ? colors.destructive : colors.warn }]}>{warning.title}</Text><Text style={[t.callout, { color: colors.foreground }]}>{warning.detail}</Text></View>)}
-          </View> : null}
-
-          <View style={{ gap: space.sm }}>
-            <View style={{ gap: space.xs }}><Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Providers</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>Each card uses its provider's own period and reading time. Missing data stays missing.</Text>{coverageCount > 0 ? <Text testID="cost-health-coverage-summary" style={[t.callout, { color: colors.warn }]}>{coverageCount} {coverageCount === 1 ? "connection needs setup or has" : "connections need setup or have"} partial coverage. See the provider cards below.</Text> : null}</View>
-            {dashboard.snapshot ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.md }} testID="cost-health-providers">
-              {dashboard.snapshot.providers.map(provider => <ProviderCard key={provider.id} provider={provider} alertBudget={dashboard.settings.providerBudgetsUsd[providerBudgetId(provider.id)] ?? null} now={now} wide={isExpanded} />)}
-            </View> : <View style={card}><Text style={[t.callout, { color: colors.mutedForeground }]}>No provider check has completed yet. Run a check when you are ready.</Text></View>}
-          </View>
-
-          <View style={[card, { gap: space.md }]}>
-            <View style={{ gap: space.xs }}><Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Checks & alerts</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>Provider checks run when this page opens and about every 5 minutes while it stays visible. Saved readings reload every minute. {dashboard.monitoring.enabled ? `The background monitor is scheduled every ${dashboard.monitoring.intervalMinutes} minutes while its service is online.` : "Background monitoring is currently off."}</Text></View>
-            <View style={{ flexDirection: "row", gap: space.sm, flexWrap: "wrap", alignItems: "center" }}>
-              {button(busy === "refresh" ? "Checking…" : now < cooldownUntil ? `Refresh available in ${Math.min(5, Math.max(1, Math.ceil((cooldownUntil - now) / 60_000)))} min` : "Refresh provider readings", () => void act("refresh", "/owner/cost-health/refresh"), disabledRefresh, true, "cost-health-refresh")}
-              {button(busy === "email" ? "Sending…" : "Send test email", () => void act("email", "/owner/cost-health/test-email"), busy !== null || !dashboard.monitoring.emailConfigured, false, "cost-health-test-email")}
-            </View>
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>Last monitor success: {measuredAt(dashboard.monitoring.lastSuccessAt)} · Next check: {measuredAt(dashboard.monitoring.nextCheckAt)}</Text>
-            <Text style={[t.caption, { color: colors.mutedForeground }]}>Alert recipient: {dashboard.monitoring.alertRecipient ?? "Not configured"} · Email delivery: {dashboard.monitoring.emailConfigured ? "configured" : "not configured"}</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>{dashboard.monitoring.limitation}</Text>
-            {feedback ? <Text testID="cost-health-feedback" style={[t.callout, { color: colors.success }]}>{feedback}</Text> : null}
-          </View>
-
-          <BudgetForm settings={dashboard.settings} busy={busy !== null} onSave={async settings => {
-            setBusy("save"); setFeedback(null); setProblem(null);
-            try {
-              const result = await apiPatch<CostHealthDashboard>("/owner/cost-health/settings", settings);
-              if (active.current) { setDashboard(result); setFeedback("Alert settings saved."); }
-            } catch (error) {
-              if (!active.current) return;
-              if (error instanceof ApiError && error.status === 403) { setAccess("denied"); setDashboard(null); }
-              else setProblem(error instanceof Error ? error.message : "Alert settings could not be saved.");
-            } finally { if (active.current) setBusy(null); }
-          }} />
-
-          <View style={{ gap: space.sm }}>
-            <Text accessibilityRole="header" style={[t.title2, { color: colors.foreground }]}>Service health</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>These checks describe what the monitor could reach at the last check; they are not a round-the-clock outage guarantee.</Text>
-            {dashboard.snapshot?.health.length ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.md }}>{dashboard.snapshot.health.map(check => <HealthCard key={check.id} check={check} wide={isExpanded} />)}</View> : <View style={card}><Text style={[t.callout, { color: colors.mutedForeground }]}>No health readings yet.</Text></View>}
-          </View>
-        </> : null}
-      </> : null}
-    </View>
-  </ScrollView>;
+  return <CostHealthWorkspace
+    access={access} dashboard={dashboard} problem={problem} busy={busy} feedback={feedback}
+    now={now} cooldownUntil={cooldownUntil} disabledRefresh={disabledRefresh}
+    onBack={() => router.replace("/(admin)")}
+    onReload={() => void loadCached()}
+    onRefresh={() => void act("refresh", "/owner/cost-health/refresh")}
+    onEmail={() => void act("email", "/owner/cost-health/test-email")}
+    renderProvider={provider => <ProviderCard provider={provider} alertBudget={dashboard?.settings.providerBudgetsUsd[providerBudgetId(provider.id)] ?? null} now={now} wide={false} />}
+    renderBudget={() => dashboard ? <BudgetForm settings={dashboard.settings} busy={busy !== null} onSave={async settings => {
+      setBusy("save"); setFeedback(null); setProblem(null);
+      try {
+        const result = await apiPatch<CostHealthDashboard>("/owner/cost-health/settings", settings);
+        if (active.current) { setDashboard(result); setFeedback("Alert settings saved."); }
+      } catch (error) {
+        if (!active.current) return;
+        if (error instanceof ApiError && error.status === 403) { authorized.current = false; setAccess("denied"); setDashboard(null); }
+        else setProblem(error instanceof Error ? error.message : "Alert settings could not be saved.");
+        throw error;
+      } finally { if (active.current) setBusy(null); }
+    }} /> : null}
+  />;
 }
-
 function ProviderCard({ provider, alertBudget, now, wide }: { provider: ProviderReading; alertBudget: number | null; now: number; wide: boolean }) {
   const colors = useColors(); const { t, numeric, space, radius } = useLayout();
   const [showConnectionDetails, setShowConnectionDetails] = useState(false);
   const statusText = { connected: "Connected", partial: "Partial", not_connected: "Not connected", unavailable: "Unavailable" }[provider.status];
   const statusColor = provider.status === "connected" ? colors.success : provider.status === "unavailable" ? colors.destructive : colors.warn;
   const external = async () => { try { await Linking.openURL(provider.dashboardUrl); } catch { /* The account page remains a visible URL below. */ } };
-  return <View testID={`cost-health-provider-${provider.id}`} style={{ flexBasis: wide ? "48%" : "100%", flexGrow: 1, minWidth: 270, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: space.md, gap: space.sm }}>
+  return <View testID={`cost-health-provider-${provider.id}`} style={{ width: "100%", minWidth: 0, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: space.md, gap: space.sm }}>
     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: space.xs }}><Text style={[t.title3, { color: colors.foreground, flex: 1 }]}>{provider.name}</Text><Text style={[t.caption, { color: statusColor }]}>{statusText}</Text></View>
     <Text style={[t.caption, { color: colors.mutedForeground }]}>{provider.scope}</Text>
     <View style={{ padding: space.sm, borderRadius: radius.sm, backgroundColor: colors.muted, gap: space.xs }}>
@@ -276,11 +196,6 @@ function ProviderCard({ provider, alertBudget, now, wide }: { provider: Provider
   </View>;
 }
 
-function HealthCard({ check, wide }: { check: HealthCheck; wide: boolean }) {
-  const colors = useColors(); const { t, numeric, space, radius } = useLayout();
-  const color = check.status === "healthy" ? colors.success : check.status === "degraded" ? colors.warn : colors.destructive;
-  return <View style={{ flexBasis: wide ? "31%" : "100%", flexGrow: 1, minWidth: 250, backgroundColor: colors.card, borderColor: colors.border, borderWidth: 1, borderRadius: radius.md, padding: space.md, gap: space.xs }}><View style={{ flexDirection: "row", alignItems: "center", gap: space.xs }}><Feather name={check.status === "healthy" ? "check-circle" : "alert-circle"} size={18} color={color} /><Text style={[t.title3, { color: colors.foreground, flex: 1 }]}>{check.name}</Text></View><Text style={[t.caption, { color }]}>{check.status === "healthy" ? "Reachable" : check.status === "degraded" ? "Degraded" : "Unavailable"}</Text><Text style={[t.callout, { color: colors.mutedForeground }]}>{check.note}</Text><Text style={[t.caption, numeric, { color: colors.inkFaint }]}>{measuredAt(check.checkedAt)}{check.latencyMs === null ? "" : ` · ${check.latencyMs} ms`}</Text></View>;
-}
 
 function BudgetForm({ settings, busy, onSave }: { settings: CostHealthSettings; busy: boolean; onSave: (next: CostHealthSettings) => Promise<void> }) {
   const colors = useColors(); const { t, space, radius, isExpanded } = useLayout();

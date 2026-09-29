@@ -108,3 +108,87 @@ export function visibleSummary(dashboard: CostHealthDashboard): { known: string;
   const projection = dashboard.summary.complete ? usd(dashboard.summary.projectedSpendUsd) : "Not available";
   return { known, projection, detail: dashboard.summary.note };
 }
+
+export type CostHealthHistoryRange = "1D" | "7D" | "30D";
+export type CostHealthHistoryPoint = {
+  checkedAt: string;
+  timestamp: number;
+  amountUsd: number;
+};
+export type CostHealthHistoryChart = {
+  rangeStart: number;
+  rangeEnd: number;
+  points: CostHealthHistoryPoint[];
+  /** Chronological groups only: provider coverage is not known to be comparable. */
+  segments: CostHealthHistoryPoint[][];
+  latestPoint: CostHealthHistoryPoint | null;
+  /** Age of the latest plotted check, not proof that its provider data is current. */
+  isStale: boolean;
+  /** Checks in the selected range that have no valid dollar amount. */
+  missingCount: number;
+  limitations: string[];
+};
+
+const HISTORY_RANGE_DAYS: Record<CostHealthHistoryRange, number> = { "1D": 1, "7D": 7, "30D": 30 };
+const HISTORY_STALE_MS = 2 * 3_600_000;
+
+/**
+ * Plot only reported usage. The API stores neither provider membership nor billing
+ * periods for historical aggregates, so even adjacent amounts cannot establish a
+ * spend trend. Render markers, not a connected line or a percentage change.
+ */
+export function buildCostHealthHistoryChart(
+  history: Readonly<CostHealthDashboard["history"]>,
+  range: CostHealthHistoryRange,
+  now = Date.now(),
+): CostHealthHistoryChart {
+  const rangeStart = now - HISTORY_RANGE_DAYS[range] * 24 * 3_600_000;
+  const readings = history
+    .map((reading) => ({ ...reading, timestamp: Date.parse(reading.checkedAt) }))
+    .filter((reading) => Number.isFinite(reading.timestamp) && reading.timestamp >= rangeStart && reading.timestamp <= now)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  const points: CostHealthHistoryPoint[] = [];
+  const segments: CostHealthHistoryPoint[][] = [];
+  let segment: CostHealthHistoryPoint[] = [];
+  let missingCount = 0;
+
+  for (let index = 0; index < readings.length; index += 1) {
+    const reading = readings[index];
+    const amount = reading.knownSpendUsd;
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount < 0) {
+      missingCount += 1;
+      segment = [];
+      continue;
+    }
+    const point = { checkedAt: reading.checkedAt, timestamp: reading.timestamp, amountUsd: amount };
+    const previous = segment[segment.length - 1];
+    // Isolate ambiguous same-time checks and reset boundaries. Billing periods are
+    // unavailable, so a calendar boundary is deliberately conservative too.
+    const sameTime = readings[index - 1]?.timestamp === point.timestamp || readings[index + 1]?.timestamp === point.timestamp;
+    const previousSameTime = previous && readings[index - 2]?.timestamp === previous.timestamp;
+    if (previous && (
+      sameTime || previousSameTime || point.timestamp - previous.timestamp >= HISTORY_STALE_MS ||
+      point.amountUsd < previous.amountUsd ||
+      new Date(point.timestamp).getUTCMonth() !== new Date(previous.timestamp).getUTCMonth()
+    )) segment = [];
+    if (segment.length === 0) segments.push(segment);
+    segment.push(point);
+    points.push(point);
+  }
+
+  const latestPoint = points[points.length - 1] ?? null;
+  return {
+    rangeStart,
+    rangeEnd: now,
+    points,
+    segments,
+    latestPoint,
+    isStale: latestPoint === null || now - latestPoint.timestamp >= HISTORY_STALE_MS,
+    missingCount,
+    limitations: [
+      "Reported usage only; these amounts are not a total bill or invoice.",
+      "History does not identify the providers or billing periods behind each amount. Readings cannot establish a comparable spending trend.",
+      "Ranges filter the latest 48 stored checks available from the server; they may not cover the full selected period. Missing readings are not zero.",
+    ],
+  };
+}
