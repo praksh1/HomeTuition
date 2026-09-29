@@ -55,6 +55,8 @@ These HTTP probes check the public website and API liveness endpoints; they do n
 
 Hourly database writes and HTTP probes themselves use a small amount of service capacity and can wake sleeping services. Checks run only while the monitoring API is online. Failed provider calls generate email warnings; missing configuration and partial-coverage notices appear on the page, not as repeated setup emails. Recheck the coverage section after changing service variables.
 
+Leaving the live dashboard open can keep database compute awake because private access is revalidated while readings refresh. Close it when not needed; the hourly scheduler and configured emails continue while the API is online. Railway workspace API tokens are workspace-wide, not read-only: prefer a Viewer OAuth integration or explicitly review the broader token scope before connecting it. Never repurpose the developer CLI's interactive login token.
+
 ### Durable state
 
 Three additive tables (`owner_cost_health`, `owner_cost_health_history`, `owner_cost_health_alerts`) are created lazily. Existing account/class tables are untouched. Snapshots contain safe usage metadata, never API keys or customer evidence. History and alert records expire after 90 days. Failed email submissions are retried on subsequent checks, at most three attempts per warning with a thirty-minute delay. Provider acceptance is recorded before considering an email sent. A crash between remote acceptance and the database write can cause an at-least-once retry; do not promise exactly-once delivery.
