@@ -4,7 +4,7 @@
 - Agent: Codex root with class creation, call layout and enrolled journey agents
 - Branch: `codex/preview-journey-fixes-sep29`
 - Base commit: `6854935420d30166a8f3afec5a768a5c6b6d9373`
-- Status: in progress
+- Status: Preview regression release deployed and verified; full live make-up workflow remains pending
 
 ## Requested
 
@@ -34,11 +34,14 @@ Preview is the release target for this regression pass. Production promotion is 
 - Discover: 282 browser assertions at 390/1440; messages 150; batch booking UI 90; discovery helpers 24 and query guard contracts 4. Enrollment failures also suppress Ready to join.
 - Profile UI: 330 assertions including both roles at 390/1440 plus 320x568 and 844x320, delayed pre-save read, failed upload retry, failed post-save read, real scrolling and coordinate Save/Close actions. No private documents were uploaded.
 - Class home: 50 browser assertions at 390/1440; 4 new history helper tests. Source attendance privacy contract: 13 class-group contracts pass. UI fixtures are synthetic and not actual PostgreSQL integration.
-- Final combined workspace typecheck passes; app unit suite 614/614; backend suite 845/845 including attendance privacy contract and pending-request quota tests (21 focused remedy tests). Design lint remains at its baseline (56 hex/211 sizes); API and staging-target web build pass. Web export verifies Fadko name and the exact staging API target; Preview dry-run passes. Exact-bundle verifier unit tests: 7/7.
+- Final combined workspace typecheck passes; app unit suite 623/623 including the nine new build-target guards; backend suite 845/845 including attendance privacy contract and pending-request quota tests (21 focused remedy tests). Design lint remains at its baseline (56 hex/211 sizes); API and staging-target web build pass. Web export verifies Fadko name and the exact staging API target; Preview dry-run passes.
 - Root visually inspected phone photo dialog, phone earnings, laptop short-course boundary review, and phone/landscape/laptop expanded-call/chat screenshots. Layout fixtures do not load all production font faces.
 - Verified CLI access and the explicit staging service; staging/production database URLs and session secrets differ; upload buckets differ; staging uses LiveKit and has no real payment keys.
 - Code commit `3621c4795ee6204206bdb09476544ae0c3544dc6` pushed to this Preview branch. Staging API deployment `0505f3d6-2cde-4a94-9ce1-dff87b93b95e` is SUCCESS, readiness returns HTTP 200/status ok. Authenticated read-only PostgreSQL/API checks pass for three existing synthetic student class enrollments; anonymous responses disclose no viewer enrollment, teacher attendance remains private, exact purchased-batch links agree. No writes, payment, emails or classroom joins were used.
-- New cache/target/export and exact-served-bundle regressions: 20/20. Final clean export and replacement Preview Worker verification remain pending below.
+- Cache/target/export and exact-served-bundle regressions: 20/20, also independently reviewed/probed. Build-target tests now run with the default app unit suite. Final clean export passes across all 130 JavaScript chunks. Guard commit `8cdcbe3` is pushed.
+- Final Preview Worker `07d90b8b-4a51-4792-87d7-30409bff6444` deployed at `https://hometuition-preview.praksh-dhakal.workers.dev`. Post-release verification compares served HTML plus SHA-256 of all 130 emitted JS chunks against local export and rejects mixed Railway origins; PASS. `/api/readyz` and `/api/healthz` both HTTP 200/status ok.
+- Fresh Chromium live-Preview guest navigation at widths 390 and 1440 reaches Welcome with zero browser exceptions, no horizontal overflow, and no Production API requests. This is an unauthenticated smoke check, not proof of a live classroom or phone browser.
+- Production API remains deployment `b339abdd-a755-44f9-96e4-5b2cc1308b8d` (SUCCESS, created Sep 29 21:38:52Z); no Production deployment command was issued. GitHub lists no CI run for this new branch; its workflows do not auto-trigger on this branch. Reported suites were run locally, and authenticated data checks against isolated Preview.
 
 ## Problems and surprises
 
@@ -60,4 +63,4 @@ No purchase, real payment, automatic refund/ban, production merge, document rete
 
 ## Remaining risks / next pickup point
 
-Deploy verified changes to staging API and Preview Worker, verify exact served bundles and health, and run the read-only synthetic API probe. Full make-up requests, replacement assignment/acceptance, quota UI and payment holds are still inactive; the concrete activation work is tracked in `.agents/backlog/2026-09-30-live-makeup-workflow.md`. No further owner policy decision is required to implement the approved policy. Physical phone/live-call retesting remains necessary before Production promotion.
+This Preview regression release is verified. Full make-up requests, replacement assignment/acceptance, quota UI and payment holds are still inactive; the concrete activation work is tracked in `.agents/backlog/2026-09-30-live-makeup-workflow.md`. No further owner policy decision is required to implement the approved policy. Physical phone/live-call retesting remains necessary before Production promotion. Future API-host changes must update the Railway-host safety guard when moving to custom domains; legitimate unrelated external asset/video origins remain allowed. Static builds still emit existing Excalidraw local-resource CSS warnings, so the successful export is not an assertion that all library font resources were transformed.

@@ -28,7 +28,7 @@
     "test:classroom-media-ui": "node scripts/classroom-media-ui/run.mjs",
     "test:phone": "node scripts/phone-tests/run.mjs",
     "test:photo": "node scripts/phone-tests/photo.mjs",
-    "test": "node --test --experimental-strip-types \"utils/**/*.test.ts\" \"components/**/*.test.ts\"",
+    "test": "node --test --experimental-strip-types \"utils/**/*.test.ts\" \"components/**/*.test.ts\" \"scripts/build-targets.test.cjs\"",
     "test:classroom": "node scripts/classroom-tests/run.mjs",
     "test:perf": "node scripts/perf-tests/run.mjs",
     "test:messaging": "node scripts/messaging-tests/run.mjs",
