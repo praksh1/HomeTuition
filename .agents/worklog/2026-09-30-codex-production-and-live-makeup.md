@@ -36,6 +36,12 @@ Production and Preview have divergent histories: 299 changed files, including a 
 
 Capacity interruptions required agent retries. Deep review found alternate admin read-path authorization bypass, fulfilled replacement cases blocking account closure after payout, ignored stored policy snapshots, acceptance retries rejected after later state changes, and partial make-up storage being treated as no history. These were repaired with targeted regressions; PostgreSQL execution still must verify transaction/catalog behavior. Initial browser screenshots caught stale closing-modal titles and device-local rather than Nepal times; both repaired and reverified. Initial browser bundling could not parse the native time picker; test-only native boundary uses the established fixture alias, not a production dependency change.
 
+## Retry audit continuation
+
+The new real PostgreSQL make-up suite passes 108 checks, including eight reopening eligibility cases; Programs passes 608. Older downstream fixtures were updated to provide required synthetic profile metadata, expect suspended private-editor denial, verify participant-only receipt/fee arithmetic and require refunded-seat revocation rather than retained access. Negative privacy/onboarding checks remain intact; no runtime guard was relaxed. Production uses a narrow separately tested variant and preserves its owner dashboard and private-ID signer.
+
+Preview CI 36753508070 at 6af375c3 is checking the remaining downstream suites. Final review is hardening ordinary-booking interval and amount checks against a concurrent teacher edit before activation. Synthetic-role read smoke preflight passes for both services; the Production fallback proves only repository demo seed credentials in memory. No live bookings, payments, tickets, documents or participant accounts were mutated by these diagnostics.
+
 ## Fabrications found
 
 None added. A completed session or brief connection is not evidence of full delivery. Practice receipts cannot become real refunds or actual earnings.
