@@ -110,15 +110,28 @@ export async function tagReplacementClassGroups<T extends { id: number }>(rows: 
 
 export type StoredRemedyFinancialFacts = RemedyFinancialFacts;
 
-/** A financial support request races acceptance/payout on the very same original payment lock. */
+/** Take the original payment lock BEFORE inserting a ticket whose user FK takes KEY SHARE.
+ * Make-up writes lock this payment before their participant user rows; reversing that
+ * order here would deadlock a simultaneous request/acceptance. Nonfinancial reports
+ * and unrelated/unauthorized lessons do not acquire a financial lock. */
+export async function lockOriginalPaymentForReview(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], input: {
+  sessionId: number | null; studentId: number; actorRole: string; reason: string;
+}) {
+  if (input.sessionId === null || input.actorRole !== "student" || !["Payment Issue", "Refund Request"].includes(input.reason)) return null;
+  const identity = await originalAllocationForSession(input.sessionId, input.studentId, tx);
+  if (!identity) return null;
+  const [payment] = await tx.select().from(batchTestPaymentsTable).where(eq(batchTestPaymentsTable.bookingId, identity.bookingId)).for("update").limit(1);
+  if (!payment) throw Error("The original payment record is unavailable. No financial request was saved.");
+  return { identity, payment };
+}
+
+/** Freeze atomically after the ticket has its durable ID, on the already-held original payment. */
 export async function freezeOriginalPaymentForReview(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], input: {
   sessionId: number | null; studentId: number; actorRole: string; reason: string; disputeId: number;
 }): Promise<void> {
-  if (input.sessionId === null || input.actorRole !== "student" || !["Payment Issue", "Refund Request"].includes(input.reason)) return;
-  const identity = await originalAllocationForSession(input.sessionId, input.studentId, tx);
-  if (!identity) return;
-  const [payment] = await tx.select().from(batchTestPaymentsTable).where(eq(batchTestPaymentsTable.bookingId, identity.bookingId)).for("update").limit(1);
-  if (!payment) throw Error("The original payment record is unavailable. No financial request was saved.");
+  const locked = await lockOriginalPaymentForReview(tx, input);
+  if (!locked) return;
+  const { identity, payment } = locked;
   const history = await tx.select().from(batchTestLedgerEntriesTable)
     .where(and(eq(batchTestLedgerEntriesTable.bookingId, identity.bookingId), eq(batchTestLedgerEntriesTable.position, identity.position)))
     .orderBy(asc(batchTestLedgerEntriesTable.id));

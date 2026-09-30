@@ -42,6 +42,13 @@ The new real PostgreSQL make-up suite passes 108 checks, including eight reopeni
 
 Preview CI 36753508070 at 6af375c3 is checking the remaining downstream suites. Final review is hardening ordinary-booking interval and amount checks against a concurrent teacher edit before activation. Synthetic-role read smoke preflight passes for both services; the Production fallback proves only repository demo seed credentials in memory. No live bookings, payments, tickets, documents or participant accounts were mutated by these diagnostics.
 
+## Exact-source gate follow-up
+
+- Preview 54baa1e4 / CI 36764632199 passed all 145 new PostgreSQL make-up checks. Published fixture version 1 matches snapshot version 1; runtime validation remains strict. Following public catalog pagination exposed incomplete synthetic publication stubs from approved race-test teachers, not a shared/live database write. Cleanup archives only exact tracked local-disposable fixture program IDs after API shutdown; all financial evidence remains intact.
+- Production 51c8a259 / CI 36764603174 passed every server/database gate, then mobile test diagnostics proved a date-picker dismissal/scroll race in coordinate sampling. Both browser scripts now await actual picker detachment and stable hit-tested geometry before trusted input, retaining original action timeouts and assertions. No frontend runtime change was made.
+- Independent audit additionally found a financial support-ticket FK/original-payment lock inversion; the narrow payment-first correction and deterministic race checks are in progress in both sources. Worker publication remains held until the final exact-source gate is green.
+- That correction is now independently reviewed and frozen: exact owned original-payment pre-lock before either ticket INSERT, then atomic hold/event with the new ticket ID. Four direct/assistant versus request/acceptance PostgreSQL combinations add 20 bounded real-lock/receipt/seat/hold/no-refund assertions. Local API 888/888 Preview and 857/857 Production, both typechecks/builds and both trusted-touch class setup 170/170 passed. The final fresh isolated gate remains required before release.
+
 ## Fabrications found
 
 None added. A completed session or brief connection is not evidence of full delivery. Practice receipts cannot become real refunds or actual earnings.

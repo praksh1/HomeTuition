@@ -11,7 +11,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership } from "../lib/membership";
-import { freezeOriginalPaymentForReview } from "../lib/lessonRemedyIntegration";
+import { freezeOriginalPaymentForReview, lockOriginalPaymentForReview } from "../lib/lessonRemedyIntegration";
 import { verifyUpload } from "../lib/fileStore";
 import { endedEarlyWithoutReturning } from "../lib/sessionEvidence";
 import { MAX_TICKETS_PER_DAY, isTerminal, ticketRef } from "../lib/tickets";
@@ -155,6 +155,7 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
    * a dispute is itself evidence, so its audit line is part of the write rather than telemetry.
    */
   const dispute = await db.transaction(async (tx) => {
+    await lockOriginalPaymentForReview(tx, { sessionId: about, studentId: userId, actorRole: req.user!.role, reason });
     const [created] = await tx.insert(disputesTable).values({
       userId,
       sessionId: about,
