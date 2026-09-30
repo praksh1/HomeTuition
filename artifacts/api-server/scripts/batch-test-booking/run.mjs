@@ -322,8 +322,13 @@ try {
   await assert.rejects(q("UPDATE batch_test_payments SET receipt='{}' WHERE booking_id=(SELECT id FROM batch_test_bookings WHERE batch_id=$1 AND student_id=$2)", [c.id, a.user.id]), /SIMULATED_RECEIPT_IMMUTABLE/); passed++; console.log("PASS simulated capture cannot be rewritten");
   await assert.rejects(q("UPDATE batch_test_ledger_entries SET detail='{}' WHERE booking_id=$1", [bookingId]), /SIMULATED_LEDGER_IMMUTABLE/); passed++; console.log("PASS simulated settlement history cannot be rewritten");
   check("real lesson IDs materialised", booked.booked && booked.lessons.length === 2 && booked.lessons.every((l) => Number.isInteger(l.sessionId)));
-  let rows = (await q("SELECT e.*,s.enrolled_count,s.price FROM session_enrollments e JOIN sessions s ON s.id=e.session_id JOIN batch_test_sessions bt ON bt.session_id=s.id WHERE bt.batch_id=$1", [c.id])).rows;
-  check("no charged/paid/reference rows or duplicate enrolments", rows.length === 2 && rows.every((r) => r.payment_status === "test" && r.payment_method === "test_access" && r.payment_reference === null && r.enrolled_count === 1 && r.price === 0));
+  const rows = (await q("SELECT e.*,bt.position,s.enrolled_count,s.price FROM session_enrollments e JOIN sessions s ON s.id=e.session_id JOIN batch_test_sessions bt ON bt.session_id=s.id WHERE bt.batch_id=$1", [c.id])).rows;
+  check("no charged/paid/reference rows or duplicate enrolments", rows.length === 2 && new Set(rows.map(r => r.session_id)).size === 2 && rows.every(r => r.student_id === a.user.id && ["test", "refunded"].includes(r.payment_status) && r.payment_method === "test_access" && r.payment_reference === null && r.price === 0));
+  const retainedSeat = rows.find(r => r.position === 0), refundedSeat = rows.find(r => r.position === 1);
+  check("refund revokes only its exact original allocation seat", retainedSeat?.payment_status === "test" && retainedSeat.enrolled_count === 1 && refundedSeat?.payment_status === "refunded" && refundedSeat.enrolled_count === 0);
+  const refundedSid = booked.lessons[1].sessionId;
+  check("refunded original lesson room denies its former participant", (await api(`/sessions/${refundedSid}/room`, a.token)).status === 403);
+  check("refunded original whiteboard socket denies its former participant", !await socketAccepted(a.token, refundedSid));
   const sid = booked.lessons[0].sessionId;
   check("individual free-lesson endpoint cannot bypass batch booking", (await api(`/sessions/${sid}/book`, outsider.token, { paymentMethod: "test_access" })).status === 409);
   check("unenrolled room refused", (await api(`/sessions/${sid}/room`, outsider.token)).status === 403);
