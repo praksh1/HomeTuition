@@ -20,7 +20,9 @@ Do not merge the whole divergent Preview branch. Preserve Production's premium C
 
 ## Verification
 
-Candidate checks passed: workspace typecheck, API build, design baseline, 766 API and 614 app unit tests; browser assertions for class setup (170), profile/photo (226), messaging (150), class home (50), expanded call layout (308), booking (90), Discover (274) and owner Cost & Health (612). Export-target tests: 11. Rebuild final frozen source before deployment.
+Candidate checks passed: workspace typecheck, API build, design baseline, 778 API and 614 app unit tests; browser assertions for class setup (170), profile/photo (226), messaging (150), class home (50), expanded call layout (308), booking (90), Discover (274) and owner Cost & Health (612). Export-target tests: 12. The final frozen frontend export passed the exact Production API check for all 129 JavaScript chunks; the built owner dashboard and final enrollment presentation also passed browser checks.
+
+The first isolated Production CI run (36744396086) caught a stale unit-test dependency on the removed "Try test checkout" label. Updated that assertion to locate the actual enrollment action while still requiring the signed-out account guard to precede it. All 614 app unit tests passed after that test-only repair. A fresh isolated database run is required before deployment.
 
 Read-only Production database readiness passed using the explicitly selected Railway Production service. Public-schema creation permission and all safety-table parent dependencies exist. The three new suppression/report tables are absent and will be created additively through fail-closed initialization. No business or personal data was read or changed by that check.
 
@@ -38,4 +40,4 @@ Owner dashboard design, provider billing plans, real payment integrations, stude
 
 ## Remaining risks / next pickup point
 
-Finish operator-preview focused checks, freeze the candidate, run isolated database CI and rebuild. Record commit, deployment IDs, health checks and remote asset hashes before reporting deployed. Physical iOS/Android and two-device live media were not tested by these browser gates.
+Operator-preview focused checks passed, including disabled/password-reset operators, legacy citizenship review and fail-closed message initialization. Run fresh isolated database CI. Record commit, deployment IDs, health checks and remote asset hashes before reporting deployed. Physical iOS/Android and two-device live media were not tested by these browser gates.

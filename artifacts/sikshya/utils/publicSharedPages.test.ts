@@ -24,8 +24,10 @@ test("shared class pages identify signed-out visitors before checkout", () => {
   assert.match(programPage, /onOpenHome=\{\(\) => router\.push\("\/welcome"\)\}/);
   assert.match(programPage, /onBackToTeacher=\{\(\) => backToTeacher\(program\.teacher\.id\)\}/);
   const guard = bookingPanel.indexOf("if (accountRequired)");
-  const requestButton = bookingPanel.indexOf("Try test checkout");
-  assert.ok(guard >= 0 && guard < requestButton, `${appRoot}: account guard must precede checkout`);
+  // Check the enrollment action, not its copy: the label may improve without
+  // changing the requirement that public visitors sign in before booking.
+  const requestButton = bookingPanel.indexOf("onPress={() => void request(true)}");
+  assert.ok(guard >= 0 && requestButton >= 0 && guard < requestButton, `${appRoot}: account guard must precede checkout`);
   assert.match(bookingPanel, /Sign in to join/);
   assert.match(bookingPanel, /Create a student account/);
   assert.match(bookingPanel, /next: returnPath/);
