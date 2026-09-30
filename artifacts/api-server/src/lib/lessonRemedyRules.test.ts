@@ -85,6 +85,12 @@ test("database harness rejects shared URLs before fixture queries and only uses 
   assert.match(harness, /LIVEKIT_API_KEY: ""/); assert.match(harness, /RESEND_API_KEY: ""/);
 });
 
+test("synthetic published batch fixture uses the same program version as its published snapshot", () => {
+  const harness = readFileSync(new URL("../../scripts/lesson-remedies/run.mjs", import.meta.url), "utf8");
+  assert.match(harness, /learning_programs\(teacher_id,type,title,status,version\) VALUES\(\$1,'structured','Synthetic make-up course','published',1\)/);
+  assert.match(harness, /programVersion: 1/);
+});
+
 test("acceptance serializes student bookings before participant account UPDATE locks", () => {
   const source = readFileSync(new URL("./lessonRemedyStore.ts", import.meta.url), "utf8");
   const accept = source.slice(source.indexOf("export async function acceptLessonMakeup"), source.indexOf("export async function actOnLessonMakeup"));
