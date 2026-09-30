@@ -1757,8 +1757,6 @@ async function bookSession(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const price = session.price ?? 0;
-
   try {
     const result = await db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${user.userId})`);
@@ -1768,6 +1766,12 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         .select({
           enrolledCount: sessionsTable.enrolledCount,
           maxStudents: sessionsTable.maxStudents,
+          date: sessionsTable.date,
+          duration: sessionsTable.duration,
+          startedAt: sessionsTable.startedAt,
+          price: sessionsTable.price,
+          teacherId: sessionsTable.teacherId,
+          topic: sessionsTable.topic,
           // Read again under the lock. The check above ran before this transaction opened, so
           // on its own it lets a booking commit against a class that was cancelled in between —
           // leaving a student paid into a class that no longer exists, and missed by the refund
@@ -1782,6 +1786,13 @@ async function bookSession(req: Request, res: Response): Promise<void> {
       if (locked.status === "completed" || locked.status === "cancelled") {
         return { kind: "closed" as const };
       }
+      // An edit can commit while this booking waits for the row lock. Never use the earlier
+      // interval, door deadline or price after the lock has returned the current lesson.
+      const lockedClosesAt = studentDoorClosesAt({ ...locked, endedAt: null });
+      if (lockedClosesAt !== null && Date.now() > lockedClosesAt) {
+        return { kind: "expired" as const };
+      }
+      const price = locked.price ?? 0;
 
       const [existing] = await tx
         .select({ id: sessionEnrollmentsTable.id, paymentStatus: sessionEnrollmentsTable.paymentStatus })
@@ -1822,9 +1833,14 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         .where(and(eq(sessionEnrollmentsTable.studentId, user.userId), ne(sessionsTable.id, id),
           inArray(sessionEnrollmentsTable.paymentStatus, activeEnrolmentStatuses()),
           inArray(sessionsTable.status, ["upcoming", "live"]),
-          sql`${sessionsTable.date} < ${new Date(session.date.getTime() + session.duration * 60_000).toISOString()}::timestamptz`,
-          sql`${sessionsTable.date} + ${sessionsTable.duration} * interval '1 minute' > ${session.date.toISOString()}::timestamptz`)).limit(1);
+          sql`${sessionsTable.date} < ${new Date(locked.date.getTime() + locked.duration * 60_000).toISOString()}::timestamptz`,
+          sql`${sessionsTable.date} + ${sessionsTable.duration} * interval '1 minute' > ${locked.date.toISOString()}::timestamptz`)).limit(1);
       if (overlapping.length) return { kind: "overlap" as const };
+      // A changed promise requires another review, not consent inferred from a stale tap.
+      if (locked.date.getTime() !== session.date.getTime() || locked.duration !== session.duration
+          || locked.price !== session.price || locked.topic !== session.topic || locked.teacherId !== session.teacherId) {
+        return { kind: "details_changed" as const };
+      }
 
       /**
        * The one booking that may skip the gateway, and the three things it needs.
@@ -1905,11 +1921,11 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         if (!viaTestAccess) {
           await tx.update(teacherProfilesTable)
             .set({ totalStudents: sql`${teacherProfilesTable.totalStudents} + 1` })
-            .where(eq(teacherProfilesTable.userId, session.teacherId));
+            .where(eq(teacherProfilesTable.userId, locked.teacherId));
         }
       }
 
-      return { kind: "booked" as const, enrolment, viaTestAccess };
+      return { kind: "booked" as const, enrolment, viaTestAccess, price, teacherId: locked.teacherId, topic: locked.topic };
     });
 
     switch (result.kind) {
@@ -1920,6 +1936,15 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         // Cancelled or finished between the check above and the lock. Same message as that
         // check, because from the student's side it is the same thing.
         res.status(409).json({ error: "This session is no longer available." });
+        return;
+      case "expired":
+        res.status(409).json({ error: "This class is over, so it can no longer be booked.", started: true });
+        return;
+      case "details_changed":
+        res.status(409).json({
+          error: "Lesson details changed. Refresh and review before booking. No payment was taken.",
+          refreshRequired: true,
+        });
         return;
       case "full":
         res.status(409).json({ error: "This session is full." });
@@ -1949,7 +1974,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         });
         return;
       default: {
-        req.log.info({ sessionId: id, studentId: user.userId, price }, "session booked and paid");
+        req.log.info({ sessionId: id, studentId: user.userId, price: result.price }, "session booked and paid");
         /**
          * Tell the teacher somebody is coming.
          *
@@ -1965,10 +1990,10 @@ async function bookSession(req: Request, res: Response): Promise<void> {
           .select({ name: usersTable.name })
           .from(usersTable)
           .where(eq(usersTable.id, user.userId));
-        notify(session.teacherId, {
+        notify(result.teacherId, {
           kind: "session_booked",
           sessionId: id,
-          topic: session.topic,
+          topic: result.topic,
           fromUserId: user.userId,
           fromName: studentRow?.name ?? "A student",
           /**
@@ -1976,7 +2001,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
            * paid, not merely that somebody clicked something — so a test booking must not send
            * one saying they were. It reports zero and says why.
            */
-          amount: result.viaTestAccess ? 0 : session.price,
+          amount: result.viaTestAccess ? 0 : result.price,
           ...(result.viaTestAccess ? { testBooking: true } : null),
           at: new Date().toISOString(),
         });

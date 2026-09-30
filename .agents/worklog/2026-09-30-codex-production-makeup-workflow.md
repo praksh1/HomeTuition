@@ -58,6 +58,15 @@ Complete the approved linked make-up request, teacher assignment, student accept
 - The owner browser harness requires a separate operator export, not the local fixture bundles used by the new make-up checks. Its absent local index caused ENOENT; unchanged source and the prior root live owner checks are not a substitute for rerunning this optional check after the proper export.
 - Helper initially generated a malformed apply_patch hunk and a Git path with `(admin)` was read without quoting. Both failed before any incorrect edits; corrected patch converter/path quoting used.
 
+## Final release audit, continued
+
+- Shared write/DTO reopening guard landed: eligible withdrawn or unaccepted review cases may re-request only while claim, quota, account, allocation and refund-review checks permit it. Accepted-at-ever replacements cannot chain.
+- Final local API gate: 845 tests and typecheck passed. Fresh Production export retains the correct Production API; owner dashboard browser gate passed 612 assertions at 320/390/768/1440 widths.
+- Additional root browser gates: profile 226, notifications 40, participant payment statements 90, in-class chat 17 and expanded call layout 308 assertions passed. These are isolated browser checks, not physical-device/media or real payment-provider tests.
+- Isolated Production CI runs passed all 106 new PostgreSQL make-up checks and Programs checks. Old receipt fixtures expected hidden teacher fee breakdowns and active refunded seats. Corrected only those stale expectations: exact own-receipt hold/fee arithmetic, retained privacy exclusions, exact refunded seat/count and explicit room/socket denial. No runtime safety guard was relaxed.
+- Production live-smoke preflight found no Preview staging accounts. Runner falls back only to bounded numeric repository seed definitions, proving the unchanged demo credential in memory before selecting two roles. No destructive seed code is imported or run; no account/booking/payment is created or changed, and no identifying data or credentials are printed. Preview retains strict staging-only selection.
+- Follow-up CI 36753536294 at f89e1b5b passed booking 149, video 43, proof 125 and teaching access 26. Two old student-access fixtures collided with a previously booked lesson before reaching their intended payment-refusal probe; fixing only synthetic dates. A final review is hardening a pre-row-lock ordinary-booking interval and amount against concurrent teacher edits. Activation remains held for the corrected exact-source gate.
+
 ## Fabrications found
 
 None found in the promoted workflow. No new receipt, paid charge, automatic refund, inferred delivery from connection or fake earnings is created. Browser data is explicitly synthetic and not a live account result.

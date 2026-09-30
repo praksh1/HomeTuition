@@ -156,4 +156,54 @@ export async function runFinanceChecks({ api, q, connect, check, fixture, reques
   }
   await assertTeacherLockPrecedesUsers("Make-up offer", () => offer(lockingFixture, lockingCase));
   await assertTeacherLockPrecedesUsers("Make-up acceptance", () => accept(lockingFixture, lockingCase));
+  // A booking's first read is not a promise that remains true while it waits for
+  // the target row. Hold an uncommitted teacher edit, prove that exact blocking
+  // relationship, then let the booking see the committed interval/quote under lock.
+  const bookingRace = await fixture();
+  await q("INSERT INTO account_security(user_id,email_verified_at) VALUES($1,now()) ON CONFLICT(user_id) DO UPDATE SET email_verified_at=now()", [bookingRace.student.id]);
+  await q("INSERT INTO user_onboarding(user_id,phone,profile_photo_key,completed_at) VALUES($1,'9800000000',$2,now()) ON CONFLICT(user_id) DO UPDATE SET phone=EXCLUDED.phone,profile_photo_key=EXCLUDED.profile_photo_key,completed_at=EXCLUDED.completed_at", [bookingRace.student.id, `synthetic/profile-${bookingRace.student.id}.jpg`]);
+  const existingStart = Date.parse(bookingRace.snapshot.lessons[0].startsAt);
+  const teacherGrant = (await q("SELECT id FROM test_teaching_grants WHERE teacher_id=$1 ORDER BY id DESC LIMIT 1", [bookingRace.teacher.id])).rows[0].id;
+  const seatsBefore = (await q("SELECT session_id,payment_status,payment_method,payment_reference FROM session_enrollments WHERE student_id=$1 ORDER BY session_id", [bookingRace.student.id])).rows;
+  const receiptBefore = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [bookingRace.bookingId])).rows[0].receipt;
+
+  async function assertBookingUsesLockedDetails(label, setClause, values, responseMatches) {
+    const target = (await q("INSERT INTO sessions(teacher_id,teacher_name,subject,topic,date,duration,max_students,enrolled_count,price) VALUES($1,'Synthetic teacher','Maths','Synthetic ordinary race lesson',$2,30,10,0,500) RETURNING id", [bookingRace.teacher.id, new Date(existingStart - HOUR)])).rows[0].id;
+    await q("INSERT INTO test_classes(session_id,teacher_id,grant_id) VALUES($1,$2,$3)", [target, bookingRace.teacher.id, teacherGrant]);
+    const owner = await connect(); let pending; let settled;
+    try {
+      await owner.query("BEGIN");
+      await owner.query("SET LOCAL statement_timeout='5s'");
+      const ownerPid = (await owner.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      await owner.query("SELECT id FROM sessions WHERE id=$1 FOR UPDATE", [target]);
+      // Only static fixture SQL reaches this helper; no user input is interpolated.
+      await owner.query(`UPDATE sessions SET ${setClause} WHERE id=$1`, [target, ...values]);
+      pending = api(`/sessions/${target}/book`, bookingRace.student.token, { paymentMethod: "esewa" })
+        .then(response => ({ response }), error => ({ error }));
+      let blocked = false;
+      for (let attempt = 0; attempt < 50; attempt++) {
+        blocked = (await q("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1::int=ANY(pg_blocking_pids(pid)) AND wait_event_type='Lock') AS waiting", [ownerPid])).rows[0].waiting;
+        if (blocked) break;
+        await new Promise(resolveWait => setTimeout(resolveWait, 100));
+      }
+      assert.equal(blocked, true, `${label} booking must wait for the exact teacher-edit row owner`);
+      await owner.query("COMMIT");
+    } finally {
+      try { await owner.query("ROLLBACK"); } finally { owner.release(); }
+      // Always free the held row before awaiting the already-bounded HTTP call.
+      if (pending) settled = await pending;
+    }
+    if (settled?.error) throw settled.error;
+    const response = settled?.response;
+    check(`${label} is rechecked from the current locked lesson before payment`, response?.status === 409 && responseMatches(response.body));
+    check(`${label} refusal writes no enrollment, receipt reference or consumed seat`, (await q("SELECT 1 FROM session_enrollments WHERE session_id=$1", [target])).rowCount === 0 && (await q("SELECT enrolled_count FROM sessions WHERE id=$1", [target])).rows[0].enrolled_count === 0);
+    const seatsAfter = (await q("SELECT session_id,payment_status,payment_method,payment_reference FROM session_enrollments WHERE student_id=$1 ORDER BY session_id", [bookingRace.student.id])).rows;
+    const receiptsAfter = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [bookingRace.bookingId])).rows;
+    check(`${label} refusal preserves every original seat and the sole original payment`, JSON.stringify(seatsAfter) === JSON.stringify(seatsBefore) && receiptsAfter.length === 1 && JSON.stringify(receiptsAfter[0].receipt) === JSON.stringify(receiptBefore));
+  }
+  await assertBookingUsesLockedDetails("Concurrent overlapping reschedule", "date=$2", [new Date(existingStart + 10 * 60000)], body => /overlap/i.test(body?.error ?? ""));
+  await assertBookingUsesLockedDetails("Concurrent overlapping duration increase", "duration=$2", [90], body => /overlap/i.test(body?.error ?? ""));
+  await assertBookingUsesLockedDetails("Concurrent price change", "price=$2", [550], body => body?.refreshRequired === true);
+  await assertBookingUsesLockedDetails("Concurrent lesson topic change", "topic=$2", ["Synthetic changed lesson promise"], body => body?.refreshRequired === true);
+  await assertBookingUsesLockedDetails("Concurrent expired reschedule", "date=$2", [new Date(Date.now() - 2 * HOUR)], body => body?.started === true);
 }

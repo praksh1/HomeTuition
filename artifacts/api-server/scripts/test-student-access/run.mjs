@@ -298,7 +298,9 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
   /* ---- the two ways a grant is not a season ticket ---- */
 
   const paid = await paidTeacher(api, "Paying Pramila");
-  const ordinaryClass = await makeClass(api, paid.token, "An ordinary paid class");
+  // Isolate the payment gate from the student's already-booked lesson. The explicit
+  // overlapping probe below tests that separate schedule gate without hiding this one.
+  const ordinaryClass = await makeClass(api, paid.token, "An ordinary paid class", Date.now() + 120 * MIN);
   check("that class is not marked a test class",
     sql(`select count(*) from test_classes where session_id = ${ordinaryClass.body.id}`) === "0");
   const crossTry = await book(api, tested.token, ordinaryClass.body.id);
@@ -307,6 +309,18 @@ await withServer(8102, { ALLOW_TEST_STUDENT_ACCESS: "true" }, async (api) => {
   check("and holds no seat in it", sql(
     `select count(*) from session_enrollments where session_id = ${ordinaryClass.body.id}
      and student_id = ${tested.id}`) === "0");
+
+  const enrolledDate = Date.parse(sql(`select date from sessions where id = ${id}`));
+  const overlappingClass = await makeClass(api, paid.token, "An ordinary overlapping class", enrolledDate);
+  const overlappingTry = await book(api, tested.token, overlappingClass.body.id);
+  check("an ordinary overlapping booking is refused before payment",
+    overlappingTry.status === 409 && /overlap/i.test(overlappingTry.body?.error ?? ""),
+    `${overlappingTry.status} ${JSON.stringify(overlappingTry.body)}`);
+  check("the overlapping refusal creates no enrollment or payment reference", sql(
+    `select count(*) from session_enrollments where session_id = ${overlappingClass.body.id}
+     and student_id = ${tested.id}`) === "0");
+  check("the overlapping refusal consumes no seat", sql(
+    `select enrolled_count from sessions where id = ${overlappingClass.body.id}`) === "0");
 
   /* ---- both doors into the classroom agree ---- */
 
