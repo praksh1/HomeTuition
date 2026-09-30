@@ -15,7 +15,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+import { prepareReadyAccountForClass, prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
@@ -124,6 +124,7 @@ async function run() {
 
   const teacher = await register(api, "teacher", "Ram Prasad");
   const student = await register(api, "student", "Sita Sharma");
+  prepareReadyAccountForClass(student.user.id);
   const outsider = await register(api, "student", "Nobody Special");
 
   const created = await api("/sessions", { method: "POST", token: teacher.token, body: {
@@ -274,6 +275,7 @@ async function run() {
 
     /* A student in the same class must get a strictly weaker token. */
     const student = await register(lkApi, "student", "LiveKit Student");
+    prepareReadyAccountForClass(student.user.id);
     const booked = await lkApi(`/sessions/${made.body.id}/book`, { method: "POST", token: student.token });
     check("the student could book the class", booked.status === 200 || booked.status === 201,
       `status=${booked.status} ${JSON.stringify(booked.body)}`);

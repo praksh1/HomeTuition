@@ -26,7 +26,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
-import { prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
+import { prepareProfileForClass, prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
@@ -109,6 +109,10 @@ async function register(role, opts = {}) {
     email: `lp_${Date.now()}_${seq}@example.com`, password: "password123", role,
     ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status} ${JSON.stringify(res.body)}`);
+  // Onboarding is not the subject of this suite. Keep the approval-negative fixtures
+  // otherwise complete so their refusals test review authority rather than missing photos.
+  prepareProfileForClass(res.body.user.id);
+  sql(`update account_security set email_verified_at=now() where user_id=${Number(res.body.user.id)}`);
   // Approval is the door publication and public visibility are gated on, so a suite that opened it
   // for everybody could not tell the difference between "approved" and "not checked".
   if (role === "teacher" && opts.approved !== false) prepareTeacherForClass(res.body.user.id);

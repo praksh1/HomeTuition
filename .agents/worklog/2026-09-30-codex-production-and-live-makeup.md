@@ -22,7 +22,13 @@ Use the owner's approved two-per-paid-month / ceil(purchased short-course lesson
 
 Live Railway Production deployment b339abdd-a755-44f9-96e4-5b2cc1308b8d is SUCCESS with metadata commit f9b0506f3d424e4aeaf0f86366eab4bfa8722432 on main. Remote main matches. Existing Preview fixes were verified in the prior task.
 
-Final local checks: API and app typecheck, 631 app unit tests, 868 API unit tests, API build and unchanged design baseline passed. The make-up browser suite passed 66 assertions at 320/390/1440 pixels, with Nepal and Chicago browser timezones, read-only paused records, participant request context and ambiguous retry identity. Earlier class-home (50) and teaching-billing (42) browser gates passed. These use synthetic browser API fixtures, not proof of live PostgreSQL transactions. Actual isolated database CI remains required before activation.
+Final local checks: API and app typecheck, 631 app unit tests, 874 API unit tests, API build and unchanged design baseline passed. The make-up browser suite passed 66 assertions at 320/390/1440 pixels, with Nepal and Chicago browser timezones, read-only paused records, participant request context and ambiguous retry identity. Earlier class-home (50) and teaching-billing (42) browser gates passed. The final Preview export verifies all 130 emitted JavaScript chunks against the exact staging API.
+
+Actual isolated PostgreSQL 16 run 36747810047 passed all 100 make-up checks, including concurrent allowance requests, nine acceptance retries, refund/acceptance races, both deterministic advisory/user-row lock regressions, exact refund-backed seat revocation, forbidden seat identity/resurrection writes, original-payment settlement, account closure blockers and operator restrictions. The downstream older program fixture then failed its current mandatory profile requirement; repairing only synthetic photo/phone/verification setup while preserving negative onboarding cases. Full CI must be green before activation.
+
+Read-only readiness diagnostics passed for explicitly selected Preview and Production Railway services: all booking/session/payment dependencies and CREATE privilege exist; all three new make-up tables are absent, not partially installed. Added a tightly scoped live-smoke helper which uses existing clearly synthetic staging roles and prints only response counts, never credentials or user details; it makes no booking/payment/request/ticket/document actions.
+
+The separate regression release is deployed: source 4bfb7e979c0f08eae5a88de5393deccc597a05f8, Railway 0b9743c5-08a5-44e2-bf90-3394d0f15651, Worker 5aa6aa8b-c716-4eef-8c00-2fe0c3d49e03. Live readiness, exact 129-bundle hashes and owner-page privacy checks passed. The narrow follow-on Production make-up promotion preserves that dashboard and does not activate unrelated identity/closure features.
 
 ## Problems and surprises
 
@@ -40,4 +46,4 @@ No billing plan, purchases, payment credentials, student identity requirement or
 
 ## Remaining risks / next pickup point
 
-Candidate release validation, new make-up PostgreSQL race tests, UI journeys, additive migration/readiness, staged activation and release evidence remain. This entry describes ongoing work, not a deployed feature.
+Full downstream CI, narrow Production make-up variant validation, staged activation, live participant smoke and final release evidence remain. The regression fixes are live; make-ups are not enabled yet. Physical iOS/Android and two-device real media were not tested by the synthetic browser gates.

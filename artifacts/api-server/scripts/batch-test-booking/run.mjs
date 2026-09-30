@@ -44,7 +44,7 @@ async function account(role, grant = true) {
   assert.ok(registered.status < 300, JSON.stringify(registered));
   const a = registered.body;
   await q("UPDATE account_security SET email_verified_at=now() WHERE user_id=$1", [a.user.id]);
-  await q("INSERT INTO user_onboarding (user_id,completed_at) VALUES ($1,now()) ON CONFLICT (user_id) DO UPDATE SET completed_at=now()", [a.user.id]);
+  await q("INSERT INTO user_onboarding (user_id,completed_at,phone,profile_photo_key) VALUES ($1,now(),'9800000000',$2) ON CONFLICT (user_id) DO UPDATE SET completed_at=now(),phone=EXCLUDED.phone,profile_photo_key=EXCLUDED.profile_photo_key", [a.user.id, `synthetic/profile-${a.user.id}.jpg`]);
   if (role === "teacher") await q("UPDATE teacher_profiles SET approval_status='approved', subscription_active=false WHERE user_id=$1", [a.user.id]);
   if (grant) await grantAccount(a, role);
   return a;

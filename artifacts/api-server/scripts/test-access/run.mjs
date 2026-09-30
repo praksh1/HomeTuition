@@ -17,6 +17,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareProfileForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
@@ -80,6 +81,8 @@ async function register(api, role, name) {
     ...(role === "teacher" ? { subject: "Maths", bio: "x" } : { grade: "10", dateOfBirth: "2000-01-01" }) } });
   if (res.status > 201) throw new Error(`register ${role}: ${res.status} ${JSON.stringify(res.body)}`);
   const id = Number(sql(`select id from users where email = '${email}'`));
+  // Leave email and operator review untouched for the explicit negative-gate checks.
+  if (role === "teacher") prepareProfileForClass(id);
   return { ...res.body, email, id };
 }
 

@@ -25,6 +25,7 @@ import { spawn, execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
+import { prepareProfileForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
@@ -120,8 +121,7 @@ const approve = (id) => sql(`update teacher_profiles set approval_status = 'appr
 const payPlan = (id) => sql(`update teacher_profiles set subscription_active = true where user_id = ${id}`);
 /** Onboarding is a gate for a test grant, so a student who is to receive one has finished it. */
 const onboard = (id) =>
-  sql(`insert into user_onboarding (user_id, completed_at) values (${id}, now())
-       on conflict (user_id) do update set completed_at = now()`);
+  prepareProfileForClass(id);
 
 /** A student ready to be granted: verified, onboarded, in good standing. */
 async function readyStudent(api, name) {
@@ -134,6 +134,7 @@ async function readyStudent(api, name) {
 /** A teacher who may create classes because an operator granted test teaching access. */
 async function testTeacher(api, agentToken, name) {
   const t = await register(api, "teacher", name);
+  prepareProfileForClass(t.id);
   verify(t.id);
   approve(t.id);
   const granted = await api(`/admin/teachers/${t.id}/test-access`, { method: "POST", token: agentToken,
@@ -145,6 +146,7 @@ async function testTeacher(api, agentToken, name) {
 /** A teacher who paid for a plan like anybody else, whose classes are ordinary paid classes. */
 async function paidTeacher(api, name) {
   const t = await register(api, "teacher", name);
+  prepareProfileForClass(t.id);
   verify(t.id);
   approve(t.id);
   payPlan(t.id);

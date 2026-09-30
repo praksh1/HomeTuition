@@ -19,6 +19,7 @@ import { spawn, execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { prepareReadyAccountForClass, prepareTeacherForClass } from "../test-support/teacherAccess.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const serverRoot = path.resolve(here, "..", "..");
@@ -137,10 +138,7 @@ async function register(api, role, extra = {}) {
   return { ...res.body, email, id };
 }
 
-const prepareTeacher = (id) => sql(`
-  UPDATE account_security SET email_verified_at = now() WHERE user_id = ${id};
-  UPDATE teacher_profiles SET approval_status = 'approved', subscription_active = true WHERE user_id = ${id};
-`);
+const prepareTeacher = prepareTeacherForClass;
 
 const DAY = 86_400_000;
 
@@ -544,6 +542,7 @@ async function main() {
     console.log("\nWhether the provider may name a participant\n");
     {
       const student = await register(api, "student");
+      prepareReadyAccountForClass(student.id);
       const stranger = await register(api, "student");
 
       const named = evt({ id: `evt_${RUN}_named` }, { room, user_id: teacher.id, owner: true });
