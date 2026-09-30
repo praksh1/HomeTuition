@@ -18,6 +18,7 @@ assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname), "Remote
 assert.match(parsed.pathname, /^\/fadko_makeup_test[A-Za-z0-9_-]*$/, "Database name must begin fadko_makeup_test.");
 const pool = new Pool({ connectionString: url, max: 15 });
 const q = (text, values = []) => pool.query(text, values);
+const fixtureProgramIds = [];
 const DAY = 86400000; const HOUR = 3600000; const duration = 30;
 const secret = "disposable-makeup-tests-only-secret";
 let port = Number(process.env.MAKEUP_TEST_PORT ?? 8126); let child; let log = ""; let passed = 0;
@@ -68,6 +69,7 @@ async function fixture({ monthly = true, count = 3, positions = null, at = Date.
   const teacher = teacherAccount ?? await account("teacher"); const student = earlierStudent ?? await account("student");
   // A published program snapshot is version 1; the schema's default 0 is a draft.
   const program = (await q("INSERT INTO learning_programs(teacher_id,type,title,status,version) VALUES($1,'structured','Synthetic make-up course','published',1) RETURNING id", [teacher.id])).rows[0].id;
+  fixtureProgramIds.push(program);
   const batchId = (await q("INSERT INTO learning_program_batches(program_id,status,capacity,total_tuition_npr,version) VALUES($1,'published',10,$2,1) RETURNING id", [program, count * 1000])).rows[0].id;
   const lessons = Array.from({ length: count }, (_, position) => ({ position, startsAt: new Date(at + position * 2 * DAY).toISOString(), durationMinutes: duration }));
   const snapshot = { batchId, version: 1, programId: program, programVersion: 1, programTitle: "Synthetic make-up course",
@@ -239,4 +241,15 @@ try {
   check("active rotated operator retains read-only durable queue while writes paused", (await api("/admin/lesson-remedies", operator.token)).status === 200);
   console.log(`${passed} real PostgreSQL make-up checks passed. No shared database, real payments, emails or media calls were used.`);
 } catch (error) { console.error(log.slice(-5000)); throw error; }
-finally { await stop(); await pool.end(); }
+finally {
+  await stop();
+  try {
+    // These exact disposable fixture rows model purchased batches, not complete public
+    // Program publications. Approved race-test teachers must not leave NULL publication
+    // stubs at the front of the next suite's catalogue. Keep seats, cases and ledgers intact.
+    if (fixtureProgramIds.length) {
+      const archived = await q("UPDATE learning_programs SET status='archived',archived_at=now() WHERE id=ANY($1::int[])", [fixtureProgramIds]);
+      assert.equal(archived.rowCount, fixtureProgramIds.length, "Archive only this disposable harness's exact tracked program stubs.");
+    }
+  } finally { await pool.end(); }
+}

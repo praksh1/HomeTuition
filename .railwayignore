@@ -1,0 +1,15 @@
+# Local upload exclusions only; the deployment uses the reviewed source commit.
+.railwayignore
+.agents/
+.codex/
+.ux-audit/
+artifacts/sikshya/.ux-audit/
+artifacts/sikshya/operator-web-build/
+artifacts/sikshya/web-build/
+node_modules/
+.git/
+.env
+.env.local
+*.env
+dist/
+*.tsbuildinfo

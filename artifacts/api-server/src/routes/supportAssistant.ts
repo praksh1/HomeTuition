@@ -16,7 +16,7 @@ import { allowanceFor, nameOf, recordOpened } from "../lib/ticketStore";
 import { ticketRef } from "../lib/tickets";
 import { buildSupportReviewBrief, conversationTopic, investigationChoices, supportInvestigation } from "../lib/supportInvestigation";
 import { listSupportLessons, readSupportLesson } from "../lib/supportCaseContext";
-import { freezeOriginalPaymentForReview } from "../lib/lessonRemedyIntegration";
+import { freezeOriginalPaymentForReview, lockOriginalPaymentForReview } from "../lib/lessonRemedyIntegration";
 import { SUPPORT_STARTER_ARTICLES, SUPPORT_STARTER_VERSION, starterReviewFor } from "../lib/supportStarterArticles";
 
 const router: IRouter = Router();
@@ -331,6 +331,8 @@ router.post("/support/assistant/conversations/:id/request", requireAuth, async (
         .map((item) => resolveSupport(item.body).classification.intent));
       const safety = messages.some((item) => item.role === "user" && (resolveSupport(item.body).classification.intent === "safety" || supportToneResponse(item.body, flaggedTerms(item.body))?.kind === "report"));
       const reason = safety ? "Inappropriate Behavior" : topic === "billing" ? "Payment Issue" : ["class_access", "messaging", "homework"].includes(topic) ? "Technical Failure" : "Other";
+      await lockOriginalPaymentForReview(tx, { sessionId: caseContext?.sessionId ?? null, studentId: userId,
+        actorRole: req.user!.role, reason });
       const [created] = await tx.insert(disputesTable).values({
         userId, reason, description, evidenceUrl: null, sessionId: caseContext?.sessionId ?? null,
       }).returning({ id: disputesTable.id });

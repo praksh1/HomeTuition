@@ -307,6 +307,101 @@ export async function runFinanceChecks({ api, q, connect, check, fixture, reques
   check("cross-batch request concurrency preserves the original payment, purchased seats and held allocation", requestReceiptAfter.length === 1 && JSON.stringify(requestReceiptAfter[0].receipt) === JSON.stringify(requestReceiptBefore) && JSON.stringify(requestSeatsAfter) === JSON.stringify(requestSeatsBefore) && (await ledger(requesting)).to_state === "replacement_pending");
 
 
+  // Financial ticket INSERTs take user FK KEY SHARE. Pause a real make-up write
+  // after it owns the original payment but before its student/user locks. The
+  // actual ticket must wait on that payment WITHOUT first acquiring its user FK.
+  // This is the exact payment -> user / user -> payment deadlock, not a mock.
+  async function waitForFinancialBlocker(blockerPid, studentId, atStudentAdvisory) {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const row = (await q(atStudentAdvisory
+        ? `SELECT a.pid FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid
+          WHERE $1::int=ANY(pg_blocking_pids(a.pid)) AND a.wait_event_type='Lock'
+            AND l.locktype='advisory' AND l.classid=838210::oid AND l.objid=$2::oid AND NOT l.granted LIMIT 1`
+        : `SELECT pid FROM pg_stat_activity WHERE $1::int=ANY(pg_blocking_pids(pid))
+          AND wait_event_type='Lock' AND query ILIKE '%batch_test_payments%' LIMIT 1`,
+        atStudentAdvisory ? [blockerPid, studentId] : [blockerPid])).rows[0];
+      if (row) return row.pid;
+      await new Promise(resolveWait => setTimeout(resolveWait, 100));
+    }
+    assert.fail(atStudentAdvisory ? "Real make-up must wait at the held student advisory after its payment lock"
+      : "Real financial ticket must wait on the make-up's exact original payment lock");
+  }
+  async function assertFinancialTicketLockOrder(path, operation) {
+    const f = await fixture({ studentFirst: true });
+    const label = `${path === "direct" ? "Direct financial ticket" : "Assistant financial handoff"} versus make-up ${operation}`;
+    let caseId; let offerId; let conversationId;
+    if (operation === "accept") {
+      const requested = await request(f); assert.equal(requested.status, 200, JSON.stringify(requested));
+      caseId = requested.body.caseId;
+      assert.equal((await offer(f, caseId)).status, 200);
+      offerId = (await q("SELECT id FROM lesson_remedy_offers WHERE case_id=$1 AND status='proposed'", [caseId])).rows[0].id;
+    }
+    if (path === "assistant") {
+      // Set up only a synthetic transcript; the handoff itself goes through real
+      // authenticated HTTP and its normal linked-lesson ownership/classifier.
+      conversationId = (await q("INSERT INTO support_conversations(user_id,title) VALUES($1,'Synthetic payment review') RETURNING id", [f.student.id])).rows[0].id;
+      await q("INSERT INTO support_case_links(conversation_id,session_id) VALUES($1,$2)", [conversationId, f.sessionIds[0]]);
+      await q("INSERT INTO support_messages(conversation_id,role,body,source) VALUES($1,'user','I need help with a payment.','synthetic')", [conversationId]);
+    }
+    const receiptBefore = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [f.bookingId])).rows[0].receipt;
+    const seatsBefore = (await q("SELECT session_id,payment_status,payment_method,payment_reference FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 ORDER BY session_id", [f.sessionIds, f.student.id])).rows;
+    const owner = await connect(); let makeupPending; let ticketPending; let makeupSettled; let ticketSettled;
+    try {
+      await owner.query("BEGIN");
+      await owner.query("SET LOCAL statement_timeout='10s'");
+      const ownerPid = (await owner.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      await owner.query("SELECT pg_advisory_xact_lock(838210,$1)", [f.student.id]);
+      makeupPending = (operation === "request" ? request(f) :
+        api(`/lesson-remedies/${caseId}/accept`, f.student.token, { offerId, requestKey: randomUUID() }))
+        .then(response => ({ response }), error => ({ error }));
+      const makeupPid = await waitForFinancialBlocker(ownerPid, f.student.id, true);
+      ticketPending = (path === "direct" ? api("/disputes", f.student.token, {
+        reason: "Payment Issue", description: "Synthetic original payment requires human review.", sessionId: f.sessionIds[0],
+      }) : api(`/support/assistant/conversations/${conversationId}/request`, f.student.token, {}))
+        .then(response => ({ response }), error => ({ error }));
+      await waitForFinancialBlocker(makeupPid, f.student.id, false);
+      await owner.query("SET LOCAL lock_timeout='1s'");
+      // Pre-fix: the ticket already inserted its user FK, so this UPDATE times
+      // out. Fixed: the ticket waits before INSERT and cannot hold that FK.
+      await owner.query("SELECT id FROM users WHERE id=$1 FOR UPDATE", [f.student.id]);
+      check(`${label} waits on original payment before acquiring a ticket user-FK lock`, true);
+      await owner.query("COMMIT");
+    } finally {
+      try { await owner.query("ROLLBACK"); } finally { owner.release(); }
+      [makeupSettled, ticketSettled] = await Promise.all([makeupPending ?? Promise.resolve(null), ticketPending ?? Promise.resolve(null)]);
+    }
+    if (makeupSettled?.error) throw makeupSettled.error;
+    if (ticketSettled?.error) throw ticketSettled.error;
+    const made = makeupSettled?.response; const sent = ticketSettled?.response;
+    assert.equal(made?.status, 200, JSON.stringify(made)); assert.equal(sent?.status, 201, JSON.stringify(sent));
+    caseId ??= made.body.caseId;
+    const ticketId = path === "direct" ? sent.body.id : sent.body.ticketId;
+    const ticket = (await q("SELECT user_id,session_id,reason FROM disputes WHERE id=$1", [ticketId])).rows[0];
+    check(`${label} commits one owned financial ticket without deadlock`, ticket?.user_id === f.student.id &&
+      ticket.session_id === f.sessionIds[0] && ticket.reason === "Payment Issue" &&
+      Number((await q("SELECT count(*) AS n FROM disputes WHERE user_id=$1", [f.student.id])).rows[0].n) === 1);
+    const remedy = (await q("SELECT status,outcome FROM lesson_remedy_cases WHERE id=$1", [caseId])).rows[0];
+    const events = (await q("SELECT detail FROM lesson_remedy_events WHERE case_id=$1 AND event='refund_review'", [caseId])).rows;
+    check(`${label} durably holds the exact original allocation for human review`, remedy.status === "review_required" &&
+      remedy.outcome === "refund_review" && events.length === 1 && events[0].detail.disputeId === ticketId &&
+      events[0].detail.paymentMoved === false && (await ledger(f)).to_state === "replacement_pending");
+    const acceptedOffers = (await q("SELECT replacement_session_id FROM lesson_remedy_offers WHERE case_id=$1 AND accepted_at IS NOT NULL", [caseId])).rows;
+    check(`${label} creates no second replacement or payment`, operation === "request" ? acceptedOffers.length === 0 :
+      acceptedOffers.length === 1 && acceptedOffers[0].replacement_session_id === made.body.replacementSessionId &&
+      (await q("SELECT 1 FROM session_enrollments e JOIN sessions s ON s.id=e.session_id WHERE s.id=$1 AND s.price=0 AND e.student_id=$2 AND e.payment_method='linked_makeup' AND e.payment_reference IS NULL", [made.body.replacementSessionId, f.student.id])).rowCount === 1);
+    const receiptsAfter = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [f.bookingId])).rows;
+    const seatsAfter = (await q("SELECT session_id,payment_status,payment_method,payment_reference FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 ORDER BY session_id", [f.sessionIds, f.student.id])).rows;
+    const balance = await ledger(f);
+    check(`${label} preserves frozen amounts, every original seat and the sole original receipt`, receiptsAfter.length === 1 &&
+      JSON.stringify(receiptsAfter[0].receipt) === JSON.stringify(receiptBefore) && JSON.stringify(seatsAfter) === JSON.stringify(seatsBefore) &&
+      balance.gross_npr === 1000 && balance.teacher_npr === 700 && balance.fadko_npr === 300 &&
+      Number((await q("SELECT count(*) AS n FROM refunds WHERE student_id=$1", [f.student.id])).rows[0].n) === 0);
+  }
+  for (const path of ["direct", "assistant"]) {
+    for (const operation of ["request", "accept"]) await assertFinancialTicketLockOrder(path, operation);
+  }
+
+
   // A booking's first read is not a promise that remains true while it waits for
   // the target row. Hold an uncommitted teacher edit, prove that exact blocking
   // relationship, then let the booking see the committed interval/quote under lock.

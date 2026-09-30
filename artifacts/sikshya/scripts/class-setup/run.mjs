@@ -291,12 +291,30 @@ try {
         // Wait for the real target's enabled/stable/hit-tested actionability before
         // sampling touch coordinates. Trial performs no click or application action.
         await locator.click({ trial: true });
-        const box = await locator.boundingBox();
+        const before = await captureTouchState();
+        // Modal dismissal can restore focus/scroll after Playwright's trial. Read
+        // final geometry across animation frames, then tap without another awaited
+        // diagnostic read between sampling the target and the trusted input.
+        const box = await locator.evaluate(async node => {
+          const started = performance.now();
+          let previous = null; let stableFrames = 0;
+          while (performance.now() - started < 30000) {
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            if (!node.isConnected) throw new Error("tap target detached while settling");
+            const rect = node.getBoundingClientRect();
+            const current = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+            const stable = previous && Object.keys(current).every(key => Math.abs(current[key] - previous[key]) < 0.1);
+            stableFrames = stable ? stableFrames + 1 : 0;
+            previous = current;
+            const x = current.x + current.width / 2; const y = current.y + current.height / 2;
+            if (stableFrames >= 3 && node.contains(document.elementFromPoint(x, y))) return current;
+          }
+          throw new Error("tap target geometry did not settle within the existing 30-second action timeout");
+        });
         assert.ok(box && box.width >= minimumSize && box.height >= minimumSize, "real target has the expected tap dimensions");
         const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
         assert.ok(point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height, "real target fits the viewport");
-        assert.ok(await locator.evaluate((node, { x, y }) => node.contains(document.elementFromPoint(x, y)), point), "no overlay covers the real target");
-        const action = { target: locator.toString(), geometry: { box, point }, before: await captureTouchState() };
+        const action = { target: locator.toString(), geometry: { box, point }, before };
         if (width < 600) await countPage.touchscreen.tap(point.x, point.y);
         else await countPage.mouse.click(point.x, point.y);
         await countPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -324,6 +342,10 @@ try {
     // Calendar days are deliberately compact; other controls retain the 44px minimum.
     await countPage.getByTestId("bs-day-3").click();
     await tap(countPage.getByTestId("bs-confirm"));
+    // RNW's fade-out still owns focus/scroll until the picker is removed. Do not
+    // tap the timetable behind it while its eventual dismissal can move that UI.
+    await countPage.getByTestId("nepali-date-picker").waitFor({ state: "detached" });
+    assert.equal(await countPage.getByTestId("nepali-date-picker").count(), 0, "date picker fully closes before trusted timetable taps");
     await countPage.getByTestId("class-time-0").fill("16:15");
     await tap(countButton("Daily"));
     check(await countButton("Prepare my timetable").isDisabled() && await countPage.getByText(/Only 30 daily lessons fit.*one lesson per day/).count() === 1, `${width}: fifty daily lessons explain the thirty-day boundary immediately`);
