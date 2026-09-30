@@ -25,6 +25,9 @@ const html = '<!doctype html><html><head><meta charset="utf-8"><style>html,body,
 const server = createServer((req, res) => { res.setHeader("Content-Type", req.url === "/bundle.js" ? "application/javascript" : "text/html"); res.end(req.url === "/bundle.js" ? readFileSync(bundle) : html); });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const browser = await (await getChromium()).launch({ headless: true });
+console.log("CLASS_SETUP_RUNNER", JSON.stringify({ node: process.version, platform: process.platform,
+  browser: browser.version(), hostTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  fixtureTimeZone: process.env.CLASS_SETUP_TEST_TIMEZONE ?? "host-default" }));
 let checks = 0;
 const check = (value, label) => { assert.ok(value, label); checks++; console.log(`PASS ${label}`); };
 try {
@@ -245,19 +248,67 @@ try {
   await unavailable.close();
 
   for (const [width, height] of [[390, 844], [1440, 900]]) {
-    const countPage = await browser.newPage({ viewport: { width, height }, hasTouch: width < 600 });
+    const countPage = await browser.newPage({ viewport: { width, height }, hasTouch: width < 600,
+      ...(process.env.CLASS_SETUP_TEST_TIMEZONE ? { timezoneId: process.env.CLASS_SETUP_TEST_TIMEZONE } : {}) });
     await countPage.goto(`http://127.0.0.1:${server.address().port}/create-class`);
+    await countPage.evaluate(() => {
+      window.classSetupTapDiagnostics = [];
+      window.classSetupEventDiagnostics = [];
+      for (const type of ["pointerdown", "pointerup", "pointercancel", "touchstart", "touchend", "touchcancel", "click"]) {
+        document.addEventListener(type, event => {
+          const target = event.target?.closest?.('[role="button"]') ?? event.target;
+          const touch = event.touches?.[0] ?? event.changedTouches?.[0];
+          const sample = { type, at: performance.now(), pointerType: event.pointerType,
+            x: touch?.clientX ?? event.clientX, y: touch?.clientY ?? event.clientY,
+            label: target?.getAttribute?.("aria-label") ?? target?.textContent?.slice(0, 180),
+            defaultPrevented: event.defaultPrevented, trusted: event.isTrusted };
+          window.classSetupEventDiagnostics.push(sample);
+          window.classSetupEventDiagnostics = window.classSetupEventDiagnostics.slice(-80);
+          setTimeout(() => { sample.defaultPrevented = event.defaultPrevented; }, 0);
+        }, { capture: true, passive: true });
+      }
+    });
     const countButton = (name) => countPage.getByRole("button", { name, exact: true });
+    const captureTouchState = () => countPage.evaluate(() => ({
+      width: window.innerWidth, height: window.innerHeight, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      activeElement: { tag: document.activeElement?.tagName, label: document.activeElement?.getAttribute("aria-label") },
+      frequency: [...document.querySelectorAll('[role="button"]')]
+        .filter(node => /Daily|Weekly|Twice weekly|Every two weeks|Alternate days|Choose weekdays|Pick my own dates|Create editable/.test(node.getAttribute("aria-label") ?? ""))
+        .map(node => ({ label: node.getAttribute("aria-label"), disabled: node.getAttribute("aria-disabled"), box: node.getBoundingClientRect().toJSON() })),
+      confirmation: document.querySelector('[data-testid="batch-confirmation"]')?.textContent ?? null,
+      body: document.body.innerText.slice(0, 16000),
+    }));
+    const dumpTouchFailure = async (stage, error) => {
+      console.error("CLASS_SETUP_TOUCH_FAILURE", JSON.stringify({ stage, error: String(error), state: await captureTouchState() }));
+      const diagnostics = await countPage.evaluate(() => ({ actions: window.classSetupTapDiagnostics, events: window.classSetupEventDiagnostics }));
+      for (const action of diagnostics.actions) console.error("CLASS_SETUP_TOUCH_ACTION", JSON.stringify(action));
+      console.error("CLASS_SETUP_TOUCH_EVENTS", JSON.stringify(diagnostics.events));
+      await countPage.screenshot({ path: path.join(work, `${width}-manual-timetable-failure.png`), fullPage: true });
+    };
     const tap = async (locator, minimumSize = 44) => {
-      await locator.scrollIntoViewIfNeeded();
-      const box = await locator.boundingBox();
-      assert.ok(box && box.width >= minimumSize && box.height >= minimumSize, "real target has the expected tap dimensions");
-      const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-      assert.ok(point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height, "real target fits the viewport");
-      assert.ok(await locator.evaluate((node, { x, y }) => node.contains(document.elementFromPoint(x, y)), point), "no overlay covers the real target");
-      if (width < 600) await countPage.touchscreen.tap(point.x, point.y);
-      else await countPage.mouse.click(point.x, point.y);
-      await countPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      try {
+        await locator.scrollIntoViewIfNeeded();
+        // Wait for the real target's enabled/stable/hit-tested actionability before
+        // sampling touch coordinates. Trial performs no click or application action.
+        await locator.click({ trial: true });
+        const box = await locator.boundingBox();
+        assert.ok(box && box.width >= minimumSize && box.height >= minimumSize, "real target has the expected tap dimensions");
+        const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        assert.ok(point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height, "real target fits the viewport");
+        assert.ok(await locator.evaluate((node, { x, y }) => node.contains(document.elementFromPoint(x, y)), point), "no overlay covers the real target");
+        const action = { target: locator.toString(), geometry: { box, point }, before: await captureTouchState() };
+        if (width < 600) await countPage.touchscreen.tap(point.x, point.y);
+        else await countPage.mouse.click(point.x, point.y);
+        await countPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        action.after = await captureTouchState();
+        await countPage.evaluate(sample => {
+          window.classSetupTapDiagnostics.push(sample);
+          window.classSetupTapDiagnostics = window.classSetupTapDiagnostics.slice(-12);
+        }, action);
+      } catch (error) {
+        await dumpTouchFailure(`tap ${locator.toString()}`, error);
+        throw error;
+      }
     };
     await countPage.getByLabel("Class name", { exact: true }).fill("Timetable count regression");
     await countPage.getByLabel("Tell students about your class", { exact: true }).fill("A course to practise and revise school exercises together.");
@@ -278,7 +329,12 @@ try {
     check(await countButton("Prepare my timetable").isDisabled() && await countPage.getByText(/Only 30 daily lessons fit.*one lesson per day/).count() === 1, `${width}: fifty daily lessons explain the thirty-day boundary immediately`);
     await tap(countButton("Pick my own dates"));
     await tap(countButton("Create editable lesson dates"));
-    await countPage.getByText(/50 lesson rows ready/).waitFor();
+    try {
+      await countPage.getByText(/50 lesson rows ready/).waitFor();
+    } catch (error) {
+      await dumpTouchFailure("waiting for fifty manual lesson rows", error);
+      throw error;
+    }
     check(await countPage.getByRole("button", { name: /^Edit lesson \d+ date and time$/ }).count() === 50, `${width}: fifty manual rows are available`);
     await countPage.getByTestId("class-time-0").fill("16:45");
     await tap(countButton("Continue"));

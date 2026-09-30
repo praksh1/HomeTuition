@@ -463,8 +463,11 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
     if (!program || !batch || program.status !== "published" || batch.status !== "published") throw new Refusal(409, "This class is not open for booking.");
     const snapshot = readBatchSnapshot(batch.publishedSnapshot);
     if (!snapshot || snapshot.version !== batch.version || snapshot.programVersion !== program.version) throw new Refusal(409, "This listing changed. Ask the teacher to review it.");
-    const access = await eligibility(tx, program.teacherId, viewerId);
     const isTeacher = program.teacherId === viewerId;
+    // Match ordinary booking and make-up acceptance before eligibility locks users.
+    // Taking user UPDATE first would cycle with a booking's enrollment FK KEY SHARE.
+    if (!isTeacher) await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${viewerId})`);
+    const access = await eligibility(tx, program.teacherId, viewerId);
     const [already] = await tx.select().from(batchTestBookingsTable).where(and(eq(batchTestBookingsTable.batchId, batchId), eq(batchTestBookingsTable.studentId, viewerId)));
     const currentQuote = classJoiningPreview(snapshot, Date.now());
     const quote = already ? already.quote as ReturnType<typeof classJoiningPreview> : currentQuote;
@@ -477,8 +480,6 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
       const seats = await tx.select({ id: batchTestBookingsTable.id }).from(batchTestBookingsTable).where(eq(batchTestBookingsTable.batchId, batchId));
       if (seats.length >= snapshot.capacity) throw new Refusal(409, "This test class is full.");
       const selected = snapshot.lessons.filter((l) => quote.lessonPositions.includes(l.position));
-      // Shared with replacement acceptance: two teachers cannot sell this student's same slot concurrently.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${viewerId})`);
       if (selected.some((l) => Date.parse(l.startsAt) + l.durationMinutes * 60000 > until)) {
         throw new Refusal(409, "These lessons extend beyond the test period. Ask the teacher to prepare dates within the test window.");
       }
