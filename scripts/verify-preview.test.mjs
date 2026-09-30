@@ -28,6 +28,10 @@ for (const mode of [
   "production",
   "missing-api",
   "unavailable",
+  "lazy-correct",
+  "lazy-production",
+  "lazy-stale",
+  "foreign-api",
 ]) {
   test(`preview verification: ${mode}`, async () => {
     const buildDir = await mkdtemp(
@@ -52,12 +56,20 @@ for (const mode of [
         path.join(buildDir, "_expo/static/js/web/entry-456.js"),
         "entry",
       );
+      const lazy = mode === "lazy-production"
+        ? "wss://workspaceapi-server-production-5a63.up.railway.app/api/ws"
+        : mode === "foreign-api" ? "https://another-api.up.railway.app" : "lazy";
+      if (mode.startsWith("lazy-") || mode === "foreign-api") {
+        await writeFile(path.join(buildDir, "_expo/static/js/web/lazy-789.js"), lazy);
+      }
       const fetchImpl = async (url) => {
         const body =
           url.pathname === "/"
             ? mode === "old-html"
               ? html.replace("456", "789")
               : html
+            : url.pathname.includes("lazy-")
+              ? mode === "lazy-stale" ? "older lazy content" : lazy
             : url.pathname.includes("__common")
               ? common
               : mode === "wrong-bytes"
@@ -70,6 +82,7 @@ for (const mode of [
       const run = () =>
         verifyPreview({ buildDir, previewUrl, apiUrl, fetchImpl });
       if (mode === "correct") assert.equal((await run()).assets.length, 2);
+      else if (mode === "lazy-correct") assert.equal((await run()).assets.length, 3);
       else await assert.rejects(run);
     } finally {
       await rm(buildDir, { recursive: true, force: true });

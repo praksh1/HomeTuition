@@ -20,6 +20,7 @@ Fix lesson entry and timetable count changes, simplify course dates and earnings
 - Conversation report confirmation omits the ticket reference while the operator ticket remains stored.
 - Dormant `lessonRemedies.ts` policy now reserves courtesy allowance on request submission, not only teacher offers; release/acceptance/teacher-failure cases have focused tests. This does not activate make-up routes or payment holds.
 - Browser fixtures cover these regressions. `scripts/preview-journey-readonly.mjs` is a strictly staging-only authenticated, read-only synthetic-account probe; it never logs credentials or starts a class.
+- Static and operator export checks now reject mixed Railway API hosts in every emitted JavaScript chunk. Static release exports always clear Metro instead of trusting a checkout-local target stamp. The served-Preview verifier compares exact bytes of all emitted JS chunks, including lazy chunks. Development caching is unchanged.
 
 ## Decisions and assumptions
 
@@ -35,7 +36,9 @@ Preview is the release target for this regression pass. Production promotion is 
 - Class home: 50 browser assertions at 390/1440; 4 new history helper tests. Source attendance privacy contract: 13 class-group contracts pass. UI fixtures are synthetic and not actual PostgreSQL integration.
 - Final combined workspace typecheck passes; app unit suite 614/614; backend suite 845/845 including attendance privacy contract and pending-request quota tests (21 focused remedy tests). Design lint remains at its baseline (56 hex/211 sizes); API and staging-target web build pass. Web export verifies Fadko name and the exact staging API target; Preview dry-run passes. Exact-bundle verifier unit tests: 7/7.
 - Root visually inspected phone photo dialog, phone earnings, laptop short-course boundary review, and phone/landscape/laptop expanded-call/chat screenshots. Layout fixtures do not load all production font faces.
-- Verified CLI access and the explicit staging service; staging/production database URLs and session secrets differ; upload buckets differ; staging uses LiveKit and has no real payment keys. Deployment and post-release checks remain pending.
+- Verified CLI access and the explicit staging service; staging/production database URLs and session secrets differ; upload buckets differ; staging uses LiveKit and has no real payment keys.
+- Code commit `3621c4795ee6204206bdb09476544ae0c3544dc6` pushed to this Preview branch. Staging API deployment `0505f3d6-2cde-4a94-9ce1-dff87b93b95e` is SUCCESS, readiness returns HTTP 200/status ok. Authenticated read-only PostgreSQL/API checks pass for three existing synthetic student class enrollments; anonymous responses disclose no viewer enrollment, teacher attendance remains private, exact purchased-batch links agree. No writes, payment, emails or classroom joins were used.
+- New cache/target/export and exact-served-bundle regressions: 20/20. Final clean export and replacement Preview Worker verification remain pending below.
 
 ## Problems and surprises
 
@@ -44,6 +47,7 @@ Preview is the release target for this regression pass. Production promotion is 
 - Real Excalidraw rendering caught a 12px teacher dock/footer collision missed by the initial stub. Kept the established toolbar clearance and reserved the matching expanded-call band; root inspected the corrected actual-board phone screenshot. Regenerated the successful web build after that correction; the earlier capture is not the release input.
 - First photo browser check assumed fade modal removal was synchronous; waiting for hidden state corrected the harness. Stale batch earnings assertion and a history assertion expecting Completed after missing-attendance hardening were updated to the truthful current output. Call/wizard harness timing/target checks were corrected before final green runs.
 - An initial local pnpm Wrangler command was unavailable because Wrangler is not a project dependency; verified existing `npx` Wrangler 4.144.0 and its deploy flags instead. No package dependency or paid service was added.
+- The first uploaded Preview Worker (`8108b21b-d5e9-4a82-9e43-e2c277f5fe09`) failed post-upload verification: HTTP used staging but the compiled wsUrl module retained the Production API origin. Correct dot-notation source was confirmed; installed Expo stores Metro transforms in shared temporary `metro-cache`, while the old guard checked only that some chunk included staging. Changed to always-clean static exports and all-chunk rejection before upload, reused by operator exports; no Production deployment was made. This first upload is not accepted as the final release.
 - Existing untracked audit/build artifacts are preserved.
 
 ## Fabrications found
