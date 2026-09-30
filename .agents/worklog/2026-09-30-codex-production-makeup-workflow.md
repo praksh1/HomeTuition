@@ -4,7 +4,7 @@
 - Agent: Codex production_promotion, with makeup_backend and makeup_integrations
 - Branch: codex/production-makeup-workflow-sep30
 - Base commit: 4bfb7e979c0f08eae5a88de5393deccc597a05f8
-- Status: in progress
+- Status: completed and live in Production and Preview
 
 ## Requested
 
@@ -15,7 +15,7 @@ Complete the approved linked make-up request, teacher assignment, student accept
 - New policy/core/schema/view/router modules and focused tests under `artifacts/api-server/src/lib/lessonRemedy*`, `makeupPolicy*`, `lessonRemedies*`, `routes/lessonRemedies.ts` and `lib/db/src/schema/lessonRemedies.ts`. Core modules originate from reviewed Preview source `8837e78b`; backend owns its later reopen-DTO correction.
 - A narrow read-only `accountClosureStatus` adapter permits older deployments without a closure table, while installed closed-account rows and query failures remain authoritative. This does not install or activate closure or identity collection APIs.
 - Targeted membership/session allowance/session ownership, replacement privacy, shared overlap locks, immutable seat/refund guards, ledger transitions, original-allocation holds, refund/payout decisions, support context and notification integration hunks. Ordinary identity and LiveKit provider settings are unchanged.
-- Participant `makeups.tsx` and operator `(admin)/makeups.tsx` use the shared `MakeupsWorkspace`; class home, lesson details and original receipt statements link to the exact original/replacement lesson. Operator desk navigation and make-up notification routing are registered.
+- Participant `makeups.tsx` and uniquely routed operator `(admin)/operator-makeups.tsx` use the shared `MakeupsWorkspace`; class home, lesson details and original receipt statements link to the exact original/replacement lesson. Operator desk navigation and make-up notification routing are registered.
 - API PostgreSQL harness `scripts/lesson-remedies/{run,financeChecks}.mjs` originates from `b2d8d295`, including exact case-ID lookups rather than assuming the first historical case. It restricts execution to local disposable `fadko_makeup_test*` databases and neutralizes real external providers. Early active-operator fixture is explicit.
 - Production-only harness adaptation seeds a synthetic local closure-status table instead of calling absent closure APIs; removed only two full closure API assertions. The closed-account commitment refusal and read-only adapter unit checks remain. Integrations owns additional reopen assertions.
 - The CI workflow keeps the existing `fadko_test_booking` guard/database for old booking suites, creates a separate `fadko_makeup_test` database for make-up integration checks, and adds the new browser harness. No deployment or credentials are included.
@@ -103,7 +103,7 @@ Purchases, live money/provider credentials, identity collection/student citizens
 
 ## Remaining risks / next pickup point
 
-Backend/integrations completed the small withdrawn/review case reopening projection and its real-PG assertions in both sources. Runtime is frozen and final local unit/type/owner browser gates passed. Root must run the assembled-variant PostgreSQL gate, complete exact Production export/hash and owner/privacy checks, then enable only the make-up flag and verify signed synthetic-role reads. Do not report the follow-on live until those gates pass. Live phone teacher/student interaction and real payment-provider operation remain separate owner/provider testing.
+This release is complete; the authoritative final evidence is below. Remaining validation is owner testing on physical iOS/Android devices and real payment-provider operation when separately activated. Replacements are currently assigned privately per student, not bulk whole-class rescheduling. No purchases or automatic refunds/bans were performed.
 
 ## September 30 release checkpoint (supersedes earlier pending status)
 
@@ -111,3 +111,13 @@ Backend/integrations completed the small withdrawn/review case reopening project
 - Railway deployment f6e19467-3b4b-4aa8-9065-7332318660ce is SUCCESS. Signed existing synthetic teacher/student reads returned 200/enabled; participant access to the operator desk returned 403 and anonymous history returned 401. Full live storage is complete and dependencies ready. Identity collection and closure-completion flags remain unset. No live account, booking, request, ticket or payment was created by release smoke checks.
 - Preview source 9d0213109484651196a8783066025b791e1e9787 also passed full CI 36768446002 and API deployment 67a88e80-b80f-4835-b093-6bf626a335c7; only LESSON_REMEDIES_ENABLED=1 was activated there. Its three additive tables and signed-role/privacy checks passed.
 - Fresh deployment exports passed 162 real-export route assertions again in both targets. The independent final link audit then caught one stale operator make-up notification destination; corrected to /(admin)/operator-makeups with original class/lesson context preserved, teacher/student /makeups unchanged, and direct regressions added. Frontend publication waits for fresh corrected exports and the final source gate. No unrelated runtime change or second API deployment is needed for this frontend-only correction.
+
+## Final verified live release
+
+- Production frontend source 70cb9505d4c666c3c08736fe05e6f4b6c28f8568 passed full CI 36771385545: API 857, app 626, PostgreSQL make-ups 163; all existing financial/access/browser gates and 162 actual Expo routing assertions passed. Independent raw job logs prove the export and runner executed. This differs from deployed API fbfeae61 only in frontend notification routing/tests and documentation, with no backend/database/schema delta.
+- Fresh clean Production export verified all 129 JavaScript chunks against the exact Production API and Fadko identity, retained the premium owner workspace, rejected the retired operator path, and again passed 162 mobile/desktop direct/reload/role routing assertions. Worker hometuition version ea222abd-588a-4b06-a89a-ba455f747fbf is live at https://hometuition.praksh-dhakal.workers.dev.
+- Post-publication verification passed for served HTML and every one of the 129 exact chunk hashes/API targets. The owner Cost & Health page serves the exact three entry/shared bundles, preserves the premium dashboard and rejects anonymous owner-data access (401). Public API readiness and programs returned 200. Production Railway remains f6e19467-3b4b-4aa8-9065-7332318660ce, SUCCESS.
+- Preview frontend source b63a8938318219f31bdad949ef45d6e8555ab6e8 passed full CI 36771385492 (API 888, app 635, PostgreSQL 165 and all downstream gates). Fresh Preview export and 162 local routing assertions passed; Worker hometuition-preview version a5da37b3-fa8a-4b14-9a08-687269a5e6c2 is live, with all 130 served chunk hashes and the isolated staging API verified. Preview Railway remains 67a88e80-b80f-4835-b093-6bf626a335c7, SUCCESS.
+- Only the make-up flag is enabled in both services; complete additive storage, participant/operator separation and anonymous privacy passed signed synthetic-role smoke. No real money, refund, ticket, make-up request/acceptance or account was created by live deployment verification; complete transaction/race coverage ran against isolated disposable PostgreSQL, not shared live data.
+- Owner test path: Classes -> choose class -> Make-up lessons (or Make-up options beside an eligible original lesson). Student requests and sees reserved/remaining allowance; teacher offers a Nepal-time replacement; student accepts; original receipt/allocation remains linked and held. Operator evidence-confirmed delivery starts a fresh 48-hour review period. Missed replacements go to human review; no second tuition, automatic refund or inferred attendance.
+- No blanket main/Preview merge, provider switch, private-ID activation, account-closure completion, purchase or billing-plan change. Historical pending checkpoints above are superseded by this final section.
