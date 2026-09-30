@@ -239,6 +239,16 @@ router.post(
       res.status(400).json({ error: "Write the reason for that complaint or refund decision." });
       return;
     }
+    // Ledger-only rescheduling is not a booked, student-accepted make-up. Keep the
+    // same guard as batch checkout until an atomic remedy acceptance owns this event.
+    if (event === "replacement_scheduled") {
+      res.status(409).json({ error: "A replacement must be linked to the original booking and accepted by the student before this lesson can move forward. No replacement was recorded." });
+      return;
+    }
+    if (event === "makeup_requested" || event === "makeup_delivery_confirmed" || event === "makeup_withdrawn" || event === "makeup_review_restored") {
+      res.status(409).json({ error: "Use the make-up request and documented delivery review. A ledger event cannot create or confirm a make-up." });
+      return;
+    }
     try {
       const updated = await db.transaction(async (tx) => {
         const [row] = await tx

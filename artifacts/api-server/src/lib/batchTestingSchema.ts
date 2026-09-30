@@ -62,9 +62,32 @@ export const BATCH_TEST_DDL = [
      CREATE TRIGGER ${table}_test_promise_guard BEFORE UPDATE OR DELETE ON ${table}
      FOR EACH ROW EXECUTE FUNCTION protect_batch_test_promise(); END IF; END $$`),
   `CREATE OR REPLACE FUNCTION protect_batch_test_enrollment() RETURNS trigger LANGUAGE plpgsql AS $$
-   DECLARE linked integer;
+   DECLARE linked integer; original_position integer; old_linked integer; approved_refund boolean := false;
    BEGIN
-    SELECT batch_id INTO linked FROM batch_test_sessions WHERE session_id=NEW.session_id;
+    SELECT batch_id,position INTO linked,original_position FROM batch_test_sessions WHERE session_id=NEW.session_id;
+    IF TG_OP='UPDATE' THEN
+      SELECT batch_id INTO old_linked FROM batch_test_sessions WHERE session_id=OLD.session_id;
+      -- A booked promise cannot escape this guard by moving its seat to an unmapped session
+      -- or another booked student. Only its payment status may ever change.
+      IF old_linked IS NOT NULL AND (to_jsonb(NEW)-'payment_status') IS DISTINCT FROM (to_jsonb(OLD)-'payment_status') THEN
+        RAISE EXCEPTION 'BATCH_TEST_BOOKING_REQUIRED' USING ERRCODE='P0001';
+      END IF;
+      IF old_linked IS NOT NULL AND OLD.payment_status='refunded' AND NEW.payment_status IS DISTINCT FROM 'refunded' THEN
+        RAISE EXCEPTION 'BATCH_TEST_BOOKING_REQUIRED' USING ERRCODE='P0001';
+      END IF;
+      -- A human refund appends the exact original allocation's ledger decision under its
+      -- payment lock before revoking access. Do not treat this as a new paid/refunded booking.
+      IF old_linked IS NOT NULL AND OLD.payment_status='test' AND NEW.payment_status='refunded'
+         AND OLD.payment_method='test_access' AND NEW.payment_method='test_access'
+         AND OLD.payment_reference IS NULL AND NEW.payment_reference IS NULL THEN
+        SELECT EXISTS(SELECT 1 FROM batch_test_bookings b JOIN batch_test_payments pay ON pay.booking_id=b.id
+          WHERE b.batch_id=old_linked AND b.student_id=OLD.student_id
+            AND COALESCE((SELECT l.to_state FROM batch_test_ledger_entries l
+              WHERE l.booking_id=b.id AND l.position=original_position ORDER BY l.id DESC LIMIT 1),'future') IN ('refund_owed','refunded'))
+          INTO approved_refund;
+        IF approved_refund THEN RETURN NEW; END IF;
+      END IF;
+    END IF;
     IF linked IS NOT NULL AND (NEW.payment_status IS DISTINCT FROM 'test' OR NEW.payment_method IS DISTINCT FROM 'test_access' OR NEW.payment_reference IS NOT NULL OR
        NOT EXISTS(SELECT 1 FROM batch_test_bookings WHERE batch_id=linked AND student_id=NEW.student_id)) THEN
       RAISE EXCEPTION 'BATCH_TEST_BOOKING_REQUIRED' USING ERRCODE='P0001';

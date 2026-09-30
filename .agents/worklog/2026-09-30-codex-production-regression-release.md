@@ -4,7 +4,7 @@
 - Agent: codex
 - Branch: codex/production-journey-fixes-sep30
 - Base commit: f9b0506f3d424e4aeaf0f86366eab4bfa8722432
-- Status: release verification in progress; not yet deployed
+- Status: deployed and live artifact/health/privacy checks passed
 
 ## Requested
 
@@ -24,6 +24,10 @@ Candidate checks passed: workspace typecheck, API build, design baseline, 778 AP
 
 The first isolated Production CI run (36744396086) caught a stale unit-test dependency on the removed "Try test checkout" label. Updated that assertion to locate the actual enrollment action while still requiring the signed-out account guard to precede it. All 614 app unit tests passed after that test-only repair. A fresh isolated database run is required before deployment.
 
+Fresh isolated CI 36745763001 passed all steps, including PostgreSQL-backed program, booking, video/proof/access and browser checks. Released source: 4bfb7e979c0f08eae5a88de5393deccc597a05f8 on codex/production-journey-fixes-sep30. Railway manual source upload deployment 0b9743c5-08a5-44e2-bf90-3394d0f15651 succeeded and passed readiness; Cloudflare hometuition Worker version 5aa6aa8b-c716-4eef-8c00-2fe0c3d49e03 deployed successfully. No main-branch blanket merge was performed.
+
+Live verification passed: served HTML and every one of 129 emitted JavaScript chunks exactly match the frozen Production artifact; correct Production API target; approved premium owner dashboard labels preserved; anonymous owner data rejected (401); readiness and public catalogue 200; protected message inbox/unread/access and storage routes reject anonymous callers (401). An initial smoke probe used nonexistent /api/messages and returned its expected routing 404; corrected to the actual protected message routes and passed. New message safety tables still require an authenticated path to exercise their initialization; the read-only prerequisite check and isolated initializer tests passed.
+
 Read-only Production database readiness passed using the explicitly selected Railway Production service. Public-schema creation permission and all safety-table parent dependencies exist. The three new suppression/report tables are absent and will be created additively through fail-closed initialization. No business or personal data was read or changed by that check.
 
 ## Problems and surprises
@@ -40,4 +44,4 @@ Owner dashboard design, provider billing plans, real payment integrations, stude
 
 ## Remaining risks / next pickup point
 
-Operator-preview focused checks passed, including disabled/password-reset operators, legacy citizenship review and fail-closed message initialization. Run fresh isolated database CI. Record commit, deployment IDs, health checks and remote asset hashes before reporting deployed. Physical iOS/Android and two-device live media were not tested by these browser gates.
+Operator-preview focused checks passed, including disabled/password-reset operators, legacy citizenship review and fail-closed message initialization. Physical iOS/Android and two-device live media were not tested by these browser gates. The follow-on make-up release is being assembled on codex/production-makeup-workflow-sep30 and is not enabled by this regression release.

@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
+import { radius } from "@/constants/layout";
 import { apiGet } from "@/utils/api";
 import { notify } from "@/utils/alerts";
 import { countdown, humanDuration, serverNow, waitingState } from "@/utils/sessionClock";
@@ -21,6 +22,7 @@ import SessionThread from "@/components/SessionThread";
 import { useDates } from "@/context/DatePreferenceContext";
 import DropClass from "@/components/DropClass";
 import RescheduleClass from "@/components/RescheduleClass";
+import { ProgramButton } from "@/components/programs/ProgramPieces";
 
 /**
  * A class's own page — the link the owner asked for.
@@ -42,6 +44,7 @@ import RescheduleClass from "@/components/RescheduleClass";
 
 interface SessionDetail {
   id: number;
+  classGroup?: { batchId: number; title: string; lessonPosition: number; lessonCount: number; makeup?: boolean; originalSessionId?: number };
   teacherId: number;
   teacherName: string;
   subject: string;
@@ -252,6 +255,31 @@ export default function SessionPage() {
         ) : null}
       </View>
 
+      {session.classGroup ? (
+        <TouchableOpacity
+          testID="session-open-class-home"
+          accessibilityRole="link"
+          accessibilityLabel={`Open ${session.classGroup.title} class home`}
+          onPress={() => router.push({ pathname: "/class-home", params: { id: String(session.classGroup!.batchId) } })}
+          activeOpacity={0.75}
+          style={[styles.card, { backgroundColor: colors.actionSoft, borderColor: colors.primary, flexDirection: "row", alignItems: "center", gap: 12 }]}
+        >
+          <View style={{ width: 40, height: 40, borderRadius: radius.sm, backgroundColor: colors.primary, alignItems: "center", justifyContent: "center" }}>
+            <Feather name="book-open" size={20} color={colors.primaryForeground} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.sectionTitle, { color: colors.primary }]}>Open class home</Text>
+            <Text style={[styles.muted, { color: colors.mutedForeground }]}>Materials, homework, messages and all lesson dates</Text>
+          </View>
+          <Feather name="chevron-right" size={18} color={colors.primary} />
+        </TouchableOpacity>
+      ) : null}
+      {session.classGroup?.makeup && session.classGroup.originalSessionId ? <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your linked make-up lesson</Text>
+        <Text style={[styles.muted, { color: colors.mutedForeground }]}>This replaces the original purchased lesson. No additional tuition is charged and the original payment remains linked for review.</Text>
+        <ProgramButton label="View original lesson & request" icon="repeat" onPress={() => router.push({ pathname: "/makeups", params: { id: String(session.classGroup!.batchId), sessionId: String(session.classGroup!.originalSessionId) } })} />
+      </View> : null}
+
       {/* The student's half: has the teacher turned up, and what to do if not. */}
       {!isTeacher && waiting && session.status !== "completed" && (
         <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -279,7 +307,7 @@ export default function SessionPage() {
         Only for a class that has not happened: moving a lesson that was already taught is not
         rescheduling, and the students who sat through it would be told their class had moved.
       */}
-      {isTeacher && session.status === "upcoming" && (
+      {isTeacher && session.status === "upcoming" && !session.classGroup?.makeup && (
         <RescheduleClass sessionId={session.id} currentDate={session.date} onMoved={() => void load()} />
       )}
 

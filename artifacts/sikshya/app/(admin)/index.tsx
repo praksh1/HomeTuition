@@ -159,6 +159,14 @@ export default function AdminTickets() {
       */}
       <VideoCheck colors={colors} />
 
+      <TouchableOpacity accessibilityRole="button" accessibilityLabel="Review make-up lessons and held payments" style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => router.push("/(admin)/makeups")}>
+        <View style={styles.cardHead}>
+          <Text style={[styles.reason, { color: colors.primary }]}>Make-up lessons & payment holds</Text>
+          <Feather name="chevron-right" size={16} color={colors.primary} />
+        </View>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Review original lessons, replacement dates and delivery evidence. No automatic refunds or payout decisions.</Text>
+      </TouchableOpacity>
+
       {counts && (
         <View style={styles.stats}>
           <Stat label="Open tickets" value={counts.known ? counts.openTickets : "—"} colors={colors} />

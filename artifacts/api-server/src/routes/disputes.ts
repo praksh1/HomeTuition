@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { getSessionMembership } from "../lib/membership";
+import { freezeOriginalPaymentForReview } from "../lib/lessonRemedyIntegration";
 import { verifyUpload } from "../lib/fileStore";
 import { endedEarlyWithoutReturning } from "../lib/sessionEvidence";
 import { MAX_TICKETS_PER_DAY, isTerminal, ticketRef } from "../lib/tickets";
@@ -161,6 +162,9 @@ router.post("/disputes", requireAuth, async (req, res): Promise<void> => {
       description: description.trim(),
       evidenceUrl: attachment,
     }).returning();
+
+    await freezeOriginalPaymentForReview(tx, { sessionId: about, studentId: userId, actorRole: req.user!.role,
+      reason, disputeId: created!.id });
 
     await recordOpened(created!.id, userId, req.user!.role, await nameOf(userId), tx);
     await tx.insert(activityLogTable).values({

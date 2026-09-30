@@ -12,6 +12,7 @@ export interface UserEvent {
    * teacher's "class starting" switch should silence.
    */
   kind:
+    | "makeup_update"
     | "conversation_sync"
     | "message"
     | "follower"
@@ -41,6 +42,9 @@ export interface UserEvent {
   preview?: string;
   sessionId?: number | string;
   batchId?: number | string;
+  caseId?: number;
+  replacementSessionId?: number;
+  status?: string;
   homeworkId?: number | string;
   homeworkTitle?: string;
   dueAt?: string;

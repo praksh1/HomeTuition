@@ -79,6 +79,19 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
       res.status(403).json({ error: "You do not have access to this." });
       return;
     }
+    if (process.env.OPERATOR_SITE_ENFORCEMENT_ENABLED === "true") {
+      const { operatorByUserId } = await import("../lib/operatorStore");
+      const operator = await operatorByUserId(userId);
+      if (!operator || operator.disabledAt) {
+        res.status(403).json({ error: "This operator account cannot access the desk." });
+        return;
+      }
+      const bootstrapRoute = /^\/api\/operator\/(me|password)\/?$/.test(req.originalUrl.split("?")[0] ?? "");
+      if (operator.mustChangePassword && !bootstrapRoute) {
+        res.status(403).json({ error: "Change your one-time password before opening the desk.", code: "OPERATOR_PASSWORD_CHANGE_REQUIRED" });
+        return;
+      }
+    }
     next();
   } catch {
     // A lookup that failed is not permission granted.

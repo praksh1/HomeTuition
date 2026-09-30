@@ -41,6 +41,18 @@ jobs:
       - run: pnpm --filter @workspace/sikshya run lint:design
       - run: pnpm run db:push
       - run: pnpm --filter @workspace/api-server run build
+      - name: Prepare isolated make-up database
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fadko_makeup_test
+        run: |
+          createdb -h 127.0.0.1 -U postgres fadko_makeup_test
+          pnpm run db:push
+      - name: Make-up request, quota and financial safety checks
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/fadko_makeup_test
+          PGURL: postgres://postgres:postgres@127.0.0.1:5432/fadko_makeup_test
+        run: pnpm --filter @workspace/api-server run test:lesson-remedies
       - run: pnpm --filter @workspace/api-server run test:programs
       - run: pnpm --filter @workspace/api-server run test:batch-booking
       - run: pnpm --filter @workspace/api-server run test:video
@@ -54,5 +66,6 @@ jobs:
           pnpm --filter @workspace/sikshya run test:class-setup
           pnpm --filter @workspace/sikshya run test:batch-booking-ui
           pnpm --filter @workspace/sikshya run test:class-home
+          pnpm --filter @workspace/sikshya run test:makeups-ui
           pnpm --filter @workspace/sikshya run test:class-students
       # This workflow intentionally has no deployment or credentials.

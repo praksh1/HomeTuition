@@ -33,6 +33,7 @@ import { activityFor } from "../lib/sessionLifecycle";
 import { hashPassword } from "../lib/auth";
 import { notify, notifyInApp } from "../lib/notify";
 import { refundSplit } from "../lib/sessionChanges";
+import { originalAllocationForSession } from "../lib/lessonRemedyIntegration";
 import { checkStorage, storageSettingsPresent } from "../lib/fileStore";
 import { diagnoseVideo } from "../lib/video/diagnose";
 import { TICKET_STATUSES, displayStatus, nextStatuses, statusLabel, ticketRef } from "../lib/tickets";
@@ -1669,6 +1670,13 @@ router.post("/admin/sessions/:sessionId/refund", async (req, res): Promise<void>
 
   const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, sessionId));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
+  const allocation = await originalAllocationForSession(sessionId, student);
+  if (allocation) {
+    res.status(409).json({ error: "Review this student's original class receipt allocation. Do not issue a zero-price make-up refund or create a real refund for a simulated payment.",
+      bookingId: allocation.bookingId, position: allocation.position, originalSessionId: allocation.originalSessionId,
+      replacementSessionId: allocation.replacementSessionId });
+    return;
+  }
 
   const [enrolment] = await db
     .select({ id: sessionEnrollmentsTable.id, paymentStatus: sessionEnrollmentsTable.paymentStatus })

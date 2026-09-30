@@ -1,10 +1,10 @@
 /**
  * Provider- and database-independent money model for a future Learning Program purchase.
  *
- * This is intentionally not a checkout and has no rates or dates baked into it. The owner has
- * not approved a commission, student service fee, complaint window, payout day or gateway. What
- * is settled is the accounting shape: one confirmed program payment is divided across its paid
- * lessons, and each lesson earns or returns only its own allocation.
+ * This is intentionally not a real checkout. The owner approved a 70/30 teacher/platform
+ * beta split and a 48-hour lesson review window; a transfer provider and actual payout date
+ * are not confirmed. One program payment is divided across its paid lessons, and each lesson
+ * earns or returns only its own allocation.
  *
  * Existing Single Class and Monthly payment code must not import this until there is an explicit
  * migration contract. Today this module is a calculator and an executable specification only.
@@ -34,6 +34,10 @@ export const PROGRAM_ALLOCATION_EVENTS = [
   "complaint_denied",
   "payout_confirmed",
   "refund_confirmed",
+  "makeup_requested",
+  "makeup_delivery_confirmed",
+  "makeup_withdrawn",
+  "makeup_review_restored",
 ] as const;
 
 export type ProgramAllocationEvent = (typeof PROGRAM_ALLOCATION_EVENTS)[number];
@@ -127,24 +131,35 @@ const TRANSITIONS: Readonly<
   future: {
     lesson_delivered: "delivered_pending",
     lesson_cancelled: "replacement_pending",
+    makeup_requested: "replacement_pending",
+    makeup_delivery_confirmed: "delivered_pending",
   },
   replacement_pending: {
     // A make-up carries the same allocation forward; it never creates a second earning.
     replacement_scheduled: "future",
     refund_approved: "refund_owed",
+    makeup_requested: "replacement_pending",
+    makeup_delivery_confirmed: "delivered_pending",
+    makeup_withdrawn: "future",
   },
   delivered_pending: {
     complaint_opened: "disputed",
     complaint_window_closed: "eligible",
+    makeup_requested: "replacement_pending",
   },
   disputed: {
     complaint_upheld: "refund_owed",
     complaint_denied: "eligible",
+    makeup_requested: "replacement_pending",
+    // Only a documented operator denial after the linked financial ticket is closed.
+    // The make-up keeps its independently confirmed 48-hour clock, not instant eligibility.
+    makeup_review_restored: "delivered_pending",
   },
   eligible: {
     // An exceptional complaint may freeze an earning until the payout is actually confirmed.
     complaint_opened: "disputed",
     payout_confirmed: "paid_out",
+    makeup_requested: "replacement_pending",
   },
   refund_owed: {
     refund_confirmed: "refunded",

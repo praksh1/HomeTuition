@@ -17,6 +17,7 @@ import { apiGet, apiPatch } from "@/utils/api";
 import { onNetworkResume } from "@/utils/networkResume";
 import {
   getNotifications,
+  addInAppNotification,
   markAllRead,
   markNotificationRead,
   markNotificationsForServerIds,
@@ -258,6 +259,8 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             classTitle: event.topic,
             personName: event.fromName,
           }, event.inboxId);
+        } else if (event.kind === "makeup_update") {
+          await addInAppNotification({ serverId: event.inboxId, title: "Make-up lesson updated", body: `${event.topic ?? "Your class"} · Open the request to review its current status and dates.`, type: "general", data: { type: "makeup_update", batchId: event.batchId, sessionId: event.sessionId, caseId: event.caseId } });
         } else if (event.kind === "session_message") {
           if (!preferences.push.messages) return;
           // A class's own thread, which is where a teacher says they are running late. It

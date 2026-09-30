@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
+import { router } from "expo-router";
 
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
@@ -16,6 +17,79 @@ import {
   type ParticipantTestReceipt,
 } from "@/utils/batchTestMoney";
 import { ProgramButton, ProgramCardShell, ProgramNotice } from "../programs/ProgramPieces";
+
+function MakeupReceiptEvidence({
+  receipt,
+  role,
+}: {
+  receipt: ParticipantTestReceipt;
+  role: "student" | "teacher";
+}) {
+  const colors = useColors();
+  const { t, space, radius } = useLayout();
+  const affected = receipt.allocations.filter(
+    (allocation) => allocation.remedy,
+  );
+  if (!affected.length) return null;
+  return (
+    <View style={{ gap: space.sm }}>
+      {affected.map((allocation) => {
+        const remedy = allocation.remedy!;
+        const amount =
+          role === "teacher" ? allocation.teacherNpr : allocation.grossNpr;
+        return (
+          <View
+            key={allocation.position}
+            testID={`receipt-remedy-${receipt.bookingId}-${allocation.position}`}
+            style={{
+              gap: space.xs,
+              padding: space.sm,
+              borderRadius: radius.sm,
+              backgroundColor: colors.actionSoft,
+            }}
+          >
+            <Text style={[t.bodyStrong, { color: colors.primary }]}>
+              Lesson {allocation.position + 1} · Linked make-up
+            </Text>
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>
+              {receipt.classTitle} · Original receipt {receipt.reference}
+            </Text>
+            <Text style={[t.caption, { color: colors.foreground }]}>
+              {remedy.allocationHeld
+                ? `Original ${role === "teacher" ? "earnings" : "lesson payment"} on hold${Number.isSafeInteger(amount) ? ` · NPR ${amount!.toLocaleString("en-NP")}` : ""}`
+                : "See the original lesson allocation for its current settlement status"}
+            </Text>
+            {remedy.replacementStartsAt ? (
+              <Text style={[t.caption, { color: colors.foreground }]}>
+                Replacement · {testReceiptNepalTime(remedy.replacementStartsAt)}
+              </Text>
+            ) : null}
+            {remedy.reviewClosesAt ? (
+              <Text style={[t.caption, { color: colors.foreground }]}>
+                Review closes · {testReceiptNepalTime(remedy.reviewClosesAt)}
+              </Text>
+            ) : null}
+            <Text style={[t.caption, { color: colors.mutedForeground }]}>
+              Additional tuition: NPR 0 · Not a second payment or earning
+            </Text>
+            <ProgramButton
+              label="Open linked make-up record"
+              onPress={() =>
+                router.push({
+                  pathname: "/makeups",
+                  params: {
+                    id: String(receipt.batchId),
+                    sessionId: String(remedy.originalSessionId),
+                  },
+                })
+              }
+            />
+          </View>
+        );
+      })}
+    </View>
+  );
+}
 
 function Money({ value }: { value: number }) {
   const colors = useColors();
@@ -98,6 +172,7 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
   const [nextCursor, setNextCursor] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [makeupsEnabled, setMakeupsEnabled] = useState(false);
   const [receiptQuery, setReceiptQuery] = useState("");
   const [visibleReceipts, setVisibleReceipts] = useState(8);
   const [expandedReceiptIds, setExpandedReceiptIds] = useState<Set<number>>(() => new Set());
@@ -125,9 +200,10 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
     setBusy(true);
     setError("");
     try {
-      const result = await apiGet<{ receipts: ParticipantTestReceipt[]; nextCursor?: number | null }>(`/batch-tests/me/payments${cursor ? `?cursor=${cursor}` : ""}`);
+      const result = await apiGet<{ receipts: ParticipantTestReceipt[]; nextCursor?: number | null; makeupsEnabled?: boolean }>(`/batch-tests/me/payments${cursor ? `?cursor=${cursor}` : ""}`);
       setReceipts((current) => cursor ? [...(current ?? []), ...result.receipts] : result.receipts);
       setNextCursor(result.nextCursor ?? null);
+      setMakeupsEnabled(result.makeupsEnabled === true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not load test payment details.");
     } finally {
@@ -168,8 +244,13 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
       </View>
       <ProgramNotice title="Testing only" body={`These records show how payments and earnings will look. No real money was ${role === "teacher" ? "paid to you" : "charged"}.`} tone="neutral" />
       <ProgramNotice title={role === "teacher" ? "Why an amount may be on hold" : "How lesson reviews work"} body={role === "teacher"
-        ? "A delivered lesson is reviewed for 48 hours after its scheduled end. A dispute holds the affected lesson's share for human review. Make-up requests are handled by Support until the in-app process is ready. Eligibility is not a bank transfer."
-        : "Each lesson is tracked separately. You can raise a concern during its 48-hour review window. Fadko reviews disputed lessons before deciding a refund or teacher payout. Contact Support to request a make-up."} tone="neutral" />
+        ? makeupsEnabled
+          ? "A make-up or dispute keeps the original lesson's share on hold. Confirmed replacement delivery starts a fresh 48-hour review window. The replacement does not earn a second payment. Eligibility is not a bank transfer."
+          : "A delivered lesson is reviewed for 48 hours after its scheduled end. A dispute holds the affected lesson's share for human review. Contact Support to request a make-up. Eligibility is not a bank transfer."
+        : makeupsEnabled
+          ? "Each lesson is tracked separately. Request a make-up from your class or ask Support for refund review. The original lesson payment stays linked; an accepted replacement starts a fresh review window only after delivery is confirmed."
+          : "Each lesson is tracked separately. You can raise a concern during its 48-hour review window. Fadko reviews disputed lessons before deciding a refund or teacher payout. Contact Support to request a make-up."} tone="neutral" />
+      {role === "student" ? receipts.filter(receipt => receipt.allocations.some(allocation => allocation.remedy)).map(receipt => <MakeupReceiptEvidence key={receipt.bookingId} receipt={receipt} role={role} />) : null}
       {role === "teacher" ? <View style={{ gap: space.sm }}>
         <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Receipts by student and class</Text>
         <TextInput accessibilityLabel="Search receipts by class, student or reference" placeholder="Search class, student or receipt" placeholderTextColor={colors.mutedForeground} value={receiptQuery} onChangeText={(value) => { setReceiptQuery(value); setVisibleReceipts(8); }} style={[t.body, { color: colors.foreground, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm, padding: space.md }]} />
@@ -223,6 +304,7 @@ export function BatchTestMoneySummary({ role }: { role: "student" | "teacher" })
               }) : null}
             </> : <Text style={[t.caption, { color: colors.mutedForeground }]}>Breakdown unavailable. Contact Support before relying on this receipt.</Text>}
             <Text style={[t.caption, { color: colors.mutedForeground }]}>{participantReceiptStatus(receipt, "teacher")} · Practice record, not a bank transfer</Text>
+            <MakeupReceiptEvidence receipt={receipt} role={role} />
           </View>;
         })}
         {matchingReceipts.length === 0 ? <Text style={[t.body, { color: colors.mutedForeground }]}>No loaded receipts match that search.{nextCursor ? " Load older receipts to continue searching." : ""}</Text> : null}

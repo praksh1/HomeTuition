@@ -15,11 +15,23 @@ export interface ParticipantTestReceipt {
     fadkoNpr?: number;
     state: string;
     stateChangedAt?: string;
+    remedy?: {
+      id: number;
+      status: string;
+      originalSessionId: number;
+      replacementSessionId: number | null;
+      replacementStartsAt: string | null;
+      replacementEndsAt: string | null;
+      reviewClosesAt: string | null;
+      allocationHeld: boolean;
+      additionalChargeNpr: 0;
+    };
   }>;
   accounting: {
     teacherPaidOutNpr?: number;
     refundedGrossNpr?: number;
     actualMoneyMovedNpr: number;
+    heldGrossNpr?: number;
   };
 }
 
@@ -34,6 +46,7 @@ export interface ParticipantTestTotals {
 }
 
 const pendingEarningStates = new Set(["future", "delivered_pending", "eligible"]);
+const heldEarningStates = new Set([...pendingEarningStates, "replacement_pending", "disputed"]);
 
 export function teacherReceiptBreakdown(receipt: ParticipantTestReceipt): {
   tuitionNpr: number; fadkoFeeNpr: number; teacherShareNpr: number;
@@ -66,7 +79,7 @@ export function participantTestTotals(receipts: ParticipantTestReceipt[]): Parti
     totals.teacherShareNpr += receipt.allocations
       .reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0);
     totals.teacherHeldNpr += receipt.allocations
-      .filter((allocation) => pendingEarningStates.has(allocation.state))
+      .filter((allocation) => heldEarningStates.has(allocation.state))
       .reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0);
     totals.teacherPaidOutNpr += receipt.accounting.teacherPaidOutNpr ?? 0;
     totals.teacherRefundedNpr += receipt.allocations
@@ -203,6 +216,7 @@ export function participantReceiptStatus(
 ): string {
   const states = new Set(receipt.allocations.map((allocation) => allocation.state));
   if (states.has("disputed")) return "Support review in progress";
+  if (receipt.allocations.some((allocation) => allocation.remedy?.allocationHeld)) return "Make-up or lesson review in progress";
   if (states.has("refund_owed")) return "Refund approved in this test";
   if (states.size === 1 && states.has("refunded")) return role === "teacher" ? "Test earnings reversed" : "Test refund completed";
   if (states.size === 1 && states.has("paid_out")) return role === "teacher" ? "Test payout recorded" : "Lessons completed";

@@ -19,6 +19,7 @@ import {
 } from "../lib/sessionChanges";
 import { alreadyRefunded, lastMovedAt, quoteDrop, scheduleEditsUsed } from "../lib/scheduleChanges";
 import { notify } from "../lib/notify";
+import { originalAllocationForSession } from "../lib/lessonRemedyIntegration";
 
 /**
  * Getting out of a class, and what that costs.
@@ -102,6 +103,13 @@ router.get("/sessions/:id/drop-info", requireAuth, async (req, res): Promise<voi
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
 
   const enrolment = await paidEnrolment(id, user.userId);
+  const allocation = await originalAllocationForSession(id, user.userId);
+  if (allocation) {
+    res.json({ enrolled: !!enrolment && enrolment.paymentStatus !== "refunded", canDrop: false,
+      originalSessionId: allocation.originalSessionId, bookingId: allocation.bookingId, position: allocation.position,
+      reason: "This lesson belongs to your class purchase. Request make-up or refund review from the lesson's Help options; its original payment allocation stays linked." });
+    return;
+  }
 
   /**
    * Somebody who already left, and what happened to their money.
@@ -215,6 +223,12 @@ router.post("/sessions/:id/drop", requireAuth, async (req, res): Promise<void> =
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
 
   const enrolment = await paidEnrolment(id, user.userId);
+  const allocation = await originalAllocationForSession(id, user.userId);
+  if (allocation) {
+    res.status(409).json({ error: "This lesson belongs to your class purchase. Support reviews the original lesson allocation; a make-up has no separate charge to refund.",
+      originalSessionId: allocation.originalSessionId, bookingId: allocation.bookingId, position: allocation.position });
+    return;
+  }
   if (!enrolment || enrolment.paymentStatus !== "paid") {
     res.status(409).json({ error: "You are not booked into this class." });
     return;
