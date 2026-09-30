@@ -178,6 +178,9 @@ export async function requestLessonMakeup(actor: RemedyActor, sessionId: number,
   return db.transaction(async (tx) => {
     await lockPurchase(tx, preliminary.bookingId);
     const p = await purchase(tx, sessionId, actor.userId);
+    // Batch eligibility takes teacher SHARE then student UPDATE. Serialize the student
+    // first so sorted account locks cannot invert that order for an older student account.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${p.studentId})`);
     await openAccounts(tx, p);
     const requestFingerprint = fingerprint({ reason: input.reason, note: remedyNote(input.note) });
     const [old] = await tx.select().from(lessonRemedyCasesTable)
@@ -287,6 +290,9 @@ export async function acceptLessonMakeup(actor: RemedyActor, caseId: number, inp
     }
     requireOpenEnrollment(p);
     await lockTeacherSchedule(tx, p.teacherId);
+    // Ordinary booking holds this advisory before its enrollment FK takes user KEY SHARE.
+    // Take it before user FOR UPDATE, or acceptance and that insert can wait on each other.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${p.studentId})`);
     await openAccounts(tx, p);
     const terms = await bookingPolicy(tx, p);
     const decision = assessRemedyAcceptance({ status: c.status as LessonRemedyStatus, offerStatus: offer.status as "proposed",
@@ -298,7 +304,6 @@ export async function acceptLessonMakeup(actor: RemedyActor, caseId: number, inp
     if (c.reason === "teacher_missed" && !c.teacherNonDeliveryConfirmed) refuse("teacher_confirmation_required", "The teacher must confirm the original lesson was not delivered before this offer can be accepted.");
     if (!(c.reason === "teacher_missed" && c.teacherNonDeliveryConfirmed) && await used(tx, p.bookingId) > terms.courtesyLimit) refuse("allowance_used", "Your make-up allowance changed. Contact Support to review this offer.");
     await availableTeacher(tx, p, offer.startsAt, offer.endsAt);
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${p.studentId})`);
     const otherLessons = await tx.select({ session: sessionsTable }).from(sessionEnrollmentsTable)
       .innerJoin(sessionsTable, eq(sessionsTable.id, sessionEnrollmentsTable.sessionId))
       .where(and(eq(sessionEnrollmentsTable.studentId, p.studentId), inArray(sessionEnrollmentsTable.paymentStatus, ["paid", "test"]), inArray(sessionsTable.status, ["upcoming", "live"])));

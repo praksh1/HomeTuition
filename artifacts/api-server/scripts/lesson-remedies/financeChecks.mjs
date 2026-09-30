@@ -163,6 +163,157 @@ export async function runFinanceChecks({ api, q, connect, check, fixture, reques
   }
   await assertTeacherLockPrecedesUsers("Make-up offer", () => offer(lockingFixture, lockingCase));
   await assertTeacherLockPrecedesUsers("Make-up acceptance", () => accept(lockingFixture, lockingCase));
+
+  // Exercise real HTTP booking writes, not just a source-order assertion. A different
+  // teacher's booking owns the student advisory while waiting at a fixture-held row.
+  // Acceptance must wait at that advisory WITHOUT first locking the student's user row.
+  async function readyBookingAccount(person, teacher = false) {
+    await q("INSERT INTO account_security(user_id,email_verified_at) VALUES($1,now()) ON CONFLICT(user_id) DO UPDATE SET email_verified_at=now()", [person.id]);
+    await q("INSERT INTO user_onboarding(user_id,phone,profile_photo_key,completed_at) VALUES($1,'9800000000',$2,now()) ON CONFLICT(user_id) DO UPDATE SET phone=EXCLUDED.phone,profile_photo_key=EXCLUDED.profile_photo_key,completed_at=EXCLUDED.completed_at", [person.id, `synthetic/profile-${person.id}.jpg`]);
+    if (teacher) await q("INSERT INTO teacher_profiles(user_id,subject,approval_status) VALUES($1,'Synthetic Maths','approved') ON CONFLICT(user_id) DO UPDATE SET approval_status='approved'", [person.id]);
+  }
+  async function waitForBookingStudentLock(ownerPid, studentId, label) {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const row = (await q(`SELECT a.pid FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid
+        WHERE $1::int=ANY(pg_blocking_pids(a.pid)) AND a.wait_event_type='Lock'
+          AND l.locktype='advisory' AND l.classid=838210::oid AND l.objid=$2::oid AND l.granted LIMIT 1`, [ownerPid, studentId])).rows[0];
+      if (row) return row.pid;
+      await new Promise(resolveWait => setTimeout(resolveWait, 100));
+    }
+    assert.fail(`${label} must hold the student advisory while waiting for the exact fixture row owner`);
+  }
+  async function waitForAcceptanceStudentLock(bookingPid, studentId, label) {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const blocked = (await q(`SELECT EXISTS(SELECT 1 FROM pg_locks
+        WHERE locktype='advisory' AND classid=838210::oid AND objid=$1::oid AND NOT granted
+          AND $2::int=ANY(pg_blocking_pids(pid))) AS waiting`, [studentId, bookingPid])).rows[0].waiting;
+      if (blocked) return;
+      await new Promise(resolveWait => setTimeout(resolveWait, 100));
+    }
+    assert.fail(`${label} acceptance must wait for the actual concurrent booking's student advisory`);
+  }
+  async function assertBookingAndAcceptanceLockOrder(kind, overlapping) {
+    const f = await fixture();
+    await readyBookingAccount(f.student);
+    const replacementAt = Date.now() + 12 * DAY;
+    const other = await fixture({ count: 1, at: replacementAt + (overlapping ? 0 : -2 * HOUR) });
+    const label = `${kind === "ordinary" ? "Ordinary lesson" : "Different-teacher batch"} booking ${overlapping ? "conflict" : "nonconflict"}`;
+    const requested = await request(f); assert.equal(requested.status, 200, JSON.stringify(requested));
+    const caseId = requested.body.caseId;
+    assert.equal((await offer(f, caseId, replacementAt)).status, 200);
+    const offerId = (await q("SELECT id FROM lesson_remedy_offers WHERE case_id=$1 AND status='proposed'", [caseId])).rows[0].id;
+    const receiptBefore = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [f.bookingId])).rows[0].receipt;
+    const originalSeatsBefore = (await q("SELECT session_id,payment_status,payment_method,payment_reference FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 ORDER BY session_id", [f.sessionIds, f.student.id])).rows;
+    let target;
+    let book;
+    if (kind === "ordinary") {
+      const grantId = (await q("SELECT id FROM test_teaching_grants WHERE teacher_id=$1 ORDER BY id DESC LIMIT 1", [other.teacher.id])).rows[0].id;
+      target = (await q("INSERT INTO sessions(teacher_id,teacher_name,subject,topic,date,duration,max_students,enrolled_count,price) VALUES($1,'Synthetic teacher','Maths','Synthetic concurrent ordinary lesson',$2,30,10,0,500) RETURNING id", [other.teacher.id, other.snapshot.lessons[0].startsAt])).rows[0].id;
+      await q("INSERT INTO test_classes(session_id,teacher_id,grant_id) VALUES($1,$2,$3)", [target, other.teacher.id, grantId]);
+      book = () => api(`/sessions/${target}/book`, f.student.token, { paymentMethod: "esewa" });
+    } else {
+      await readyBookingAccount(other.teacher, true);
+      const quote = await api(`/batch-tests/${other.batchId}`, f.student.token);
+      assert.equal(quote.status, 200, JSON.stringify(quote));
+      book = () => api(`/batch-tests/${other.batchId}`, f.student.token, { quoteKey: quote.body.quoteKey, gateway: "fadko_test", outcome: "success" });
+      target = other.sessionIds[0];
+    }
+    const owner = await connect(); let bookingPending; let acceptancePending; let bookingSettled; let acceptanceSettled;
+    try {
+      await owner.query("BEGIN");
+      await owner.query("SET LOCAL statement_timeout='10s'");
+      const ownerPid = (await owner.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      if (kind === "ordinary") {
+        await owner.query("SELECT id FROM sessions WHERE id=$1 FOR UPDATE", [target]);
+      } else {
+        // Registration takes student advisory before eligibility's teacher profile read.
+        // Hold this other teacher's profile row to pause the real HTTP checkout AFTER
+        // its advisory, not before the transaction or at an invented test-only hook.
+        await owner.query("SELECT id FROM teacher_profiles WHERE user_id=$1 FOR UPDATE", [other.teacher.id]);
+      }
+      bookingPending = book().then(response => ({ response }), error => ({ error }));
+      const bookingPid = await waitForBookingStudentLock(ownerPid, f.student.id, label);
+      acceptancePending = api(`/lesson-remedies/${caseId}/accept`, f.student.token, { offerId, requestKey: randomUUID() })
+        .then(response => ({ response }), error => ({ error }));
+      await waitForAcceptanceStudentLock(bookingPid, f.student.id, label);
+      await owner.query("SET LOCAL lock_timeout='1s'");
+      // A real enrollment INSERT needs this same FK KEY SHARE. If acceptance owns
+      // user UPDATE before waiting on the advisory, this probe times out deterministically.
+      await owner.query("SELECT id FROM users WHERE id=$1 FOR KEY SHARE", [f.student.id]);
+      check(`${label} and waiting acceptance cannot form an enrollment-FK/user-lock cycle`, true);
+      await owner.query("COMMIT");
+    } finally {
+      try { await owner.query("ROLLBACK"); } finally { owner.release(); }
+      // Each HTTP call is independently bounded. Release every fixture lock first,
+      // and consume both rejections even if a regression failed a lock-order assertion.
+      [bookingSettled, acceptanceSettled] = await Promise.all([
+        bookingPending ?? Promise.resolve(null), acceptancePending ?? Promise.resolve(null),
+      ]);
+    }
+    if (bookingSettled?.error) throw bookingSettled.error;
+    if (acceptanceSettled?.error) throw acceptanceSettled.error;
+    const booked = bookingSettled?.response;
+    const accepted = acceptanceSettled?.response;
+    assert.equal(booked?.status, kind === "ordinary" ? 201 : 200, JSON.stringify(booked));
+    check(`${label} completes its real no-charge enrollment without a deadlock`, (await q("SELECT 1 FROM session_enrollments WHERE session_id=$1 AND student_id=$2 AND payment_status='test' AND payment_method='test_access'", [target, f.student.id])).rowCount === 1);
+    const acceptedOffers = (await q("SELECT replacement_session_id FROM lesson_remedy_offers WHERE case_id=$1 AND accepted_at IS NOT NULL", [caseId])).rows;
+    if (overlapping) {
+      check(`${label} acceptance sees the committed conflicting booking and creates no replacement`, accepted?.status === 409 && accepted.body?.code === "student_schedule_conflict" && acceptedOffers.length === 0 && (await q("SELECT status FROM lesson_remedy_cases WHERE id=$1", [caseId])).rows[0].status === "offered");
+    } else {
+      check(`${label} acceptance creates exactly one linked zero-charge replacement`, accepted?.status === 200 && acceptedOffers.length === 1 && (await q("SELECT 1 FROM session_enrollments e JOIN sessions s ON s.id=e.session_id WHERE s.id=$1 AND s.price=0 AND e.student_id=$2 AND e.payment_status='test' AND e.payment_method='linked_makeup' AND e.payment_reference IS NULL", [acceptedOffers[0]?.replacement_session_id ?? -1, f.student.id])).rowCount === 1);
+    }
+    const originalReceipts = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [f.bookingId])).rows;
+    const originalSeatsAfter = (await q("SELECT session_id,payment_status,payment_method,payment_reference FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 ORDER BY session_id", [f.sessionIds, f.student.id])).rows;
+    check(`${label} preserves original purchased seats, held allocation and sole original receipt`, originalReceipts.length === 1 && JSON.stringify(originalReceipts[0].receipt) === JSON.stringify(receiptBefore) && JSON.stringify(originalSeatsAfter) === JSON.stringify(originalSeatsBefore) && (await ledger(f)).to_state === "replacement_pending");
+    if (kind === "batch") {
+      check(`${label} records only one additional batch booking/payment for the separately purchased class`, Number((await q("SELECT count(*) AS n FROM batch_test_bookings b JOIN batch_test_payments p ON p.booking_id=b.id WHERE b.batch_id=$1 AND b.student_id=$2", [other.batchId, f.student.id])).rows[0].n) === 1);
+    }
+  }
+  for (const kind of ["ordinary", "batch"]) {
+    await assertBookingAndAcceptanceLockOrder(kind, false);
+    await assertBookingAndAcceptanceLockOrder(kind, true);
+  }
+
+  // Older student accounts sort before the teacher in request's closure guard.
+  // Reproduce that order against an actual second-batch checkout from the SAME
+  // teacher: request owns student UPDATE and waits at teacher; checkout must wait
+  // at student advisory rather than holding teacher SHARE and waiting on student.
+  const requesting = await fixture({ studentFirst: true });
+  assert.ok(requesting.student.id < requesting.teacher.id);
+  await readyBookingAccount(requesting.student);
+  await readyBookingAccount(requesting.teacher, true);
+  const laterBatch = await fixture({ count: 1, teacherAccount: requesting.teacher, at: Date.now() + 15 * DAY });
+  const laterQuote = await api(`/batch-tests/${laterBatch.batchId}`, requesting.student.token);
+  assert.equal(laterQuote.status, 200, JSON.stringify(laterQuote));
+  const requestReceiptBefore = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [requesting.bookingId])).rows[0].receipt;
+  const requestSeatsBefore = (await q("SELECT session_id,payment_status FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 ORDER BY session_id", [requesting.sessionIds, requesting.student.id])).rows;
+  const requestOwner = await connect(); let requestPending; let batchPending; let requestSettled; let batchSettled;
+  try {
+    await requestOwner.query("BEGIN");
+    await requestOwner.query("SET LOCAL statement_timeout='10s'");
+    const ownerPid = (await requestOwner.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+    await requestOwner.query("SELECT id FROM users WHERE id=$1 FOR SHARE", [requesting.teacher.id]);
+    requestPending = request(requesting).then(response => ({ response }), error => ({ error }));
+    const requestPid = await waitForBookingStudentLock(ownerPid, requesting.student.id, "Older-student make-up request");
+    await assert.rejects(q("SELECT id FROM users WHERE id=$1 FOR KEY SHARE NOWAIT", [requesting.student.id]), error => error.code === "55P03");
+    check("older-student request has reached sorted student UPDATE before the fixture-held teacher row", true);
+    batchPending = api(`/batch-tests/${laterBatch.batchId}`, requesting.student.token, { quoteKey: laterQuote.body.quoteKey, gateway: "fadko_test", outcome: "success" })
+      .then(response => ({ response }), error => ({ error }));
+    await waitForAcceptanceStudentLock(requestPid, requesting.student.id, "Same-teacher batch versus older-student request");
+    check("same-teacher batch waits before user locks when older-student request owns student advisory", true);
+    await requestOwner.query("COMMIT");
+  } finally {
+    try { await requestOwner.query("ROLLBACK"); } finally { requestOwner.release(); }
+    [requestSettled, batchSettled] = await Promise.all([requestPending ?? Promise.resolve(null), batchPending ?? Promise.resolve(null)]);
+  }
+  if (requestSettled?.error) throw requestSettled.error;
+  if (batchSettled?.error) throw batchSettled.error;
+  check("concurrent older-student request and same-teacher batch checkout both commit without deadlock", requestSettled?.response.status === 200 && batchSettled?.response.status === 200 && Number((await q("SELECT count(*) AS n FROM batch_test_bookings b JOIN batch_test_payments p ON p.booking_id=b.id WHERE b.batch_id=$1 AND b.student_id=$2", [laterBatch.batchId, requesting.student.id])).rows[0].n) === 1);
+  const requestReceiptAfter = (await q("SELECT receipt FROM batch_test_payments WHERE booking_id=$1", [requesting.bookingId])).rows;
+  const requestSeatsAfter = (await q("SELECT session_id,payment_status FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 ORDER BY session_id", [requesting.sessionIds, requesting.student.id])).rows;
+  check("cross-batch request concurrency preserves the original payment, purchased seats and held allocation", requestReceiptAfter.length === 1 && JSON.stringify(requestReceiptAfter[0].receipt) === JSON.stringify(requestReceiptBefore) && JSON.stringify(requestSeatsAfter) === JSON.stringify(requestSeatsBefore) && (await ledger(requesting)).to_state === "replacement_pending");
+
+
   // A booking's first read is not a promise that remains true while it waits for
   // the target row. Hold an uncommitted teacher edit, prove that exact blocking
   // relationship, then let the booking see the committed interval/quote under lock.

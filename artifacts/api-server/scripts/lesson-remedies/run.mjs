@@ -62,9 +62,10 @@ function receipt(bookingId, positions) {
     actualMoneyCollectedNpr: 0, actualMoneyPaidOutNpr: 0,
     allocations: positions.map((position) => ({ position, grossNpr: 1000, teacherNpr: 700, fadkoNpr: 300, state: "held" })) };
 }
-async function fixture({ monthly = true, count = 3, positions = null, at = Date.now() + 2 * DAY, paymentStatus = "test" } = {}) {
+async function fixture({ monthly = true, count = 3, positions = null, at = Date.now() + 2 * DAY, paymentStatus = "test", studentFirst = false, teacherAccount = null } = {}) {
   assert.equal(paymentStatus, "test", "Mapped practice classes must use their real test-access enrollment contract.");
-  const teacher = await account("teacher"); const student = await account("student");
+  const earlierStudent = studentFirst ? await account("student") : null;
+  const teacher = teacherAccount ?? await account("teacher"); const student = earlierStudent ?? await account("student");
   const program = (await q("INSERT INTO learning_programs(teacher_id,type,title,status) VALUES($1,'structured','Synthetic make-up course','published') RETURNING id", [teacher.id])).rows[0].id;
   const batchId = (await q("INSERT INTO learning_program_batches(program_id,status,capacity,total_tuition_npr,version) VALUES($1,'published',10,$2,1) RETURNING id", [program, count * 1000])).rows[0].id;
   const lessons = Array.from({ length: count }, (_, position) => ({ position, startsAt: new Date(at + position * 2 * DAY).toISOString(), durationMinutes: duration }));

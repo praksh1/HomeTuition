@@ -84,3 +84,35 @@ test("database harness rejects shared URLs before fixture queries and only uses 
   assert.match(harness, /fadko_makeup_test/); assert.match(harness, /VIDEO_PROVIDER: "echo"/);
   assert.match(harness, /LIVEKIT_API_KEY: ""/); assert.match(harness, /RESEND_API_KEY: ""/);
 });
+
+test("acceptance serializes student bookings before participant account UPDATE locks", () => {
+  const source = readFileSync(new URL("./lessonRemedyStore.ts", import.meta.url), "utf8");
+  const accept = source.slice(source.indexOf("export async function acceptLessonMakeup"), source.indexOf("export async function actOnLessonMakeup"));
+  const teacher = accept.indexOf("await lockTeacherSchedule(tx, p.teacherId)");
+  const student = accept.indexOf("SELECT pg_advisory_xact_lock(838210,");
+  const users = accept.indexOf("await openAccounts(tx, p)");
+  const overlap = accept.indexOf("const otherLessons =");
+  assert.ok(teacher >= 0 && teacher < student && student < users && users < overlap);
+  assert.equal((accept.match(/SELECT pg_advisory_xact_lock\(838210,/g) ?? []).length, 1);
+});
+
+test("batch registration serializes student bookings before eligibility account locks", () => {
+  const source = readFileSync(new URL("../routes/batchTesting.ts", import.meta.url), "utf8");
+  const run = source.slice(source.indexOf("async function run("), source.indexOf('router.all("/batch-tests/:id"'));
+  const teacher = run.indexOf("await lockTeacherSchedule(tx, initial.program.teacherId)");
+  const student = run.indexOf("SELECT pg_advisory_xact_lock(838210,");
+  const users = run.indexOf("await eligibility(tx, program.teacherId, viewerId)");
+  const overlap = run.indexOf("const otherLessons =");
+  assert.ok(teacher >= 0 && teacher < student && student < users && users < overlap);
+  assert.match(run, /if \(!isTeacher\) await tx\.execute/);
+  assert.equal((run.match(/SELECT pg_advisory_xact_lock\(838210,/g) ?? []).length, 1);
+});
+
+test("request serializes cross-booking user locks after its original payment lock", () => {
+  const source = readFileSync(new URL("./lessonRemedyStore.ts", import.meta.url), "utf8");
+  const request = source.slice(source.indexOf("export async function requestLessonMakeup"), source.indexOf("async function withCase"));
+  const payment = request.indexOf("await lockPurchase(tx, preliminary.bookingId)");
+  const student = request.indexOf("SELECT pg_advisory_xact_lock(838210,");
+  const users = request.indexOf("await openAccounts(tx, p)");
+  assert.ok(payment >= 0 && payment < student && student < users);
+});
