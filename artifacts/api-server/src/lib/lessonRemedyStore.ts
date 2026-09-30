@@ -241,6 +241,9 @@ export async function offerLessonMakeup(actor: RemedyActor, caseId: number,
     const requestFingerprint = fingerprint({ startsAt: input.startsAt, confirmTeacherNonDelivery: input.confirmTeacherNonDelivery === true });
     if (await replay(tx, c, actor, "offer", input.requestKey, requestFingerprint)) return { ...result(c), batchId: p.batchId, changed: false };
     requireOpenEnrollment(p);
+    // Ordinary bookings/creation take this advisory before user-row closure guards. Match
+    // that order so a make-up never holds a user UPDATE while waiting on their schedule lock.
+    await lockTeacherSchedule(tx, p.teacherId);
     await openAccounts(tx, p);
     const [acceptedPreviously] = await tx.select({ id: lessonRemedyOffersTable.id }).from(lessonRemedyOffersTable)
       .where(and(eq(lessonRemedyOffersTable.caseId, c.id), sql`${lessonRemedyOffersTable.acceptedAt} IS NOT NULL`)).limit(1);
@@ -283,6 +286,7 @@ export async function acceptLessonMakeup(actor: RemedyActor, caseId: number, inp
       return { ...result(c, offer.replacementSessionId), batchId: p.batchId, changed: false };
     }
     requireOpenEnrollment(p);
+    await lockTeacherSchedule(tx, p.teacherId);
     await openAccounts(tx, p);
     const terms = await bookingPolicy(tx, p);
     const decision = assessRemedyAcceptance({ status: c.status as LessonRemedyStatus, offerStatus: offer.status as "proposed",

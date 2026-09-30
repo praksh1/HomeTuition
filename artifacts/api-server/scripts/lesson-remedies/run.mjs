@@ -24,7 +24,7 @@ let port = Number(process.env.MAKEUP_TEST_PORT ?? 8126); let child; let log = ""
 const check = (name, value) => { assert.ok(value, name); passed++; console.log(`PASS ${name}`); };
 const key = () => randomUUID();
 async function api(route, token, body, method = body === undefined ? "GET" : "POST") {
-  const res = await fetch(`http://127.0.0.1:${port}/api${route}`, { method, headers: { "Content-Type": "application/json", "X-Fadko-Platform": "web", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const res = await fetch(`http://127.0.0.1:${port}/api${route}`, { method, signal: AbortSignal.timeout(30000), headers: { "Content-Type": "application/json", "X-Fadko-Platform": "web", ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 async function start(flag = "1", enforceOperators = false) {
@@ -63,6 +63,7 @@ function receipt(bookingId, positions) {
     allocations: positions.map((position) => ({ position, grossNpr: 1000, teacherNpr: 700, fadkoNpr: 300, state: "held" })) };
 }
 async function fixture({ monthly = true, count = 3, positions = null, at = Date.now() + 2 * DAY, paymentStatus = "test" } = {}) {
+  assert.equal(paymentStatus, "test", "Mapped practice classes must use their real test-access enrollment contract.");
   const teacher = await account("teacher"); const student = await account("student");
   const program = (await q("INSERT INTO learning_programs(teacher_id,type,title,status) VALUES($1,'structured','Synthetic make-up course','published') RETURNING id", [teacher.id])).rows[0].id;
   const batchId = (await q("INSERT INTO learning_program_batches(program_id,status,capacity,total_tuition_npr,version) VALUES($1,'published',10,$2,1) RETURNING id", [program, count * 1000])).rows[0].id;
@@ -83,7 +84,7 @@ async function fixture({ monthly = true, count = 3, positions = null, at = Date.
       [teacher.id, `Synthetic lesson ${l.position + 1}`, l.startsAt, duration, selected.includes(l.position) ? 1 : 0])).rows[0].id;
     sessionIds.push(sid); await q("INSERT INTO batch_test_sessions(batch_id,position,session_id) VALUES($1,$2,$3)", [batchId, l.position, sid]);
     await q("INSERT INTO test_classes(session_id,teacher_id,grant_id) VALUES($1,$2,$3)", [sid, teacher.id, tg]);
-    if (selected.includes(l.position)) await q("INSERT INTO session_enrollments(session_id,student_id,payment_status,payment_method) VALUES($1,$2,$3,'synthetic_fixture')", [sid, student.id, paymentStatus]);
+    if (selected.includes(l.position)) await q("INSERT INTO session_enrollments(session_id,student_id,payment_status,payment_method) VALUES($1,$2,$3,'test_access')", [sid, student.id, paymentStatus]);
   }
   return { teacher, student, batchId, bookingId, sessionIds, snapshot };
 }
@@ -194,7 +195,7 @@ try {
   check("participant DTO never contains private contacts, identity or operator notes", !/password|@example|dateOfBirth|citizenship|evidenceReviewed|Synthetic operator/.test(JSON.stringify(privateView)));
   const closure = await fixture(); await q("INSERT INTO account_closure_requests(user_id,status,requested_at,closed_at) VALUES($1,'closed',now(),now()) ON CONFLICT(user_id) DO UPDATE SET status='closed',closed_at=now()", [closure.student.id]);
   check("closure winning account row blocks newly created commitments", (await request(closure)).status >= 400);
-  await runFinanceChecks({ api, q, check, fixture, request, offer, accept, resolve, operator, outsider, acceptedPastFixture, DAY, HOUR });
+  await runFinanceChecks({ api, q, connect: () => pool.connect(), check, fixture, request, offer, accept, resolve, operator, outsider, acceptedPastFixture, DAY, HOUR });
   await stop(); port++; await start("0");
   const disabled = await list(f);
   check("new-write kill switch makes future user requests fail closed", !disabled.enabled && (await request(f, 2)).status === 503);

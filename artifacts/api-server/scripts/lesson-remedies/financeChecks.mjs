@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
 /** Runs only inside run.mjs's explicitly local disposable PostgreSQL fixture. */
-export async function runFinanceChecks({ api, q, check, fixture, request, offer, accept, resolve, operator, outsider, acceptedPastFixture, DAY, HOUR }) {
+export async function runFinanceChecks({ api, q, connect, check, fixture, request, offer, accept, resolve, operator, outsider, acceptedPastFixture, DAY, HOUR }) {
   const ownReceipt = (response, f) => response.body?.receipts?.find((r) => r.bookingId === f.bookingId);
   const ledger = async (f, position = 0) => (await q("SELECT * FROM batch_test_ledger_entries WHERE booking_id=$1 AND position=$2 ORDER BY id DESC LIMIT 1", [f.bookingId, position])).rows[0];
   const f = await fixture();
@@ -12,6 +12,16 @@ export async function runFinanceChecks({ api, q, check, fixture, request, offer,
   const acceptedKey = randomUUID();
   const accepted = await accept(f, caseId, acceptedKey); assert.equal(accepted.status, 200, JSON.stringify(accepted));
   const replacementId = accepted.body.replacementSessionId;
+
+  await assert.rejects(q("UPDATE session_enrollments SET payment_status='refunded' WHERE session_id=$1 AND student_id=$2", [f.sessionIds[0], f.student.id]), /BATCH_TEST_BOOKING_REQUIRED/);
+  check("original seat cannot be revoked without its exact refund ledger decision", true);
+  await assert.rejects(q("UPDATE session_enrollments SET session_id=$1 WHERE session_id=$2 AND student_id=$3", [replacementId, f.sessionIds[0], f.student.id]), /BATCH_TEST_BOOKING_REQUIRED/);
+  check("mapped original seat cannot escape to an unmapped replacement identity", true);
+  const foreignStudent = (await q("INSERT INTO users(email,name,role,password_hash) VALUES($1,'Synthetic other booked student','student','synthetic-not-a-login') RETURNING id", [`${randomUUID()}@example.com`])).rows[0].id;
+  const foreignGrant = (await q("INSERT INTO test_student_grants(student_id,reason,valid_until) VALUES($1,'Disposable identity-guard fixture',$2) RETURNING id", [foreignStudent, new Date(Date.now() + 120 * DAY)])).rows[0].id;
+  await q("INSERT INTO batch_test_bookings(batch_id,student_id,student_grant_id,quote) VALUES($1,$2,$3,$4)", [f.batchId, foreignStudent, foreignGrant, JSON.stringify({ lessonPositions: [0] })]);
+  await assert.rejects(q("UPDATE session_enrollments SET student_id=$1 WHERE session_id=$2 AND student_id=$3", [foreignStudent, f.sessionIds[0], f.student.id]), /BATCH_TEST_BOOKING_REQUIRED/);
+  check("mapped original seat cannot transfer to a different already-booked student", true);
 
   const detail = await api(`/sessions/${replacementId}`, f.student.token);
   check("replacement detail links one original class and purchased lesson count", detail.status === 200 && detail.body.classGroup.makeup === true && detail.body.classGroup.batchId === f.batchId && detail.body.classGroup.originalSessionId === f.sessionIds[0] && detail.body.classGroup.lessonCount === f.sessionIds.length);
@@ -85,6 +95,8 @@ export async function runFinanceChecks({ api, q, check, fixture, request, offer,
   const refund = await api(`/admin/batch-test-payments/${f.bookingId}/allocations/0/events`, operator.token, { event: "refund_approved", note: "Synthetic documented human approval from original receipt." });
   assert.equal(refund.status, 200, JSON.stringify(refund));
   check("generic human refund revokes original and replacement seats together", (await q("SELECT 1 FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 AND payment_status IN ('paid','test')", [[f.sessionIds[0], replacementId], f.student.id])).rowCount === 0);
+  await assert.rejects(q("UPDATE session_enrollments SET payment_status='test' WHERE session_id=$1 AND student_id=$2", [f.sessionIds[0], f.student.id]), /BATCH_TEST_BOOKING_REQUIRED/);
+  check("refunded original seat cannot be resurrected by a later test-status write", true);
   const refundedAccess = await api(`/sessions/${replacementId}/access`, f.student.token);
   check("refund approval denies replacement access even though its price is zero", refundedAccess.status === 200 && !refundedAccess.body.isEnrolled && !refundedAccess.body.canJoin);
   const history = await api(`/class-groups/${f.batchId}/remedies`, f.student.token);
@@ -116,4 +128,39 @@ export async function runFinanceChecks({ api, q, check, fixture, request, offer,
   await q("INSERT INTO lesson_remedy_events(case_id,actor_id,actor_role,event,from_status,to_status,detail) VALUES($1,$2,'operator','resolve','review_required','review_required',$3)", [contextCaseId, operator.id, JSON.stringify({ note: "PRIVATE OPERATOR EVIDENCE MUST NOT LEAK" })]);
   const studentContext = await api(`/class-groups/${contextFixture.batchId}/remedies`, contextFixture.student.token);
   check("student receives teacher's clear reason but no operator's private evidence notes", studentContext.body.lessons.find((l) => l.case?.id === contextCaseId).case.teacherDecisionReason === teacherReason && !JSON.stringify(studentContext.body).includes("PRIVATE OPERATOR"));
+
+  // Reproduce the ordinary booking/create order deterministically. The owner holds the
+  // teacher advisory and then reads that user's row. A make-up may wait for the advisory,
+  // but cannot already hold the user UPDATE lock and create a cycle with that owner.
+  const lockingFixture = await fixture();
+  const lockingRequest = await request(lockingFixture); assert.equal(lockingRequest.status, 200, JSON.stringify(lockingRequest));
+  const lockingCase = lockingRequest.body.caseId;
+  async function assertTeacherLockPrecedesUsers(label, operation) {
+    const owner = await connect(); let pending; let settled;
+    try {
+      await owner.query("BEGIN");
+      await owner.query("SET LOCAL statement_timeout='5s'");
+      await owner.query("SELECT pg_advisory_xact_lock(838201,$1)", [lockingFixture.teacher.id]);
+      // Attach the rejection handler immediately so an HTTP timeout never becomes unhandled.
+      pending = operation().then(response => ({ response }), error => ({ error }));
+      let blocked = false;
+      for (let attempt = 0; attempt < 50; attempt++) {
+        blocked = (await q("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND classid=838201::oid AND objid=$1::oid AND NOT granted) AS waiting", [lockingFixture.teacher.id])).rows[0].waiting;
+        if (blocked) break;
+        await new Promise(resolveWait => setTimeout(resolveWait, 100));
+      }
+      assert.equal(blocked, true, `${label} must be waiting at its teacher schedule advisory`);
+      await owner.query("SET LOCAL lock_timeout='1s'");
+      await owner.query("SELECT id FROM users WHERE id=$1 FOR SHARE", [lockingFixture.teacher.id]);
+      check(`${label} cannot hold a teacher user lock while waiting for the teacher schedule lock`, true);
+    } finally {
+      try { await owner.query("ROLLBACK"); } finally { owner.release(); }
+      // HTTP has a 30s bound; release the advisory before waiting for its result.
+      if (pending) settled = await pending;
+    }
+    if (settled?.error) throw settled.error;
+    assert.equal(settled?.response.status, 200, JSON.stringify(settled?.response));
+  }
+  await assertTeacherLockPrecedesUsers("Make-up offer", () => offer(lockingFixture, lockingCase));
+  await assertTeacherLockPrecedesUsers("Make-up acceptance", () => accept(lockingFixture, lockingCase));
 }

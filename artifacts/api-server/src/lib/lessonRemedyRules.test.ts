@@ -36,6 +36,16 @@ test("private participant DTO cannot return raw case events or operator notes", 
   assert.doesNotMatch(view, /\b(passwordHash|email|phone|dateOfBirth|detail|events|operatorNote)\??:/);
   assert.match(view, /teacherNonDeliveryConfirmed: boolean/);
 });
+test("make-up offers and acceptance take the teacher schedule advisory before account-row closure locks", () => {
+  const source = readFileSync(new URL("./lessonRemedyStore.ts", import.meta.url), "utf8");
+  for (const [start, end] of [["export async function offerLessonMakeup", "export async function acceptLessonMakeup"],
+    ["export async function acceptLessonMakeup", "export async function actOnLessonMakeup"]]) {
+    const branch = source.slice(source.indexOf(start!), source.indexOf(end!));
+    const advisory = branch.indexOf("await lockTeacherSchedule(tx, p.teacherId)");
+    const accounts = branch.indexOf("await openAccounts(tx, p)");
+    assert.ok(advisory >= 0 && advisory < accounts, "teacher advisory must precede user FOR UPDATE");
+  }
+});
 test("database harness rejects shared URLs before fixture queries and only uses local synthetic service", () => {
   const harness = readFileSync(new URL("../../scripts/lesson-remedies/run.mjs", import.meta.url), "utf8");
   assert.ok(harness.indexOf("Remote/shared databases are forbidden") < harness.indexOf("const pool"));

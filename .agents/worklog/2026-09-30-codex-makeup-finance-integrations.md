@@ -24,7 +24,7 @@ Complete the approved make-up workflow without a second charge or earning, prese
 
 - API TypeScript check: passed.
 - API build: passed.
-- API unit suite: 868 passed after the independent stored-policy, acceptance replay and schema-readiness review patches.
+- API unit suite: 874 passed after stored-policy, acceptance replay, schema-readiness, enrollment trigger and lock-order review patches.
 - PostgreSQL harness files: JavaScript syntax checks passed. Real transactions have not yet been executed locally because this host has no PostgreSQL/container runtime; root owns the PostgreSQL 16 CI run.
 - Git diff whitespace check: passed.
 
@@ -35,3 +35,10 @@ No deployment, shared database mutation, migration, commit, purchase, actual pay
 ## Remaining
 
 Run actual PostgreSQL race/integration checks and fix any failures before activation. The real HTTP harness also checks an exact acceptance retry after refund returns its saved link without restoring either revoked seat. Root owns UI, PostgreSQL CI, Production promotion and activation.
+
+## First PostgreSQL CI diagnosis
+
+- Run 36744550519 passed dependency install, aggregate TypeScript, API/UI unit tests, design lint, fresh schema push and API build. Its first fixture failed with `BATCH_TEST_BOOKING_REQUIRED`: synthetic fixture enrollment used a method different from the real `test_access` contract.
+- The same existing trigger also prohibited real workflow revocation `test -> refunded`. Added a narrow exception only for unchanged original seat identity, retained `test_access`/null payment reference, and the latest exact original allocation ledger in `refund_owed`/`refunded`. New paid/refunded enrollment inserts remain forbidden.
+- Protected the mapped OLD identity so a seat cannot move to an unmapped session or another booked student, and a refunded seat cannot be resurrected. Added five focused SQL guard tests and real PostgreSQL negative assertions; the fixture now mirrors the real test enrollment method.
+- Independent backend review also fixed offer/accept's teacher-advisory-before-user-row lock order to match normal booking. Deterministic PostgreSQL tests hold that advisory while checking user-row availability for both operations, with bounded waits and rollback/release cleanup. Root must rerun PostgreSQL CI; no live database or deployment changes were made here.
