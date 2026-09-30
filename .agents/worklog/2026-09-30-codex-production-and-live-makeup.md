@@ -66,3 +66,10 @@ No billing plan, purchases, payment credentials, student identity requirement or
 ## Remaining risks / next pickup point
 
 Full downstream CI, narrow Production make-up variant validation, staged activation, live participant smoke and final release evidence remain. The regression fixes are live; make-ups are not enabled yet. Physical iOS/Android and two-device real media were not tested by the synthetic browser gates.
+
+## September 30 release checkpoint (supersedes earlier pending status)
+
+- Exact Preview source 9d0213109484651196a8783066025b791e1e9787 passed full CI 36768446002: API 888, app 634, isolated PostgreSQL make-ups 165 including financial-ticket/booking races and successful fixture visibility cleanup, programs 608, booking 151, video 43, proof 125, teacher access 26 and student access 111. All browser and actual-export route gates passed.
+- Only LESSON_REMEDIES_ENABLED=1 was enabled for Preview. Railway deployment 67a88e80-b80f-4835-b093-6bf626a335c7 is SUCCESS. Signed synthetic teacher/student history returned 200/enabled; participants cannot access the operator desk (403), and anonymous history is private (401). The three additive make-up tables are fully installed, dependencies ready; identity/closure-completion flags remain unset. Smoke checks created no live accounts, bookings, requests, tickets or payments.
+- Production full CI 36768420498 passed at fbfeae61ee1ad892b5bb5b701aff6eec306cb0e0, and Railway f6e19467-3b4b-4aa8-9065-7332318660ce is SUCCESS with the same read/privacy/catalog checks. Premium owner dashboard and private-ID boundaries were preserved.
+- Fresh target exports again passed 162 real-export routing assertions each. Independent final artifact review caught one stale operator make-up notification destination, now corrected to /(admin)/operator-makeups with direct regressions. Participant /makeups and original lesson context are unchanged. Frontend publication remains held for fresh corrected exports and the final source gate.

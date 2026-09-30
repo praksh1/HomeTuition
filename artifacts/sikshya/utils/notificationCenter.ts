@@ -69,7 +69,7 @@ export function notificationDestination(
   const programId = value(data, "programId");
   const conversationWith = value(data, "conversationWith");
   if (kind === "identity_status") return { pathname: "/identity-verification" };
-  if (kind === "makeup_update") return { pathname: role === "admin" ? "/(admin)/makeups" : "/makeups", params: { ...(batchId ? { id: batchId } : {}), ...(sessionId ? { sessionId } : {}) } };
+  if (kind === "makeup_update") return { pathname: role === "admin" ? "/(admin)/operator-makeups" : "/makeups", params: { ...(batchId ? { id: batchId } : {}), ...(sessionId ? { sessionId } : {}) } };
 
   if (batchId && kind === "class_quiz_published") return { pathname: "/class-quizzes", params: { id: batchId } };
 
