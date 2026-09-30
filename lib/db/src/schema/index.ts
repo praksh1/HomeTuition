@@ -39,6 +39,7 @@ export * from "./sessionProviderEvents";
 export * from "./sessionQualitySamples";
 export * from "./learningPrograms";
 export * from "./batchTesting";
+export * from "./lessonRemedies";
 export * from "./classGroups";
 export * from "./classQuizzes";
 export * from "./support";

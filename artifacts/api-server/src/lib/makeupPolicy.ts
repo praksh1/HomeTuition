@@ -28,7 +28,8 @@ export type MakeupOfferDecision =
       replacementDeadlineMs: number;
       needsStudentAcceptance: true;
       payoutHeldUntilDeliveryAndReview: true;
-      refundReviewPreserved: boolean;
+      /** Review remains available; this is not a promise that a student no-show earns a refund. */
+      refundReviewPreserved: true;
     };
 
 const HOUR = 60 * 60 * 1000;
@@ -62,7 +63,7 @@ export function assessMakeupOffer(facts: MakeupOfferFacts): MakeupOfferDecision 
     replacementDeadlineMs: deadline,
     needsStudentAcceptance: true,
     payoutHeldUntilDeliveryAndReview: true,
-    refundReviewPreserved: facts.reason === "teacher_missed",
+    refundReviewPreserved: true,
   };
 }
 

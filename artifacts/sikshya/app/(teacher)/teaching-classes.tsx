@@ -175,7 +175,7 @@ export default function TeachingClasses() {
                   <Text style={[t.title3, { color: colors.foreground }]}>{group.title}</Text>
                   <Text style={[t.caption, { color: colors.mutedForeground }]}>
                     {group.items[0]!.batch.format === "ongoing"
-                      ? "Regular tuition · 30-day dates"
+                      ? "Monthly tuition program · 30-day period"
                       : "Short course"}
                   </Text>
                 </View>

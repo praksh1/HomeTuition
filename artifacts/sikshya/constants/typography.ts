@@ -1,4 +1,5 @@
 import { Platform, type TextStyle } from "react-native";
+import { interfaceFontFamily, type InterfaceFontWeight } from "./fontFamilies";
 
 /**
  * The Fadko type scale.
@@ -30,14 +31,7 @@ import { Platform, type TextStyle } from "react-native";
  * already converted, which is why they look small.
  */
 
-type Weight = "regular" | "medium" | "semibold" | "bold";
-
-const INTER: Record<Weight, string> = {
-  regular: "Inter_400Regular",
-  medium: "Inter_500Medium",
-  semibold: "Inter_600SemiBold",
-  bold: "Inter_700Bold",
-};
+type Weight = InterfaceFontWeight;
 
 /**
  * The font family string for a weight, with a Devanagari fallback where the platform supports
@@ -48,9 +42,7 @@ const INTER: Record<Weight, string> = {
  * renders the system default. Hence the platform split.
  */
 export function family(weight: Weight = "regular"): string {
-  const inter = INTER[weight];
-  if (Platform.OS !== "web") return inter;
-  return `${inter}, "Noto Sans Devanagari", "Mangal", ui-sans-serif, system-ui, sans-serif`;
+  return interfaceFontFamily(weight, Platform.OS);
 }
 
 export interface TypeStep {
@@ -105,7 +97,7 @@ function buildScale(mult: number) {
   };
 }
 
-/** The phone-sized scale. Use `useType()` from `hooks/useLayout` to get the responsive one. */
+/** The phone-sized scale. Use `useLayout().t` to get the responsive one. */
 export const type = buildScale(1);
 
 export type TypeScale = ReturnType<typeof buildScale>;

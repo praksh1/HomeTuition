@@ -227,7 +227,7 @@ router.post("/teaching-classes", requireAuth, requireReadyAccount, async (req, r
       .status(422)
       .json({
         error:
-          "Choose regular tuition or a short course, then try saving again.",
+          "Choose a monthly tuition program or a short course, then try saving again.",
       });
     return;
   }

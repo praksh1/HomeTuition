@@ -23,6 +23,7 @@ import {
   radius,
   space,
 } from "@/constants/layout";
+import { family, numeric } from "@/constants/typography";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 
@@ -215,11 +216,11 @@ export function FloatingTabBar({ state, descriptors, navigation }: FloatingTabBa
                       {icon}
                       {badge !== undefined && badge !== null ? (
                         <View style={[styles.badge, { backgroundColor: colors.brand, borderColor: colors.card }]}>
-                          <Text style={[t.caption, styles.badgeText, { color: colors.onInverse }]}>{String(badge)}</Text>
+                          <Text style={[t.caption, numeric, styles.badgeText, { color: colors.onInverse }]}>{String(badge)}</Text>
                         </View>
                       ) : null}
                     </View>
-                    <Text numberOfLines={1} style={[isExpanded ? t.bodyStrong : t.caption, styles.label, isExpanded && styles.desktopLabel, { color: focused ? colors.primary : colors.mutedForeground, fontWeight: focused ? "700" : "500" }]}>
+                    <Text numberOfLines={1} style={[isExpanded ? t.bodyStrong : t.caption, styles.label, isExpanded && styles.desktopLabel, { color: focused ? colors.primary : colors.mutedForeground, fontFamily: family(focused ? "bold" : "medium") }]}>
                       {label}
                     </Text>
                   </Pressable>
@@ -250,5 +251,5 @@ const styles = StyleSheet.create({
   label: { maxWidth: "100%", textAlign: "center" },
   desktopLabel: { flex: 1, textAlign: "left" },
   badge: { position: "absolute", top: -7, right: -8, minWidth: 18, height: 18, alignItems: "center", justifyContent: "center", paddingHorizontal: 3, borderRadius: radius.pill, borderWidth: 2 },
-  badgeText: { lineHeight: 11, fontWeight: "700", transform: [{ scale: 0.82 }] },
+  badgeText: { lineHeight: 11, fontFamily: family("bold"), transform: [{ scale: 0.82 }] },
 });

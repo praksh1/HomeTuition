@@ -13,6 +13,24 @@ const base = {
   nowMs: 1_000_000,
 };
 
+test("a requested, offered or unresolved make-up holds the original allocation", () => {
+  for (const status of ["requested", "offered", "accepted", "review_required"] as const) {
+    assert.deepEqual(automaticBatchTestEvents({ ...base, sessionStatus: "completed", teacherPresenceRecorded: true,
+      nowMs: base.scheduledStartMs + 60 * HOUR, evidenceSessionId: 91,
+      remedy: { status, originalSessionId: 17, acceptedReplacementSessionId: 91 } }), []);
+  }
+});
+
+test("only confirmed replacement delivery uses replacement evidence and its fresh review clock", () => {
+  const facts = { ...base, sessionStatus: "completed", teacherPresenceRecorded: true,
+    remedy: { status: "delivered_review" as const, originalSessionId: 17, acceptedReplacementSessionId: 91 } };
+  assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 17 }), []);
+  assert.deepEqual(automaticBatchTestEvents(facts), []); // Missing target identity is not a fallback.
+  assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 91 }), ["lesson_delivered"]);
+  assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 91, nowMs: base.scheduledStartMs + 49 * HOUR }), ["lesson_delivered", "complaint_window_closed"]);
+  assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 91, activeComplaint: true }), ["lesson_delivered", "complaint_opened"]);
+});
+
 test("a teacher or operator cannot manufacture delivery from a completed label alone", () => {
   assert.deepEqual(automaticBatchTestEvents({ ...base, sessionStatus: "completed" }), []);
 });

@@ -8,6 +8,7 @@ import { FadkoLogo } from "@/components/FadkoLogo";
 import { ProfileOverflowMenu, type ProfileMenuItem } from "@/components/profile/ProfileOverflowMenu";
 import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { HIT_SLOP_MIN, radius, space } from "@/constants/layout";
+import { family } from "@/constants/typography";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
@@ -183,7 +184,7 @@ export function AppShellHeader({ role, routeName }: { role: ShellRole; routeName
               onPress={() => go(profilePath)}
               style={({ pressed }) => [styles.avatar, { backgroundColor: colors.actionSoft, borderColor: colors.border }, pressed && styles.pressed]}
             >
-              <Text style={[t.caption, { color: colors.primary, fontWeight: "700" }]}>{initials}</Text>
+              <Text style={[t.caption, { color: colors.primary, fontFamily: family("bold") }]}>{initials}</Text>
               <ProfilePhoto uri={user && "avatarUrl" in user ? user.avatarUrl : undefined} userId={user?.userId} self />
             </Pressable>
           </>

@@ -632,13 +632,13 @@ export default function ClassSetup() {
                   How will this class run?
                 </Text>
                 <ProgramButton
-                  label="Regular tuition · every 30 days"
+                  label="Monthly tuition program"
                   emphasis={form.format === "ongoing" ? "secondary" : "quiet"}
                   disabled={locked}
                   onPress={() => setForm({ ...form, format: "ongoing" })}
                 />
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>
-                  For a continuing Maths, Science or language group.
+                  A continuing group, paid in 30-day periods. Set the exact lessons for each period.
                 </Text>
                 <ProgramButton
                   label="Short course · a set finish"
@@ -907,7 +907,7 @@ export default function ClassSetup() {
                     emphasis={lateChoiceMade && form.allowLateJoining ? "secondary" : "quiet"}
                     onPress={() => { setLateChoiceMade(true); setForm({ ...form, allowLateJoining: true }); }} />
                   <Text style={[t.callout, { color: colors.mutedForeground }]}>Late joiners pay only for lessons that have not started, if a seat is available. Everyone keeps the same end date. Past lessons and individual catch-up teaching are not included.</Text>
-                </> : <Text style={[t.callout, { color: colors.mutedForeground }]}>One-off lessons and short courses currently require joining before the first lesson. Regular tuition also offers late joining.</Text>}
+                </> : <Text style={[t.callout, { color: colors.mutedForeground }]}>One-off lessons and short courses currently require joining before the first lesson. Monthly tuition programs also offer late joining.</Text>}
               </ProgramCardShell>
             <ProgramNotice
               title="Review your class next"
@@ -935,7 +935,7 @@ export default function ClassSetup() {
               {form.format === "ongoing" && form.lessons.length === 1 ? <ProgramNotice tone="waiting" title="Only 1 lesson in these 30 days" body="The full price buys that single lesson. Check your timetable before publishing." /> : null}
               <Text style={[t.callout, { color: colors.foreground }]}>
                 {form.lessons.length} lessons · up to {form.capacity} students ·{" "}
-                {form.format === "ongoing" ? "Regular tuition" : "Short course"}
+                {form.format === "ongoing" ? "Monthly tuition program" : "Short course"}
               </Text>
               {period ? (
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>

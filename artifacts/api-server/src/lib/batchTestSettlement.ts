@@ -3,6 +3,7 @@ import {
   type ProgramAllocationEvent,
   type ProgramAllocationState,
 } from "./programCommerce.ts";
+import { remedySettlementTarget, type RemedyFulfillment } from "./lessonRemedies.ts";
 
 export interface BatchTestSettlementFacts {
   state: ProgramAllocationState;
@@ -13,6 +14,9 @@ export interface BatchTestSettlementFacts {
   teacherPresenceRecorded: boolean;
   activeComplaint: boolean;
   nowMs: number;
+  /** Supplied by the allocation-aware store once durable remedies are activated. */
+  remedy?: RemedyFulfillment;
+  evidenceSessionId?: number;
 }
 
 /**
@@ -20,6 +24,13 @@ export interface BatchTestSettlementFacts {
  * invent. This chooses no complaint outcome and confirms no transfer of money.
  */
 export function automaticBatchTestEvents(facts: BatchTestSettlementFacts): ProgramAllocationEvent[] {
+  if (facts.remedy) {
+    const target = remedySettlementTarget(facts.remedy);
+    // The original lesson cannot satisfy a replacement. A completed label plus a brief
+    // teacher join is not enough to confirm make-up delivery: that is a separate evidence
+    // review transition, never a consequence of this accounting synchronizer.
+    if (target.hold || target.sessionId !== facts.evidenceSessionId || facts.remedy.status !== "delivered_review") return [];
+  }
   const events: ProgramAllocationEvent[] = [];
   let state = facts.state;
 
