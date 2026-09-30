@@ -21,3 +21,12 @@ export function remedyNote(value: unknown, required = false): string {
 export function remedyRequestFingerprint(input: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
+
+/** Lifecycle only: callers must still apply purchase, account, claim, quota and financial-review gates. */
+export function canOpenLessonRemedyRequest(record: {
+  status: string; outcome: string | null; acceptedEver: boolean;
+} | null): boolean {
+  return record === null || (record.acceptedEver === false
+    && ["withdrawn", "review_required"].includes(record.status)
+    && record.outcome !== "refund_review");
+}

@@ -1,7 +1,39 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { RemedyRefusal, validRemedyRequestKey, remedyNote, remedyRequestFingerprint } from "./lessonRemedyRules.ts";
+import { RemedyRefusal, validRemedyRequestKey, remedyNote, remedyRequestFingerprint, canOpenLessonRemedyRequest } from "./lessonRemedyRules.ts";
+
+test("only withdrawn or unaccepted review-required cases can re-request, never an accepted replacement or refund review", () => {
+  assert.equal(canOpenLessonRemedyRequest(null), true);
+  for (const status of ["requested", "offered", "accepted", "delivered_review", "review_required", "withdrawn", "resolved", "unknown"]) {
+    for (const acceptedEver of [true, false]) {
+      for (const outcome of [null, "refund_review", "teacher_no_show", "student_no_show"]) {
+        assert.equal(canOpenLessonRemedyRequest({ status, outcome, acceptedEver }),
+          !acceptedEver && ["withdrawn", "review_required"].includes(status) && outcome !== "refund_review");
+      }
+    }
+  }
+  assert.equal(canOpenLessonRemedyRequest({ status: "withdrawn", outcome: null } as never), false);
+});
+
+test("DTO re-request uses the same lifecycle guard and still assesses current purchase and financial/account restrictions", () => {
+  const source = readFileSync(new URL("./lessonRemedyStore.ts", import.meta.url), "utf8");
+  const write = source.slice(source.indexOf("export async function requestLessonMakeup"), source.indexOf("export async function offerLessonMakeup"));
+  const read = source.slice(source.indexOf("export async function listLessonRemedies"));
+  assert.match(write, /canOpenLessonRemedyRequest\(\{ status: existing\.status, outcome: existing\.outcome, acceptedEver: !!accepted \}\)/);
+  assert.match(read, /status: currentCase!\.status, outcome: c\.outcome/);
+  assert.match(read, /offer\.caseId === c\.id && offer\.acceptedAt !== null/);
+  assert.match(read, /if \(!requestLifecycleOpen\)/);
+  assert.match(read, /assessRemedyRequest\(facts\)/);
+  assert.match(read, /assessRemedyRequest\(\{ \.\.\.facts, reason: "teacher_missed" \}\)/);
+  assert.match(read, /hasFinancialReview\(p\)/);
+  assert.match(read, /!openAccountIds\.has\(p\.studentId\) \|\| !openAccountIds\.has\(p\.teacherId\)/);
+  assert.match(read, /p\.paymentStatus === "refunded"/);
+  assert.match(read, /if \(!writeEnabled\)/);
+  assert.match(write, /await openAccounts\(tx, p\)/);
+  assert.match(write, /await activeRefundReview\(tx, p\)/);
+  assert.match(write, /const decision = assessRemedyRequest\(facts\)/);
+});
 
 test("remedy action keys are bounded and cannot become path/query or SQL text", () => {
   for (const key of ["12345678", "a".repeat(100), "case_1-withdraw_2"]) assert.equal(validRemedyRequestKey(key), true);

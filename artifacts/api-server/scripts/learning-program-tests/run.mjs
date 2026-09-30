@@ -1779,8 +1779,12 @@ async function simpleClasses() {
   check("conflict leaves batch draft", (await read(overlap.batch.id)).body.item.batch.status === "draft");
   const unapproved = (await create(body, pending.token)).body.item;
   check("existing account approval gate preserved", (await publish(unapproved, pending.token)).status === 403);
+  // Snapshot the authorized request body before suspension: a suspended account
+  // cannot read the private editor merely to prepare its expected refusal probe.
+  const beforeSuspension = (await read(id)).body.item;
   sql(`update users set suspended_at=now() where id=${teacher.user.id}`);
-  check("suspended teacher cannot publish", (await publish((await read(id)).body.item)).status === 403);
+  check("suspended teacher cannot read private class", (await read(id)).status === 403);
+  check("suspended teacher cannot publish", (await publish(beforeSuspension)).status === 403);
   check("suspended listing hidden publicly", (await api(`/programs/${pid}`)).status === 404);
   sql(`update users set suspended_at=null where id=${teacher.user.id}`);
   check("student cannot use operator-only simulated enrolment", (await api(`/admin/program-commerce/programs/${pid}/test-enrolments`, { method: "POST", token: student.token, body: { studentId: student.user.id, totalTuitionNpr: 3000, paidLessonCount: 1 } })).status === 403);

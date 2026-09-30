@@ -12,6 +12,7 @@ const targets = {
 };
 const target = targets[process.argv[2]];
 assert(target, "Choose the explicit preview or production target.");
+assert([undefined, "--check-accounts"].includes(process.argv[3]), "Unknown smoke mode.");
 assert.equal(process.env.RAILWAY_SERVICE_ID, target.service, "Railway service does not match the release target.");
 assert(process.env.DATABASE_URL && process.env.SESSION_SECRET, "Release credentials are not configured.");
 const client = new Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 10000, query_timeout: 10000 });
@@ -23,6 +24,9 @@ try {
     ORDER BY role,id`);
   await client.query("ROLLBACK");
   assert.equal(rows.length, 2, "Both existing synthetic staging roles are needed for this smoke.");
+  if (process.argv[3] === "--check-accounts") {
+    console.log(JSON.stringify({ check: "synthetic-smoke-prerequisites", target: process.argv[2], rolesReady: rows.length }));
+  } else {
   for (const user of rows) {
     const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, process.env.SESSION_SECRET, { expiresIn: "2m" });
     const response = await fetch(`${target.origin}/api/lesson-remedies`, {
@@ -44,6 +48,7 @@ try {
   assert.equal(anonymous.status, 401, "Anonymous make-up history must remain private.");
   await anonymous.body?.cancel();
   console.log("PASS participant/operator separation and anonymous make-up privacy");
+  }
 } catch {
   console.error("Live make-up smoke failed. No user booking or payment action was attempted; inspect release/auth/schema.");
   process.exitCode = 1;

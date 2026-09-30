@@ -154,7 +154,20 @@ try {
   const quotaView = await list(quota); check("quota display and untouched lessons agree with server reservation", quotaView.quotas[0].used === 2 && quotaView.quotas[0].remaining === 0 && quotaView.lessons.filter((l) => !l.case).every((l) => !l.canRequest));
   const withdrawnCase = quotaRaces.find((r) => r.status === 200).body.caseId;
   check("withdraw releases pending courtesy reservation", (await api(`/lesson-remedies/${withdrawnCase}/withdraw`, quota.student.token, { requestKey: key() })).status === 200 && (await list(quota)).quotas[0].used === 1);
+  const withdrawnIndex = quotaRaces.findIndex((r) => r.body?.caseId === withdrawnCase);
+  check("eligible withdrawn original exposes the same re-request action", lessonForCase(await list(quota), withdrawnCase).canRequest);
+  const reopened = await request(quota, withdrawnIndex);
+  check("re-request reopens the same case and reserves its released quota slot", reopened.status === 200 && reopened.body.caseId === withdrawnCase && (await list(quota)).quotas[0].used === 2);
+  assert.equal((await api(`/lesson-remedies/${withdrawnCase}/withdraw`, quota.student.token, { requestKey: key() })).status, 200);
   const deniedIndex = quotaRaces.findIndex((r) => r.status !== 200); check("another original lesson can use the released slot", (await request(quota, deniedIndex)).status === 200);
+  check("withdrawn case cannot reopen when the allowance is now exhausted", !lessonForCase(await list(quota), withdrawnCase).canRequest && (await request(quota, withdrawnIndex)).status === 409);
+  const blockedReopen = await fixture(); const blockedRequest = await request(blockedReopen);
+  assert.equal(blockedRequest.status, 200);
+  assert.equal((await api(`/lesson-remedies/${blockedRequest.body.caseId}/withdraw`, blockedReopen.student.token, { requestKey: key() })).status, 200);
+  await q("INSERT INTO disputes(user_id,session_id,reason,description) VALUES($1,$2,'Refund Request','Synthetic support review blocks reopened request')", [blockedReopen.student.id, blockedReopen.sessionIds[0]]);
+  check("active financial support hides and refuses a withdrawn re-request", !lessonForCase(await list(blockedReopen), blockedRequest.body.caseId).canRequest && (await request(blockedReopen)).status === 409);
+  const overdueRequest = await fixture({ at: Date.now() - 3 * DAY });
+  check("elapsed original claim window hides and refuses new requests", !(await list(overdueRequest)).lessons.find(l => l.originalSessionId === overdueRequest.sessionIds[0]).canRequest && (await request(overdueRequest)).status === 409);
   const short = await fixture({ monthly: false, count: 1 });
   check("one-lesson course has no student courtesy make-up", (await request(short)).status === 409 && (await list(short)).quotas[0].limit === 0);
   const teacherMissed = await request(short, 0, "teacher_missed"); assert.equal(teacherMissed.status, 200, JSON.stringify(teacherMissed));
@@ -171,6 +184,8 @@ try {
   await q("UPDATE lesson_remedy_offers SET created_at=now()-interval '2 hour',expires_at=now()-interval '1 hour' WHERE case_id=$1", [er.body.caseId]);
   check("expired offer is visibly unavailable and releases unaccepted reservation", lessonForCase(await list(expired), er.body.caseId).case.status === "review_required" && (await list(expired)).quotas[0].used === 0);
   check("expired acceptance refuses instead of creating seat", (await accept(expired, er.body.caseId)).status === 409);
+  const expiredReopen = await request(expired);
+  check("unaccepted review can re-request the same original without a replacement chain", expiredReopen.status === 200 && expiredReopen.body.caseId === er.body.caseId);
   check("teacher can propose a fresh time after expiry without replacement chain", (await offer(expired, er.body.caseId, Date.now() + 14 * DAY)).status === 200);
   const subset = await fixture({ positions: [1, 2] });
   check("late-join subset cannot request an unpurchased earlier lesson", (await request(subset, 0)).status === 404 && (await list(subset)).lessons.length === 2);
@@ -186,6 +201,7 @@ try {
   check("refund uses original NPR1000 allocation, not zero-price replacement", (await q("SELECT to_state,gross_npr FROM batch_test_ledger_entries WHERE booking_id=$1 AND position=0 ORDER BY id DESC LIMIT 1", [race.bookingId])).rows[0].gross_npr === 1000 && (await q("SELECT to_state FROM batch_test_ledger_entries WHERE booking_id=$1 AND position=0 ORDER BY id DESC LIMIT 1", [race.bookingId])).rows[0].to_state === "refund_owed");
   const refundedOriginal = lessonForCase(await list(race), rr.body.caseId);
   check("refunded original remains in private make-up history without new actions", refundedOriginal.case.status === "resolved" && !refundedOriginal.canRequest);
+  check("refunded original cannot restart a make-up request", (await request(race)).status === 404);
   const delivery = await fixture({ at: Date.now() - 5 * DAY }); const delivered = await acceptedPastFixture(delivery);
   check("Completed label alone does not permit confirmation", (await resolve(operator, delivered.caseId, "replacement_delivered")).status === 409);
   await q("INSERT INTO session_activity(session_id,ended_at) VALUES($1,$2)", [delivered.replacementId, new Date(delivered.replacementAt + duration * 60000)]);
@@ -197,6 +213,7 @@ try {
   const failed = await fixture({ at: Date.now() - 5 * DAY }); const failedReplacement = await acceptedPastFixture(failed);
   check("missed replacement goes to human review, not automatic refund", (await resolve(operator, failedReplacement.caseId, "student_missed_replacement")).status === 200 && lessonForCase(await list(failed), failedReplacement.caseId).case.status === "review_required" && (await list(failed)).quotas[0].used === 1);
   check("teacher-failed replacement releases courtesy but keeps original review/hold", (await resolve(operator, failedReplacement.caseId, "teacher_missed_replacement")).status === 200 && (await list(failed)).quotas[0].used === 0 && lessonForCase(await list(failed), failedReplacement.caseId).case.status === "review_required");
+  check("accepted-ever review cannot reopen an original for a second replacement", !lessonForCase(await list(failed), failedReplacement.caseId).canRequest && (await request(failed)).status === 409);
   const privateView = await list(delivery, delivery.teacher);
   check("participant DTO never contains private contacts, identity or operator notes", !/password|@example|dateOfBirth|citizenship|evidenceReviewed|Synthetic operator/.test(JSON.stringify(privateView)));
   const closure = await fixture(); await q("INSERT INTO account_closure_requests(user_id,status,requested_at,closed_at) VALUES($1,'closed',now(),now()) ON CONFLICT(user_id) DO UPDATE SET status='closed',closed_at=now()", [closure.student.id]);

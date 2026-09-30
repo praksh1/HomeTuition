@@ -15,7 +15,7 @@ import { assertTeacherSchedule, lockTeacherSchedule } from "./teacherSchedule";
 import { accountClosureCompleted } from "./accountClosureStore";
 import { lessonRemediesEnabled, ensureLessonRemedySchema, lessonRemedySchemaReady } from "./lessonRemedySchema";
 import type { LessonRemedyListView, LessonRemedyCaseView, LessonRemedyLessonView } from "./lessonRemedyView";
-import { RemedyRefusal, validRemedyRequestKey, remedyNote, remedyRequestFingerprint as fingerprint } from "./lessonRemedyRules";
+import { RemedyRefusal, validRemedyRequestKey, remedyNote, remedyRequestFingerprint as fingerprint, canOpenLessonRemedyRequest } from "./lessonRemedyRules";
 import { lessonRemedyParticipantContext, type RemedyContextEvent } from "./lessonRemedyContext.ts";
 export { RemedyRefusal, validRemedyRequestKey, remedyNote } from "./lessonRemedyRules";
 
@@ -187,7 +187,7 @@ export async function requestLessonMakeup(actor: RemedyActor, sessionId: number,
     if (existing) {
       const [accepted] = await tx.select({ id: lessonRemedyOffersTable.id }).from(lessonRemedyOffersTable)
         .where(and(eq(lessonRemedyOffersTable.caseId, existing.id), sql`${lessonRemedyOffersTable.acceptedAt} IS NOT NULL`));
-      if (accepted || !["withdrawn", "review_required"].includes(existing.status) || existing.outcome === "refund_review") {
+      if (!canOpenLessonRemedyRequest({ status: existing.status, outcome: existing.outcome, acceptedEver: !!accepted })) {
         refuse("request_exists", "This lesson already has a make-up request. Open its existing record.");
       }
     }
@@ -507,6 +507,20 @@ export async function listLessonRemedies(actor: RemedyActor, batchId?: number): 
   const offers = cases.length ? await db.select().from(lessonRemedyOffersTable).where(inArray(lessonRemedyOffersTable.caseId, cases.map((c) => c.id))).orderBy(asc(lessonRemedyOffersTable.version)) : [];
   const history = bookingIds.length ? await db.select().from(batchTestLedgerEntriesTable).where(inArray(batchTestLedgerEntriesTable.bookingId, bookingIds)).orderBy(asc(batchTestLedgerEntriesTable.id)) : [];
   const studentIds = [...new Set(purchases.map((p) => p.studentId))];
+  // Bounded, read-only account projection; the write still rechecks and locks fresh account rows.
+  const participantIds = actor.role === "student"
+    ? [...new Set(purchases.flatMap((p) => [p.studentId, p.teacherId]))] : [];
+  const accounts = participantIds.length ? await db.select({ id: usersTable.id, suspendedAt: usersTable.suspendedAt })
+    .from(usersTable).where(inArray(usersTable.id, participantIds)) : [];
+  const openAccountIds = new Set(accounts.filter((account) => !account.suspendedAt).map((account) => account.id));
+  if (participantIds.length) {
+    const closureTable = await db.execute(sql`SELECT to_regclass('account_closure_requests') AS table_name`);
+    if (closureTable.rows[0]?.table_name) {
+      const closed = await db.execute(sql`SELECT user_id FROM account_closure_requests
+        WHERE status='closed' AND user_id IN (${sql.join(participantIds.map(id => sql`${id}`), sql`,`)})`);
+      for (const row of closed.rows) openAccountIds.delete(Number(row.user_id));
+    }
+  }
   const sessionIds = [...new Set([...purchases.map((p) => p.session.id),
     ...offers.flatMap((o) => o.acceptedAt && o.replacementSessionId ? [o.replacementSessionId] : [])])];
   const complaints = sessionIds.length ? await db.select({ studentId: disputesTable.userId, sessionId: disputesTable.sessionId }).from(disputesTable)
@@ -529,8 +543,13 @@ export async function listLessonRemedies(actor: RemedyActor, batchId?: number): 
         limit: terms.courtesyLimit, used: count, remaining: Math.max(0, terms.courtesyLimit - count), noRollover: true });
     }
     const q = quotas.get(p.bookingId)!; const c = cases.find((c) => c.originalBookingId === p.bookingId && c.originalPosition === p.position);
+    const currentCase = c ? caseView(c, offers, actor, now, context) : null;
     let canRequest = actor.role === "student"; let disallowedReason: string | undefined; let canReportTeacherMissed = canRequest;
-    if (c) { canRequest = false; canReportTeacherMissed = false; disallowedReason = "This lesson already has a make-up record. Open its details below."; }
+    const requestLifecycleOpen = canOpenLessonRemedyRequest(c ? {
+      status: currentCase!.status, outcome: c.outcome,
+      acceptedEver: offers.some((offer) => offer.caseId === c.id && offer.acceptedAt !== null),
+    } : null);
+    if (!requestLifecycleOpen) { canRequest = false; canReportTeacherMissed = false; disallowedReason = "This lesson already has a make-up record. Open its details below."; }
     else {
       const facts = { policy: terms, reason: "student_missed" as const, originalLessonPurchased: true, originalIsReplacement: false,
         originalScheduledStartMs: p.session.date.getTime(), originalScheduledEndMs: p.session.date.getTime() + p.session.duration * 60_000,
@@ -542,7 +561,10 @@ export async function listLessonRemedies(actor: RemedyActor, batchId?: number): 
       catch { canReportTeacherMissed = false; }
       if (hasFinancialReview(p)) { canRequest = false; canReportTeacherMissed = false; disallowedReason = "Continue through your existing Support review for this lesson."; }
     }
-    const currentCase = c ? caseView(c, offers, actor, now, context) : null;
+    if (actor.role === "student" && (!openAccountIds.has(p.studentId) || !openAccountIds.has(p.teacherId))) {
+      canRequest = false; canReportTeacherMissed = false;
+      disallowedReason = "A participant account cannot arrange this make-up right now. Contact Support for review.";
+    }
     const allocation = history.filter((entry) => entry.bookingId === p.bookingId && entry.position === p.position).at(-1)?.toState ?? "future";
     const financialReview = hasFinancialReview(p);
     if (currentCase && (!ALLOCATIONS_OPEN.includes(allocation) || financialReview)) {
