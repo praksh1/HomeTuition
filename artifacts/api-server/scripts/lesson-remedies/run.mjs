@@ -90,6 +90,11 @@ async function fixture({ monthly = true, count = 3, positions = null, at = Date.
 }
 const request = (f, i = 0, reason = "student_missed", requestKey = key()) => api(`/sessions/${f.sessionIds[i]}/makeup-request`, f.student.token, { reason, requestKey, note: "Synthetic request for the original purchased lesson." });
 async function list(f, who = f.student) { const r = await api(`/class-groups/${f.batchId}/remedies`, who.token); assert.equal(r.status, 200, JSON.stringify(r)); return r.body; }
+function lessonForCase(view, caseId) {
+  const lesson = view.lessons.find(row => row.case?.id === caseId);
+  assert.ok(lesson, `The private view must retain exact make-up case ${caseId}`);
+  return lesson;
+}
 async function offer(f, c, startsAt = Date.now() + 12 * DAY, extra = {}) {
   return api(`/lesson-remedies/${c}/offer`, f.teacher.token, { startsAt: new Date(startsAt).toISOString(), requestKey: key(), ...extra });
 }
@@ -134,7 +139,7 @@ try {
   check("another student cannot accept/withdraw someone else's case", (await api(`/lesson-remedies/${c}/withdraw`, outsider.token, { requestKey: key() })).status === 404);
   const offered = await offer(f, c); assert.equal(offered.status, 200, JSON.stringify(offered));
   check("student cannot propose teacher offer", (await api(`/lesson-remedies/${c}/offer`, f.student.token, { startsAt: new Date(Date.now() + 13 * DAY).toISOString(), requestKey: key() })).status === 403);
-  const offerRow = (await list(f)).lessons[0].case.offer;
+  const offerRow = lessonForCase(await list(f), c).case.offer;
   check("offer expiry is earlier of seven days and its start", Date.parse(offerRow.expiresAt) <= Date.now() + 7 * DAY && Date.parse(offerRow.expiresAt) <= Date.parse(offerRow.startsAt));
   const racingKey = key(); const acceptRace = await Promise.all(Array.from({ length: 9 }, () => api(`/lesson-remedies/${c}/accept`, f.student.token, { offerId: offerRow.id, requestKey: racingKey })));
   check("nine simultaneous accepts return one linked replacement", acceptRace.every((r) => r.status === 200) && new Set(acceptRace.map((r) => r.body.replacementSessionId)).size === 1 && acceptRace.filter((r) => r.body.changed).length === 1);
@@ -164,7 +169,7 @@ try {
   check("replacement cannot exceed original thirty-day deadline", (await offer(conflict, conflictReq.body.caseId, Date.now() + 40 * DAY)).status === 409);
   const expired = await fixture(); const er = await request(expired); await offer(expired, er.body.caseId);
   await q("UPDATE lesson_remedy_offers SET created_at=now()-interval '2 hour',expires_at=now()-interval '1 hour' WHERE case_id=$1", [er.body.caseId]);
-  check("expired offer is visibly unavailable and releases unaccepted reservation", (await list(expired)).lessons[0].case.status === "review_required" && (await list(expired)).quotas[0].used === 0);
+  check("expired offer is visibly unavailable and releases unaccepted reservation", lessonForCase(await list(expired), er.body.caseId).case.status === "review_required" && (await list(expired)).quotas[0].used === 0);
   check("expired acceptance refuses instead of creating seat", (await accept(expired, er.body.caseId)).status === 409);
   check("teacher can propose a fresh time after expiry without replacement chain", (await offer(expired, er.body.caseId, Date.now() + 14 * DAY)).status === 200);
   const subset = await fixture({ positions: [1, 2] });
@@ -175,22 +180,23 @@ try {
   const safety = await fixture(); await q("INSERT INTO disputes(user_id,session_id,reason,description) VALUES($1,$2,'Inappropriate Behavior','Synthetic safety evidence')", [safety.student.id, safety.sessionIds[0]]);
   check("safety-only support does not silently consume financial make-up options", (await request(safety)).status === 200);
   const race = await fixture(); const rr = await request(race); await offer(race, rr.body.caseId);
-  const rv = (await list(race)).lessons[0].case.offer;
+  const rv = lessonForCase(await list(race), rr.body.caseId).case.offer;
   const raceResult = await Promise.all([api(`/lesson-remedies/${rr.body.caseId}/accept`, race.student.token, { offerId: rv.id, requestKey: key() }), resolve(operator, rr.body.caseId, "refund_approved")]);
   check("refund/acceptance race never leaves admitted replacement after original refund", raceResult[1].status === 200 && [200, 409].includes(raceResult[0].status) && (await q("SELECT 1 FROM session_enrollments WHERE student_id=$1 AND session_id IN (SELECT replacement_session_id FROM lesson_remedy_offers WHERE case_id=$2) AND payment_status IN ('paid','test')", [race.student.id, rr.body.caseId])).rowCount === 0);
   check("refund uses original NPR1000 allocation, not zero-price replacement", (await q("SELECT to_state,gross_npr FROM batch_test_ledger_entries WHERE booking_id=$1 AND position=0 ORDER BY id DESC LIMIT 1", [race.bookingId])).rows[0].gross_npr === 1000 && (await q("SELECT to_state FROM batch_test_ledger_entries WHERE booking_id=$1 AND position=0 ORDER BY id DESC LIMIT 1", [race.bookingId])).rows[0].to_state === "refund_owed");
-  check("refunded original remains in private make-up history without new actions", (await list(race)).lessons[0].case.status === "resolved" && !(await list(race)).lessons[0].canRequest);
+  const refundedOriginal = lessonForCase(await list(race), rr.body.caseId);
+  check("refunded original remains in private make-up history without new actions", refundedOriginal.case.status === "resolved" && !refundedOriginal.canRequest);
   const delivery = await fixture({ at: Date.now() - 5 * DAY }); const delivered = await acceptedPastFixture(delivery);
   check("Completed label alone does not permit confirmation", (await resolve(operator, delivered.caseId, "replacement_delivered")).status === 409);
   await q("INSERT INTO session_activity(session_id,ended_at) VALUES($1,$2)", [delivered.replacementId, new Date(delivered.replacementAt + duration * 60000)]);
   await q("INSERT INTO session_participation(session_id,user_id,role,present_ms,join_count) VALUES($1,$2,'teacher',$3,1)", [delivered.replacementId, delivery.teacher.id, duration * 60000]);
-  check("documented operator review confirms actual replacement and starts fresh48h window", (await resolve(operator, delivered.caseId, "replacement_delivered")).status === 200 && Date.parse((await list(delivery)).lessons[0].case.replacementReviewClosesAt) >= Date.now() + 48 * HOUR - 3000);
+  check("documented operator review confirms actual replacement and starts fresh48h window", (await resolve(operator, delivered.caseId, "replacement_delivered")).status === 200 && Date.parse(lessonForCase(await list(delivery), delivered.caseId).case.replacementReviewClosesAt) >= Date.now() + 48 * HOUR - 3000);
   const beforePayment = await api("/batch-tests/me/payments", delivery.student.token);
   check("confirmation does not immediately pay out during fresh replacement review", beforePayment.status === 200 && beforePayment.body.receipts.find((r) => r.bookingId === delivery.bookingId).allocations[0].state === "delivered_pending");
   check("generic operator payout cannot bypass fresh replacement review", (await api(`/admin/batch-test-payments/${delivery.bookingId}/allocations/0/events`, operator.token, { event: "payout_confirmed", note: "Synthetic attempt to bypass fresh review." })).status === 409);
   const failed = await fixture({ at: Date.now() - 5 * DAY }); const failedReplacement = await acceptedPastFixture(failed);
-  check("missed replacement goes to human review, not automatic refund", (await resolve(operator, failedReplacement.caseId, "student_missed_replacement")).status === 200 && (await list(failed)).lessons[0].case.status === "review_required" && (await list(failed)).quotas[0].used === 1);
-  check("teacher-failed replacement releases courtesy but keeps original review/hold", (await resolve(operator, failedReplacement.caseId, "teacher_missed_replacement")).status === 200 && (await list(failed)).quotas[0].used === 0 && (await list(failed)).lessons[0].case.status === "review_required");
+  check("missed replacement goes to human review, not automatic refund", (await resolve(operator, failedReplacement.caseId, "student_missed_replacement")).status === 200 && lessonForCase(await list(failed), failedReplacement.caseId).case.status === "review_required" && (await list(failed)).quotas[0].used === 1);
+  check("teacher-failed replacement releases courtesy but keeps original review/hold", (await resolve(operator, failedReplacement.caseId, "teacher_missed_replacement")).status === 200 && (await list(failed)).quotas[0].used === 0 && lessonForCase(await list(failed), failedReplacement.caseId).case.status === "review_required");
   const privateView = await list(delivery, delivery.teacher);
   check("participant DTO never contains private contacts, identity or operator notes", !/password|@example|dateOfBirth|citizenship|evidenceReviewed|Synthetic operator/.test(JSON.stringify(privateView)));
   const closure = await fixture(); await q("INSERT INTO account_closure_requests(user_id,status,requested_at,closed_at) VALUES($1,'closed',now(),now()) ON CONFLICT(user_id) DO UPDATE SET status='closed',closed_at=now()", [closure.student.id]);
