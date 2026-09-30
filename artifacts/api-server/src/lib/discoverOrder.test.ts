@@ -46,3 +46,16 @@ test("catalog query orders and resumes using the same rank, publication time and
 test("both program and default tuition catalogue requests ask for authorized personalization", () => {
   assert.equal((studentDiscover.match(/params\.set\("personalized", "1"\)/g) ?? []).length, 2);
 });
+
+test("enrolled card links are exact admitted batches, not teacher follows or stale booking rows", () => {
+  const query = route.slice(route.indexOf("const myClassBatchIdFor"), route.indexOf('router.get("/programs",'));
+  assert.match(query, /booked\.student_id = \$\{studentId\}/);
+  assert.match(query, /booked_batch\.program_id = \$\{learningProgramsTable\.id\}/);
+  assert.match(query, /place\.session_id = lesson\.id AND place\.student_id = booked\.student_id/);
+  assert.match(query, /place\.payment_status = 'paid' OR \(place\.payment_status = 'test' AND \$\{admitsTestEnrolment\("test"\)\}\)/);
+  assert.match(query, /SELECT booked\.batch_id/);
+  assert.doesNotMatch(query, /student_teacher_subscriptions/);
+  assert.equal((route.match(/myClassBatchId: myClassBatchIdFor\(studentId\)/g) ?? []).length, 2);
+  assert.equal((route.match(/res\.setHeader\("Cache-Control", "private, no-store"\)/g) ?? []).length, 2);
+  assert.equal((route.match(/res\.vary\("Authorization"\)/g) ?? []).length, 2);
+});

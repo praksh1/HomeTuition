@@ -21,7 +21,7 @@
  * | `hidden` | mounted, painted nowhere, touch passes through | the board gets the whole screen; the call keeps running |
  * | `compact` | a small preview snapped to the bottom-right | proof the call is alive, not a control surface |
  * | `normal` | draggable, large enough to work Daily's own controls | the working size |
- * | `full` | the whole safe area | screen share, and reading what a student wrote |
+ * | `full` | expanded inside the classroom's safe control bands | video-first teaching and screen share |
  *
  * `compact` deliberately does **not** try to show a provider's control row. Daily's controls do
  * not fit in a thumbnail; a row of half-buttons nobody can hit is worse than none, so compact
@@ -150,6 +150,11 @@ export interface Viewport {
   /** Room the board's own toolbars need at the top and bottom. Never covered. */
   reservedTop: number;
   reservedBottom: number;
+  /** Expanded calls keep classroom context and controls outside the media surface. */
+  fullReservedTop?: number;
+  fullReservedBottom?: number;
+  /** A docked chat/class-list panel shares the expanded surface on wider screens. */
+  fullReservedRight?: number;
   /** The smallest tap target this project allows. Compact is sized around it. */
   hitSlopMin: number;
 }
@@ -173,14 +178,20 @@ export function compactSize(v: Viewport): { width: number; height: number } {
   const available = Math.max(120, v.width - v.insets.left - v.insets.right - 16);
   const width = Math.min(180, Math.max(148, Math.round(v.width * 0.42)), available);
   // 16:9 for the picture, plus one full tap target for the header that carries Restore.
-  return { width, height: Math.round((width * 9) / 16) + v.hitSlopMin };
+  return { width, height: windowedHeight(Math.round((width * 9) / 16) + v.hitSlopMin, v) };
+}
+
+/** Rotation can leave less vertical room than an aspect-ratio preview assumes. */
+function windowedHeight(preferred: number, v: Viewport): number {
+  const available = v.height - v.insets.top - v.insets.bottom - v.reservedTop - v.reservedBottom;
+  return Math.min(preferred, Math.max(v.hitSlopMin, available));
 }
 
 /** Normal has to be big enough to work a provider's own control row. */
 export function normalSize(v: Viewport): { width: number; height: number } {
   const available = v.width - v.insets.left - v.insets.right - 16;
   const width = Math.min(Math.max(280, available), 420);
-  return { width: Math.max(200, width), height: Math.round((width * 9) / 16) + v.hitSlopMin };
+  return { width: Math.max(200, width), height: windowedHeight(Math.round((width * 9) / 16) + v.hitSlopMin, v) };
 }
 
 /**
@@ -192,11 +203,13 @@ export function normalSize(v: Viewport): { width: number; height: number } {
  */
 export function windowRect(state: CallWindowState, v: Viewport, offset = { x: 0, y: 0 }): WindowRect {
   if (state === "full") {
+    const top = v.insets.top + (v.fullReservedTop ?? 0);
+    const bottom = v.insets.bottom + (v.fullReservedBottom ?? 0);
     return {
-      top: v.insets.top,
+      top,
       left: v.insets.left,
-      width: Math.max(0, v.width - v.insets.left - v.insets.right),
-      height: Math.max(0, v.height - v.insets.top - v.insets.bottom),
+      width: Math.max(0, v.width - v.insets.left - v.insets.right - (v.fullReservedRight ?? 0)),
+      height: Math.max(0, v.height - top - bottom),
     };
   }
 

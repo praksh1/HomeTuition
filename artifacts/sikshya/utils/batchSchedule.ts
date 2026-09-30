@@ -4,6 +4,51 @@ export const BATCH_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] 
 export const BATCH_MAX_LESSONS = 60;
 export type ClassFrequency = "daily" | "weekly" | "twice_weekly" | "every_two_weeks" | "alternate" | "weekdays" | "own";
 
+/** A bounded text field, not a huge number that only fails on the next screen. */
+export function lessonCountInput(value: string): string {
+  const digits = value.replace(/\D/g, "").replace(/^0+/, "").slice(0, 2);
+  return digits ? String(Math.min(BATCH_MAX_LESSONS, Number(digits))) : "";
+}
+
+/** Keep existing dates; removing an edited row always needs the teacher's consent. */
+export function reconcileLessonCount(lessons: ProgramBatchLessonDraft[], count: number, blankTemplates: ProgramBatchLessonDraft[] | null = null): {
+  lessons: ProgramBatchLessonDraft[]; removed: number; added: number; needsConfirmation: boolean;
+} {
+  if (!Number.isInteger(count) || count < 1 || count > BATCH_MAX_LESSONS || !lessons[0])
+    throw new Error("Choose 1 to 60 lessons before updating the timetable.");
+  const first = lessons[0];
+  const removed = lessons.slice(count);
+  const added = Math.max(0, count - lessons.length);
+  return {
+    lessons: [
+      ...lessons.slice(0, count).map((lesson) => ({ ...lesson })),
+      ...Array.from({ length: added }, () => ({ ...first, date: "" })),
+    ],
+    removed: removed.length,
+    added,
+    needsConfirmation: removed.some((lesson, index) => {
+      const template = blankTemplates?.[count + index] ?? first;
+      return lesson.date !== "" || lesson.time !== template.time || lesson.durationMinutes !== template.durationMinutes;
+    }),
+  };
+}
+
+/** A short course's boundaries come from its actual timetable, never a second calendar. */
+export function courseScheduleRange(lessons: ProgramBatchLessonDraft[], expectedCount: number): { startsAt: string; endsAt: string } | null {
+  if (!lessons.length || lessons.length !== expectedCount) return null;
+  const slots = lessons.map((lesson) => {
+    if (!calendarDay(lesson.date) || !validLessonTime(lesson.time) || ![30, 45, 60, 90].includes(lesson.durationMinutes)) return null;
+    const start = Date.parse(`${lesson.date}T${lesson.time}:00+05:45`);
+    return { start, end: start + lesson.durationMinutes * 60_000 };
+  });
+  if (slots.some((slot) => !slot)) return null;
+  const complete = slots as { start: number; end: number }[];
+  return {
+    startsAt: new Date(Math.min(...complete.map((slot) => slot.start))).toISOString(),
+    endsAt: new Date(Math.max(...complete.map((slot) => slot.end))).toISOString(),
+  };
+}
+
 /** Calendar arithmetic, not device-local instants: DST abroad must not move Nepal lessons. */
 export function calendarDay(value: string): Date | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -78,7 +123,9 @@ export function prepareClassLessons(
       const date = day.toISOString().slice(0, 10);
       const startsAt = Date.parse(`${date}T${first.time}:00+05:45`);
       if (startsAt + first.durationMinutes * 60_000 > end)
-        return { ok: false, message: `Only ${lessons.length} ${lessons.length === 1 ? "lesson fits" : "lessons fit"} in these 30 days. Choose fewer lessons or a more frequent pattern.` };
+        return { ok: false, message: frequency === "daily"
+          ? `Only ${lessons.length} daily lessons fit in this 30-day period: Daily schedules one lesson per day. Reduce the count, use Pick my own dates for more than one lesson a day, or choose a short course for a longer timetable.`
+          : `Only ${lessons.length} ${lessons.length === 1 ? "lesson fits" : "lessons fit"} in these 30 days. Choose fewer lessons, a more frequent pattern, or Pick my own dates.` };
       lessons.push({ ...first, date });
     }
     day.setUTCDate(day.getUTCDate() + 1);

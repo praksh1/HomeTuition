@@ -306,7 +306,7 @@ export default function ConversationScreen() {
             <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>{reporting ? "Sending…" : "Send report"}</Text>
           </TouchableOpacity>
         </View> : null}
-        {reportRef ? <Text accessibilityLiveRegion="polite" style={[t.callout, { color: colors.success }]}>Report {reportRef} sent to the Fadko Help Desk.</Text> : null}
+        {reportRef ? <Text accessibilityLiveRegion="polite" style={[t.callout, { color: colors.success }]}>Reported to the Fadko Help Desk. You can also block this person if needed.</Text> : null}
         <TouchableOpacity accessibilityRole="button" onPress={() => setSafetyOpen(false)} style={{ minHeight: 44, justifyContent: "center" }}><Text style={[t.callout, { color: colors.primary }]}>Close safety options</Text></TouchableOpacity>
       </View> : null}
 

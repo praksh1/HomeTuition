@@ -133,14 +133,25 @@ try {
     );
     await page.getByRole("button", { name: "Show 4 previous lesson dates" }).click();
     check(
-      (await page.locator("body").innerText()).includes("Date passed"),
+      (await page.locator("body").innerText()).includes("Attendance unavailable"),
       `${width}: elapsed but unfinished lesson is not called completed`,
     );
 
     await page.goto(`${base}?previous`);
     await page.getByRole("button", { name: "Show 3 previous lesson dates" }).click();
     const previous = await page.locator("body").innerText();
-    check(previous.includes("Completed") && previous.includes("Cancelled"), `${width}: earlier lessons show actual status`);
+    check(previous.includes("Attendance unavailable") && previous.includes("Cancelled"), `${width}: earlier lessons show actual status without inventing attendance`);
+    await page.getByRole("button", { name: "View lesson 2", exact: true }).click();
+    check(await page.evaluate(() => window.lastNavigation?.params?.id === "102"), `${width}: a previous lesson opens its own record`);
+    await page.getByRole("button", { name: "Get help with lesson 2", exact: true }).click();
+    check(await page.evaluate(() => window.lastNavigation?.pathname === "/support" && window.lastNavigation?.params?.sessionId === "102"), `${width}: help retains the exact original lesson`);
+    await page.goto(`${base}?finished&attendance`);
+    await page.getByRole("button", { name: "Show 4 previous lesson dates" }).click();
+    const evidence = await page.locator("body").innerText();
+    check(evidence.includes("Joined") && evidence.includes("No attendance recorded") && evidence.includes("Attendance unavailable"), `${width}: attendance facts differ from unknown evidence`);
+    check(!evidence.includes("Missed") && !evidence.includes("Date passed"), `${width}: absent evidence is not a no-show verdict`);
+    check(await page.getByRole("button", { name: "Get help with lesson 3", exact: true }).count() === 0, `${width}: cancelled/unpurchased history creates no artificial entitlement`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: expanded history actions have no horizontal overflow`);
 
     await page.goto(`${base}?teacher`);
     const students = page.getByRole("button", { name: /Students/ });

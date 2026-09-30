@@ -77,6 +77,9 @@ export async function bundleForBrowser({ entry, outfile, alias = {} }) {
           files something actually imports.
         */
         ".ttf": "dataurl",
+        // The real Excalidraw CSS bundles Assistant; full classroom route fixtures need
+        // these fonts embedded too, without adding a remote font request to a local test.
+        ".woff2": "dataurl",
         /*
           And `.js` files that contain JSX, which `@expo/vector-icons` ships several of.
 

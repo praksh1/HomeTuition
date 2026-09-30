@@ -5,7 +5,7 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { HIT_SLOP_MIN } from "@/constants/layout";
 import { FadkoLogo } from "@/components/FadkoLogo";
-import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
+import { OwnProfilePhoto } from "@/components/profile/OwnProfilePhoto";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 
@@ -53,12 +53,7 @@ export function ProfileHero({ eyebrow, initials, name, subtitle, avatarUrl, user
       </View>
 
       <View style={[styles.identityRow, { gap: space.md }]}>
-        <View style={[styles.avatarRing, { width: space.huge + space.xxl, height: space.huge + space.xxl, padding: space.xxs, borderRadius: radius.pill, borderColor: colors.onInverseMuted }]}>
-          <View style={[styles.avatar, { borderRadius: radius.pill, backgroundColor: colors.card }]}>
-            <Text style={[t.title2, { color: colors.secondary }]}>{initials}</Text>
-            <ProfilePhoto uri={avatarUrl} userId={userId} self />
-          </View>
-        </View>
+        <OwnProfilePhoto avatarUrl={avatarUrl} userId={userId} initials={initials} />
         <View style={[styles.identityCopy, { gap: space.xxs }]}>
           <Text style={[t.title2, { color: colors.onInverse }]}>{name}</Text>
           <Text style={[t.callout, { color: colors.onInverseMuted }]}>{subtitle}</Text>
@@ -80,8 +75,6 @@ const styles = StyleSheet.create({
   eyebrowRow: { flexDirection: "row", alignItems: "center" },
   brandMark: { alignItems: "center", justifyContent: "center" },
   identityRow: { flexDirection: "row", alignItems: "center" },
-  avatarRing: { borderWidth: 1 },
-  avatar: { flex: 1, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   identityCopy: { flex: 1 },
   status: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center" },
 });

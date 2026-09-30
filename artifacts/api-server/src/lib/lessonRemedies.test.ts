@@ -153,13 +153,59 @@ test("original-session evidence cannot settle an open make-up", () => {
 test("quota reservations release on decline/expiry, accepted no-shows count, teacher failure never counts", () => {
   const facts = { reason: "student_missed" as const, status: "offered" as const, acceptedAtMs: null, teacherFailedReplacement: false };
   assert.equal(courtesyAllowanceUse(facts), 1);
-  for (const status of ["requested", "review_required", "withdrawn", "resolved"] as const) assert.equal(courtesyAllowanceUse({ ...facts, status }), 0);
+  assert.equal(courtesyAllowanceUse({ ...facts, status: "requested" }), 1);
+  for (const status of ["review_required", "withdrawn", "resolved"] as const) assert.equal(courtesyAllowanceUse({ ...facts, status }), 0);
   for (const status of ["accepted", "delivered_review", "review_required", "resolved"] as const) {
     assert.equal(courtesyAllowanceUse({ ...facts, status, acceptedAtMs: start }), 1);
     assert.equal(courtesyAllowanceUse({ ...facts, status, acceptedAtMs: start, teacherFailedReplacement: true }), 0);
     assert.equal(courtesyAllowanceUse({ ...facts, status, acceptedAtMs: start, reason: "teacher_missed" }), 0);
   }
   assert.throws(() => courtesyAllowanceUse({ ...facts, status: "accepted" }), /incomplete/);
+});
+
+test("two submitted monthly courtesy requests exhaust the allowance before either teacher offer", () => {
+  const request = { reason: "student_missed" as const, status: "requested" as const, acceptedAtMs: null, teacherFailedReplacement: false };
+  const used = [request, request].reduce((total, facts) => total + courtesyAllowanceUse(facts), 0);
+  assert.equal(used, 2);
+  assert.equal(assessRemedyRequest({ ...base, courtesyUsedOrReserved: courtesyAllowanceUse(request) }).remainingCourtesy, 1);
+  assert.throws(() => assessRemedyRequest({ ...base, courtesyUsedOrReserved: used }),
+    (error: unknown) => error instanceof LessonRemedyError && error.code === "allowance_used");
+  assert.equal(assessRemedyRequest({ ...base, reason: "teacher_missed", courtesyUsedOrReserved: used }).teacherApprovalRequired, true);
+  for (const status of ["requested", "offered"] as const) {
+    assert.equal(courtesyAllowanceUse({ ...request, status, reason: "teacher_missed" }), 0);
+    assert.equal(courtesyAllowanceUse({ ...request, status, teacherFailedReplacement: true }), 0);
+  }
+});
+
+test("unaccepted requests release their slot on withdrawal, rejection, declined offer or expiry", () => {
+  const request = { reason: "student_missed" as const, status: "requested" as const, acceptedAtMs: null, teacherFailedReplacement: false };
+  const offered = transitionLessonRemedy(request.status, "offer", "teacher");
+  const releasedStatuses = [
+    transitionLessonRemedy(request.status, "withdraw", "student"),
+    transitionLessonRemedy(request.status, "resolve", "operator"),
+    transitionLessonRemedy(offered, "decline", "student"),
+    transitionLessonRemedy(offered, "expire", "system"),
+  ];
+  for (const status of releasedStatuses) {
+    const used = courtesyAllowanceUse(request) + courtesyAllowanceUse({ ...request, status });
+    assert.equal(used, 1);
+    assert.equal(assessRemedyRequest({ ...base, courtesyUsedOrReserved: used }).remainingCourtesy, 1);
+  }
+});
+
+test("one original case keeps one reservation through offer, acceptance and student no-show review", () => {
+  const request = { reason: "student_missed" as const, acceptedAtMs: null, teacherFailedReplacement: false };
+  assert.equal(courtesyAllowanceUse({ ...request, status: "requested" }), 1);
+  const offered = transitionLessonRemedy("requested", "offer", "teacher");
+  assert.equal(courtesyAllowanceUse({ ...request, status: offered }), 1);
+  const accepted = transitionLessonRemedy(offered, "accept", "student");
+  const acceptedFacts = { ...request, acceptedAtMs: start };
+  assert.equal(courtesyAllowanceUse({ ...acceptedFacts, status: accepted }), 1);
+  const review = transitionLessonRemedy(accepted, "student_missed_replacement", "operator");
+  assert.equal(courtesyAllowanceUse({ ...acceptedFacts, status: review }), 1);
+  const resolved = transitionLessonRemedy(review, "resolve", "operator");
+  assert.equal(courtesyAllowanceUse({ ...acceptedFacts, status: resolved }), 1);
+  assert.equal(courtesyAllowanceUse({ ...acceptedFacts, status: resolved, teacherFailedReplacement: true }), 0);
 });
 
 const acceptance = {

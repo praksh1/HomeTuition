@@ -258,6 +258,7 @@ export default function StudentClassroom() {
   /** Which implementation carries this call. The server decides; the app just mounts it. */
   const [videoProvider, setVideoProvider] = useState<string>("daily");
   const [mediaPrepared, setMediaPrepared] = useState(false);
+  const [floorChromeHeight, setFloorChromeHeight] = useState(0);
   const [micToggleRequest, setMicToggleRequest] = useState(0);
   const [localMicOn, setLocalMicOn] = useState(false);
   const [localCameraOn, setLocalCameraOn] = useState(false);
@@ -324,9 +325,12 @@ export default function StudentClassroom() {
       insets,
       reservedTop: boardToolbarBottom - insets.top + HIT_SLOP_MIN + (isLandscapeLayout ? space.xs : space.lg),
       reservedBottom: pipBottomClearance - insets.bottom,
+      fullReservedTop: HIT_SLOP_MIN + space.lg,
+      fullReservedBottom: Math.max(HIT_SLOP_MIN + space.huge + space.lg, floorChromeHeight + space.sm + space.xs),
+      fullReservedRight: !isCompact && mode === "chat" ? Math.min(388, width * 0.38) + space.md : 0,
       hitSlopMin: HIT_SLOP_MIN,
     }),
-    [width, height, visibleViewport.top, visibleViewport.height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
+    [width, height, visibleViewport.top, visibleViewport.height, insets, boardToolbarBottom, pipBottomClearance, floorChromeHeight, isCompact, mode, isLandscapeLayout, space.xs, space.sm, space.md, space.lg, space.huge],
   );
 
   const rect = windowRect(callWindow.state, viewport, callWindow.offset);
@@ -1052,7 +1056,7 @@ export default function StudentClassroom() {
         <View style={s.contentArea}>
           <Animated.View
             testID="video-window"
-            pointerEvents={mode === "chat" || videoHidden ? "none" : "auto"}
+            pointerEvents={videoHidden ? "none" : "auto"}
             style={[
               s.videoArea,
               elevation.sheet,
@@ -1067,7 +1071,7 @@ export default function StudentClassroom() {
                 // Position comes from the shared model; the animated value only tracks a live drag.
                 transform: windowControls.canDrag ? pipDrag.getTranslateTransform() : [],
               },
-              ((isCompact && mode === "chat") || videoHidden) && s.videoAreaHidden,
+              videoHidden && s.videoAreaHidden,
             ]}
           >
             <View
@@ -1176,7 +1180,7 @@ export default function StudentClassroom() {
                   ]}
                   onPress={toggleFullVideoWindow}
                   accessibilityLabel={
-                    videoFull ? "Restore call window" : "Show call full screen"
+                    videoFull ? "Restore call window" : "Expand call window"
                   }
                   testID="video-fullscreen-btn"
                 >
@@ -1321,49 +1325,56 @@ export default function StudentClassroom() {
               </View>
             )}
 
-            {/*
-              Where this student stands, pinned along the bottom.
-
-              Above the board rather than over the call, because the board is what a student looks
-              at for most of a lesson and an invitation they cannot see is an invitation nobody
-              answers. Inert when the floor is null — before the first state arrives, once the
-              class ends, and on a provider that cannot enforce a permission.
-            */}
-            {mode !== "chat" ? <View pointerEvents="box-none" style={[s.floorLayer, { bottom: insets.bottom + space.sm }]}>
-              <ClassroomFloor
-                floor={floor}
-                refusal={floorRefusal}
-                onDismissRefusal={clearFloorRefusal}
-                actions={floorActions}
-                discussionOpensAt={discussionOpensAt}
-                canModerate={canModerate}
-                microphoneOn={localMicOn}
-                onToggleMicrophone={() => setMicToggleRequest((count) => count + 1)}
-                cameraOn={localCameraOn}
-                onToggleCamera={() => setCameraToggleRequest((count) => count + 1)}
-                dockControls={<ClassroomControlDock inline bottom={0}
-                  chatOpen={false} unreadCount={unreadChatCount} videoHidden={videoHidden}
-                  onToggleChat={() => setMode("chat")}
-                  onToggleVideo={videoHidden ? showVideoWindow : hideVideoWindow}
-                  onLeave={leaveSession} leaveLabel="Leave class" />}
-              />
-            </View> : null}
-
-            {mode !== "chat" ? <ClassroomReactions reactions={floatingReactions} /> : null}
-            <ClassroomChatDrawer
-              open={mode === "chat"}
-              connected={connected}
-              onReaction={sendReaction}
-              reactions={floatingReactions}
-              messages={messages}
-              value={chatMsg}
-              onChangeText={setChatMsg}
-              onSend={sendMessage}
-              onClose={() => setMode("board")}
-              placeholder="Message everyone…"
-              emptyText="Ask your teacher a question without leaving the board."
-            />
           </View>
+          {/* These overlays share the call's stacking parent. Keeping them inside the
+            clipped board placed the student's controls behind an expanded LiveKit tile. */}
+          {/*
+            Where this student stands, pinned along the bottom.
+
+            Above the board rather than over the call, because the board is what a student looks
+            at for most of a lesson and an invitation they cannot see is an invitation nobody
+            answers. Inert when the floor is null — before the first state arrives, once the
+            class ends, and on a provider that cannot enforce a permission.
+          */}
+          {mode !== "chat" ? <View pointerEvents="box-none" testID="student-control-layer"
+            onLayout={(event) => {
+              const next = Math.ceil(event.nativeEvent.layout.height);
+              setFloorChromeHeight((current) => current === next ? current : next);
+            }}
+            style={[s.floorLayer, { bottom: insets.bottom + space.sm }]}>
+            <ClassroomFloor
+              floor={floor}
+              refusal={floorRefusal}
+              onDismissRefusal={clearFloorRefusal}
+              actions={floorActions}
+              discussionOpensAt={discussionOpensAt}
+              canModerate={canModerate}
+              microphoneOn={localMicOn}
+              onToggleMicrophone={() => setMicToggleRequest((count) => count + 1)}
+              cameraOn={localCameraOn}
+              onToggleCamera={() => setCameraToggleRequest((count) => count + 1)}
+              dockControls={<ClassroomControlDock inline bottom={0}
+                chatOpen={false} unreadCount={unreadChatCount} videoHidden={videoHidden}
+                onToggleChat={() => setMode("chat")}
+                onToggleVideo={videoHidden ? showVideoWindow : hideVideoWindow}
+                onLeave={leaveSession} leaveLabel="Leave class" />}
+            />
+          </View> : null}
+
+          {mode !== "chat" ? <ClassroomReactions reactions={floatingReactions} /> : null}
+          <ClassroomChatDrawer
+            open={mode === "chat"}
+            connected={connected}
+            onReaction={sendReaction}
+            reactions={floatingReactions}
+            messages={messages}
+            value={chatMsg}
+            onChangeText={setChatMsg}
+            onSend={sendMessage}
+            onClose={() => setMode("board")}
+            placeholder="Message everyone…"
+            emptyText="Ask your teacher a question without leaving the board."
+          />
         </View>
       </View>
       <ClassroomMediaPreparation

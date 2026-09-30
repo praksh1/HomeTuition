@@ -5,6 +5,23 @@ let libraryArticles = [];
 let syntheticHold = { id: 77, userId: 2, version: 0, active: false, caseId: null, reviewDueAt: null, overdue: false, documentDeleted: false, detailsDeleted: false };
 export class ApiError extends Error { constructor(status, message, data = {}) { super(message); this.status = status; this.data = data; } }
 export async function apiGet(path) {
+  if (path === "/onboarding/me/profile-photo/view") {
+    window.photoViewReads = (window.photoViewReads ?? 0) + 1;
+    if (window.failPhotoView) throw new Error("Synthetic photo refresh failure");
+    const photo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lD8AAAAASUVORK5CYII=";
+    if (window.deferNextPhotoView) {
+      window.deferNextPhotoView = false;
+      // Resolve only when the test releases the already-started request. The old URL must
+      // not replace the freshly committed photo when responses arrive out of order.
+      return await new Promise(resolve => {
+        window.releaseDeferredPhotoView = () => {
+          window.deferredPhotoResolved = true;
+          resolve({ url: `${photo}#stale-before-save` });
+        };
+      });
+    }
+    return { url: window.photoViewUrl ?? photo };
+  }
   if (path === '/account-closure') return { request: null };
   if (path === '/account-closure-review') return { items: [{userId:2,name:'Synthetic closure student',role:'student',version:0,requestedAt:'2026-09-27'}], nextCursor:null };
   if (path === '/account-closure-review/2') {
@@ -55,7 +72,11 @@ export async function apiPost(path, body) {
   if (path === "/identity-review/77/open") return { verification: { id: 77, status: "submitted", holder: "parent" }, details: { legalName: "Synthetic Parent Fixture", documentNumber: "TEST-ONLY", dateOfBirth: "1990-01-01", issuingDistrict: "Kathmandu", issuingMunicipality: "Kathmandu", parentRelationship: "Parent", consent: true } };
   if (path === "/identity-review/77/decision") { window.identityDecision = body; return {}; }
   if (path === "/identity-verification/prepare") { window.identityPreparationCount = (window.identityPreparationCount ?? 0) + 1; window.identityPrepared = body; return { id: 77 }; }
-  if (path === "/onboarding/me/profile-photo") { window.photoUploaded = body.fileKey; return {}; }
+  if (path === "/onboarding/me/profile-photo") {
+    window.photoUploadAttempts = (window.photoUploadAttempts ?? 0) + 1;
+    if (window.failPhotoUpload) throw new Error("Synthetic photo save failure");
+    window.photoUploaded = body.fileKey; return {};
+  }
   if (path === "/admin/support/articles/starter-drafts") {
     if (libraryArticles.length) return { created: 0 };
     libraryArticles = [{ id: 1, slug: "starter-payment", title: "Starter payment guide", answer: "A test checkout does not move real money.", intent: "billing", keywords: ["payment"], status: "draft", starterReview: { version: "2026-09-24-v1", check: "Compare the test receipt with Payments & receipts before publishing.", sources: [] } }];

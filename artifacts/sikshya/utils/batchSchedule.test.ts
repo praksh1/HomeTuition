@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { batchDetailsIssues, batchScheduleIssues, calendarDay, prepareClassLessons, repeatLessons } from "./batchSchedule.ts";
+import { batchDetailsIssues, batchScheduleIssues, calendarDay, courseScheduleRange, lessonCountInput, prepareClassLessons, reconcileLessonCount, repeatLessons } from "./batchSchedule.ts";
 
 const first = { date: "2026-10-01", time: "10:00", durationMinutes: 60 };
 const period = { groupId: 1, index: 0, startsAt: "2026-10-01T04:15:00.000Z", endsAt: "2026-10-31T04:15:00.000Z" };
@@ -14,7 +14,58 @@ test("daily regular tuition prepares the teacher's exact count, not a guessed 26
   }
   const overflow = prepareClassLessons(first, 31, "daily", [], period);
   assert.equal(overflow.ok, false);
-  if (!overflow.ok) assert.match(overflow.message, /Only 30 lessons fit/);
+  if (!overflow.ok) assert.match(overflow.message, /Only 30 daily lessons fit.*one lesson per day.*Pick my own dates.*short course/);
+});
+
+test("lesson-count entry limits digits and range without allowing an enormous draft", () => {
+  for (const [value, expected] of [["", ""], ["0", ""], ["007", "7"], ["15", "15"], ["60", "60"], ["61", "60"], ["999999999", "60"], ["12abc", "12"], ["abcd", ""]])
+    assert.equal(lessonCountInput(value!), expected);
+});
+
+test("reducing fifty unprepared rows retains the first fifteen including edits", () => {
+  const original = [first, ...Array.from({ length: 49 }, () => ({ ...first, date: "" }))];
+  const changed = original.map((lesson, index) => index === 0 ? { ...lesson, time: "11:00" } : lesson);
+  const resized = reconcileLessonCount(changed, 15, original);
+  assert.equal(resized.lessons.length, 15);
+  assert.equal(resized.needsConfirmation, false);
+  assert.equal(resized.removed, 35);
+  assert.equal(resized.lessons[0]?.time, "11:00");
+  assert.equal(changed.length, 50);
+});
+
+test("removing scheduled or individually edited rows needs explicit confirmation", () => {
+  const original = [first, { ...first, date: "2026-10-02" }];
+  assert.equal(reconcileLessonCount(original, 1).needsConfirmation, true);
+  assert.equal(reconcileLessonCount([first, { ...first, date: "", time: "12:00" }], 1).needsConfirmation, true);
+  assert.equal(reconcileLessonCount([first, { ...first, date: "", durationMinutes: 45 }], 1).needsConfirmation, true);
+});
+
+test("increasing the count preserves dates and adds blank rows, never duplicate appointments", () => {
+  const existing = [first, { ...first, date: "2026-10-02" }];
+  const resized = reconcileLessonCount(existing, 4);
+  assert.equal(resized.added, 2);
+  assert.deepEqual(resized.lessons.slice(0, 2), existing);
+  assert.deepEqual(resized.lessons.slice(2).map((lesson) => lesson.date), ["", ""]);
+  for (const count of [0, 61, 1.5, NaN, Infinity]) assert.throws(() => reconcileLessonCount(existing, count), /Choose 1 to 60/);
+});
+
+test("empty rows from successive preparations remain safely removable after first-lesson edits", () => {
+  const existing = [first, { ...first, date: "" }];
+  const changed = [{ ...first, time: "11:00" }, existing[1]!];
+  const grown = reconcileLessonCount(changed, 4, existing).lessons;
+  const baseline = [existing[0]!, existing[1]!, ...grown.slice(2)].map((lesson) => ({ ...lesson }));
+  assert.equal(reconcileLessonCount(grown, 1, baseline).needsConfirmation, false);
+  grown[3]!.time = "15:00";
+  assert.equal(reconcileLessonCount(grown, 1, baseline).needsConfirmation, true);
+});
+
+test("short-course dates follow all actual lesson instants and require a complete timetable", () => {
+  const last = { date: "2026-12-31", time: "23:30", durationMinutes: 60 };
+  assert.deepEqual(courseScheduleRange([first, last], 2), { startsAt: "2026-10-01T04:15:00.000Z", endsAt: "2026-12-31T18:45:00.000Z" });
+  assert.deepEqual(courseScheduleRange([last, first], 2), courseScheduleRange([first, last], 2));
+  assert.equal(courseScheduleRange([first], 2), null);
+  assert.equal(courseScheduleRange([first, { ...last, date: "" }], 2), null);
+  assert.equal(courseScheduleRange([first, { ...last, durationMinutes: 120 }], 2), null);
 });
 
 test("weekly and twice-weekly patterns require stable chosen weekdays", () => {

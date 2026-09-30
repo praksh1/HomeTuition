@@ -27,8 +27,10 @@ interface TestBooking {
   receipts: TestReceipt[];
 }
 
+export type BatchEnrollmentState = "checking" | "enrolled" | "not_enrolled" | "unavailable" | "teacher" | "public";
+
 /** This deliberately never imports PaymentSheet: rehearsal must not ask for a wallet/PIN. */
-export function BatchTestPanel({ batchId, teacher = false, accountRequired = false, returnPath, onBooked }: { batchId: number; teacher?: boolean; accountRequired?: boolean; returnPath?: string; onBooked?: () => void }) {
+export function BatchTestPanel({ batchId, teacher = false, accountRequired = false, returnPath, onBooked, onEnrollmentStateChange }: { batchId: number; teacher?: boolean; accountRequired?: boolean; returnPath?: string; onBooked?: () => void; onEnrollmentStateChange?: (state: BatchEnrollmentState) => void }) {
   const colors = useColors();
   const { t, space, numeric } = useLayout();
   const dates = useDates();
@@ -39,6 +41,12 @@ export function BatchTestPanel({ batchId, teacher = false, accountRequired = fal
   const [testOptionsOpen, setTestOptionsOpen] = useState(false);
   const gate = useRef(false);
   const generation = useRef(0);
+  const stateListener = useRef(onEnrollmentStateChange);
+  stateListener.current = onEnrollmentStateChange;
+  const enrollmentState: BatchEnrollmentState = accountRequired ? "public" : result
+    ? result.isTeacher ? "teacher" : result.booked ? "enrolled" : "not_enrolled"
+    : busy ? "checking" : "unavailable";
+  useEffect(() => { stateListener.current?.(enrollmentState); }, [batchId, enrollmentState]);
   async function request(confirm = false, outcome: "success" | "declined" = "success") {
     if (gate.current || (confirm && !result)) return;
     const current = generation.current;

@@ -12,6 +12,9 @@ const lessons = [
   status: earlierState
     ? sessionId === 101 || sessionId === 102 ? "completed" : sessionId === 103 ? "cancelled" : "upcoming"
     : sessionId === 101 && !location.search.includes("upcoming") ? "live" : "upcoming",
+  attendance: location.search.includes("attendance")
+    ? sessionId === 101 ? "joined" : sessionId === 102 ? "not_recorded" : sessionId === 103 ? "not_enrolled" : "unavailable"
+    : undefined,
 }));
 
 export async function apiGet() {

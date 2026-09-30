@@ -33,6 +33,7 @@ import { BatchTestPanel } from "./BatchTestPanel";
 import { apiDelete, apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 import { classEarningsEstimate, classPriceBreakdown, classPublishSummary } from "@/utils/classPrice";
 import type { ClassEarningsEstimate as EarningsEstimate } from "@/utils/classPrice";
+import { fadkoFeeAllocation } from "@/utils/batchTestMoney";
 import {
   classDescriptionIssues,
   classIsPublished,
@@ -55,7 +56,10 @@ import {
   batchDetailsIssues,
   batchScheduleIssues,
   calendarDay,
+  courseScheduleRange,
+  lessonCountInput,
   prepareClassLessons,
+  reconcileLessonCount,
   type ClassFrequency,
 } from "@/utils/batchSchedule";
 
@@ -69,14 +73,23 @@ const titles = [
 function ClassEarningsEstimateCard({ estimate, tuitionNpr, lessons }: { estimate: EarningsEstimate | null; tuitionNpr: number; lessons: number }) {
   const colors = useColors();
   const { t, space, numeric } = useLayout();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   if (!estimate) return null;
   const amount = (value: number, fractionDigits = 0) => value.toLocaleString("en-NP", {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   });
+  const feeNpr = tuitionNpr - estimate.totalNpr;
+  const feeParts = fadkoFeeAllocation(feeNpr);
   return <ProgramCardShell>
-    <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Your estimated earnings</Text>
-    <View style={{ gap: space.sm }}>
+    <View style={{ gap: space.xs }}>
+      <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Your earnings per student</Text>
+      <Text testID="class-earnings-total" style={[t.display, numeric, { color: colors.primary }]}>NPR {amount(estimate.totalNpr)}</Text>
+      <Text style={[t.callout, { color: colors.mutedForeground }]}>Estimated after Fadko fees · NPR {amount(estimate.averagePerLessonNpr, 2)} per completed lesson</Text>
+    </View>
+    <ProgramButton label={detailsOpen ? "Hide price breakdown" : "View price breakdown"} emphasis="quiet"
+      icon={detailsOpen ? "chevron-up" : "chevron-down"} onPress={() => setDetailsOpen(!detailsOpen)} />
+    {detailsOpen ? <View testID="class-earnings-breakdown" style={{ gap: space.sm }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
         <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Class price per student</Text>
         <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>NPR {amount(tuitionNpr)}</Text>
@@ -89,19 +102,18 @@ function ClassEarningsEstimateCard({ estimate, tuitionNpr, lessons }: { estimate
         <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Minus: Fadko fee</Text>
         <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>NPR {amount(tuitionNpr - estimate.totalNpr)}</Text>
       </View>
+      {feeParts ? <View style={{ paddingLeft: space.md, gap: space.xs }}>
+        {[["Platform", feeParts.platformNpr], ["Server", feeParts.serverNpr], ["Maintenance", feeParts.maintenanceNpr]].map(([label, value]) => <View key={label} style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
+          <Text style={[t.caption, { color: colors.mutedForeground, flex: 1 }]}>{label}</Text>
+          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>NPR {amount(Number(value))}</Text>
+        </View>)}
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>Parts of the same Fadko fee, not additional deductions.</Text>
+      </View> : null}
       <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
         <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Government tax deduction in this preview</Text>
         <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>NPR 0</Text>
       </View>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md }}>
-        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>For each enrolled student</Text>
-        <Text style={[t.bodyStrong, numeric, { color: colors.foreground, textAlign: "right" }]}>NPR {amount(estimate.totalNpr)}</Text>
-      </View>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md }}>
-        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Approx. per completed lesson</Text>
-        <Text style={[t.bodyStrong, numeric, { color: colors.foreground, textAlign: "right" }]}>NPR {amount(estimate.averagePerLessonNpr, 2)}</Text>
-      </View>
-    </View>
+    </View> : null}
     <Text style={[t.caption, { color: colors.mutedForeground }]}>Live tax handling has not been configured. This estimate uses current teaching terms; approved refunds or adjustments may reduce the final payout.</Text>
   </ProgramCardShell>;
 }
@@ -143,23 +155,25 @@ export default function ClassSetup() {
   const [individual, setIndividual] = useState(false);
   const [focusLesson, setFocusLesson] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<
-    "publish" | "leave" | "replace" | "close" | "delete" | null
+    "publish" | "leave" | "replace" | "resize" | "close" | "delete" | null
   >(null);
   const [replacement, setReplacement] = useState<
     ProgramBatchLessonDraft[] | null
   >(null);
+  const blankLessonTemplates = useRef<ProgramBatchLessonDraft[] | null>(null);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
   const [departure, setDeparture] = useState<(() => void) | null>(null);
   const scroll = useRef<ScrollView>(null);
   const key = useRef("");
   const keyStorage = `fadko-class-create-${user?.id ?? "unknown"}`;
-  const dirty = JSON.stringify(form) !== accepted;
+  const dirty = JSON.stringify(form) !== accepted || (item ? count !== String(item.batch.lessons.length) : count !== "");
   const scheduleFresh = !!item && JSON.stringify(form.lessons) === JSON.stringify(item.batch.lessons.map(lessonDraft));
   const scheduleKey = JSON.stringify([item?.batch.id ?? null, form.lessons]);
   const conflicts = review?.key === scheduleKey ? review.conflicts : scheduleFresh ? item?.batch.scheduleConflicts ?? [] : [];
   const conflictIndices = new Set(conflicts.flatMap((c) => [c.lessonIndex, ...(c.otherLessonIndex === null ? [] : [c.otherLessonIndex])]));
   const locked = busy || !editing || item?.batch.status === "closed" || item?.batch.bookingLocked === true;
   const published = !!item && classIsPublished(item) && !dirty;
+  const canDelete = !item || (item.batch.status === "draft" && !item.batch.publishedAt && !item.batch.published && !item.batch.bookingLocked);
   const askLeave = useCallback((go: () => void) => {
     if (!op.current) {
       setLeaveAction(() => go);
@@ -201,6 +215,7 @@ export default function ClassSetup() {
     setFocusLesson(null);
     setIndividual(false);
     setReview(null);
+    blankLessonTemplates.current = null;
     try {
       if (id) {
         const result = await apiGet<{ item: TeachingClass }>(
@@ -273,6 +288,7 @@ export default function ClassSetup() {
     move(1);
   };
   const first = form.lessons[0]!;
+  const courseDates = form.format === "fixed" ? courseScheduleRange(form.lessons, Number(count)) : null;
   const period = draftTuitionPeriod(
     item?.batch ??
       ({ format: form.format, tuitionGroupId: 1 } as OwnerProgramBatch),
@@ -326,6 +342,24 @@ export default function ClassSetup() {
     if (errors.length) {
       setIssues(errors);
       scroll.current?.scrollTo({ y: 0, animated: false });
+      return;
+    }
+    if (step === 0 && form.lessons.length > 1 && form.lessons.length !== lessonCount) {
+      const resized = reconcileLessonCount(form.lessons, lessonCount, blankLessonTemplates.current);
+      if (resized.needsConfirmation) {
+        setReplacement(resized.lessons);
+        setConfirm("resize");
+        return;
+      }
+      setForm({ ...formRef.current, lessons: resized.lessons });
+      blankLessonTemplates.current = resized.lessons.map((lesson, index) => ({ ...(blankLessonTemplates.current?.[index] ?? lesson) }));
+      setReview(null);
+      setFocusLesson(individual ? 0 : null);
+      if (resized.added) setIndividual(true);
+      move(1);
+      setNotice(resized.added
+        ? `${lessonCount} lessons now. Your existing dates are kept; choose dates for the ${resized.added} new lessons.`
+        : `${lessonCount} lessons now. Your first ${lessonCount} dates are kept; unused empty rows were removed.`);
       return;
     }
     if (step === 1 && !(await checkSchedule())) return;
@@ -419,13 +453,22 @@ export default function ClassSetup() {
     }
   };
   const deleteDraft = async () => {
-    if (!item || item.batch.status !== "draft" || item.batch.publishedAt || item.batch.published || op.current) return;
+    if (op.current || !canDelete) return;
     op.current = true;
     setBusy(true);
     setIssues([]);
     try {
-      await apiDelete(`/teaching-classes/${item.batch.id}`);
+      if (item) await apiDelete(`/teaching-classes/${item.batch.id}`);
       await AsyncStorage.removeItem(keyStorage);
+      const fresh = emptyClassForm();
+      setItem(null);
+      setForm(fresh);
+      setAccepted(JSON.stringify(fresh));
+      setCount("");
+      setStep(0);
+      setFrequency(null);
+      setIndividual(false);
+      key.current = Crypto.randomUUID();
       setConfirm(null);
       setDeparture(() => () => router.replace("/(teacher)/teaching-classes"));
     } catch (error) { fail(error); }
@@ -532,6 +575,7 @@ export default function ClassSetup() {
       ),
     });
   const useSchedule = (lessons: ProgramBatchLessonDraft[]) => {
+    blankLessonTemplates.current = lessons.map((lesson) => ({ ...lesson }));
     setForm({ ...formRef.current, lessons });
     setIndividual(frequency === "own");
     setFocusLesson(frequency === "own" ? 0 : null);
@@ -561,10 +605,12 @@ export default function ClassSetup() {
       ? "Leave without saving?"
       : confirm === "replace"
         ? "Replace these lesson dates?"
+        : confirm === "resize"
+          ? `Use ${count} lessons instead?`
         : confirm === "close"
           ? "Close this listing?"
           : confirm === "delete"
-            ? "Delete this unpublished class?"
+            ? item ? "Delete this unpublished class?" : "Discard this setup?"
           : "Publish this class listing?";
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -684,8 +730,13 @@ export default function ClassSetup() {
             />
             <TeachingLanguageChoice value={form.teachingLanguage} disabled={locked}
               onChange={(teachingLanguage) => setForm({ ...form, teachingLanguage })} />
-            <ClassField label="How many lessons will students get?" hint={form.format === "ongoing" ? "Choose the exact number of sessions in these 30 days, from 1 to 60." : "Choose the exact number of sessions in this course, from 1 to 60."}
-              value={count} disabled={locked} numeric onChange={(value) => setCount(value.replace(/\D/g, ""))} />
+            <ClassField label="How many lessons will students get?" hint={form.format === "ongoing" ? "1–60 lessons in these 30 days. Daily schedules one per day (up to 30); use your own dates for multiple lessons a day." : "1–60 lessons. Your first and last lesson set the course's beginning and finish."}
+              value={count} disabled={locked} numeric maxLength={2} onChange={(value) => {
+                setCount(lessonCountInput(value));
+                setIssues([]);
+                setNotice("");
+                setReview(null);
+              }} />
             <ClassField label={form.format === "ongoing" ? "Price for these 30 days (NPR)" : "Price for the whole course (NPR)"}
               hint="One full price per student for every listed lesson. Payment is upfront."
               value={form.totalTuitionNpr} disabled={locked} numeric
@@ -726,6 +777,14 @@ export default function ClassSetup() {
                 body={`From ${instantLabel(period.startsAt)} until ${instantLabel(period.endsAt)}. All lessons must finish inside these dates.`}
               />
             ) : null}
+            {form.format === "fixed" ? <ProgramCardShell testID="class-course-dates">
+              <Text style={[t.title3, { color: colors.foreground }]}>Course dates</Text>
+              {courseDates ? <>
+                <Text style={[t.callout, { color: colors.foreground }]}>Begins: {instantLabel(courseDates.startsAt)}</Text>
+                <Text style={[t.callout, { color: colors.foreground }]}>Finishes: {instantLabel(courseDates.endsAt)}</Text>
+              </> : <Text style={[t.callout, { color: colors.mutedForeground }]}>Your course begins with the first lesson and finishes after the last. Prepare all {count || "your"} lesson dates to see the full range.</Text>}
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>These dates update with your timetable, so students see one consistent schedule.</Text>
+            </ProgramCardShell> : null}
             {focusLesson !== null && !conflicts.length ? <ProgramButton label="Show all lesson editors" emphasis="quiet" onPress={() => setFocusLesson(null)} /> : null}
             {(individual ? form.lessons.map((lesson, index) => ({ lesson, index })).filter(({ index }) => focusLesson === null || index === focusLesson) : [{ lesson: first, index: 0 }]).map(({ lesson, index: i }) => (
               <ProgramCardShell key={i}>
@@ -944,6 +1003,10 @@ export default function ClassSetup() {
                   payment is never automatic.
                 </Text>
               ) : null}
+              {courseDates ? <View testID="class-course-review" style={{ gap: space.xs }}>
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>Begins: {instantLabel(courseDates.startsAt)}</Text>
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>Finishes: {instantLabel(courseDates.endsAt)}</Text>
+              </View> : null}
             </ProgramCardShell>
             <ClassEarningsEstimateCard estimate={earningsEstimate} tuitionNpr={Number(form.totalTuitionNpr)} lessons={plannedLessons} />
             {teacherShareBps === null ? <ProgramNotice title="Teaching terms unavailable" body="Reload the current teaching fee before publishing. Your class draft remains saved." tone="waiting"><ProgramButton label="Reload teaching terms" onPress={() => void loadBilling()} /></ProgramNotice> : null}
@@ -991,9 +1054,6 @@ export default function ClassSetup() {
               body="Publishing shows your description, dates and price to students. Available joining options follow the site's current payment mode."
             />}
             {item?.batch.bookingLocked ? <ProgramNotice title="Booked details are locked" body="A student has a test place. Keep these dates and details as promised. Use a copy for another test class." /> : null}
-            {item?.batch.status === "draft" && !item.batch.publishedAt && !item.batch.published && !item.batch.bookingLocked ? <ProgramButton
-              label="Delete unpublished class" emphasis="danger" disabled={busy}
-              onPress={() => setConfirm("delete")} /> : null}
             {item?.batch.status === "published" && form.format === "ongoing" && !item.batch.bookingLocked ? (
               <ProgramButton
                 label="Prepare the next 30 days"
@@ -1050,6 +1110,10 @@ export default function ClassSetup() {
                   onPress={() => move(step - 1)}
                 />
               ) : null}
+              {canDelete && (item || dirty) ? <ProgramButton
+                label={item ? "Delete draft" : "Discard setup"}
+                spoken={item ? "Delete unpublished class" : "Discard setup"}
+                emphasis="danger" disabled={busy} onPress={() => setConfirm("delete")} /> : null}
               {step === 3 ? (
                 <>
                   <ProgramButton
@@ -1134,12 +1198,14 @@ export default function ClassSetup() {
               ? [
                   "This replaces the lesson dates currently in your draft. Nothing is saved until Save draft succeeds.",
                 ]
+            : confirm === "resize"
+              ? [`The first ${count} lesson dates and their edits will stay. Lessons ${Number(count) + 1}–${form.lessons.length} and any edits to them will be removed from this draft.`, "Nothing is saved until you save the draft. Choose Keep editing to review the count instead."]
             : confirm === "close"
                 ? [
                     "Students will no longer see this offer. This action cannot be undone.",
                   ]
                 : confirm === "delete"
-                  ? ["This draft and its lesson dates will be removed. A published or booked class cannot be deleted. This cannot be undone."]
+                  ? [item ? "This draft and its lesson dates will be removed. A published or booked class cannot be deleted. This cannot be undone." : "Your unsaved entries will be cleared. No class has been saved or published, and no student booking is affected."]
                 : [
                     item?.batch.status === "draft" ? "Unsaved changes will be lost. Your saved draft stays in My classes; use Delete unpublished class to remove it." : item?.batch.status === "published" ? "Unsaved edits will be lost. Your published listing stays available." : "No class will be created from these unsaved entries.",
                   ]
@@ -1149,10 +1215,12 @@ export default function ClassSetup() {
             ? "Confirm and publish"
             : confirm === "replace"
               ? "Replace dates"
+            : confirm === "resize"
+              ? `Keep first ${count} lessons`
             : confirm === "close"
                 ? "Close listing"
                 : confirm === "delete"
-                  ? "Delete unpublished class"
+                  ? item ? "Delete unpublished class" : "Discard setup"
                 : "Leave without saving"
         }
         destructive={confirm !== "publish"}
@@ -1167,6 +1235,15 @@ export default function ClassSetup() {
           else if (confirm === "delete") void deleteDraft();
           else if (confirm === "replace" && replacement)
             useSchedule(replacement);
+          else if (confirm === "resize" && replacement) {
+            setForm({ ...formRef.current, lessons: replacement });
+            blankLessonTemplates.current = replacement.map((lesson, index) => ({ ...(blankLessonTemplates.current?.[index] ?? lesson) }));
+            setReview(null);
+            setConfirm(null);
+            setFocusLesson(individual ? 0 : null);
+            move(1);
+            setNotice(`${replacement.length} lessons now. Your retained dates and edits are unchanged.`);
+          }
           else if (confirm === "leave" && leaveAction) {
             const go = leaveAction;
             setDeparture(() => () => {
@@ -1197,6 +1274,7 @@ export function ClassField({
   multiline = false,
   numeric = false,
   disabled = false,
+  maxLength,
 }: {
   label: string;
   hint: string;
@@ -1205,6 +1283,7 @@ export function ClassField({
   multiline?: boolean;
   numeric?: boolean;
   disabled?: boolean;
+  maxLength?: number;
 }) {
   const colors = useColors();
   const { t, space, radius } = useLayout();
@@ -1217,6 +1296,7 @@ export function ClassField({
         aria-disabled={disabled}
         editable={!disabled}
         value={value}
+        maxLength={maxLength}
         onChangeText={onChange}
         multiline={multiline}
         keyboardType={numeric ? "number-pad" : "default"}

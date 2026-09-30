@@ -4,6 +4,7 @@ export type ClassJourneyLesson = {
   startsAt: string;
   durationMinutes: number;
   status?: string;
+  attendance?: import("./lessonHistory").LessonAttendanceState;
 };
 
 export type ClassJourneyDisplayLesson = ClassJourneyLesson & {

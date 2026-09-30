@@ -13,6 +13,7 @@ import {
   classGroupMessagesTable,
   db,
   sessionParticipationTable,
+  sessionEnrollmentsTable,
   sessionsTable,
   usersTable,
 } from "@workspace/db";
@@ -247,11 +248,32 @@ router.get("/class-groups/:id", requireAuth, async (req, res) => {
     visibleMessageCount(access),
     unreadMessageCount(access, req.user!.userId),
   ]);
+  // One bounded query pair for the viewer, never every classmate's attendance or contacts.
+  let attendance: Map<number, string> | null = null;
+  if (!access.isTeacher && lessons.length) {
+    try {
+      const sessionIds = lessons.map(lesson => lesson.sessionId);
+      const [enrollments, participation] = await Promise.all([
+        db.select({ sessionId: sessionEnrollmentsTable.sessionId }).from(sessionEnrollmentsTable)
+          .where(and(eq(sessionEnrollmentsTable.studentId, req.user!.userId), inArray(sessionEnrollmentsTable.sessionId, sessionIds))),
+        db.select({ sessionId: sessionParticipationTable.sessionId, presentMs: sessionParticipationTable.presentMs }).from(sessionParticipationTable)
+          .where(and(eq(sessionParticipationTable.userId, req.user!.userId), eq(sessionParticipationTable.role, "student"), inArray(sessionParticipationTable.sessionId, sessionIds))),
+      ]);
+      const enrolled = new Set(enrollments.map(row => row.sessionId));
+      const joined = new Set(participation.filter(row => row.presentMs > 0).map(row => row.sessionId));
+      attendance = new Map(lessons.map(lesson => [lesson.sessionId,
+        !enrolled.has(lesson.sessionId) ? "not_enrolled" : joined.has(lesson.sessionId) ? "joined" : "not_recorded"]));
+    } catch {
+      // An unavailable evidence table must not become a zero-attendance accusation.
+    }
+  }
   res.json({
     title: access.title,
     isTeacher: access.isTeacher,
     serverNow: new Date().toISOString(),
-    lessons,
+    lessons: lessons.map(lesson => ({ ...lesson,
+      ...(!access.isTeacher ? { attendance: attendance?.get(lesson.sessionId) ?? "unavailable" } : {}),
+    })),
     counts: { ...counts, messages, unreadMessages },
   });
 });

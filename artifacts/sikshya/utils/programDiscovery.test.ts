@@ -12,6 +12,7 @@ import {
   cardFromDetail,
   cardFromSummary,
   discoverIntentFor,
+  enrolledClassBatchId,
   localMatches,
   localTypeMatches,
   missingOptional,
@@ -41,6 +42,17 @@ const full = (over: Partial<PublicProgramDetail> = {}): PublicProgramDetail => (
     { title: "Where we start", outcome: "Know what the first lesson covers." },
     { title: "Working with fractions", outcome: "Can add, subtract, multiply, divide fractions." },
   ], ...over,
+});
+
+test("enrollment labels and links use only the viewer's explicit exact batch", () => {
+  assert.equal(cardFromSummary(row()).enrolled, false);
+  assert.equal(cardFromSummary(row({ myClass: null })).enrolled, false);
+  assert.equal(cardFromSummary(row({ myClass: { batchId: 17 } })).enrolled, true);
+  assert.equal(enrolledClassBatchId(full({ myClass: { batchId: 17 } })), 17);
+  for (const batchId of [0, -1, 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER + 1, "17", null]) {
+    assert.equal(enrolledClassBatchId({ myClass: { batchId } } as never), null);
+  }
+  assert.equal(enrolledClassBatchId({ priority: 100, followed: true } as never), null);
 });
 
 /* --- tabs and filters ------------------------------------------------------- */

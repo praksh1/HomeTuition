@@ -76,7 +76,7 @@ export interface RemedyRequestFacts {
   originalScheduledEndMs: number;
   originalActualEndMs: number | null;
   nowMs: number;
-  /** Offered reservations + accepted courtesy make-ups for this booking/paid period. */
+  /** Requested/offered reservations + accepted courtesy make-ups for this booking/paid period. */
   courtesyUsedOrReserved: number;
   allocationState: string;
 }
@@ -184,7 +184,7 @@ export function remedySettlementTarget(remedy: RemedyFulfillment): { sessionId: 
   return { sessionId: null, hold: true };
 }
 
-/** Offer reservations prevent concurrent approvals from spending the same allowance twice. */
+/** Count once per original case: submission reserves a slot before a teacher offers a replacement. */
 export function courtesyAllowanceUse(facts: {
   reason: MakeupReason;
   status: LessonRemedyStatus;
@@ -200,7 +200,7 @@ export function courtesyAllowanceUse(facts: {
     throw new LessonRemedyError("invalid_facts", "The accepted make-up record is incomplete. Support must review it.");
   }
   if (facts.reason === "teacher_missed" || facts.teacherFailedReplacement) return 0;
-  if (facts.acceptedAtMs !== null || facts.status === "offered") return 1;
+  if (facts.acceptedAtMs !== null || facts.status === "requested" || facts.status === "offered") return 1;
   return 0;
 }
 

@@ -888,6 +888,23 @@ const publiclyVisible = () =>
 const attachDiscoverStudentIfRequested = (req: Request, res: Response, next: NextFunction) =>
   req.query.personalized === "1" ? void attachUserIfPresent(req, res, next) : next();
 
+/** One authorized class-home link, selected in the catalogue query rather than N card requests.
+ * A booking alone is not access: an actual purchased lesson must still admit this student.
+ * The exact batch id also prevents a previous paid period being mistaken for a new purchase.
+ */
+const myClassBatchIdFor = (studentId: number | null) => studentId === null ? sql<number | null>`NULL` : sql<number | null>`(
+  SELECT booked.batch_id FROM batch_test_bookings booked
+  JOIN learning_program_batches booked_batch ON booked_batch.id = booked.batch_id
+  JOIN batch_test_sessions booked_lesson ON booked_lesson.batch_id = booked_batch.id
+  JOIN sessions lesson ON lesson.id = booked_lesson.session_id
+  JOIN session_enrollments place ON place.session_id = lesson.id AND place.student_id = booked.student_id
+  WHERE booked.student_id = ${studentId} AND booked_batch.program_id = ${learningProgramsTable.id}
+    AND (place.payment_status = 'paid' OR (place.payment_status = 'test' AND ${admitsTestEnrolment("test")}))
+  ORDER BY (lesson.status IN ('upcoming', 'live') AND lesson.date + lesson.duration * interval '1 minute' > now()) DESC,
+    booked.created_at DESC, booked.batch_id DESC
+  LIMIT 1
+)`;
+
 router.get("/programs", attachDiscoverStudentIfRequested, async (req: Request, res: Response): Promise<void> => {
   const limit = readLimit(req.query.limit);
   if (limit === null) {
@@ -900,6 +917,10 @@ router.get("/programs", attachDiscoverStudentIfRequested, async (req: Request, r
     return;
   }
   const studentId = req.query.personalized === "1" && req.user?.role === "student" ? req.user.userId : null;
+  if (studentId !== null) {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.vary("Authorization");
+  }
   let cursor: { at: Date; id: number; rank?: number } | null = null;
   if (req.query.cursor !== undefined) {
     cursor = studentId === null
@@ -1057,6 +1078,7 @@ router.get("/programs", attachDiscoverStudentIfRequested, async (req: Request, r
       teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
       priority,
+      myClassBatchId: myClassBatchIdFor(studentId),
     })
     .from(learningProgramsTable)
     .innerJoin(usersTable, eq(usersTable.id, learningProgramsTable.teacherId))
@@ -1103,6 +1125,7 @@ router.get("/programs", attachDiscoverStudentIfRequested, async (req: Request, r
         referenceName: snapshot.referenceName,
         referenceSource: snapshot.referenceSource,
         moduleCount: snapshot.modules.length,
+        ...(studentId !== null ? { myClass: row.myClassBatchId ? { batchId: row.myClassBatchId } : null } : {}),
       }];
     }),
     nextCursor: rows.length > limit && last?.publishedAt
@@ -1122,7 +1145,12 @@ router.get("/programs", attachDiscoverStudentIfRequested, async (req: Request, r
  * an id that never existed, because "this exists but you may not see it" tells a stranger the id
  * space, and a program that cannot be read honestly is not a program that should be half-drawn.
  */
-router.get("/programs/:id", async (req: Request, res: Response): Promise<void> => {
+router.get("/programs/:id", attachDiscoverStudentIfRequested, async (req: Request, res: Response): Promise<void> => {
+  const studentId = req.query.personalized === "1" && req.user?.role === "student" ? req.user.userId : null;
+  if (studentId !== null) {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.vary("Authorization");
+  }
   const id = readId(req.params.id);
   if (id === null) {
     res.status(400).json({ error: "That program address is not valid." });
@@ -1138,6 +1166,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
       teacherId: learningProgramsTable.teacherId,
       teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
+      myClassBatchId: myClassBatchIdFor(studentId),
     })
     .from(learningProgramsTable)
     .innerJoin(usersTable, eq(usersTable.id, learningProgramsTable.teacherId))
@@ -1167,6 +1196,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
       publishedAt: row.publishedAt,
       teacher: { id: row.teacherProfileId, name: row.teacherName },
       ...snapshot,
+      ...(studentId !== null ? { myClass: row.myClassBatchId ? { batchId: row.myClassBatchId } : null } : {}),
     },
   });
 });

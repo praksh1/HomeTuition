@@ -28,6 +28,8 @@ import { PROGRAM_TYPE_CHOICES, programTypeLabel, type ProgramType, type ProgramT
 
 /** One row in the public list, exactly as `/programs` returns it (see the API header for shape). */
 export interface PublicProgramSummary {
+  /** Authenticated viewer's exact enrolled batch. Absent on public/older responses. */
+  myClass?: { batchId: number } | null;
   presentation?: "class";
   id: number;
   type: ProgramType | string;
@@ -59,6 +61,7 @@ export interface PublicProgramModule {
 
 /** One published program in full, as `/programs/:id` returns it. */
 export interface PublicProgramDetail {
+  myClass?: { batchId: number } | null;
   presentation?: "class";
   outline?: string;
   id: number;
@@ -188,6 +191,7 @@ export function programTypeFilters(): ProgramTypeFilter[] {
  * project has already recorded a dozen times.
  */
 export interface ProgramCardFields {
+  enrolled: boolean;
   id: number;
   title: string;
   outcome: string;
@@ -201,6 +205,7 @@ export interface ProgramCardFields {
 /** For a summary row from the list; the intended learner comes through when the API sends it. */
 export function cardFromSummary(row: PublicProgramSummary): ProgramCardFields {
   return {
+    enrolled: enrolledClassBatchId(row) !== null,
     id: row.id,
     title: row.title || "Untitled program",
     outcome: row.outcome,
@@ -217,6 +222,7 @@ export function cardFromSummary(row: PublicProgramSummary): ProgramCardFields {
 
 export function cardFromDetail(program: PublicProgramDetail): ProgramCardFields {
   return {
+    enrolled: enrolledClassBatchId(program) !== null,
     id: program.id,
     title: program.title || "Untitled program",
     outcome: program.outcome,
@@ -226,6 +232,12 @@ export function cardFromDetail(program: PublicProgramDetail): ProgramCardFields 
     teachingLanguage: program.teachingLanguage,
     teacherName: program.teacher.name,
   };
+}
+
+/** Never infer enrollment from ranking, a follow, the teacher, or a Program rehearsal. */
+export function enrolledClassBatchId(value: { myClass?: { batchId: number } | null }): number | null {
+  const id = value.myClass?.batchId;
+  return typeof id === "number" && Number.isSafeInteger(id) && id > 0 ? id : null;
 }
 
 /* ========================================================================== *

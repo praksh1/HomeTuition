@@ -2,10 +2,11 @@ import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SearchableSelectionField } from "@/components/profile/SearchableSelectionField";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
 import { prepareProfilePhoto } from "@/utils/profilePhotoUpload";
@@ -50,6 +51,7 @@ export default function Onboarding() {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [photo, setPhoto] = useState<UploadableFile | null>(null);
   const [photoUploaded, setPhotoUploaded] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState(user?.avatarUrl);
   const [photoError, setPhotoError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -126,11 +128,13 @@ export default function Onboarding() {
         prepared.release();
       }
       setPhoto(null);
+      setPhotoUrl(photo.uri);
       setPhotoUploaded(true);
       setPhotoError(false);
       // The upload already succeeded. A transient profile refresh must not tell the person
       // their photo failed to save; the next account refresh can fetch its signed view URL.
       try { await refreshUser(); } catch { /* Preserve the successful upload result. */ }
+      try { const result = await apiGet<{ url: string }>("/onboarding/me/profile-photo/view"); setPhotoUrl(result.url); } catch { /* Keep the selected preview on a successful upload. */ }
       notify("Photo uploaded", "Your profile photo has been saved.");
     } catch (error) {
       notify("Photo not uploaded", error instanceof Error ? error.message : "Please try again.");
@@ -283,6 +287,10 @@ export default function Onboarding() {
         <View onLayout={event => { sectionY.current.photo = event.nativeEvent.layout.y; }} testID="account-photo-section" style={{ padding: space.md, gap: space.sm, borderWidth: 1, borderColor: photoError ? colors.destructive : colors.border, borderRadius: radius.md, backgroundColor: colors.card }}>
           <Text style={[t.bodyStrong, { color: colors.foreground }]}>Profile photo *</Text>
           <Text style={[t.caption, { color: colors.mutedForeground }]}>{isTeacher ? "Use a clear photo so students can recognise their teacher." : "Add a profile photo so people in your classes can recognise you. Do not upload identity documents here."}</Text>
+          <View testID="account-photo-preview" style={{ width: 88, height: 88, borderRadius: radius.pill, overflow: "hidden", backgroundColor: colors.surfaceSunk, alignItems: "center", justifyContent: "center" }}>
+            <Feather name="user" size={28} color={colors.mutedForeground} />
+            {photo ? <Image accessibilityLabel="Selected profile photo preview" source={{ uri: photo.uri }} resizeMode="cover" style={{ width: "100%", height: "100%", position: "absolute" }} /> : <ProfilePhoto uri={photoUrl ?? user?.avatarUrl} self />}
+          </View>
           <TouchableOpacity onPress={() => void choosePhoto()} activeOpacity={0.75} style={{ minHeight: 48, justifyContent: "center", paddingHorizontal: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm }}>
             <Text style={[t.body, { color: colors.primary }]} numberOfLines={1}>{photo ? photo.name : photoUploaded ? "Photo uploaded — choose a replacement" : "Select photo"}</Text>
           </TouchableOpacity>

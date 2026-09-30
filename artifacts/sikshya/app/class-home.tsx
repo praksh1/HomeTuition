@@ -14,6 +14,7 @@ import { classLessonJourney } from "@/utils/classLessonJourney";
 import type { ClassJourneyDisplayLesson } from "@/utils/classLessonJourney";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import { serverNow } from "@/utils/sessionClock";
+import { lessonHistoryLabel, type LessonAttendanceState } from "@/utils/lessonHistory";
 
 interface Home {
   title: string;
@@ -25,6 +26,7 @@ interface Home {
     startsAt: string;
     durationMinutes: number;
     status?: string;
+    attendance?: LessonAttendanceState;
   }>;
   counts: {
     messages: number;
@@ -236,13 +238,9 @@ export default function ClassHomeScreen() {
         const isCurrent =
           journey.stage === "current" &&
           lesson.sessionId === journey.focusLesson?.sessionId;
-        const stateLabel = lesson.status === "completed"
-          ? "Completed"
-          : lesson.status === "cancelled"
-            ? "Cancelled"
-            : journey.previousLessons.some((past) => past.sessionId === lesson.sessionId)
-              ? "Date passed"
-              : isCurrent ? "Now" : "";
+        const previous = journey.previousLessons.some((past) => past.sessionId === lesson.sessionId);
+        const stateLabel = lessonHistoryLabel({ status: lesson.status, previous,
+          current: isCurrent, attendance: lesson.attendance, isTeacher: home.isTeacher });
         return (
           <View
             key={lesson.sessionId}
@@ -252,22 +250,34 @@ export default function ClassHomeScreen() {
               paddingVertical: space.sm,
               borderTopWidth: index ? 1 : 0,
               borderTopColor: colors.border,
-              flexDirection: "row",
-              alignItems: "center",
+              flexDirection: "column",
+              alignItems: "stretch",
               gap: space.sm,
             }}
           >
-            <View style={{ flex: 1, gap: space.xxs }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+            <View style={{ flex: 1, minWidth: 0, gap: space.xxs }}>
               <Text style={[t.bodyStrong, { color: colors.foreground }]}>Lesson {lesson.displayNumber}</Text>
               <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
                 {formatLesson(lesson)}
               </Text>
             </View>
             {stateLabel ? (
-              <View style={{ paddingHorizontal: space.sm, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: colors.surfaceSunk }}>
+              <View style={{ maxWidth: "48%", paddingHorizontal: space.sm, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: colors.surfaceSunk }}>
                 <Text style={[t.caption, { color: colors.primary }]}>{stateLabel}</Text>
               </View>
             ) : null}
+            </View>
+            {previous ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
+              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View lesson ${lesson.displayNumber}`} onPress={() => router.push({ pathname: "/session/[id]", params: { id: String(lesson.sessionId) } })}
+                style={{ minHeight: 44, paddingHorizontal: space.sm, justifyContent: "center" }}>
+                <Text style={[t.caption, { color: colors.primary }]}>View lesson</Text>
+              </TouchableOpacity>
+              {!home.isTeacher && lesson.attendance !== "not_enrolled" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Get help with lesson ${lesson.displayNumber}`} onPress={() => router.push({ pathname: "/support", params: { sessionId: String(lesson.sessionId) } })}
+                style={{ minHeight: 44, paddingHorizontal: space.sm, justifyContent: "center" }}>
+                <Text style={[t.caption, { color: colors.primary }]}>Get help</Text>
+              </TouchableOpacity> : null}
+            </View> : null}
           </View>
         );
       })}
@@ -364,6 +374,7 @@ export default function ClassHomeScreen() {
                 <Feather name={showPrevious ? "chevron-up" : "chevron-down"} size={18} color={colors.primary} />
               </TouchableOpacity>
               {showPrevious ? lessonRows(journey.previousLessons) : null}
+              {showPrevious && !home.isTeacher ? <Text style={[t.caption, { color: colors.mutedForeground }]}>Joined means a classroom connection was recorded, not that the full lesson was delivered. Missing attendance needs review; it does not decide a refund.</Text> : null}
             </View>
           ) : null}
         </View>

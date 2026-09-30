@@ -6,6 +6,17 @@ export class ApiError extends Error {
 // an unexpected endpoint still fails instead of turning into synthetic success.
 export async function apiGet(path) {
   globalThis.__apiPaths = [...(globalThis.__apiPaths || []), path];
+  if (path === "/batch-tests/99" && globalThis.__batchEnrollmentFixture) {
+    if (globalThis.__batchEnrollmentFixture === "unavailable") throw new Error("Synthetic enrollment lookup unavailable");
+    const booked = globalThis.__batchEnrollmentFixture === "enrolled";
+    return {
+      testOnly: true, paymentCollectedNpr: 0, isTeacher: false, booked,
+      quoteKey: "a".repeat(64), quote: { status: "remaining_lessons", remainingLessonCount: 2, amountNpr: 600 },
+      offerLessons: [{ position: 7, startsAt: "2026-10-08T10:00:00Z", durationMinutes: 60 }],
+      lessons: booked ? [{ position: 7, sessionId: 125, startsAt: "2026-10-08T10:00:00Z", durationMinutes: 60 }, { position: 8, sessionId: 126, startsAt: "2026-10-09T10:00:00Z", durationMinutes: 60 }] : [],
+      receipts: booked ? [{ reference: "TEST-BATCH-1", grossNpr: 600, allocations: [{ position: 7, grossNpr: 300 }, { position: 8, grossNpr: 300 }] }] : [],
+    };
+  }
   if (path.startsWith("/teachers?")) return {
     teachers: [{
       id: 42, userId: 1042, name: "Anjali Rai", subject: "Mathematics",

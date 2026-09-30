@@ -555,6 +555,7 @@ export default function Discover() {
             onLoadMore={() => void loadPrograms({ append: true })}
             onRetry={() => void loadPrograms({ query: programQuery, type: programType })}
             onOpen={(id) => router.push(`/(student)/program/${id}`)}
+            onOpenMyClass={(batchId) => router.push({ pathname: "/class-home", params: { id: String(batchId) } })}
             onSubmit={(text) => { setProgramQuery(text); void loadPrograms({ query: text, type: programType }); }}
           />
         </ScrollView>
@@ -585,6 +586,7 @@ export default function Discover() {
             onLoadMore={() => void loadListedClasses({ append: true })}
             onRetry={() => void loadListedClasses({ query: listedClassQuery })}
             onOpen={(id) => router.push(`/(student)/program/${id}`)}
+            onOpenMyClass={(batchId) => router.push({ pathname: "/class-home", params: { id: String(batchId) } })}
             onSubmit={(text) => { setListedClassQuery(text); void loadListedClasses({ query: text }); }}
           />
         </ScrollView>

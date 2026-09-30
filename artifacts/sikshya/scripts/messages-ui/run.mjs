@@ -185,7 +185,8 @@ try {
     await page.getByText("Report this person", { exact: true }).click();
     await page.getByTestId("message-report-description").fill("This person sent repeated unwanted messages.");
     await page.getByTestId("message-report-submit").click();
-    await page.getByText("Report HT-000321 sent to the Fadko Help Desk.", { exact: true }).waitFor();
+    await page.getByText("Reported to the Fadko Help Desk. You can also block this person if needed.", { exact: true }).waitFor();
+    check(!(await page.locator("body").innerText()).includes("HT-000321"), `${width}: reporting confirms delivery without exposing ticket numbers`);
     check(await page.evaluate(() => window.lastReport?.path === "/messages/11/report" && window.lastReport?.body.description === "This person sent repeated unwanted messages." && !window.lastNavigation), `${width}: private report submits the described user to the Help Desk without navigating away`);
     await page.getByText("Unblock this person", { exact: true }).click();
     await page.getByTestId("conversation-input").waitFor();

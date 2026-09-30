@@ -75,7 +75,7 @@ try {
     await page.goto(base + "?teacher-ready");
     await page.getByText("Class ready for testing", { exact: true }).waitFor();
     const teacherClassText = await page.locator("body").innerText();
-    check(`${width}: teacher class home shows illustrative share and next lesson`, teacherClassText.includes("Illustrative teacher share: NPR 4,200") && teacherClassText.includes("Open next lesson"));
+    check(`${width}: teacher class home shows estimated earnings and next lesson`, teacherClassText.includes("Estimated teacher earnings: NPR 4,200") && teacherClassText.includes("Open next lesson"));
     check(`${width}: teacher class home hides student and platform allocations`, !teacherClassText.includes("Test payment: NPR 6,000") && !teacherClassText.includes("Fadko allocation") && !teacherClassText.includes("Still held"));
     await page.goto(base + "?stale");
     await page.getByRole("button", { name: "Confirm practice enrollment — no charge", exact: true }).waitFor();
