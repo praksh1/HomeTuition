@@ -12,7 +12,7 @@ import {
   testClassesTable,
   usersTable,
 } from "@workspace/db";
-import { requireAuth } from "../middlewares/requireAuth";
+import { requireAuth, attachUserIfPresent, requireAdmin } from "../middlewares/requireAuth";
 import { requireReadyAccount } from "../middlewares/requireReadyAccount";
 import { identityEligible } from "../lib/identityEligibility";
 import { requireTeachingIdentity } from "../middlewares/requireTeachingIdentity";
@@ -68,6 +68,7 @@ import { isRecurringDay, notARecurringDay } from "../lib/monthlyStore";
 import { mayCreateClassAt } from "../lib/sessionAllowance";
 import { legacyStandaloneCreationOpen } from "../lib/teacherBilling";
 import { batchTestForSession } from "../lib/batchTestStore";
+import { notAReplacementLesson, readReplacementIdentity, tagReplacementClassGroups } from "../lib/lessonRemedyIntegration";
 import {
   TEST_BOOKING_LABEL,
   TEST_CLASS_LABEL,
@@ -151,6 +152,7 @@ async function tagTestClasses<T extends { id: number }>(rows: T[]): Promise<T[]>
  */
 async function tagClassGroupLessons<T extends { id: number }>(rows: T[]): Promise<T[]> {
   if (!rows.length) return rows;
+  rows = await tagReplacementClassGroups(rows);
   const mapped = await db
     .select({
       sessionId: batchTestSessionsTable.sessionId,
@@ -307,6 +309,7 @@ router.get("/public/classes", async (req: Request, res: Response): Promise<void>
   const where = [
     // Only actual single classes for sale — never a materialised monthly class-day.
     notARecurringDay,
+    sql`NOT EXISTS (SELECT 1 FROM batch_test_sessions bt WHERE bt.session_id=${sessionsTable.id})`,
     // Only "upcoming" — a live / completed / cancelled class cannot be bought.
     eq(sessionsTable.status, "upcoming"),
     // Only teachers permitted to appear publicly.
@@ -317,6 +320,8 @@ router.get("/public/classes", async (req: Request, res: Response): Promise<void>
     // out of the public list.
     sql`${sessionsTable.enrolledCount} < ${sessionsTable.maxStudents}`,
   ];
+  const excludeReplacement = await notAReplacementLesson();
+  if (excludeReplacement) where.push(excludeReplacement);
 
   /*
     Filter in SQL so expired rows do not consume a page. The storefront must close at the same
@@ -397,7 +402,12 @@ router.get("/public/classes", async (req: Request, res: Response): Promise<void>
   });
 });
 
-router.get("/sessions", async (req, res): Promise<void> => {
+router.get("/sessions", attachUserIfPresent, async (req, res): Promise<void> => {
+  if (req.user?.role === "admin") {
+    let authorized = false;
+    await requireAdmin(req, res, () => { authorized = true; });
+    if (!authorized) return;
+  }
   const { teacherId, studentId, status, agenda, catalog, page = "1", limit = "20" } = req.query as Record<string, string>;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
@@ -435,6 +445,17 @@ router.get("/sessions", async (req, res): Promise<void> => {
   if ((!teacherId && !studentId) || catalog === "standalone") {
     conditions.push(notARecurringDay);
     conditions.push(sql`not exists (select 1 from ${batchTestSessionsTable} where ${batchTestSessionsTable.sessionId} = ${sessionsTable.id})`);
+    const excludeReplacement = await notAReplacementLesson();
+    if (excludeReplacement) conditions.push(excludeReplacement);
+  }
+  // A private make-up appears only in the authenticated participant's own schedule.
+  // A query-string teacher/student ID is not proof of membership.
+  const ownSchedule = req.user?.role === "admin" ||
+    (teacherId !== undefined && req.user?.role === "teacher" && req.user.userId === Number(teacherId)) ||
+    (studentId !== undefined && req.user?.role === "student" && req.user.userId === Number(studentId));
+  if (!ownSchedule && (teacherId || studentId) && catalog !== "standalone") {
+    const excludeReplacement = await notAReplacementLesson();
+    if (excludeReplacement) conditions.push(excludeReplacement);
   }
 
   /**
@@ -841,13 +862,23 @@ router.get("/sessions/subjects", async (_req, res): Promise<void> => {
   res.json({ subjects: merged });
 });
 
-router.get("/sessions/:id", async (req, res): Promise<void> => {
+router.get("/sessions/:id", attachUserIfPresent, async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const id = parseInt(raw, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid session ID" }); return; }
 
   const [session] = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id));
   if (!session) { res.status(404).json({ error: "Session not found" }); return; }
+  const replacement = await readReplacementIdentity(id);
+  if (replacement && req.user?.role === "admin") {
+    let authorized = false;
+    await requireAdmin(req, res, () => { authorized = true; });
+    if (!authorized) return;
+  }
+  if (replacement && req.user?.role !== "admin" && req.user?.userId !== replacement.teacherId &&
+      (req.user === undefined || !await readReplacementIdentity(id, db, req.user.userId))) {
+    res.status(404).json({ error: "Session not found" }); return;
+  }
 
   // `endedAt` travels with the class so the app can answer "may I open this?" the moment a
   // card is tapped, without a round trip and without opening the classroom to find out. The
@@ -1279,6 +1310,12 @@ router.patch("/sessions/:id", requireAuth, async (req, res): Promise<void> => {
   if (!existing) { res.status(404).json({ error: "Session not found" }); return; }
   if (existing.teacherId !== user.userId) {
     res.status(403).json({ error: "You can only update your own sessions" });
+    return;
+  }
+
+  if ((date !== undefined || duration !== undefined || price !== undefined || maxStudents !== undefined ||
+      topic !== undefined || subject !== undefined) && await readReplacementIdentity(id)) {
+    res.status(409).json({ error: "This accepted make-up preserves the agreed lesson date, length and price. Use its linked request for any further review." });
     return;
   }
 
@@ -1759,6 +1796,7 @@ async function bookSession(req: Request, res: Response): Promise<void> {
 
   try {
     const result = await db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${user.userId})`);
       // Re-read the row inside the transaction and lock it, so two students booking the last
       // seat at the same instant cannot both be let in.
       const [locked] = await tx
@@ -1815,6 +1853,14 @@ async function bookSession(req: Request, res: Response): Promise<void> {
       // not consume another seat because it already holds one.
       if (!await identityEligible(session.teacherId, "teacher", tx)) return { kind: "identity_teacher" as const };
       if (!existing && locked.enrolledCount >= locked.maxStudents) return { kind: "full" as const };
+      const overlapping = await tx.select({ id: sessionsTable.id }).from(sessionEnrollmentsTable)
+        .innerJoin(sessionsTable, eq(sessionsTable.id, sessionEnrollmentsTable.sessionId))
+        .where(and(eq(sessionEnrollmentsTable.studentId, user.userId), ne(sessionsTable.id, id),
+          inArray(sessionEnrollmentsTable.paymentStatus, activeEnrolmentStatuses()),
+          inArray(sessionsTable.status, ["upcoming", "live"]),
+          sql`${sessionsTable.date} < ${new Date(session.date.getTime() + session.duration * 60_000).toISOString()}::timestamptz`,
+          sql`${sessionsTable.date} + ${sessionsTable.duration} * interval '1 minute' > ${session.date.toISOString()}::timestamptz`)).limit(1);
+      if (overlapping.length) return { kind: "overlap" as const };
 
       /**
        * The one booking that may skip the gateway, and the three things it needs.
@@ -1915,6 +1961,9 @@ async function bookSession(req: Request, res: Response): Promise<void> {
         return;
       case "full":
         res.status(409).json({ error: "This session is full." });
+        return;
+      case "overlap":
+        res.status(409).json({ error: "This lesson overlaps another lesson you have already booked. No payment was taken." });
         return;
       case "declined":
         res.status(402).json({
@@ -2083,6 +2132,7 @@ router.get("/sessions/:id/access", requireAuth, async (req, res): Promise<void> 
   const canBookAsTest =
     !membership.isSessionTeacher &&
     !membership.isEnrolledStudent &&
+    !(await readReplacementIdentity(id)) &&
     testStudentAllowed() &&
     (await isTestClass(id)) &&
     (await liveTestStudentGrant(req.user!.userId)) !== null;

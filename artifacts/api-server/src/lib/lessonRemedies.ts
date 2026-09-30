@@ -67,6 +67,25 @@ export function readLessonRemedyPolicy(raw: unknown): LessonRemedyPolicy | null 
   } catch { return null; }
 }
 
+/** A booking keeps its established terms across requests, withdrawals and later policy releases. */
+export function establishedLessonRemedyPolicy(kind: RemedyProgramKind, purchasedLessonCount: number,
+  records: Array<{ policyVersion: string; policySnapshot: unknown }>): LessonRemedyPolicy {
+  if (!records.length) return snapshotLessonRemedyPolicy(kind, purchasedLessonCount);
+  const policies = records.map(record => {
+    const stored = readLessonRemedyPolicy(record.policySnapshot);
+    if (!stored || stored.version !== record.policyVersion || stored.kind !== kind ||
+        stored.purchasedLessonCount !== purchasedLessonCount) {
+      throw new LessonRemedyError("policy_needs_review", "Support must check this enrollment's saved make-up terms. No allowance or payment decision changed.");
+    }
+    return stored;
+  });
+  const frozen = policies[0]!;
+  if (policies.some(stored => JSON.stringify(stored) !== JSON.stringify(frozen))) {
+    throw new LessonRemedyError("policy_needs_review", "This enrollment has conflicting saved make-up terms. Support must review them before continuing.");
+  }
+  return frozen;
+}
+
 export interface RemedyRequestFacts {
   policy: LessonRemedyPolicy;
   reason: MakeupReason;

@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db, sessionsTable, sessionEnrollmentsTable } from "@workspace/db";
 import { DOORS_OPEN_MINUTES, canJoin } from "./sessionStart";
 import { admitsTestEnrolment } from "./testStudentAccess";
+import { replacementStudentAccess } from "./lessonRemedyIntegration";
 
 /**
  * How early a paid student may enter the classroom.
@@ -116,7 +117,10 @@ export async function getSessionMembership(
   const viaTestAccess = admitsTestEnrolment(enrollment?.paymentStatus);
 
   // A free class has nothing to pay, so enrolling in one is already "paid".
-  const hasPaid = !!enrollment && (session.price <= 0 || enrollment.paymentStatus === "paid" || viaTestAccess);
+  const replacementAllowed = enrollment && session.price <= 0
+    ? await replacementStudentAccess(sessionId, userId) : null;
+  const hasPaid = !!enrollment && replacementAllowed !== false &&
+    (session.price <= 0 || enrollment.paymentStatus === "paid" || viaTestAccess);
 
   /**
    * A `test` row with the switch off is treated as no row at all.
@@ -128,7 +132,7 @@ export async function getSessionMembership(
 
   return {
     isSessionTeacher: false,
-    isEnrolledStudent: !!enrollment && enrollment.paymentStatus !== "refunded" && !dormantTestRow,
+    isEnrolledStudent: !!enrollment && enrollment.paymentStatus !== "refunded" && !dormantTestRow && replacementAllowed !== false,
     hasPaid,
     wasRefunded: enrollment?.paymentStatus === "refunded",
     viaTestAccess,

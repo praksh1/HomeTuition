@@ -1,7 +1,8 @@
 import { and, desc, eq, isNotNull, or } from "drizzle-orm";
-import { db, sessionEnrollmentsTable, sessionsTable, refundsTable, batchTestSessionsTable, batchTestBookingsTable, batchTestPaymentsTable } from "@workspace/db";
+import { db, sessionEnrollmentsTable, sessionsTable, refundsTable } from "@workspace/db";
 import { accessRefusalFor, getSessionMembership } from "./membership";
 import { explainSupportPayment } from "./supportPaymentEvidence";
+import { originalAllocationForSession } from "./lessonRemedyIntegration";
 
 /** Only own teaching/enrolment records. No rosters, other people's payments, secrets or DMs. */
 export async function listSupportLessons(userId: number) {
@@ -36,17 +37,14 @@ export async function readSupportLesson(userId: number, sessionId: number) {
     ]),
   ];
   if (!teacher && row.enrollmentId) {
-    const [batch] = await db.select({ bookingId: batchTestBookingsTable.id, position: batchTestSessionsTable.position, receipt: batchTestPaymentsTable.receipt })
-      .from(batchTestSessionsTable).innerJoin(batchTestBookingsTable, and(
-        eq(batchTestBookingsTable.batchId, batchTestSessionsTable.batchId), eq(batchTestBookingsTable.studentId, userId),
-      )).innerJoin(batchTestPaymentsTable, eq(batchTestPaymentsTable.bookingId, batchTestBookingsTable.id))
-      .where(eq(batchTestSessionsTable.sessionId, sessionId)).limit(1);
+    const batch = await originalAllocationForSession(sessionId, userId);
     const refunds = await db.select({ id: refundsTable.id, amount: refundsTable.amount, status: refundsTable.status,
       requestedAt: refundsTable.requestedAt, paidAt: refundsTable.paidAt })
-      .from(refundsTable).where(and(eq(refundsTable.studentId, userId), eq(refundsTable.sessionId, sessionId)))
+      .from(refundsTable).where(and(eq(refundsTable.studentId, userId), eq(refundsTable.sessionId, batch?.originalSessionId ?? sessionId)))
       .orderBy(desc(refundsTable.id)).limit(6);
     facts.push(...explainSupportPayment({ enrollmentId: row.enrollmentId, status: row.paymentStatus ?? "unknown",
-      method: row.paymentMethod, reference: row.paymentReference, batch, refunds }));
+      method: row.paymentMethod, reference: row.paymentReference, batch: batch ?? undefined, refunds }));
+    if (batch?.replacementSessionId) facts.push(`This is a make-up for original lesson #${batch.originalSessionId}. The original receipt allocation remains the only charge; no second charge or earning is created.`);
   }
   return { sessionId: row.id, title: row.topic, facts };
 }

@@ -83,6 +83,7 @@ export default function AdminTabLayout() {
         <Tabs.Screen name="ticket/[id]" options={{ href: null }} />
         <Tabs.Screen name="person/[id]" options={{ href: null }} />
         <Tabs.Screen name="help-library" options={{ href: null }} />
+        <Tabs.Screen name="makeups" options={{ href: null, tabBarStyle: { display: "none" } }} />
         <Tabs.Screen name="identity-review" options={{ href: null, tabBarStyle: { display: "none" } }} />
         <Tabs.Screen name="identity-holds" options={{ href: null, tabBarStyle: { display: "none" } }} />
         <Tabs.Screen name="account-closures" options={{ href: null, tabBarStyle: { display: "none" } }} />

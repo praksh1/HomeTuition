@@ -35,6 +35,13 @@ test("quiz notices open the enrolled class quiz space, not homework or a paid ro
   assert.equal(notificationPresentation(notice).label, "Practice quiz");
 });
 
+test("make-up updates keep the original class and lesson rather than opening a new checkout", () => {
+  const data = { type: "makeup_update", batchId: 18, sessionId: 105, replacementSessionId: 200 };
+  assert.deepEqual(notificationDestination(data, "student"), { pathname: "/makeups", params: { id: "18", sessionId: "105" } });
+  assert.deepEqual(notificationDestination(data, "admin"), { pathname: "/(admin)/makeups", params: { id: "18", sessionId: "105" } });
+  assert.equal(notificationPresentation(item({ data })).label, "Make-up lesson");
+});
+
 test("opening one notification leaves every other unread item unread", () => {
   const result = markOnlyNotificationRead([item(), item({ id: "two" })], "one");
   assert.equal(result[0]?.read, true);

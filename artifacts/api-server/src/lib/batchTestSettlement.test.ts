@@ -23,12 +23,28 @@ test("a requested, offered or unresolved make-up holds the original allocation",
 
 test("only confirmed replacement delivery uses replacement evidence and its fresh review clock", () => {
   const facts = { ...base, sessionStatus: "completed", teacherPresenceRecorded: true,
+    confirmedReplacementReviewClosesAtMs: base.scheduledStartMs + 49 * HOUR,
     remedy: { status: "delivered_review" as const, originalSessionId: 17, acceptedReplacementSessionId: 91 } };
   assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 17 }), []);
   assert.deepEqual(automaticBatchTestEvents(facts), []); // Missing target identity is not a fallback.
   assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 91 }), ["lesson_delivered"]);
   assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 91, nowMs: base.scheduledStartMs + 49 * HOUR }), ["lesson_delivered", "complaint_window_closed"]);
   assert.deepEqual(automaticBatchTestEvents({ ...facts, evidenceSessionId: 91, activeComplaint: true }), ["lesson_delivered", "complaint_opened"]);
+});
+
+test("a confirmed label without its independently stored review deadline holds", () => {
+  assert.deepEqual(automaticBatchTestEvents({ ...base, state: "delivered_pending", sessionStatus: "completed",
+    teacherPresenceRecorded: true, nowMs: base.scheduledStartMs + 500 * HOUR, evidenceSessionId: 91,
+    remedy: { status: "delivered_review", originalSessionId: 17, acceptedReplacementSessionId: 91 } }), []);
+});
+
+test("late operator confirmation cannot backdate replacement release to its booked end", () => {
+  const deadline = base.scheduledStartMs + 100 * HOUR;
+  const facts = { ...base, state: "delivered_pending" as const, sessionStatus: "completed", teacherPresenceRecorded: true,
+    evidenceSessionId: 91, remedy: { status: "delivered_review" as const, originalSessionId: 17, acceptedReplacementSessionId: 91 },
+    confirmedReplacementReviewClosesAtMs: deadline };
+  assert.deepEqual(automaticBatchTestEvents({ ...facts, nowMs: deadline - 1 }), []);
+  assert.deepEqual(automaticBatchTestEvents({ ...facts, nowMs: deadline }), ["complaint_window_closed"]);
 });
 
 test("a teacher or operator cannot manufacture delivery from a completed label alone", () => {

@@ -24,6 +24,7 @@ import { notifyUser, notifyUsers } from "../ws/userHub";
 
 /** Which preference switch governs each kind. */
 const PREF_KEY: Record<NotificationKind, PrefKind> = {
+  makeup_update: "sessionLive",
   message: "messages",
   class_message: "messages",
   class_homework_set: "homework",

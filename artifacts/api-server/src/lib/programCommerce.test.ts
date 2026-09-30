@@ -125,11 +125,11 @@ test("paid-out and refunded allocations are terminal", () => {
 
 test("every non-terminal state exposes only the approved transitions", () => {
   const expected: Record<ProgramAllocationState, Partial<Record<ProgramAllocationEvent, ProgramAllocationState>>> = {
-    future: { lesson_delivered: "delivered_pending", lesson_cancelled: "replacement_pending" },
-    replacement_pending: { replacement_scheduled: "future", refund_approved: "refund_owed" },
-    delivered_pending: { complaint_opened: "disputed", complaint_window_closed: "eligible" },
-    disputed: { complaint_upheld: "refund_owed", complaint_denied: "eligible" },
-    eligible: { complaint_opened: "disputed", payout_confirmed: "paid_out" },
+    future: { lesson_delivered: "delivered_pending", lesson_cancelled: "replacement_pending", makeup_requested: "replacement_pending", makeup_delivery_confirmed: "delivered_pending" },
+    replacement_pending: { replacement_scheduled: "future", refund_approved: "refund_owed", makeup_requested: "replacement_pending", makeup_delivery_confirmed: "delivered_pending", makeup_withdrawn: "future" },
+    delivered_pending: { complaint_opened: "disputed", complaint_window_closed: "eligible", makeup_requested: "replacement_pending" },
+    disputed: { complaint_upheld: "refund_owed", complaint_denied: "eligible", makeup_requested: "replacement_pending", makeup_review_restored: "delivered_pending" },
+    eligible: { complaint_opened: "disputed", payout_confirmed: "paid_out", makeup_requested: "replacement_pending" },
     paid_out: {},
     refund_owed: { refund_confirmed: "refunded" },
     refunded: {},

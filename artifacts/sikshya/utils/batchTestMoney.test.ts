@@ -92,6 +92,18 @@ test("an empty real result stays an honest zero summary", () => {
   });
 });
 
+test("make-up and disputed shares remain held without counting another payment", () => {
+  const record = receipt({ allocations: [
+    { position: 0, grossNpr: 500, teacherNpr: 350, state: "replacement_pending" },
+    { position: 1, grossNpr: 500, teacherNpr: 350, state: "disputed" },
+  ], accounting: { actualMoneyMovedNpr: 0, teacherPaidOutNpr: 0, heldGrossNpr: 1000 } });
+  const result = participantTestTotals([record]);
+  assert.equal(result.teacherHeldNpr, 700);
+  assert.equal(result.grossNpr, 1000);
+  assert.equal(result.teacherPaidOutNpr, 0);
+  assert.equal(participantMoneyStatement([record], "teacher").pending.reduce((sum, row) => sum + row.amountNpr, 0), 700);
+});
+
 test("participant history describes the user's outcome without exposing internal custody", () => {
   assert.equal(participantReceiptStatus(receipt(), "student"), "Test booking confirmed");
   assert.equal(participantReceiptStatus(receipt(), "teacher"), "Expected earnings pending");

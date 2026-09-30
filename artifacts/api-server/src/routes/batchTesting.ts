@@ -5,6 +5,7 @@ import { db, learningProgramsTable, learningProgramBatchesTable, teacherProfiles
   userOnboardingTable, testTeachingGrantsTable, testStudentGrantsTable, batchTestContractsTable,
   batchTestBookingsTable, batchTestPaymentsTable, batchTestLedgerEntriesTable, batchTestSessionsTable,
   classGroupHomeworkTable, sessionsTable, sessionActivityTable, sessionEnrollmentsTable, sessionParticipationTable, disputesTable, testClassesTable } from "@workspace/db";
+import { lessonRemedyCasesTable, lessonRemedyOffersTable, lessonRemedyEventsTable } from "@workspace/db";
 import { requireAdmin, requireAuth } from "../middlewares/requireAuth";
 import { emailVerifiedFor, onboardingCompleteFor } from "../lib/accountSecurity";
 import { identityEligible } from "../lib/identityEligibility";
@@ -21,6 +22,9 @@ import { simulatedBatchReceipt, type SimulatedBatchReceipt } from "../lib/batchT
 import { PROGRAM_ALLOCATION_EVENTS, ProgramCommerceInputError, transitionProgramAllocation,
   type ProgramAllocationEvent, type ProgramAllocationState } from "../lib/programCommerce";
 import { automaticBatchTestEvents, batchTestNeedsHumanAttention } from "../lib/batchTestSettlement";
+import { participantRemedyView, readBookingRemedies } from "../lib/lessonRemedyIntegration";
+import { assertRemedyFinancialEvent, remedyHoldsAllocation } from "../lib/lessonRemedyFinance.ts";
+import { lessonRemediesEnabled, lessonRemedySchemaReady } from "../lib/lessonRemedySchema";
 
 const router = Router();
 const EVENTS_REQUIRING_NOTE = new Set<ProgramAllocationEvent>([
@@ -28,10 +32,14 @@ const EVENTS_REQUIRING_NOTE = new Set<ProgramAllocationEvent>([
 ]);
 
 type BatchLedgerRow = typeof batchTestLedgerEntriesTable.$inferSelect;
-function receiptView(receipt: SimulatedBatchReceipt, entries: BatchLedgerRow[]) {
+type ReceiptRemedy = Awaited<ReturnType<typeof readBookingRemedies>>[number];
+function receiptView(receipt: SimulatedBatchReceipt, entries: BatchLedgerRow[], remedies: ReceiptRemedy[] = []) {
   const allocations = receipt.allocations.map((allocation) => {
     const latest = entries.filter((entry) => entry.position === allocation.position).at(-1);
-    return { ...allocation, state: latest?.toState ?? "future" };
+    const state = latest?.toState ?? "future";
+    const remedy = remedies.find(row => row.position === allocation.position);
+    return { ...allocation, state, ...(remedy ? { remedy: { ...participantRemedyView(remedy),
+      allocationHeld: !["paid_out", "refunded"].includes(state) && remedyHoldsAllocation(remedy) } } : {}) };
   });
   const terminal = (state: string) => allocations.filter((allocation) => allocation.state === state);
   const sum = (rows: typeof allocations, key: "grossNpr" | "teacherNpr" | "fadkoNpr") =>
@@ -42,7 +50,7 @@ function receiptView(receipt: SimulatedBatchReceipt, entries: BatchLedgerRow[]) 
   return {
     ...receipt,
     allocations,
-    needsAttention: allocations.some((allocation) => batchTestNeedsHumanAttention(allocation.state)),
+    needsAttention: allocations.some((allocation) => batchTestNeedsHumanAttention(allocation.state) || allocation.remedy?.allocationHeld),
     history: entries.map((entry) => ({ ...entry, createdAt: entry.createdAt.toISOString() })),
     accounting: {
       heldGrossNpr: sum(held, "grossNpr"),
@@ -59,8 +67,9 @@ function participantReceiptView(
   role: "student" | "teacher",
   receipt: SimulatedBatchReceipt,
   entries: BatchLedgerRow[],
+  remedies: ReceiptRemedy[] = [],
 ) {
-  const full = receiptView(receipt, entries);
+  const full = receiptView(receipt, entries, remedies);
   const common = {
     reference: full.reference,
     allocations: full.allocations.map((allocation) => {
@@ -68,12 +77,12 @@ function participantReceiptView(
       const stateChangedAt = latest?.createdAt.toISOString();
       return role === "teacher"
         ? { position: allocation.position, state: allocation.state, grossNpr: allocation.grossNpr,
-            fadkoNpr: allocation.fadkoNpr, teacherNpr: allocation.teacherNpr, stateChangedAt }
-        : { position: allocation.position, state: allocation.state, grossNpr: allocation.grossNpr, stateChangedAt };
+            fadkoNpr: allocation.fadkoNpr, teacherNpr: allocation.teacherNpr, stateChangedAt, remedy: allocation.remedy }
+        : { position: allocation.position, state: allocation.state, grossNpr: allocation.grossNpr, stateChangedAt, remedy: allocation.remedy };
     }),
     accounting: role === "teacher"
-      ? { teacherPaidOutNpr: full.accounting.teacherPaidOutNpr, actualMoneyMovedNpr: 0 }
-      : { refundedGrossNpr: full.accounting.refundedGrossNpr, actualMoneyMovedNpr: 0 },
+      ? { teacherPaidOutNpr: full.accounting.teacherPaidOutNpr, heldGrossNpr: full.accounting.heldGrossNpr, actualMoneyMovedNpr: 0 }
+      : { refundedGrossNpr: full.accounting.refundedGrossNpr, heldGrossNpr: full.accounting.heldGrossNpr, actualMoneyMovedNpr: 0 },
   };
   return role === "teacher"
     ? { ...common, grossNpr: full.grossNpr,
@@ -106,6 +115,7 @@ async function synchronizeBatchTestSettlements(batchId?: number, bookingIds?: nu
         .where(eq(batchTestPaymentsTable.bookingId, target.bookingId)).for("update").limit(1);
       if (!payment) return;
       const receipt = payment.receipt as SimulatedBatchReceipt;
+      const remedies = await readBookingRemedies([target.bookingId], tx);
       const lessons = await tx.select({
         position: batchTestSessionsTable.position,
         sessionId: sessionsTable.id,
@@ -118,7 +128,13 @@ async function synchronizeBatchTestSettlements(batchId?: number, bookingIds?: nu
         .leftJoin(sessionActivityTable, eq(sessionActivityTable.sessionId, sessionsTable.id))
         .where(eq(batchTestSessionsTable.batchId, target.batchId));
       if (!lessons.length) return;
-      const sessionIds = lessons.map((lesson) => lesson.sessionId);
+      const replacementIds = remedies.flatMap(remedy => remedy.replacementSessionId === null ? [] : [remedy.replacementSessionId]);
+      const replacements = replacementIds.length ? await tx.select({
+        position: sql<number>`-1`, sessionId: sessionsTable.id, status: sessionsTable.status,
+        startsAt: sessionsTable.date, durationMinutes: sessionsTable.duration, endedAt: sessionActivityTable.endedAt,
+      }).from(sessionsTable).leftJoin(sessionActivityTable, eq(sessionActivityTable.sessionId, sessionsTable.id))
+        .where(inArray(sessionsTable.id, replacementIds)) : [];
+      const sessionIds = [...lessons.map((lesson) => lesson.sessionId), ...replacementIds];
       const [history, teacherPresence, complaints] = await Promise.all([
         tx.select().from(batchTestLedgerEntriesTable)
           .where(eq(batchTestLedgerEntriesTable.bookingId, target.bookingId))
@@ -127,13 +143,19 @@ async function synchronizeBatchTestSettlements(batchId?: number, bookingIds?: nu
           .from(sessionParticipationTable)
           .where(and(inArray(sessionParticipationTable.sessionId, sessionIds), eq(sessionParticipationTable.role, "teacher"), gt(sessionParticipationTable.presentMs, 0))),
         tx.select({ sessionId: disputesTable.sessionId }).from(disputesTable)
-          .where(and(eq(disputesTable.userId, target.studentId), inArray(disputesTable.sessionId, sessionIds), inArray(disputesTable.status, [...ACTIVE_COMPLAINT_STATUSES]))),
+          .where(and(eq(disputesTable.userId, target.studentId), inArray(disputesTable.sessionId, sessionIds),
+            inArray(disputesTable.reason, ["Payment Issue", "Refund Request"]), inArray(disputesTable.status, [...ACTIVE_COMPLAINT_STATUSES]))),
       ]);
       const present = new Set(teacherPresence.map((row) => row.sessionId));
       const complained = new Set(complaints.map((row) => row.sessionId));
 
       for (const allocation of receipt.allocations) {
-        const lesson = lessons.find((row) => row.position === allocation.position);
+        const original = lessons.find((row) => row.position === allocation.position);
+        const remedy = remedies.find(row => row.position === allocation.position);
+        const released = remedy?.status === "withdrawn" || (remedy?.status === "resolved" && remedy.outcome === "no_adjustment");
+        const confirmed = remedy?.status === "delivered_review" || (remedy?.status === "resolved" && remedy.outcome === "replacement_delivered");
+        if (remedy && !released && !confirmed) continue;
+        const lesson = remedy && !released ? replacements.find(row => row.sessionId === remedy.replacementSessionId) : original;
         if (!lesson) continue;
         let state = (history.filter((entry) => entry.position === allocation.position).at(-1)?.toState ?? "future") as ProgramAllocationState;
         const events = automaticBatchTestEvents({
@@ -143,8 +165,13 @@ async function synchronizeBatchTestSettlements(batchId?: number, bookingIds?: nu
           durationMinutes: lesson.durationMinutes,
           actualEndMs: lesson.endedAt?.getTime(),
           teacherPresenceRecorded: present.has(lesson.sessionId),
-          activeComplaint: complained.has(lesson.sessionId),
+          activeComplaint: complained.has(lesson.sessionId) || (original !== undefined && complained.has(original.sessionId)),
           nowMs: Date.now(),
+          ...(remedy && !released ? {
+            remedy: { status: "delivered_review" as const, originalSessionId: remedy.originalSessionId,
+              acceptedReplacementSessionId: remedy.replacementSessionId }, evidenceSessionId: lesson.sessionId,
+            confirmedReplacementReviewClosesAtMs: remedy.replacementReviewClosesAt?.getTime(),
+          } : {}),
         });
         for (const event of events) {
           const toState = transitionProgramAllocation(state, event);
@@ -182,8 +209,10 @@ router.get("/admin/batch-test-payments", requireAuth, requireAdmin, async (req, 
     const history = bookingIds.length ? await db.select().from(batchTestLedgerEntriesTable)
       .where(inArray(batchTestLedgerEntriesTable.bookingId, bookingIds))
       .orderBy(asc(batchTestLedgerEntriesTable.id)) : [];
+    const remedies = await readBookingRemedies(bookingIds);
     res.setHeader("Cache-Control", "no-store").json({ testOnly: true, receipts: rows.map(r => ({
-      ...receiptView(r.receipt as SimulatedBatchReceipt, history.filter((entry) => entry.bookingId === r.bookingId)),
+      ...receiptView(r.receipt as SimulatedBatchReceipt, history.filter((entry) => entry.bookingId === r.bookingId),
+        remedies.filter(remedy => remedy.bookingId === r.bookingId)),
       bookingId: r.bookingId, recordedAt: r.recordedAt.toISOString(), batchId: r.batchId,
       studentName: r.studentName, classTitle: readBatchSnapshot(r.snapshot)?.programTitle ?? "Class title unavailable",
     })) });
@@ -241,15 +270,18 @@ router.get("/batch-tests/me/payments", requireAuth, async (req, res, next) => {
         .where(inArray(batchTestLedgerEntriesTable.bookingId, bookingIds))
         .orderBy(asc(batchTestLedgerEntriesTable.id))
       : [];
+    const remedies = await readBookingRemedies(bookingIds);
     res.setHeader("Cache-Control", "no-store").json({
       testOnly: true,
       role,
+      makeupsEnabled: lessonRemediesEnabled() && await lessonRemedySchemaReady(),
       nextCursor,
       receipts: rows.map((row) => ({
         ...participantReceiptView(
           role,
           row.receipt as SimulatedBatchReceipt,
           history.filter((entry) => entry.bookingId === row.bookingId),
+          remedies.filter(remedy => remedy.bookingId === row.bookingId),
         ),
         bookingId: row.bookingId,
         batchId: row.batchId,
@@ -279,6 +311,9 @@ router.post("/admin/batch-test-payments/:bookingId/allocations/:position/events"
   if (event === "replacement_scheduled") {
     res.status(409).json({ error: "A replacement must be linked to the original booking and accepted by the student before this lesson can move forward. No replacement was recorded." }); return;
   }
+  if (event === "makeup_requested" || event === "makeup_delivery_confirmed" || event === "makeup_withdrawn" || event === "makeup_review_restored") {
+    res.status(409).json({ error: "Use the make-up request and documented delivery review. A ledger event cannot create or confirm a make-up." }); return;
+  }
   try {
     const entry = await db.transaction(async (tx) => {
       const [payment] = await tx.select().from(batchTestPaymentsTable)
@@ -287,6 +322,8 @@ router.post("/admin/batch-test-payments/:bookingId/allocations/:position/events"
       const receipt = payment.receipt as SimulatedBatchReceipt;
       const allocation = receipt.allocations.find((row) => row.position === position);
       if (!allocation) return null;
+      const [remedy] = (await readBookingRemedies([bookingId], tx)).filter(row => row.position === position);
+      assertRemedyFinancialEvent(remedy, event as ProgramAllocationEvent);
       const [latest] = await tx.select().from(batchTestLedgerEntriesTable)
         .where(and(eq(batchTestLedgerEntriesTable.bookingId, bookingId), eq(batchTestLedgerEntriesTable.position, position)))
         .orderBy(desc(batchTestLedgerEntriesTable.id)).limit(1);
@@ -297,12 +334,47 @@ router.post("/admin/batch-test-payments/:bookingId/allocations/:position/events"
         grossNpr: allocation.grossNpr, teacherNpr: allocation.teacherNpr, fadkoNpr: allocation.fadkoNpr,
         detail: { note: note || null, paymentMoved: false },
       }).returning();
+      if (event === "payout_confirmed" && remedy?.status === "delivered_review" && remedy.outcome === "replacement_delivered") {
+        // The held original allocation has passed its independently confirmed replacement
+        // review clock. This explicit operator payout closes fulfillment, not a Completed label.
+        await tx.update(lessonRemedyCasesTable).set({ status: "resolved", outcome: "replacement_delivered",
+          resolvedBy: req.user!.userId, resolvedAt: new Date(), updatedAt: new Date() })
+          .where(eq(lessonRemedyCasesTable.id, remedy.id));
+        await tx.insert(lessonRemedyEventsTable).values({ caseId: remedy.id, actorId: req.user!.userId, actorRole: "operator",
+          event: "allocation_settled", fromStatus: remedy.status, toStatus: "resolved",
+          detail: { ledgerEntryId: created!.id, originalSessionId: remedy.originalSessionId, paymentMoved: false } });
+      }
+      if (event === "refund_approved" || event === "complaint_upheld") {
+        const [original] = await tx.select({ sessionId: batchTestSessionsTable.sessionId }).from(batchTestSessionsTable)
+          .innerJoin(batchTestBookingsTable, eq(batchTestBookingsTable.batchId, batchTestSessionsTable.batchId))
+          .where(and(eq(batchTestBookingsTable.id, bookingId), eq(batchTestSessionsTable.position, position))).limit(1);
+        const ids = [...(original ? [original.sessionId] : []), ...(remedy?.replacementSessionId ? [remedy.replacementSessionId] : [])];
+        const [booking] = await tx.select({ studentId: batchTestBookingsTable.studentId }).from(batchTestBookingsTable)
+          .where(eq(batchTestBookingsTable.id, bookingId));
+        if (booking && ids.length) {
+          const revoked = await tx.update(sessionEnrollmentsTable).set({ paymentStatus: "refunded" })
+            .where(and(inArray(sessionEnrollmentsTable.sessionId, ids), eq(sessionEnrollmentsTable.studentId, booking.studentId),
+              sql`${sessionEnrollmentsTable.paymentStatus} <> 'refunded'`)).returning({ sessionId: sessionEnrollmentsTable.sessionId });
+          for (const row of revoked) await tx.update(sessionsTable).set({ enrolledCount: sql`GREATEST(0, ${sessionsTable.enrolledCount}-1)` })
+            .where(and(eq(sessionsTable.id, row.sessionId), eq(sessionsTable.status, "upcoming")));
+        }
+        if (remedy) {
+          await tx.update(lessonRemedyCasesTable).set({ status: "resolved", outcome: "refund_review",
+            resolvedBy: req.user!.userId, resolvedAt: new Date() }).where(eq(lessonRemedyCasesTable.id, remedy.id));
+          await tx.update(lessonRemedyOffersTable).set({ status: "withdrawn", withdrawnAt: new Date() })
+            .where(and(eq(lessonRemedyOffersTable.caseId, remedy.id), eq(lessonRemedyOffersTable.status, "proposed")));
+          await tx.insert(lessonRemedyEventsTable).values({ caseId: remedy.id, actorId: req.user!.userId, actorRole: "operator",
+            event: "refund_approved", fromStatus: remedy.status, toStatus: "resolved",
+            detail: { note, bookingId, position, originalSessionId: remedy.originalSessionId, ledgerEntryId: created!.id, paymentMoved: false } });
+        }
+      }
       return created;
     });
     if (!entry) { res.status(404).json({ error: "That simulated lesson allocation was not found." }); return; }
     res.json({ entry: { ...entry, createdAt: entry.createdAt.toISOString() }, notice: "TEST ONLY — no money moved." });
   } catch (error) {
     if (error instanceof ProgramCommerceInputError) { res.status(409).json({ error: error.message }); return; }
+    if (error instanceof Error && /make-up|held|linked/.test(error.message)) { res.status(409).json({ error: error.message }); return; }
     res.status(503).json({ error: "The simulated ledger could not be updated. No money moved." });
   }
 });
@@ -408,6 +480,8 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
       const seats = await tx.select({ id: batchTestBookingsTable.id }).from(batchTestBookingsTable).where(eq(batchTestBookingsTable.batchId, batchId));
       if (seats.length >= snapshot.capacity) throw new Refusal(409, "This test class is full.");
       const selected = snapshot.lessons.filter((l) => quote.lessonPositions.includes(l.position));
+      // Shared with replacement acceptance: two teachers cannot sell this student's same slot concurrently.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(838210, ${viewerId})`);
       if (selected.some((l) => Date.parse(l.startsAt) + l.durationMinutes * 60000 > until)) {
         throw new Refusal(409, "These lessons extend beyond the test period. Ask the teacher to prepare dates within the test window.");
       }
@@ -455,10 +529,11 @@ async function run(batchId: number, viewerId: number, confirm?: string, outcome?
     const paymentHistory = paymentIds.length ? await tx.select().from(batchTestLedgerEntriesTable)
       .where(inArray(batchTestLedgerEntriesTable.bookingId, paymentIds))
       .orderBy(asc(batchTestLedgerEntriesTable.id)) : [];
+    const paymentRemedies = await readBookingRemedies(paymentIds, tx);
     return { testOnly: true, paymentCollectedNpr: 0, pilotEndsAt: new Date(until).toISOString(), isTeacher,
       receipts: paymentRows.map(r => ({
         ...participantReceiptView(isTeacher ? "teacher" : "student", r.receipt as SimulatedBatchReceipt,
-          paymentHistory.filter((entry) => entry.bookingId === r.bookingId)),
+          paymentHistory.filter((entry) => entry.bookingId === r.bookingId), paymentRemedies.filter(row => row.bookingId === r.bookingId)),
         bookingId: r.bookingId, recordedAt: r.recordedAt.toISOString(),
       })),
       teacherId: program.teacherId, teacherName: access.teacher.name, classTitle: snapshot.programTitle, studentName: access.viewerName,

@@ -17,6 +17,8 @@ export interface BatchTestSettlementFacts {
   /** Supplied by the allocation-aware store once durable remedies are activated. */
   remedy?: RemedyFulfillment;
   evidenceSessionId?: number;
+  /** Only the operator's durable delivery confirmation sets this, never presence or a label. */
+  confirmedReplacementReviewClosesAtMs?: number | null;
 }
 
 /**
@@ -29,7 +31,8 @@ export function automaticBatchTestEvents(facts: BatchTestSettlementFacts): Progr
     // The original lesson cannot satisfy a replacement. A completed label plus a brief
     // teacher join is not enough to confirm make-up delivery: that is a separate evidence
     // review transition, never a consequence of this accounting synchronizer.
-    if (target.hold || target.sessionId !== facts.evidenceSessionId || facts.remedy.status !== "delivered_review") return [];
+    if (target.hold || target.sessionId !== facts.evidenceSessionId || facts.remedy.status !== "delivered_review" ||
+        !Number.isFinite(facts.confirmedReplacementReviewClosesAtMs)) return [];
   }
   const events: ProgramAllocationEvent[] = [];
   let state = facts.state;
@@ -51,7 +54,8 @@ export function automaticBatchTestEvents(facts: BatchTestSettlementFacts): Progr
   // A late-running class must not lose review time because its planned slot has passed.
   // Historical sessions without an end record retain the scheduled-end fallback.
   const reviewStartsMs = Math.max(scheduledEndMs, facts.actualEndMs ?? scheduledEndMs);
-  const complaintClosesMs = reviewStartsMs + PROGRAM_BETA_COMPLAINT_WINDOW_HOURS * 60 * 60_000;
+  const complaintClosesMs = facts.remedy ? facts.confirmedReplacementReviewClosesAtMs!
+    : reviewStartsMs + PROGRAM_BETA_COMPLAINT_WINDOW_HOURS * 60 * 60_000;
   if (state === "delivered_pending" && facts.nowMs >= complaintClosesMs) {
     events.push("complaint_window_closed");
   }

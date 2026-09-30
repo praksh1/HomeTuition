@@ -1,6 +1,12 @@
 import { Feather } from "@expo/vector-icons";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useRef, useState, type ComponentProps } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { ActivityIndicator, Text, TouchableOpacity, View } from "react-native";
 import { ClassGroupShell } from "@/components/classes/ClassGroupShell";
 import { ProgramNotice } from "@/components/programs/ProgramPieces";
@@ -14,7 +20,15 @@ import { classLessonJourney } from "@/utils/classLessonJourney";
 import type { ClassJourneyDisplayLesson } from "@/utils/classLessonJourney";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import { serverNow } from "@/utils/sessionClock";
-import { lessonHistoryLabel, type LessonAttendanceState } from "@/utils/lessonHistory";
+import {
+  lessonHistoryLabel,
+  type LessonAttendanceState,
+} from "@/utils/lessonHistory";
+import {
+  remedyQuotaLabel,
+  remedyStatusLabel,
+  type RemedyList,
+} from "@/utils/lessonRemedyView";
 
 interface Home {
   title: string;
@@ -59,6 +73,7 @@ export default function ClassHomeScreen() {
   const { lastEvent } = useNotifications();
   const [home, setHome] = useState<Home | null>(null);
   const [problem, setProblem] = useState("");
+  const [remedies, setRemedies] = useState<RemedyList | null>(null);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [showPrevious, setShowPrevious] = useState(false);
   const receivedAt = useRef(Date.now());
@@ -77,7 +92,18 @@ export default function ClassHomeScreen() {
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [load]),
+      let current = true;
+      void apiGet<RemedyList>(`/class-groups/${batchId}/remedies`)
+        .then((result) => {
+          if (current) setRemedies(result);
+        })
+        .catch(() => {
+          if (current) setRemedies(null);
+        });
+      return () => {
+        current = false;
+      };
+    }, [batchId, load]),
   );
   useEffect(() => {
     const timer = setInterval(() => setTick(Date.now()), 30_000);
@@ -86,10 +112,15 @@ export default function ClassHomeScreen() {
   useEffect(() => {
     if (
       (lastEvent?.kind === "class_message" ||
+        lastEvent?.kind === "makeup_update" ||
         lastEvent?.kind.startsWith("class_homework_")) &&
       Number(lastEvent.batchId) === batchId
     ) {
       void load();
+      if (lastEvent?.kind === "makeup_update")
+        void apiGet<RemedyList>(`/class-groups/${batchId}/remedies`)
+          .then(setRemedies)
+          .catch(() => setRemedies(null));
     }
   }, [batchId, lastEvent, load]);
   if (!home && !problem)
@@ -127,20 +158,21 @@ export default function ClassHomeScreen() {
     });
     return `${dates.format(batchDateValue(local.date)!)} · ${local.time} Nepal time`;
   };
-  const when = journey.stage === "finished"
-    ? "No upcoming date"
-    : focusLesson
-    ? (() => {
-        return formatLesson(focusLesson);
-      })()
-    : "No lesson scheduled";
+  const when =
+    journey.stage === "finished"
+      ? "No upcoming date"
+      : focusLesson
+        ? (() => {
+            return formatLesson(focusLesson);
+          })()
+        : "No lesson scheduled";
   const heroLabel =
     journey.stage === "current"
       ? "LESSON TIME NOW"
       : journey.stage === "upcoming"
         ? "NEXT LESSON"
         : journey.stage === "finished"
-        ? "NO UPCOMING LESSONS"
+          ? "NO UPCOMING LESSONS"
           : "NO LESSONS SCHEDULED";
   const heroContext =
     journey.focusNumber && journey.stage !== "finished"
@@ -214,6 +246,23 @@ export default function ClassHomeScreen() {
       badgeLabel: "",
       withBatch: false,
     },
+    ...(remedies?.enabled
+      ? [
+          {
+            icon: "repeat" as HomeCard["icon"],
+            label: "Make-up lessons",
+            note: home.isTeacher
+              ? "Requests, replacement dates and held lesson payments"
+              : remedies.quotas.length === 1
+                ? remedyQuotaLabel(remedies.quotas[0]!)
+                : "Your allowance, requests and replacement dates",
+            path: "/makeups",
+            unread: 0,
+            badgeLabel: "",
+            withBatch: true,
+          },
+        ]
+      : []),
     {
       icon: "life-buoy" as HomeCard["icon"],
       label: "Help",
@@ -238,9 +287,16 @@ export default function ClassHomeScreen() {
         const isCurrent =
           journey.stage === "current" &&
           lesson.sessionId === journey.focusLesson?.sessionId;
-        const previous = journey.previousLessons.some((past) => past.sessionId === lesson.sessionId);
-        const stateLabel = lessonHistoryLabel({ status: lesson.status, previous,
-          current: isCurrent, attendance: lesson.attendance, isTeacher: home.isTeacher });
+        const previous = journey.previousLessons.some(
+          (past) => past.sessionId === lesson.sessionId,
+        );
+        const stateLabel = lessonHistoryLabel({
+          status: lesson.status,
+          previous,
+          current: isCurrent,
+          attendance: lesson.attendance,
+          isTeacher: home.isTeacher,
+        });
         return (
           <View
             key={lesson.sessionId}
@@ -255,29 +311,139 @@ export default function ClassHomeScreen() {
               gap: space.sm,
             }}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
-            <View style={{ flex: 1, minWidth: 0, gap: space.xxs }}>
-              <Text style={[t.bodyStrong, { color: colors.foreground }]}>Lesson {lesson.displayNumber}</Text>
-              <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
-                {formatLesson(lesson)}
-              </Text>
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                gap: space.sm,
+              }}
+            >
+              <View style={{ flex: 1, minWidth: 0, gap: space.xxs }}>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>
+                  Lesson {lesson.displayNumber}
+                </Text>
+                <Text
+                  style={[
+                    t.caption,
+                    numeric,
+                    { color: colors.mutedForeground },
+                  ]}
+                >
+                  {formatLesson(lesson)}
+                </Text>
+              </View>
+              {stateLabel ? (
+                <View
+                  style={{
+                    maxWidth: "48%",
+                    paddingHorizontal: space.sm,
+                    paddingVertical: space.xxs,
+                    borderRadius: radius.pill,
+                    backgroundColor: colors.surfaceSunk,
+                  }}
+                >
+                  <Text style={[t.caption, { color: colors.primary }]}>
+                    {stateLabel}
+                  </Text>
+                </View>
+              ) : null}
             </View>
-            {stateLabel ? (
-              <View style={{ maxWidth: "48%", paddingHorizontal: space.sm, paddingVertical: space.xxs, borderRadius: radius.pill, backgroundColor: colors.surfaceSunk }}>
-                <Text style={[t.caption, { color: colors.primary }]}>{stateLabel}</Text>
+            {previous || remedies?.enabled ? (
+              <View
+                style={{
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  gap: space.sm,
+                }}
+              >
+                {previous ? (
+                  <>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel={`View lesson ${lesson.displayNumber}`}
+                      onPress={() =>
+                        router.push({
+                          pathname: "/session/[id]",
+                          params: { id: String(lesson.sessionId) },
+                        })
+                      }
+                      style={{
+                        minHeight: 44,
+                        paddingHorizontal: space.sm,
+                        justifyContent: "center",
+                      }}
+                    >
+                      <Text style={[t.caption, { color: colors.primary }]}>
+                        View lesson
+                      </Text>
+                    </TouchableOpacity>
+                    {!home.isTeacher && lesson.attendance !== "not_enrolled" ? (
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        accessibilityLabel={`Get help with lesson ${lesson.displayNumber}`}
+                        onPress={() =>
+                          router.push({
+                            pathname: "/support",
+                            params: { sessionId: String(lesson.sessionId) },
+                          })
+                        }
+                        style={{
+                          minHeight: 44,
+                          paddingHorizontal: space.sm,
+                          justifyContent: "center",
+                        }}
+                      >
+                        <Text style={[t.caption, { color: colors.primary }]}>
+                          Get help
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </>
+                ) : null}
+                {remedies?.enabled &&
+                remedies.lessons.some(
+                  (item) =>
+                    item.originalSessionId === lesson.sessionId &&
+                    (home.isTeacher
+                      ? item.case !== null
+                      : item.case !== null ||
+                        item.canRequest ||
+                        item.canReportTeacherMissed),
+                ) ? (
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel={`Make-up options for lesson ${lesson.displayNumber}`}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/makeups",
+                        params: {
+                          id: String(batchId),
+                          sessionId: String(lesson.sessionId),
+                        },
+                      })
+                    }
+                    style={{
+                      minHeight: 44,
+                      paddingHorizontal: space.sm,
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text style={[t.caption, { color: colors.primary }]}>
+                      {(() => {
+                        const found = remedies.lessons.find(
+                          (item) =>
+                            item.originalSessionId === lesson.sessionId &&
+                            item.case,
+                        );
+                        return found?.case && !home.isTeacher
+                          ? remedyStatusLabel(found.case)
+                          : "Make-up options";
+                      })()}
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
             ) : null}
-            </View>
-            {previous ? <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
-              <TouchableOpacity accessibilityRole="button" accessibilityLabel={`View lesson ${lesson.displayNumber}`} onPress={() => router.push({ pathname: "/session/[id]", params: { id: String(lesson.sessionId) } })}
-                style={{ minHeight: 44, paddingHorizontal: space.sm, justifyContent: "center" }}>
-                <Text style={[t.caption, { color: colors.primary }]}>View lesson</Text>
-              </TouchableOpacity>
-              {!home.isTeacher && lesson.attendance !== "not_enrolled" ? <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Get help with lesson ${lesson.displayNumber}`} onPress={() => router.push({ pathname: "/support", params: { sessionId: String(lesson.sessionId) } })}
-                style={{ minHeight: 44, paddingHorizontal: space.sm, justifyContent: "center" }}>
-                <Text style={[t.caption, { color: colors.primary }]}>Get help</Text>
-              </TouchableOpacity> : null}
-            </View> : null}
           </View>
         );
       })}
@@ -344,19 +510,39 @@ export default function ClassHomeScreen() {
             </Text>
           </View>
           {journey.upcomingLessons.length
-            ? lessonRows(showAllUpcoming ? journey.upcomingLessons : journey.upcomingLessons.slice(0, 3))
+            ? lessonRows(
+                showAllUpcoming
+                  ? journey.upcomingLessons
+                  : journey.upcomingLessons.slice(0, 3),
+              )
             : null}
           {journey.upcomingLessons.length > 3 ? (
             <TouchableOpacity
               accessibilityRole="button"
-              accessibilityLabel={showAllUpcoming ? "Show fewer upcoming dates" : `Show all ${journey.upcomingLessons.length} upcoming dates`}
+              accessibilityLabel={
+                showAllUpcoming
+                  ? "Show fewer upcoming dates"
+                  : `Show all ${journey.upcomingLessons.length} upcoming dates`
+              }
               onPress={() => setShowAllUpcoming((shown) => !shown)}
-              style={{ minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.xs }}
+              style={{
+                minHeight: 44,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: space.xs,
+              }}
             >
               <Text style={[t.bodyStrong, numeric, { color: colors.primary }]}>
-                {showAllUpcoming ? "Show fewer dates" : `+ ${journey.upcomingLessons.length - 3} more scheduled ${journey.upcomingLessons.length - 3 === 1 ? "date" : "dates"}`}
+                {showAllUpcoming
+                  ? "Show fewer dates"
+                  : `+ ${journey.upcomingLessons.length - 3} more scheduled ${journey.upcomingLessons.length - 3 === 1 ? "date" : "dates"}`}
               </Text>
-              <Feather name={showAllUpcoming ? "chevron-up" : "chevron-down"} size={17} color={colors.primary} />
+              <Feather
+                name={showAllUpcoming ? "chevron-up" : "chevron-down"}
+                size={17}
+                color={colors.primary}
+              />
             </TouchableOpacity>
           ) : null}
           {journey.previousLessons.length ? (
@@ -365,16 +551,36 @@ export default function ClassHomeScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={`${showPrevious ? "Hide" : "Show"} ${journey.previousLessons.length} previous lesson dates`}
                 onPress={() => setShowPrevious((shown) => !shown)}
-                style={{ minHeight: 48, paddingHorizontal: space.md, borderRadius: radius.sm, backgroundColor: colors.actionSoft, flexDirection: "row", alignItems: "center", gap: space.sm }}
+                style={{
+                  minHeight: 48,
+                  paddingHorizontal: space.md,
+                  borderRadius: radius.sm,
+                  backgroundColor: colors.actionSoft,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: space.sm,
+                }}
               >
                 <Feather name="clock" size={18} color={colors.primary} />
-                <Text style={[t.bodyStrong, { flex: 1, color: colors.primary }]}>
+                <Text
+                  style={[t.bodyStrong, { flex: 1, color: colors.primary }]}
+                >
                   Previous lessons ({journey.previousLessons.length})
                 </Text>
-                <Feather name={showPrevious ? "chevron-up" : "chevron-down"} size={18} color={colors.primary} />
+                <Feather
+                  name={showPrevious ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color={colors.primary}
+                />
               </TouchableOpacity>
               {showPrevious ? lessonRows(journey.previousLessons) : null}
-              {showPrevious && !home.isTeacher ? <Text style={[t.caption, { color: colors.mutedForeground }]}>Joined means a classroom connection was recorded, not that the full lesson was delivered. Missing attendance needs review; it does not decide a refund.</Text> : null}
+              {showPrevious && !home.isTeacher ? (
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                  Joined means a classroom connection was recorded, not that the
+                  full lesson was delivered. Missing attendance needs review; it
+                  does not decide a refund.
+                </Text>
+              ) : null}
             </View>
           ) : null}
         </View>

@@ -51,6 +51,7 @@ const SHARED_SCREENS = [
   { name: "monthly-chat", segment: "monthly-chat" },
   { name: "monthly-homework", segment: "monthly-homework" },
   { name: "class-home", segment: "class-home" },
+  { name: "makeups", segment: "makeups" },
   { name: "class-students", segment: "class-students" },
   { name: "class-chat", segment: "class-chat" },
   { name: "class-homework", segment: "class-homework" },

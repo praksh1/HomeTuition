@@ -1,12 +1,26 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import type { ClosureCommitments } from "./accountClosurePolicy";
+import { lessonRemedySchemaReady } from "./lessonRemedySchema";
 
 /** Read-only preflight. Missing schema/failed queries throw and prevent completion.
  * Never changes lesson states, generates settlements, or interprets a simulated payout as cash.
  * Untracked legacy payment history requires reconciliation, not an invented zero balance.
  */
 export async function readAccountClosureCommitments(source: Pick<typeof db,"execute">, userId: number): Promise<ClosureCommitments> {
+  const hasRemedies = await lessonRemedySchemaReady(source);
+  const pendingRemedies = hasRemedies ? sql`(SELECT count(*) FROM lesson_remedy_cases c
+    WHERE (c.student_id=${userId} OR c.teacher_id=${userId}) AND c.status NOT IN ('resolved','withdrawn')
+      AND NOT (c.status='delivered_review' AND c.outcome='replacement_delivered'
+        AND c.replacement_review_closes_at IS NOT NULL AND c.replacement_review_closes_at<=now()
+        AND EXISTS(SELECT 1 FROM lesson_remedy_offers o WHERE o.case_id=c.id AND o.accepted_at IS NOT NULL AND o.replacement_session_id IS NOT NULL)
+        AND COALESCE((SELECT l.to_state FROM batch_test_ledger_entries l WHERE l.booking_id=c.original_booking_id
+          AND l.position=c.original_position ORDER BY l.id DESC LIMIT 1),'future')='paid_out'))` : sql`0`;
+  const notReplacement = hasRemedies ? sql`AND NOT EXISTS(SELECT 1 FROM lesson_remedy_offers mo
+    WHERE mo.replacement_session_id=s.id AND mo.accepted_at IS NOT NULL)` : sql``;
+  const noPendingCase = hasRemedies ? sql`AND NOT EXISTS(SELECT 1 FROM lesson_remedy_cases c
+    WHERE c.original_booking_id=a.booking_id AND c.original_position=a.position
+      AND c.status NOT IN ('resolved','withdrawn'))` : sql``;
   const result=await source.execute(sql`
     WITH relevant_sessions AS (
       SELECT s.id,s.status FROM sessions s WHERE s.teacher_id=${userId}
@@ -16,7 +30,9 @@ export async function readAccountClosureCommitments(source: Pick<typeof db,"exec
       JOIN learning_program_enrollments e ON e.id=a.enrollment_id JOIN learning_programs p ON p.id=e.program_id
       WHERE e.student_id=${userId} OR p.teacher_id=${userId}
     ), relevant_batch_allocations AS (
-      SELECT COALESCE((SELECT l.to_state FROM batch_test_ledger_entries l WHERE l.booking_id=b.id
+      SELECT b.id AS booking_id,
+        CASE WHEN (a.item->>'position') ~ '^[0-9]{1,9}$' THEN (a.item->>'position')::integer END AS position,
+        COALESCE((SELECT l.to_state FROM batch_test_ledger_entries l WHERE l.booking_id=b.id
         AND l.position=CASE WHEN (a.item->>'position') ~ '^[0-9]{1,9}$' THEN (a.item->>'position')::integer END
         ORDER BY l.id DESC LIMIT 1),'future') AS state
       FROM batch_test_bookings b JOIN batch_test_payments pay ON pay.booking_id=b.id
@@ -43,10 +59,10 @@ export async function readAccountClosureCommitments(source: Pick<typeof db,"exec
         WHERE d.kind='makeup' AND d.status NOT IN ('held','cancelled') AND (r.teacher_id=${userId}
           OR EXISTS(SELECT 1 FROM recurring_enrollments e WHERE e.recurring_id=r.id AND e.cycle_index=d.cycle_index AND e.student_id=${userId} AND e.status='active'))) +
       (SELECT count(*) FROM relevant_program_allocations WHERE state='replacement_pending') +
-      (SELECT count(*) FROM relevant_batch_allocations WHERE state='replacement_pending') AS makeups,
+      (SELECT count(*) FROM relevant_batch_allocations a WHERE state='replacement_pending' ${noPendingCase}) + ${pendingRemedies} AS makeups,
       EXISTS(SELECT 1 FROM session_enrollments e JOIN sessions s ON s.id=e.session_id
         WHERE e.payment_status='paid' AND (e.student_id=${userId} OR s.teacher_id=${userId})
-          AND NOT EXISTS(SELECT 1 FROM batch_test_sessions b WHERE b.session_id=s.id))
+          AND NOT EXISTS(SELECT 1 FROM batch_test_sessions b WHERE b.session_id=s.id) ${notReplacement})
         OR EXISTS(SELECT 1 FROM recurring_enrollments e JOIN recurring_sessions r ON r.id=e.recurring_id
           WHERE e.student_id=${userId} OR r.teacher_id=${userId})
         OR EXISTS(SELECT 1 FROM learning_program_enrollments e JOIN learning_programs p ON p.id=e.program_id

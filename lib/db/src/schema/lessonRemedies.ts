@@ -28,6 +28,9 @@ export const lessonRemedyCasesTable = pgTable("lesson_remedy_cases", {
   studentId: integer("student_id").notNull().references(() => usersTable.id, { onDelete: "restrict" }),
   teacherId: integer("teacher_id").notNull().references(() => usersTable.id, { onDelete: "restrict" }),
   reason: text("reason").notNull(), // student_missed | teacher_missed; never a verdict by itself
+  /** A student's allegation is not evidence of teacher non-delivery. */
+  teacherNonDeliveryConfirmed: boolean("teacher_non_delivery_confirmed").notNull().default(false),
+  teacherFailedReplacement: boolean("teacher_failed_replacement").notNull().default(false),
   status: text("status").notNull().default("requested"),
   /** Frozen allowance/deadline terms; never silently apply a later policy to an old request. */
   policyVersion: text("policy_version").notNull(),

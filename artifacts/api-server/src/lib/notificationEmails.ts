@@ -12,6 +12,7 @@
  */
 
 export type NotificationKind =
+  | "makeup_update"
   | "message"
   | "follower"
   | "program_published"
@@ -40,6 +41,9 @@ export interface NotificationEvent {
   batchId?: number;
   homeworkId?: number;
   quizId?: number;
+  caseId?: number;
+  replacementSessionId?: number;
+  status?: string;
   homeworkTitle?: string;
   dueAt?: string;
   /** What was paid, for the notifications about money arriving or going back. */

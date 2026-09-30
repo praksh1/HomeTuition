@@ -16,6 +16,7 @@ import { allowanceFor, nameOf, recordOpened } from "../lib/ticketStore";
 import { ticketRef } from "../lib/tickets";
 import { buildSupportReviewBrief, conversationTopic, investigationChoices, supportInvestigation } from "../lib/supportInvestigation";
 import { listSupportLessons, readSupportLesson } from "../lib/supportCaseContext";
+import { freezeOriginalPaymentForReview } from "../lib/lessonRemedyIntegration";
 import { SUPPORT_STARTER_ARTICLES, SUPPORT_STARTER_VERSION, starterReviewFor } from "../lib/supportStarterArticles";
 
 const router: IRouter = Router();
@@ -331,6 +332,8 @@ router.post("/support/assistant/conversations/:id/request", requireAuth, async (
       const [created] = await tx.insert(disputesTable).values({
         userId, reason, description, evidenceUrl: null, sessionId: caseContext?.sessionId ?? null,
       }).returning({ id: disputesTable.id });
+      await freezeOriginalPaymentForReview(tx, { sessionId: caseContext?.sessionId ?? null, studentId: userId,
+        actorRole: req.user!.role, reason, disputeId: created!.id });
       await recordOpened(created!.id, userId, req.user!.role, await nameOf(userId), tx);
       await tx.insert(activityLogTable).values({
         userId, action: "dispute.create", subjectType: "dispute", subjectId: created!.id,

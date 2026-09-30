@@ -2,6 +2,7 @@ import { and, eq, gte, lte, ne } from "drizzle-orm";
 import { db, sessionsTable, teacherProfilesTable } from "@workspace/db";
 import { notARecurringDay } from "./monthlyStore";
 import { notABatchTestLesson } from "./batchTestStore";
+import { notAReplacementLesson } from "./lessonRemedyIntegration";
 import { liveTestGrant } from "./testTeachingAccess";
 import { TIER_WINDOW_MS, judgeAllowance, tierOf, type AllowanceVerdict } from "./tierLimits";
 
@@ -72,6 +73,7 @@ export async function neighbouringClassTimes(args: {
         ne(sessionsTable.status, "cancelled"),
         notARecurringDay,
         notABatchTestLesson,
+        await notAReplacementLesson(),
       ),
     );
 
@@ -170,6 +172,7 @@ export async function allowanceSummary(teacherId: number, now = new Date()): Pro
         ne(sessionsTable.status, "cancelled"),
         notARecurringDay,
         notABatchTestLesson,
+        await notAReplacementLesson(),
       ),
     );
 

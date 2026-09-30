@@ -1,0 +1,108 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+
+/** Runs only inside run.mjs's explicitly local disposable PostgreSQL fixture. */
+export async function runFinanceChecks({ api, q, check, fixture, request, offer, accept, resolve, operator, outsider, acceptedPastFixture, DAY, HOUR }) {
+  const ownReceipt = (response, f) => response.body?.receipts?.find((r) => r.bookingId === f.bookingId);
+  const ledger = async (f, position = 0) => (await q("SELECT * FROM batch_test_ledger_entries WHERE booking_id=$1 AND position=$2 ORDER BY id DESC LIMIT 1", [f.bookingId, position])).rows[0];
+  const f = await fixture();
+  const requested = await request(f); assert.equal(requested.status, 200, JSON.stringify(requested));
+  const caseId = requested.body.caseId;
+  assert.equal((await offer(f, caseId)).status, 200);
+  const acceptedKey = randomUUID();
+  const accepted = await accept(f, caseId, acceptedKey); assert.equal(accepted.status, 200, JSON.stringify(accepted));
+  const replacementId = accepted.body.replacementSessionId;
+
+  const detail = await api(`/sessions/${replacementId}`, f.student.token);
+  check("replacement detail links one original class and purchased lesson count", detail.status === 200 && detail.body.classGroup.makeup === true && detail.body.classGroup.batchId === f.batchId && detail.body.classGroup.originalSessionId === f.sessionIds[0] && detail.body.classGroup.lessonCount === f.sessionIds.length);
+  check("private replacement detail is unavailable to anonymous and stranger IDs", (await api(`/sessions/${replacementId}`)).status === 404 && (await api(`/sessions/${replacementId}`, outsider.token)).status === 404);
+  const ownSchedule = await api(`/sessions?studentId=${f.student.id}`, f.student.token);
+  const fakeSchedule = await api(`/sessions?studentId=${f.student.id}`, outsider.token);
+  const publicTeacherSchedule = await api(`/sessions?teacherId=${f.teacher.id}`);
+  check("replacement schedule requires authenticated ownership, not query IDs", ownSchedule.body.sessions.some((s) => s.id === replacementId) && !fakeSchedule.body.sessions.some((s) => s.id === replacementId) && !publicTeacherSchedule.body.sessions.some((s) => s.id === replacementId));
+  check("replacement cannot enter public standalone catalog", !(await api(`/sessions?catalog=standalone&teacherId=${f.teacher.id}`)).body.sessions.some((s) => s.id === replacementId));
+  const drop = await api(`/sessions/${replacementId}/drop-info`, f.student.token);
+  check("legacy drop adapter shows original allocation, not zero-price replacement refund", drop.status === 200 && drop.body.canDrop === false && drop.body.originalSessionId === f.sessionIds[0]);
+  check("legacy drop write cannot mint a refund for a class allocation", (await api(`/sessions/${replacementId}/drop`, f.student.token, {})).status === 409);
+  check("legacy operator full refund routes back to exact original receipt", (await api(`/admin/sessions/${replacementId}/refund`, operator.token, { studentId: f.student.id, note: "Synthetic operator checking the original receipt allocation." })).status === 409);
+  const material = (await q("INSERT INTO class_group_materials(batch_id,teacher_id,title,note) VALUES($1,$2,'Synthetic teaching note','No personal data or external media.') RETURNING id", [f.batchId, f.teacher.id])).rows[0];
+  check("replacement retains class material access without separate purchase", (await api(`/class-groups/${f.batchId}/materials`, f.student.token)).body.materials.some((m) => m.id === material.id));
+  check("stranger cannot inspect replacement's original materials", (await api(`/class-groups/${f.batchId}/materials`, outsider.token)).status === 403);
+  const teacherMoney = await api("/batch-tests/me/payments", f.teacher.token);
+  const receipt = ownReceipt(teacherMoney, f);
+  check("teacher held accounting retains every nonterminal original allocation", teacherMoney.body.makeupsEnabled === true && receipt.accounting.heldGrossNpr === 3000 && receipt.allocations[0].remedy.allocationHeld && receipt.allocations[0].remedy.additionalChargeNpr === 0 && receipt.accounting.actualMoneyMovedNpr === 0);
+  for (const event of ["lesson_delivered", "complaint_window_closed", "makeup_delivery_confirmed", "makeup_review_restored", "payout_confirmed"]) {
+    check(`generic operator cannot fabricate make-up event ${event}`, (await api(`/admin/batch-test-payments/${f.bookingId}/allocations/0/events`, operator.token, { event, note: "Synthetic no-bypass check." })).status === 409);
+  }
+
+  await q("INSERT INTO operator_accounts(user_id,login_id,must_change_password) VALUES($1,$2,false) ON CONFLICT(user_id) DO UPDATE SET must_change_password=false", [operator.id, `synthetic-${operator.id}`]);
+  const closureRequest = await api("/account-closure", f.student.token, { confirmed: true });
+  assert.equal(closureRequest.status, 200, JSON.stringify(closureRequest));
+  const closure = await api(`/account-closure-review/${f.student.id}`, operator.token);
+  check("pending make-up blocks closure once, not once per case plus allocation", closure.status === 200 && closure.body.commitments.pendingMakeups === 1 && closure.body.blockers.length > 0 && closure.body.completionAvailable === false);
+
+  // A replacement may legally finish beyond its original monthly paid period. Reproduce
+  // that boundary with past accepted synthetic records, not a renewal or another charge.
+  const afterPeriod = await fixture({ at: Date.now() - 30 * DAY - 15 * 60000 });
+  const ap = await acceptedPastFixture(afterPeriod);
+  const starts = new Date(Date.parse(afterPeriod.snapshot.tuitionPeriod.endsAt));
+  await q("UPDATE sessions SET date=$2,status='live' WHERE id=$1", [ap.replacementId, starts]);
+  await q("UPDATE lesson_remedy_offers SET starts_at=$2,ends_at=$3,expires_at=$2 WHERE case_id=$1 AND accepted_at IS NOT NULL", [ap.caseId, starts, new Date(starts.getTime() + 30 * 60000)]);
+  const currentAccess = await api(`/sessions/${ap.replacementId}/access`, afterPeriod.student.token);
+  check("accepted replacement after monthly period end remains joinable without renewal", starts.getTime() < Date.now() && currentAccess.status === 200 && currentAccess.body.isEnrolled && currentAccess.body.canJoin);
+  check("replacement classroom issues only its already-booked participant access", (await api(`/sessions/${ap.replacementId}/room`, afterPeriod.student.token)).status === 200 && (await api(`/sessions/${ap.replacementId}/room`, outsider.token)).status === 403);
+  check("no extra class charge or receipt is created after period end", Number((await q("SELECT count(*) AS n FROM batch_test_payments WHERE booking_id=$1", [afterPeriod.bookingId])).rows[0].n) === 1);
+
+  // Refund/support flow names the replacement, yet holds the original paid allocation.
+  const delivered = await fixture({ at: Date.now() - 5 * DAY }); const d = await acceptedPastFixture(delivered);
+  await q("INSERT INTO session_activity(session_id,ended_at) VALUES($1,$2)", [d.replacementId, new Date(d.replacementAt + 30 * 60000)]);
+  await q("INSERT INTO session_participation(session_id,user_id,role,present_ms,join_count) VALUES($1,$2,'teacher',1800000,1)", [d.replacementId, delivered.teacher.id]);
+  assert.equal((await resolve(operator, d.caseId, "replacement_delivered")).status, 200);
+  const originalDeadline = (await q("SELECT replacement_review_closes_at FROM lesson_remedy_cases WHERE id=$1", [d.caseId])).rows[0].replacement_review_closes_at;
+  const support = await api("/disputes", delivered.student.token, { reason: "Refund Request", description: "Synthetic replacement delivery needs human financial review.", sessionId: d.replacementId });
+  assert.equal(support.status, 201, JSON.stringify(support));
+  check("replacement-linked financial support atomically freezes original allocation", (await ledger(delivered)).to_state === "disputed" && (await q("SELECT status FROM lesson_remedy_cases WHERE id=$1", [d.caseId])).rows[0].status === "review_required");
+  check("delivery review cannot implicitly deny original or replacement financial ticket", (await resolve(operator, d.caseId, "replacement_delivered")).status === 409 && (await resolve(operator, d.caseId, "refund_denied")).status === 409);
+  // Simulate a separately completed, documented human Support decision; the make-up
+  // restoration endpoint must still preserve (not shorten/reset) the confirmed clock.
+  await q("UPDATE disputes SET status='denied',resolved_at=now(),resolution='Synthetic separately reviewed decision' WHERE id=$1", [support.body.id]);
+  assert.equal((await resolve(operator, d.caseId, "refund_denied")).status, 200);
+  const restored = (await q("SELECT status,replacement_review_closes_at FROM lesson_remedy_cases WHERE id=$1", [d.caseId])).rows[0];
+  check("explicit human refund denial restores pending review, not instant payout", restored.status === "delivered_review" && restored.replacement_review_closes_at.getTime() === originalDeadline.getTime() && (await ledger(delivered)).to_state === "delivered_pending");
+  check("restored make-up still refuses payout before the same 48h deadline", (await api(`/admin/batch-test-payments/${delivered.bookingId}/allocations/0/events`, operator.token, { event: "payout_confirmed" })).status === 409);
+  await q("UPDATE lesson_remedy_cases SET replacement_review_closes_at=now()-interval '1 second' WHERE id=$1", [d.caseId]);
+  const afterReview = ownReceipt(await api("/batch-tests/me/payments", delivered.student.token), delivered);
+  check("only elapsed confirmed replacement clock admits original earning", afterReview.allocations[0].state === "eligible" && afterReview.allocations[0].remedy.allocationHeld === false);
+  assert.equal((await api(`/admin/batch-test-payments/${delivered.bookingId}/allocations/0/events`, operator.token, { event: "payout_confirmed" })).status, 200);
+  check("one replacement pays out original amount exactly once in simulation", (await ledger(delivered)).to_state === "paid_out" && (await ledger(delivered)).gross_npr === 1000 && (await api(`/admin/batch-test-payments/${delivered.bookingId}/allocations/0/events`, operator.token, { event: "payout_confirmed" })).status === 409);
+  check("settled replacement fulfillment closes its durable make-up case", (await q("SELECT status,outcome FROM lesson_remedy_cases WHERE id=$1", [d.caseId])).rows[0].status === "resolved");
+  assert.equal((await api("/account-closure", delivered.student.token, { confirmed: true })).status, 200);
+  const settledClosure = await api(`/account-closure-review/${delivered.student.id}`, operator.token);
+  check("settled fulfilled replacement does not block account closure forever", settledClosure.status === 200 && settledClosure.body.commitments.pendingMakeups === 0);
+
+  // Exercise the older operator ledger route, which must have the same seat revocation
+  // and case finality as the new make-up operator portal.
+  const refund = await api(`/admin/batch-test-payments/${f.bookingId}/allocations/0/events`, operator.token, { event: "refund_approved", note: "Synthetic documented human approval from original receipt." });
+  assert.equal(refund.status, 200, JSON.stringify(refund));
+  check("generic human refund revokes original and replacement seats together", (await q("SELECT 1 FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 AND payment_status IN ('paid','test')", [[f.sessionIds[0], replacementId], f.student.id])).rowCount === 0);
+  const refundedAccess = await api(`/sessions/${replacementId}/access`, f.student.token);
+  check("refund approval denies replacement access even though its price is zero", refundedAccess.status === 200 && !refundedAccess.body.isEnrolled && !refundedAccess.body.canJoin);
+  const history = await api(`/class-groups/${f.batchId}/remedies`, f.student.token);
+  check("refunded case remains readable without any new participant actions", history.status === 200 && history.body.lessons.find((l) => l.originalSessionId === f.sessionIds[0]).case.status === "resolved" && !history.body.lessons.find((l) => l.originalSessionId === f.sessionIds[0]).canRequest);
+  const acceptedOfferId = (await q("SELECT id FROM lesson_remedy_offers WHERE case_id=$1 AND accepted_at IS NOT NULL", [caseId])).rows[0].id;
+  const replayedAcceptance = await api(`/lesson-remedies/${caseId}/accept`, f.student.token, { offerId: acceptedOfferId, requestKey: acceptedKey });
+  check("committed acceptance replay after refund returns history without reviving either seat", replayedAcceptance.status === 200 && replayedAcceptance.body.changed === false && replayedAcceptance.body.replacementSessionId === replacementId && (await q("SELECT 1 FROM session_enrollments WHERE session_id=ANY($1::int[]) AND student_id=$2 AND payment_status IN ('paid','test')", [[f.sessionIds[0], replacementId], f.student.id])).rowCount === 0);
+  check("no simulated class decision creates real cash refund debt", Number((await q("SELECT count(*) AS n FROM refunds WHERE session_id=ANY($1::int[])", [[f.sessionIds[0], replacementId, d.replacementId]])).rows[0].n) === 0);
+
+  // A very busy class must not push an older active case beyond the queue's row cap.
+  const busy = await fixture({ count: 501, monthly: false });
+  const busyRequest = await request(busy, 0); assert.equal(busyRequest.status, 200, JSON.stringify(busyRequest));
+  const studentQueue = await api("/lesson-remedies", busy.student.token);
+  const teacherQueue = await api("/lesson-remedies", busy.teacher.token);
+  check("student queue prioritizes active cases and declares truncation", studentQueue.status === 200 && studentQueue.body.truncated === true && !!studentQueue.body.truncationReason && studentQueue.body.lessons[0].case?.id === busyRequest.body.caseId);
+  check("teacher queue excludes hundreds of lessons without a request", teacherQueue.status === 200 && teacherQueue.body.lessons.length === 1 && teacherQueue.body.lessons[0].case.id === busyRequest.body.caseId && teacherQueue.body.truncated === false);
+  const ownOperatorCase = (await api("/admin/lesson-remedies", operator.token)).body.lessons.find((l) => l.case?.id === busyRequest.body.caseId);
+  check("operator queue keeps existing active cases accessible before unrelated lessons", !!ownOperatorCase);
+  const declined = await resolve(operator, busyRequest.body.caseId, "refund_review", { confirmed: false, requestKey: randomUUID() });
+  check("all operator outcomes require explicit reviewed-evidence confirmation", declined.status === 400);
+}

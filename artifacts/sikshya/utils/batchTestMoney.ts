@@ -15,11 +15,23 @@ export interface ParticipantTestReceipt {
     fadkoNpr?: number;
     state: string;
     stateChangedAt?: string;
+    remedy?: {
+      id: number;
+      status: string;
+      originalSessionId: number;
+      replacementSessionId: number | null;
+      replacementStartsAt: string | null;
+      replacementEndsAt: string | null;
+      reviewClosesAt: string | null;
+      allocationHeld: boolean;
+      additionalChargeNpr: 0;
+    };
   }>;
   accounting: {
     teacherPaidOutNpr?: number;
     refundedGrossNpr?: number;
     actualMoneyMovedNpr: number;
+    heldGrossNpr?: number;
   };
 }
 
@@ -33,26 +45,49 @@ export interface ParticipantTestTotals {
   actualMoneyMovedNpr: number;
 }
 
-const pendingEarningStates = new Set(["future", "delivered_pending", "eligible"]);
+const pendingEarningStates = new Set([
+  "future",
+  "delivered_pending",
+  "eligible",
+]);
+const heldEarningStates = new Set([
+  ...pendingEarningStates,
+  "replacement_pending",
+  "disputed",
+]);
 
 export function teacherReceiptBreakdown(receipt: ParticipantTestReceipt): {
-  tuitionNpr: number; fadkoFeeNpr: number; teacherShareNpr: number;
+  tuitionNpr: number;
+  fadkoFeeNpr: number;
+  teacherShareNpr: number;
 } | null {
   const tuitionNpr = receipt.grossNpr;
   const fadkoFeeNpr = receipt.fadkoNpr;
   const teacherShareNpr = receipt.teacherNpr;
-  if (![tuitionNpr, fadkoFeeNpr, teacherShareNpr].every((value) => Number.isSafeInteger(value) && value! >= 0)) return null;
+  if (
+    ![tuitionNpr, fadkoFeeNpr, teacherShareNpr].every(
+      (value) => Number.isSafeInteger(value) && value! >= 0,
+    )
+  )
+    return null;
   if (tuitionNpr! !== fadkoFeeNpr! + teacherShareNpr!) return null;
-  return { tuitionNpr: tuitionNpr!, fadkoFeeNpr: fadkoFeeNpr!, teacherShareNpr: teacherShareNpr! };
+  return {
+    tuitionNpr: tuitionNpr!,
+    fadkoFeeNpr: fadkoFeeNpr!,
+    teacherShareNpr: teacherShareNpr!,
+  };
 }
 
 /** Presentation allocation of the recorded Fadko fee, never an additional charge or vendor expense. */
 export function fadkoFeeAllocation(feeNpr: number): {
-  platformNpr: number; serverNpr: number; maintenanceNpr: number;
+  platformNpr: number;
+  serverNpr: number;
+  maintenanceNpr: number;
 } | null {
-  if (!Number.isSafeInteger(feeNpr) || feeNpr < 0 || feeNpr > 1_000_000_000) return null;
+  if (!Number.isSafeInteger(feeNpr) || feeNpr < 0 || feeNpr > 1_000_000_000)
+    return null;
   // Allocate rupee rounding within the existing fee. For NPR 210 this is 154 + 42 + 14.
-  const platformNpr = Math.round(feeNpr * 11 / 15);
+  const platformNpr = Math.round((feeNpr * 11) / 15);
   const serverNpr = Math.round(feeNpr / 5);
   const maintenanceNpr = feeNpr - platformNpr - serverNpr;
   if (maintenanceNpr < 0) return null;
@@ -60,30 +95,37 @@ export function fadkoFeeAllocation(feeNpr: number): {
 }
 
 /** One arithmetic definition for the student and teacher summaries. */
-export function participantTestTotals(receipts: ParticipantTestReceipt[]): ParticipantTestTotals {
-  return receipts.reduce<ParticipantTestTotals>((totals, receipt) => {
-    totals.grossNpr += receipt.grossNpr ?? 0;
-    totals.teacherShareNpr += receipt.allocations
-      .reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0);
-    totals.teacherHeldNpr += receipt.allocations
-      .filter((allocation) => pendingEarningStates.has(allocation.state))
-      .reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0);
-    totals.teacherPaidOutNpr += receipt.accounting.teacherPaidOutNpr ?? 0;
-    totals.teacherRefundedNpr += receipt.allocations
-      .filter((allocation) => allocation.state === "refunded")
-      .reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0);
-    totals.refundedGrossNpr += receipt.accounting.refundedGrossNpr ?? 0;
-    totals.actualMoneyMovedNpr += receipt.accounting.actualMoneyMovedNpr;
-    return totals;
-  }, {
-    grossNpr: 0,
-    teacherShareNpr: 0,
-    teacherHeldNpr: 0,
-    teacherPaidOutNpr: 0,
-    teacherRefundedNpr: 0,
-    refundedGrossNpr: 0,
-    actualMoneyMovedNpr: 0,
-  });
+export function participantTestTotals(
+  receipts: ParticipantTestReceipt[],
+): ParticipantTestTotals {
+  return receipts.reduce<ParticipantTestTotals>(
+    (totals, receipt) => {
+      totals.grossNpr += receipt.grossNpr ?? 0;
+      totals.teacherShareNpr += receipt.allocations.reduce(
+        (sum, allocation) => sum + (allocation.teacherNpr ?? 0),
+        0,
+      );
+      totals.teacherHeldNpr += receipt.allocations
+        .filter((allocation) => heldEarningStates.has(allocation.state))
+        .reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0);
+      totals.teacherPaidOutNpr += receipt.accounting.teacherPaidOutNpr ?? 0;
+      totals.teacherRefundedNpr += receipt.allocations
+        .filter((allocation) => allocation.state === "refunded")
+        .reduce((sum, allocation) => sum + (allocation.teacherNpr ?? 0), 0);
+      totals.refundedGrossNpr += receipt.accounting.refundedGrossNpr ?? 0;
+      totals.actualMoneyMovedNpr += receipt.accounting.actualMoneyMovedNpr;
+      return totals;
+    },
+    {
+      grossNpr: 0,
+      teacherShareNpr: 0,
+      teacherHeldNpr: 0,
+      teacherPaidOutNpr: 0,
+      teacherRefundedNpr: 0,
+      refundedGrossNpr: 0,
+      actualMoneyMovedNpr: 0,
+    },
+  );
 }
 
 export interface ParticipantMoneyStatementRow {
@@ -103,16 +145,25 @@ export interface ParticipantMoneyStatement {
 }
 
 function newest(values: Array<string | undefined>, fallback: string): string {
-  return values.filter((value): value is string => !!value)
-    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? fallback;
+  return (
+    values
+      .filter((value): value is string => !!value)
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ??
+    fallback
+  );
 }
 
-function newestFirst(a: ParticipantMoneyStatementRow, b: ParticipantMoneyStatementRow): number {
+function newestFirst(
+  a: ParticipantMoneyStatementRow,
+  b: ParticipantMoneyStatementRow,
+): number {
   return new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime();
 }
 
 function recordedMoney(value: number | undefined): number | null {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : null;
 }
 
 /**
@@ -140,7 +191,9 @@ export function participantMoneyStatement(
           status: "Test checkout recorded",
         });
       }
-      for (const allocation of receipt.allocations.filter((row) => row.state === "refund_owed" || row.state === "refunded")) {
+      for (const allocation of receipt.allocations.filter(
+        (row) => row.state === "refund_owed" || row.state === "refunded",
+      )) {
         const refund = recordedMoney(allocation.grossNpr);
         if (refund === null) continue;
         const posted = allocation.state === "refunded";
@@ -152,17 +205,27 @@ export function participantMoneyStatement(
           occurredAt: allocation.stateChangedAt ?? receipt.recordedAt,
           amountNpr: refund,
           direction: "credit",
-          status: posted ? "Test refund recorded" : "Test refund approved (not sent)",
+          status: posted
+            ? "Test refund recorded"
+            : "Test refund approved (not sent)",
         });
       }
       continue;
     }
 
-    const pending = receipt.allocations.filter((row) => pendingEarningStates.has(row.state));
-    const review = receipt.allocations.filter((row) => row.state === "disputed" || row.state === "replacement_pending");
-    const reversalPending = receipt.allocations.filter((row) => row.state === "refund_owed");
+    const pending = receipt.allocations.filter((row) =>
+      pendingEarningStates.has(row.state),
+    );
+    const review = receipt.allocations.filter(
+      (row) => row.state === "disputed" || row.state === "replacement_pending",
+    );
+    const reversalPending = receipt.allocations.filter(
+      (row) => row.state === "refund_owed",
+    );
     const paid = receipt.allocations.filter((row) => row.state === "paid_out");
-    const reversed = receipt.allocations.filter((row) => row.state === "refunded");
+    const reversed = receipt.allocations.filter(
+      (row) => row.state === "refunded",
+    );
     const student = receipt.studentName ?? "Student name unavailable";
     const teacherRow = (
       kind: string,
@@ -172,14 +235,20 @@ export function participantMoneyStatement(
       status: string,
     ) => {
       if (!source.length) return;
-      const amount = source.reduce((sum, row) => sum + (recordedMoney(row.teacherNpr) ?? 0), 0);
+      const amount = source.reduce(
+        (sum, row) => sum + (recordedMoney(row.teacherNpr) ?? 0),
+        0,
+      );
       if (amount <= 0) return;
       rows.push({
         id: `${receipt.bookingId}-${kind}`,
         section,
         title: receipt.classTitle,
         detail: `${student} · Receipt ${receipt.reference}`,
-        occurredAt: newest(source.map((row) => row.stateChangedAt), receipt.recordedAt),
+        occurredAt: newest(
+          source.map((row) => row.stateChangedAt),
+          receipt.recordedAt,
+        ),
         amountNpr: amount,
         direction,
         status,
@@ -187,9 +256,21 @@ export function participantMoneyStatement(
     };
     teacherRow("pending", pending, "pending", "neutral", "Pending");
     teacherRow("review", review, "pending", "neutral", "Under review");
-    teacherRow("reversal-pending", reversalPending, "pending", "debit", "Reversal pending");
+    teacherRow(
+      "reversal-pending",
+      reversalPending,
+      "pending",
+      "debit",
+      "Reversal pending",
+    );
     teacherRow("paid", paid, "posted", "credit", "Test payout recorded");
-    teacherRow("reversed", reversed, "posted", "debit", "Reversed after refund");
+    teacherRow(
+      "reversed",
+      reversed,
+      "posted",
+      "debit",
+      "Reversed after refund",
+    );
   }
   return {
     pending: rows.filter((row) => row.section === "pending").sort(newestFirst),
@@ -201,15 +282,28 @@ export function participantReceiptStatus(
   receipt: ParticipantTestReceipt,
   role: "student" | "teacher",
 ): string {
-  const states = new Set(receipt.allocations.map((allocation) => allocation.state));
+  const states = new Set(
+    receipt.allocations.map((allocation) => allocation.state),
+  );
   if (states.has("disputed")) return "Support review in progress";
+  if (
+    receipt.allocations.some((allocation) => allocation.remedy?.allocationHeld)
+  )
+    return "Make-up or lesson review in progress";
   if (states.has("refund_owed")) return "Refund approved in this test";
-  if (states.size === 1 && states.has("refunded")) return role === "teacher" ? "Test earnings reversed" : "Test refund completed";
-  if (states.size === 1 && states.has("paid_out")) return role === "teacher" ? "Test payout recorded" : "Lessons completed";
+  if (states.size === 1 && states.has("refunded"))
+    return role === "teacher"
+      ? "Test earnings reversed"
+      : "Test refund completed";
+  if (states.size === 1 && states.has("paid_out"))
+    return role === "teacher" ? "Test payout recorded" : "Lessons completed";
   if (states.has("replacement_pending")) return "Replacement or refund needed";
   if (states.has("delivered_pending")) return "Lesson review period";
-  if (states.has("eligible")) return role === "teacher" ? "Ready for test payout" : "Lesson completed";
-  return role === "teacher" ? "Expected earnings pending" : "Test booking confirmed";
+  if (states.has("eligible"))
+    return role === "teacher" ? "Ready for test payout" : "Lesson completed";
+  return role === "teacher"
+    ? "Expected earnings pending"
+    : "Test booking confirmed";
 }
 
 export function testReceiptNepalTime(value: string): string {

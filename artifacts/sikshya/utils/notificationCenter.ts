@@ -69,6 +69,7 @@ export function notificationDestination(
   const programId = value(data, "programId");
   const conversationWith = value(data, "conversationWith");
   if (kind === "identity_status") return { pathname: "/identity-verification" };
+  if (kind === "makeup_update") return { pathname: role === "admin" ? "/(admin)/makeups" : "/makeups", params: { ...(batchId ? { id: batchId } : {}), ...(sessionId ? { sessionId } : {}) } };
 
   if (batchId && kind === "class_quiz_published") return { pathname: "/class-quizzes", params: { id: batchId } };
 
@@ -104,6 +105,7 @@ export function notificationDestination(
 
 export function notificationPresentation(notification: AppNotification): NotificationPresentation {
   const kind = value(notification.data, "type");
+  if (kind === "makeup_update") return { icon: "clock", label: "Make-up lesson", tone: "action" };
   if (kind === "class_quiz_published") return { icon: "check-circle", label: "Practice quiz", tone: "action" };
   if (kind === "message" || kind === "class_message" || kind === "session_message") {
     return { icon: "message-circle", label: "Message", tone: "action" };

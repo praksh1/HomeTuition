@@ -1,0 +1,43 @@
+# Production regression release and live make-up workflow
+
+- Date: 2026-09-30
+- Agent: codex
+- Branch: codex/preview-journey-fixes-sep29; production candidate codex/production-journey-fixes-sep30
+- Base commit: Preview 7d3b070a; Production f9b0506f3d424e4aeaf0f86366eab4bfa8722432
+- Status: in progress
+
+## Requested
+
+Promote the verified Preview regression fixes to Production and complete real make-up request, assignment, quota-display and original-payment-hold workflow.
+
+## Changed
+
+Implemented private participant and operator make-up workspaces, original-lesson deep links, server-authoritative allowance display, Nepal-time date offers, request/offer/accept/withdraw decisions, explicit human evidence acknowledgment, in-app updates, original-receipt replacement details and accurate held totals. Transactional routes hold the original allocation, prevent duplicate accepted replacements and block zero-price replacement access through generic paid/free routes. Confirmed delivery starts a fresh 48-hour clock; missed replacements require human review. Feature pause retains read-only history and durable obligations.
+
+## Decisions and assumptions
+
+Use the owner's approved two-per-paid-month / ceil(purchased short-course lessons / 10), cap-three, no-rollover policy. No purchases, automatic refunds or bans. Confirmed teacher non-delivery does not consume courtesy allowance. No second payment or duplicate earning. AI does not confirm delivery.
+
+## Verification
+
+Live Railway Production deployment b339abdd-a755-44f9-96e4-5b2cc1308b8d is SUCCESS with metadata commit f9b0506f3d424e4aeaf0f86366eab4bfa8722432 on main. Remote main matches. Existing Preview fixes were verified in the prior task.
+
+Final local checks: API and app typecheck, 631 app unit tests, 868 API unit tests, API build and unchanged design baseline passed. The make-up browser suite passed 66 assertions at 320/390/1440 pixels, with Nepal and Chicago browser timezones, read-only paused records, participant request context and ambiguous retry identity. Earlier class-home (50) and teaching-billing (42) browser gates passed. These use synthetic browser API fixtures, not proof of live PostgreSQL transactions. Actual isolated database CI remains required before activation.
+
+## Problems and surprises
+
+Production and Preview have divergent histories: 299 changed files, including a premium Production owner cost dashboard which a blanket Preview merge would overwrite. Construct a reviewed candidate preserving that dashboard and feature flags. Bundled git log stalled twice; full Git for Windows works. No local PostgreSQL/Docker executable found; use disposable CI PostgreSQL, never shared Preview as destructive fixture.
+
+Capacity interruptions required agent retries. Deep review found alternate admin read-path authorization bypass, fulfilled replacement cases blocking account closure after payout, ignored stored policy snapshots, acceptance retries rejected after later state changes, and partial make-up storage being treated as no history. These were repaired with targeted regressions; PostgreSQL execution still must verify transaction/catalog behavior. Initial browser screenshots caught stale closing-modal titles and device-local rather than Nepal times; both repaired and reverified. Initial browser bundling could not parse the native time picker; test-only native boundary uses the established fixture alias, not a production dependency change.
+
+## Fabrications found
+
+None added. A completed session or brief connection is not evidence of full delivery. Practice receipts cannot become real refunds or actual earnings.
+
+## Deliberately not changed
+
+No billing plan, purchases, payment credentials, student identity requirement or automatic money movement. No whole-branch merge over the Production cost dashboard.
+
+## Remaining risks / next pickup point
+
+Candidate release validation, new make-up PostgreSQL race tests, UI journeys, additive migration/readiness, staged activation and release evidence remain. This entry describes ongoing work, not a deployed feature.

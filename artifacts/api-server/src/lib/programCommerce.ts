@@ -34,6 +34,10 @@ export const PROGRAM_ALLOCATION_EVENTS = [
   "complaint_denied",
   "payout_confirmed",
   "refund_confirmed",
+  "makeup_requested",
+  "makeup_delivery_confirmed",
+  "makeup_withdrawn",
+  "makeup_review_restored",
 ] as const;
 
 export type ProgramAllocationEvent = (typeof PROGRAM_ALLOCATION_EVENTS)[number];
@@ -127,24 +131,35 @@ const TRANSITIONS: Readonly<
   future: {
     lesson_delivered: "delivered_pending",
     lesson_cancelled: "replacement_pending",
+    makeup_requested: "replacement_pending",
+    makeup_delivery_confirmed: "delivered_pending",
   },
   replacement_pending: {
     // A make-up carries the same allocation forward; it never creates a second earning.
     replacement_scheduled: "future",
     refund_approved: "refund_owed",
+    makeup_requested: "replacement_pending",
+    makeup_delivery_confirmed: "delivered_pending",
+    makeup_withdrawn: "future",
   },
   delivered_pending: {
     complaint_opened: "disputed",
     complaint_window_closed: "eligible",
+    makeup_requested: "replacement_pending",
   },
   disputed: {
     complaint_upheld: "refund_owed",
     complaint_denied: "eligible",
+    makeup_requested: "replacement_pending",
+    // Only a documented operator denial after the linked financial ticket is closed.
+    // The make-up keeps its independently confirmed 48-hour clock, not instant eligibility.
+    makeup_review_restored: "delivered_pending",
   },
   eligible: {
     // An exceptional complaint may freeze an earning until the payout is actually confirmed.
     complaint_opened: "disputed",
     payout_confirmed: "paid_out",
+    makeup_requested: "replacement_pending",
   },
   refund_owed: {
     refund_confirmed: "refunded",

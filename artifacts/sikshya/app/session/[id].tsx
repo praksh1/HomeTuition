@@ -22,6 +22,7 @@ import SessionThread from "@/components/SessionThread";
 import { useDates } from "@/context/DatePreferenceContext";
 import DropClass from "@/components/DropClass";
 import RescheduleClass from "@/components/RescheduleClass";
+import { ProgramButton } from "@/components/programs/ProgramPieces";
 
 /**
  * A class's own page — the link the owner asked for.
@@ -43,7 +44,7 @@ import RescheduleClass from "@/components/RescheduleClass";
 
 interface SessionDetail {
   id: number;
-  classGroup?: { batchId: number; title: string; lessonPosition: number; lessonCount: number };
+  classGroup?: { batchId: number; title: string; lessonPosition: number; lessonCount: number; makeup?: boolean; originalSessionId?: number };
   teacherId: number;
   teacherName: string;
   subject: string;
@@ -273,6 +274,11 @@ export default function SessionPage() {
           <Feather name="chevron-right" size={18} color={colors.primary} />
         </TouchableOpacity>
       ) : null}
+      {session.classGroup?.makeup && session.classGroup.originalSessionId ? <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Text style={[styles.sectionTitle, { color: colors.foreground }]}>Your linked make-up lesson</Text>
+        <Text style={[styles.muted, { color: colors.mutedForeground }]}>This replaces the original purchased lesson. No additional tuition is charged and the original payment remains linked for review.</Text>
+        <ProgramButton label="View original lesson & request" icon="repeat" onPress={() => router.push({ pathname: "/makeups", params: { id: String(session.classGroup!.batchId), sessionId: String(session.classGroup!.originalSessionId) } })} />
+      </View> : null}
 
       {/* The student's half: has the teacher turned up, and what to do if not. */}
       {!isTeacher && waiting && session.status !== "completed" && (
@@ -301,7 +307,7 @@ export default function SessionPage() {
         Only for a class that has not happened: moving a lesson that was already taught is not
         rescheduling, and the students who sat through it would be told their class had moved.
       */}
-      {isTeacher && session.status === "upcoming" && (
+      {isTeacher && session.status === "upcoming" && !session.classGroup?.makeup && (
         <RescheduleClass sessionId={session.id} currentDate={session.date} onMoved={() => void load()} />
       )}
 
