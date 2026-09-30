@@ -57,4 +57,11 @@ jobs:
           pnpm --filter @workspace/sikshya run test:class-home
           pnpm --filter @workspace/sikshya run test:class-students
           pnpm --filter @workspace/sikshya run test:makeups-ui
+      - name: Real-export make-up route checks
+        env:
+          EXPO_PUBLIC_API_URL: http://127.0.0.1:39999
+          EXPO_EXPORT_MAX_WORKERS: 2
+        run: |
+          pnpm --filter @workspace/sikshya run build
+          pnpm --filter @workspace/sikshya run test:makeups-routes
       # This workflow intentionally has no deployment or credentials.

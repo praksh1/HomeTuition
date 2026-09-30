@@ -5,6 +5,7 @@
   "main": "expo-router/entry",
   "scripts": {
     "test:makeups-ui": "node scripts/makeups-ui/run.mjs",
+    "test:makeups-routes": "node scripts/makeups-routes/run.mjs",
     "test:dashboard-audit": "node scripts/dashboard-audit/run.mjs",
     "test:signup-ui": "node scripts/signup-audit/run.mjs",
     "test:teaching-billing": "node scripts/teaching-billing/run.mjs",

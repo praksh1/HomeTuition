@@ -250,11 +250,24 @@ try {
     const countButton = (name) => countPage.getByRole("button", { name, exact: true });
     const tap = async (locator, minimumSize = 44) => {
       await locator.scrollIntoViewIfNeeded();
+      // Wait for the real target's enabled/stable/hit-tested actionability before
+      // sampling touch coordinates. Trial performs no click or application action.
+      await locator.click({ trial: true });
       const box = await locator.boundingBox();
       assert.ok(box && box.width >= minimumSize && box.height >= minimumSize, "real target has the expected tap dimensions");
       const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       assert.ok(point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height, "real target fits the viewport");
       assert.ok(await locator.evaluate((node, { x, y }) => node.contains(document.elementFromPoint(x, y)), point), "no overlay covers the real target");
+      await locator.evaluate((node, geometry) => {
+        window.classSetupTapDiagnostics ??= [];
+        window.classSetupTapDiagnostics.push({
+          label: node.getAttribute("aria-label") ?? node.textContent,
+          disabled: node.getAttribute("aria-disabled"), geometry,
+          activeTag: document.activeElement?.tagName,
+          sampledAt: performance.now(),
+        });
+        window.classSetupTapDiagnostics = window.classSetupTapDiagnostics.slice(-24);
+      }, { box, point });
       if (width < 600) await countPage.touchscreen.tap(point.x, point.y);
       else await countPage.mouse.click(point.x, point.y);
       await countPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -278,7 +291,17 @@ try {
     check(await countButton("Prepare my timetable").isDisabled() && await countPage.getByText(/Only 30 daily lessons fit.*one lesson per day/).count() === 1, `${width}: fifty daily lessons explain the thirty-day boundary immediately`);
     await tap(countButton("Pick my own dates"));
     await tap(countButton("Create editable lesson dates"));
-    await countPage.getByText(/50 lesson rows ready/).waitFor();
+    try {
+      await countPage.getByText(/50 lesson rows ready/).waitFor();
+    } catch (error) {
+      console.error("CLASS_SETUP_TOUCH_DIAGNOSTICS", JSON.stringify(await countPage.evaluate(() => ({
+        width: window.innerWidth, height: window.innerHeight,
+        actions: window.classSetupTapDiagnostics,
+        page: document.body.innerText,
+      }))));
+      await countPage.screenshot({ path: path.join(work, `${width}-manual-timetable-failure.png`), fullPage: true });
+      throw error;
+    }
     check(await countPage.getByRole("button", { name: /^Edit lesson \d+ date and time$/ }).count() === 50, `${width}: fifty manual rows are available`);
     await countPage.getByTestId("class-time-0").fill("16:45");
     await tap(countButton("Continue"));

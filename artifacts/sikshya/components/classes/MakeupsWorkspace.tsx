@@ -426,7 +426,7 @@ export default function MakeupsWorkspace({
               label="Show all lessons in this class"
               onPress={() =>
                 router.replace({
-                  pathname: operator ? "/(admin)/makeups" : "/makeups",
+                  pathname: operator ? "/(admin)/operator-makeups" : "/makeups",
                   params: batchId ? { id: String(batchId) } : {},
                 } as never)
               }
