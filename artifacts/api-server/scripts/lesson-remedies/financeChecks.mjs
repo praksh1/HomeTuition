@@ -105,4 +105,15 @@ export async function runFinanceChecks({ api, q, check, fixture, request, offer,
   check("operator queue keeps existing active cases accessible before unrelated lessons", !!ownOperatorCase);
   const declined = await resolve(operator, busyRequest.body.caseId, "refund_review", { confirmed: false, requestKey: randomUUID() });
   check("all operator outcomes require explicit reviewed-evidence confirmation", declined.status === 400);
+
+  const contextFixture = await fixture();
+  const contextRequest = await request(contextFixture); assert.equal(contextRequest.status, 200, JSON.stringify(contextRequest));
+  const contextCaseId = contextRequest.body.caseId;
+  const teacherContext = (await api(`/class-groups/${contextFixture.batchId}/remedies`, contextFixture.teacher.token)).body.lessons.find((l) => l.case?.id === contextCaseId).case;
+  check("teacher receives the student's make-up explanation, not a context-free request", teacherContext.requestNote === "Synthetic request for the original purchased lesson.");
+  const teacherReason = "I cannot offer that date; please contact me about another time.";
+  assert.equal((await api(`/lesson-remedies/${contextCaseId}/decision`, contextFixture.teacher.token, { decision: "reject", note: teacherReason, requestKey: randomUUID() })).status, 200);
+  await q("INSERT INTO lesson_remedy_events(case_id,actor_id,actor_role,event,from_status,to_status,detail) VALUES($1,$2,'operator','resolve','review_required','review_required',$3)", [contextCaseId, operator.id, JSON.stringify({ note: "PRIVATE OPERATOR EVIDENCE MUST NOT LEAK" })]);
+  const studentContext = await api(`/class-groups/${contextFixture.batchId}/remedies`, contextFixture.student.token);
+  check("student receives teacher's clear reason but no operator's private evidence notes", studentContext.body.lessons.find((l) => l.case?.id === contextCaseId).case.teacherDecisionReason === teacherReason && !JSON.stringify(studentContext.body).includes("PRIVATE OPERATOR"));
 }
