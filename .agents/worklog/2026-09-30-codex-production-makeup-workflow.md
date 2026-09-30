@@ -69,6 +69,14 @@ Complete the approved linked make-up request, teacher assignment, student accept
 
 ## Fabrications found
 
+## Production API activation and final routing gate
+
+- Full isolated CI 36755321981 passed at e9f626774fa0e3a89fe30af27a32559824e33a5e: API 849, app 622, new make-up PostgreSQL 121, Programs 607, bookings 149, video 43, proof 125, teacher access 26, student access 111; all configured browser gates passed.
+- Set only LESSON_REMEDIES_ENABLED=1 on exact Production service be00bc18-98c7-4007-9ee4-9df080cdec8a. Uploaded the clean e9f62677 source; Railway deployment 090754ee-e14e-4d2a-b57f-7a79883bead4 reports SUCCESS.
+- Live signed synthetic-role smoke passed: student and teacher 200/enabled, participant operator endpoints 403, anonymous make-up endpoint 401. Full live catalog check reports storage complete and dependencies ready. Identity collection and closure completion flags remain unset. Public readiness/programs 200; private owner endpoint 401 anonymously. These are read-only authorization/storage checks, not a real payment or full live request/offer/accept transaction.
+- Actual exported app checks discovered an Expo public-URI collision between participant /makeups and grouped operator /makeups: operator refresh selected the participant page. Corrected the operator page to unique /operator-makeups in both branches; participant links remain unchanged. Added three source route regressions and a real-export, synthetic authenticated browser routing gate to CI. Final frontend release is held until fresh exports and this gate pass.
+- Parallel local exports attempted by root collided in the shared Metro cache (EPERM); no deployed service failed. Preview export is completing first, then Production will be re-exported sequentially with correct explicit API targets. No cache bypass or runtime guard change was used.
+
 None found in the promoted workflow. No new receipt, paid charge, automatic refund, inferred delivery from connection or fake earnings is created. Browser data is explicitly synthetic and not a live account result.
 
 ## Deliberately not changed

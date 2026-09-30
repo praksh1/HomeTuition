@@ -60,6 +60,7 @@
     "test:class-setup": "node scripts/class-setup/run.mjs",
     "test:class-home": "node scripts/class-home-journey/run.mjs",
     "test:makeups-ui": "node scripts/makeups-ui/run.mjs",
+    "test:makeups-routes": "node scripts/makeups-routes/run.mjs",
     "test:class-students": "node scripts/class-students-journey/run.mjs",
     "test:messages-ui": "node scripts/messages-ui/run.mjs",
     "test:profile-ui": "node scripts/profile-ui/run.mjs",
