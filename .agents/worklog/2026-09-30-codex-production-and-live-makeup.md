@@ -4,7 +4,7 @@
 - Agent: codex
 - Branch: codex/preview-journey-fixes-sep29; production candidate codex/production-journey-fixes-sep30
 - Base commit: Preview 7d3b070a; Production f9b0506f3d424e4aeaf0f86366eab4bfa8722432
-- Status: in progress
+- Status: completed and live in Preview and Production
 
 ## Requested
 
@@ -65,7 +65,7 @@ No billing plan, purchases, payment credentials, student identity requirement or
 
 ## Remaining risks / next pickup point
 
-Full downstream CI, narrow Production make-up variant validation, staged activation, live participant smoke and final release evidence remain. The regression fixes are live; make-ups are not enabled yet. Physical iOS/Android and two-device real media were not tested by the synthetic browser gates.
+The regression fixes and complete per-student make-up workflow are live. The authoritative final release evidence is below. Remaining checks are owner testing on physical iOS/Android and real payment-provider operation when separately activated; synthetic browser gates do not prove real two-device media. Bulk whole-class rescheduling is separate from the current private per-student replacements.
 
 ## September 30 release checkpoint (supersedes earlier pending status)
 
@@ -73,3 +73,13 @@ Full downstream CI, narrow Production make-up variant validation, staged activat
 - Only LESSON_REMEDIES_ENABLED=1 was enabled for Preview. Railway deployment 67a88e80-b80f-4835-b093-6bf626a335c7 is SUCCESS. Signed synthetic teacher/student history returned 200/enabled; participants cannot access the operator desk (403), and anonymous history is private (401). The three additive make-up tables are fully installed, dependencies ready; identity/closure-completion flags remain unset. Smoke checks created no live accounts, bookings, requests, tickets or payments.
 - Production full CI 36768420498 passed at fbfeae61ee1ad892b5bb5b701aff6eec306cb0e0, and Railway f6e19467-3b4b-4aa8-9065-7332318660ce is SUCCESS with the same read/privacy/catalog checks. Premium owner dashboard and private-ID boundaries were preserved.
 - Fresh target exports again passed 162 real-export routing assertions each. Independent final artifact review caught one stale operator make-up notification destination, now corrected to /(admin)/operator-makeups with direct regressions. Participant /makeups and original lesson context are unchanged. Frontend publication remains held for fresh corrected exports and the final source gate.
+
+## Final verified live release
+
+- Preview source b63a8938318219f31bdad949ef45d6e8555ab6e8 passed full CI 36771385492: API 888, app 635, PostgreSQL make-ups 165, programs 608, booking 151, video 43, proof 125, teacher access 26, student access 111, browser 170/90/50/66/24 and actual Expo routes 162. Raw job logs independently prove export/runner completion.
+- Clean fresh Preview export verified Fadko identity and all 130 chunks targeting only the staging API, with unique participant/operator routes and no retired notification path. Its 162 direct/reload/role/no-overflow browser assertions passed again. Worker hometuition-preview version a5da37b3-fa8a-4b14-9a08-687269a5e6c2 is live; post-publication served HTML and every exact chunk hash/API target passed. Railway 67a88e80-b80f-4835-b093-6bf626a335c7 remains SUCCESS; backend is unchanged from the earlier gated 9d021310 source.
+- Production source 70cb9505d4c666c3c08736fe05e6f4b6c28f8568 passed full CI 36771385545 (API 857, app 626, PostgreSQL 163 and every remaining gate). Its fresh 129-chunk export and 162 local routes passed; Worker hometuition version ea222abd-588a-4b06-a89a-ba455f747fbf is live. Every served chunk hash and exact Production API target passed. Railway f6e19467-3b4b-4aa8-9065-7332318660ce remains SUCCESS, backend-identical to the final frontend source.
+- Signed live synthetic-role reads, participant/operator separation, anonymous privacy, full additive storage and API readiness passed for both services. Only LESSON_REMEDIES_ENABLED=1 was enabled; identity collection and closure completion remain unset. No live account, booking, request, ticket or payment was created by smoke tests. Full transactional/concurrent financial tests used isolated disposable PostgreSQL.
+- Premium Production owner Cost & Health dashboard was preserved: exact three entry/shared bundles and labels verified live, anonymous owner-data access denied (401). No blanket branch/main merge or private-ID/provider/billing-plan change.
+- Owner test path: Classes -> class -> Make-up lessons, or Make-up options for a specific original lesson. Check student request/reserved quota, teacher replacement offer, student acceptance, linked original receipt/held allocation and operator delivery review. No second tuition. Missed replacements remain human review; approved delivery starts a fresh 48-hour dispute period, not instant payout. Real payments are still not activated.
+- This release is complete; earlier pending checkpoints are historical and superseded. Current implementation is private per-student replacement assignment, not bulk class rescheduling. Physical-device and real-provider testing remain explicit limitations, not claimed results.
