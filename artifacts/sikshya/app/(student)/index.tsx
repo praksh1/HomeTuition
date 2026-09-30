@@ -134,6 +134,7 @@ export default function Discover() {
         const params = new URLSearchParams();
         params.set("limit", "20");
         params.set("presentation", "program");
+        params.set("personalized", "1");
         if (q.trim().length > 0) params.set("q", q.trim());
         if (type !== "all") params.set("type", type);
         if (cursor) params.set("cursor", cursor);
@@ -211,6 +212,7 @@ export default function Discover() {
         const params = new URLSearchParams();
         params.set("limit", "20");
         params.set("presentation", "class");
+        params.set("personalized", "1");
         if (q.trim().length > 0) params.set("q", q.trim());
         if (cursor) params.set("cursor", cursor);
         const answer = await apiGet<{ programs: PublicProgramSummary[]; nextCursor: string | null }>(
@@ -553,6 +555,7 @@ export default function Discover() {
             onLoadMore={() => void loadPrograms({ append: true })}
             onRetry={() => void loadPrograms({ query: programQuery, type: programType })}
             onOpen={(id) => router.push(`/(student)/program/${id}`)}
+            onOpenMyClass={(batchId) => router.push({ pathname: "/class-home", params: { id: String(batchId) } })}
             onSubmit={(text) => { setProgramQuery(text); void loadPrograms({ query: text, type: programType }); }}
           />
         </ScrollView>
@@ -583,6 +586,7 @@ export default function Discover() {
             onLoadMore={() => void loadListedClasses({ append: true })}
             onRetry={() => void loadListedClasses({ query: listedClassQuery })}
             onOpen={(id) => router.push(`/(student)/program/${id}`)}
+            onOpenMyClass={(batchId) => router.push({ pathname: "/class-home", params: { id: String(batchId) } })}
             onSubmit={(text) => { setListedClassQuery(text); void loadListedClasses({ query: text }); }}
           />
         </ScrollView>

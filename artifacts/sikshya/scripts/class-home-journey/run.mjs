@@ -71,6 +71,12 @@ try {
       current.includes("+ 1 more scheduled date"),
       `${width}: long schedule stays compact`,
     );
+    await page.getByRole("button", { name: "Show all 4 upcoming dates" }).click();
+    check(
+      (await page.locator("body").innerText()).includes("Lesson 4"),
+      `${width}: remaining dates expand without leaving class home`,
+    );
+    await page.getByRole("button", { name: "Show fewer upcoming dates" }).click();
     check(
       current.includes("Payments & receipts"),
       `${width}: student records are one tap away`,
@@ -112,11 +118,11 @@ try {
     );
 
     await page.goto(`${base}?finished`);
-    await page.getByText("SCHEDULE COMPLETE", { exact: true }).waitFor();
+    await page.getByText("NO UPCOMING LESSONS", { exact: true }).waitFor();
     const finished = await page.locator("body").innerText();
     check(
-      finished.includes("All 4 scheduled dates have passed"),
-      `${width}: completed schedule says what passed`,
+      finished.includes("Review earlier and closed lesson dates below"),
+      `${width}: finished schedule points to status details`,
     );
     check(
       !finished.includes("NEXT LESSON") &&
@@ -125,6 +131,27 @@ try {
           .count()),
       `${width}: completed schedule invents no next lesson`,
     );
+    await page.getByRole("button", { name: "Show 4 previous lesson dates" }).click();
+    check(
+      (await page.locator("body").innerText()).includes("Attendance unavailable"),
+      `${width}: elapsed but unfinished lesson is not called completed`,
+    );
+
+    await page.goto(`${base}?previous`);
+    await page.getByRole("button", { name: "Show 3 previous lesson dates" }).click();
+    const previous = await page.locator("body").innerText();
+    check(previous.includes("Attendance unavailable") && previous.includes("Cancelled"), `${width}: earlier lessons show actual status without inventing attendance`);
+    await page.getByRole("button", { name: "View lesson 2", exact: true }).click();
+    check(await page.evaluate(() => window.lastNavigation?.params?.id === "102"), `${width}: a previous lesson opens its own record`);
+    await page.getByRole("button", { name: "Get help with lesson 2", exact: true }).click();
+    check(await page.evaluate(() => window.lastNavigation?.pathname === "/support" && window.lastNavigation?.params?.sessionId === "102"), `${width}: help retains the exact original lesson`);
+    await page.goto(`${base}?finished&attendance`);
+    await page.getByRole("button", { name: "Show 4 previous lesson dates" }).click();
+    const evidence = await page.locator("body").innerText();
+    check(evidence.includes("Joined") && evidence.includes("No attendance recorded") && evidence.includes("Attendance unavailable"), `${width}: attendance facts differ from unknown evidence`);
+    check(!evidence.includes("Missed") && !evidence.includes("Date passed"), `${width}: absent evidence is not a no-show verdict`);
+    check(await page.getByRole("button", { name: "Get help with lesson 3", exact: true }).count() === 0, `${width}: cancelled/unpurchased history creates no artificial entitlement`);
+    check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: expanded history actions have no horizontal overflow`);
 
     await page.goto(`${base}?teacher`);
     const students = page.getByRole("button", { name: /Students/ });
@@ -136,7 +163,7 @@ try {
     await earnings.waitFor();
     await earnings.click();
     check(
-      await page.evaluate(() => window.lastNavigation === "/subscription"),
+      await page.evaluate(() => window.lastNavigation === "/(teacher)/subscription"),
       `${width}: teacher earnings destination is correct`,
     );
     check(errors.length === 0, `${width}: no browser exceptions`);

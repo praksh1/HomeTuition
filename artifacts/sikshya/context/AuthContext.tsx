@@ -166,6 +166,7 @@ interface ApiUserProfile {
   emailVerified?: boolean;
   authProviders?: string[];
   onboardingComplete?: boolean;
+  profilePhotoUrl?: string | null;
   teacher?: ApiTeacher | null;
   student?: ApiStudent | null;
 }
@@ -197,7 +198,7 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       sessionsThisMonth: t.sessionsThisMonth ?? 0,
       totalStudents: t.totalStudents ?? 0,
       monthlyEarnings: t.monthlyEarnings ?? 0,
-      avatarUrl: t.avatarUrl ?? undefined,
+      avatarUrl: profile.profilePhotoUrl ?? t.avatarUrl ?? undefined,
       location: t.location ?? undefined,
       district: t.district ?? undefined,
       experienceYears: t.experienceYears ?? undefined,
@@ -219,7 +220,7 @@ function mapApiUserToUser(profile: ApiUserProfile): User | null {
       grade: s?.grade ?? "",
       bio: s?.bio ?? undefined,
       enrolledSessions: [],
-      avatarUrl: s?.avatarUrl ?? undefined,
+      avatarUrl: profile.profilePhotoUrl ?? s?.avatarUrl ?? undefined,
       emailVerified: profile.emailVerified === true,
       authProviders: profile.authProviders ?? [],
       onboardingComplete: profile.onboardingComplete === true,

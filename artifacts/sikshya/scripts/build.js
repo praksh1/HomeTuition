@@ -1,49 +1,15 @@
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
+const { assertBundleTargets: checkBundleTargets } = require("./build-targets.cjs");
 
 const projectRoot = path.resolve(__dirname, "..");
 const basePath = (process.env.BASE_PATH || "/").replace(/\/+$/, "");
 
 /**
- * Remembers what the last build was pointed at, and what it called itself.
- *
- * Metro caches each transformed module, and `process.env.EXPO_PUBLIC_*` is inlined during
- * that transform — but the cache key does not include the value. So changing the API URL and
- * rebuilding produces a build that *succeeds* and still contains the old address. That was
- * reproduced here deliberately: a build asked for port 9999 reported success and shipped 8080.
- *
- * The app's own name, slug and scheme travel the same route: expo-constants has the manifest
- * baked into it at transform time, so renaming the app in app.json and rebuilding can leave
- * the browser tab and the home-screen label showing the old name. Both go in the stamp.
- *
- * Clearing the bundler cache fixes it and costs about a minute, so it is done only when the
- * target has actually changed rather than on every build.
- */
-const TARGET_STAMP = path.join(projectRoot, "node_modules", ".cache", "sikshya-build-target");
-
-function readLastTarget() {
-  try {
-    return fs.readFileSync(TARGET_STAMP, "utf8").trim();
-  } catch {
-    // No stamp means we cannot know what is cached, so treat it as changed.
-    return null;
-  }
-}
-
-function writeTarget(target) {
-  try {
-    fs.mkdirSync(path.dirname(TARGET_STAMP), { recursive: true });
-    fs.writeFileSync(TARGET_STAMP, target);
-  } catch {
-    // Not being able to record it only costs a slower next build.
-  }
-}
-
-/**
  * Reads the API address back out of the files that were just produced.
  *
- * The stamp above prevents the known cause; this catches the symptom whatever the cause. A
+ * A clean export prevents the known cache cause; this checks every emitted chunk. A
  * wrong API address in a bundle is invisible — the build passes, the site loads, and only
  * logins fail — so it is worth failing loudly here instead.
  */
@@ -55,17 +21,15 @@ function assertBundleTargets(expected) {
   } catch {
     exitWithError(`Build produced no JavaScript to check in ${jsDir}`);
   }
-  const found = files.some((f) =>
-    fs.readFileSync(path.join(jsDir, f), "utf8").includes(`"${expected}"`),
-  );
-  if (!found) {
-    exitWithError(
-      `The build does not point at ${expected}.\n` +
-        "This usually means the bundler served a cached copy of the old address. Delete\n" +
-        "node_modules/.cache and try again, or run the export with --clear.",
-    );
+  try {
+    checkBundleTargets(files.map((name) => ({
+      name,
+      source: fs.readFileSync(path.join(jsDir, name), "utf8"),
+    })), expected);
+  } catch (error) {
+    exitWithError(error.message);
   }
-  console.log(`Verified: the built app points at ${expected}`);
+  console.log(`Verified all ${files.length} JavaScript chunks: API target ${expected}, no mixed Railway targets.`);
 }
 
 /**
@@ -90,7 +54,7 @@ function readIdentity() {
  * under the icon when the site is added to an Android home screen. It shipped as "Guru", the
  * name the project was generated under, long after every screen in the app said Fadko.
  *
- * The stamp above prevents the stale-cache cause; this catches the symptom whatever the cause.
+ * A clean export prevents the stale-cache cause; this also verifies the actual output.
  */
 function assertBuildIdentity(identity) {
   const html = fs.readFileSync(path.join(projectRoot, "web-build", "index.html"), "utf8");
@@ -174,26 +138,10 @@ function main() {
   console.log(apiUrl ? `API at ${apiUrl}` : `Setting EXPO_PUBLIC_DOMAIN=${domain}`);
 
   const identity = readIdentity();
-  const target = [
-    apiUrl ? `api:${apiUrl}` : `domain:${domain}`,
-    `name:${identity.name}`,
-    `slug:${identity.slug}`,
-    `scheme:${identity.scheme}`,
-  ].join("|");
-  const targetChanged = readLastTarget() !== target;
-  if (targetChanged) {
-    console.log("The API address or the app's name changed since the last build — clearing the bundler cache.");
-    // Invalidate the old stamp before Metro starts. A failed export may still populate Metro's
-    // cache with the new target; keeping the last successful stamp would then make a retry for
-    // that old target trust a cache produced by the failed build. The stamp is restored only
-    // after the exported bundle has passed both target and identity verification below.
-    try {
-      fs.rmSync(TARGET_STAMP, { force: true });
-    } catch {
-      // The export still receives --clear. A missing/locked stamp simply makes the next build
-      // clear once more instead of risking a stale API address.
-    }
-  }
+  // A checkout-local stamp cannot guarantee every shared Metro transform has this target.
+  // Sep 30 verification caught correct staging HTTP beside cached Production wsUrl output.
+  // Static/release exports always clear; development builds keep their normal fast cache.
+  console.log("Clearing Metro for a clean, target-specific static export.");
 
   const outputDir = path.join(projectRoot, "web-build");
   if (fs.existsSync(outputDir)) {
@@ -223,7 +171,7 @@ function main() {
     "--output-dir",
     "web-build",
     ...(requestedWorkers ? ["--max-workers", requestedWorkers] : []),
-    ...(targetChanged ? ["--clear"] : []),
+    "--clear",
   ];
   if (requestedWorkers) {
     console.log(`Limiting Metro to ${requestedWorkers} worker(s) for this export.`);
@@ -256,7 +204,6 @@ function main() {
 
   assertBundleTargets(apiUrl ?? domain);
   assertBuildIdentity(identity);
-  writeTarget(target);
 
   console.log(`Build complete! Static web app ready in web-build/ (base path: ${basePath || "/"})`);
 }

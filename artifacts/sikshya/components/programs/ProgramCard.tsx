@@ -52,8 +52,9 @@ export default function ProgramCard({ fields, onPress, actionLabel = "View progr
         gap: space.sm,
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.xs }}>
+      <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.xs, flexWrap: "wrap" }}>
         <ProgramChip label={fields.typeLabel} tone="neutral" testID={testID ? `${testID}-type` : undefined} />
+        {fields.enrolled ? <ProgramChip label="Enrolled" tone="live" testID={testID ? `${testID}-enrolled` : undefined} /> : null}
       </View>
 
       <Text

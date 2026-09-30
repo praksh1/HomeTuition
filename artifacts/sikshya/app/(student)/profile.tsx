@@ -41,6 +41,8 @@ export default function StudentProfile() {
       <ProfileHero
         eyebrow="MY FADKO PROFILE"
         initials={initials}
+        avatarUrl={student.avatarUrl}
+        userId={student.userId}
         name={student.name}
         subtitle={student.grade || "Grade not added yet"}
         status={{

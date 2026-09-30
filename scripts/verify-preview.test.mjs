@@ -10,6 +10,19 @@ const previewUrl = "https://hometuition-preview.example.workers.dev";
 const html =
   '<script src="/_expo/static/js/web/__common-123.js" defer></script><script src="/_expo/static/js/web/entry-456.js" defer></script>';
 
+test("production verification only accepts the exact approved Worker/API pair", async () => {
+  const production = {
+    buildDir: "not-read-unless-target-is-valid",
+    previewUrl: "https://hometuition.praksh-dhakal.workers.dev/",
+    apiUrl: "https://workspaceapi-server-production-5a63.up.railway.app/",
+    target: "production",
+  };
+  await assert.rejects(() => verifyPreview({ ...production, previewUrl }), /approved Production Worker/);
+  await assert.rejects(() => verifyPreview({ ...production, apiUrl }), /approved Production API/);
+  await assert.rejects(() => verifyPreview({ ...production, target: "unknown" }), /Unknown release target/);
+  await assert.rejects(() => verifyPreview({ ...production, target: "preview" }), /isolated preview Worker/);
+});
+
 test("accepts split Metro runtime/entry names, not only index", () => {
   assert.deepEqual(bundlePaths(html), [
     "_expo/static/js/web/__common-123.js",
@@ -28,6 +41,10 @@ for (const mode of [
   "production",
   "missing-api",
   "unavailable",
+  "lazy-correct",
+  "lazy-production",
+  "lazy-stale",
+  "foreign-api",
 ]) {
   test(`preview verification: ${mode}`, async () => {
     const buildDir = await mkdtemp(
@@ -52,12 +69,20 @@ for (const mode of [
         path.join(buildDir, "_expo/static/js/web/entry-456.js"),
         "entry",
       );
+      const lazy = mode === "lazy-production"
+        ? "wss://workspaceapi-server-production-5a63.up.railway.app/api/ws"
+        : mode === "foreign-api" ? "https://another-api.up.railway.app" : "lazy";
+      if (mode.startsWith("lazy-") || mode === "foreign-api") {
+        await writeFile(path.join(buildDir, "_expo/static/js/web/lazy-789.js"), lazy);
+      }
       const fetchImpl = async (url) => {
         const body =
           url.pathname === "/"
             ? mode === "old-html"
               ? html.replace("456", "789")
               : html
+            : url.pathname.includes("lazy-")
+              ? mode === "lazy-stale" ? "older lazy content" : lazy
             : url.pathname.includes("__common")
               ? common
               : mode === "wrong-bytes"
@@ -70,6 +95,7 @@ for (const mode of [
       const run = () =>
         verifyPreview({ buildDir, previewUrl, apiUrl, fetchImpl });
       if (mode === "correct") assert.equal((await run()).assets.length, 2);
+      else if (mode === "lazy-correct") assert.equal((await run()).assets.length, 3);
       else await assert.rejects(run);
     } finally {
       await rm(buildDir, { recursive: true, force: true });

@@ -5,6 +5,7 @@ import { logger } from "./logger";
 import { describeStorageFailure, type StorageFailure } from "./storageErrors";
 import { resolveEndpoint } from "./storageEndpoint";
 import { ALLOWED_UPLOAD_TYPES, downloadDisposition, extensionFor } from "./fileStoreFormats";
+import { isLegacyIdentityFile, mayReviewLegacyIdentityFile } from "./legacyIdentityFiles";
 
 // Re-exported so callers have one place to import storage things from.
 export { describeStorageFailure, type StorageFailure };
@@ -230,6 +231,19 @@ export async function putObject(args: {
 
 /** A short-lived link to look at one file. Handed out per view, never stored. */
 export async function signView(key: string, downloadName?: string): Promise<string | null> {
+  if (!isFileStoreConfigured()) return null;
+  if (await isLegacyIdentityFile(key)) throw new Error("Private identity files cannot use ordinary attachment links.");
+  return signStoredView(key, downloadName, VIEW_URL_MINUTES * 60);
+}
+
+/** Operator-only compatibility for old citizenship uploads. Never used by profile/message callers. */
+export async function signLegacyIdentityReview(key: string, operatorId: number): Promise<string | null> {
+  if (!await mayReviewLegacyIdentityFile(key, operatorId)) return null;
+  return signStoredView(key, undefined, 120);
+}
+
+/** Private signing primitive: public callers must apply their own explicit guard above. */
+async function signStoredView(key: string, downloadName: string | undefined, expiresIn: number): Promise<string | null> {
   const c = client();
   if (!c) return null;
   const disposition = downloadDisposition(downloadName);
@@ -240,8 +254,60 @@ export async function signView(key: string, downloadName?: string): Promise<stri
       Key: key,
       ...(disposition ? { ResponseContentDisposition: disposition } : {}),
     }),
-    { expiresIn: VIEW_URL_MINUTES * 60 },
+    { expiresIn },
   );
+}
+
+// A profile can appear in a header, a class card and a teacher listing during one visit.
+// Reuse its safe, short-lived URL so those surfaces can use the browser's same-image cache
+// instead of presigning and fetching a camera original again on every account refresh.
+const profileViewCache = new Map<string, { url: string; until: number }>();
+export async function signProfilePhoto(key: string): Promise<string | null> {
+  const hit = profileViewCache.get(key);
+  if (hit && hit.until > Date.now()) {
+    // A previously ordinary upload can later be submitted as citizenship evidence.
+    // Never let the photo cache outlive that private classification.
+    if (await isLegacyIdentityFile(key)) {
+      profileViewCache.delete(key);
+      throw new Error("Private identity files cannot use ordinary attachment links.");
+    }
+    return hit.url;
+  }
+  const url = await signView(key); // Keeps the historical identity-document guard.
+  if (!url) return null;
+  profileViewCache.set(key, { url, until: Date.now() + 8 * 60_000 });
+  if (profileViewCache.size > 512) profileViewCache.delete(profileViewCache.keys().next().value!);
+  return url;
+}
+
+/**
+ * Bounded, server-authorized read for placing an existing handout on a live board.
+ * Never use this for identity files or arbitrary attachments. The route checks both the
+ * class and material owner before calling it; a size cap protects the small API server.
+ */
+export async function readBoardObject(key: string, maxBytes: number): Promise<Buffer | null> {
+  const c = client();
+  if (!c) return null;
+  if (await isLegacyIdentityFile(key)) throw new Error("Private identity files cannot be used as board materials.");
+  const object = await c.client.send(
+    new GetObjectCommand({ Bucket: c.config.bucket, Key: key }),
+    { abortSignal: AbortSignal.timeout(30_000) },
+  );
+  if (object.ContentLength !== undefined && object.ContentLength > maxBytes) {
+    throw new RangeError("This material is too large for the live board.");
+  }
+  if (!object.Body) throw new Error("The saved material is empty.");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of object.Body as AsyncIterable<Uint8Array>) {
+    size += chunk.length;
+    if (size > maxBytes) {
+      throw new RangeError("This material is too large for the live board.");
+    }
+    chunks.push(Buffer.from(chunk));
+  }
+  if (!size) throw new Error("The saved material is empty.");
+  return Buffer.concat(chunks, size);
 }
 
 export interface UploadFacts {
@@ -293,6 +359,7 @@ export async function verifyUpload(key: string, userId: number): Promise<UploadV
   if (ownerOf(key) !== userId) {
     return { ok: false, reason: "That file does not belong to you." };
   }
+  if (await isLegacyIdentityFile(key)) return { ok: false, reason: "Identity documents cannot be reused as messages, profile photos, homework or support attachments." };
   const facts = await describeUpload(key);
   if (!facts) return { ok: false, reason: "File uploads are not set up on this server." };
   if (!facts.exists) return { ok: false, reason: "That file did not finish uploading." };

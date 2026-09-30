@@ -2,12 +2,14 @@ import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, Image, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SearchableSelectionField } from "@/components/profile/SearchableSelectionField";
+import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { HIT_SLOP_MIN, readingWidth } from "@/constants/layout";
 import { useAuth } from "@/context/AuthContext";
+import { prepareProfilePhoto } from "@/utils/profilePhotoUpload";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPatch, apiPost } from "@/utils/api";
@@ -35,7 +37,7 @@ export default function Onboarding() {
   const editing = params.edit === "1";
   const scrollRef = useRef<ScrollView>(null);
   const phoneRef = useRef<TextInput>(null);
-  const sectionY = useRef({ contact: 0, location: 0, affiliation: 0 });
+  const sectionY = useRef({ contact: 0, location: 0, affiliation: 0, photo: 0 });
   const [provinces, setProvinces] = useState<Province[]>([]);
   const [phone, setPhone] = useState("");
   const [province, setProvince] = useState("");
@@ -49,16 +51,25 @@ export default function Onboarding() {
   const [facilities, setFacilities] = useState<Facility[]>([]);
   const [photo, setPhoto] = useState<UploadableFile | null>(null);
   const [photoUploaded, setPhotoUploaded] = useState(false);
+  const [photoUrl, setPhotoUrl] = useState(user?.avatarUrl);
+  const [photoError, setPhotoError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [fieldError, setFieldError] = useState<{ field: AccountDetailsField; message: string } | null>(null);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadFailed(false);
     void Promise.all([
       apiGet<{ provinces: Province[] }>("/locations/nepal"),
       apiGet<{ onboarding: Record<string, string | null> | null }>("/onboarding/me"),
     ]).then(([locations, current]) => {
+      if (!active) return;
+      if (!locations.provinces?.length) throw new Error("Locations unavailable");
       setProvinces(locations.provinces ?? []);
       const row = current.onboarding;
       if (!row) return;
@@ -77,9 +88,10 @@ export default function Onboarding() {
       setInstitutionName(draft.institutionName);
       setAffiliationStatus(draft.affiliationStatus);
       setPhotoUploaded(Boolean(row.profilePhotoKey));
-    }).catch(() => notify("Could not load locations", "Check your connection and try again."))
-      .finally(() => setLoading(false));
-  }, []);
+    }).catch(() => { if (active) setLoadFailed(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [loadAttempt, user?.id]);
 
   const districts = useMemo(() => provinces.find((item) => item.name === province)?.districts ?? [], [provinces, province]);
   const localLevels = useMemo(() => districts.find((item) => item.name === district)?.localLevels ?? [], [districts, district]);
@@ -108,11 +120,22 @@ export default function Onboarding() {
     if (!photo) return;
     setSaving(true);
     try {
-      const fileKey = await uploadFile(photo);
-      await apiPost("/onboarding/me/profile-photo", { fileKey });
+      const prepared = await prepareProfilePhoto(photo);
+      try {
+        const fileKey = await uploadFile(prepared.file);
+        await apiPost("/onboarding/me/profile-photo", { fileKey });
+      } finally {
+        prepared.release();
+      }
       setPhoto(null);
+      setPhotoUrl(photo.uri);
       setPhotoUploaded(true);
-      notify("Photo uploaded", "Students will be able to recognise who is teaching them.");
+      setPhotoError(false);
+      // The upload already succeeded. A transient profile refresh must not tell the person
+      // their photo failed to save; the next account refresh can fetch its signed view URL.
+      try { await refreshUser(); } catch { /* Preserve the successful upload result. */ }
+      try { const result = await apiGet<{ url: string }>("/onboarding/me/profile-photo/view"); setPhotoUrl(result.url); } catch { /* Keep the selected preview on a successful upload. */ }
+      notify("Photo uploaded", "Your profile photo has been saved.");
     } catch (error) {
       notify("Photo not uploaded", error instanceof Error ? error.message : "Please try again.");
     } finally {
@@ -131,7 +154,7 @@ export default function Onboarding() {
   };
 
   const finish = async () => {
-    if (!editing && isTeacher && !photoUploaded) { notify("Profile photo needed", "Upload a clear face photo before finishing."); return; }
+    if (loading || loadFailed || saving) return;
     const issue = firstAccountDetailsIssue({ phone, province, district, localLevel, locality, institutionName, affiliationStatus });
     if (issue) {
       setFieldError(issue);
@@ -139,6 +162,11 @@ export default function Onboarding() {
       return;
     }
     setFieldError(null);
+    if (!photoUploaded) {
+      setPhotoError(true);
+      scrollRef.current?.scrollTo({ y: Math.max(0, sectionY.current.photo - space.md), animated: true });
+      return;
+    }
     setSaving(true);
     try {
       await apiPatch("/onboarding/me", {
@@ -183,7 +211,16 @@ export default function Onboarding() {
         <Text style={[t.body, { color: colors.mutedForeground }]}>Preparing your account details…</Text>
       </View> : null}
 
-      {!loading && <>
+      {!loading && loadFailed && <View accessibilityRole="alert" testID="account-load-error" style={{ padding: space.lg, gap: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }}>
+        <Feather name="cloud-off" size={24} color={colors.mutedForeground} />
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>Your account details couldn’t be loaded</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>Nothing has been changed. Try again to load your saved details before editing.</Text>
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry loading account details" testID="account-load-retry" onPress={() => setLoadAttempt(attempt => attempt + 1)} style={{ minHeight: HIT_SLOP_MIN, paddingHorizontal: space.md, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary }}>
+          <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
+        </TouchableOpacity>
+      </View>}
+
+      {!loading && !loadFailed && <>
       <View onLayout={(event) => { sectionY.current.contact = event.nativeEvent.layout.y; }} style={{ gap: space.md, padding: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, backgroundColor: colors.card }}>
         <SectionHeading icon="phone" title="Contact" detail="How Fadko can reach you about your account and classes" colors={colors} t={t} radius={radius} space={space} />
         <View style={{ gap: space.xs }}>
@@ -197,7 +234,7 @@ export default function Onboarding() {
       <Field label="Phone number *" value={phone} onChange={(value: string) => { setPhone(value); clearError("phone"); }} placeholder="+977…" colors={colors} t={t} radius={radius} space={space} keyboardType="phone-pad" error={fieldError?.field === "phone" ? fieldError.message : undefined} inputRef={phoneRef} testID="account-phone" />
         <View style={{ flexDirection: "row", alignItems: "flex-start", gap: space.xs }}>
           <Feather name="lock" size={15} color={colors.mutedForeground} />
-          <Text style={[t.caption, { flex: 1, color: colors.mutedForeground }]}>Your phone stays private. Fadko may use it for important login, class and account notices.</Text>
+          <Text style={[t.caption, { flex: 1, color: colors.mutedForeground }]}>Your phone stays private. Add a number where Fadko can reach you about your account. Phone OTP verification is not required during testing.</Text>
         </View>
       </View>
 
@@ -246,14 +283,19 @@ export default function Onboarding() {
       )}
       </View>
 
-      {isTeacher && !editing && (
-        <View style={{ padding: space.md, gap: space.sm, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, backgroundColor: colors.card }}>
-          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Clear face profile photo *</Text>
-          <Text style={[t.caption, { color: colors.mutedForeground }]}>Use a professional, LinkedIn-style photo. Students should know who they will meet before booking.</Text>
+      {(
+        <View onLayout={event => { sectionY.current.photo = event.nativeEvent.layout.y; }} testID="account-photo-section" style={{ padding: space.md, gap: space.sm, borderWidth: 1, borderColor: photoError ? colors.destructive : colors.border, borderRadius: radius.md, backgroundColor: colors.card }}>
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Profile photo *</Text>
+          <Text style={[t.caption, { color: colors.mutedForeground }]}>{isTeacher ? "Use a clear photo so students can recognise their teacher." : "Add a profile photo so people in your classes can recognise you. Do not upload identity documents here."}</Text>
+          <View testID="account-photo-preview" style={{ width: 88, height: 88, borderRadius: radius.pill, overflow: "hidden", backgroundColor: colors.surfaceSunk, alignItems: "center", justifyContent: "center" }}>
+            <Feather name="user" size={28} color={colors.mutedForeground} />
+            {photo ? <Image accessibilityLabel="Selected profile photo preview" source={{ uri: photo.uri }} resizeMode="cover" style={{ width: "100%", height: "100%", position: "absolute" }} /> : <ProfilePhoto uri={photoUrl ?? user?.avatarUrl} self />}
+          </View>
           <TouchableOpacity onPress={() => void choosePhoto()} activeOpacity={0.75} style={{ minHeight: 48, justifyContent: "center", paddingHorizontal: space.md, borderWidth: 1, borderColor: colors.border, borderRadius: radius.sm }}>
             <Text style={[t.body, { color: colors.primary }]} numberOfLines={1}>{photo ? photo.name : photoUploaded ? "Photo uploaded — choose a replacement" : "Select photo"}</Text>
           </TouchableOpacity>
           {photo && <TouchableOpacity onPress={() => void uploadPhoto()} disabled={saving} activeOpacity={0.85} style={{ minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, backgroundColor: colors.primary }}><Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Upload selected photo</Text></TouchableOpacity>}
+          {photoError && <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive }]}>Select and upload a profile photo before saving.</Text>}
         </View>
       )}
 

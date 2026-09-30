@@ -15,6 +15,7 @@ import {
   PASSWORD_RESEND_SECONDS,
 } from "../lib/accountSecurity";
 import { isEmailConfigured } from "../lib/mailer";
+import { signProfilePhoto } from "../lib/fileStore";
 import { ageOn } from "../lib/onboardingRules";
 import { flagContent } from "../lib/moderation";
 import { socialProviderConfiguration, verifySocialCredential, type SocialProvider } from "../lib/socialIdentity";
@@ -377,11 +378,15 @@ router.get("/auth/me", requireAuth, async (req, res): Promise<void> => {
 });
 
 async function buildUserProfile(user: { id: number; email: string; name: string; role: string }) {
-  const [emailVerified, authProviders, onboardingComplete] = await Promise.all([
+  const [emailVerified, authProviders, onboardingComplete, onboarding] = await Promise.all([
     emailVerifiedFor(user.id),
     externalProvidersFor(user.id),
     onboardingCompleteFor(user.id),
+    db.select({ profilePhotoKey: userOnboardingTable.profilePhotoKey }).from(userOnboardingTable).where(eq(userOnboardingTable.userId, user.id)).then((rows) => rows[0]),
   ]);
+  const profilePhotoUrl = onboarding?.profilePhotoKey
+    ? await signProfilePhoto(onboarding.profilePhotoKey).catch(() => null)
+    : null;
   if (user.role === "teacher") {
     const [teacher] = await db
       .select()
@@ -395,6 +400,7 @@ async function buildUserProfile(user: { id: number; email: string; name: string;
       emailVerified,
       authProviders,
       onboardingComplete,
+      profilePhotoUrl,
       teacher: teacher ? { ...teacher, name: user.name, email: user.email } : null,
     };
   } else {
@@ -410,6 +416,7 @@ async function buildUserProfile(user: { id: number; email: string; name: string;
       emailVerified,
       authProviders,
       onboardingComplete,
+      profilePhotoUrl,
       student: student ?? null,
     };
   }

@@ -5,6 +5,9 @@ import {
   type ProgramBatchLessonDraft,
 } from "./programBatches.ts";
 export interface TeachingClass {
+  /** Present on My Classes list responses; older saved fixtures omit these fields. */
+  enrolledCount?: number;
+  nextLessonAt?: string | null;
   title: string;
   summary: string;
   teachingLanguage: string;
@@ -81,7 +84,7 @@ export function classDescriptionIssues(form: ClassForm): string[] {
     ["title", "Class name", 8, 90],
     ["summary", "Class description", 24, 240],
     ["teachingLanguage", "Teaching language", 2, 100],
-    ["outline", "Optional teaching plan", 0, 2000],
+    ["outline", "Optional lesson outline", 0, 2000],
   ] as const) {
     if (form[field].trim().length < min)
       issues.push(`${label} needs a little more detail.`);

@@ -4,6 +4,7 @@ export interface ConversationSummary {
   otherUserId: number;
   otherUserName: string;
   otherUserRole: string | null;
+  otherUserPhotoUrl?: string | null;
   lastMessage: string;
   lastMessageAt: string;
   unreadCount: number;

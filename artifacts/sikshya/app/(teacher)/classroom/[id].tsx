@@ -16,6 +16,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useVisibleViewport } from "@/hooks/useVisibleViewport";
 import { useColors } from "@/hooks/useColors";
 import { useAuth } from "@/context/AuthContext";
 import type { Teacher } from "@/context/AuthContext";
@@ -245,6 +246,7 @@ export default function Classroom() {
     elevation,
   } = useLayout();
   const insets = useSafeAreaInsets();
+  const visibleViewport = useVisibleViewport(true);
   const { user } = useAuth();
   const teacher = user as Teacher;
   /**
@@ -415,6 +417,12 @@ export default function Classroom() {
   const videoFull = videoWindowSize === "full";
   const videoSmall = videoWindowSize === "small";
   const windowControls = callWindowControls(callWindow);
+  // The page/zoom footer remains usable even during video-first teaching. Expanded media
+  // reserves this same dock band; lowering the dock into the footer creates a second overlap.
+  const controlDockBottom = hudBottom;
+  const dockedPanelWidth = !isCompact && mode !== "whiteboard"
+    ? Math.min(mode === "chat" ? 388 : 380, width * 0.38)
+    : 0;
 
   /**
    * Everything about where the window goes, in one shared place.
@@ -426,13 +434,16 @@ export default function Classroom() {
   const viewport: Viewport = useMemo(
     () => ({
       width,
-      height,
+      height: Math.min(height, visibleViewport.top + visibleViewport.height),
       insets,
       reservedTop: boardToolbarBottom - insets.top + HIT_SLOP_MIN + (isLandscapeLayout ? space.xs : space.lg),
       reservedBottom: pipBottomClearance - insets.bottom,
+      fullReservedTop: HIT_SLOP_MIN + space.lg,
+      fullReservedBottom: controlDockBottom - insets.bottom + HIT_SLOP_MIN + space.lg,
+      fullReservedRight: dockedPanelWidth ? dockedPanelWidth + space.md : 0,
       hitSlopMin: HIT_SLOP_MIN,
     }),
-    [width, height, insets, boardToolbarBottom, pipBottomClearance, isLandscapeLayout, space.xs, space.lg],
+    [width, height, visibleViewport.top, visibleViewport.height, insets, boardToolbarBottom, pipBottomClearance, controlDockBottom, dockedPanelWidth, isLandscapeLayout, space.xs, space.md, space.lg],
   );
 
   const rect = windowRect(callWindow.state, viewport, callWindow.offset);
@@ -1407,7 +1418,7 @@ export default function Classroom() {
         </View>
 
         {!boardOverlayOpen && mode !== "chat" && mode !== "participants" ? <ClassroomControlDock
-          bottom={hudBottom}
+          bottom={controlDockBottom}
           chatOpen={false}
           unreadCount={unreadChatCount}
           videoHidden={videoHidden}
@@ -1592,14 +1603,12 @@ export default function Classroom() {
         <View style={s.contentArea}>
           <Animated.View
             testID="video-window"
-            // The browser's one-time "turn on sound" prompt is a real button inside this
-            // floating window. It must stay clickable during the call, but never through the
-            // participant drawer: on Safari and headless Chromium it can otherwise win the hit
-            // test even while the drawer is visibly painted above it. The list is the active
-            // surface while it is open, so the call window becomes deliberately inert until the
-            // teacher closes the list.
+            // The dock, chat and participant drawer are siblings of this frame. Do not make
+            // the whole call inert when a panel opens: that also disables Restore/Minimize.
+            // Wide expanded calls reserve the panel's actual rail, while phone Modal sheets
+            // own their own hit-testing surface above the still-mounted media session.
             pointerEvents={
-              mode === "chat" || mode === "participants" || videoHidden || boardOverlayOpen
+              videoHidden || boardOverlayOpen || materialMenuOpen
                 ? "none"
                 : "auto"
             }
@@ -1617,7 +1626,7 @@ export default function Classroom() {
                 // Position comes from the shared model; the animated value only tracks a live drag.
                 transform: windowControls.canDrag ? pipDrag.getTranslateTransform() : [],
               },
-              ((isCompact && mode === "chat") || videoHidden || boardOverlayOpen) && s.videoAreaHidden,
+              (videoHidden || boardOverlayOpen || materialMenuOpen) && s.videoAreaHidden,
             ]}
           >
             <View
@@ -1726,7 +1735,7 @@ export default function Classroom() {
                   ]}
                   onPress={toggleFullVideoWindow}
                   accessibilityLabel={
-                    videoFull ? "Restore call window" : "Show call full screen"
+                    videoFull ? "Restore call window" : "Expand call window"
                   }
                   testID="video-fullscreen-btn"
                 >
@@ -1796,6 +1805,7 @@ export default function Classroom() {
               <View pointerEvents="box-none" style={s.whiteboardArea}>
                 {materialMenuOpen && (
                   <View
+                    testID="teaching-material-menu"
                     pointerEvents="auto"
                     style={[
                       s.materialMenu,
@@ -2035,6 +2045,7 @@ export default function Classroom() {
                         },
                       ]}
                       onPress={() => setMaterialMenuOpen(false)}
+                      testID="teaching-material-cancel"
                       activeOpacity={0.8}
                     >
                       <Feather
@@ -2122,40 +2133,42 @@ export default function Classroom() {
                 </View>
               </View>
             </ErrorBoundary>
-            {/*
-              The class list, the two whole-class controls, and the discussion.
+          </View>
+          {/* Classroom overlays must not be children of the board's clipping/stacking
+            surface. A high child z-index cannot escape the board's sibling call frame. */}
+          {/*
+            The class list, the two whole-class controls, and the discussion.
 
-              Along the bottom rather than in the header: a teacher moderating is looking at the
-              board, and a raised hand they have to go and find is a raised hand that waits.
-            */}
-            <View pointerEvents="box-none" style={s.floorLayer}>
-              <ClassroomFloor
-                floor={floor}
-                refusal={floorRefusal}
-                onDismissRefusal={clearFloorRefusal}
-                actions={floorActions}
-                participantOpen={mode === "participants"}
-                onParticipantOpenChange={(open) => setMode(open ? "participants" : "whiteboard")}
-                discussionOpensAt={discussionOpensAt}
-                canModerate={canModerate}
-              />
-            </View>
-
-            {mode !== "chat" ? <ClassroomReactions reactions={floatingReactions} /> : null}
-            <ClassroomChatDrawer
-              open={mode === "chat"}
-              connected={connected}
-              onReaction={sendReaction}
-              reactions={floatingReactions}
-              messages={messages}
-              value={chatMsg}
-              onChangeText={setChatMsg}
-              onSend={sendMessage}
-              onClose={() => setMode("whiteboard")}
-              placeholder="Message everyone…"
-              emptyText="Students’ questions and replies will appear here."
+            Along the bottom rather than in the header: a teacher moderating is looking at the
+            board, and a raised hand they have to go and find is a raised hand that waits.
+          */}
+          <View pointerEvents="box-none" style={s.floorLayer}>
+            <ClassroomFloor
+              floor={floor}
+              refusal={floorRefusal}
+              onDismissRefusal={clearFloorRefusal}
+              actions={floorActions}
+              participantOpen={mode === "participants"}
+              onParticipantOpenChange={(open) => setMode(open ? "participants" : "whiteboard")}
+              discussionOpensAt={discussionOpensAt}
+              canModerate={canModerate}
             />
           </View>
+
+          {mode !== "chat" ? <ClassroomReactions reactions={floatingReactions} /> : null}
+          <ClassroomChatDrawer
+            open={mode === "chat"}
+            connected={connected}
+            onReaction={sendReaction}
+            reactions={floatingReactions}
+            messages={messages}
+            value={chatMsg}
+            onChangeText={setChatMsg}
+            onSend={sendMessage}
+            onClose={() => setMode("whiteboard")}
+            placeholder="Message everyone…"
+            emptyText="Students’ questions and replies will appear here."
+          />
         </View>
       </View>
       <WarningModal

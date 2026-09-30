@@ -11,5 +11,5 @@ const screen = new URLSearchParams(window.location.search).get("screen");
 const Component = screen === "library" ? HelpLibrary : screen === "teacher" ? TeacherProfile : screen === "editor" ? Onboarding : StudentProfile;
 const role = screen === "teacher" ? "teacher" : "student";
 createRoot(document.getElementById("root")!).render(
-  screen === "editor" || screen === "library" ? <Component /> : <><AppShellHeader role={role} routeName="profile" /><Component /></>,
+  ["editor", "library"].includes(screen ?? "") ? <Component /> : <><AppShellHeader role={role} routeName="profile" /><Component /></>,
 );

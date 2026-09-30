@@ -2,23 +2,30 @@ import { and, asc, desc, eq, gt, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   batchTestBookingsTable,
+  activityLogTable,
   classGroupMessageReadsTable,
   classGroupMessagesTable,
   messageAttachmentsTable,
   messageReactionsTable,
   db,
+  disputesTable,
   learningProgramBatchesTable,
   learningProgramsTable,
   messagesTable,
   sessionEnrollmentsTable,
   sessionsTable,
   studentTeacherSubscriptionsTable,
+  userOnboardingTable,
+  userReportsTable,
   usersTable,
 } from "@workspace/db";
 import { requireAuth } from "../middlewares/requireAuth";
 import { notify, syncConversation } from "../lib/notify";
 import { verifyUpload } from "../lib/fileStore";
-import { ensureMessageSafety, lockMessagePair, messageAccess } from "../lib/messageSafety";
+import { signProfilePhoto } from "../lib/fileStore";
+import { directMessageVisibleTo, ensureMessageSafety, lockMessagePair, messageAccess } from "../lib/messageSafety";
+import { MAX_TICKETS_PER_DAY, ticketRef } from "../lib/tickets";
+import { allowanceFor, nameOf, recordOpened } from "../lib/ticketStore";
 
 const router: IRouter = Router();
 
@@ -28,7 +35,30 @@ router.get("/messages/:otherUserId/access", requireAuth, async (req, res): Promi
   const otherId = messageUserId(req.params.otherUserId);
   if (!otherId || otherId === req.user!.userId) { res.status(400).json({ error: "Choose another person." }); return; }
   await ensureMessageSafety();
-  res.json(await messageAccess(db, req.user!.userId, otherId));
+  const { canSend, blockedByYou, reason } = await messageAccess(db, req.user!.userId, otherId);
+  const [other] = await db.select({
+    name: usersTable.name,
+    role: usersTable.role,
+    photoKey: userOnboardingTable.profilePhotoKey,
+  }).from(usersTable)
+    .leftJoin(userOnboardingTable, eq(userOnboardingTable.userId, usersTable.id))
+    .where(eq(usersTable.id, otherId));
+  const [existing] = await db.select({ id: messagesTable.id }).from(messagesTable)
+    .where(and(
+      or(
+        and(eq(messagesTable.senderId, req.user!.userId), eq(messagesTable.receiverId, otherId)),
+        and(eq(messagesTable.senderId, otherId), eq(messagesTable.receiverId, req.user!.userId)),
+      ),
+      directMessageVisibleTo(req.user!.userId),
+    )).limit(1);
+  // Teacher photos are already public. Student photos stay within an actual conversation.
+  const canShowIdentity = other?.role === "teacher" || Boolean(existing);
+  res.json({
+    canSend, blockedByYou, reason,
+    otherUserName: canShowIdentity ? other?.name ?? null : null,
+    otherUserPhotoUrl: canShowIdentity && other?.photoKey
+      ? await signProfilePhoto(other.photoKey).catch(() => null) : null,
+  });
 });
 
 router.post("/messages/:otherUserId/block", requireAuth, async (req, res): Promise<void> => {
@@ -46,8 +76,54 @@ router.post("/messages/:otherUserId/block", requireAuth, async (req, res): Promi
   });
   if (!result) { res.status(404).json({ error: "This conversation is not available." }); return; }
   syncConversation([userId], { fromUserId: otherId, at: new Date().toISOString() });
-  syncConversation([otherId], { fromUserId: userId, at: new Date().toISOString() });
-  res.json(result);
+  const { canSend, blockedByYou, reason } = result;
+  res.json({ canSend, blockedByYou, reason });
+});
+
+/** A short, private report creates a normal Help Desk ticket with an operator-only subject link. */
+router.post("/messages/:otherUserId/report", requireAuth, async (req, res): Promise<void> => {
+  const userId = req.user!.userId;
+  const otherId = messageUserId(req.params.otherUserId);
+  const description = typeof req.body?.description === "string" ? req.body.description.trim() : "";
+  if (!otherId || otherId === userId) { res.status(400).json({ error: "Choose the person you are reporting." }); return; }
+  if (description.length < 10 || description.length > 3000) {
+    res.status(400).json({ error: "Describe what happened in 10 to 3,000 characters." }); return;
+  }
+  await ensureMessageSafety();
+  const [conversation] = await db.select({ id: messagesTable.id }).from(messagesTable)
+    .where(and(
+      or(
+        and(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, otherId)),
+        and(eq(messagesTable.senderId, otherId), eq(messagesTable.receiverId, userId)),
+      ),
+      directMessageVisibleTo(userId),
+    )).limit(1);
+  if (!conversation) { res.status(403).json({ error: "You can report someone you have messaged with." }); return; }
+  const allowance = await allowanceFor(userId);
+  if (!allowance.ok) {
+    res.status(429).json({ error: allowance.reason, used: allowance.used, limit: MAX_TICKETS_PER_DAY, remaining: 0, nextAllowedAt: allowance.nextAllowedAt });
+    return;
+  }
+  const ticket = await db.transaction(async tx => {
+    const [created] = await tx.insert(disputesTable).values({
+      userId,
+      sessionId: null,
+      reason: "Inappropriate Behavior",
+      description,
+      evidenceUrl: null,
+    }).returning();
+    await tx.insert(userReportsTable).values({ ticketId: created!.id, reportedUserId: otherId });
+    await recordOpened(created!.id, userId, req.user!.role, await nameOf(userId), tx);
+    await tx.insert(activityLogTable).values({
+      userId,
+      action: "user_report.create",
+      subjectType: "dispute",
+      subjectId: created!.id,
+      detail: { reportedUserId: otherId },
+    });
+    return created!;
+  });
+  res.status(201).json({ ref: ticketRef(ticket.id), id: ticket.id });
 });
 
 type DirectConversation = {
@@ -58,14 +134,19 @@ type DirectConversation = {
   lastMessageFromMe: boolean;
   otherUserName: string;
   otherUserRole: string | null;
+  otherUserPhotoUrl: string | null;
 };
 
 async function directConversations(userId: number): Promise<DirectConversation[]> {
+  await ensureMessageSafety();
   const all = await db.select().from(messagesTable)
-    .where(or(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, userId)))
+    .where(and(
+      or(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, userId)),
+      directMessageVisibleTo(userId),
+    ))
     .orderBy(asc(messagesTable.createdAt));
 
-  type Convo = Omit<DirectConversation, "otherUserName" | "otherUserRole">;
+  type Convo = Omit<DirectConversation, "otherUserName" | "otherUserRole" | "otherUserPhotoUrl">;
   const byOther = new Map<number, Convo>();
   for (const message of all) {
     const otherUserId = message.senderId === userId ? message.receiverId : message.senderId;
@@ -93,15 +174,19 @@ async function directConversations(userId: number): Promise<DirectConversation[]
   if (!conversations.length) return [];
 
   const others = await db
-    .select({ id: usersTable.id, name: usersTable.name, role: usersTable.role })
+    .select({ id: usersTable.id, name: usersTable.name, role: usersTable.role, photoKey: userOnboardingTable.profilePhotoKey })
     .from(usersTable)
+    .leftJoin(userOnboardingTable, eq(userOnboardingTable.userId, usersTable.id))
     .where(inArray(usersTable.id, conversations.map((conversation) => conversation.otherUserId)));
   const otherMap = new Map(others.map((other) => [other.id, other]));
-  return conversations.map((conversation) => ({
+  return Promise.all(conversations.map(async (conversation) => ({
     ...conversation,
     otherUserName: otherMap.get(conversation.otherUserId)?.name ?? "Unknown",
     otherUserRole: otherMap.get(conversation.otherUserId)?.role ?? null,
-  }));
+    otherUserPhotoUrl: otherMap.get(conversation.otherUserId)?.photoKey
+      ? await signProfilePhoto(otherMap.get(conversation.otherUserId)!.photoKey!).catch(() => null)
+      : null,
+  })));
 }
 
 type ClassGroupRow = {
@@ -352,11 +437,12 @@ async function unreadClassMessageTotal(userId: number, role: string): Promise<nu
  */
 router.get("/messages/unread-count", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
+  await ensureMessageSafety();
   const [[direct], classes] = await Promise.all([
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(messagesTable)
-      .where(and(eq(messagesTable.receiverId, userId), eq(messagesTable.read, false))),
+      .where(and(eq(messagesTable.receiverId, userId), eq(messagesTable.read, false), directMessageVisibleTo(userId))),
     unreadClassMessageTotal(userId, req.user!.role),
   ]);
   res.json({ unread: (direct?.count ?? 0) + classes });
@@ -387,17 +473,21 @@ router.get("/messages/:otherUserId", requireAuth, async (req, res): Promise<void
   const userId = req.user!.userId;
   const otherUserId = parseInt(String(req.params.otherUserId), 10);
   if (isNaN(otherUserId)) { res.status(400).json({ error: "Invalid user id" }); return; }
+  await ensureMessageSafety();
 
   const thread = await db.select().from(messagesTable)
-    .where(or(
-      and(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, otherUserId)),
-      and(eq(messagesTable.senderId, otherUserId), eq(messagesTable.receiverId, userId)),
+    .where(and(
+      or(
+        and(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, otherUserId)),
+        and(eq(messagesTable.senderId, otherUserId), eq(messagesTable.receiverId, userId)),
+      ),
+      directMessageVisibleTo(userId),
     ))
     .orderBy(messagesTable.createdAt);
 
   await db.update(messagesTable)
     .set({ read: true })
-    .where(and(eq(messagesTable.senderId, otherUserId), eq(messagesTable.receiverId, userId), eq(messagesTable.read, false)));
+    .where(and(eq(messagesTable.senderId, otherUserId), eq(messagesTable.receiverId, userId), eq(messagesTable.read, false), directMessageVisibleTo(userId)));
 
   /**
    * Files and reactions, fetched for the whole thread at once.
@@ -413,7 +503,14 @@ router.get("/messages/:otherUserId", requireAuth, async (req, res): Promise<void
   const [files, reactions] = ids.length
     ? await Promise.all([
         db.select().from(messageAttachmentsTable).where(inArray(messageAttachmentsTable.messageId, ids)),
-        db.select().from(messageReactionsTable).where(inArray(messageReactionsTable.messageId, ids)),
+        db.select().from(messageReactionsTable).where(and(
+          inArray(messageReactionsTable.messageId, ids),
+          sql`NOT EXISTS (
+            SELECT 1 FROM message_reaction_suppressions hidden_reaction
+            WHERE hidden_reaction.reaction_id = ${messageReactionsTable.id}
+              AND hidden_reaction.hidden_from_user_id = ${userId}
+          )`,
+        )),
       ])
     : [[], []];
 
@@ -483,6 +580,11 @@ router.post("/messages/:messageId/reaction", requireAuth, async (req, res): Prom
   }
 
   await ensureMessageSafety();
+  if (message.receiverId === userId) {
+    const visible = await db.select({ id: messagesTable.id }).from(messagesTable)
+      .where(and(eq(messagesTable.id, messageId), directMessageVisibleTo(userId)));
+    if (!visible.length) { res.status(404).json({ error: "That message was not found." }); return; }
+  }
   const result = await db.transaction(async tx => {
     const otherId = message.senderId === userId ? message.receiverId : message.senderId;
     await lockMessagePair(tx, userId, otherId);
@@ -497,10 +599,17 @@ router.post("/messages/:messageId/reaction", requireAuth, async (req, res): Prom
       await tx.delete(messageReactionsTable).where(eq(messageReactionsTable.id, existing.id));
       return { error: null, emoji: null };
     }
+    let reactionId: number | undefined;
     if (existing) {
       await tx.update(messageReactionsTable).set({ emoji: chosen }).where(eq(messageReactionsTable.id, existing.id));
+      reactionId = existing.id;
     } else {
-      await tx.insert(messageReactionsTable).values({ messageId, userId, emoji: chosen }).onConflictDoNothing();
+      const [created] = await tx.insert(messageReactionsTable).values({ messageId, userId, emoji: chosen }).onConflictDoNothing().returning({ id: messageReactionsTable.id });
+      reactionId = created?.id;
+    }
+    if (access.suppressForRecipient && reactionId) {
+      await tx.execute(sql`INSERT INTO message_reaction_suppressions(reaction_id, hidden_from_user_id)
+        VALUES (${reactionId}, ${otherId}) ON CONFLICT DO NOTHING`);
     }
     return { error: null, emoji: chosen };
   });
@@ -539,12 +648,16 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('fadko-dm-rate'), ${userId})`);
     await lockMessagePair(tx, userId, otherUserId);
     const access = await messageAccess(tx, userId, otherUserId);
-    if (!access.canSend) return { status: 403, error: access.reason, message: null };
+    if (!access.canSend) return { status: 403, error: access.reason, message: null, suppressed: false };
     const [recent] = await tx.select({ total: sql<number>`count(*)::int` }).from(messagesTable)
       .where(and(eq(messagesTable.senderId, userId), gt(messagesTable.createdAt, new Date(Date.now() - 60_000))));
-    if (recent.total >= 30) return { status: 429, error: "Please wait a moment before sending more messages.", message: null };
+    if (recent.total >= 30) return { status: 429, error: "Please wait a moment before sending more messages.", message: null, suppressed: false };
     const [message] = await tx.insert(messagesTable).values({ senderId: userId, receiverId: otherUserId, body: (body ?? "").trim() }).returning();
-    return { status: 201, error: null, message };
+    if (access.suppressForRecipient) {
+      await tx.execute(sql`INSERT INTO message_delivery_suppressions(message_id, hidden_from_user_id)
+        VALUES (${message!.id}, ${otherUserId})`);
+    }
+    return { status: 201, error: null, message, suppressed: access.suppressForRecipient };
   });
   if (!result.message) { res.status(result.status).json({ error: result.error }); return; }
   const message = result.message;
@@ -595,10 +708,10 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
   const at = new Date(message.createdAt).toISOString();
   // Both accounts receive a live-only nudge. On the sender's other devices the conversation
   // partner is the recipient; on the recipient's devices it is the sender.
-  syncConversation([otherUserId], { fromUserId: userId, at });
+  if (!result.suppressed) syncConversation([otherUserId], { fromUserId: userId, at });
   syncConversation([userId], { fromUserId: otherUserId, at });
 
-  notify(otherUserId, {
+  if (!result.suppressed) notify(otherUserId, {
     kind: "message",
     fromUserId: userId,
     fromName: sender?.name ?? "Someone",
@@ -638,6 +751,7 @@ router.post("/messages/:otherUserId", requireAuth, async (req, res): Promise<voi
 router.get("/message-recipients", requireAuth, async (req, res): Promise<void> => {
   const userId = req.user!.userId;
   const role = req.user!.role;
+  await ensureMessageSafety();
 
   /** userId -> why they are on the list, for the line under their name. */
   const reasons = new Map<number, string>();
@@ -680,14 +794,27 @@ router.get("/message-recipients", requireAuth, async (req, res): Promise<void> =
   }
 
   const people = await db
-    .select({ userId: usersTable.id, name: usersTable.name, role: usersTable.role })
+    .select({ userId: usersTable.id, name: usersTable.name, role: usersTable.role, photoKey: userOnboardingTable.profilePhotoKey })
     .from(usersTable)
+    .leftJoin(userOnboardingTable, eq(userOnboardingTable.userId, usersTable.id))
     .where(inArray(usersTable.id, ids));
+  const history = await db.selectDistinct({ senderId: messagesTable.senderId, receiverId: messagesTable.receiverId })
+    .from(messagesTable)
+    .where(and(
+      or(eq(messagesTable.senderId, userId), eq(messagesTable.receiverId, userId)),
+      directMessageVisibleTo(userId),
+    ));
+  const conversationPartners = new Set(history.map((row) => row.senderId === userId ? row.receiverId : row.senderId));
 
   res.json(
-    people
-      .map((p) => ({ ...p, note: reasons.get(p.userId) ?? "" }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+    await Promise.all(people
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(async ({ photoKey, ...person }) => ({
+        ...person,
+        note: reasons.get(person.userId) ?? "",
+        photoUrl: photoKey && (person.role === "teacher" || conversationPartners.has(person.userId))
+          ? await signProfilePhoto(photoKey).catch(() => null) : null,
+      }))),
   );
 });
 

@@ -1,18 +1,24 @@
 import { and, asc, desc, eq, ilike, inArray, lt, or, sql } from "drizzle-orm";
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import {
   db,
   learningProgramModulesTable,
   learningProgramsTable,
+  sessionEnrollmentsTable,
+  sessionsTable,
+  studentProfilesTable,
   teachingClassSetupsTable,
   studentTeacherSubscriptionsTable,
   teacherProfilesTable,
+  userOnboardingTable,
   usersTable,
 } from "@workspace/db";
 
-import { requireAuth } from "../middlewares/requireAuth";
+import { attachUserIfPresent, requireAuth } from "../middlewares/requireAuth";
 import { flagContent } from "../lib/moderation";
 import { recordActivity } from "../lib/activityLog";
+import { admitsTestEnrolment } from "../lib/testStudentAccess";
+import { personalizedCursorFor, readPersonalizedCursor } from "../lib/discoverOrder";
 import { notifyMany, type NotificationEvent } from "../lib/notify";
 import { validateLearningProgramForPublish, LEARNING_PROGRAM_TEMPLATES } from "../lib/learningPrograms";
 import {
@@ -877,16 +883,47 @@ const publiclyVisible = () =>
  * backlog's Discover integration will read this endpoint, and it is shaped now so that it never has
  * to grow a "top pick" that means `rows[0]`.
  */
-router.get("/programs", async (req: Request, res: Response): Promise<void> => {
+const attachDiscoverStudentIfRequested = (req: Request, res: Response, next: NextFunction) =>
+  req.query.personalized === "1" ? void attachUserIfPresent(req, res, next) : next();
+
+/** One authorized class-home link, selected in the catalogue query rather than N card requests.
+ * A booking alone is not access: an actual purchased lesson must still admit this student.
+ * The exact batch id also prevents a previous paid period being mistaken for a new purchase.
+ */
+const myClassBatchIdFor = (studentId: number | null) => studentId === null ? sql<number | null>`NULL` : sql<number | null>`(
+  SELECT booked.batch_id FROM batch_test_bookings booked
+  JOIN learning_program_batches booked_batch ON booked_batch.id = booked.batch_id
+  JOIN batch_test_sessions booked_lesson ON booked_lesson.batch_id = booked_batch.id
+  JOIN sessions lesson ON lesson.id = booked_lesson.session_id
+  JOIN session_enrollments place ON place.session_id = lesson.id AND place.student_id = booked.student_id
+  WHERE booked.student_id = ${studentId} AND booked_batch.program_id = ${learningProgramsTable.id}
+    AND (place.payment_status = 'paid' OR (place.payment_status = 'test' AND ${admitsTestEnrolment("test")}))
+  ORDER BY (lesson.status IN ('upcoming', 'live') AND lesson.date + lesson.duration * interval '1 minute' > now()) DESC,
+    booked.created_at DESC, booked.batch_id DESC
+  LIMIT 1
+)`;
+
+router.get("/programs", attachDiscoverStudentIfRequested, async (req: Request, res: Response): Promise<void> => {
   const limit = readLimit(req.query.limit);
   if (limit === null) {
     res.status(400).json({ error: LIMIT_REFUSAL });
     return;
   }
 
-  let cursor: { at: Date; id: number } | null = null;
+  if (req.query.personalized !== undefined && req.query.personalized !== "1") {
+    res.status(400).json({ error: "That Discover order is not available." });
+    return;
+  }
+  const studentId = req.query.personalized === "1" && req.user?.role === "student" ? req.user.userId : null;
+  if (studentId !== null) {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.vary("Authorization");
+  }
+  let cursor: { at: Date; id: number; rank?: number } | null = null;
   if (req.query.cursor !== undefined) {
-    cursor = readCursor(String(req.query.cursor));
+    cursor = studentId === null
+      ? readCursor(String(req.query.cursor))
+      : readPersonalizedCursor(String(req.query.cursor));
     if (cursor === null) {
       res.status(400).json({ error: "That page marker is not valid." });
       return;
@@ -926,6 +963,58 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
   }
 
   const where = [publiclyVisible()];
+  const [studentRows, onboardingRows, subjectRows] = studentId === null ? [[], [], []] : await Promise.all([
+    db.select({ grade: studentProfilesTable.grade }).from(studentProfilesTable).where(eq(studentProfilesTable.userId, studentId)),
+    db.select({ district: userOnboardingTable.district }).from(userOnboardingTable).where(eq(userOnboardingTable.userId, studentId)),
+    db.select({ subject: sessionsTable.subject }).from(sessionEnrollmentsTable)
+      .innerJoin(sessionsTable, eq(sessionsTable.id, sessionEnrollmentsTable.sessionId))
+      .where(and(
+        eq(sessionEnrollmentsTable.studentId, studentId),
+        inArray(sessionEnrollmentsTable.paymentStatus, admitsTestEnrolment("test") ? ["paid", "test"] : ["paid"]),
+      ))
+      .orderBy(desc(sessionsTable.date)).limit(20),
+  ]);
+  const [student] = studentRows;
+  const [onboarding] = onboardingRows;
+  // Only coarse, already supplied facts shape this order. Missing grade/area simply contributes
+  // nothing; there is no invented age, location, popularity, rating or opaque "AI" score.
+  const grade = student?.grade.trim().slice(0, 40);
+  const gradePattern = grade ? `%${grade.replace(/[\\%_]/g, (c) => `\\${c}`)}%` : null;
+  const district = onboarding?.district?.trim() || null;
+  const subjects = [...new Set(subjectRows.map((row) => row.subject.trim().toLowerCase()))]
+    .filter((subject) => subject.length >= 3 && subject !== "other" && subject !== "general")
+    .slice(0, 5);
+  const subjectMatches = subjects.map((subject) => {
+    const pattern = `%${subject.slice(0, 40).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    return sql`(
+      (${learningProgramsTable.publishedSnapshot} ->> 'title') ILIKE ${pattern} ESCAPE '\\'
+      OR (${learningProgramsTable.publishedSnapshot} ->> 'summary') ILIKE ${pattern} ESCAPE '\\'
+    )`;
+  });
+  const subjectSignal = subjectMatches.length ? sql`CASE WHEN ${sql.join(subjectMatches, sql` OR `)} THEN 4 ELSE 0 END` : sql`0`;
+  const gradeSignal = gradePattern ? sql`CASE WHEN (
+    (${learningProgramsTable.publishedSnapshot} ->> 'intendedLearner') ILIKE ${gradePattern} ESCAPE '\\'
+    OR (${learningProgramsTable.publishedSnapshot} ->> 'startingLevel') ILIKE ${gradePattern} ESCAPE '\\'
+  ) THEN 2 ELSE 0 END` : sql`0`;
+  const areaSignal = district ? sql`CASE WHEN lower(trim(${teacherProfilesTable.district})) = lower(${district}) THEN 1 ELSE 0 END` : sql`0`;
+  const priority = studentId === null ? sql<number>`0` : sql<number>`CASE
+    WHEN EXISTS (
+      SELECT 1 FROM batch_test_bookings booked
+      JOIN learning_program_batches booked_batch ON booked_batch.id = booked.batch_id
+      JOIN batch_test_sessions booked_lesson ON booked_lesson.batch_id = booked_batch.id
+      JOIN sessions lesson ON lesson.id = booked_lesson.session_id
+      JOIN session_enrollments place ON place.session_id = lesson.id AND place.student_id = booked.student_id
+      WHERE booked.student_id = ${studentId} AND booked_batch.program_id = ${learningProgramsTable.id}
+        AND booked_batch.status = 'published' AND lesson.status IN ('upcoming', 'live')
+        AND lesson.date + lesson.duration * interval '1 minute' > now()
+        AND (place.payment_status = 'paid' OR (place.payment_status = 'test' AND ${admitsTestEnrolment("test")}))
+    ) THEN 100
+    WHEN EXISTS (
+      SELECT 1 FROM student_teacher_subscriptions followed
+      WHERE followed.student_id = ${studentId} AND followed.teacher_id = ${learningProgramsTable.teacherId}
+    ) THEN 50
+    ELSE ${subjectSignal} + ${gradeSignal} + ${areaSignal}
+  END`;
   // Simple Classes reuse an immutable Program snapshot internally, but they are a different
   // product to a student. Keep the endpoint backward compatible by default; explicit catalog
   // readers can prevent the same class appearing in both Discover tabs.
@@ -937,7 +1026,9 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
   if (teacherProfileId !== null) where.push(eq(teacherProfilesTable.id, teacherProfileId));
   if (types !== null) where.push(inArray(learningProgramsTable.type, types));
   if (cursor !== null) {
-    where.push(sql`(${learningProgramsTable.publishedAt}, ${learningProgramsTable.id}) < (${cursor.at}, ${cursor.id})`);
+    where.push(studentId === null
+      ? sql`(${learningProgramsTable.publishedAt}, ${learningProgramsTable.id}) < (${cursor.at}, ${cursor.id})`
+      : sql`(${priority}, ${learningProgramsTable.publishedAt}, ${learningProgramsTable.id}) < (${cursor.rank}, ${cursor.at}, ${cursor.id})`);
   }
   if (search !== null) {
     /*
@@ -984,12 +1075,16 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
       teacherId: learningProgramsTable.teacherId,
       teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
+      priority,
+      myClassBatchId: myClassBatchIdFor(studentId),
     })
     .from(learningProgramsTable)
     .innerJoin(usersTable, eq(usersTable.id, learningProgramsTable.teacherId))
     .innerJoin(teacherProfilesTable, eq(teacherProfilesTable.userId, learningProgramsTable.teacherId))
     .where(and(...where))
-    .orderBy(desc(learningProgramsTable.publishedAt), desc(learningProgramsTable.id))
+    .orderBy(...(studentId === null
+      ? [desc(learningProgramsTable.publishedAt), desc(learningProgramsTable.id)]
+      : [desc(priority), desc(learningProgramsTable.publishedAt), desc(learningProgramsTable.id)]))
     // One more than asked for, so "is there another page" is known rather than guessed.
     .limit(limit + 1);
 
@@ -1028,9 +1123,14 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
         referenceName: snapshot.referenceName,
         referenceSource: snapshot.referenceSource,
         moduleCount: snapshot.modules.length,
+        ...(studentId !== null ? { myClass: row.myClassBatchId ? { batchId: row.myClassBatchId } : null } : {}),
       }];
     }),
-    nextCursor: rows.length > limit && last?.publishedAt ? `${last.publishedAt.getTime()}_${last.id}` : null,
+    nextCursor: rows.length > limit && last?.publishedAt
+      ? studentId === null
+        ? `${last.publishedAt.getTime()}_${last.id}`
+        : personalizedCursorFor({ rank: last.priority, at: last.publishedAt, id: last.id })
+      : null,
   });
 });
 
@@ -1043,7 +1143,12 @@ router.get("/programs", async (req: Request, res: Response): Promise<void> => {
  * an id that never existed, because "this exists but you may not see it" tells a stranger the id
  * space, and a program that cannot be read honestly is not a program that should be half-drawn.
  */
-router.get("/programs/:id", async (req: Request, res: Response): Promise<void> => {
+router.get("/programs/:id", attachDiscoverStudentIfRequested, async (req: Request, res: Response): Promise<void> => {
+  const studentId = req.query.personalized === "1" && req.user?.role === "student" ? req.user.userId : null;
+  if (studentId !== null) {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.vary("Authorization");
+  }
   const id = readId(req.params.id);
   if (id === null) {
     res.status(400).json({ error: "That program address is not valid." });
@@ -1059,6 +1164,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
       teacherId: learningProgramsTable.teacherId,
       teacherProfileId: teacherProfilesTable.id,
       teacherName: usersTable.name,
+      myClassBatchId: myClassBatchIdFor(studentId),
     })
     .from(learningProgramsTable)
     .innerJoin(usersTable, eq(usersTable.id, learningProgramsTable.teacherId))
@@ -1088,6 +1194,7 @@ router.get("/programs/:id", async (req: Request, res: Response): Promise<void> =
       publishedAt: row.publishedAt,
       teacher: { id: row.teacherProfileId, name: row.teacherName },
       ...snapshot,
+      ...(studentId !== null ? { myClass: row.myClassBatchId ? { batchId: row.myClassBatchId } : null } : {}),
     },
   });
 });

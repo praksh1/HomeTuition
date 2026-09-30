@@ -3,7 +3,7 @@ export function useSafeAreaInsets() {
 }
 
 export function useDates() {
-  return { format: () => "28 Bhadra 2083 BS" };
+  return { format: (date) => new Date(date).toLocaleDateString("en-GB", { timeZone: "Asia/Kathmandu", day: "numeric", month: "short", year: "numeric" }) };
 }
 
 export function useNotifications() {

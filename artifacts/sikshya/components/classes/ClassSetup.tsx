@@ -8,7 +8,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { router, useLocalSearchParams, useNavigation } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams, useNavigation } from "expo-router";
 import { usePreventRemove } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Crypto from "expo-crypto";
@@ -30,9 +30,10 @@ import { NativeTimePicker } from "./NativeTimePicker";
 import { TeachingLanguageChoice } from "./TeachingLanguageChoice";
 import { ScheduleConflictPanel } from "./ScheduleConflictPanel";
 import { BatchTestPanel } from "./BatchTestPanel";
-import { apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
+import { apiDelete, apiGet, apiPost, apiPatch, ApiError } from "@/utils/api";
 import { classEarningsEstimate, classPriceBreakdown, classPublishSummary } from "@/utils/classPrice";
 import type { ClassEarningsEstimate as EarningsEstimate } from "@/utils/classPrice";
+import { fadkoFeeAllocation } from "@/utils/batchTestMoney";
 import {
   classDescriptionIssues,
   classIsPublished,
@@ -55,38 +56,65 @@ import {
   batchDetailsIssues,
   batchScheduleIssues,
   calendarDay,
-  repeatLessons,
-  repeatPeriodLessons,
+  courseScheduleRange,
+  lessonCountInput,
+  prepareClassLessons,
+  reconcileLessonCount,
+  type ClassFrequency,
 } from "@/utils/batchSchedule";
 
 const titles = [
   "What will you teach?",
   "When will you teach?",
-  "Class size and price",
+  "Class size and joining",
   "Ready for students?",
 ];
 
-function ClassEarningsEstimateCard({ estimate }: { estimate: EarningsEstimate | null }) {
+function ClassEarningsEstimateCard({ estimate, tuitionNpr, lessons }: { estimate: EarningsEstimate | null; tuitionNpr: number; lessons: number }) {
   const colors = useColors();
   const { t, space, numeric } = useLayout();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   if (!estimate) return null;
   const amount = (value: number, fractionDigits = 0) => value.toLocaleString("en-NP", {
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   });
+  const feeNpr = tuitionNpr - estimate.totalNpr;
+  const feeParts = fadkoFeeAllocation(feeNpr);
   return <ProgramCardShell>
-    <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Your estimated earnings</Text>
-    <View style={{ gap: space.sm }}>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md }}>
-        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>For each enrolled student</Text>
-        <Text style={[t.bodyStrong, numeric, { color: colors.foreground, textAlign: "right" }]}>NPR {amount(estimate.totalNpr)}</Text>
-      </View>
-      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: space.md }}>
-        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Approx. per completed lesson</Text>
-        <Text style={[t.bodyStrong, numeric, { color: colors.foreground, textAlign: "right" }]}>NPR {amount(estimate.averagePerLessonNpr, 2)}</Text>
-      </View>
+    <View style={{ gap: space.xs }}>
+      <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>Your earnings per student</Text>
+      <Text testID="class-earnings-total" style={[t.display, numeric, { color: colors.primary }]}>NPR {amount(estimate.totalNpr)}</Text>
+      <Text style={[t.callout, { color: colors.mutedForeground }]}>Estimated after Fadko fees · NPR {amount(estimate.averagePerLessonNpr, 2)} per completed lesson</Text>
     </View>
-    <Text style={[t.caption, { color: colors.mutedForeground }]}>Before applicable taxes. This estimate uses the current teaching terms; approved refunds or adjustments may reduce the final payout.</Text>
+    <ProgramButton label={detailsOpen ? "Hide price breakdown" : "View price breakdown"} emphasis="quiet"
+      icon={detailsOpen ? "chevron-up" : "chevron-down"} onPress={() => setDetailsOpen(!detailsOpen)} />
+    {detailsOpen ? <View testID="class-earnings-breakdown" style={{ gap: space.sm }}>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
+        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Class price per student</Text>
+        <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>NPR {amount(tuitionNpr)}</Text>
+      </View>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
+        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Approx. price per lesson ({lessons})</Text>
+        <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>NPR {amount(tuitionNpr / lessons, 2)}</Text>
+      </View>
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
+        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Minus: Fadko fee</Text>
+        <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>NPR {amount(tuitionNpr - estimate.totalNpr)}</Text>
+      </View>
+      {feeParts ? <View style={{ paddingLeft: space.md, gap: space.xs }}>
+        {[["Platform", feeParts.platformNpr], ["Server", feeParts.serverNpr], ["Maintenance", feeParts.maintenanceNpr]].map(([label, value]) => <View key={label} style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
+          <Text style={[t.caption, { color: colors.mutedForeground, flex: 1 }]}>{label}</Text>
+          <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>NPR {amount(Number(value))}</Text>
+        </View>)}
+        <Text style={[t.caption, { color: colors.mutedForeground }]}>Parts of the same Fadko fee, not additional deductions.</Text>
+      </View> : null}
+      <View style={{ flexDirection: "row", justifyContent: "space-between", gap: space.md }}>
+        <Text style={[t.callout, { color: colors.mutedForeground, flex: 1 }]}>Government tax deduction in this preview</Text>
+        <Text style={[t.bodyStrong, numeric, { color: colors.foreground }]}>NPR 0</Text>
+      </View>
+    </View> : null}
+    <Text style={[t.caption, { color: colors.mutedForeground }]}>Live tax handling has not been configured. This estimate uses current teaching terms; approved refunds or adjustments may reduce the final payout.</Text>
   </ProgramCardShell>;
 }
 
@@ -99,6 +127,8 @@ export default function ClassSetup() {
   const dates = useDates();
   const [item, setItem] = useState<TeachingClass | null>(null);
   const [teacherShareBps, setTeacherShareBps] = useState<number | null>(null);
+  const [billingBusy, setBillingBusy] = useState(true);
+  const billingSequence = useRef(0);
   const [form, setFormState] = useState<ClassForm>(emptyClassForm);
   const formRef = useRef(form);
   const setForm = (next: ClassForm) => {
@@ -120,27 +150,30 @@ export default function ClassSetup() {
   const [dayIndex, setDayIndex] = useState<number | null>(null);
   const [timeIndex, setTimeIndex] = useState<number | null>(null);
   const [weekdays, setWeekdays] = useState<number[] | null>(null);
-  const [count, setCount] = useState("8");
+  const [count, setCount] = useState("");
+  const [frequency, setFrequency] = useState<ClassFrequency | null>(null);
   const [individual, setIndividual] = useState(false);
   const [focusLesson, setFocusLesson] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<
-    "publish" | "leave" | "replace" | "close" | null
+    "publish" | "leave" | "replace" | "resize" | "close" | "delete" | null
   >(null);
   const [replacement, setReplacement] = useState<
     ProgramBatchLessonDraft[] | null
   >(null);
+  const blankLessonTemplates = useRef<ProgramBatchLessonDraft[] | null>(null);
   const [leaveAction, setLeaveAction] = useState<(() => void) | null>(null);
   const [departure, setDeparture] = useState<(() => void) | null>(null);
   const scroll = useRef<ScrollView>(null);
   const key = useRef("");
   const keyStorage = `fadko-class-create-${user?.id ?? "unknown"}`;
-  const dirty = JSON.stringify(form) !== accepted;
+  const dirty = JSON.stringify(form) !== accepted || (item ? count !== String(item.batch.lessons.length) : count !== "");
   const scheduleFresh = !!item && JSON.stringify(form.lessons) === JSON.stringify(item.batch.lessons.map(lessonDraft));
   const scheduleKey = JSON.stringify([item?.batch.id ?? null, form.lessons]);
   const conflicts = review?.key === scheduleKey ? review.conflicts : scheduleFresh ? item?.batch.scheduleConflicts ?? [] : [];
   const conflictIndices = new Set(conflicts.flatMap((c) => [c.lessonIndex, ...(c.otherLessonIndex === null ? [] : [c.otherLessonIndex])]));
   const locked = busy || !editing || item?.batch.status === "closed" || item?.batch.bookingLocked === true;
   const published = !!item && classIsPublished(item) && !dirty;
+  const canDelete = !item || (item.batch.status === "draft" && !item.batch.publishedAt && !item.batch.published && !item.batch.bookingLocked);
   const askLeave = useCallback((go: () => void) => {
     if (!op.current) {
       setLeaveAction(() => go);
@@ -171,6 +204,7 @@ export default function ClassSetup() {
     setForm(next);
     setAccepted(JSON.stringify(next));
     setLateChoiceMade(true);
+    setCount(String(next.lessons.length));
   };
   const load = useCallback(async () => {
     setLoading(true);
@@ -181,6 +215,7 @@ export default function ClassSetup() {
     setFocusLesson(null);
     setIndividual(false);
     setReview(null);
+    blankLessonTemplates.current = null;
     try {
       if (id) {
         const result = await apiGet<{ item: TeachingClass }>(
@@ -192,6 +227,9 @@ export default function ClassSetup() {
         setFormState(next);
         setAccepted(JSON.stringify(next));
         setLateChoiceMade(true);
+        setCount(String(next.lessons.length));
+        setFrequency("weekdays");
+        setWeekdays([...new Set(next.lessons.map((lesson) => calendarDay(lesson.date)?.getUTCDay()).filter((day): day is number => day !== undefined))]);
         setStep(result.item.batch.lessons.length ? 3 : 1);
         setEditing(!classIsPublished(result.item));
       } else {
@@ -208,6 +246,8 @@ export default function ClassSetup() {
         setStep(0);
         setEditing(true);
         setLateChoiceMade(false);
+        setCount("");
+        setFrequency(null);
         setNotice("");
         key.current = Crypto.randomUUID();
         await AsyncStorage.setItem(keyStorage, key.current);
@@ -220,20 +260,20 @@ export default function ClassSetup() {
       setLoading(false);
     }
   }, [id, keyStorage]);
-  useEffect(() => {
-    void load();
-  }, [load]);
-  useEffect(() => {
-    let alive = true;
-    apiGet<{ teacherShareBps?: number }>("/teachers/me/billing")
-      .then((policy) => {
-        if (!alive) return;
-        const share = policy.teacherShareBps;
-        setTeacherShareBps(Number.isInteger(share) && (share ?? 0) > 0 && (share ?? 0) <= 10_000 ? share! : null);
-      })
-      .catch(() => { if (alive) setTeacherShareBps(null); });
-    return () => { alive = false; };
-  }, []);
+  // A cached tab may keep this component mounted after leaving. Focus always starts a new
+  // creation attempt on /create-class while an /[id] route reloads that exact saved draft.
+  useFocusEffect(useCallback(() => { void load(); }, [load]));
+  const loadBilling = async () => {
+    const current = ++billingSequence.current;
+    setBillingBusy(true);
+    try {
+      const policy = await apiGet<{ teacherShareBps?: number }>("/teachers/me/billing");
+      const share = policy.teacherShareBps;
+      if (current === billingSequence.current) setTeacherShareBps(Number.isInteger(share) && (share ?? 0) > 0 && (share ?? 0) <= 10_000 ? share! : null);
+    } catch { if (current === billingSequence.current) setTeacherShareBps(null); }
+    finally { if (current === billingSequence.current) setBillingBusy(false); }
+  };
+  useEffect(() => { void loadBilling(); return () => { billingSequence.current += 1; }; }, []);
   const move = (next: number) => {
     setStep(next);
     setIssues([]);
@@ -244,10 +284,11 @@ export default function ClassSetup() {
     if (busy || !form.lessons[index]) return;
     setEditing(true);
     setIndividual(true);
-    setFocusLesson(null);
+    setFocusLesson(index);
     move(1);
   };
   const first = form.lessons[0]!;
+  const courseDates = form.format === "fixed" ? courseScheduleRange(form.lessons, Number(count)) : null;
   const period = draftTuitionPeriod(
     item?.batch ??
       ({ format: form.format, tuitionGroupId: 1 } as OwnerProgramBatch),
@@ -255,10 +296,9 @@ export default function ClassSetup() {
   );
   const weekday = calendarDay(first.date)?.getUTCDay();
   const days = weekdays ?? (weekday === undefined ? [] : [weekday]);
-  const generated =
-    form.format === "ongoing"
-      ? repeatPeriodLessons(first, days, period)
-      : repeatLessons(first, Number(count), days);
+  const generated = frequency
+    ? prepareClassLessons(first, Number(count), frequency, days, form.format === "ongoing" ? period : null)
+    : { ok: false as const, message: "Choose how often lessons will happen, then prepare the timetable." };
   const dateLabel = (date: string) =>
     batchDateValue(date)
       ? dates.formatBoth(batchDateValue(date)!)
@@ -284,18 +324,42 @@ export default function ClassSetup() {
     finally { op.current = false; setBusy(false); setCheckingDates(false); }
   };
   const nextStep = async () => {
+    const lessonCount = Number(count);
     const errors =
       step === 0
-        ? classDescriptionIssues(form)
+        ? [
+            ...classDescriptionIssues(form),
+            ...(!Number.isInteger(lessonCount) || lessonCount < 1 || lessonCount > 60 ? ["Choose a whole number from 1 to 60 for the lessons in this class."] : []),
+            ...(!Number.isSafeInteger(Number(form.totalTuitionNpr)) || Number(form.totalTuitionNpr) < 1 ? ["Enter a positive whole-rupee class price."] : []),
+          ]
         : step === 1
           ? [
               ...batchScheduleIssues(form.lessons, Date.now()),
               ...draftPeriodIssues(period, form.lessons),
+              ...(form.lessons.length !== lessonCount ? [`You chose ${lessonCount} lessons. Prepare exactly that many dates before continuing.`] : []),
             ]
-          : [...batchDetailsIssues(form.capacity, form.totalTuitionNpr), ...(!lateChoiceMade ? ["Choose when students may join this class."] : [])];
+          : [...batchDetailsIssues(form.capacity, form.totalTuitionNpr), ...(!lateChoiceMade ? ["Choose when students may join this class."] : []), ...(teacherShareBps === null ? ["Current teaching terms could not be confirmed. Reload them before reviewing your price."] : [])];
     if (errors.length) {
       setIssues(errors);
       scroll.current?.scrollTo({ y: 0, animated: false });
+      return;
+    }
+    if (step === 0 && form.lessons.length > 1 && form.lessons.length !== lessonCount) {
+      const resized = reconcileLessonCount(form.lessons, lessonCount, blankLessonTemplates.current);
+      if (resized.needsConfirmation) {
+        setReplacement(resized.lessons);
+        setConfirm("resize");
+        return;
+      }
+      setForm({ ...formRef.current, lessons: resized.lessons });
+      blankLessonTemplates.current = resized.lessons.map((lesson, index) => ({ ...(blankLessonTemplates.current?.[index] ?? lesson) }));
+      setReview(null);
+      setFocusLesson(individual ? 0 : null);
+      if (resized.added) setIndividual(true);
+      move(1);
+      setNotice(resized.added
+        ? `${lessonCount} lessons now. Your existing dates are kept; choose dates for the ${resized.added} new lessons.`
+        : `${lessonCount} lessons now. Your first ${lessonCount} dates are kept; unused empty rows were removed.`);
       return;
     }
     if (step === 1 && !(await checkSchedule())) return;
@@ -338,12 +402,13 @@ export default function ClassSetup() {
             "/teaching-classes",
             body,
           );
-      setItem(result.item);
-      const next = formFromClass(result.item);
-      setAccepted(JSON.stringify(next));
+      let saved = result.item;
+      const recovered = formFromClass(saved);
+      setItem(saved);
+      setAccepted(JSON.stringify(recovered));
       const recoveredDifferentDraft =
         result.created === false &&
-        JSON.stringify(next) !==
+        JSON.stringify(recovered) !==
           JSON.stringify({
             ...sending,
             title: sending.title.trim(),
@@ -353,7 +418,19 @@ export default function ClassSetup() {
             capacity: String(Number(sending.capacity)),
             totalTuitionNpr: String(Number(sending.totalTuitionNpr)),
           });
-      if (!recoveredDifferentDraft && JSON.stringify(formRef.current) === sent)
+      if (recoveredDifferentDraft) {
+        // The first POST committed but its reply was lost. Apply the teacher's newer entries
+        // to that same draft now; a second press must not create another class or trap them here.
+        saved = (await apiPatch<{ item: TeachingClass }>(`/teaching-classes/${saved.batch.id}`, {
+          ...body,
+          expectedUpdatedAt: saved.batch.updatedAt,
+          expectedProgramUpdatedAt: saved.programUpdatedAt,
+        })).item;
+      }
+      setItem(saved);
+      const next = formFromClass(saved);
+      setAccepted(JSON.stringify(next));
+      if (JSON.stringify(formRef.current) === sent)
         setForm(next);
       if (!id) {
         await AsyncStorage.removeItem(keyStorage);
@@ -362,15 +439,11 @@ export default function ClassSetup() {
             () => () =>
               router.replace({
                 pathname: "/(teacher)/teaching-class/[id]",
-                params: { id: String(result.item.batch.id) },
+                params: { id: String(saved.batch.id) },
               }),
           );
       }
-      setNotice(
-        recoveredDifferentDraft
-          ? "Your earlier save was recovered. Your newer entries are still here — save them once more to update that draft."
-          : "Draft saved. Students cannot see these changes until you publish.",
-      );
+      setNotice("Draft saved. Students cannot see these changes until you publish.");
     } catch (error) {
       fail(error);
     } finally {
@@ -379,8 +452,31 @@ export default function ClassSetup() {
       scroll.current?.scrollTo({ y: 0, animated: false });
     }
   };
+  const deleteDraft = async () => {
+    if (op.current || !canDelete) return;
+    op.current = true;
+    setBusy(true);
+    setIssues([]);
+    try {
+      if (item) await apiDelete(`/teaching-classes/${item.batch.id}`);
+      await AsyncStorage.removeItem(keyStorage);
+      const fresh = emptyClassForm();
+      setItem(null);
+      setForm(fresh);
+      setAccepted(JSON.stringify(fresh));
+      setCount("");
+      setStep(0);
+      setFrequency(null);
+      setIndividual(false);
+      key.current = Crypto.randomUUID();
+      setConfirm(null);
+      setDeparture(() => () => router.replace("/(teacher)/teaching-classes"));
+    } catch (error) { fail(error); }
+    finally { op.current = false; setBusy(false); setConfirm(null); }
+  };
   const publish = async () => {
     if (!item || op.current || dirty || published) return;
+    if (teacherShareBps === null) { setIssues(["Current teaching terms could not be confirmed. Reload them before publishing."]); return; }
     op.current = true;
     setBusy(true);
     setIssues([]);
@@ -398,7 +494,17 @@ export default function ClassSetup() {
         "Class published. Students can now view your description, dates and price. Checkout follows the site's current payment mode.",
       );
     } catch (error) {
-      fail(error);
+      try {
+        const current = await apiGet<{ item: TeachingClass }>(`/teaching-classes/${item.batch.id}`);
+        const nowPublished = classIsPublished(current.item) && JSON.stringify(formFromClass(current.item)) === JSON.stringify(formRef.current);
+        choose(current.item);
+        if (nowPublished) {
+          setEditing(false);
+          setNotice("Class published. Your listing is up to date.");
+        } else {
+          fail(error);
+        }
+      } catch { fail(error); }
     } finally {
       op.current = false;
       setBusy(false);
@@ -469,21 +575,25 @@ export default function ClassSetup() {
       ),
     });
   const useSchedule = (lessons: ProgramBatchLessonDraft[]) => {
+    blankLessonTemplates.current = lessons.map((lesson) => ({ ...lesson }));
     setForm({ ...formRef.current, lessons });
-    setIndividual(false);
+    setIndividual(frequency === "own");
+    setFocusLesson(frequency === "own" ? 0 : null);
     setConfirm(null);
     setNotice(
-      `${lessons.length} lesson dates ready. Check the list below, including holidays.`,
+      frequency === "own" ? `${lessons.length} lesson rows ready. Choose the date of each lesson below.` : `${lessons.length} lesson dates ready. Check the list below, including holidays.`,
     );
+    scroll.current?.scrollTo({ y: 0, animated: false });
   };
   const name = item?.title || "Create a class";
   const price =
     Number(form.totalTuitionNpr) > 0
       ? `NPR ${Number(form.totalTuitionNpr).toLocaleString()} per student ${form.format === "ongoing" ? "for these 30 days" : "for the whole course"}`
       : "Set the full price before publishing";
+  const plannedLessons = Number(count);
   const earningsEstimate = teacherShareBps === null
     ? null
-    : classEarningsEstimate(Number(form.totalTuitionNpr), form.lessons.length, teacherShareBps);
+    : classEarningsEstimate(Number(form.totalTuitionNpr), plannedLessons, teacherShareBps);
   if (loading)
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -495,8 +605,12 @@ export default function ClassSetup() {
       ? "Leave without saving?"
       : confirm === "replace"
         ? "Replace these lesson dates?"
+        : confirm === "resize"
+          ? `Use ${count} lessons instead?`
         : confirm === "close"
           ? "Close this listing?"
+          : confirm === "delete"
+            ? item ? "Delete this unpublished class?" : "Discard this setup?"
           : "Publish this class listing?";
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -564,20 +678,20 @@ export default function ClassSetup() {
                   How will this class run?
                 </Text>
                 <ProgramButton
-                  label="Regular tuition · every 30 days"
+                  label="Monthly tuition program"
                   emphasis={form.format === "ongoing" ? "secondary" : "quiet"}
                   disabled={locked}
                   onPress={() => setForm({ ...form, format: "ongoing" })}
                 />
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>
-                  For a continuing Maths, Science or language group.
+                  A continuing group, paid in 30-day periods. Set the exact lessons for each period.
                 </Text>
                 <ProgramButton
                   label="Short course · a set finish"
                   emphasis={form.format === "fixed" && count !== "1" ? "secondary" : "quiet"}
                   disabled={locked}
                   onPress={() => {
-                    if (count === "1") setCount("8");
+                    if (count === "1") setCount("");
                     setForm({ ...form, format: "fixed", allowLateJoining: false });
                   }}
                 />
@@ -616,11 +730,24 @@ export default function ClassSetup() {
             />
             <TeachingLanguageChoice value={form.teachingLanguage} disabled={locked}
               onChange={(teachingLanguage) => setForm({ ...form, teachingLanguage })} />
+            <ClassField label="How many lessons will students get?" hint={form.format === "ongoing" ? "1–60 lessons in these 30 days. Daily schedules one per day (up to 30); use your own dates for multiple lessons a day." : "1–60 lessons. Your first and last lesson set the course's beginning and finish."}
+              value={count} disabled={locked} numeric maxLength={2} onChange={(value) => {
+                setCount(lessonCountInput(value));
+                setIssues([]);
+                setNotice("");
+                setReview(null);
+              }} />
+            <ClassField label={form.format === "ongoing" ? "Price for these 30 days (NPR)" : "Price for the whole course (NPR)"}
+              hint="One full price per student for every listed lesson. Payment is upfront."
+              value={form.totalTuitionNpr} disabled={locked} numeric
+              onChange={(totalTuitionNpr) => setForm({ ...form, totalTuitionNpr: totalTuitionNpr.replace(/\D/g, "") })} />
+            <Text style={[t.callout, numeric, { color: colors.foreground }]}>{classPriceBreakdown(Number(form.totalTuitionNpr), plannedLessons)}</Text>
+            <ClassEarningsEstimateCard estimate={earningsEstimate} tuitionNpr={Number(form.totalTuitionNpr)} lessons={plannedLessons} />
             <ProgramButton
               label={
                 outlineOpen
-                  ? "Hide optional teaching plan"
-                  : "Add a teaching plan (optional)"
+                  ? "Hide optional lesson outline"
+                  : "Add a lesson outline (optional)"
               }
               emphasis="quiet"
               onPress={() => setOutlineOpen(!outlineOpen)}
@@ -639,9 +766,10 @@ export default function ClassSetup() {
         ) : null}
         {step === 1 ? (
           <>
-            {conflicts.length ? <ScheduleConflictPanel conflicts={conflicts} formatDate={instantLabel} onEdit={editConflict} busy={busy}
+            {conflicts.length && focusLesson === null ? <ScheduleConflictPanel conflicts={conflicts} formatDate={instantLabel} onEdit={editConflict} busy={busy}
               onRefresh={() => void checkSchedule()}
               onOpen={(source) => leave(() => source.kind === "class" ? router.push({ pathname: "/(teacher)/teaching-class/[id]", params: { id: String(source.id) } }) : router.push({ pathname: "/(teacher)/program-batches/[id]", params: { id: String(source.id) } }))} /> : null}
+            {focusLesson !== null && conflicts.length ? <ProgramButton label="Back to overlapping lessons" emphasis="quiet" onPress={() => { setFocusLesson(null); scroll.current?.scrollTo({ y: 0, animated: false }); }} /> : null}
             {review?.key === scheduleKey && !conflicts.length ? <ProgramNotice title="No overlapping lessons found" body="Checked against your current commitments. Fadko checks again when you publish." /> : null}
             {item?.batch.periodAnchorLocked && period ? (
               <ProgramNotice
@@ -649,7 +777,15 @@ export default function ClassSetup() {
                 body={`From ${instantLabel(period.startsAt)} until ${instantLabel(period.endsAt)}. All lessons must finish inside these dates.`}
               />
             ) : null}
-            {focusLesson !== null ? <ProgramButton label="Show all lesson editors" emphasis="quiet" onPress={() => setFocusLesson(null)} /> : null}
+            {form.format === "fixed" ? <ProgramCardShell testID="class-course-dates">
+              <Text style={[t.title3, { color: colors.foreground }]}>Course dates</Text>
+              {courseDates ? <>
+                <Text style={[t.callout, { color: colors.foreground }]}>Begins: {instantLabel(courseDates.startsAt)}</Text>
+                <Text style={[t.callout, { color: colors.foreground }]}>Finishes: {instantLabel(courseDates.endsAt)}</Text>
+              </> : <Text style={[t.callout, { color: colors.mutedForeground }]}>Your course begins with the first lesson and finishes after the last. Prepare all {count || "your"} lesson dates to see the full range.</Text>}
+              <Text style={[t.caption, { color: colors.mutedForeground }]}>These dates update with your timetable, so students see one consistent schedule.</Text>
+            </ProgramCardShell> : null}
+            {focusLesson !== null && !conflicts.length ? <ProgramButton label="Show all lesson editors" emphasis="quiet" onPress={() => setFocusLesson(null)} /> : null}
             {(individual ? form.lessons.map((lesson, index) => ({ lesson, index })).filter(({ index }) => focusLesson === null || index === focusLesson) : [{ lesson: first, index: 0 }]).map(({ lesson, index: i }) => (
               <ProgramCardShell key={i}>
                 {conflictIndices.has(i) ? <Text style={[t.bodyStrong, { color: colors.destructive }]}>Overlapping time · lesson {i + 1}</Text> : null}
@@ -722,55 +858,38 @@ export default function ClassSetup() {
                 </View>
               </ProgramCardShell>
             ))}
-            {!individual ? (
+            {!individual && plannedLessons > 1 ? (
               <ProgramCardShell>
                 <Text style={[t.title3, { color: colors.foreground }]}>
-                  Teaching days
+                  How often will you teach?
                 </Text>
                 <Text style={[t.callout, { color: colors.mutedForeground }]}>
-                  Choose the days you normally teach. The first lesson must fall
-                  on one of them.
+                  Fadko will prepare exactly {count || "the chosen number of"} lesson dates. You can adjust any date afterwards.
                 </Text>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    gap: space.xs,
-                  }}
-                >
-                  {BATCH_WEEKDAYS.map((day, i) => (
-                    <ProgramButton
-                      key={day}
-                      label={`${day}${days.includes(i) ? " · selected" : ""}`}
-                      disabled={locked}
-                      emphasis={days.includes(i) ? "secondary" : "quiet"}
-                      onPress={() =>
-                        setWeekdays(
-                          days.includes(i)
-                            ? days.filter((d) => d !== i)
-                            : [...days, i],
-                        )
-                      }
-                    />
-                  ))}
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
+                  {([
+                    ["daily", "Daily"], ["weekly", "Weekly"], ["twice_weekly", "Twice weekly"],
+                    ["every_two_weeks", "Every two weeks"], ["alternate", "Alternate days"],
+                    ["weekdays", "Choose weekdays"], ["own", "Pick my own dates"],
+                  ] as const).map(([value, label]) => <ProgramButton key={value} label={label} disabled={locked}
+                    emphasis={frequency === value ? "secondary" : "quiet"}
+                    spoken={`${label}${frequency === value ? ", selected" : ""}`}
+                    onPress={() => { setFrequency(value); setWeekdays(weekday === undefined ? [] : [weekday]); }} />)}
                 </View>
-                {form.format === "fixed" ? (
-                  <ClassField
-                    label="How many lessons?"
-                    hint="Example: 8 lessons in total, including the first."
-                    value={count}
-                    disabled={locked}
-                    numeric
-                    onChange={setCount}
-                  />
-                ) : (
-                  <Text style={[t.caption, { color: colors.mutedForeground }]}>
-                    Fadko lists the matching lessons within 30 days. Thirty days
-                    does not mean thirty lessons.
-                  </Text>
-                )}
+                {frequency === "weekly" || frequency === "twice_weekly" || frequency === "every_two_weeks" || frequency === "weekdays" ? <>
+                  <Text style={[t.bodyStrong, { color: colors.foreground }]}>Teaching weekdays</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}>
+                    {BATCH_WEEKDAYS.map((day, i) => <ProgramButton key={day} label={day} disabled={locked}
+                      spoken={`${day}, ${days.includes(i) ? "selected" : "not selected"}`}
+                      emphasis={days.includes(i) ? "secondary" : "quiet"}
+                      onPress={() => setWeekdays(frequency === "weekly" || frequency === "every_two_weeks" ? [i] : days.includes(i) ? days.filter((d) => d !== i) : [...days, i])} />)}
+                  </View>
+                </> : null}
+                {form.format === "ongoing" ? <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                  All {count || "chosen"} lessons must fit within these 30 days. If they do not, change the frequency or number of lessons.
+                </Text> : null}
                 <ProgramButton
-                  label="Prepare my timetable"
+                  label={frequency === "own" ? "Create editable lesson dates" : "Prepare my timetable"}
                   disabled={locked || !generated.ok}
                   onPress={() => {
                     if (generated.ok) {
@@ -792,15 +911,14 @@ export default function ClassSetup() {
               <Text style={[t.title3, { color: colors.foreground }]}>
                 Your lesson dates
               </Text>
-              {form.lessons.map((l, i) => (
-                <Text
-                  key={i}
-                  style={[t.callout, numeric, { color: conflictIndices.has(i) ? colors.destructive : colors.foreground }]}
-                >
-                  {conflictIndices.has(i) ? "⚠ " : ""}{i + 1}. {dateLabel(l.date)} · {l.time || "Time not chosen"} ·{" "}
-                  {l.durationMinutes} min
-                </Text>
-              ))}
+              {form.lessons.map((l, i) => individual ? <ProgramButton key={i}
+                label={`${conflictIndices.has(i) ? "⚠ " : ""}Lesson ${i + 1}: ${dateLabel(l.date)} · ${l.time || "Time not chosen"}`}
+                spoken={`Edit lesson ${i + 1} date and time`}
+                emphasis={focusLesson === i ? "secondary" : "quiet"}
+                onPress={() => { setFocusLesson(i); scroll.current?.scrollTo({ y: 0, animated: false }); }} /> :
+                <Text key={i} style={[t.callout, numeric, { color: conflictIndices.has(i) ? colors.destructive : colors.foreground }]}>
+                  {conflictIndices.has(i) ? "⚠ " : ""}{i + 1}. {dateLabel(l.date)} · {l.time || "Time not chosen"} · {l.durationMinutes} min
+                </Text>)}
               <Text style={[t.caption, { color: colors.mutedForeground }]}>
                 Check school holidays and festivals. Dates are not skipped
                 automatically.
@@ -813,7 +931,7 @@ export default function ClassSetup() {
                 }
                 disabled={locked}
                 emphasis="quiet"
-                onPress={() => { setFocusLesson(null); setIndividual(!individual); }}
+                onPress={() => { setFocusLesson(individual ? null : 0); setIndividual(!individual); scroll.current?.scrollTo({ y: 0, animated: false }); }}
               />
             </ProgramCardShell>
             <ProgramButton label={checkingDates ? "Checking all lesson dates…" : "Check timetable availability"} emphasis="secondary" disabled={locked}
@@ -828,26 +946,16 @@ export default function ClassSetup() {
               value={form.capacity}
               numeric
               disabled={locked}
-              onChange={(capacity) => setForm({ ...form, capacity })}
+              onChange={(capacity) => setForm({ ...form, capacity: capacity.replace(/\D/g, "") })}
             />
-            <ClassField
-              label={
-                form.format === "ongoing"
-                  ? "Price for 30 days (NPR)"
-                  : "Price for the whole course (NPR)"
-              }
-              hint="One full price per student for the listed lessons. Payment is upfront. Example: 3000 (not a suggested price)."
-              value={form.totalTuitionNpr}
-              numeric
-              disabled={locked}
-              onChange={(totalTuitionNpr) =>
-                setForm({ ...form, totalTuitionNpr })
-              }
-            />
+            <ProgramButton label="Change lesson count or price" emphasis="quiet" disabled={locked} onPress={() => move(0)} />
             <Text style={[t.callout, numeric, { color: colors.foreground }]}>
               {classPriceBreakdown(Number(form.totalTuitionNpr), form.lessons.length)}
             </Text>
-            <ClassEarningsEstimateCard estimate={earningsEstimate} />
+            <ClassEarningsEstimateCard estimate={earningsEstimate} tuitionNpr={Number(form.totalTuitionNpr)} lessons={plannedLessons} />
+            {teacherShareBps === null ? <ProgramNotice title={billingBusy ? "Checking current teaching terms" : "Teaching terms unavailable"} body={billingBusy ? "Your earnings estimate will appear here shortly." : "Your class details are saved locally. Reload the current teaching fee before reviewing or publishing a price."} tone="waiting">
+              {!billingBusy ? <ProgramButton label="Reload teaching terms" onPress={() => void loadBilling()} /> : null}
+            </ProgramNotice> : null}
               <ProgramCardShell>
                 <Text style={[t.bodyStrong, { color: colors.foreground }]}>When can students join? · Required</Text>
                 <ProgramButton label="Close joining when the class starts" disabled={locked}
@@ -858,10 +966,10 @@ export default function ClassSetup() {
                     emphasis={lateChoiceMade && form.allowLateJoining ? "secondary" : "quiet"}
                     onPress={() => { setLateChoiceMade(true); setForm({ ...form, allowLateJoining: true }); }} />
                   <Text style={[t.callout, { color: colors.mutedForeground }]}>Late joiners pay only for lessons that have not started, if a seat is available. Everyone keeps the same end date. Past lessons and individual catch-up teaching are not included.</Text>
-                </> : <Text style={[t.callout, { color: colors.mutedForeground }]}>One-off lessons and short courses currently require joining before the first lesson. Regular tuition also offers late joining.</Text>}
+                </> : <Text style={[t.callout, { color: colors.mutedForeground }]}>One-off lessons and short courses currently require joining before the first lesson. Monthly tuition programs also offer late joining.</Text>}
               </ProgramCardShell>
             <ProgramNotice
-              title="Set the price, then review"
+              title="Review your class next"
               body="Saving or publishing never charges anyone. Simulated checkout, when enabled, creates test enrollment only — no real money moves."
             />
           </>
@@ -886,7 +994,7 @@ export default function ClassSetup() {
               {form.format === "ongoing" && form.lessons.length === 1 ? <ProgramNotice tone="waiting" title="Only 1 lesson in these 30 days" body="The full price buys that single lesson. Check your timetable before publishing." /> : null}
               <Text style={[t.callout, { color: colors.foreground }]}>
                 {form.lessons.length} lessons · up to {form.capacity} students ·{" "}
-                {form.format === "ongoing" ? "Regular tuition" : "Short course"}
+                {form.format === "ongoing" ? "Monthly tuition program" : "Short course"}
               </Text>
               {period ? (
                 <Text style={[t.caption, { color: colors.mutedForeground }]}>
@@ -895,8 +1003,13 @@ export default function ClassSetup() {
                   payment is never automatic.
                 </Text>
               ) : null}
+              {courseDates ? <View testID="class-course-review" style={{ gap: space.xs }}>
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>Begins: {instantLabel(courseDates.startsAt)}</Text>
+                <Text style={[t.caption, { color: colors.mutedForeground }]}>Finishes: {instantLabel(courseDates.endsAt)}</Text>
+              </View> : null}
             </ProgramCardShell>
-            <ClassEarningsEstimateCard estimate={earningsEstimate} />
+            <ClassEarningsEstimateCard estimate={earningsEstimate} tuitionNpr={Number(form.totalTuitionNpr)} lessons={plannedLessons} />
+            {teacherShareBps === null ? <ProgramNotice title="Teaching terms unavailable" body="Reload the current teaching fee before publishing. Your class draft remains saved." tone="waiting"><ProgramButton label="Reload teaching terms" onPress={() => void loadBilling()} /></ProgramNotice> : null}
             <ProgramCardShell>
               <Text style={[t.title3, { color: colors.foreground }]}>
                 Timetable · Nepal time
@@ -913,7 +1026,7 @@ export default function ClassSetup() {
             {form.outline ? (
               <ProgramCardShell>
                 <Text style={[t.title3, { color: colors.foreground }]}>
-                  Your teaching plan
+                  Your lesson outline
                 </Text>
                 <Text style={[t.callout, { color: colors.foreground }]}>
                   {form.outline}
@@ -997,6 +1110,10 @@ export default function ClassSetup() {
                   onPress={() => move(step - 1)}
                 />
               ) : null}
+              {canDelete && (item || dirty) ? <ProgramButton
+                label={item ? "Delete draft" : "Discard setup"}
+                spoken={item ? "Delete unpublished class" : "Discard setup"}
+                emphasis="danger" disabled={busy} onPress={() => setConfirm("delete")} /> : null}
               {step === 3 ? (
                 <>
                   <ProgramButton
@@ -1022,7 +1139,7 @@ export default function ClassSetup() {
                         published ? "Published — up to date" : "Publish class"
                       }
                       emphasis="primary"
-                      disabled={busy || published || conflicts.length > 0 || item?.batch.bookingLocked === true}
+                      disabled={busy || published || teacherShareBps === null || conflicts.length > 0 || item?.batch.bookingLocked === true}
                       onPress={() => setConfirm("publish")}
                       grow
                     />
@@ -1081,12 +1198,16 @@ export default function ClassSetup() {
               ? [
                   "This replaces the lesson dates currently in your draft. Nothing is saved until Save draft succeeds.",
                 ]
-              : confirm === "close"
+            : confirm === "resize"
+              ? [`The first ${count} lesson dates and their edits will stay. Lessons ${Number(count) + 1}–${form.lessons.length} and any edits to them will be removed from this draft.`, "Nothing is saved until you save the draft. Choose Keep editing to review the count instead."]
+            : confirm === "close"
                 ? [
                     "Students will no longer see this offer. This action cannot be undone.",
                   ]
+                : confirm === "delete"
+                  ? [item ? "This draft and its lesson dates will be removed. A published or booked class cannot be deleted. This cannot be undone." : "Your unsaved entries will be cleared. No class has been saved or published, and no student booking is affected."]
                 : [
-                    "Only unsaved changes will be lost. Your saved work stays safe.",
+                    item?.batch.status === "draft" ? "Unsaved changes will be lost. Your saved draft stays in My classes; use Delete unpublished class to remove it." : item?.batch.status === "published" ? "Unsaved edits will be lost. Your published listing stays available." : "No class will be created from these unsaved entries.",
                   ]
         }
         confirmLabel={
@@ -1094,8 +1215,12 @@ export default function ClassSetup() {
             ? "Confirm and publish"
             : confirm === "replace"
               ? "Replace dates"
-              : confirm === "close"
+            : confirm === "resize"
+              ? `Keep first ${count} lessons`
+            : confirm === "close"
                 ? "Close listing"
+                : confirm === "delete"
+                  ? item ? "Delete unpublished class" : "Discard setup"
                 : "Leave without saving"
         }
         destructive={confirm !== "publish"}
@@ -1107,10 +1232,33 @@ export default function ClassSetup() {
           if (op.current) return;
           if (confirm === "publish") void publish();
           else if (confirm === "close") void close();
+          else if (confirm === "delete") void deleteDraft();
           else if (confirm === "replace" && replacement)
             useSchedule(replacement);
+          else if (confirm === "resize" && replacement) {
+            setForm({ ...formRef.current, lessons: replacement });
+            blankLessonTemplates.current = replacement.map((lesson, index) => ({ ...(blankLessonTemplates.current?.[index] ?? lesson) }));
+            setReview(null);
+            setConfirm(null);
+            setFocusLesson(individual ? 0 : null);
+            move(1);
+            setNotice(`${replacement.length} lessons now. Your retained dates and edits are unchanged.`);
+          }
           else if (confirm === "leave" && leaveAction) {
-            setDeparture(() => leaveAction);
+            const go = leaveAction;
+            setDeparture(() => () => {
+              if (!id) {
+                const fresh = emptyClassForm();
+                setItem(null);
+                setForm(fresh);
+                setAccepted(JSON.stringify(fresh));
+                setCount("");
+                setStep(0);
+                key.current = Crypto.randomUUID();
+                void AsyncStorage.removeItem(keyStorage);
+              } else if (item) choose(item);
+              go();
+            });
             setConfirm(null);
           }
         }}
@@ -1126,6 +1274,7 @@ export function ClassField({
   multiline = false,
   numeric = false,
   disabled = false,
+  maxLength,
 }: {
   label: string;
   hint: string;
@@ -1134,6 +1283,7 @@ export function ClassField({
   multiline?: boolean;
   numeric?: boolean;
   disabled?: boolean;
+  maxLength?: number;
 }) {
   const colors = useColors();
   const { t, space, radius } = useLayout();
@@ -1146,6 +1296,7 @@ export function ClassField({
         aria-disabled={disabled}
         editable={!disabled}
         value={value}
+        maxLength={maxLength}
         onChangeText={onChange}
         multiline={multiline}
         keyboardType={numeric ? "number-pad" : "default"}

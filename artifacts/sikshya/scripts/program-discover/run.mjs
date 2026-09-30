@@ -85,7 +85,7 @@ function ListHost(props) {
 function Harness() {
   const [scene, set] = React.useState({ screen: "list", props: { programs: [], initialLoad: false, initialError: null, paginationError: null, loadingMore: false, hasMore: false } });
   setScene = set;
-  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher"), onOpenHome: record("onOpenHome"), onBackToTeacher: record("onBackToTeacher") };
+  const common = { onRetry: record("onRetry"), onLoadMore: record("onLoadMore"), onOpen: record("onOpen"), onOpenMyClass: record("onOpenMyClass"), onBack: record("onBack"), onShare: record("onShare"), onOpenTeacher: record("onOpenTeacher"), onOpenHome: record("onOpenHome"), onBackToTeacher: record("onBackToTeacher") };
   const sceneKey = JSON.stringify([scene.screen, Object.keys(scene.props ?? {})]) + String(renders);
   let element = null;
   if (scene.screen === "list") element = React.createElement(ListHost, { ...common, ...scene.props });
@@ -331,6 +331,15 @@ for (const size of SIZES) {
   check(`${L}: the class catalogue remains searchable`,
     (await seen("class-discover-search")) && (await seen("class-discover-search-submit")));
   check(`${L}: the class catalogue does not scroll sideways`, (await overflow()) <= 1);
+  await show({ screen: "list", props: listState({ catalog: "class", programs: [
+    { ...publishedClass, myClass: { batchId: 991 } }, { ...publishedClass, id: 92, title: "Another period", myClass: null },
+  ] }) });
+  check(`${L}: enrolled cards carry a clear Enrolled badge and my-class action`, /Enrolled/.test(await text("class-card-91")) && /Open my class/.test(await text("class-card-91")) && !/View dates & price/.test(await text("class-card-91")));
+  await p.getByTestId("class-card-91").click();
+  check(`${L}: enrolled card opens the exact purchased batch, not a new offer`, (await p.evaluate(() => window.__sent)).some((event) => event.name === "onOpenMyClass" && event.args[0] === 991));
+  check(`${L}: other period of the same program is not labelled enrolled`, !/Enrolled/.test(await text("class-card-92")) && /View dates & price/.test(await text("class-card-92")));
+  await p.getByTestId("class-card-92").click();
+  check(`${L}: unowned offer keeps its public details action`, (await p.evaluate(() => window.__sent)).some((event) => event.name === "onOpen" && event.args[0] === 92));
   check(`${L}: every class-catalogue control reaches the touch floor`,
     (await smallTargets()).length === 0, (await smallTargets()).join(", "));
 
@@ -494,6 +503,34 @@ for (const size of SIZES) {
   check(`${L}: period summary never contradicts enabled late joining`, !(await body()).includes("No automatic charge or mid-period joining"));
 
   const publicTestBatch = { ...lateBatch, testPilotEndsAt: "2026-12-31T23:59:59Z" };
+  await p.evaluate(() => { window.__batchEnrollmentFixture = "enrolled"; window.__apiPaths = []; });
+  await show({ screen: "view", props: { program: detail({ presentation: "class", myClass: { batchId: 99 } }), batches: [publicTestBatch] } }, "view-enrolled");
+  await p.getByRole("button", { name: "Open class home", exact: true }).waitFor();
+  check(`${L}: returning enrolled student sees a learning hub, not buyer instructions`, (await seen("program-view-enrolled")) && !/Ready to join\?|Price & joining details|Review the included lessons before enrolling|Up to 10 students/.test(await body()));
+  check(`${L}: only one purchased lesson schedule is present`, await p.getByRole("button", { name: /^View all .* lesson dates$/ }).count() === 1);
+  check(`${L}: stored purchase keeps its truthful practice-payment label`, /practice enrollment; no payment was processed/.test(await body()));
+  check(`${L}: details reuse one existing enrollment read, not duplicate fetches`, (await p.evaluate(() => window.__apiPaths.filter((path) => path === "/batch-tests/99").length)) === 1);
+  await p.getByRole("button", { name: "Open class home", exact: true }).click();
+  check(`${L}: enrolled details open the purchased class home`, JSON.stringify(await p.evaluate(() => window.lastNavigation)) === JSON.stringify({ pathname: "/class-home", params: { id: "99" } }));
+  await p.getByRole("button", { name: "View all 2 lesson dates", exact: true }).click();
+  check(`${L}: timetable expands the actual purchased subset, not all advertised lessons`, await p.getByRole("button", { name: /^Open lesson \d+$/ }).count() === 2);
+  check(`${L}: enrolled learning hub fits viewport width`, (await overflow()) <= 1);
+  await p.screenshot({ path: path.join(SHOTS, `${size.width}-view-enrolled.png`), fullPage: true });
+  await p.evaluate(() => { window.__batchEnrollmentFixture = "not_enrolled"; });
+  await show({ screen: "view", props: { program: detail({ presentation: "class" }), batches: [publicTestBatch] } });
+  await p.getByRole("button", { name: "Confirm practice enrollment — no charge", exact: true }).waitFor();
+  check(`${L}: unenrolled buyer retains price, joining details and confirmation`, /Est\. NPR 3,056/.test(await body()) && await p.getByRole("button", { name: "Price & joining details", exact: true }).count() === 1 && /Ready to join\?/.test(await body()));
+  await p.evaluate(() => { window.__batchEnrollmentFixture = "unavailable"; });
+  await show({ screen: "view", props: { program: detail({ presentation: "class" }), batches: [publicTestBatch] } });
+  await p.getByText("Synthetic enrollment lookup unavailable", { exact: true }).waitFor();
+  check(`${L}: an enrollment lookup failure offers a retry, not an invitation to purchase again`, !/Ready to join\?|Price & joining details|Confirm practice enrollment/.test(await body()) && await p.getByRole("button", { name: "Review enrollment", exact: true }).count() === 1);
+  await show({ screen: "view", props: { program: detail({ presentation: "class", myClass: { batchId: 88 } }), batches: [], batchAvailability: "closed" } });
+  check(`${L}: closed booking windows do not erase an existing learning-hub link`, (await seen("program-view-my-class")) && !/Joining has closed|Ready to join\?/.test(await body()));
+  await p.getByRole("button", { name: "Open my class", exact: true }).click();
+  check(`${L}: previous enrolled period still opens its exact class home`, JSON.stringify(await p.evaluate(() => window.lastNavigation)) === JSON.stringify({ pathname: "/class-home", params: { id: "88" } }));
+  await show({ screen: "view", props: { program: detail({ presentation: "class", myClass: { batchId: 99 } }), batches: [lateBatch] } });
+  check(`${L}: disabling practice checkout does not turn an owned class back into a buyer offer`, await p.getByRole("button", { name: "Open my class", exact: true }).count() === 1 && !/Price & joining details|Enrollment is not open yet|Ready to join\?/.test(await body()));
+  await p.evaluate(() => { window.__batchEnrollmentFixture = null; });
   await p.evaluate(() => { window.__apiPaths = []; window.lastNavigation = null; });
   await show({
     screen: "view",

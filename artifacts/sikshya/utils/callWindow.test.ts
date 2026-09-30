@@ -155,6 +155,56 @@ test("full fills the safe area and nothing more", () => {
   assert.ok(rect.top + rect.height <= PHONE.height - PHONE.insets.bottom, "never under the home bar");
 });
 
+test("expanded teaching reserves context and controls rather than covering them", () => {
+  for (const size of [
+    { width: 320, height: 568 }, { width: 390, height: 844 },
+    { width: 430, height: 932 }, { width: 768, height: 1024 },
+    { width: 1440, height: 900 }, { width: 740, height: 360 },
+  ]) {
+    const v: Viewport = { ...PHONE, ...size, fullReservedTop: 64, fullReservedBottom: 112 };
+    const rect = windowRect("full", v);
+    assert.equal(rect.top, v.insets.top + 64);
+    assert.ok(rect.top + rect.height <= v.height - v.insets.bottom - 112);
+    assert.ok(rect.height >= v.hitSlopMin * 2, "frame and call controls each retain a tap row");
+  }
+});
+
+test("a wide expanded call shares the screen with messages or the class list", () => {
+  for (const reservedRight of [Math.min(388, 768 * 0.38) + 16, 404]) {
+    const v: Viewport = { ...LAPTOP, fullReservedTop: 64, fullReservedBottom: 80, fullReservedRight: reservedRight };
+    const rect = windowRect("full", v);
+    assert.equal(rect.left + rect.width, v.width - v.insets.right - reservedRight);
+    assert.ok(rect.width > normalSize(v).width, "the call remains a teaching stage, not a thumbnail");
+  }
+});
+
+test("portrait-to-landscape windowed calls shrink vertically rather than losing the controls", () => {
+  const v: Viewport = {
+    width: 740, height: 360, insets: { top: 0, bottom: 0, left: 44, right: 44 },
+    reservedTop: 108, reservedBottom: 140, hitSlopMin: 44,
+  };
+  for (const state of ["compact", "normal"] as const) {
+    const rect = windowRect(state, v);
+    assert.ok(rect.top + rect.height <= v.height - v.reservedBottom);
+    assert.ok(rect.height >= 44, "the Restore/Minimize row is retained");
+  }
+});
+
+test("a Pro Max browser call keeps its frame and bottom controls above Safari chrome", () => {
+  // The layout viewport may still be 956 high while the visual viewport ends at 818.
+  // Both classrooms pass that visible boundary to this shared geometry helper.
+  const visible: Viewport = {
+    width: 440, height: 818,
+    insets: { top: 59, bottom: 34, left: 0, right: 0 },
+    reservedTop: 88, reservedBottom: 120, hitSlopMin: 44,
+  };
+  const full = windowRect("full", visible);
+  assert.ok(full.top + full.height <= 818 - visible.insets.bottom);
+  assert.ok(full.height - visible.hitSlopMin >= 44, "the LiveKit body keeps a tappable control row");
+  const compact = windowRect("compact", visible);
+  assert.ok(compact.top + compact.height <= 818 - visible.insets.bottom - visible.reservedBottom + 8);
+});
+
 test("a parked window sits in the bottom-right, clear of the board's own controls", () => {
   for (const v of [PHONE, LAPTOP]) {
     const rect = windowRect("compact", v);

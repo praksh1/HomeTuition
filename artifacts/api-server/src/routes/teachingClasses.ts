@@ -1,4 +1,4 @@
-import { and, desc, eq, ne, lt, ilike } from "drizzle-orm";
+import { and, eq, ne, ilike, sql } from "drizzle-orm";
 import { Router, type Request, type Response } from "express";
 import {
   db,
@@ -7,8 +7,11 @@ import {
   learningProgramBatchLessonsTable,
   learningProgramTuitionGroupsTable,
   learningProgramBatchPeriodsTable,
+  learningProgramEnrollmentsTable,
   teachingClassSetupsTable,
   teachingClassJoiningTable,
+  batchTestContractsTable,
+  batchTestBookingsTable,
   teacherProfilesTable,
   usersTable,
 } from "@workspace/db";
@@ -31,6 +34,7 @@ import {
   teacherScheduleReview,
 } from "../lib/teacherSchedule";
 import { recordActivity } from "../lib/activityLog";
+import { teachingClassDeletionIssue } from "../lib/teachingClassDeletion";
 import { flagContent } from "../lib/moderation";
 import { ownerBatch, periodFor, lessonsFor } from "./programBatches";
 
@@ -130,11 +134,20 @@ router.get("/teaching-classes", requireAuth, async (req, res) => {
     res.status(400).json({ error: "That page address is not valid." });
     return;
   }
+  const now = new Date();
+  // Rank the entire teacher list before paging. Sorting one 20-row page at a time could
+  // still leave an active class on page two behind a recently closed listing.
+  // A batch-test booking is the current class-group membership record. Simulated
+  // per-lesson refund ledger entries do not cancel that membership or lesson access.
+  // Fetch rows and rank metadata in one statement: a draft deleted during listing cannot
+  // disappear between a summary query and a second row lookup.
   const rows = await db
     .select({
       setup: teachingClassSetupsTable,
       program: learningProgramsTable,
       batch: learningProgramBatchesTable,
+      enrolledCount: sql<number>`(select count(*)::int from batch_test_bookings b where b.batch_id = ${learningProgramBatchesTable.id})`,
+      nextLessonAt: sql<Date | null>`(select min(l.starts_at) from learning_program_batch_lessons l where l.batch_id = ${learningProgramBatchesTable.id} and l.starts_at + l.duration_minutes * interval '1 minute' > ${now})`,
     })
     .from(teachingClassSetupsTable)
     .innerJoin(
@@ -150,16 +163,26 @@ router.get("/teaching-classes", requireAuth, async (req, res) => {
         eq(learningProgramsTable.teacherId, teacherId),
         query ? ilike(learningProgramsTable.title, `%${query.replace(/[\\%_]/g, "\\$&")}%`) : undefined,
         status ? eq(learningProgramBatchesTable.status, status) : undefined,
-        before === null
-          ? undefined
-          : lt(learningProgramBatchesTable.id, before),
       ),
-    )
-    .orderBy(desc(learningProgramBatchesTable.id))
-    .limit(21);
+    );
+  const rank = (row: typeof rows[number]) => row.batch.status === "closed" ? 4
+    : row.batch.status === "draft" ? 2
+    : row.nextLessonAt ? row.enrolledCount > 0 ? 0 : 1 : 3;
+  rows.sort((a, b) => rank(a) - rank(b) ||
+    ((rank(a) < 2 && rank(b) < 2) ? new Date(a.nextLessonAt!).getTime() - new Date(b.nextLessonAt!).getTime() : 0) ||
+    b.batch.id - a.batch.id);
+  const cursorIndex = before === null ? -1 : rows.findIndex((row) => row.batch.id === before);
+  if (before !== null && cursorIndex < 0) { res.status(400).json({ error: "This class page changed. Refresh the list." }); return; }
+  const page = rows.slice(cursorIndex + 1, cursorIndex + 21);
   res.json({
-    classes: await Promise.all(rows.slice(0, 20).map((row) => view(row, db, false))),
-    nextCursor: rows.length > 20 ? rows[19]!.batch.id : null,
+    classes: await Promise.all(page.map(async (row) => {
+      return {
+        ...(await view(row, db, false)),
+        enrolledCount: row.enrolledCount,
+        nextLessonAt: row.nextLessonAt ? new Date(row.nextLessonAt).toISOString() : null,
+      };
+    })),
+    nextCursor: rows.length > cursorIndex + 21 ? page.at(-1)!.batch.id : null,
   });
 });
 
@@ -202,7 +225,7 @@ router.post("/teaching-classes", requireAuth, async (req, res) => {
       .status(422)
       .json({
         error:
-          "Choose regular tuition or a short course, then try saving again.",
+          "Choose a monthly tuition program or a short course, then try saving again.",
       });
     return;
   }
@@ -293,6 +316,46 @@ router.get("/teaching-classes/:id", requireAuth, async (req, res) => {
     return;
   }
   res.json({ item: await view(row) });
+});
+
+router.delete("/teaching-classes/:id", requireAuth, async (req, res) => {
+  const teacherId = teacher(req, res);
+  if (teacherId === null) return;
+  const batchId = Number(req.params.id);
+  const deleted = await db.transaction(async (tx) => {
+    await lockTeacherSchedule(tx, teacherId);
+    const row = await owned(batchId, teacherId, tx);
+    if (!row) { res.status(404).json({ error: "That class was not found." }); return false; }
+    const [batch] = await tx.select().from(learningProgramBatchesTable)
+      .where(eq(learningProgramBatchesTable.id, batchId)).for("update");
+    if (!batch) { res.status(404).json({ error: "That class was not found." }); return false; }
+    const [contract] = await tx.select({ batchId: batchTestContractsTable.batchId }).from(batchTestContractsTable)
+      .where(eq(batchTestContractsTable.batchId, batchId)).limit(1);
+    const [booking] = await tx.select({ id: batchTestBookingsTable.id }).from(batchTestBookingsTable)
+      .where(eq(batchTestBookingsTable.batchId, batchId)).limit(1);
+    const isInitialBatch = row.setup.initialBatchId === batchId;
+    const [sibling] = isInitialBatch ? await tx.select({ id: learningProgramBatchesTable.id }).from(learningProgramBatchesTable)
+        .where(and(eq(learningProgramBatchesTable.programId, row.program.id), ne(learningProgramBatchesTable.id, batchId))).limit(1) : [];
+    const [enrollment] = isInitialBatch ? await tx.select({ id: learningProgramEnrollmentsTable.id }).from(learningProgramEnrollmentsTable)
+      .where(eq(learningProgramEnrollmentsTable.programId, row.program.id)).limit(1) : [];
+    const issue = teachingClassDeletionIssue({
+      batchStatus: batch.status, batchPublishedAt: batch.publishedAt, batchPublishedSnapshot: batch.publishedSnapshot,
+      hasTestContract: !!contract, hasTestBooking: !!booking, isInitialBatch,
+      hasSibling: !!sibling, hasProgramEnrollment: !!enrollment,
+      programStatus: row.program.status, programPublishedAt: row.program.publishedAt,
+      programPublishedSnapshot: row.program.publishedSnapshot,
+    });
+    if (issue) { res.status(409).json({ error: issue }); return false; }
+    if (isInitialBatch) {
+      await tx.delete(learningProgramsTable).where(eq(learningProgramsTable.id, row.program.id));
+    } else {
+      await tx.delete(learningProgramBatchesTable).where(eq(learningProgramBatchesTable.id, batchId));
+    }
+    return true;
+  });
+  if (!deleted) return;
+  activity(teacherId, batchId, "teaching_class.deleted_unpublished");
+  res.json({ deleted: true });
 });
 
 router.patch("/teaching-classes/:id", requireAuth, async (req, res) => {
@@ -442,18 +505,6 @@ router.post("/teaching-classes/:id/publish", requireAuth, async (req, res) => {
       res.status(409).json({ error: "This class is closed or archived." });
       return null;
     }
-    if (
-      req.body.expectedUpdatedAt !== batch.updatedAt.toISOString() ||
-      req.body.expectedProgramUpdatedAt !== program.updatedAt.toISOString()
-    ) {
-      res
-        .status(409)
-        .json({
-          error:
-            "This class changed since you reviewed it. Reload and review the current details.",
-        });
-      return null;
-    }
     const description = readClassDescription({
       ...program,
       outline: setup.outline,
@@ -559,6 +610,17 @@ router.post("/teaching-classes/:id/publish", requireAuth, async (req, res) => {
         item: await view((await owned(batch.id, teacherId, tx))!, tx),
         unchanged: true,
       };
+    // A publish reply can be lost after the transaction commits. A retry with the old
+    // timestamps is safe when the exact promise is already live; changed promises still fail.
+    if (
+      req.body.expectedUpdatedAt !== batch.updatedAt.toISOString() ||
+      req.body.expectedProgramUpdatedAt !== program.updatedAt.toISOString()
+    ) {
+      res.status(409).json({
+        error: "This class changed since you reviewed it. Reload and review the current details.",
+      });
+      return null;
+    }
     if (
       Date.parse(snapshot.enrollmentClosesAt) <= Date.now() ||
       lessons.some((lesson) => lesson.startsAt.getTime() <= Date.now())

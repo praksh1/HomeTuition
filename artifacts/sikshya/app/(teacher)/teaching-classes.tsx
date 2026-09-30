@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Feather } from "@expo/vector-icons";
 import { ActivityIndicator, ScrollView, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { router, useFocusEffect } from "expo-router";
@@ -38,6 +39,22 @@ export default function TeachingClasses() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const nextLessonAt = (item: TeachingClass) =>
+    item.nextLessonAt === undefined
+      ? item.batch.lessons
+          .filter((lesson) => Date.parse(lesson.startsAt) + lesson.durationMinutes * 60_000 > Date.now())
+          .sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt))[0]?.startsAt ?? null
+      : item.nextLessonAt;
+  const sectionFor = (item: TeachingClass) => {
+    if (item.batch.status === "closed") return 4;
+    if (item.batch.status === "draft") return 3;
+    if (!nextLessonAt(item)) return 2;
+    return (item.enrolledCount ?? 0) > 0 ? 0 : 1;
+  };
+  const sectionLabels = ["Active classes", "Open for bookings", "Past class dates", "Drafts", "Closed listings"];
+  const groups = groupTeachingClasses(items).sort((a, b) =>
+    Math.min(...a.items.map(sectionFor)) - Math.min(...b.items.map(sectionFor)),
+  );
   const sequence = useRef(0);
   const loadingMore = useRef(false);
   useEffect(() => {
@@ -115,7 +132,7 @@ export default function TeachingClasses() {
           <View style={{ flex: isExpanded ? 1 : undefined, gap: space.xs }}>
             <Text style={[t.title1, { color: colors.foreground }]}>My classes</Text>
             <Text style={[t.callout, { color: colors.mutedForeground }]}>
-              Your teaching studio. Find a class here; see your next lesson in Schedule.
+              Keep your classes, lesson dates and prices in one place.
             </Text>
           </View>
           <ProgramButton label="Create a class" emphasis="primary" icon="plus"
@@ -138,16 +155,31 @@ export default function TeachingClasses() {
             <ProgramButton label="Try again" onPress={() => void load()} />
           </ProgramNotice>
         ) : items.length ? (
-          groupTeachingClasses(items).map((group) => (
-            <ProgramCardShell key={group.key} testID={`teaching-class-${group.items[0]!.batch.id}`}>
-              <Text style={[t.title3, { color: colors.foreground }]}>
-                {group.title}
-              </Text>
-              <Text style={[t.callout, { color: colors.mutedForeground }]}>
-                {group.items[0]!.batch.format === "ongoing"
-                  ? "Regular tuition · shared 30-day dates"
-                  : "Short course"}
-              </Text>
+          groups.map((group, groupIndex) => {
+            const groupSection = Math.min(...group.items.map(sectionFor));
+            const previousGroup = groups[groupIndex - 1];
+            const previousSection = previousGroup ? Math.min(...previousGroup.items.map(sectionFor)) : -1;
+            return <React.Fragment key={group.key}>
+              {groupSection !== previousSection ? (
+                <View style={{ gap: space.xxs, marginTop: groupIndex ? space.xs : 0 }}>
+                  <Text accessibilityRole="header" style={[t.title3, { color: colors.foreground }]}>{sectionLabels[groupSection]}</Text>
+                  {groupSection === 0 ? <Text style={[t.caption, { color: colors.mutedForeground }]}>Students enrolled with lessons ahead</Text> : null}
+                </View>
+              ) : null}
+            <ProgramCardShell testID={`teaching-class-${group.items[0]!.batch.id}`}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: space.sm }}>
+                <View style={{ width: 40, height: 40, borderRadius: radius.sm, backgroundColor: colors.actionSoft, alignItems: "center", justifyContent: "center" }}>
+                  <Feather name="book-open" size={19} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1, gap: space.xxs }}>
+                  <Text style={[t.title3, { color: colors.foreground }]}>{group.title}</Text>
+                  <Text style={[t.caption, { color: colors.mutedForeground }]}>
+                    {group.items[0]!.batch.format === "ongoing"
+                      ? "Monthly tuition program · 30-day period"
+                      : "Short course"}
+                  </Text>
+                </View>
+              </View>
               {(expanded[group.key] ? group.items : group.items.slice(0, 1)).map((item) => (
                 <View
                   key={item.batch.id}
@@ -167,33 +199,38 @@ export default function TeachingClasses() {
                       item.batch.status === "closed"
                         ? "Closed"
                         : classIsPublished(item)
-                          ? "Published"
+                          ? sectionFor(item) === 0 ? "Active" : "Published"
                           : item.batch.status === "published"
                             ? "Unpublished changes"
                             : "Draft"
                     }
                   />
                   <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>
-                    {item.batch.lessons.length} {item.batch.lessons.length === 1 ? "lesson" : "lessons"} · {item.teachingLanguage} · {item.batch.totalTuitionNpr ? `NPR ${item.batch.totalTuitionNpr.toLocaleString("en-NP")} / student` : "Price not set"}
+                    {item.batch.lessons.length} {item.batch.lessons.length === 1 ? "lesson" : "lessons"} · {item.teachingLanguage} · {item.batch.totalTuitionNpr ? `NPR ${item.batch.totalTuitionNpr.toLocaleString("en-NP")} / student` : "Price not set"}{item.enrolledCount ? ` · ${item.enrolledCount} enrolled` : ""}
                   </Text>
                   </View>
-                  {item.batch.tuitionPeriod ? (
+                  {item.batch.status === "published" && nextLessonAt(item) ? <Text style={[t.caption, numeric, { color: colors.primary }]}>
+                    Next lesson · {dateLabel(nextLessonAt(item)!)}
+                  </Text> : null}
+                  {(expanded[group.key] || !nextLessonAt(item)) && item.batch.tuitionPeriod ? (
                     <Text
                       style={[t.caption, { color: colors.mutedForeground }]}
                     >
-                      {dateLabel(item.batch.tuitionPeriod.startsAt)} until{" "}
+                      Dates: {dateLabel(item.batch.tuitionPeriod.startsAt)} until{" "}
                       {dateLabel(item.batch.tuitionPeriod.endsAt)}
                     </Text>
-                  ) : item.batch.lessons[0] ? <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Starts {dateLabel(item.batch.lessons[0].startsAt)}</Text> : null}
+                  ) : item.batch.lessons[0] && (!nextLessonAt(item) || Date.parse(item.batch.lessons[0].startsAt) !== Date.parse(nextLessonAt(item)!))
+                    ? <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>Starts {dateLabel(item.batch.lessons[0].startsAt)}</Text>
+                    : null}
                   </View>
                   <View style={{ alignSelf: isExpanded ? "center" : "stretch" }}>
                   <ProgramButton
                     label={
                       item.batch.status === "draft"
                         ? "Continue setup"
-                        : "View these dates"
+                        : "Class details"
                     }
-                    spoken={`${item.batch.status === "draft" ? "Continue setup" : "View dates"} for ${item.title}${item.batch.tuitionPeriod ? `, ${dateLabel(item.batch.tuitionPeriod.startsAt)}` : ""}`}
+                    spoken={`${item.batch.status === "draft" ? "Continue setup" : "Class details"} for ${item.title}${item.batch.tuitionPeriod ? `, ${dateLabel(item.batch.tuitionPeriod.startsAt)}` : ""}`}
                     onPress={() =>
                       router.push({
                         pathname: "/(teacher)/teaching-class/[id]",
@@ -208,7 +245,8 @@ export default function TeachingClasses() {
                 label={expanded[group.key] ? "Collapse date sets" : `More date sets (${group.items.length - 1})`}
                 onPress={() => setExpanded((old) => ({ ...old, [group.key]: !old[group.key] }))} /> : null}
             </ProgramCardShell>
-          ))
+            </React.Fragment>;
+          })
         ) : (
           <ProgramNotice
             title={query || status ? "No matching classes" : "Start with what you know"}

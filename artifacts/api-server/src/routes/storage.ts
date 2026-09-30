@@ -7,6 +7,7 @@ import { mayOpenHomeworkFile } from "../lib/homeworkAccess";
 import { mayOpenMessageFile } from "../lib/messageAccess";
 import { mayOpenClassMessageFile } from "../lib/classMessageAccess";
 import { mayOpenClassMaterialFile } from "../lib/classMaterialAccess";
+import { isLegacyIdentityFile } from "../lib/legacyIdentityFiles";
 import {
   ALLOWED_UPLOAD_TYPES,
   MAX_UPLOAD_BYTES,
@@ -15,6 +16,7 @@ import {
   ownerOf,
   putObject,
   signUpload,
+  signLegacyIdentityReview,
   signView,
 } from "../lib/fileStore";
 
@@ -206,6 +208,24 @@ router.get("/storage/file", requireAuth, async (req: Request, res: Response) => 
   const user = req.user!;
   const uploader = ownerOf(key);
   if (uploader === null) { res.status(400).json({ error: "That is not a file we hold." }); return; }
+
+  // Historical citizenship files must never inherit attachment or uploader permissions.
+  // Keep the operator's existing preview working, but recheck their live DB authority and
+  // issue a shorter, uncached review link rather than weakening signView's identity guard.
+  try {
+    if (await isLegacyIdentityFile(key)) {
+      const url = await signLegacyIdentityReview(key, user.userId);
+      if (!url) { res.status(403).json({ error: "You cannot open this file." }); return; }
+      res.setHeader("Cache-Control", "private, no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      res.json({ url });
+      return;
+    }
+  } catch (error) {
+    req.log.error({ err: error }, "could not check private document review access");
+    res.status(503).json({ error: "Could not check access to that file. Please try again." });
+    return; // A failed check must never fall back to ordinary attachment access.
+  }
 
   let allowed = uploader === user.userId || user.role === "admin";
 

@@ -1,17 +1,20 @@
 import { Feather } from "@expo/vector-icons";
-import React from "react";
+import React, { useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { router } from "expo-router";
 
 import { HIT_SLOP_MIN, space as staticSpace } from "@/constants/layout";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import {
   missingOptional,
+  enrolledClassBatchId,
   programTypeLabel,
   referenceBlock,
   type PublicProgramDetail,
 } from "@/utils/programDiscovery";
-import { ProgramBackControl, ProgramCardShell, ProgramChip } from "./ProgramPieces";
+import { ProgramBackControl, ProgramButton, ProgramCardShell, ProgramChip } from "./ProgramPieces";
+import type { BatchEnrollmentState } from "../classes/BatchTestPanel";
 import { type ProgramBatchSnapshot } from "@/utils/programBatches";
 import { ClassOfferCard } from "./ClassOfferCard";
 import { PublicFadkoHome } from "@/components/PublicFadkoHome";
@@ -65,6 +68,11 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
   const { t, gutter, space, radius } = useLayout();
   const reference = referenceBlock(program);
   const missing = missingOptional(program);
+  const enrolledBatchId = publicVisitor ? null : enrolledClassBatchId(program);
+  const [batchEnrollment, setBatchEnrollment] = useState<Record<number, BatchEnrollmentState>>({});
+  const hasEnrolledClass = enrolledBatchId !== null || batches.some((batch) => batchEnrollment[batch.batchId] === "enrolled");
+  const checkingBatchEnrollment = !publicVisitor && batches.some((batch) => batch.testPilotEndsAt &&
+    (!batchEnrollment[batch.batchId] || batchEnrollment[batch.batchId] === "checking" || batchEnrollment[batch.batchId] === "unavailable"));
 
   return (
     <ScrollView
@@ -130,6 +138,7 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
         ) : null}
         <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, flexWrap: "wrap" }}>
           <ProgramChip label={program.presentation === "class" ? "Class" : programTypeLabel(program.type)} tone="neutral" testID="program-view-type" />
+          {hasEnrolledClass ? <ProgramChip label="Enrolled" tone="live" testID="program-view-enrolled" /> : null}
         </View>
         <Text style={[t.title1, { color: colors.foreground }]} testID="program-view-title">
           {program.title || "Untitled program"}
@@ -221,12 +230,18 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
       </Section>
 
       {/* --------------------------------------------------------------- scheduled batches */}
-      <Section title={program.presentation === "class" ? "Dates and price" : "Upcoming batches"} testID="program-view-batches">
+      {enrolledBatchId !== null && !batches.some((batch) => batch.batchId === enrolledBatchId) ? <ProgramCardShell testID="program-view-my-class">
+        <Text style={[t.title3, { color: colors.foreground }]}>Your class is ready to open</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>Find your lesson schedule, materials, homework and class messages together.</Text>
+        <ProgramButton label="Open my class" emphasis="primary" onPress={() => router.push({ pathname: "/class-home", params: { id: String(enrolledBatchId) } })} />
+        <ProgramButton label="View payment history" emphasis="quiet" onPress={() => router.push("/(student)/payments")} />
+      </ProgramCardShell> : null}
+      <Section title={program.presentation === "class" ? "Class dates" : "Upcoming batches"} testID="program-view-batches">
         {batchesUnavailable ? (
           <Text style={[t.callout, { color: colors.mutedForeground }]}>
             Fadko could not check this Program’s upcoming dates and price. Try this page again.
           </Text>
-        ) : batches.length === 0 ? (
+        ) : batches.length === 0 && !hasEnrolledClass ? (
           <View style={{ gap: space.xxs }} testID={`program-view-${batchAvailability}`}>
             <Text style={[t.bodyStrong, { color: colors.foreground }]}>
               {batchAvailability === "closed" ? "Joining has closed for these dates" : "Dates and price are not open yet"}
@@ -239,7 +254,7 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
           </View>
         ) : (
           <View style={{ gap: space.sm }}>
-            {batches.map((batch) => <ClassOfferCard key={batch.batchId} batch={batch} accountRequired={publicVisitor} returnPath={`/program/${program.id}`} />)}
+            {batches.map((batch) => <ClassOfferCard key={`${program.id}-${batch.batchId}`} batch={batch} accountRequired={publicVisitor} returnPath={`/program/${program.id}`} initiallyEnrolled={batch.batchId === enrolledBatchId} onEnrollmentStateChange={(state) => setBatchEnrollment((current) => current[batch.batchId] === state ? current : { ...current, [batch.batchId]: state })} />)}
           </View>
         )}
       </Section>
@@ -262,7 +277,7 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
         this page are told what is true: they can read the program, they can see the teacher, and
         joining is not open.
       */}
-      {(!publicVisitor || (batches.length > 0 && !batches.some((batch) => batch.testPilotEndsAt))) ? <View
+      {!hasEnrolledClass && !checkingBatchEnrollment && (!publicVisitor || (batches.length > 0 && !batches.some((batch) => batch.testPilotEndsAt))) ? <View
         testID={testEnrollment ? "program-view-test-enrolled" : testEnrollmentUnavailable ? "program-view-test-unknown" : "program-view-not-open"}
         style={{
           padding: space.md, backgroundColor: colors.surfaceSunk, borderRadius: radius.md,
@@ -277,13 +292,13 @@ export default function ProgramView({ program, onBack, onShare, onOpenTeacher, t
           </>
         ) : testEnrollmentUnavailable ? (
           <>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Your test place could not be checked</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>The class is available to read, but Fadko could not confirm your simulated enrolment. Try this page again.</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Your enrollment could not be checked</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>The class is available to read, but Fadko could not confirm your place. Refresh this page before trying again.</Text>
           </>
         ) : (
           <>
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Simulated checkout" : program.presentation === "class" ? "Preview only" : "Joining a program is not open yet"}</Text>
-            <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Signed-in, verified students can rehearse booking the classes above. No real money moves." : "Joining and payment are not open yet."}</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Ready to join?" : program.presentation === "class" ? "Enrollment not open yet" : "Joining a program is not open yet"}</Text>
+            <Text style={[t.callout, { color: colors.mutedForeground }]}>{batches.some((batch) => batch.testPilotEndsAt) ? "Choose a class above to review its dates, tuition and enrollment details." : "Joining and payment are not open yet."}</Text>
           </>
         )}
       </View> : null}

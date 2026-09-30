@@ -94,7 +94,7 @@ export default function StudentProgramScreen() {
           .catch(() => ({ value: { testEnrollment: null, allocations: [] }, unavailable: true }))
         : Promise.resolve({ value: { testEnrollment: null, allocations: [] }, unavailable: false });
       const [answer, rehearsal, batchAnswer] = await Promise.all([
-        apiGet<{ program: PublicProgramDetail }>(`/programs/${id}`),
+        apiGet<{ program: PublicProgramDetail }>(`/programs/${id}${user?.role === "student" ? "?personalized=1" : ""}`),
         rehearsalRequest,
         apiGet<{ batches: ProgramBatchSnapshot[]; availability?: "open" | "closed" | "not_scheduled" }>(`/programs/${id}/batches`)
           .then((value) => ({ value, unavailable: false }))

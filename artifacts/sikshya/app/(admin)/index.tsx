@@ -56,6 +56,7 @@ const CATEGORIES = [
   { id: "payment", label: "Payment" },
   { id: "technical", label: "Technical" },
   { id: "safety", label: "Safety / harassment" },
+  { id: "reported_user", label: "Reported users" },
   { id: "other", label: "Other" },
 ] as const;
 

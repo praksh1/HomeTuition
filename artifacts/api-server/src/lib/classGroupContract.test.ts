@@ -114,6 +114,16 @@ test("class home publishes the server clock beside its schedule", () => {
   assert.match(routes, /durationMinutes: sessionsTable\.duration/);
 });
 
+test("class home attendance is viewer-scoped and unavailable evidence never becomes an absence", () => {
+  const home = routes.slice(routes.indexOf('router.get("/class-groups/:id",'), routes.indexOf('router.get("/class-groups/:id/students",'));
+  assert.match(home, /if \(!access\.isTeacher && lessons\.length\)/);
+  assert.match(home, /eq\(sessionEnrollmentsTable\.studentId, req\.user!\.userId\)/);
+  assert.match(home, /eq\(sessionParticipationTable\.userId, req\.user!\.userId\)/);
+  assert.match(home, /inArray\(sessionParticipationTable\.sessionId, sessionIds\)/);
+  assert.match(home, /attendance\?\.get\(lesson\.sessionId\) \?\? "unavailable"/);
+  assert.doesNotMatch(home, /attendance: "missed"|email:|legalName:|dateOfBirth:/);
+});
+
 test("the teacher roster separates enrolment from optional attendance evidence", () => {
   assert.match(routes, /\/class-groups\/:id\/students/);
   assert.match(routes, /Only the teacher can view this class roster/);

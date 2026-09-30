@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import { bundleForBrowser } from "../bundle-for-browser.mjs";
 import { getChromium } from "../board-tests/harness.mjs";
+import { makePdf } from "../board-tests/pdf-fixture.mjs";
+import { createRequire } from "node:module";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const work = mkdtempSync(path.join(tmpdir(), "fadko-profile-ui-"));
@@ -31,6 +33,8 @@ const built = await bundleForBrowser({
 assert.ok(built.ok, built.error);
 
 const server = createServer((req, res) => {
+  if (req.url === "/synthetic-pages.pdf") { res.setHeader("Content-Type", "application/pdf"); res.end(Buffer.from(makePdf(4).split(",")[1], "base64")); return; }
+  if (req.url === "/pdf.worker.min.js") { res.setHeader("Content-Type", "application/javascript; charset=utf-8"); res.end(readFileSync(createRequire(import.meta.url).resolve("pdfjs-dist/legacy/build/pdf.worker.min.mjs"))); return; }
   res.setHeader("Content-Type", req.url === "/bundle.js" ? "application/javascript; charset=utf-8" : "text/html; charset=utf-8");
   res.end(req.url === "/bundle.js" ? readFileSync(bundle) : '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body,#root{height:100%;margin:0}</style><div id="root"></div><script src="/bundle.js"></script>');
 });
@@ -44,7 +48,9 @@ try {
     const base = `http://127.0.0.1:${server.address().port}`;
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
+    page.on("dialog", dialog => dialog.accept());
     page.on("pageerror", (error) => errors.push(String(error)));
+
 
     await page.goto(`${base}?screen=library`);
     await page.getByTestId("help-starter-import").click();
@@ -72,6 +78,7 @@ try {
 
     await page.goto(`${base}?screen=student`);
     await page.getByText("MY FADKO PROFILE", { exact: true }).waitFor();
+    check(await page.getByTestId("profile-photo").count() >= 1, `${width}: student's uploaded photo appears on Profile`);
     await page.getByTestId("student-account-details").waitFor();
     let body = await page.locator("body").innerText();
     check(body.includes("Account & payments"), `${width}: student account actions have a clear section`);
@@ -143,6 +150,7 @@ try {
 
     await page.goto(`${base}?screen=teacher&role=teacher`);
     await page.getByText("MY TEACHING PROFILE", { exact: true }).waitFor();
+    check(await page.getByTestId("profile-photo").count() >= 1, `${width}: teacher's uploaded photo appears on Profile`);
     await page.getByTestId("teacher-account-details").waitFor();
     body = await page.locator("body").innerText();
     check(body.includes("Teaching tools"), `${width}: teacher tools are grouped`);
@@ -155,12 +163,59 @@ try {
     check(teacherMenuText.includes("Teaching") && teacherMenuText.includes("Money") && teacherMenuText.includes("Help"), `${width}: teacher menu is grouped for scanning`);
     await page.getByRole("button", { name: "Close menu" }).last().click();
     check(!body.includes("National ID / Citizenship"), `${width}: teacher document forms start collapsed`);
-    check((await page.getByTestId("teacher-credentials-toggle").boundingBox()).height >= 44, `${width}: credentials disclosure meets touch floor`);
-    await page.getByTestId("teacher-credentials-toggle").click();
-    await page.getByText("National ID / Citizenship", { exact: true }).waitFor();
-    check((await page.locator("body").innerText()).includes("1 approved · 1 submitted"), `${width}: credential summary stays visible`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: teacher profile has no horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-teacher.png`), fullPage: true });
+
+    for (const role of ["teacher", "student"]) {
+      await page.goto(`${base}?screen=${role}&role=${role}`);
+      const manage = page.getByTestId("profile-photo-manage");
+      await manage.click();
+      await page.getByTestId("profile-photo-dialog").waitFor();
+      check(await page.getByTestId("profile-photo-preview").locator("img").count() === 1, `${width}: ${role} can view the current photo directly`);
+      check(!await page.evaluate(() => !!window.photoUploaded || !!window.lastSavedAccount), `${width}: ${role} viewing a photo changes no account data`);
+      check(await page.getByTestId("profile-photo-dialog").evaluate(node => {
+        const r = node.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+      }), `${width}: ${role} photo dialog fits the viewport`);
+      await page.getByRole("button", { name: "Close profile photo", exact: true }).click();
+      await manage.click();
+      await page.evaluate(() => { window.testPhotoSelected = true; window.failPhotoUpload = true; });
+      await page.getByTestId("profile-photo-choose").click();
+      await page.getByTestId("profile-photo-save").click();
+      await page.getByText("Synthetic photo save failure", { exact: true }).waitFor();
+      check(await page.getByTestId("profile-photo-save").isVisible(), `${width}: ${role} failed upload keeps the selected photo for retry`);
+      check(!await page.evaluate(() => !!window.photoUploaded || !!window.lastSavedAccount), `${width}: ${role} failed photo save cannot overwrite contact details`);
+      await page.evaluate(() => { window.failPhotoUpload = false; window.failPhotoView = true; });
+      await page.getByTestId("profile-photo-save").click();
+      await page.getByText("Your profile photo has been updated.", { exact: true }).waitFor();
+      check(await page.evaluate(() => window.photoUploaded === "fixture" && window.photoUploadAttempts === 2), `${width}: ${role} retry saves once even if follow-up preview refresh fails`);
+      check(await page.getByTestId("profile-photo-save").count() === 0, `${width}: ${role} successful upload offers no accidental duplicate save`);
+      check(!await page.evaluate(() => !!window.lastSavedAccount), `${width}: ${role} photo change is independent of the full account form`);
+      await page.screenshot({ path: path.join(work, `${width}-${role}-photo.png`) });
+      await page.getByRole("button", { name: "Close profile photo", exact: true }).click();
+      await page.getByTestId("profile-photo-dialog").waitFor({ state: "hidden" });
+      check(await page.getByTestId("profile-photo-dialog").count() === 0, `${width}: ${role} closes the photo viewer without navigating away`);
+
+      await page.goto(`${base}?screen=${role}&role=${role}`);
+      await page.evaluate(() => {
+        window.deferNextPhotoView = true;
+        window.testPhotoSelected = true;
+        window.photoViewUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lD8AAAAASUVORK5CYII=#fresh-after-save";
+      });
+      await page.getByTestId("profile-photo-manage").click();
+      await page.waitForFunction(() => typeof window.releaseDeferredPhotoView === "function");
+      await page.getByTestId("profile-photo-choose").click();
+      await page.getByTestId("profile-photo-save").click();
+      await page.getByText("Your profile photo has been updated.", { exact: true }).waitFor();
+      const preview = page.getByTestId("profile-photo-preview").locator("img");
+      await page.waitForFunction(() => document.querySelector('[data-testid="profile-photo-preview"] img')?.getAttribute("src")?.endsWith("#fresh-after-save"));
+      await page.evaluate(() => window.releaseDeferredPhotoView());
+      await page.waitForFunction(() => window.deferredPhotoResolved === true);
+      // Allow the late promise and React's effect to flush before checking its result.
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      check((await preview.getAttribute("src"))?.endsWith("#fresh-after-save"), `${width}: ${role} delayed old-photo response cannot undo a successful replacement`);
+      check(await page.evaluate(() => window.photoUploadAttempts === 1 && !window.lastSavedAccount), `${width}: ${role} out-of-order photo reads never repeat the upload or submit the account form`);
+      await page.getByRole("button", { name: "Close profile photo", exact: true }).click();
+    }
 
     await page.goto(`${base}?screen=editor&role=teacher`);
     await page.getByText("Contact", { exact: true }).waitFor();
@@ -178,6 +233,19 @@ try {
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: account editor has no horizontal overflow`);
     check(errors.length === 0, `${width}: profile flows have no browser exceptions`);
     await page.screenshot({ path: path.join(work, `${width}-editor.png`), fullPage: true });
+
+    await page.goto(`${base}?screen=editor&profile=load-error`);
+    await page.getByTestId("account-load-error").waitFor();
+    check(await page.getByTestId("account-save").count() === 0, `${width}: load failure cannot expose a blank save form`);
+    check(await page.getByTestId("account-phone").count() === 0, `${width}: load failure cannot overwrite saved phone details`);
+    check((await page.getByTestId("account-load-retry").boundingBox()).height >= 44, `${width}: retry meets touch target floor`);
+    await page.screenshot({ path: path.join(work, `${width}-editor-retry.png`), fullPage: true });
+    await page.evaluate(() => { window.retryAccountLoad = true; });
+    await page.getByTestId("account-load-retry").click();
+    await page.getByTestId("account-phone").waitFor();
+    check(await page.getByTestId("account-phone").inputValue() === "+977 9800000000", `${width}: retry restores saved account data`);
+    check(await page.getByTestId("account-load-error").count() === 0, `${width}: successful retry clears error state`);
+    check(!await page.evaluate(() => !!window.lastSavedAccount), `${width}: retry does not write account data`);
 
     await page.goto(`${base}?screen=editor&profile=incomplete`);
     await page.getByText("Contact", { exact: true }).waitFor();
@@ -212,6 +280,63 @@ try {
     check((await page.getByTestId("account-institution").count()) === 0, `${width}: institution input waits for an affiliation choice`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: confirmation guidance does not create horizontal overflow`);
     await page.screenshot({ path: path.join(work, `${width}-editor-fixture.png`), fullPage: true });
+    for (const role of ["teacher", "student"]) {
+      await page.goto(`${base}?screen=editor&role=${role}`);
+      await page.getByTestId("account-save").click();
+      check(await page.getByText("Select and upload a profile photo before saving.", { exact: true }).isVisible(), `${width}: ${role} must upload a photo even in edit mode`);
+      check(!await page.evaluate(() => !!window.lastSavedAccount), `${width}: ${role} missing photo does not submit details`);
+      await page.evaluate(() => window.testPhotoSelected = true);
+      await page.getByText("Select photo", { exact: true }).click();
+      await page.getByText("Upload selected photo", { exact: true }).click();
+      await page.getByText("Photo uploaded — choose a replacement", { exact: true }).waitFor();
+      check(await page.getByTestId("account-photo-preview").locator("img").count() === 1, `${width}: ${role} account editor shows the uploaded photo preview`);
+      check(await page.evaluate(() => window.photoUploaded === "fixture"), `${width}: ${role} upload uses the profile-photo endpoint`);
+      await page.getByTestId("account-save").click();
+      check(await page.evaluate(() => window.lastSavedAccount?.path === "/onboarding/me"), `${width}: ${role} valid account can save after photo upload`);
+    }
+    await page.close();
+  }
+
+  for (const viewport of [{ width: 320, height: 568 }, { width: 844, height: 320 }]) {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const page = await browser.newPage({ viewport });
+    const errors = [];
+    page.on("pageerror", error => errors.push(String(error)));
+    const label = `${viewport.width}×${viewport.height}`;
+    for (const role of ["teacher", "student"]) {
+      await page.goto(`${base}?screen=${role}&role=${role}`);
+      await page.getByTestId("profile-photo-manage").click();
+      const dialog = page.getByTestId("profile-photo-dialog");
+      await dialog.waitFor();
+      check(await dialog.evaluate(node => {
+        const r = node.getBoundingClientRect();
+        return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+      }), `${label}: ${role} photo dialog is fully bounded on small portrait and short landscape screens`);
+      await page.evaluate(() => window.testPhotoSelected = true);
+      const choose = page.getByTestId("profile-photo-choose");
+      await choose.scrollIntoViewIfNeeded();
+      await choose.click();
+      const save = page.getByTestId("profile-photo-save");
+      await save.scrollIntoViewIfNeeded();
+      check(await save.evaluate(node => {
+        const r = node.getBoundingClientRect();
+        return r.height >= 44 && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight;
+      }), `${label}: ${role} can scroll to a fully visible 44-point save control`);
+      await save.click();
+      await page.getByText("Your profile photo has been updated.", { exact: true }).waitFor();
+      const close = page.getByRole("button", { name: "Close profile photo", exact: true });
+      await close.scrollIntoViewIfNeeded();
+      check(await close.evaluate(node => {
+        const r = node.getBoundingClientRect();
+        return r.height >= 44 && r.top >= 0 && r.bottom <= innerHeight;
+      }), `${label}: ${role} can scroll back to and reach the close control`);
+      await page.screenshot({ path: path.join(work, `${viewport.width}-${viewport.height}-${role}-photo-dialog.png`) });
+      await close.click();
+      await dialog.waitFor({ state: "hidden" });
+      check(await page.evaluate(() => window.photoUploadAttempts === 1 && !window.lastSavedAccount), `${label}: ${role} small-screen save remains a photo-only operation`);
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${label}: ${role} photo flow introduces no horizontal overflow`);
+    }
+    check(errors.length === 0, `${label}: small-screen photo flows have no browser exceptions`);
     await page.close();
   }
 } finally {

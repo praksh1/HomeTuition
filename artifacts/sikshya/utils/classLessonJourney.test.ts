@@ -78,6 +78,41 @@ test("keeps the current lesson in focus instead of skipping to tomorrow", () => 
   assert.equal(result.focusNumber, 2);
   assert.equal(result.passedDates, 1);
   assert.equal(result.remainingDates, 3);
+  assert.deepEqual(result.previousLessons.map((lesson) => lesson.sessionId), [11]);
+  assert.deepEqual(result.upcomingLessons.map((lesson) => lesson.sessionId), [12, 13, 14]);
+});
+
+test("previous dates are newest first and keep actual completion status", () => {
+  const withStatuses = lessons.map((lesson, index) => ({
+    ...lesson,
+    status: index === 0 ? "completed" : index === 1 ? "cancelled" : "upcoming",
+  }));
+  const result = classLessonJourney(withStatuses, Date.parse("2026-09-15T11:00:00.000Z"));
+  assert.deepEqual(result.previousLessons.map((lesson) => lesson.displayNumber), [3, 2, 1]);
+  assert.deepEqual(result.previousLessons.map((lesson) => lesson.status), ["upcoming", "cancelled", "completed"]);
+  assert.deepEqual(result.upcomingLessons.map((lesson) => lesson.displayNumber), [4]);
+});
+
+test("completed and cancelled lessons cannot appear as upcoming even before their booked time", () => {
+  const withStatuses = lessons.map((lesson, index) => ({
+    ...lesson,
+    status: index === 0 ? "completed" : index === 1 ? "cancelled" : "upcoming",
+  }));
+  const result = classLessonJourney(withStatuses, Date.parse("2026-09-13T09:00:00.000Z"));
+  assert.equal(result.stage, "upcoming");
+  assert.equal(result.focusLesson?.sessionId, 13);
+  assert.deepEqual(result.upcomingLessons.map((lesson) => lesson.sessionId), [13, 14]);
+  assert.deepEqual(result.previousLessons.map((lesson) => lesson.sessionId), [12, 11]);
+});
+
+test("a live lesson remains current if the scheduled end has elapsed", () => {
+  const result = classLessonJourney(
+    [{ ...lessons[0], status: "live" }],
+    Date.parse("2026-09-13T12:00:00.000Z"),
+  );
+  assert.equal(result.stage, "current");
+  assert.equal(result.remainingDates, 1);
+  assert.deepEqual(result.previousLessons, []);
 });
 
 test("the exact booked start belongs to the current lesson", () => {

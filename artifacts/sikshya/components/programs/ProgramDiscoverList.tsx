@@ -8,6 +8,7 @@ import { useLayout } from "@/hooks/useLayout";
 import {
   DISCOVER_SEARCH_PROMPT,
   cardFromSummary,
+  enrolledClassBatchId,
   programListState,
   programTypeFilters,
   type ProgramListState,
@@ -65,6 +66,7 @@ export interface ProgramDiscoverListProps {
   onLoadMore: () => void;
   onRetry: () => void;
   onOpen: (id: number) => void;
+  onOpenMyClass?: (batchId: number) => void;
   /**
    * The screen submits the typed query to the API. The list itself never fetches; it just draws
    * what the screen hands it. Called on Enter, on the Search button, and on the clear-search
@@ -77,7 +79,7 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
   const {
     catalog = "course",
     query, onQueryChange, chosenType, onTypeChange, programs, initialLoad, loadingMore, hasMore,
-    initialError, paginationError, onLoadMore, onRetry, onOpen, onSubmit,
+    initialError, paginationError, onLoadMore, onRetry, onOpen, onOpenMyClass, onSubmit,
   } = props;
   const colors = useColors();
   const { t, space, radius, isWide } = useLayout();
@@ -256,8 +258,12 @@ export default function ProgramDiscoverList(props: ProgramDiscoverListProps) {
               <ProgramCard
                 testID={`${catalog === "class" ? "class-card" : "program-card"}-${row.id}`}
                 fields={cardFromSummary(row)}
-                onPress={() => onOpen(row.id)}
-                actionLabel={catalog === "class" ? "View dates & price" : "View course"}
+                onPress={() => {
+                  const batchId = enrolledClassBatchId(row);
+                  if (batchId !== null && onOpenMyClass) onOpenMyClass(batchId);
+                  else onOpen(row.id);
+                }}
+                actionLabel={enrolledClassBatchId(row) !== null ? "Open my class" : catalog === "class" ? "View dates & price" : "View course"}
               />
             </View>
           ))}
