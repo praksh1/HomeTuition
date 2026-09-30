@@ -68,7 +68,7 @@ export function notificationDestination(
   const sessionId = value(data, "sessionId");
   const programId = value(data, "programId");
   const conversationWith = value(data, "conversationWith");
-  if (kind === "makeup_update") return { pathname: role === "admin" ? "/(admin)/makeups" : "/makeups", params: { ...(batchId ? { id: batchId } : {}), ...(sessionId ? { sessionId } : {}) } };
+  if (kind === "makeup_update") return { pathname: role === "admin" ? "/(admin)/operator-makeups" : "/makeups", params: { ...(batchId ? { id: batchId } : {}), ...(sessionId ? { sessionId } : {}) } };
 
   if (batchId && kind === "class_quiz_published") return { pathname: "/class-quizzes", params: { id: batchId } };
 
