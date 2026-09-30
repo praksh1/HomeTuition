@@ -51,6 +51,12 @@ Preview CI 36753508070 at 6af375c3 is checking the remaining downstream suites. 
 
 ## Fabrications found
 
+### Teardown correction after real financial-race execution
+
+CI 36767516515 at 0dddffe6 passed all 165 PostgreSQL make-up assertions, including all four financial ticket races. Its fixture archiving teardown correctly hit the purchased-program immutability trigger, so later gates were skipped. The final cleanup now resets only existing profiles belonging to exact synthetic teacher IDs created by this local-disposable harness, after API shutdown. No protected class promise, seat, receipt, case or ledger is altered; no trigger bypass. Fresh CI must prove cleanup followed by legacy catalog and browser/export checks.
+
+### Fabrication review
+
 None added. A completed session or brief connection is not evidence of full delivery. Practice receipts cannot become real refunds or actual earnings.
 
 ## Deliberately not changed
