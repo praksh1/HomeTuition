@@ -89,6 +89,12 @@ Complete the approved linked make-up request, teacher assignment, student accept
 
 ## Fabrications found
 
+### Teardown correction after real financial-race execution
+
+CI 36767488971 at 223c2537 passed all 163 PostgreSQL make-up assertions, including all four real financial-ticket/request/acceptance races. Its new fixture archiving teardown then correctly failed the immutable purchased-program trigger. No guard was bypassed. Replaced that cleanup with a visibility-only reset of existing profiles for exact synthetic teacher IDs created by this guarded disposable harness, after API shutdown. Published promises, seats, cases, receipts and ledger rows are untouched. A fresh full gate remains required.
+
+### Fabrication review
+
 None found in the promoted workflow. No new receipt, paid charge, automatic refund, inferred delivery from connection or fake earnings is created. Browser data is explicitly synthetic and not a live account result.
 
 ## Deliberately not changed

@@ -18,7 +18,7 @@ assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname), "Remote
 assert.match(parsed.pathname, /^\/fadko_makeup_test[A-Za-z0-9_-]*$/, "Database name must begin fadko_makeup_test.");
 const pool = new Pool({ connectionString: url, max: 15 });
 const q = (text, values = []) => pool.query(text, values);
-const fixtureProgramIds = [];
+const fixtureTeacherIds = [];
 const DAY = 86400000; const HOUR = 3600000; const duration = 30;
 const secret = "disposable-makeup-tests-only-secret";
 let port = Number(process.env.MAKEUP_TEST_PORT ?? 8126); let child; let log = ""; let passed = 0;
@@ -53,6 +53,7 @@ async function stop() {
 async function account(role) {
   const email = `${randomUUID()}@example.com`;
   const row = (await q("INSERT INTO users(email,name,role,password_hash) VALUES($1,$2,$3,'synthetic-not-a-login') RETURNING id", [email, `Synthetic ${role}`, role])).rows[0];
+  if (role === "teacher") fixtureTeacherIds.push(row.id);
   const token = jwt.sign({ userId: row.id, email, role }, secret, { expiresIn: "1h" });
   return { id: row.id, token };
 }
@@ -69,7 +70,6 @@ async function fixture({ monthly = true, count = 3, positions = null, at = Date.
   const teacher = teacherAccount ?? await account("teacher"); const student = earlierStudent ?? await account("student");
   // A published program snapshot is version 1; the schema's default 0 is a draft.
   const program = (await q("INSERT INTO learning_programs(teacher_id,type,title,status,version) VALUES($1,'structured','Synthetic make-up course','published',1) RETURNING id", [teacher.id])).rows[0].id;
-  fixtureProgramIds.push(program);
   const batchId = (await q("INSERT INTO learning_program_batches(program_id,status,capacity,total_tuition_npr,version) VALUES($1,'published',10,$2,1) RETURNING id", [program, count * 1000])).rows[0].id;
   const lessons = Array.from({ length: count }, (_, position) => ({ position, startsAt: new Date(at + position * 2 * DAY).toISOString(), durationMinutes: duration }));
   const snapshot = { batchId, version: 1, programId: program, programVersion: 1, programTitle: "Synthetic make-up course",
@@ -244,12 +244,16 @@ try {
 finally {
   await stop();
   try {
-    // These exact disposable fixture rows model purchased batches, not complete public
-    // Program publications. Approved race-test teachers must not leave NULL publication
-    // stubs at the front of the next suite's catalogue. Keep seats, cases and ledgers intact.
-    if (fixtureProgramIds.length) {
-      const archived = await q("UPDATE learning_programs SET status='archived',archived_at=now() WHERE id=ANY($1::int[])", [fixtureProgramIds]);
-      assert.equal(archived.rowCount, fixtureProgramIds.length, "Archive only this disposable harness's exact tracked program stubs.");
+    // These owned disposable teachers model purchased batches, not complete public
+    // Program publications. Return their temporary review status to pending so NULL
+    // publication stubs cannot obstruct the next suite's catalogue. Never mutate
+    // protected paid promises, seats, cases, receipts or ledger entries for cleanup.
+    if (fixtureTeacherIds.length) {
+      const profiles = Number((await q("SELECT count(*) AS n FROM teacher_profiles WHERE user_id=ANY($1::int[])", [fixtureTeacherIds])).rows[0].n);
+      const reset = await q("UPDATE teacher_profiles SET approval_status='pending' WHERE user_id=ANY($1::int[]) RETURNING user_id,approval_status", [fixtureTeacherIds]);
+      assert.equal(reset.rowCount, profiles, "Reset only this disposable harness's existing teacher profiles; some fixtures deliberately have none.");
+      assert.ok(reset.rows.every(row => row.approval_status === "pending"));
+      assert.equal((await q("SELECT 1 FROM teacher_profiles WHERE user_id=ANY($1::int[]) AND approval_status='approved'", [fixtureTeacherIds])).rowCount, 0);
     }
   } finally { await pool.end(); }
 }
