@@ -96,3 +96,19 @@ The desk should show action-needed exceptions, not every scheduled lesson. Autom
 need a decision log, deadline, original-allocation trail and outcome reason. Teacher identity
 approval, ambiguous delivery, safety reports and provider reconciliation remain deliberate
 operator responsibilities. AI can prepare context; it cannot ban users or issue refunds.
+
+## Concrete follow-up findings from September 30 source audit
+
+- Student Classes initially loads only 100 owned lessons. A scoped pagination repair is
+  underway; verify more than 100 dates, complete class counts and a mid-page connection
+  failure before marking this closed. A scalable authenticated class-summary endpoint is
+  a later improvement; do not replace complete reads with Upcoming-only reads.
+- Teacher Schedule also displays only its first 100 dates per selected status. Add a
+  clear Load more or cursor-based schedule view, retaining nearest-first Upcoming order.
+  This is still open and must not be described as repaired by the student pagination fix.
+- Lesson details put Start/Join below the entire roster and message history. With a large
+  class this primary action becomes hard to find. Promote it into a persistent accessible
+  action area without auto-joining the call or covering messages on narrow screens.
+- Residual teacher-access limits and contradictory practice-classroom wording are being
+  removed. Before-first-booking payout education must explain 48-hour review, dispute or
+  make-up holds, and eligibility versus an actual bank transfer, without inventing a payout day.

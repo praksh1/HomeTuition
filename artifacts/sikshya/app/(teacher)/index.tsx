@@ -38,6 +38,7 @@ export default function TeacherDashboard() {
   const { unreadCount, refresh: refreshNotifs } = useNotifications();
   const teacher = user as Teacher;
   const [upcomingSessions, setUpcomingSessions] = useState<ApiSession[]>([]);
+  const [upcomingCount, setUpcomingCount] = useState<number | null>(null);
   const [expiredCount, setExpiredCount] = useState(0);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState(false);
@@ -58,11 +59,12 @@ export default function TeacherDashboard() {
     if (!quiet) setSessionsLoading(true);
     try {
       const [next, missed] = await Promise.all([
-        apiGet<{ sessions: ApiSession[] }>(teacherAgendaPath(teacher.userId, "upcoming", 5)),
+        apiGet<{ sessions: ApiSession[]; total: number }>(teacherAgendaPath(teacher.userId, "upcoming", 5)),
         apiGet<{ total: number }>(teacherAgendaPath(teacher.userId, "missed", 1)),
       ]);
       if (sequence !== sessionSequence.current) return;
       setUpcomingSessions(next.sessions);
+      setUpcomingCount(Number.isSafeInteger(next.total) && next.total >= next.sessions.length ? next.total : null);
       setExpiredCount(missed.total);
       setSessionsError(false);
     } catch {
@@ -314,7 +316,9 @@ export default function TeacherDashboard() {
         <Text style={[t.title2, { color: colors.foreground }]}>Upcoming</Text>
         {!sessionsLoading && upcomingSessions.length > 0 && (
           <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>
-            {upcomingSessions.length} {upcomingSessions.length === 1 ? "class" : "classes"}
+            {upcomingCount !== null && upcomingCount > upcomingSessions.length
+              ? `Next ${upcomingSessions.length} of ${upcomingCount} lessons`
+              : `${upcomingSessions.length} ${upcomingSessions.length === 1 ? "lesson" : "lessons"}`}
           </Text>
         )}
       </View>

@@ -52,6 +52,8 @@ jobs:
         run: |
           npm i -g playwright
           npx playwright install --with-deps chromium
+          pnpm --filter @workspace/sikshya run test:teaching-billing
+          pnpm --filter @workspace/sikshya run test:sessions-ui
           pnpm --filter @workspace/sikshya run test:class-setup
           pnpm --filter @workspace/sikshya run test:batch-booking-ui
           pnpm --filter @workspace/sikshya run test:class-home

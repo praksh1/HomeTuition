@@ -61,11 +61,13 @@ export async function apiGet(url) {
     return { sessions: teacherUpcoming };
   }
   if (url.includes("studentId=")) {
+    const query = new URL(url, "http://localhost").searchParams;
+    const page = Number(query.get("page") ?? 1);
+    const limit = Number(query.get("limit") ?? 20);
     if (new URLSearchParams(location.search).get("large") === "1") {
-      const page = Number(new URL(url, "http://localhost").searchParams.get("page") ?? 1);
-      return { sessions: largeStudentClasses.slice((page - 1) * 100, page * 100), total: largeStudentClasses.length };
+      return { sessions: largeStudentClasses.slice((page - 1) * limit, page * limit), total: largeStudentClasses.length, page, limit };
     }
-    return { sessions: studentClass, total: studentClass.length };
+    return { sessions: studentClass.slice((page - 1) * limit, page * limit), total: studentClass.length, page, limit };
   }
   throw new Error(`Unexpected sessions request: ${url}`);
 }

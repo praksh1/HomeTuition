@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
+import { readCompleteOwnedSessions, type OwnedSessionPage } from "@/utils/ownedSessionPages";
 import SessionCard from "@/components/SessionCard";
 import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { useColors } from "@/hooks/useColors";
@@ -70,10 +71,8 @@ type SessionListItem =
 
 /** How often the session list re-checks for classes going live while the screen is open. */
 const SESSION_POLL_MS = 15000;
-const SESSION_PAGE_SIZE = 100;
 
 type SessionResponseRow = { id: number; teacherId?: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] };
-type SessionPage = { sessions: SessionResponseRow[]; total?: number };
 
 function mapSession(s: SessionResponseRow): Session {
   return {
@@ -85,10 +84,6 @@ function mapSession(s: SessionResponseRow): Session {
   };
 }
 
-function mergeSessions(fresh: Session[], older: Session[]): Session[] {
-  const seen = new Set(fresh.map((session) => session.id));
-  return [...fresh, ...older.filter((session) => !seen.has(session.id))];
-}
 
 export default function StudentSessions() {
   const { user } = useAuth();
@@ -98,11 +93,6 @@ export default function StudentSessions() {
   const insets = useSafeAreaInsets();
   const student = user as Student;
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [total, setTotal] = useState(0);
-  const [nextPage, setNextPage] = useState(2);
-  const loadedMore = useRef(false);
-  const [moreBusy, setMoreBusy] = useState(false);
-  const [moreError, setMoreError] = useState("");
   /**
    * A ticking clock, so a class that runs out while this screen is open moves itself out of
    * Upcoming rather than sitting there until the next fetch.
@@ -118,6 +108,11 @@ export default function StudentSessions() {
    */
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const readGeneration = useRef(0);
+  const currentStudentId = useRef(student?.userId);
+  currentStudentId.current = student?.userId;
+  const dataOwner = useRef(student?.userId);
+  const reading = useRef<{ owner: number | undefined; generation: number; promise: Promise<void> } | null>(null);
 
   // Sessions go live on the teacher's schedule, not the student's navigation. Loading only
   // on focus meant a class that started while this screen was open never appeared as live —
@@ -125,12 +120,9 @@ export default function StudentSessions() {
   // Re-fetching on an interval keeps the Join button honest.
   useFocusEffect(
     useCallback(() => {
-      loadedMore.current = false;
-      setNextPage(2);
-      setTotal(0);
       loadSessions();
       const timer = setInterval(loadSessions, SESSION_POLL_MS);
-      return () => clearInterval(timer);
+      return () => { clearInterval(timer); readGeneration.current++; };
     }, [student?.userId])
   );
 
@@ -143,11 +135,22 @@ export default function StudentSessions() {
     return () => clearInterval(timer);
   }, []);
 
-  const loadSessions = async () => {
+  const loadSessions = (): Promise<void> => {
+    const owner = student?.userId;
+    if (reading.current && reading.current.owner === owner && reading.current.generation === readGeneration.current) return reading.current.promise;
+    const generation = ++readGeneration.current;
+    const isCurrent = () => generation === readGeneration.current && currentStudentId.current === owner;
+    if (dataOwner.current !== owner) {
+      dataOwner.current = owner;
+      setSessions([]); setLoading(true); setLoadError(false);
+    }
+    const promise = Promise.resolve().then(async () => {
     try {
-      const myRes = student?.userId
-        ? await apiGet<SessionPage>(`/sessions?studentId=${student.userId}&limit=${SESSION_PAGE_SIZE}&page=1`)
-        : { sessions: [], total: 0 };
+      const rows = owner ? await readCompleteOwnedSessions(
+        (page, limit) => apiGet<OwnedSessionPage<SessionResponseRow>>(`/sessions?studentId=${owner}&limit=${limit}&page=${page}`),
+        isCurrent,
+      ) : [];
+      if (!isCurrent()) return;
 
       /**
        * Only classes this student actually holds.
@@ -159,30 +162,18 @@ export default function StudentSessions() {
        *
        * Classes to buy belong in Discover. This screen is the ones they own.
        */
-      const firstPage = myRes.sessions.map(mapSession);
-      setSessions(old => loadedMore.current ? mergeSessions(firstPage, old) : firstPage);
-      setTotal(myRes.total ?? firstPage.length);
+      setSessions(rows.map(mapSession));
       setLoadError(false);
     } catch (_e) {
       // Offline: fall through to whatever was last known rather than emptying the list.
-      setLoadError(true);
+      if (isCurrent()) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
+      if (reading.current?.generation === generation) reading.current = null;
     }
-  };
-
-  const loadMore = async () => {
-    if (!student?.userId || moreBusy || sessions.length >= total) return;
-    setMoreBusy(true); setMoreError("");
-    try {
-      const page = await apiGet<SessionPage>(`/sessions?studentId=${student.userId}&limit=${SESSION_PAGE_SIZE}&page=${nextPage}`);
-      loadedMore.current = true;
-      setSessions(old => mergeSessions(old, page.sessions.map(mapSession)));
-      setNextPage(old => old + 1);
-      if (typeof page.total === "number") setTotal(page.total);
-    } catch {
-      setMoreError("Could not load more lessons. Your classes are still saved; try again.");
-    } finally { setMoreBusy(false); }
+    });
+    reading.current = { owner, generation, promise };
+    return promise;
   };
 
   /**
@@ -447,14 +438,6 @@ export default function StudentSessions() {
           </View>
           )
         }
-        ListFooterComponent={sessions.length < total ? <View style={{ gap: space.xs, paddingTop: space.md }}>
-          <Text style={[t.caption, { color: colors.mutedForeground, textAlign: "center" }]}>{sessions.length} of {total} lessons loaded · classes stay grouped above</Text>
-          {moreError ? <Text accessibilityRole="alert" style={[t.caption, { color: colors.destructive, textAlign: "center" }]}>{moreError}</Text> : null}
-          <Pressable testID="student-load-more-classes" accessibilityRole="button" disabled={moreBusy} onPress={() => void loadMore()}
-            style={{ minHeight: HIT_SLOP_MIN, alignItems: "center", justifyContent: "center", borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
-            <Text style={[t.bodyStrong, { color: colors.primary }]}>{moreBusy ? "Loading more…" : "Load more lessons"}</Text>
-          </Pressable>
-        </View> : null}
       />
     </View>
   );

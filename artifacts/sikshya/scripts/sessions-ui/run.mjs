@@ -95,12 +95,10 @@ try {
 
     await page.goto(`http://127.0.0.1:${server.address().port}?role=student&large=1`);
     await page.getByTestId("student-class-group-801").waitFor();
-    check(await page.getByTestId("student-load-more-classes").count() === 1, `${width}: older lessons are available without flooding the initial screen`);
-    check(await page.getByTestId("student-class-group-805").count() === 0, `${width}: fifth class waits for the next page`);
-    await page.getByTestId("student-load-more-classes").click();
     await page.getByTestId("student-class-group-805").waitFor();
-    check(await page.getByTestId("student-class-group-805").count() === 1, `${width}: later classes remain reachable`);
-    check(await page.getByTestId("student-load-more-classes").count() === 0, `${width}: no false extra page after all 140 lessons`);
+    check(await page.getByTestId("student-class-group-805").count() === 1, `${width}: later enrolled classes appear without a manual page-loading step`);
+    check(await page.getByTestId("student-load-more-classes").count() === 0, `${width}: all 140 lessons are read before class grouping completes`);
+    check((await page.locator("body").innerText()).includes("Active (5)"), `${width}: complete owned pagination keeps 140 lessons organized into five classes`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: many classes do not overflow`);
 
     await page.goto(`http://127.0.0.1:${server.address().port}?role=student&fail=1`);

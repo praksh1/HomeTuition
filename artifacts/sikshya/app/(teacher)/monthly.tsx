@@ -239,8 +239,8 @@ export default function MonthlyClassScreen() {
           <NoPlanYet tierPrice={view.tierPrice} onBuy={() => setBuying(true)} />
         )}
         {view && !view.plan && view.legacyPlanSalesOpen !== true && (
-          <ProgramNotice title="No new monthly plan purchase needed" tone="neutral">
-            <Text style={[t.body, { color: colors.foreground }]}>We are preparing commission-based classes. Existing monthly classes, homework and messages stay available. New class listings cannot take payments or start lessons yet.</Text>
+          <ProgramNotice title="Creating a class is free" tone="neutral">
+            <Text style={[t.body, { color: colors.foreground }]}>You do not need to buy a teacher plan. Prepare your class, dates and tuition in My classes. Existing monthly lessons, homework and messages stay available. Practice bookings move no real money; paid enrollment will open when payment processing is ready.</Text>
             <ProgramButton label="Prepare a class" onPress={() => router.push("/(teacher)/create-class")} />
           </ProgramNotice>
         )}

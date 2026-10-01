@@ -41,7 +41,7 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
       <ProgramCardShell>
         <Text style={[t.title2, { color: colors.foreground }]}>When will I get paid?</Text>
         <Text style={[t.body, { color: colors.foreground }]}>During testing, students rehearse checkout without paying. Test earnings are not money you can withdraw.</Text>
-        <Text style={[t.body, { color: colors.mutedForeground }]}>For real payments, each lesson's share stays pending until delivery is recorded and the student's 48-hour review window ends. A dispute holds the affected lesson's share for human review. Make-up requests are currently handled by Support.</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>Each original lesson's earnings stay pending until delivery is confirmed and its 48-hour student review window ends. An open dispute or make-up keeps that lesson's share on hold, not your other eligible lessons. A delivered replacement starts a fresh 48-hour review window after delivery is confirmed; it is not a second charge or earning.</Text>
         <Text style={[t.body, { color: colors.mutedForeground }]}>Eligible earnings are not yet a bank transfer. Fadko will publish the payout schedule, transfer method and processing time before accepting real payments.</Text>
         <ProgramButton label="Ask about earnings" onPress={() => router.push("/support")} />
       </ProgramCardShell>
