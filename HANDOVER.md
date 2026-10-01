@@ -1,5 +1,20 @@
 # Fadko — the whole project, in one document
 
+**30 September completed reliability release:** Production runtime 3934050e (CI
+36798168720) and Preview a30e7b99 (CI 36798186811) were deployed and live-checked.
+The active release fixes message typing/draft work, bounded transient read recovery,
+request-first make-up organization, student owned-session pagination and Teacher Home
+earnings/navigation/time labels. Separate operator Workers are published, but the
+owner's operator credentials are not yet provisioned; preserve the existing login and
+Cost & Health owner identity. Automatic v2 settlement remains OFF/shadow-only.
+The exact Worker/Railway identifiers and verification limits are in the September 30 worklog.
+The hourly same-chat heartbeat fadko-teacher-schedule-follow-up is limited to local
+Preview teacher Schedule pagination and accessible Start/Join UI/tests, with no deploy,
+push, credential, financial or schema changes. Local runs require the computer and app on.
+Broader automatic-money integration still needs active reviewed implementation.
+Historical sections below retain old snapshots; use the dated worklog/backlog for current
+release state rather than interpreting older plan or provider descriptions as current.
+
 **30 September reliability and remedy-policy update:** the owner approved prospective,
 deterministic make-up automation with a 48-hour teacher response, 7-day offer expiry and
 30-day replacement limit. Verified teacher non-delivery receives a full affected-lesson

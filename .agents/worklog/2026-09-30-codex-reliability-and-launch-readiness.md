@@ -4,7 +4,9 @@
 - Agent: Codex
 - Branch: codex/sep30-reliability-and-launch-readiness
 - Base commit: 9f3bc39721b6edc882e6000305d6c28a04b8e0e6
-- Status: in progress; not deployed.
+- Status: reliability release deployed and live-checked; broader launch work remains incomplete.
+- Deployed runtime source: 3934050e62bb19a7bbafaa7cdf7b8f6154b5e2ee.
+- Exact-source full CI: 36798168720, SUCCESS.
 
 ## Requested
 
@@ -62,7 +64,7 @@ native apps can complete the classroom and critical user journeys.
 - One live read-only sample: Production readiness 200 in 2254 ms; Preview readiness 200
   in 395 ms; Production frontend 200 in 551 ms. This does not disprove intermittent failures.
 - Root typecheck across the workspace: passed. Design ratchet: passed, no new token leaks.
-- App pure tests: 648 passed; API pure tests: 884 passed at the latest completed root run.
+- Final exact-source Production CI: 659 app pure tests and 886 API pure tests passed.
 - Responsive make-up fixture: 81 assertions passed at 320/390/1440 pixels. Future teacher
   non-delivery reporting is hidden until the booked end; post-end report reason is distinct.
 - Messaging fixture: 150 checks passed plus typing/focus/failure recovery at 390/1440 pixels.
@@ -74,17 +76,33 @@ native apps can complete the classroom and critical user journeys.
   (36797244344, source 82ad9607) passed 886 API pure tests, 648 app pure tests and 173 real
   disposable PostgreSQL make-up checks, including 25 duplicate evaluations, payout races,
   legacy-consent protection, outage review and a database constraint rejecting cash claims.
-- Final follow-up UI source still requires its own exact-source full CI. Production billing
-  fixture passed 63 checks; Preview passed 83. Owned pagination/grouping passed 12 pure
-  checks each; student schedule fixtures passed 38/46 respectively. Production's isolated
-  Nepal-calendar label promotion passed three additional cases and its billing fixture.
+- Final follow-up source passed full CI before deployment. Production billing passed 63
+  checks; Preview passed 83. Owned pagination/grouping passed 12 pure checks each; this
+  Production student schedule fixture passed 38. Nepal-calendar labels passed three
+  additional cases. Isolated PostgreSQL passed 173 make-up and 149 batch-booking checks.
 - Final Production participant export passed all 129-chunk API target checks. Real-export
   route checks passed 162 assertions; saved-session startup recovery passed seven checks.
 - Operator export passed 56 authorization, password, logout and recovery checks in each
-  checkout at 320/390/1440 pixels. Final contrast changes are being re-exported sequentially.
+  checkout at 320/390/1440 pixels. Final contrast changes were exported and verified.
 - Clean CI startup recovery now runs after the participant export it actually requires.
-  Isolated PostgreSQL and final release checks remain pending. No live release or
-  provider-confirmed payment claim at this checkpoint.
+  Isolated PostgreSQL and exact-source release checks passed. This is not proof of actual
+  provider-refunded money or physical-phone performance.
+
+## Actual deployment and live checks
+
+- Production Railway API deployment: 7e159f53-5ee4-4ca9-9e3e-9bab262b8662, SUCCESS.
+- Production participant Worker version: 599a24d8-17fc-457e-aa28-bff7f6381ffa.
+- Production operator Worker version: d1d87db7-9391-472f-9826-4aeb5765a236.
+- Live participant root and /makeups returned HTTP 200 and referenced the exact locally
+  verified entry-aa4e17e87f221dd76192a6d268e801b8.js bundle.
+- Both APIs returned readiness 200. Operator /login returned 200 with Fadko Desk title,
+  no-store and DENY framing. Both new operator origins passed API preflight checks.
+- Anonymous operator access returned 401; synthetic student/teacher credentials were
+  refused operator access with 403. No live accounts, bookings, messages, tickets, identity
+  uploads or payments were created by these checks.
+- Existing make-ups remain enabled. The v2 shadow policy has not been activated, imported
+  into startup, migrated into live storage or connected to settlement. Identity collection
+  and account-closure completion flags were not enabled. No real money moved.
 
 ## Problems and surprises
 
@@ -93,16 +111,16 @@ native apps can complete the classroom and critical user journeys.
   is not verified in this run.
 - Dedicated Chrome performance connector unavailable. No Lighthouse or real iPhone INP
   score is claimed.
-- Existing message tests replace draft persistence with a no-op. This hid per-keystroke
-  storage work and must be covered by a regression test using real persistence logic.
+- Older message fixtures replaced draft persistence with a no-op, hiding per-keystroke
+  work. This release adds real persistence-path typing regression coverage.
 - Native LiveKit remains unimplemented; current native clients use the older Daily provider.
 - Existing attendance rows do not establish continuous observation health. Missing rows must
   not be treated as conclusive evidence of absence.
 - Operator root index and admin index competed for '/': a signed-out deep link could reach
   a blank screen. The new explicit /login redirect removes the collision. Initial artifacts
   that predate this fix are withheld from deployment.
-- No local PostgreSQL instance was available. The financial race tests must run against
-  the workflow's isolated loopback PostgreSQL service, never Neon or Production.
+- No local PostgreSQL instance was available. The financial race checks passed in CI's
+  isolated loopback service, never against Neon or Production.
 - Read-only live owner access check: Production's configured owner exists but has no issued
   operator account. Preview does not configure an owner ID. Separate login export readiness
   does not prove the owner's credentials are provisioned. Existing owner login remains intact;
@@ -123,7 +141,18 @@ and Production trees.
 
 ## Remaining risks / next pickup point
 
-Measure and verify urgent runtime fixes, scoped browser and financial regression tests,
-separate operator export isolation, safe exact-source release, then complete the missing
-purchase-time policy/consent, observation coverage, refund reconciliation and native release
-gates. Update this record with actual results before handoff.
+The urgent regression release is deployed. Next: teacher Schedule pagination, accessible
+Start/Join, and secure owner operator provisioning that preserves existing Cost & Health
+ownership. Then connect prospective purchase/offer consent, authoritative observation
+coverage, deterministic deadline processing, idempotent full/partial refund ledger and
+payout exclusion, simulation receipts, and eventual provider reconciliation. These are
+not complete. Physical iPhone/Android verification and native LiveKit remain launch gates.
+
+An attempted broad unattended follow-up covering owner access, financial integration and
+Production promotion was rejected by auto-review as too risky. No workaround was used.
+The narrower same-chat heartbeat fadko-teacher-schedule-follow-up is ACTIVE hourly and
+may only implement/test the local Preview teacher Schedule and Start/Join UI task.
+It cannot deploy, push, change credentials, schemas or financial rules. It stops upon
+completion or a genuine owner/tool blocker. Local scheduled runs require the computer
+powered on, the app running and the checkout available. Remaining financial/access work
+is outside that unattended task and needs an active reviewed work session.
