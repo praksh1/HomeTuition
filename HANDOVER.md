@@ -8,9 +8,14 @@ earnings/navigation/time labels. Separate operator Workers are published, but th
 owner's operator credentials are not yet provisioned; preserve the existing login and
 Cost & Health owner identity. Automatic v2 settlement remains OFF/shadow-only.
 The exact Worker/Railway identifiers and verification limits are in the September 30 worklog.
-The hourly same-chat heartbeat fadko-teacher-schedule-follow-up is limited to local
-Preview teacher Schedule pagination and accessible Start/Join UI/tests, with no deploy,
-push, credential, financial or schema changes. Local runs require the computer and app on.
+The narrow teacher Schedule/Start/Join follow-up is now complete locally and its hourly
+heartbeat fadko-teacher-schedule-follow-up is PAUSED. The uncommitted Preview patch adds
+explicit pagination, failure/race recovery and an always-reachable single lesson action.
+Final source passed 686 pure tests, 90 focused Schedule UI checks, 66 actual-export Schedule
+checks and 1,068 actual-export action assertions, plus workspace typecheck/design checks.
+Nothing was deployed, pushed or changed in credentials, finance or schemas. Read
+`.agents/worklog/2026-09-30-codex-teacher-schedule-local.md` before promotion: the ignored
+local `web-build` is synthetic-test-only with a loopback API and must not be deployed.
 Broader automatic-money integration still needs active reviewed implementation.
 Historical sections below retain old snapshots; use the dated worklog/backlog for current
 release state rather than interpreting older plan or provider descriptions as current.

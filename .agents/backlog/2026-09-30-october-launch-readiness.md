@@ -5,6 +5,12 @@ This is a release checklist, not a statement that Fadko is ready or that store a
 
 ## Immediate regression release
 
+October 1 correction is in progress: the owner's Production recording reproduced a real
+linked-lesson crash in the old export. Sparse cancellation data, unbracketed Production
+counts, estimated newest-scroll and classroom-parent typing are repaired locally. Read
+`.agents/worklog/2026-10-01-codex-production-regressions.md` for current gate/release results;
+the September 30 completion below does not certify those later regressions or launch readiness.
+
 Completed September 30 on Production 3934050e and Preview a30e7b99: isolated typing/draft
 work, bounded read recovery, request-first make-up inbox, separate operator Worker exports,
 and exact-source CI/export/live readiness checks. This does not complete automatic
@@ -52,6 +58,11 @@ Required before automatic settlement:
 1. Freeze the approved policy and disclosure at checkout; store explicit acceptance.
 2. Record reliable delivery/non-delivery evidence and observation health. Missing telemetry
    rows alone do not prove absence. A reported issue is not a verified failure.
+   October 1 audit: LiveKit signed-event ingestion is absent; socket failed writes are not
+   retained as gaps. Provider reads cap at 2,000 events and omit provider/connection identity.
+   Add observation-only authenticated ingestion, successful coverage/gap records and complete
+   provider-scoped adapters before finalizing an automated absence. Public readiness checks
+   and the on-demand room-list diagnostic cannot certify a lesson's full observation window.
 3. Persist idempotent original-allocation actions under the same lock as payout selection,
    dispute decisions and refund requests. Holds must exclude that allocation from payout.
 4. Reconcile full and partial provider refunds, failures, retries and reversals with receipts.
@@ -109,12 +120,15 @@ operator responsibilities. AI can prepare context; it cannot ban users or issue 
   later-page failure were covered by focused tests and exact-source CI. A scalable
   authenticated class-summary endpoint remains a later improvement: complete 15-second
   refreshes can still become costly at large enrollment counts.
-- Teacher Schedule also displays only its first 100 dates per selected status. Add a
-  clear Load more or cursor-based schedule view, retaining nearest-first Upcoming order.
-  This is still open and must not be described as repaired by the student pagination fix.
-- Lesson details put Start/Join below the entire roster and message history. With a large
-  class this primary action becomes hard to find. Promote it into a persistent accessible
-  action area without auto-joining the call or covering messages on narrow screens.
+- CLOSED locally, not deployed: Teacher Schedule now has explicit Load more and accurate
+  shown/total counts, nearest-first Upcoming, gap-free mixed History, retained loaded depth
+  on failures and queued slow-refresh taps. Final 90 bundled and 66 actual-export checks
+  passed at 320/390/1440. The unchanged offset API is not a snapshot under concurrent edits;
+  changed totals/duplicate offsets require refresh. See the teacher-schedule-local worklog.
+- CLOSED locally, not deployed: lesson Start/Join stays in an in-flow footer outside the
+  roster/chat scroll area. The sole action retains existing timing, owner and access semantics.
+  Final 1,068 actual-export assertions passed across 72 phone/landscape/desktop cases, with
+  50 synthetic roster entries and long messages. No actual calls or real records accessed.
 - CLOSED in Teacher Home: retired access-limit fetches/upgrade affordances removed,
   earnings-history action works, total upcoming count and Nepal-local calendar/clock
   labels fixed. Before-first-booking earnings education explains 48-hour review,
@@ -132,8 +146,9 @@ operator responsibilities. AI can prepare context; it cannot ban users or issue 
 
 ## Explicit continuation
 
-Same-chat heartbeat fadko-teacher-schedule-follow-up is ACTIVE hourly for local Preview
-teacher Schedule pagination and accessible Start/Join tests only. No deployment, push,
-owner-access, schema or financial mutation is allowed in that scheduled scope. Keep the
-computer on and the Codex app running for local follow-ups. Broad unattended Production
-and money changes were rejected by auto-review; do not bypass that restriction.
+Same-chat heartbeat fadko-teacher-schedule-follow-up is PAUSED after its local Preview
+Schedule/Start/Join task completed and final export tests passed. No deployment, push,
+owner-access, schema or financial mutation occurred. Exact results and limitations are in
+`.agents/worklog/2026-09-30-codex-teacher-schedule-local.md`. Broader unfinished launch,
+owner-access and financial work requires an active reviewed session; do not resume that
+work under this completed narrow follow-up or bypass the earlier auto-review boundary.

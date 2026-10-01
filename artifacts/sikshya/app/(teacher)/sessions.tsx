@@ -19,6 +19,17 @@ import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
 import { teacherAgendaPath } from "@/utils/teacherAgenda";
 import { notificationClock, notificationGroupLabel, nepalDayKey } from "@/utils/notificationCenter";
+import {
+  readMoreTeacherSchedule,
+  readTeacherSchedule,
+  teacherScheduleHasMore,
+  teacherScheduleRows,
+  teacherScheduleTotal,
+  TeacherScheduleChangedError,
+  type TeacherSchedulePage,
+  type TeacherScheduleSnapshot,
+  type TeacherScheduleStatus,
+} from "@/utils/teacherSchedulePages";
 
 interface Session {
   id: string;
@@ -49,6 +60,13 @@ type AgendaItem =
   | { kind: "lesson"; key: string; session: Session };
 
 const SESSION_POLL_MS = 15_000;
+type ScheduleRead = {
+  sequence: number;
+  operation: "refresh" | "more";
+  promise: Promise<void>;
+  succeeded: boolean;
+  queuedMore?: Promise<void>;
+};
 
 type ApiSession = {
   id: number;
@@ -95,64 +113,94 @@ export default function TeacherSessions() {
   const insets = useSafeAreaInsets();
   const { t, numeric, radius, space, gutter, isExpanded } = useLayout();
   const [mode, setMode] = useState<ViewMode>("upcoming");
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [schedule, setSchedule] = useState<{ key: string; snapshot: TeacherScheduleSnapshot<ApiSession> } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<"refresh" | "more" | "changed" | null>(null);
   const requestSequence = useRef(0);
+  const focused = useRef(false);
+  const scope = `${teacher?.userId ?? "signed-out"}:${mode}`;
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const scheduleRef = useRef(schedule);
+  scheduleRef.current = schedule;
+  const inFlight = useRef<ScheduleRead | null>(null);
 
-  const loadSessions = useCallback(async (quiet = false) => {
-    if (!teacher?.userId) return;
-    // A slow Upcoming response must not arrive after a quick tap on Live and repaint the wrong
-    // agenda beneath the selected filter. State updates alone cannot order network answers.
-    const sequence = ++requestSequence.current;
-    if (!quiet) setLoading(true);
-    setLoadError(false);
-    const read = (status: string) => apiGet<{ sessions: ApiSession[] }>(
-      status === "upcoming" ? teacherAgendaPath(teacher.userId, "upcoming", 100)
-        : status === "missed" ? teacherAgendaPath(teacher.userId, "missed", 100)
-        : `/sessions?teacherId=${teacher.userId}&status=${status}&limit=100`,
-    );
-    try {
-      if (mode === "history") {
-        const [completed, cancelled, pending] = await Promise.all([
-          read("completed"),
-          read("cancelled"),
-          read("missed"),
-        ]);
-        const history = [
-          ...completed.sessions,
-          ...cancelled.sessions,
-          ...pending.sessions.filter((row) => row.expired),
-        ];
-        if (sequence === requestSequence.current) {
-          setSessions(history.map((row) => mapSession(row, teacher.userId)));
-        }
-      } else {
-        const response = await read(mode);
-        const rows = mode === "upcoming"
-          ? response.sessions.filter((row) => !row.expired)
-          : response.sessions;
-        if (sequence === requestSequence.current) {
-          setSessions(rows.map((row) => mapSession(row, teacher.userId)));
-        }
+  const loadSessions = useCallback((operation: "refresh" | "more" = "refresh", quiet = false): Promise<void> => {
+    if (!teacher?.userId || !focused.current) return Promise.resolve();
+    const sequence = requestSequence.current;
+    const isCurrent = () => focused.current && sequence === requestSequence.current && currentScope.current === scope;
+    // Polls share one read; an explicit next-page tap during that refresh must not disappear.
+    // Queue exactly one intent, only after the refreshed offsets were successfully committed.
+    const pending = inFlight.current;
+    if (pending?.sequence === sequence) {
+      if (operation === "more" && pending.operation === "refresh") {
+        setLoadingMore(true);
+        pending.queuedMore ??= pending.promise.then(async () => {
+          if (!isCurrent()) return;
+          if (pending.succeeded) await loadSessions("more");
+          else setLoadingMore(false);
+        });
+        return pending.queuedMore;
       }
-    } catch {
-      if (!quiet && sequence === requestSequence.current) {
-        setLoadError(true);
-        setSessions([]);
-      }
-    } finally {
-      if (!quiet && sequence === requestSequence.current) setLoading(false);
+      return pending.promise;
     }
-  }, [mode, teacher?.userId]);
+    const previous = scheduleRef.current?.key === scope ? scheduleRef.current.snapshot : undefined;
+    if (operation === "more" && (!previous || !teacherScheduleHasMore(previous))) {
+      setLoadingMore(false);
+      return Promise.resolve();
+    }
+    if (operation === "more") setLoadingMore(true);
+    else if (!quiet && !previous) setLoading(true);
+    setLoadError(null);
+    const read = (status: TeacherScheduleStatus, page: number, limit: number) => apiGet<TeacherSchedulePage<ApiSession>>(
+      status === "upcoming" ? teacherAgendaPath(teacher.userId, "upcoming", limit)
+        + `&page=${page}`
+        : status === "missed" ? teacherAgendaPath(teacher.userId, "missed", limit) + `&page=${page}`
+        : `/sessions?teacherId=${teacher.userId}&status=${status}&limit=${limit}&page=${page}`,
+    );
+    const request: ScheduleRead = { sequence, operation, promise: Promise.resolve(), succeeded: false };
+    const promise = Promise.resolve().then(async () => {
+      try {
+        const snapshot = operation === "more" && previous
+          ? await readMoreTeacherSchedule(previous, read, isCurrent)
+          : await readTeacherSchedule(mode, read, isCurrent, previous);
+        if (isCurrent()) {
+          const next = { key: scope, snapshot };
+          scheduleRef.current = next;
+          setSchedule(next);
+          request.succeeded = true;
+        }
+      } catch (error) {
+        if (isCurrent()) setLoadError(error instanceof TeacherScheduleChangedError ? "changed" : operation);
+      } finally {
+        if (isCurrent()) { setLoading(false); if (!request.queuedMore) setLoadingMore(false); }
+        if (inFlight.current?.sequence === sequence) inFlight.current = null;
+      }
+    });
+    request.promise = promise;
+    inFlight.current = request;
+    return promise;
+  }, [mode, scope, teacher?.userId]);
 
   useFocusEffect(
     useCallback(() => {
+      focused.current = true;
+      requestSequence.current += 1;
+      setLoadingMore(false);
+      setLoading(scheduleRef.current?.key !== scope);
       void loadSessions();
-      const timer = setInterval(() => void loadSessions(true), SESSION_POLL_MS);
-      return () => { clearInterval(timer); requestSequence.current += 1; };
-    }, [loadSessions]),
+      const timer = setInterval(() => void loadSessions("refresh", true), SESSION_POLL_MS);
+      return () => { clearInterval(timer); focused.current = false; requestSequence.current += 1; };
+    }, [loadSessions, scope]),
   );
+
+  const snapshot = schedule?.key === scope ? schedule.snapshot : undefined;
+  const sessions = useMemo(() => snapshot
+    ? teacherScheduleRows(snapshot).map((row) => mapSession(row, teacher.userId)) : [],
+  [snapshot, teacher?.userId]);
+  const total = snapshot ? teacherScheduleTotal(snapshot) : 0;
+  const hasMore = snapshot ? teacherScheduleHasMore(snapshot) : false;
 
   const agenda = useMemo<AgendaItem[]>(() => {
     const ordered = sessions.slice().sort((left, right) => {
@@ -274,6 +322,11 @@ export default function TeacherSessions() {
                 );
               })}
             </View>
+            {snapshot ? (
+              <Text testID="teacher-schedule-count" style={[t.caption, numeric, { color: colors.mutedForeground }]}>
+                {sessions.length} of {total} {total === 1 ? "lesson" : "lessons"}
+              </Text>
+            ) : null}
           </View>
         )}
         renderItem={({ item }) => {
@@ -368,6 +421,33 @@ export default function TeacherSessions() {
             ) : null}
           </View>
         )}
+        ListFooterComponent={snapshot && (hasMore || loadError) ? (
+          <View testID="teacher-schedule-footer" style={{ gap: space.sm, paddingVertical: space.md, alignItems: "center" }}>
+            {loadError ? (
+              <Text testID="teacher-schedule-page-error" accessibilityRole="alert" style={[t.callout, { color: colors.destructive, textAlign: "center" }]}>
+                {loadError === "changed" ? "Your schedule changed. Refresh to see the latest lessons."
+                  : loadError === "more" ? "More lessons could not be loaded. Your current schedule is still here."
+                  : "Your schedule could not be refreshed. Your loaded lessons are still here."}
+              </Text>
+            ) : null}
+            <Pressable
+              testID="teacher-load-more-lessons"
+              accessibilityRole="button"
+              accessibilityState={{ disabled: loadingMore, busy: loadingMore }}
+              disabled={loadingMore}
+              onPress={() => void loadSessions(loadError && loadError !== "more" ? "refresh" : "more")}
+              style={{ minHeight: HIT_SLOP_MIN, minWidth: HIT_SLOP_MIN * 4, paddingHorizontal: space.lg,
+                flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm,
+                borderRadius: radius.pill, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.card }}
+            >
+              {loadingMore ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+              <Text style={[t.bodyStrong, { color: colors.primary }]}>
+                {loadingMore ? "Loading lessons…" : loadError ? loadError === "changed" ? "Refresh schedule" : "Try again" : "Load more lessons"}
+              </Text>
+            </Pressable>
+            <Text style={[t.caption, numeric, { color: colors.mutedForeground }]}>{sessions.length} of {total} lessons shown</Text>
+          </View>
+        ) : null}
       />
     </View>
   );

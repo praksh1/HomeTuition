@@ -4,8 +4,13 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
+    "test:lesson-drop-ui": "node scripts/lesson-drop-ui/run.mjs",
+    "test:lesson-drop-routes": "node scripts/lesson-drop-routes/run.mjs",
     "test:makeups-ui": "node scripts/makeups-ui/run.mjs",
     "test:makeups-routes": "node scripts/makeups-routes/run.mjs",
+    "test:teacher-schedule-ui": "node scripts/teacher-schedule-ui/run.mjs",
+    "test:teacher-schedule-routes": "node scripts/teacher-schedule-routes/run.mjs",
+    "test:lesson-actions-routes": "node scripts/lesson-actions-routes/run.mjs",
     "test:dashboard-audit": "node scripts/dashboard-audit/run.mjs",
     "test:signup-ui": "node scripts/signup-audit/run.mjs",
     "test:teaching-billing": "node scripts/teaching-billing/run.mjs",
@@ -68,6 +73,7 @@
     "test:class-home": "node scripts/class-home-journey/run.mjs",
     "test:class-students": "node scripts/class-students-journey/run.mjs",
     "test:messages-ui": "node scripts/messages-ui/run.mjs && node scripts/messages-ui/performance.mjs",
+    "test:messages-routes": "node scripts/messages-ui/routes.mjs",
     "test:profile-ui": "node scripts/profile-ui/run.mjs",
     "test:notifications-ui": "node scripts/notifications-ui/run.mjs",
     "test:startup-recovery": "node scripts/startup-recovery/run.mjs"

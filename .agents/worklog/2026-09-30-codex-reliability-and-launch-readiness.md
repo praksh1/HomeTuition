@@ -157,3 +157,15 @@ It cannot deploy, push, change credentials, schemas or financial rules. It stops
 completion or a genuine owner/tool blocker. Local scheduled runs require the computer
 powered on, the app running and the checkout available. Remaining financial/access work
 is outside that unattended task and needs an active reviewed work session.
+
+### Local teacher Schedule follow-up completed
+
+The later September 30 scheduled run completed the local Preview Schedule pagination and
+accessible Start/Join UI repair. Final source passed 686 pure tests, 90 focused Schedule
+UI checks, 66 actual-export Schedule checks and 1,068 actual-export action assertions.
+Workspace typecheck, design ratchet and diff checks passed. The narrowly scoped heartbeat
+is now PAUSED, confirmed by the scheduler and its persisted definition. Changes remain
+uncommitted and not deployed; the reliability release above is still the deployed snapshot.
+See `2026-09-30-codex-teacher-schedule-local.md` for exact commands, synthetic evidence,
+fixture failures corrected, offset/API limitations and the loopback-only test-export warning.
+Owner access, financial settlement and native/physical-phone launch gates remain open.

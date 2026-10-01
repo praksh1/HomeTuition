@@ -27,6 +27,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
 import { createCoalescedRefresh } from "@/utils/coalescedRefresh";
+import { stableMessageRows } from "@/utils/messageRows";
 import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
 import {
   latestOwnMessageId,
@@ -87,36 +88,41 @@ export default function ConversationScreen() {
   const [reportRef, setReportRef] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   const scrollAfterLayout = useRef(true);
-  const scrollPass = useRef(0);
   const hasLoaded = useRef(false);
   const focused = useRef(false);
+  const focusEpoch = useRef(0);
+  const mutationRevision = useRef(0);
   const displayName = access?.otherUserName?.trim() || name?.trim() || "Conversation";
 
   const settleAtNewest = useCallback(() => {
-    const pass = ++scrollPass.current;
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
-    setTimeout(() => {
-      if (scrollPass.current !== pass) return;
-      listRef.current?.scrollToEnd({ animated: false });
-      scrollAfterLayout.current = false;
-    }, 120);
+    // In an inverted list the newest row is an exact offset, not an estimate of hundreds
+    // of still-unmeasured messages. A fixed-delay scrollToEnd could land in old history.
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    scrollAfterLayout.current = false;
   }, []);
 
   const load = useCallback(async () => {
-    void apiGet<NonNullable<typeof access>>(`/messages/${id}/access`).then(setAccess).catch(() => {});
+    const epoch = focusEpoch.current;
+    const revision = mutationRevision.current;
+    const isCurrent = () => focused.current && focusEpoch.current === epoch;
+    void apiGet<NonNullable<typeof access>>(`/messages/${id}/access`).then(next => {
+      if (isCurrent()) setAccess(current => JSON.stringify(current) === JSON.stringify(next) ? current : next);
+    }).catch(() => {});
     try {
       const next = await apiGet<Message[]>(`/messages/${id}`);
+      if (!isCurrent()) return;
       if (!hasLoaded.current) scrollAfterLayout.current = true;
-      setMessages(next);
+      // A read started before a successful send/reaction must not delete its local result.
+      if (mutationRevision.current === revision) setMessages(current => stableMessageRows(current, next));
       hasLoaded.current = true;
       setLoadProblem(false);
       void markTargetRead({ kind: "direct_message", conversationWith: id });
     } catch {
-      setLoadProblem(true);
+      if (isCurrent()) setLoadProblem(true);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [id, markTargetRead]);
+  }, [id, markTargetRead, user?.userId]);
 
   const refresh = useMemo(() => createCoalescedRefresh(async () => {
     if (focused.current) await load();
@@ -124,12 +130,15 @@ export default function ConversationScreen() {
 
   useFocusEffect(useCallback(() => {
     focused.current = true;
+    focusEpoch.current++;
+    scrollAfterLayout.current = true;
+    settleAtNewest();
     void refresh();
     // The user socket supplies the instant path. This is only a missed-event safety net; four
     // seconds kept every background conversation route needlessly busy.
     const interval = setInterval(() => void refresh(), 8000);
-    return () => { focused.current = false; clearInterval(interval); };
-  }, [refresh]));
+    return () => { focused.current = false; focusEpoch.current++; clearInterval(interval); };
+  }, [refresh, settleAtNewest]));
 
   useEffect(() => {
     if (
@@ -149,6 +158,7 @@ export default function ConversationScreen() {
   }, [id, markTargetRead, notifications]);
 
   const latestMine = useMemo(() => latestOwnMessageId(messages, user?.userId), [messages, user?.userId]);
+  const newestFirst = useMemo(() => [...messages].reverse(), [messages]);
 
   const pickFile = async () => {
     const result = await DocumentPicker.getDocumentAsync({
@@ -181,8 +191,9 @@ export default function ConversationScreen() {
         body,
         ...(fileKey ? { fileKey, fileType: outgoing!.mimeType, fileName: outgoing!.name } : {}),
       });
+      mutationRevision.current++;
       scrollAfterLayout.current = true;
-      setMessages((previous) => [...previous, sent]);
+      setMessages((previous) => [...previous.filter(message => message.id !== sent.id), sent]);
       if (sent.attachmentProblem) setProblem(sent.attachmentProblem);
       return true;
     } catch (error) {
@@ -196,6 +207,7 @@ export default function ConversationScreen() {
 
   const react = async (messageId: number, emoji: string) => {
     if (access?.canSend === false) return;
+    mutationRevision.current++;
     setPicking(null);
     setMessages((previous) => previous.map((message) => (
       message.id === messageId
@@ -307,7 +319,9 @@ export default function ConversationScreen() {
 
       <FlatList
         ref={listRef}
-        data={messages}
+        data={newestFirst}
+        inverted
+        accessibilityLabel="Conversation messages, newest first"
         keyExtractor={(message) => String(message.id)}
         style={styles.list}
         contentContainerStyle={{
@@ -327,7 +341,7 @@ export default function ConversationScreen() {
         onLayout={() => { if (scrollAfterLayout.current) settleAtNewest(); }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={loadProblem && messages.length > 0 ? (
+        ListFooterComponent={loadProblem && messages.length > 0 ? (
           <TouchableOpacity
             onPress={() => void refresh()}
             style={[styles.connectionNote, { borderRadius: radius.sm, backgroundColor: colors.warnSoft }]}
@@ -341,7 +355,7 @@ export default function ConversationScreen() {
           const mine = item.senderId === user?.userId;
           const files = item.attachments ?? [];
           const reactions = item.reactions ?? [];
-          const showDay = shouldShowDay(messages, index);
+          const showDay = shouldShowDay(messages, messages.length - 1 - index);
           const latestOwn = mine && latestMine === item.id;
           return (
             <View style={[styles.messageBlock, showDay && index > 0 && { marginTop: space.md }]}>

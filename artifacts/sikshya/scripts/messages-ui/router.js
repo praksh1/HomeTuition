@@ -7,7 +7,10 @@ export function useFocusEffect(callback) {
     window.addEventListener("message-test-focus", update);
     return () => window.removeEventListener("message-test-focus", update);
   }, []);
-  useEffect(() => focused ? callback() : undefined, [focused, callback]);
+  useEffect(() => {
+    window.messageFixtureFocused = focused;
+    return focused ? callback() : undefined;
+  }, [focused, callback]);
 }
 
 export const router = {

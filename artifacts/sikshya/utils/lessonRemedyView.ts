@@ -140,6 +140,35 @@ export function remedyOfferInstant(date: string, time: string): string | null {
     return null;
   return new Date(`${date}T${time}:00+05:45`).toISOString();
 }
+/** Mirror only the server's offer bounds, never financial eligibility or attendance. */
+export function remedyOfferWindow(lesson: RemedyLesson, serverNow: string): { earliest: number; latest: number } | null {
+  const now = Date.parse(serverNow);
+  const start = Date.parse(lesson.startsAt);
+  const end = Date.parse(lesson.endsAt);
+  const deadline = Date.parse(lesson.case?.replacementDeadlineAt ?? "");
+  if (![now, start, end, deadline].every(Number.isFinite) || end <= start) return null;
+  const earliest = Math.ceil((Math.max(now, end) + 60_000) / 60_000) * 60_000;
+  const latest = Math.floor((deadline - (end - start)) / 60_000) * 60_000;
+  return earliest <= latest ? { earliest, latest } : null;
+}
+export function remedySuggestedOffer(lesson: RemedyLesson, serverNow: string): string | null {
+  const window = remedyOfferWindow(lesson, serverNow);
+  if (!window) return null;
+  const tomorrow = Math.ceil((Date.parse(serverNow) + 86_400_000) / 60_000) * 60_000;
+  return new Date(Math.min(window.latest, Math.max(window.earliest, tomorrow))).toISOString();
+}
+export function remedyOfferProblem(lesson: RemedyLesson, serverNow: string, startsAt: string): string | null {
+  const starts = Date.parse(startsAt);
+  const now = Date.parse(serverNow);
+  const end = Date.parse(lesson.endsAt);
+  const originalStart = Date.parse(lesson.startsAt);
+  const deadline = Date.parse(lesson.case?.replacementDeadlineAt ?? "");
+  if (![starts, now, end, originalStart, deadline].every(Number.isFinite) || end <= originalStart)
+    return "The lesson dates are unavailable. Refresh this request before choosing a replacement.";
+  if (starts <= Math.max(now, end)) return "Choose a time after the original lesson ends and after the current time.";
+  if (starts + end - originalStart > deadline) return "Choose an earlier time so the whole make-up finishes before its deadline.";
+  return null;
+}
 export function remedyQuotaLabel(
   quota: Pick<RemedyQuota, "limit" | "used" | "remaining">,
 ): string {

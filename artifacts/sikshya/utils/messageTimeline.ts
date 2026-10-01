@@ -5,13 +5,17 @@ export interface TimelineMessage {
   createdAt: string;
 }
 
+let dayFormatter: Intl.DateTimeFormat | undefined;
+let timeFormatter: Intl.DateTimeFormat | undefined;
+
 function nepalParts(value: Date) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+  dayFormatter ??= new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Kathmandu",
     year: "numeric",
     month: "numeric",
     day: "numeric",
-  }).formatToParts(value);
+  });
+  const parts = dayFormatter.formatToParts(value);
   const get = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
   return { year: get("year"), month: get("month"), day: get("day") };
 }
@@ -26,11 +30,12 @@ export function messageDayKey(value: string) {
 export function messageTimeLabel(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-NP", {
+  timeFormatter ??= new Intl.DateTimeFormat("en-NP", {
     timeZone: "Asia/Kathmandu",
     hour: "numeric",
     minute: "2-digit",
-  }).format(date);
+  });
+  return timeFormatter.format(date);
 }
 
 export function messageDayLabel(

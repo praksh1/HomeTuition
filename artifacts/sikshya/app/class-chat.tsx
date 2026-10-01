@@ -25,6 +25,7 @@ import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
 import { createCoalescedRefresh } from "@/utils/coalescedRefresh";
+import { retainEarlierMessageRows } from "@/utils/messageRows";
 import { classConversationId } from "@/utils/conversationRoute";
 import { messageDayLabel, messageTimeLabel, shouldShowDay } from "@/utils/messageTimeline";
 import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
@@ -79,19 +80,15 @@ export default function ClassChatScreen() {
   const [problem, setProblem] = useState<string | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
   const scrollAfterLayout = useRef(true);
-  const scrollPass = useRef(0);
   const hasLoaded = useRef(false);
   const focused = useRef(false);
+  const focusEpoch = useRef(0);
+  const mutationRevision = useRef(0);
   const acknowledgedThrough = useRef<number | null>(null);
 
   const settleAtNewest = useCallback(() => {
-    const pass = ++scrollPass.current;
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
-    setTimeout(() => {
-      if (scrollPass.current !== pass) return;
-      listRef.current?.scrollToEnd({ animated: false });
-      scrollAfterLayout.current = false;
-    }, 120);
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
+    scrollAfterLayout.current = false;
   }, []);
 
   const acknowledge = useCallback(async (messages: Message[]) => {
@@ -107,6 +104,9 @@ export default function ClassChatScreen() {
   }, [batchId]);
 
   const load = useCallback(async () => {
+    const epoch = focusEpoch.current;
+    const revision = mutationRevision.current;
+    const isCurrent = () => focused.current && focusEpoch.current === epoch;
     if (routeBatchId == null) {
       setLoadProblemMessage("This class conversation link is incomplete. Return to Messages and open the class again.");
       setLoadProblem(true);
@@ -115,14 +115,23 @@ export default function ClassChatScreen() {
     }
     try {
       const next = await apiGet<ViewData>(`/class-groups/${batchId}/messages`);
+      if (!isCurrent()) return;
       if (!hasLoaded.current) scrollAfterLayout.current = true;
-      setView(next);
+      if (mutationRevision.current === revision) setView(current => {
+        if (!current) return next;
+        const messages = retainEarlierMessageRows(current.messages, next.messages);
+        // Earlier-page cursor stays with the oldest page that this reader actually loaded.
+        const keptEarlier = messages.length > next.messages.length;
+        const combined = { ...next, messages, ...(keptEarlier ? { hasEarlier: current.hasEarlier, beforeCursor: current.beforeCursor } : {}) };
+        return JSON.stringify(combined) === JSON.stringify(current) ? current : combined;
+      });
       hasLoaded.current = true;
       setLoadProblem(false);
       setLoadProblemMessage("");
       void acknowledge(next.messages);
       void markTargetRead({ kind: "class_message", batchId });
     } catch (error) {
+      if (!isCurrent()) return;
       setLoadProblem(true);
       setLoadProblemMessage(error instanceof ApiError && error.status === 403
         ? "This conversation is available only to the teacher and enrolled students."
@@ -130,9 +139,9 @@ export default function ClassChatScreen() {
           ? "This class conversation is no longer available."
           : "Fadko could not load this conversation. Try again.");
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, [acknowledge, batchId, markTargetRead, routeBatchId]);
+  }, [acknowledge, batchId, markTargetRead, routeBatchId, user?.userId]);
 
   const refresh = useMemo(() => createCoalescedRefresh(async () => {
     if (focused.current) await load();
@@ -140,12 +149,15 @@ export default function ClassChatScreen() {
 
   useFocusEffect(useCallback(() => {
     focused.current = true;
+    focusEpoch.current++;
+    scrollAfterLayout.current = true;
+    settleAtNewest();
     void refresh();
     // Live events provide the quick path; this slower pass catches a dropped socket without
     // making every mounted class screen talk to the server ten times a minute.
     const interval = setInterval(() => void refresh(), 8000);
-    return () => { focused.current = false; clearInterval(interval); };
-  }, [refresh]));
+    return () => { focused.current = false; focusEpoch.current++; clearInterval(interval); };
+  }, [refresh, settleAtNewest]));
 
   useEffect(() => {
     if (focused.current && (lastEvent?.kind === "class_message" || lastEvent?.kind === "conversation_sync") && Number(lastEvent.batchId) === batchId) {
@@ -162,6 +174,7 @@ export default function ClassChatScreen() {
   }, [batchId, markTargetRead, notifications]);
 
   const messages = useMemo(() => view?.messages ?? [], [view?.messages]);
+  const newestFirst = useMemo(() => [...messages].reverse(), [messages]);
   const timeline = useMemo(() => messages.map((message) => ({ ...message, read: false })), [messages]);
   const pinned = useMemo(
     () => (view?.pinned ?? []).filter((item) => !messages.some((message) => message.id === item.id)),
@@ -196,8 +209,9 @@ export default function ClassChatScreen() {
         body,
         ...(fileKey ? { fileKey, fileType: outgoing!.mimeType, fileName: outgoing!.name } : {}),
       });
+      mutationRevision.current++;
       scrollAfterLayout.current = true;
-      setView((current) => current ? { ...current, messages: [...current.messages, sent] } : current);
+      setView((current) => current ? { ...current, messages: [...current.messages.filter(message => message.id !== sent.id), sent] } : current);
       return true;
     } catch (error) {
       setPending(outgoing);
@@ -229,7 +243,7 @@ export default function ClassChatScreen() {
 
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const mine = item.senderId === user?.userId;
-    const showDay = shouldShowDay(timeline, index);
+    const showDay = shouldShowDay(timeline, messages.length - 1 - index);
     return (
       <View style={[styles.messageBlock, showDay && index > 0 && { marginTop: space.md }]}>
         {showDay ? (
@@ -309,7 +323,9 @@ export default function ClassChatScreen() {
 
       <FlatList
         ref={listRef}
-        data={messages}
+        data={newestFirst}
+        inverted
+        accessibilityLabel="Class messages, newest first"
         keyExtractor={(message) => String(message.id)}
         renderItem={renderMessage}
         style={styles.list}
@@ -322,7 +338,7 @@ export default function ClassChatScreen() {
         }}
         onLayout={() => { if (scrollAfterLayout.current) settleAtNewest(); }}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-        ListHeaderComponent={(
+        ListFooterComponent={(
           <>
             {loadProblem && messages.length > 0 ? (
               <TouchableOpacity onPress={() => void refresh()} style={[styles.connectionNote, { borderRadius: radius.sm, backgroundColor: colors.warnSoft }]} testID="class-chat-retry-inline">

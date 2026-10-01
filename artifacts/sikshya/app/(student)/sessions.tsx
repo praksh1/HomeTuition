@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
+import { filterCountLabel } from "@/utils/filterCountLabel";
 import { readCompleteOwnedSessions, type OwnedSessionPage } from "@/utils/ownedSessionPages";
 import SessionCard from "@/components/SessionCard";
 import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
@@ -377,7 +378,7 @@ export default function StudentSessions() {
                     style={{ minHeight: HIT_SLOP_MIN, flex: 1, alignItems: "center", justifyContent: "center", borderRadius: radius.pill, backgroundColor: active ? colors.card : colors.muted }}
                   >
                     <Text style={[t.caption, { color: active ? colors.primary : colors.mutedForeground }]}>
-                      {`${g.label} (${g.count})`}
+                      {filterCountLabel(g.label, g.count)}
                     </Text>
                   </Pressable>
                 );

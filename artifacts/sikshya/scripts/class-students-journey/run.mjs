@@ -33,7 +33,7 @@ let passed = 0;
 const check = (value, message) => { assert.ok(value, message); passed++; console.log(`PASS ${message}`); };
 
 try {
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 1440]) {
     const base = `http://127.0.0.1:${server.address().port}`;
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
@@ -46,6 +46,12 @@ try {
     check(text.includes("No lesson presence recorded yet"), `${width}: no presence is not called absence`);
     check(!text.includes("email") && !text.includes("Held by Fadko") && !text.includes("70%"), `${width}: roster reveals no contact or internal money`);
     check(text.includes("Showing 10 of 40") && !text.includes("Student 11"), `${width}: large roster opens as ten compact rows`);
+    for (const [id, label] of [["all", "All (40)"], ["joined", "Joined lessons (20)"], ["not_yet", "No activity yet (20)"]]) {
+      const filter = page.getByTestId(`roster-filter-${id}`);
+      const box = await filter.boundingBox();
+      check((await filter.innerText()).trim() === label, `${width}: roster ${id} count uses parentheses`);
+      check(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= width, `${width}: roster ${id} filter fits the viewport`);
+    }
     await page.getByTestId("roster-show-more").click();
     check((await page.locator("body").innerText()).includes("Student 11"), `${width}: teacher can reveal the next ten students`);
     await page.getByTestId("roster-filter-not_yet").click();

@@ -49,16 +49,19 @@ export async function apiGet(url) {
     throw new Error("synthetic connection failure");
   }
   if (url.includes("teacherId=")) {
-    if (url.includes("status=completed")) {
-      return { sessions: [row(70, "Final revision", now - 2 * day, "completed")] };
-    }
-    if (url.includes("status=cancelled")) {
-      return { sessions: [row(71, "Cancelled revision", now - day, "cancelled")] };
-    }
-    if (url.includes("status=live")) {
-      return { sessions: [row(72, "Live algebra clinic", now, "live")] };
-    }
-    return { sessions: teacherUpcoming };
+    const query = new URL(url, "http://localhost").searchParams;
+    const page = Number(query.get("page") ?? 1);
+    const limit = Number(query.get("limit") ?? 20);
+    const status = query.get("status");
+    const agenda = query.get("agenda");
+    const sessions = status === "completed"
+      ? [row(70, "Final revision", now - 2 * day, "completed")]
+      : status === "cancelled"
+        ? [row(71, "Cancelled revision", now - day, "cancelled")]
+        : status === "live"
+          ? [row(72, "Live algebra clinic", now, "live")]
+          : teacherUpcoming.filter((session) => agenda === "missed" ? session.expired : !session.expired);
+    return { sessions: sessions.slice((page - 1) * limit, page * limit), total: sessions.length, page, limit };
   }
   if (url.includes("studentId=")) {
     const query = new URL(url, "http://localhost").searchParams;

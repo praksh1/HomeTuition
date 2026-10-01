@@ -190,21 +190,11 @@ try {
     await page
       .getByRole("textbox", { name: "Replacement Nepal start time" })
       .fill("09:00");
+    check(await page.getByText(/Choosing Replace undelivered lesson confirms/).isVisible(), `${width}: specific replacement action discloses acknowledgement and quota effect`);
+    check(!(await page.getByRole("button", { name: /Confirm I did not deliver/ }).count()), `${width}: no separate confession toggle`);
+    check(await page.getByRole("button", { name: "I taught this lesson — review request", exact: true }).count(), `${width}: disputed delivery has a separate review path`);
     await page
-      .getByRole("button", { name: "Offer this date", exact: true })
-      .click();
-    check(
-      await page.getByText(/Confirm the missed teaching below/).isVisible(),
-      `${width}: teacher non-delivery confirmation required`,
-    );
-    await page
-      .getByRole("button", {
-        name: "Confirm I did not deliver the original lesson",
-        exact: true,
-      })
-      .click();
-    await page
-      .getByRole("button", { name: "Offer this date", exact: true })
+      .getByRole("button", { name: "Replace undelivered lesson", exact: true })
       .click();
     await page.getByText("Date offered", { exact: true }).waitFor();
     const offered = await page.evaluate(() =>
@@ -215,6 +205,21 @@ try {
         offered.body.confirmTeacherNonDelivery === true,
       `${width}: Nepal date and confirmation transmitted`,
     );
+    await page.goto(`${base}?teacher&future-original`);
+    await page.getByRole("button", { name: "Offer a date", exact: true }).click();
+    check(await page.getByRole("textbox", { name: "Replacement Nepal start time" }).inputValue() === "10:01", `${width}: future original defaults after its own finish, not tomorrow`);
+    await page.getByRole("textbox", { name: "Replacement Nepal start time" }).fill("10:00");
+    await page.getByRole("button", { name: "Offer this date", exact: true }).click();
+    check(await page.getByText(/Choose a time after the original lesson ends/).isVisible(), `${width}: invalid date rejected beside form before sending`);
+    check(await page.evaluate(() => !window.requests.some(row => row.method === "POST")), `${width}: invalid offer makes no mutation`);
+    await page.getByRole("textbox", { name: "Replacement Nepal start time" }).fill("10:01");
+    await page.getByRole("button", { name: "Offer this date", exact: true }).click();
+    await page.getByText("Date offered", { exact: true }).waitFor();
+    check((await page.evaluate(() => window.requests.find(row => row.method === "POST"))).body.startsAt === "2026-10-10T04:16:00.000Z", `${width}: correct original-specific suggested offer transmitted`);
+    await page.goto(`${base}?teacher&closed-window`);
+    await page.getByRole("button", { name: "Offer a date", exact: true }).click();
+    check(await page.getByText("No replacement time available", { exact: true }).isVisible(), `${width}: closed time window clearly explained`);
+    check(!(await page.getByRole("button", { name: "Offer this date", exact: true }).isEnabled()), `${width}: unavailable window cannot submit a fabricated date`);
     for (const role of ["teacher", "operator"]) {
       await page.goto(`${base}?${role}&untouched`);
       await page.getByRole("button", { name: "All cases", exact: true }).click();

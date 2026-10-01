@@ -40,17 +40,17 @@ const seed = [
 ];
 
 function Harness() {
+  window.__parentRenders = (window.__parentRenders || 0) + 1;
   const [open, setOpen] = React.useState(true);
   const [messages, setMessages] = React.useState(seed);
-  const [value, setValue] = React.useState("");
   const [connected, setConnected] = React.useState(true);
   window.__reactions = window.__reactions || [];
   window.__chat = {
-    state: { value, messages },
+    state: { messages },
     open: () => setOpen(true),
     connection: setConnected,
     push: (message) => setMessages((current) => [...current, message]),
-    many: () => setMessages(Array.from({ length: 36 }, (_, index) => ({
+    many: () => setMessages(Array.from({ length: 250 }, (_, index) => ({
       id: "old-" + index,
       senderName: index % 2 ? "Teacher" : "Sita",
       text: "Earlier class message " + index,
@@ -58,9 +58,10 @@ function Harness() {
       isMe: index % 2 === 1,
     }))),
   };
-  const send = () => {
+  const send = (value) => {
     const text = value.trim();
     if (!text) return;
+    if (window.__rejectNextChat) { window.__rejectNextChat = false; return false; }
     setMessages((current) => [...current, {
       id: "sent-" + current.length,
       senderName: "Teacher",
@@ -68,15 +69,12 @@ function Harness() {
       time: "now",
       isMe: true,
     }]);
-    setValue("");
   };
   return React.createElement(ClassroomChatDrawer, {
     onReaction: (emoji) => window.__reactions.push(emoji),
     open,
     connected,
     messages,
-    value,
-    onChangeText: setValue,
     onSend: send,
     onClose: () => setOpen(false),
     placeholder: "Message everyone…",
@@ -158,10 +156,10 @@ for (const viewport of [
   check(`${viewport.label}: input text stays readable`, await input.evaluate((node) => parseFloat(getComputedStyle(node).fontSize) >= 16));
   await input.fill("अभ्यास");
   await input.dispatchEvent("keydown", { key: "Enter", code: "Enter", isComposing: true });
-  const composingState = await page.evaluate(() => ({ value: window.__chat.state.value, sent: window.__chat.state.messages.some((message) => message.text === "अभ्यास") }));
+  const composingState = await page.evaluate(() => ({ value: document.querySelector('[data-testid="chat-input"]').value, sent: window.__chat.state.messages.some((message) => message.text === "अभ्यास") }));
   check(`${viewport.label}: composing text is not accidentally sent`, composingState.value === "अभ्यास" && !composingState.sent, JSON.stringify(composingState));
   await input.dispatchEvent("keydown", { key: "Enter", code: "Enter", keyCode: 229, isComposing: false });
-  check(`${viewport.label}: IME confirmation is not sent`, await page.evaluate(() => window.__chat.state.value === "अभ्यास" && !window.__chat.state.messages.some((message) => message.text === "अभ्यास")));
+  check(`${viewport.label}: IME confirmation is not sent`, await page.evaluate(() => document.querySelector('[data-testid="chat-input"]').value === "अभ्यास" && !window.__chat.state.messages.some((message) => message.text === "अभ्यास")));
   await input.fill("A message sent with Enter");
   await input.press("Enter");
   await page.waitForTimeout(350);
@@ -182,6 +180,16 @@ for (const viewport of [
 
   await page.evaluate(() => window.__chat.many());
   await page.waitForTimeout(350);
+  const parentRenders = await page.evaluate(() => window.__parentRenders);
+  await input.fill("");
+  await input.pressSequentially("Typing with 250 classroom messages", { delay: 5 });
+  check(`${viewport.label}: typing does not redraw classroom parent`, await page.evaluate(() => window.__parentRenders) === parentRenders);
+  check(`${viewport.label}: long-history typing drops no characters`, await input.inputValue() === "Typing with 250 classroom messages");
+  await page.evaluate(() => { window.__rejectNextChat = true; });
+  await input.press("Enter");
+  check(`${viewport.label}: refused send keeps the unsent words`, await input.inputValue() === "Typing with 250 classroom messages");
+  check(`${viewport.label}: refused send gives a truthful retry notice`, await page.getByText("Could not send. Your message is still here.", { exact: true }).isVisible());
+  await input.fill("");
   const scroller = page.getByTestId("classroom-chat-scroll");
   await scroller.evaluate((node) => { node.scrollTop = 0; });
   await page.waitForTimeout(100);

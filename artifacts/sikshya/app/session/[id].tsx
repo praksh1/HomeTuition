@@ -13,7 +13,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { useColors } from "@/hooks/useColors";
-import { radius } from "@/constants/layout";
+import { desktopWorkspaceMax, HIT_SLOP_MIN, marketplaceColumnMax, radius } from "@/constants/layout";
+import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
 import { notify } from "@/utils/alerts";
 import { countdown, humanDuration, serverNow, waitingState } from "@/utils/sessionClock";
@@ -96,6 +97,7 @@ export default function SessionPage() {
   const { user } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const { t, gutter, space, isExpanded } = useLayout();
 
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [attendance, setAttendance] = useState<Attendance | null>(null);
@@ -207,9 +209,15 @@ export default function SessionPage() {
   };
 
   return (
+    <View testID="session-details-page" style={{ flex: 1, backgroundColor: colors.background }}>
     <ScrollView
+      testID="session-details-scroll"
       style={{ flex: 1, backgroundColor: colors.background }}
-      contentContainerStyle={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 40 }]}
+      contentContainerStyle={[styles.container, {
+        width: "100%", maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
+        alignSelf: "center", paddingHorizontal: gutter,
+        paddingTop: insets.top + space.md, paddingBottom: space.lg,
+      }]}
     >
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7} testID="session-back-btn">
@@ -412,37 +420,44 @@ export default function SessionPage() {
       {!isTeacher && (
         <DropClass sessionId={session.id} onDropped={() => void load()} />
       )}
-
-      {/*
-        The Start button, greyed out rather than hidden or quietly refusing.
-
-        "We MUST still make sure, the completed session can never be restarted! The start
-        option should be grayed out unless it is less than 3 hours old." Greying it out is the
-        point — a teacher who has to tap something to be told it will not work has been given a
-        reason to think the app is broken. The server enforces the same window on the room
-        endpoint, so this is the courtesy and that is the control.
-      */}
+    </ScrollView>
+    {/* Keep the existing timed action reachable without covering the register or chat.
+        This is an in-flow sibling, not a second action or a fixed overlay. Server-side
+        membership and start checks remain authoritative when the classroom is opened. */}
+    <View testID="session-action-dock" style={{
+      flexShrink: 0, borderTopWidth: 1, borderColor: colors.border,
+      backgroundColor: colors.card, paddingBottom: insets.bottom + space.sm,
+    }}>
+      <View style={{
+        width: "100%", maxWidth: isExpanded ? desktopWorkspaceMax : marketplaceColumnMax,
+        alignSelf: "center", paddingHorizontal: gutter, paddingTop: space.sm, gap: space.xs,
+      }}>
       <TouchableOpacity
         testID="session-start-btn"
+        accessibilityRole="button"
+        accessibilityState={{ disabled: !start.enabled }}
+        aria-disabled={!start.enabled}
         disabled={!start.enabled}
         onPress={openClassroom}
         activeOpacity={0.85}
         style={[
           styles.primaryBtn,
-          { backgroundColor: start.enabled ? colors.primary : colors.muted },
+          { minHeight: HIT_SLOP_MIN, backgroundColor: start.enabled ? colors.primary : colors.muted },
         ]}
       >
-        <Feather name="video" size={18} color={start.enabled ? "#fff" : colors.mutedForeground} />
-        <Text style={[styles.primaryBtnText, { color: start.enabled ? "#fff" : colors.mutedForeground }]}>
+        <Feather name="video" size={18} color={start.enabled ? colors.primaryForeground : colors.mutedForeground} />
+        <Text style={[t.bodyStrong, { color: start.enabled ? colors.primaryForeground : colors.mutedForeground }]}>
           {start.label}
         </Text>
       </TouchableOpacity>
       {start.reason && (
-        <Text testID="session-start-reason" style={[styles.reason, { color: colors.mutedForeground }]}>
+        <Text testID="session-start-reason" style={[t.caption, { color: colors.mutedForeground, textAlign: "center" }]}>
           {start.reason}
         </Text>
       )}
-    </ScrollView>
+      </View>
+    </View>
+    </View>
   );
 }
 
@@ -471,8 +486,6 @@ const styles = StyleSheet.create({
   helpBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 12, paddingVertical: 12, marginTop: 8 },
   helpBtnText: { color: "#fff", fontSize: 14, fontFamily: "Inter_600SemiBold" },
   primaryBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, borderRadius: 14, paddingVertical: 15 },
-  primaryBtnText: { fontSize: 15, fontFamily: "Inter_600SemiBold" },
-  reason: { fontSize: 12, fontFamily: "Inter_400Regular", textAlign: "center", marginTop: -8, lineHeight: 18 },
   secondaryBtn: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 20, paddingVertical: 10 },
   secondaryBtnText: { fontSize: 14, fontFamily: "Inter_600SemiBold" },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular", textAlign: "center" },

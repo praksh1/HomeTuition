@@ -39,7 +39,7 @@ let passed = 0;
 const check = (value, message) => { assert.ok(value, message); passed += 1; console.log(`PASS ${message}`); };
 
 try {
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 1440]) {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));

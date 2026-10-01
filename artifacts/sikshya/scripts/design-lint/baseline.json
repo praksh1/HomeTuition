@@ -64,8 +64,8 @@
     "size": 12
   },
   "app/session/[id].tsx": {
-    "hex": 4,
-    "size": 17
+    "hex": 2,
+    "size": 15
   },
   "app/support.tsx": {
     "hex": 1,

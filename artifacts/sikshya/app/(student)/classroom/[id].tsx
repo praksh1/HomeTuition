@@ -222,7 +222,6 @@ export default function StudentClassroom() {
 
   const [session, setSession] = useState<SessionData | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [chatMsg, setChatMsg] = useState("");
   const [mode, setMode] = useState<Mode>("board");
   /** The call never unmounts while its app-owned shell is hidden or resized. */
   /**
@@ -666,10 +665,10 @@ export default function StudentClassroom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomWaiting]);
 
-  const sendMessage = () => {
-    if (!chatMsg.trim()) return;
-    sendChat(chatMsg.trim());
-    setChatMsg("");
+  const sendMessage = (text: string) => {
+    if (!connected || !text.trim()) return false;
+    sendChat(text.trim());
+    return true;
   };
 
   // Called when the student clicks Daily's native Leave button — no confirmation needed
@@ -1368,8 +1367,6 @@ export default function StudentClassroom() {
             onReaction={sendReaction}
             reactions={floatingReactions}
             messages={messages}
-            value={chatMsg}
-            onChangeText={setChatMsg}
             onSend={sendMessage}
             onClose={() => setMode("board")}
             placeholder="Message everyone…"
