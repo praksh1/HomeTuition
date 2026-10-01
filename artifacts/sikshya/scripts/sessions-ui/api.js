@@ -52,6 +52,11 @@ export async function apiGet(url) {
     }
     return { sessions: teacherUpcoming };
   }
-  if (url.includes("studentId=")) return { sessions: studentClass };
+  if (url.includes("studentId=")) {
+    const query = new URLSearchParams(url.split("?")[1]);
+    const page = Number(query.get("page") ?? 1);
+    const limit = Number(query.get("limit") ?? 20);
+    return { sessions: studentClass.slice((page - 1) * limit, page * limit), total: studentClass.length, page, limit };
+  }
   throw new Error(`Unexpected sessions request: ${url}`);
 }

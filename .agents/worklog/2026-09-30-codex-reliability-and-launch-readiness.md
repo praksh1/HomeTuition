@@ -35,6 +35,11 @@ app-first phone release without compromising the desktop experience.
 - Inactive app-first rollout helper requires verified published iOS and Android store links,
   preserves desktop and public/support/callback access, and does not block phone browsers.
 - Scoped Preview pairing keeps its newer identity/closure foundation. No wholesale merge.
+- Student Classes reads validated owned-session pages before replacing the list; a failed
+  later page preserves the previous complete list. Stale focus/account reads cannot commit.
+- Teacher Home removes retired plan limits and opens earnings history. New teachers can
+  read the 48-hour review, dispute/make-up holds and bank-transfer distinction before their
+  first student enrollment. Nepal calendar-day labels replace elapsed/device-time labels.
 
 ## Decisions and assumptions
 
@@ -65,8 +70,14 @@ native apps can complete the classroom and critical user journeys.
   in direct chat and 729/486 in class chat, with 27 draft writes. Fixed burst: zero of those
   timeline calls/writes, one draft save after pausing. This is a structural Chromium result,
   not real iPhone INP or universal latency proof.
-- Targeted remedy/shadow/read tests: 56 passed. API build passed. PostgreSQL race checks
-  are prepared in the guarded disposable-database harness, pending execution in CI.
+- Targeted remedy/shadow/read tests: 56 passed. API build passed. First Production CI
+  (36797244344, source 82ad9607) passed 886 API pure tests, 648 app pure tests and 173 real
+  disposable PostgreSQL make-up checks, including 25 duplicate evaluations, payout races,
+  legacy-consent protection, outage review and a database constraint rejecting cash claims.
+- Final follow-up UI source still requires its own exact-source full CI. Production billing
+  fixture passed 63 checks; Preview passed 83. Owned pagination/grouping passed 12 pure
+  checks each; student schedule fixtures passed 38/46 respectively. Production's isolated
+  Nepal-calendar label promotion passed three additional cases and its billing fixture.
 - Final Production participant export passed all 129-chunk API target checks. Real-export
   route checks passed 162 assertions; saved-session startup recovery passed seven checks.
 - Operator export passed 56 authorization, password, logout and recovery checks in each
@@ -92,6 +103,10 @@ native apps can complete the classroom and critical user journeys.
   that predate this fix are withheld from deployment.
 - No local PostgreSQL instance was available. The financial race tests must run against
   the workflow's isolated loopback PostgreSQL service, never Neon or Production.
+- Read-only live owner access check: Production's configured owner exists but has no issued
+  operator account. Preview does not configure an owner ID. Separate login export readiness
+  does not prove the owner's credentials are provisioned. Existing owner login remains intact;
+  do not force migration or claim owner sign-in is verified at the new operator URL.
 - Large pre-existing Excalidraw CSS/code-frame warnings make Metro output noisy. Successful
   exit plus all-chunk target checks, not progress text alone, confirms export completion.
 

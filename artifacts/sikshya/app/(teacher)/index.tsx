@@ -1,5 +1,4 @@
 import { Feather } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import React, { useCallback, useRef, useState } from "react";
 import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
@@ -15,7 +14,7 @@ import Skeleton from "@/components/Skeleton";
 import { useNotifications } from "@/context/NotificationContext";
 import { useDates } from "@/context/DatePreferenceContext";
 import type { Teacher } from "@/context/AuthContext";
-import { teacherAgendaPath } from "@/utils/teacherAgenda";
+import { teacherAgendaPath, teacherAgendaTimeLabel } from "@/utils/teacherAgenda";
 
 interface ApiSession {
   id: number;
@@ -30,32 +29,6 @@ interface ApiSession {
   expired?: boolean;
 }
 
-/** What `GET /teachers/me/allowance` sends back. */
-interface Allowance {
-  tier: string;
-  tierName: string;
-  limit: number;
-  used: number;
-  remaining: number;
-  price: number;
-}
-
-/**
- * A stat on the navy card, so the three cannot drift apart.
- *
- * At module scope deliberately: a component declared inside a render is a new component type
- * every time, which makes React tear down and rebuild the subtree on each state change rather
- * than update it.
- */
-function Stat({ children, label, labelStyle }: { children: React.ReactNode; label: string; labelStyle: object }) {
-  return (
-    <View style={styles.stat}>
-      <View style={styles.statValue}>{children}</View>
-      <Text style={labelStyle} numberOfLines={1}>{label}</Text>
-    </View>
-  );
-}
-
 export default function TeacherDashboard() {
   const { user, logout } = useAuth();
   const colors = useColors();
@@ -65,49 +38,20 @@ export default function TeacherDashboard() {
   const { unreadCount, refresh: refreshNotifs } = useNotifications();
   const teacher = user as Teacher;
   const [upcomingSessions, setUpcomingSessions] = useState<ApiSession[]>([]);
+  const [upcomingCount, setUpcomingCount] = useState<number | null>(null);
   const [expiredCount, setExpiredCount] = useState(0);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState(false);
   const sessionSequence = useRef(0);
-  /**
-   * The real allowance, from the server.
-   *
-   * This used to read `teacher.sessionsThisMonth` against a hard-coded ten. That column has
-   * never been written to since registration set it to zero, so every teacher on every plan was
-   * shown "0/10 Sessions" for ever — and the upgrade nudge below, which fires at eight, could
-   * never fire at all. Null until it loads, so nothing invents a number in the meantime.
-   */
-  const [allowance, setAllowance] = useState<Allowance | null>(null);
-  /**
-   * Loading and failed are different states and must look different.
-   *
-   * Without this the card cannot tell "we have not asked yet" from "we asked and could not
-   * reach the server", and both would render the same placeholder — which is how a teacher ends
-   * up staring at a dash wondering whether it is a spinner or an answer.
-   */
-  const [allowanceLoading, setAllowanceLoading] = useState(true);
 
   useFocusEffect(
     useCallback(() => {
       refreshNotifs();
       loadSessions();
-      loadAllowance();
       const timer = setInterval(() => void loadSessions(true), 15_000);
       return () => { clearInterval(timer); sessionSequence.current += 1; };
     }, [teacher?.userId])
   );
-
-  const loadAllowance = async () => {
-    setAllowanceLoading(true);
-    try {
-      setAllowance(await apiGet<Allowance>("/teachers/me/allowance"));
-    } catch {
-      // A dashboard that cannot reach the server should show nothing here rather than a zero,
-      // which reads as "you have used none of your classes" and is a different claim.
-      setAllowance(null);
-    }
-    setAllowanceLoading(false);
-  };
 
   const loadSessions = async (quiet = false) => {
     if (!teacher?.userId) return;
@@ -115,11 +59,12 @@ export default function TeacherDashboard() {
     if (!quiet) setSessionsLoading(true);
     try {
       const [next, missed] = await Promise.all([
-        apiGet<{ sessions: ApiSession[] }>(teacherAgendaPath(teacher.userId, "upcoming", 5)),
+        apiGet<{ sessions: ApiSession[]; total: number }>(teacherAgendaPath(teacher.userId, "upcoming", 5)),
         apiGet<{ total: number }>(teacherAgendaPath(teacher.userId, "missed", 1)),
       ]);
       if (sequence !== sessionSequence.current) return;
       setUpcomingSessions(next.sessions);
+      setUpcomingCount(Number.isSafeInteger(next.total) && next.total >= next.sessions.length ? next.total : null);
       setExpiredCount(missed.total);
       setSessionsError(false);
     } catch {
@@ -176,12 +121,6 @@ export default function TeacherDashboard() {
 
   if (!teacher) return null;
 
-  // Ink for the navy card. Tokens rather than white-at-an-opacity: an alpha over a gradient
-  // lands on a different colour at each end, and can pass contrast on one side and fail the
-  // other. Both of these are measured against both ends.
-  const onNavy = { color: colors.onInverse };
-  const onNavyMuted = { color: colors.onInverseMuted };
-
   const isPending = teacher.approvalStatus === "pending";
   const isRejected = teacher.approvalStatus === "rejected";
 
@@ -193,15 +132,7 @@ export default function TeacherDashboard() {
    * they open every day. "Today" and "Tomorrow" are kept: they are the same word in both
    * calendars and are easier to read than either.
    */
-  const formatSessionTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diffDays = Math.floor((d.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    if (diffDays === 0) return `Today, ${timeStr}`;
-    if (diffDays === 1) return `Tomorrow, ${timeStr}`;
-    return `${formatDate(d, { withTime: false })}, ${timeStr}`;
-  };
+  const formatSessionTime = (dateStr: string) => teacherAgendaTimeLabel(dateStr, formatDate);
 
   return (
     <ScrollView
@@ -307,81 +238,16 @@ export default function TeacherDashboard() {
         </View>
       )}
 
-      {/*
-        On a laptop the summary and the two buttons sit side by side; on a phone they stack.
-        Same components either way — the screen is given more room, not redesigned.
-      */}
-      <View style={{ flexDirection: isExpanded ? "row" : "column", gap: space.md, alignItems: "stretch" }}>
-        {/* ------------------------------------------------------------ this month */}
-        <LinearGradient
-          // Navy into the action blue. The card is a *surface*, so it does not use crimson —
-          // and both ends carry white text well above AA.
-          colors={[colors.secondary, colors.primary]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.statsCard, { borderRadius: radius.lg, padding: space.lg, gap: space.md, flex: isExpanded ? 1.4 : undefined }]}
-        >
-          <View style={styles.statsHead}>
-            <Text style={[t.overline, onNavyMuted]}>This month</Text>
-            {allowance && teacher.subscriptionActive && (
-              <Text style={[t.caption, onNavyMuted]}>
-                Existing single-class access
-              </Text>
-            )}
-          </View>
-
-          <View style={styles.statsRow}>
-            <Stat label="Single classes" labelStyle={[t.caption, onNavyMuted]}>
-              {allowanceLoading ? (
-                <Skeleton width={54} height={22} tint={colors.onInverseMuted} />
-              ) : allowance ? (
-                <Text style={[t.title1, numeric, onNavy]}>
-                  {allowance.used}
-                  {teacher.subscriptionActive ? <Text style={[t.title3, onNavyMuted]}>/{allowance.limit}</Text> : null}
-                </Text>
-              ) : (
-                <Text style={[t.title3, onNavyMuted]}>Unavailable</Text>
-              )}
-            </Stat>
-
-            <View style={[styles.statDivider, { backgroundColor: colors.onInverseMuted }]} />
-
-            <Stat label="Students" labelStyle={[t.caption, onNavyMuted]}>
-              <Text style={[t.title1, numeric, onNavy]}>{teacher.totalStudents}</Text>
-            </Stat>
-
-            <View style={[styles.statDivider, { backgroundColor: colors.onInverseMuted }]} />
-
-            {/*
-              Earnings are not tracked yet.
-
-              `monthly_earnings` is written once, to zero, at registration and never again — so
-              this tile has been telling every teacher they earned NPR 0k since the app was
-              built. A fabricated zero about money is the worst kind of placeholder, because it
-              is indistinguishable from a real answer. It says what it actually knows instead,
-              and starts working the day payments do.
-            */}
-            <Stat label="Earned · soon" labelStyle={[t.caption, onNavyMuted]}>
-              <Text style={[t.title1, numeric, onNavyMuted]}>—</Text>
-            </Stat>
-          </View>
-
-          {teacher.subscriptionActive && allowance && allowance.remaining > 0 && (
-            <View style={styles.planBadge}>
-              <Feather name="shield" size={13} color={colors.onInverseMuted} />
-              <Text style={[t.caption, onNavyMuted]}>
-                {allowance.remaining} more single {allowance.remaining === 1 ? "class" : "classes"} on existing access
-              </Text>
-            </View>
-          )}
-        </LinearGradient>
-
+      <View style={{ gap: space.sm }}>
+        <Text style={[t.title2, { color: colors.foreground }]}>Your teaching day</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>
+          Create and manage classes here. Open Schedule for lesson times and attendance.
+        </Text>
         {/* --------------------------------------------------------- quick actions */}
         <View
           style={{
-            flexDirection: isExpanded ? "column" : "row",
+            flexDirection: "row",
             gap: space.sm,
-            flex: isExpanded ? 1 : undefined,
             justifyContent: "center",
           }}
         >
@@ -394,6 +260,7 @@ export default function TeacherDashboard() {
             onPress={() => router.push("/(teacher)/create-class")}
             activeOpacity={0.85}
             accessibilityRole="button"
+            accessibilityLabel="New class"
           >
             <Feather name="plus" size={18} color={colors.primaryForeground} />
             <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>New class</Text>
@@ -406,9 +273,10 @@ export default function TeacherDashboard() {
             onPress={() => router.push("/(teacher)/sessions")}
             activeOpacity={0.85}
             accessibilityRole="button"
+            accessibilityLabel="Schedule"
           >
             <Feather name="calendar" size={18} color={colors.foreground} />
-            <Text style={[t.bodyStrong, { color: colors.foreground }]}>View all</Text>
+            <Text style={[t.bodyStrong, { color: colors.foreground }]}>Schedule</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -456,7 +324,9 @@ export default function TeacherDashboard() {
         <Text style={[t.title2, { color: colors.foreground }]}>Upcoming</Text>
         {!sessionsLoading && upcomingSessions.length > 0 && (
           <Text style={[t.caption, numeric, { color: colors.inkFaint }]}>
-            {upcomingSessions.length} {upcomingSessions.length === 1 ? "class" : "classes"}
+            {upcomingCount !== null && upcomingCount > upcomingSessions.length
+              ? `Next ${upcomingSessions.length} of ${upcomingCount} lessons`
+              : `${upcomingSessions.length} ${upcomingSessions.length === 1 ? "lesson" : "lessons"}`}
           </Text>
         )}
       </View>
@@ -593,47 +463,20 @@ export default function TeacherDashboard() {
         );
       })}
 
-      {/*
-        Warn near the limit, not at a fixed eight — eight of ten is worth a word and eight of
-        thirty is not. Two left is the point at which a teacher can still act on it.
-
-        Amber while there is room to act, rust once the plan is spent: running out is a
-        different message from running low, and they should not look the same.
-      */}
-      {teacher.subscriptionActive && teacher.approvalStatus === "approved" && allowance !== null && allowance.remaining <= 2 && (
-        <TouchableOpacity
-          style={[
-            styles.banner,
-            {
-              backgroundColor: allowance.remaining === 0 ? colors.destructiveSoft : colors.warnSoft,
-              borderColor: allowance.remaining === 0 ? colors.destructive : colors.warn,
-              borderRadius: radius.md,
-              padding: space.sm,
-              alignItems: "center",
-            },
-          ]}
-          onPress={() => router.push("/(teacher)/subscription")}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-        >
-          <Feather
-            name="alert-triangle"
-            size={15}
-            color={allowance.remaining === 0 ? colors.destructive : colors.warn}
-          />
-          <Text
-            style={[
-              t.caption,
-              { flex: 1, color: allowance.remaining === 0 ? colors.destructive : colors.warn },
-            ]}
-          >
-            {allowance.remaining === 0
-              ? `All ${allowance.limit} single classes on your existing access are used.`
-              : `${allowance.remaining} single ${allowance.remaining === 1 ? "class" : "classes"} left on your existing access.`}
-          </Text>
-          <Text style={[t.caption, { color: colors.primary }]}>Teaching access</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity
+        testID="teacher-earnings-entry"
+        accessibilityRole="button"
+        accessibilityLabel="Earnings history. Payment records and payout information"
+        onPress={() => router.push("/(teacher)/subscription")}
+        style={[styles.monthlyEntry, { borderColor: colors.border, backgroundColor: colors.card, borderRadius: radius.md, padding: space.md, gap: space.sm }]}
+      >
+        <Feather name="credit-card" size={20} color={colors.primary} />
+        <View style={{ flex: 1 }}>
+          <Text style={[t.bodyStrong, { color: colors.foreground }]}>Earnings history</Text>
+          <Text style={[t.callout, { color: colors.mutedForeground }]}>Payment records, pending earnings and payouts</Text>
+        </View>
+        <Feather name="chevron-right" size={20} color={colors.inkFaint} />
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -665,13 +508,6 @@ const styles = StyleSheet.create({
 
   banner: { flexDirection: "row", alignItems: "flex-start", gap: 10, borderWidth: 1 },
 
-  statsCard: { justifyContent: "center" },
-  statsHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
-  statsRow: { flexDirection: "row", alignItems: "stretch" },
-  stat: { flex: 1, alignItems: "center", gap: 4 },
-  statValue: { minHeight: 30, justifyContent: "center", alignItems: "center" },
-  statDivider: { width: StyleSheet.hairlineWidth },
-  planBadge: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start" },
   actionBtn: {
     flex: 1,
     flexDirection: "row",

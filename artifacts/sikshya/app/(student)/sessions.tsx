@@ -1,11 +1,12 @@
 import { Feather } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, FlatList, Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "@/context/AuthContext";
 import { apiGet } from "@/utils/api";
+import { readCompleteOwnedSessions, type OwnedSessionPage } from "@/utils/ownedSessionPages";
 import SessionCard from "@/components/SessionCard";
 import { useColors } from "@/hooks/useColors";
 import type { Student } from "@/context/AuthContext";
@@ -51,6 +52,7 @@ interface Session {
 }
 
 type ViewMode = "upcoming" | "live" | "history";
+type SessionResponseRow = { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] };
 type SessionListItem =
   | { kind: "session"; key: string; session: Session }
   | {
@@ -91,6 +93,11 @@ export default function StudentSessions() {
    */
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const readGeneration = useRef(0);
+  const currentStudentId = useRef(student?.userId);
+  currentStudentId.current = student?.userId;
+  const dataOwner = useRef(student?.userId);
+  const reading = useRef<{ owner: number | undefined; generation: number; promise: Promise<void> } | null>(null);
 
   // Sessions go live on the teacher's schedule, not the student's navigation. Loading only
   // on focus meant a class that started while this screen was open never appeared as live —
@@ -100,7 +107,7 @@ export default function StudentSessions() {
     useCallback(() => {
       loadSessions();
       const timer = setInterval(loadSessions, SESSION_POLL_MS);
-      return () => clearInterval(timer);
+      return () => { clearInterval(timer); readGeneration.current++; };
     }, [student?.userId])
   );
 
@@ -113,17 +120,23 @@ export default function StudentSessions() {
     return () => clearInterval(timer);
   }, []);
 
-  const loadSessions = async () => {
+  const loadSessions = (): Promise<void> => {
+    const owner = student?.userId;
+    if (reading.current && reading.current.owner === owner && reading.current.generation === readGeneration.current) return reading.current.promise;
+    const generation = ++readGeneration.current;
+    const isCurrent = () => generation === readGeneration.current && currentStudentId.current === owner;
+    if (dataOwner.current !== owner) {
+      dataOwner.current = owner;
+      setSessions([]); setLoading(true); setLoadError(false);
+    }
+    const promise = Promise.resolve().then(async () => {
     try {
-      const [myRes] = await Promise.all([
-        student?.userId
-          ? apiGet<{ sessions: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] }[] }>(
-              `/sessions?studentId=${student.userId}&limit=100`
-            )
-          : Promise.resolve({ sessions: [] }),
-      ]);
-
-      const mapSession = (s: { id: number; teacherName: string; subject: string; topic: string; date: string; duration: number; maxStudents: number; enrolledCount: number; price: number; status: string; enrolment?: string | null; testClass?: boolean; testClassLabel?: string; classGroup?: Session["classGroup"] }): Session => ({
+      const rows = owner ? await readCompleteOwnedSessions(
+        (page, limit) => apiGet<OwnedSessionPage<SessionResponseRow>>(`/sessions?studentId=${owner}&limit=${limit}&page=${page}`),
+        isCurrent,
+      ) : [];
+      if (!isCurrent()) return;
+      const mapSession = (s: SessionResponseRow): Session => ({
         id: String(s.id),
         teacherId: "",
         teacherName: s.teacherName,
@@ -151,14 +164,18 @@ export default function StudentSessions() {
        *
        * Classes to buy belong in Discover. This screen is the ones they own.
        */
-      setSessions(myRes.sessions.map(mapSession));
+      setSessions(rows.map(mapSession));
       setLoadError(false);
     } catch (_e) {
       // Offline: fall through to whatever was last known rather than emptying the list.
-      setLoadError(true);
+      if (isCurrent()) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
+      if (reading.current?.generation === generation) reading.current = null;
     }
+    });
+    reading.current = { owner, generation, promise };
+    return promise;
   };
 
   /**

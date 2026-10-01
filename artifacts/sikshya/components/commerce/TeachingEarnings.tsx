@@ -38,6 +38,13 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Estimates are shown before applicable taxes. Final earnings can change after an approved refund or adjustment. Students pay upfront; eligible earnings are released after lesson delivery and the complaint window.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
       </ProgramCardShell>
+      <ProgramCardShell>
+        <Text style={[t.title2, { color: colors.foreground }]}>When will I get paid?</Text>
+        <Text style={[t.body, { color: colors.foreground }]}>During testing, bookings and earnings are practice records. No real money is collected or paid out.</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>Each original lesson's earnings stay pending until delivery is confirmed and its 48-hour student review window ends. An open dispute or make-up keeps that lesson's share on hold, not your other eligible lessons. A delivered replacement starts a fresh 48-hour review window after delivery is confirmed; it is not a second charge or earning.</Text>
+        <Text style={[t.body, { color: colors.mutedForeground }]}>Eligible does not mean paid or transferred to your bank. Fadko will publish the payout schedule, transfer method and processing time before accepting real payments.</Text>
+        <ProgramButton label="Ask about earnings" onPress={() => router.push("/support")} />
+      </ProgramCardShell>
       <ProgramNotice title={policy.testPilotEndsAt ? "Practice payments" : "Payments are not open yet"} tone="waiting">
         <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "The current test environment uses practice bookings. No money is collected or paid out. Your lesson records and payment breakdown remain available below." : "You can prepare and publish a class. New paid enrollment will open when payment processing is ready; your existing lessons and learning resources remain available."}</Text>
       </ProgramNotice>
