@@ -39,7 +39,7 @@ let passed = 0;
 const check = (value, message) => { assert.ok(value, message); passed += 1; console.log(`PASS ${message}`); };
 
 try {
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 1440]) {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
@@ -78,6 +78,7 @@ try {
     const studentBody = await page.locator("body").innerText();
     check(studentBody.includes("30 of 30 lessons remaining"), `${width}: class progress is concise and truthful`);
     check(!studentBody.includes("Monthly Classes"), `${width}: student library has no retired product`);
+    check(studentBody.includes("Upcoming (1)") && studentBody.includes("Live (0)") && studentBody.includes("History (0)"), `${width}: student lesson filters always use parenthesized counts, including zero`);
     for (const id of ["upcoming", "live", "history"]) {
       const box = await page.getByTestId(`student-group-${id}`).boundingBox();
       check(box && box.height >= 44, `${width}: student ${id} filter meets the touch floor`);

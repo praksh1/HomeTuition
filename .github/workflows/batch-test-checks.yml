@@ -11,7 +11,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     services:
       postgres:
         image: postgres:16
@@ -71,6 +71,10 @@ jobs:
           pnpm --filter @workspace/sikshya run test:makeups-ui
           pnpm --filter @workspace/sikshya run test:class-students
           pnpm --filter @workspace/sikshya run test:messages-ui
+          node artifacts/sikshya/scripts/messages-ui/history.mjs
+          pnpm --filter @workspace/sikshya run test:notifications-ui
+          pnpm --filter @workspace/sikshya run test:lesson-drop-ui
+          pnpm --filter @workspace/sikshya run test:classroom-chat-ui
       - name: Real-export make-up route checks
         env:
           EXPO_PUBLIC_API_URL: http://127.0.0.1:39999
@@ -78,6 +82,8 @@ jobs:
         run: |
           pnpm --filter @workspace/sikshya run build
           pnpm --filter @workspace/sikshya run test:makeups-routes
+          pnpm --filter @workspace/sikshya run test:lesson-drop-routes
+          pnpm --filter @workspace/sikshya run test:messages-routes
           pnpm --filter @workspace/sikshya run test:startup-recovery
       - name: Isolated operator export, access and recovery checks
         env:

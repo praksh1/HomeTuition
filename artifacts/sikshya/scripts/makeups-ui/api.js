@@ -120,6 +120,8 @@ if (query.has("disabled")) {
   if (data.lessons[0].case) data.lessons[0].case.actions = actions;
 }
 if (query.has("past")) data.serverNow = "2026-09-30T05:15:00Z";
+if (query.has("future-original")) { data.lessons[0].startsAt = "2026-10-10T03:15:00Z"; data.lessons[0].endsAt = "2026-10-10T04:15:00Z"; }
+if (query.has("closed-window")) data.serverNow = "2026-10-30T03:15:00Z";
 if (query.has("untouched")) data.lessons.push({ ...data.lessons[0], originalSessionId: 106, title: "Untouched upcoming lesson", case: null, canRequest: false, canReportTeacherMissed: false });
 window.requests = [];
 window.fixture = data;

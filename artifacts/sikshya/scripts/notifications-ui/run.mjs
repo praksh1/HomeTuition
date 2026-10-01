@@ -38,7 +38,7 @@ let passed = 0;
 const check = (value, message) => { assert.ok(value, message); passed += 1; console.log(`PASS ${message}`); };
 
 try {
-  for (const width of [390, 1440]) {
+  for (const width of [320, 390, 1440]) {
     const page = await browser.newPage({ viewport: { width, height: 844 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(String(error)));
@@ -47,7 +47,13 @@ try {
 
     const body = await page.locator("body").innerText();
     check(body.includes("30 updates are waiting for you."), `${width}: truthful unread summary is prominent`);
-    check(body.includes("All 60") && body.includes("Unread 30"), `${width}: All and Unread counts are visible`);
+    check(body.includes("All (60)") && body.includes("Unread (30)"), `${width}: All and Unread counts use parentheses`);
+    for (const [id, label] of [["all", "All (60)"], ["unread", "Unread (30)"]]) {
+      const filter = page.getByTestId(`notification-filter-${id}`);
+      const box = await filter.boundingBox();
+      check((await filter.innerText()).trim() === label, `${width}: ${id} filter uses the exact count format`);
+      check(box && box.height >= 44 && box.x >= 0 && box.x + box.width <= width, `${width}: ${id} count filter remains reachable without horizontal overflow`);
+    }
     check(body.includes("Nepal time"), `${width}: notification times are explicitly Nepal time`);
     check(body.toLowerCase().includes("message"), `${width}: event type uses a human label`);
     check((await page.getByTestId("notifications-back").boundingBox()).height >= 44, `${width}: Back meets the touch floor`);
@@ -67,6 +73,7 @@ try {
     await page.getByTestId("notification-mark-all-read").click();
     await page.getByText("Nothing unread", { exact: true }).waitFor();
     check((await page.locator("body").innerText()).includes("You are all caught up."), `${width}: all-read state is calm and explicit`);
+    check((await page.getByTestId("notification-filter-unread").innerText()).trim() === "Unread (0)", `${width}: zero unread still uses parentheses`);
 
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: no horizontal overflow`);
     check(errors.length === 0, `${width}: no browser exceptions`);

@@ -9,6 +9,7 @@ import { useDates } from "@/context/DatePreferenceContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet } from "@/utils/api";
+import { filterCountLabel } from "@/utils/filterCountLabel";
 import {
   filterRosterStudents,
   ROSTER_PAGE_SIZE,
@@ -155,7 +156,7 @@ export default function ClassStudentsScreen() {
                         }}
                       >
                         <Text style={[t.caption, numeric, { color: active ? colors.primary : colors.mutedForeground }]}>
-                          {choice.label} {count}
+                          {filterCountLabel(choice.label, count)}
                         </Text>
                       </TouchableOpacity>
                     );

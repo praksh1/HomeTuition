@@ -304,7 +304,6 @@ export default function Classroom() {
   const [session, setSession] = useState<SessionData | null>(null);
   const [mode, setMode] = useState<Mode>("whiteboard");
   const [elapsed, setElapsed] = useState(0);
-  const [chatMsg, setChatMsg] = useState("");
   /**
    * The call never unmounts while its app-owned shell is hidden, moved or resized.
    *
@@ -1116,10 +1115,10 @@ export default function Classroom() {
     }
   }, [completeClass, endingClass]);
 
-  const sendMessage = () => {
-    if (!chatMsg.trim()) return;
-    sendChat(chatMsg.trim());
-    setChatMsg("");
+  const sendMessage = (text: string) => {
+    if (!connected || !text.trim()) return false;
+    sendChat(text.trim());
+    return true;
   };
 
   /**
@@ -2162,8 +2161,6 @@ export default function Classroom() {
             onReaction={sendReaction}
             reactions={floatingReactions}
             messages={messages}
-            value={chatMsg}
-            onChangeText={setChatMsg}
             onSend={sendMessage}
             onClose={() => setMode("whiteboard")}
             placeholder="Message everyone…"

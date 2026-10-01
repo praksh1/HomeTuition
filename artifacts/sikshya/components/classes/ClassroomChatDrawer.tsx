@@ -24,9 +24,7 @@ import { ClassroomReactions } from "./ClassroomReactions";
 interface ClassroomChatDrawerProps {
   open: boolean;
   messages: ChatMessage[];
-  value: string;
-  onChangeText: (value: string) => void;
-  onSend: () => void;
+  onSend: (text: string) => boolean | void;
   onClose: () => void;
   placeholder: string;
   emptyText: string;
@@ -66,8 +64,6 @@ function groupMessages(messages: ChatMessage[]): GroupedMessage[] {
 export function ClassroomChatDrawer({
   open,
   messages,
-  value,
-  onChangeText,
   onSend,
   onClose,
   placeholder,
@@ -83,6 +79,7 @@ export function ClassroomChatDrawer({
   const scrollRef = useRef<ScrollView>(null);
   const nearEndRef = useRef(true);
   const previousCountRef = useRef(messages.length);
+  const draftRef = useRef("");
   const [newBelow, setNewBelow] = useState(0);
   const [reactionPicker, setReactionPicker] = useState(false);
   const [reactionCooling, setReactionCooling] = useState(false);
@@ -122,11 +119,9 @@ export function ClassroomChatDrawer({
     setNewBelow((count) => count + added);
   }, [messages, open, scrollToLatest]);
 
-  const submit = useCallback(() => {
-    if (!value.trim() || !connected) return;
-    onSend();
+  const sent = useCallback(() => {
     setTimeout(() => scrollToLatest(true), 0);
-  }, [onSend, scrollToLatest, value, connected]);
+  }, [scrollToLatest]);
 
   const panel = (
     <KeyboardAvoidingView
@@ -328,55 +323,7 @@ export function ClassroomChatDrawer({
             style={[styles.iconButton, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN }]}>
             <Feather name={reactionPicker ? "x" : "smile"} size={21} color={reactionPicker ? colors.primary : colors.inkFaint} />
           </TouchableOpacity> : null}
-          <TextInput
-            testID="chat-input"
-            accessibilityLabel={placeholder}
-            value={value}
-            onChangeText={onChangeText}
-            placeholder={placeholder}
-            placeholderTextColor={colors.inkFaint}
-            multiline
-            blurOnSubmit={false}
-            onKeyPress={(event) => {
-              const keyboardEvent = event as unknown as {
-                preventDefault?: () => void;
-                nativeEvent: { key?: string; keyCode?: number; shiftKey?: boolean; isComposing?: boolean };
-              };
-              if (
-                Platform.OS === "web" &&
-                keyboardEvent.nativeEvent.key === "Enter" &&
-                !keyboardEvent.nativeEvent.isComposing &&
-                keyboardEvent.nativeEvent.keyCode !== 229 &&
-                !keyboardEvent.nativeEvent.shiftKey
-              ) {
-                keyboardEvent.preventDefault?.();
-                submit();
-              }
-            }}
-            // Use the readable 17px phone step without a heading's weight. Do not
-            // disable browser zoom to keep an input visible on a small screen.
-            style={[isCompact ? t.title3 : t.body, styles.input, { color: colors.foreground, fontFamily: t.body.fontFamily, letterSpacing: t.body.letterSpacing }]}
-          />
-          <TouchableOpacity
-            testID="chat-send"
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            disabled={!value.trim() || !connected}
-            aria-disabled={!value.trim() || !connected}
-            onPress={submit}
-            activeOpacity={0.8}
-            style={[
-              styles.send,
-              {
-                width: HIT_SLOP_MIN,
-                height: HIT_SLOP_MIN,
-                borderRadius: radius.pill,
-                backgroundColor: value.trim() ? colors.primary : "transparent",
-              },
-            ]}
-          >
-            <Feather name="arrow-up" size={19} color={value.trim() ? colors.primaryForeground : colors.inkFaint} />
-          </TouchableOpacity>
+          <ClassroomChatComposer draftRef={draftRef} connected={connected} onSend={onSend} onSubmitted={sent} placeholder={placeholder} />
         </View>
       </View>
     </KeyboardAvoidingView>
@@ -412,6 +359,52 @@ export function ClassroomChatDrawer({
       </Pressable>
     </Modal>
   );
+}
+
+/** Typing must not redraw the shared board, call tiles or the message history. */
+function ClassroomChatComposer({ draftRef, connected, onSend, onSubmitted, placeholder }: {
+  draftRef: React.MutableRefObject<string>;
+  connected: boolean;
+  onSend: (text: string) => boolean | void;
+  onSubmitted: () => void;
+  placeholder: string;
+}) {
+  const colors = useColors();
+  const { t, isCompact, radius } = useLayout();
+  const [value, setValue] = useState(draftRef.current);
+  const [problem, setProblem] = useState(false);
+  const submit = () => {
+    const text = draftRef.current.trim();
+    if (!text || !connected) return;
+    try {
+      if (onSend(text) === false) { setProblem(true); return; }
+      draftRef.current = "";
+      setValue("");
+      setProblem(false);
+      onSubmitted();
+    } catch { setProblem(true); }
+  };
+  return <View style={{ flex: 1, minWidth: 0 }}>
+    {problem ? <Text accessibilityLiveRegion="polite" style={[t.caption, { color: colors.warn }]}>Could not send. Your message is still here.</Text> : null}
+    <View style={{ flexDirection: "row", alignItems: "flex-end" }}>
+      <TextInput testID="chat-input" accessibilityLabel={placeholder} value={value}
+        onChangeText={text => { draftRef.current = text; setValue(text); }}
+        placeholder={placeholder} placeholderTextColor={colors.inkFaint} multiline blurOnSubmit={false}
+        onKeyPress={event => {
+          const native = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean; isComposing?: boolean; keyCode?: number };
+          if (Platform.OS === "web" && native.key === "Enter" && !native.shiftKey && !native.isComposing && native.keyCode !== 229) {
+            event.preventDefault(); submit();
+          }
+        }}
+        style={[isCompact ? t.title3 : t.body, styles.input, { color: colors.foreground, fontFamily: t.body.fontFamily, letterSpacing: t.body.letterSpacing }]} />
+      <TouchableOpacity testID="chat-send" accessibilityRole="button" accessibilityLabel="Send message"
+        disabled={!value.trim() || !connected} aria-disabled={!value.trim() || !connected}
+        accessibilityState={{ disabled: !value.trim() || !connected }} onPress={submit} activeOpacity={0.8}
+        style={[styles.send, { width: HIT_SLOP_MIN, height: HIT_SLOP_MIN, borderRadius: radius.pill, backgroundColor: value.trim() ? colors.primary : "transparent" }]}>
+        <Feather name="arrow-up" size={19} color={value.trim() ? colors.primaryForeground : colors.inkFaint} />
+      </TouchableOpacity>
+    </View>
+  </View>;
 }
 
 const styles = {

@@ -4,6 +4,8 @@
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
+    "test:lesson-drop-ui": "node scripts/lesson-drop-ui/run.mjs",
+    "test:lesson-drop-routes": "node scripts/lesson-drop-routes/run.mjs",
     "test:teaching-billing": "node scripts/teaching-billing/run.mjs",
     "test:batch-booking-ui": "node scripts/batch-booking/run.mjs",
     "dev": "node scripts/copy-pdf-worker.js && expo start --web --port 8081",
@@ -65,6 +67,7 @@
     "test:makeups-routes": "node scripts/makeups-routes/run.mjs",
     "test:class-students": "node scripts/class-students-journey/run.mjs",
     "test:messages-ui": "node scripts/messages-ui/run.mjs && node scripts/messages-ui/performance.mjs",
+    "test:messages-routes": "node scripts/messages-ui/routes.mjs",
     "test:profile-ui": "node scripts/profile-ui/run.mjs",
     "test:notifications-ui": "node scripts/notifications-ui/run.mjs",
     "test:startup-recovery": "node scripts/startup-recovery/run.mjs"

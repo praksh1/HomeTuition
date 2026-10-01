@@ -34,6 +34,9 @@ import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import {
   remedyCanReportTeacher,
   remedyOfferInstant,
+  remedyOfferWindow,
+  remedyOfferProblem,
+  remedySuggestedOffer,
   remedyQuotaLabel,
   remedyStatusLabel,
   remedyVisibleLessons,
@@ -99,7 +102,6 @@ export default function MakeupsWorkspace({
   const [time, setTime] = useState("09:00");
   const [datePicker, setDatePicker] = useState(false);
   const [timePicker, setTimePicker] = useState(false);
-  const [confirmedTeacherMissed, setConfirmedTeacherMissed] = useState(false);
   const [outcome, setOutcome] =
     useState<(typeof outcomes)[number]["value"]>("refund_review");
   const [deliveryChecked, setDeliveryChecked] = useState(false);
@@ -184,17 +186,12 @@ export default function MakeupsWorkspace({
     mode: Form["mode"],
     reason: Form["reason"] = "student_missed",
   ) => {
-    const proposed = lessonDraft({
-      startsAt: new Date(
-        Date.parse(data?.serverNow ?? "") + 24 * 60 * 60 * 1000,
-      ).toISOString(),
-      durationMinutes: 60,
-    });
-    setDate(proposed.date);
-    setTime(proposed.time);
+    const proposedInstant = remedySuggestedOffer(lesson, data?.serverNow ?? "");
+    const proposed = proposedInstant ? lessonDraft({ startsAt: proposedInstant, durationMinutes: 60 }) : null;
+    setDate(proposed?.date ?? "");
+    setTime(proposed?.time ?? "09:00");
     setNote("");
     setFormError("");
-    setConfirmedTeacherMissed(false);
     setOutcome("refund_review");
     setDeliveryChecked(false);
     setForm({ lesson, mode, reason });
@@ -226,19 +223,14 @@ export default function MakeupsWorkspace({
         setFormError("Choose a valid date and Nepal start time.");
         return;
       }
-      if (
-        remedy.reason === "teacher_missed" &&
-        !remedy.teacherNonDeliveryConfirmed &&
-        !confirmedTeacherMissed
-      ) {
-        setFormError(
-          "Confirm the missed teaching below before offering a teacher non-delivery replacement.",
-        );
-        return;
-      }
+      const dateProblem = remedyOfferProblem(lesson, data?.serverNow ?? "", startsAt);
+      if (dateProblem) { setFormError(dateProblem); return; }
+      // The specific disclosed button is the teacher's acknowledgement, not system proof.
+      // Keep the server's consent/allowance check; do not silently turn an allegation into absence.
+      const replacingUndelivered = remedy.reason === "teacher_missed" && !remedy.teacherNonDeliveryConfirmed;
       void mutate(
         `/lesson-remedies/${remedy.id}/offer`,
-        { startsAt, confirmTeacherNonDelivery: confirmedTeacherMissed },
+        { startsAt, confirmTeacherNonDelivery: replacingUndelivered },
         "Replacement date offered. The student must accept it before it is assigned.",
       );
     } else if (mode === "reject" && remedy)
@@ -300,6 +292,8 @@ export default function MakeupsWorkspace({
   };
   const teacher = data?.role === "teacher";
   const operatorMode = operator && data?.role === "admin";
+  const offerWindow = form?.mode === "offer" ? remedyOfferWindow(form.lesson, data?.serverNow ?? "") : null;
+  const acknowledgingNonDelivery = form?.mode === "offer" && form.lesson.case?.reason === "teacher_missed" && !form.lesson.case.teacherNonDeliveryConfirmed;
   // Teachers arrange existing requests; they cannot request a replacement for a student.
   // The operator's "All cases" must not expand into an entire purchased timetable.
   const candidates = (data?.lessons ?? []).filter(lesson => !(teacher || operatorMode) || Boolean(lesson.case));
@@ -781,6 +775,7 @@ export default function MakeupsWorkspace({
             ) : null}
             {form?.mode === "offer" ? (
               <>
+                {!offerWindow ? <ProgramNotice title="No replacement time available" body="The original dates or replacement deadline need checking. Refresh the request before arranging a date; no change or refund has been made." tone="waiting" /> : null}
                 <ProgramNotice
                   title="Keep the original lesson linked"
                   tone="neutral"
@@ -827,19 +822,13 @@ export default function MakeupsWorkspace({
                     disabled={busy}
                   />
                 )}
-                {form.lesson.case?.reason === "teacher_missed" &&
-                !form.lesson.case.teacherNonDeliveryConfirmed ? (
-                  <ProgramButton
-                    label={
-                      confirmedTeacherMissed
-                        ? "Confirmed: I did not deliver the original lesson"
-                        : "Confirm I did not deliver the original lesson"
-                    }
-                    emphasis={confirmedTeacherMissed ? "primary" : "secondary"}
-                    onPress={() => setConfirmedTeacherMissed((value) => !value)}
-                    disabled={busy}
+                {acknowledgingNonDelivery ? (
+                  <ProgramNotice
+                    title="Replace an undelivered lesson"
+                    body="The student reported that this lesson was not taught. Choosing Replace undelivered lesson confirms you are replacing teaching that was not delivered; it will not use the student's courtesy allowance. If you taught the lesson, review the request instead."
                   />
                 ) : null}
+                {acknowledgingNonDelivery ? <ProgramButton label="I taught this lesson — review request" emphasis="quiet" disabled={busy} onPress={() => openForm(form.lesson, "reject", "teacher_missed")} /> : null}
               </>
             ) : (
               <>
@@ -965,7 +954,7 @@ export default function MakeupsWorkspace({
             <ProgramButton
               label={
                 form?.mode === "offer"
-                  ? "Offer this date"
+                  ? acknowledgingNonDelivery ? "Replace undelivered lesson" : "Offer this date"
                   : form?.mode === "resolve"
                     ? "Record decision"
                     : form?.mode === "reject"
@@ -974,6 +963,7 @@ export default function MakeupsWorkspace({
               }
               emphasis="primary"
               busy={busy}
+              disabled={form?.mode === "offer" && !offerWindow}
               onPress={submit}
             />
             <ProgramButton
@@ -990,18 +980,18 @@ export default function MakeupsWorkspace({
         value={batchDateValue(date)}
         title="Choose a replacement date"
         minDate={
-          data
+          offerWindow
             ? batchDateValue(
-                lessonDraft({ startsAt: data.serverNow, durationMinutes: 60 })
+                lessonDraft({ startsAt: new Date(offerWindow.earliest).toISOString(), durationMinutes: 60 })
                   .date,
               )
             : null
         }
         maxDate={
-          form?.lesson.case
+          offerWindow
             ? batchDateValue(
                 lessonDraft({
-                  startsAt: form.lesson.case.replacementDeadlineAt,
+                  startsAt: new Date(offerWindow.latest).toISOString(),
                   durationMinutes: 60,
                 }).date,
               )

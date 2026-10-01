@@ -4,6 +4,9 @@ import {
   remedyGroup,
   remedyCanReportTeacher,
   remedyOfferInstant,
+  remedyOfferWindow,
+  remedyOfferProblem,
+  remedySuggestedOffer,
   remedyQuotaLabel,
   remedyStatusLabel,
   remedyVisibleLessons,
@@ -109,4 +112,26 @@ test("teacher non-delivery cannot be reported before the scheduled end", () => {
   assert.equal(remedyCanReportTeacher(value, value.endsAt), true);
   assert.equal(remedyCanReportTeacher(value, "bad date"), false);
   assert.equal(remedyCanReportTeacher({ ...value, canReportTeacherMissed: false }, value.endsAt), false);
+});
+test("future original lessons start replacement suggestions after the original, not tomorrow", () => {
+  const value = { ...lesson("requested"), startsAt: "2026-10-10T03:15:00Z", endsAt: "2026-10-10T04:15:00Z" };
+  const now = "2026-09-30T03:15:00Z";
+  assert.equal(remedySuggestedOffer(value, now), "2026-10-10T04:16:00.000Z");
+  assert.equal(remedyOfferProblem(value, now, "2026-10-01T03:15:00Z"), "Choose a time after the original lesson ends and after the current time.");
+  assert.equal(remedyOfferProblem(value, now, remedySuggestedOffer(value, now)!), null);
+});
+test("suggested time fits the full lesson and inclusive deadline, including a nearly closed window", () => {
+  const value = lesson("requested");
+  const now = "2026-10-30T03:00:00Z";
+  assert.equal(remedySuggestedOffer(value, now), "2026-10-30T03:15:00.000Z");
+  assert.equal(remedyOfferProblem(value, now, "2026-10-30T03:15:00Z"), null);
+  assert.equal(remedyOfferProblem(value, now, "2026-10-30T03:16:00Z"), "Choose an earlier time so the whole make-up finishes before its deadline.");
+  assert.equal(remedyOfferWindow(value, "2026-10-30T03:15:00Z"), null);
+});
+test("unavailable dates never throw or invent a replacement time", () => {
+  const value = lesson("requested");
+  assert.equal(remedySuggestedOffer(value, "bad"), null);
+  assert.equal(remedyOfferWindow({ ...value, case: null }, value.startsAt), null);
+  assert.equal(remedySuggestedOffer({ ...value, endsAt: value.startsAt }, value.startsAt), null);
+  assert.match(remedyOfferProblem(value, "bad", value.startsAt)!, /dates are unavailable/);
 });

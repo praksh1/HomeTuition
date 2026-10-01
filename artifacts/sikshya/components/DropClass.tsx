@@ -2,9 +2,13 @@ import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
 import { notify } from "@/utils/alerts";
+import { hasDropQuote, isLinkedDropLesson, type DropInfo } from "@/utils/dropClassView";
 import WarningModal from "@/components/WarningModal";
+import { ProgramButton } from "@/components/programs/ProgramPieces";
+import { router } from "expo-router";
 
 /**
  * Getting out of a class you paid for.
@@ -27,27 +31,7 @@ import WarningModal from "@/components/WarningModal";
  * cannot afford.
  */
 
-export interface DropInfo {
-  enrolled: boolean;
-  /** True for somebody who was in this class and dropped or was refunded out of it. */
-  left?: boolean;
-  refundAmount?: number | null;
-  refundPaid?: boolean;
-  /** Business days still to run on the promised wait. Null once it is paid. */
-  businessDaysLeft?: number | null;
-  businessDaysTotal?: number;
-  canDrop: boolean;
-  reason: string | null;
-  pricePaid: number;
-  studentRefund: number;
-  teacherShare: number;
-  platformShare: number;
-  full: boolean;
-  known: boolean;
-  headline: string;
-  detail: string;
-  deadlineHours: number;
-}
+export type { DropInfo } from "@/utils/dropClassView";
 
 interface Props {
   sessionId: number | string;
@@ -57,6 +41,7 @@ interface Props {
 
 export default function DropClass({ sessionId, onDropped }: Props) {
   const colors = useColors();
+  const { t } = useLayout();
   const [info, setInfo] = useState<DropInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -121,6 +106,36 @@ export default function DropClass({ sessionId, onDropped }: Props) {
 
   // Not booked, or we could not tell. Either way there is nothing here to offer.
   if (!info?.enrolled) return null;
+
+  // Class-purchase lessons intentionally have no legacy drop quote. Keep their
+  // original allocation link instead of formatting undefined prices (which
+  // previously crashed every enrolled student's lesson-details screen).
+  if (isLinkedDropLesson(info)) {
+    return (
+      <View style={[styles.card, { borderColor: colors.border }]} testID="drop-linked-lesson">
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>This lesson is part of your class</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>
+          Make-up and refund options stay linked to the lesson you purchased.
+        </Text>
+        <ProgramButton
+          testID="drop-linked-remedies"
+          label="Make-up or refund options"
+          icon="repeat"
+          onPress={() => router.push({ pathname: "/makeups", params: { sessionId: String(info.originalSessionId) } })}
+        />
+      </View>
+    );
+  }
+
+  if (!hasDropQuote(info)) {
+    return (
+      <View style={[styles.card, { borderColor: colors.border }]} testID="drop-quote-unavailable">
+        <Text style={[t.bodyStrong, { color: colors.foreground }]}>Cancellation details are unavailable</Text>
+        <Text style={[t.callout, { color: colors.mutedForeground }]}>Your place is unchanged. Check again before making a change.</Text>
+        <ProgramButton label="Check again" onPress={() => void load()} />
+      </View>
+    );
+  }
 
   const drop = async () => {
     setAsking(false);
