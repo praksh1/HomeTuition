@@ -83,6 +83,7 @@ function twoPagePdf() {
 
 let blocked = false;
 export async function apiGet(path) {
+  globalThis.messageReadCalls = (globalThis.messageReadCalls ?? 0) + 1;
   if (path.endsWith("/access")) return { canSend: !blocked, blockedByYou: blocked, reason: blocked ? "You blocked this person. Unblock to send messages." : null };
   if (location.search.includes("failure")) throw new Error("offline");
   if (path.startsWith("/storage/file")) {
@@ -142,6 +143,11 @@ export async function apiPost(path, body) {
   if (path.endsWith("/report")) { globalThis.lastReport = { path, body }; return { ref: "HT-000321", id: 321 }; }
   if (blocked) throw new Error("You blocked this person. Unblock to send messages.");
   if (path.includes("reaction")) return {};
+  if (body.body && globalThis.failNextMessageSend) {
+    globalThis.failNextMessageSend = false;
+    await new Promise(resolve => { globalThis.releaseFailedMessageSend = resolve; });
+    throw new Error("Connection interrupted. Your message was not sent.");
+  }
   if (path.startsWith("/class-groups/")) {
     if (path.endsWith("/read")) return {};
     return { id: 203, senderId: 7, senderName: "Staging Review Teacher", senderRole: "teacher", body: body.body, createdAt: new Date().toISOString() };

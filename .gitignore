@@ -62,4 +62,5 @@ artifacts/sikshya/ios/
 
 # Production web export
 artifacts/sikshya/web-build/
+artifacts/sikshya/operator-web-build/
 scratchpad

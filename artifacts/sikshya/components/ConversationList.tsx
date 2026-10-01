@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import { router } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   RefreshControl,
@@ -24,6 +24,7 @@ import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { ApiError, apiGet } from "@/utils/api";
+import { createCoalescedRefresh } from "@/utils/coalescedRefresh";
 import {
   conversationTimeLabel,
   filterInboxThreads,
@@ -65,6 +66,7 @@ export default function ConversationList({ title }: { title: string }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [problem, setProblem] = useState("");
+  const focused = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -79,11 +81,9 @@ export default function ConversationList({ title }: { title: string }) {
       }
       setThreads(inboxThreads(data.direct, data.classes));
       setProblem("");
-      try {
-        setDrafts(await loadDrafts());
-      } catch {
-        // A device-storage failure should not hide conversations fetched from the server.
-      }
+      // Draft storage is optional. A stalled browser storage read must not keep loading
+      // or the single-flight refresh locked after conversations have arrived successfully.
+      void loadDrafts().then(setDrafts).catch(() => {});
     } catch {
       setProblem("Fadko could not load your conversations.");
     } finally {
@@ -92,17 +92,22 @@ export default function ConversationList({ title }: { title: string }) {
     }
   }, []);
 
-  useEffect(() => {
-    void load();
+  const refresh = useMemo(() => createCoalescedRefresh(async () => {
+    if (focused.current) await load();
+  }), [load]);
+
+  useFocusEffect(useCallback(() => {
+    focused.current = true;
+    void refresh();
     // The user socket refreshes immediately below. This slower fallback covers a missed event
     // without making an idle inbox refetch ten times a minute.
-    const interval = setInterval(() => void load(), 12000);
-    return () => clearInterval(interval);
-  }, [load]);
+    const interval = setInterval(() => void refresh(), 12000);
+    return () => { focused.current = false; clearInterval(interval); };
+  }, [refresh]));
 
   useEffect(() => {
-    if (lastEvent?.kind === "message" || lastEvent?.kind === "class_message" || lastEvent?.kind === "conversation_sync") void load();
-  }, [lastEvent, load]);
+    if (focused.current && (lastEvent?.kind === "message" || lastEvent?.kind === "class_message" || lastEvent?.kind === "conversation_sync")) void refresh();
+  }, [lastEvent, refresh]);
 
   const visible = useMemo(
     () => filterInboxThreads(threads, query, filter),
@@ -137,7 +142,7 @@ export default function ConversationList({ title }: { title: string }) {
       }}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void load(); }} tintColor={colors.primary} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); void refresh(); }} tintColor={colors.primary} />}
     >
       <View style={styles.titleRow}>
         <View style={styles.headingCopy}>
@@ -237,7 +242,7 @@ export default function ConversationList({ title }: { title: string }) {
           <Text style={[t.title3, { color: colors.foreground }]}>Messages are unavailable</Text>
           <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>{problem} Check your connection and try again.</Text>
           <TouchableOpacity
-            onPress={() => { setLoading(true); void load(); }}
+            onPress={() => { setLoading(true); void refresh(); }}
             style={[styles.retryButton, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]}
           >
             <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>

@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -9,13 +9,13 @@ import {
   Platform,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import MessageAttachment from "@/components/MessageAttachment";
+import { MessageComposerInput } from "@/components/MessageComposerInput";
 import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
 import { ATTACHMENT_PICKER_TYPES } from "@/utils/attachmentTypes";
 import { useAuth } from "@/context/AuthContext";
@@ -24,9 +24,8 @@ import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { ApiError, apiGet, apiPost } from "@/utils/api";
+import { createCoalescedRefresh } from "@/utils/coalescedRefresh";
 import { classConversationId } from "@/utils/conversationRoute";
-import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
-import { shouldSendMessageOnKey } from "@/utils/messageComposer";
 import { messageDayLabel, messageTimeLabel, shouldShowDay } from "@/utils/messageTimeline";
 import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
 import type { Attachment } from "@/utils/reactions";
@@ -71,7 +70,6 @@ export default function ClassChatScreen() {
   const { lastEvent, notifications, markTargetRead } = useNotifications();
   const { t, numeric, gutter, space, radius, isWide } = useLayout();
   const [view, setView] = useState<ViewData | null>(null);
-  const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<UploadableFile | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -83,6 +81,7 @@ export default function ClassChatScreen() {
   const scrollAfterLayout = useRef(true);
   const scrollPass = useRef(0);
   const hasLoaded = useRef(false);
+  const focused = useRef(false);
   const acknowledgedThrough = useRef<number | null>(null);
 
   const settleAtNewest = useCallback(() => {
@@ -94,14 +93,6 @@ export default function ClassChatScreen() {
       scrollAfterLayout.current = false;
     }, 120);
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getDraft(draftKey).then((saved) => {
-      if (!cancelled && saved) setDraft(saved);
-    });
-    return () => { cancelled = true; };
-  }, [draftKey]);
 
   const acknowledge = useCallback(async (messages: Message[]) => {
     const lastMessageId = messages.at(-1)?.id;
@@ -143,24 +134,29 @@ export default function ClassChatScreen() {
     }
   }, [acknowledge, batchId, markTargetRead, routeBatchId]);
 
-  useEffect(() => {
-    void load();
+  const refresh = useMemo(() => createCoalescedRefresh(async () => {
+    if (focused.current) await load();
+  }), [load]);
+
+  useFocusEffect(useCallback(() => {
+    focused.current = true;
+    void refresh();
     // Live events provide the quick path; this slower pass catches a dropped socket without
     // making every mounted class screen talk to the server ten times a minute.
-    const interval = setInterval(() => void load(), 8000);
-    return () => clearInterval(interval);
-  }, [load]);
+    const interval = setInterval(() => void refresh(), 8000);
+    return () => { focused.current = false; clearInterval(interval); };
+  }, [refresh]));
 
   useEffect(() => {
-    if ((lastEvent?.kind === "class_message" || lastEvent?.kind === "conversation_sync") && Number(lastEvent.batchId) === batchId) {
+    if (focused.current && (lastEvent?.kind === "class_message" || lastEvent?.kind === "conversation_sync") && Number(lastEvent.batchId) === batchId) {
       scrollAfterLayout.current = true;
-      void load();
+      void refresh();
     }
-  }, [batchId, lastEvent, load]);
+  }, [batchId, lastEvent, refresh]);
 
   useEffect(() => {
     const target = { kind: "class_message" as const, batchId };
-    if (notifications.some((notification) => !notification.read && notificationMatchesReadTarget(notification, target))) {
+    if (focused.current && notifications.some((notification) => !notification.read && notificationMatchesReadTarget(notification, target))) {
       void markTargetRead(target);
     }
   }, [batchId, markTargetRead, notifications]);
@@ -188,13 +184,11 @@ export default function ClassChatScreen() {
     });
   };
 
-  const send = async () => {
-    const body = draft.trim();
-    if ((!body && !pending) || sending) return;
+  const send = async (body: string): Promise<boolean> => {
+    if ((!body && !pending) || sending) return false;
     const outgoing = pending;
     setSending(true);
     setProblem(null);
-    setDraft("");
     setPending(null);
     try {
       const fileKey = outgoing ? await uploadFile(outgoing) : undefined;
@@ -202,14 +196,13 @@ export default function ClassChatScreen() {
         body,
         ...(fileKey ? { fileKey, fileType: outgoing!.mimeType, fileName: outgoing!.name } : {}),
       });
-      await clearDraft(draftKey);
       scrollAfterLayout.current = true;
       setView((current) => current ? { ...current, messages: [...current.messages, sent] } : current);
+      return true;
     } catch (error) {
-      setDraft(body);
       setPending(outgoing);
-      void saveDraft(draftKey, body);
       setProblem(error instanceof Error && error.message ? error.message : "That message did not send. Try again.");
+      return false;
     } finally {
       setSending(false);
     }
@@ -332,7 +325,7 @@ export default function ClassChatScreen() {
         ListHeaderComponent={(
           <>
             {loadProblem && messages.length > 0 ? (
-              <TouchableOpacity onPress={() => void load()} style={[styles.connectionNote, { borderRadius: radius.sm, backgroundColor: colors.warnSoft }]} testID="class-chat-retry-inline">
+              <TouchableOpacity onPress={() => void refresh()} style={[styles.connectionNote, { borderRadius: radius.sm, backgroundColor: colors.warnSoft }]} testID="class-chat-retry-inline">
                 <Feather name="refresh-cw" size={15} color={colors.warn} />
                 <Text style={[t.caption, { color: colors.warn }]}>New messages may be delayed. Tap to retry.</Text>
               </TouchableOpacity>
@@ -372,7 +365,7 @@ export default function ClassChatScreen() {
                 <View style={[styles.emptyIcon, { borderRadius: radius.pill, backgroundColor: colors.warnSoft }]}><Feather name="alert-circle" size={22} color={colors.warn} /></View>
                 <Text style={[t.title3, { color: colors.foreground }]}>Conversation unavailable</Text>
                 <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>{loadProblemMessage || "Fadko could not load this conversation. Try again."}</Text>
-                <TouchableOpacity onPress={() => { setLoading(true); void load(); }} style={[styles.retry, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]} testID="class-chat-retry">
+                <TouchableOpacity onPress={() => { setLoading(true); void refresh(); }} style={[styles.retry, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]} testID="class-chat-retry">
                   <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
                 </TouchableOpacity>
               </>
@@ -422,34 +415,18 @@ export default function ClassChatScreen() {
             >
               <Feather name="paperclip" size={19} color={colors.primary} />
             </TouchableOpacity>
-            <TextInput
-              value={draft}
-              onChangeText={(text) => { setDraft(text); void saveDraft(draftKey, text); }}
+            <MessageComposerInput
+              key={draftKey}
+              draftKey={draftKey}
+              sending={sending}
+              hasAttachment={Boolean(pending)}
+              onSend={send}
               placeholder="Message your class…"
-              placeholderTextColor={colors.inkFaint}
-              style={[t.body, styles.input, { minHeight: HIT_SLOP_MIN, maxHeight: 112, borderRadius: radius.lg, borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
-              multiline
-              onKeyPress={(event) => {
-                const native = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean; isComposing?: boolean };
-                if (!shouldSendMessageOnKey(Platform.OS, native.key, native.shiftKey, native.isComposing)) return;
-                event.preventDefault();
-                void send();
-              }}
-              accessibilityLabel="Class message"
-              testID="class-chat-input"
+              inputLabel="Class message"
+              sendLabel="Send class message"
+              inputTestID="class-chat-input"
+              sendTestID="class-chat-send"
             />
-            <TouchableOpacity
-              style={[styles.composeAction, { minWidth: HIT_SLOP_MIN, minHeight: HIT_SLOP_MIN, borderRadius: radius.pill, backgroundColor: draft.trim() || pending ? colors.primary : colors.muted }]}
-              onPress={() => void send()}
-              disabled={(!draft.trim() && !pending) || sending}
-              accessibilityRole="button"
-              accessibilityLabel="Send class message"
-              accessibilityState={{ disabled: (!draft.trim() && !pending) || sending }}
-              aria-disabled={(!draft.trim() && !pending) || sending}
-              testID="class-chat-send"
-            >
-              {sending ? <ActivityIndicator size="small" color={colors.primaryForeground} /> : <Feather name="send" size={18} color={draft.trim() || pending ? colors.primaryForeground : colors.inkFaint} />}
-            </TouchableOpacity>
           </View>
         </View>
       ) : null}

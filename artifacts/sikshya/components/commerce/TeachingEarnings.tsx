@@ -32,14 +32,14 @@ export function TeachingEarningsContent({ policy, failed, retry }: {
       {failed ? <ProgramButton label="Try again" onPress={retry} /> : null}
     </ProgramNotice> : <>
       <ProgramCardShell>
-        <Text style={[t.title2, { color: colors.foreground }]}>Teach without buying a tier</Text>
-        <Text style={[t.body, { color: colors.foreground }]}>Prepare your class and set its price. New teacher-plan purchases are paused while we connect student payments.</Text>
+        <Text style={[t.title2, { color: colors.foreground }]}>Your teaching, your earnings</Text>
+        <Text style={[t.body, { color: colors.foreground }]}>Creating a class is free. Set one clear price for students and see your estimated earnings before publishing.</Text>
         <Text style={[t.body, { color: colors.foreground }]}>When you enter a class price and lesson dates, Fadko shows your estimated earnings for each enrolled student and the approximate amount per lesson.</Text>
         <Text style={[t.caption, { color: colors.mutedForeground }]}>Estimates are shown before applicable taxes. Final earnings can change after an approved refund or adjustment. Students pay upfront; eligible earnings are released after lesson delivery and the complaint window.</Text>
         <ProgramButton label="Prepare a class" emphasis="primary" onPress={() => router.push("/(teacher)/create-class")} />
       </ProgramCardShell>
-      <ProgramNotice title={policy.testPilotEndsAt ? "Simulated checkout is open" : "Listings only for now"} tone="waiting">
-        <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "Signed-in, verified students can rehearse booking published classes without payment. Lesson links appear after the first simulated booking. Test activity creates no real earnings or payouts." : "Publishing a new class does not yet collect payment, enrol students or create a live classroom. Your existing classes keep their current access and terms."}</Text>
+      <ProgramNotice title={policy.testPilotEndsAt ? "Practice payments" : "Payments are not open yet"} tone="waiting">
+        <Text style={[t.body, { color: colors.foreground }]}>{policy.testPilotEndsAt ? "The current test environment uses practice bookings. No money is collected or paid out. Your lesson records and payment breakdown remain available below." : "You can prepare and publish a class. New paid enrollment will open when payment processing is ready; your existing lessons and learning resources remain available."}</Text>
       </ProgramNotice>
       <BatchTestMoneySummary role="teacher" />
     </>}

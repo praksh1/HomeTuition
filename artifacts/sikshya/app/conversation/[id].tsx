@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -16,6 +16,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import MessageAttachment from "@/components/MessageAttachment";
+import { MessageComposerInput } from "@/components/MessageComposerInput";
 import { ProfilePhoto } from "@/components/profile/ProfilePhoto";
 import { HIT_SLOP_MIN, marketplaceColumnMax } from "@/constants/layout";
 import { ATTACHMENT_PICKER_TYPES } from "@/utils/attachmentTypes";
@@ -25,8 +26,7 @@ import { useNotifications } from "@/context/NotificationContext";
 import { useColors } from "@/hooks/useColors";
 import { useLayout } from "@/hooks/useLayout";
 import { apiGet, apiPost } from "@/utils/api";
-import { clearDraft, getDraft, saveDraft } from "@/utils/drafts";
-import { shouldSendMessageOnKey } from "@/utils/messageComposer";
+import { createCoalescedRefresh } from "@/utils/coalescedRefresh";
 import { notificationMatchesReadTarget } from "@/utils/notificationCenter";
 import {
   latestOwnMessageId,
@@ -69,7 +69,6 @@ export default function ConversationScreen() {
   const { notifications, lastEvent, markTargetRead } = useNotifications();
   const { t, numeric, gutter, space, radius, isWide } = useLayout();
   const [messages, setMessages] = useState<Message[]>([]);
-  const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadProblem, setLoadProblem] = useState(false);
   const [sending, setSending] = useState(false);
@@ -90,6 +89,7 @@ export default function ConversationScreen() {
   const scrollAfterLayout = useRef(true);
   const scrollPass = useRef(0);
   const hasLoaded = useRef(false);
+  const focused = useRef(false);
   const displayName = access?.otherUserName?.trim() || name?.trim() || "Conversation";
 
   const settleAtNewest = useCallback(() => {
@@ -101,14 +101,6 @@ export default function ConversationScreen() {
       scrollAfterLayout.current = false;
     }, 120);
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void getDraft(String(id)).then((saved) => {
-      if (!cancelled && saved) setDraft(saved);
-    });
-    return () => { cancelled = true; };
-  }, [id]);
 
   const load = useCallback(async () => {
     void apiGet<NonNullable<typeof access>>(`/messages/${id}/access`).then(setAccess).catch(() => {});
@@ -126,27 +118,32 @@ export default function ConversationScreen() {
     }
   }, [id, markTargetRead]);
 
-  useEffect(() => {
-    void load();
+  const refresh = useMemo(() => createCoalescedRefresh(async () => {
+    if (focused.current) await load();
+  }), [load]);
+
+  useFocusEffect(useCallback(() => {
+    focused.current = true;
+    void refresh();
     // The user socket supplies the instant path. This is only a missed-event safety net; four
     // seconds kept every background conversation route needlessly busy.
-    const interval = setInterval(() => void load(), 8000);
-    return () => clearInterval(interval);
-  }, [load]);
+    const interval = setInterval(() => void refresh(), 8000);
+    return () => { focused.current = false; clearInterval(interval); };
+  }, [refresh]));
 
   useEffect(() => {
     if (
       (lastEvent?.kind === "message" || lastEvent?.kind === "conversation_sync") &&
-      Number(lastEvent.fromUserId) === Number(id)
+      Number(lastEvent.fromUserId) === Number(id) && focused.current
     ) {
       scrollAfterLayout.current = true;
-      void load();
+      void refresh();
     }
-  }, [id, lastEvent, load]);
+  }, [id, lastEvent, refresh]);
 
   useEffect(() => {
     const target = { kind: "direct_message" as const, conversationWith: id };
-    if (notifications.some((notification) => !notification.read && notificationMatchesReadTarget(notification, target))) {
+    if (focused.current && notifications.some((notification) => !notification.read && notificationMatchesReadTarget(notification, target))) {
       void markTargetRead(target);
     }
   }, [id, markTargetRead, notifications]);
@@ -169,14 +166,12 @@ export default function ConversationScreen() {
     });
   };
 
-  const send = async () => {
-    const body = draft.trim();
-    if ((!body && !pending) || sending || access?.canSend === false) return;
+  const send = async (body: string): Promise<boolean> => {
+    if ((!body && !pending) || sending || access?.canSend === false) return false;
 
     setSending(true);
     setProblem(null);
     const outgoing = pending;
-    setDraft("");
     setPending(null);
 
     try {
@@ -186,14 +181,14 @@ export default function ConversationScreen() {
         body,
         ...(fileKey ? { fileKey, fileType: outgoing!.mimeType, fileName: outgoing!.name } : {}),
       });
-      await clearDraft(String(id));
       scrollAfterLayout.current = true;
       setMessages((previous) => [...previous, sent]);
       if (sent.attachmentProblem) setProblem(sent.attachmentProblem);
+      return true;
     } catch (error) {
-      setDraft(body);
       setPending(outgoing);
       setProblem(error instanceof Error && error.message ? error.message : "That did not send. Try again.");
+      return false;
     } finally {
       setSending(false);
     }
@@ -210,7 +205,7 @@ export default function ConversationScreen() {
     try {
       await apiPost(`/messages/${messageId}/reaction`, { emoji });
     } catch {
-      void load();
+      void refresh();
     }
   };
 
@@ -334,7 +329,7 @@ export default function ConversationScreen() {
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={loadProblem && messages.length > 0 ? (
           <TouchableOpacity
-            onPress={() => void load()}
+            onPress={() => void refresh()}
             style={[styles.connectionNote, { borderRadius: radius.sm, backgroundColor: colors.warnSoft }]}
             accessibilityRole="button"
           >
@@ -452,7 +447,7 @@ export default function ConversationScreen() {
                 </View>
                 <Text style={[t.title3, { color: colors.foreground }]}>Conversation unavailable</Text>
                 <Text style={[t.callout, styles.center, { color: colors.mutedForeground }]}>Check your connection and try again.</Text>
-                <TouchableOpacity onPress={() => { setLoading(true); void load(); }} style={[styles.retry, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]}>
+                <TouchableOpacity onPress={() => { setLoading(true); void refresh(); }} style={[styles.retry, { minHeight: HIT_SLOP_MIN, borderRadius: radius.sm, backgroundColor: colors.primary }]}>
                   <Text style={[t.bodyStrong, { color: colors.primaryForeground }]}>Try again</Text>
                 </TouchableOpacity>
               </>
@@ -509,45 +504,18 @@ export default function ConversationScreen() {
           >
             <Feather name="paperclip" size={19} color={colors.primary} />
           </TouchableOpacity>
-          <TextInput
-            value={draft}
-            onChangeText={(text) => { setDraft(text); void saveDraft(String(id), text); }}
+          <MessageComposerInput
+            key={String(id)}
+            draftKey={String(id)}
+            sending={sending}
+            hasAttachment={Boolean(pending)}
+            onSend={send}
             placeholder="Write a message…"
-            placeholderTextColor={colors.inkFaint}
-            style={[t.body, styles.input, { minHeight: HIT_SLOP_MIN, maxHeight: 112, borderRadius: radius.lg, borderColor: colors.border, color: colors.foreground, backgroundColor: colors.background }]}
-            multiline
-            onKeyPress={(event) => {
-              const native = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean; isComposing?: boolean };
-              if (!shouldSendMessageOnKey(Platform.OS, native.key, native.shiftKey, native.isComposing)) return;
-              event.preventDefault();
-              void send();
-            }}
-            accessibilityLabel="Message"
-            testID="conversation-input"
+            inputLabel="Message"
+            sendLabel="Send message"
+            inputTestID="conversation-input"
+            sendTestID="conversation-send-btn"
           />
-          <TouchableOpacity
-            style={[
-              styles.composeAction,
-              {
-                minWidth: HIT_SLOP_MIN,
-                minHeight: HIT_SLOP_MIN,
-                borderRadius: radius.pill,
-                backgroundColor: draft.trim() || pending ? colors.primary : colors.muted,
-              },
-            ]}
-            onPress={() => void send()}
-            disabled={(!draft.trim() && !pending) || sending}
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            accessibilityState={{ disabled: (!draft.trim() && !pending) || sending }}
-            aria-disabled={(!draft.trim() && !pending) || sending}
-            activeOpacity={0.78}
-            testID="conversation-send-btn"
-          >
-            {sending
-              ? <ActivityIndicator size="small" color={colors.primaryForeground} />
-              : <Feather name="send" size={18} color={draft.trim() || pending ? colors.primaryForeground : colors.inkFaint} />}
-          </TouchableOpacity>
         </View>
       </View>
       }

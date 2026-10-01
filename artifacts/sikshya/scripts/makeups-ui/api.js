@@ -119,6 +119,8 @@ if (query.has("disabled")) {
   data.lessons[0].canReportTeacherMissed = false;
   if (data.lessons[0].case) data.lessons[0].case.actions = actions;
 }
+if (query.has("past")) data.serverNow = "2026-09-30T05:15:00Z";
+if (query.has("untouched")) data.lessons.push({ ...data.lessons[0], originalSessionId: 106, title: "Untouched upcoming lesson", case: null, canRequest: false, canReportTeacherMissed: false });
 window.requests = [];
 window.fixture = data;
 export async function apiGet(path) {

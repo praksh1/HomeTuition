@@ -1,5 +1,18 @@
 # Fadko — the whole project, in one document
 
+**30 September reliability and remedy-policy update:** the owner approved prospective,
+deterministic make-up automation with a 48-hour teacher response, 7-day offer expiry and
+30-day replacement limit. Verified teacher non-delivery receives a full affected-lesson
+refund entitlement; an explicitly warned student absence at a courtesy replacement has
+a 70/30 student/platform outcome with no teacher payout. Uncertain evidence remains held
+for review. This supersedes older proposal-only/manual-only recommendations for new
+accepted terms, never existing purchases or retired Monthly contracts. AI cannot issue
+refunds or bans. The v2 engine is shadow-only, not connected to active settlement or real
+cash; checkout consent, reliable observation and provider reconciliation remain gates.
+See `.agents/memory/makeup-automation-prospective-sep30.md`,
+`.agents/worklog/2026-09-30-codex-reliability-and-launch-readiness.md` and
+`.agents/backlog/2026-09-30-october-launch-readiness.md` for current evidence and remaining work.
+
 **11 September commission transition:** the owner approved retiring new teacher-tier sales for
 commission-based classes while keeping existing Monthly homework/chat and purchased contracts.
 Implementation is a separate preview, not part of the approved planning production release.

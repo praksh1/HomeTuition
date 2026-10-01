@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Prospective make-up automation safeguards](makeup-automation-prospective-sep30.md) — owner approved 48-hour teacher response, 7-day offer expiry, 30-day replacement limit and prospective 70/30 courtesy absence outcome. Evidence and prior consent are required; shadow code is not active settlement or provider-confirmed cash.
+
 - [Classmate directory and private-message safeguards](classmates-directory-and-message-safety.md) — connected public names/ids only; keep moderation private, compose without leaving the call, shared enrollment and bilateral blocks enforced by the server.
 
 - [Production testing and teacher studio](teacher-studio-production-sep24.md) — 24 Sep: support production approved; preserve classroom/support TODOs; scheduling/booking reliability and simplified scalable teacher workspace next. Make-up policy is a proposal, not an automatic refund authorization.

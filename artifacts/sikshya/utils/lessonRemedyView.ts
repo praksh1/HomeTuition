@@ -98,7 +98,9 @@ export function remedyStatusLabel(value: RemedyCase): string {
 export function remedyGroup(
   lesson: RemedyLesson,
 ): Exclude<RemedyFilter, "all"> {
-  if (!lesson.case) return "attention";
+  // Unrequested lessons are not an operator's to-do list. Students choose a specific
+  // lesson from their schedule; only existing requests belong in this inbox.
+  if (!lesson.case) return "history";
   if (["resolved", "withdrawn"].includes(lesson.case.status)) return "history";
   if (["accepted", "delivered_review"].includes(lesson.case.status))
     return "scheduled";
@@ -112,8 +114,16 @@ export function remedyVisibleLessons(
   return lessons.filter(
     (lesson) =>
       (!sessionId || lesson.originalSessionId === sessionId) &&
-      (filter === "all" || remedyGroup(lesson) === filter),
+      (filter === "all" ||
+        (Boolean(lesson.case) && remedyGroup(lesson) === filter)),
   );
+}
+/** A report concerns teaching that should already have happened, never a future date. */
+export function remedyCanReportTeacher(lesson: RemedyLesson, serverNow: string): boolean {
+  const now = Date.parse(serverNow);
+  const end = Date.parse(lesson.endsAt);
+  return lesson.canReportTeacherMissed && Number.isFinite(now) &&
+    Number.isFinite(end) && now >= end;
 }
 /** Never parse a date/time in the browser's US/local zone. Both fields represent Nepal time. */
 export function remedyOfferInstant(date: string, time: string): string | null {
