@@ -5,6 +5,11 @@ This is a release checklist, not a statement that Fadko is ready or that store a
 
 ## Immediate regression release
 
+Completed September 30 on Production 3934050e and Preview a30e7b99: isolated typing/draft
+work, bounded read recovery, request-first make-up inbox, separate operator Worker exports,
+and exact-source CI/export/live readiness checks. This does not complete automatic
+settlement, owner operator provisioning, physical-phone validation or native release.
+
 - Reproduce typing with realistic message history, image/PDF attachments and real draft persistence.
 - Keep typing state out of the timeline. Coalesce draft writes; clearing after Send must win over older writes.
 - Recover transient read failures within one deadline. Never automatically replay payment or other mutations.
@@ -99,16 +104,36 @@ operator responsibilities. AI can prepare context; it cannot ban users or issue 
 
 ## Concrete follow-up findings from September 30 source audit
 
-- Student Classes initially loads only 100 owned lessons. A scoped pagination repair is
-  underway; verify more than 100 dates, complete class counts and a mid-page connection
-  failure before marking this closed. A scalable authenticated class-summary endpoint is
-  a later improvement; do not replace complete reads with Upcoming-only reads.
+- CLOSED for this regression release: Student Classes validates all owned-session pages
+  before replacing its list. More than 100 dates, complete grouping, stale responses and
+  later-page failure were covered by focused tests and exact-source CI. A scalable
+  authenticated class-summary endpoint remains a later improvement: complete 15-second
+  refreshes can still become costly at large enrollment counts.
 - Teacher Schedule also displays only its first 100 dates per selected status. Add a
   clear Load more or cursor-based schedule view, retaining nearest-first Upcoming order.
   This is still open and must not be described as repaired by the student pagination fix.
 - Lesson details put Start/Join below the entire roster and message history. With a large
   class this primary action becomes hard to find. Promote it into a persistent accessible
   action area without auto-joining the call or covering messages on narrow screens.
-- Residual teacher-access limits and contradictory practice-classroom wording are being
-  removed. Before-first-booking payout education must explain 48-hour review, dispute or
-  make-up holds, and eligibility versus an actual bank transfer, without inventing a payout day.
+- CLOSED in Teacher Home: retired access-limit fetches/upgrade affordances removed,
+  earnings-history action works, total upcoming count and Nepal-local calendar/clock
+  labels fixed. Before-first-booking earnings education explains 48-hour review,
+  dispute/make-up holds and eligibility versus an actual bank transfer.
+- OPEN copy follow-up: inspect remaining generic earnings-release wording and the older
+  Contact Support make-up wording in money summaries against the direct request workflow.
+- OPEN scale check: the existing 500-lesson make-up list cap may omit older cases.
+  Audit and implement a case-centric paginated inbox before claiming full-time teacher scale.
+- OPEN owner operator setup: Production's configured owner has no issued operator account;
+  Preview has no configured owner ID. Preserve existing login and Cost & Health ownership.
+  The published separate portal and fixture sign-in tests do not prove owner sign-in works.
+- Railway's CLI warned about existing config-as-code support changing by December 1, 2026.
+  Verify current primary documentation and plan the migration separately; it was not changed
+  during this reliability release.
+
+## Explicit continuation
+
+Same-chat heartbeat fadko-teacher-schedule-follow-up is ACTIVE hourly for local Preview
+teacher Schedule pagination and accessible Start/Join tests only. No deployment, push,
+owner-access, schema or financial mutation is allowed in that scheduled scope. Keep the
+computer on and the Codex app running for local follow-ups. Broad unattended Production
+and money changes were rejected by auto-review; do not bypass that restriction.
