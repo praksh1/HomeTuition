@@ -477,7 +477,11 @@ export async function listLessonRemedies(actor: RemedyActor, batchId?: number): 
   if (!writeEnabled && !await lessonRemedySchemaReady()) return { ...base, enabled: false, unavailableReason: "Make-up requests are not open yet. You can still contact Support for lesson or refund review." };
   if (writeEnabled) await enabled();
   if (!["student", "teacher", "admin"].includes(actor.role)) refuse("not_available", "This lesson view is unavailable.", 403);
-  const rows = await db.select(PURCHASE_COLUMNS)
+  // A 30-lesson class must not transfer the same full timetable and immutable receipt
+  // thirty times from Postgres. Fetch those shared blobs once per booking below.
+  const rows = await db.select({ booking: batchTestBookingsTable, mapping: batchTestSessionsTable,
+    session: sessionsTable, enrollment: sessionEnrollmentsTable, studentName: usersTable.name,
+    endedAt: sessionActivityTable.endedAt })
     .from(batchTestBookingsTable).innerJoin(batchTestSessionsTable, eq(batchTestSessionsTable.batchId, batchTestBookingsTable.batchId))
     .innerJoin(sessionsTable, eq(sessionsTable.id, batchTestSessionsTable.sessionId))
     .innerJoin(batchTestPaymentsTable, eq(batchTestPaymentsTable.bookingId, batchTestBookingsTable.id))
@@ -497,9 +501,19 @@ export async function listLessonRemedies(actor: RemedyActor, batchId?: number): 
   const lessons: LessonRemedyLessonView[] = []; const quotas = new Map<number, LessonRemedyListView["quotas"][number]>();
   // Only joined, purchased allocations are emitted. A historical late join must never see a
   // courtesy action for an earlier session merely because the class has a mapping for it.
-  const purchases = rows.slice(0, 500).filter((row) => ["paid", "test", "refunded"].includes(row.enrollment.paymentStatus))
-    .map((row) => readPurchase(row, true));
-  const bookingIds = [...new Set(purchases.map((p) => p.bookingId))];
+  const purchasedRows = rows.slice(0, 500).filter((row) => ["paid", "test", "refunded"].includes(row.enrollment.paymentStatus));
+  const bookingIds = [...new Set(purchasedRows.map((row) => row.booking.id))];
+  const shared = bookingIds.length ? await db.select({ bookingId: batchTestBookingsTable.id,
+    payment: batchTestPaymentsTable, contract: batchTestContractsTable }).from(batchTestBookingsTable)
+    .innerJoin(batchTestPaymentsTable, eq(batchTestPaymentsTable.bookingId, batchTestBookingsTable.id))
+    .innerJoin(batchTestContractsTable, eq(batchTestContractsTable.batchId, batchTestBookingsTable.batchId))
+    .where(inArray(batchTestBookingsTable.id, bookingIds)) : [];
+  const sharedByBooking = new Map(shared.map(row => [row.bookingId, row]));
+  const purchases = purchasedRows.map(row => {
+    const frozen = sharedByBooking.get(row.booking.id);
+    if (!frozen) refuse("purchase_needs_review", "This enrollment record changed while loading. Refresh before arranging a make-up.");
+    return readPurchase({ ...row, payment: frozen.payment, contract: frozen.contract }, true);
+  });
   const cases = bookingIds.length ? await db.select().from(lessonRemedyCasesTable).where(inArray(lessonRemedyCasesTable.originalBookingId, bookingIds)) : [];
   // Two bounded context rows per case, not a raw event dump or an operator-note feed.
   const context = cases.length ? (await db.execute(sql`SELECT DISTINCT ON (e.case_id,e.event)
@@ -535,8 +549,10 @@ export async function listLessonRemedies(actor: RemedyActor, batchId?: number): 
     const replacementIds = new Set(offers.filter((o) => o.caseId === caseId && o.acceptedAt).map((o) => o.replacementSessionId));
     return complaints.some((d) => d.studentId === p.studentId && (d.sessionId === p.session.id || replacementIds.has(d.sessionId)));
   };
+  const termsByBooking = new Map<number, ReturnType<typeof policy>>();
   for (const p of purchases) {
-    const terms = policy(p, cases.filter(record => record.originalBookingId === p.bookingId));
+    const terms = termsByBooking.get(p.bookingId) ?? policy(p, cases.filter(record => record.originalBookingId === p.bookingId));
+    termsByBooking.set(p.bookingId, terms);
     if (!quotas.has(p.bookingId)) {
       const count = cases.filter((c) => c.originalBookingId === p.bookingId).reduce((sum, c) => {
         const view = caseView(c, offers, actor, now);

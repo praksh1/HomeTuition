@@ -66,7 +66,16 @@ test("one-lesson courtesy exclusion and exhausted allowance never block teacher-
   const single = snapshotLessonRemedyPolicy("short_course", 1);
   assert.throws(() => assessRemedyRequest({ ...base, policy: single }), /One-lesson/);
   assert.throws(() => assessRemedyRequest({ ...base, courtesyUsedOrReserved: 2 }), /allowance/);
-  assert.equal(assessRemedyRequest({ ...base, policy: single, reason: "teacher_missed", courtesyUsedOrReserved: 10 }).automaticRefund, false);
+  assert.equal(assessRemedyRequest({ ...base, policy: single, reason: "teacher_missed", courtesyUsedOrReserved: 10, nowMs: end }).automaticRefund, false);
+});
+
+test("teacher non-delivery cannot be reported for a lesson that has not finished", () => {
+  for (const nowMs of [start - HOUR, start, end - 1]) {
+    assert.throws(() => assessRemedyRequest({ ...base, reason: "teacher_missed", nowMs }),
+      (error: unknown) => error instanceof LessonRemedyError && error.code === "lesson_not_finished");
+  }
+  assert.doesNotThrow(() => assessRemedyRequest({ ...base, reason: "teacher_missed", nowMs: end }));
+  assert.equal(assessRemedyRequest(base).mode, "advance_absence");
 });
 
 test("unpaid/unpurchased lessons, replacement chains and corrupt facts fail closed", () => {
@@ -170,7 +179,7 @@ test("two submitted monthly courtesy requests exhaust the allowance before eithe
   assert.equal(assessRemedyRequest({ ...base, courtesyUsedOrReserved: courtesyAllowanceUse(request) }).remainingCourtesy, 1);
   assert.throws(() => assessRemedyRequest({ ...base, courtesyUsedOrReserved: used }),
     (error: unknown) => error instanceof LessonRemedyError && error.code === "allowance_used");
-  assert.equal(assessRemedyRequest({ ...base, reason: "teacher_missed", courtesyUsedOrReserved: used }).teacherApprovalRequired, true);
+  assert.equal(assessRemedyRequest({ ...base, reason: "teacher_missed", courtesyUsedOrReserved: used, nowMs: end }).teacherApprovalRequired, true);
   for (const status of ["requested", "offered"] as const) {
     assert.equal(courtesyAllowanceUse({ ...request, status, reason: "teacher_missed" }), 0);
     assert.equal(courtesyAllowanceUse({ ...request, status, teacherFailedReplacement: true }), 0);

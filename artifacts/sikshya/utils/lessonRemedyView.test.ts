@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   remedyGroup,
+  remedyCanReportTeacher,
   remedyOfferInstant,
   remedyQuotaLabel,
   remedyStatusLabel,
@@ -70,7 +71,7 @@ test("the screen uses supplied quota, never counts attendance or assumes renewal
   );
 });
 test("pending, assigned, review and closed states remain distinct", () => {
-  assert.equal(remedyGroup(lesson()), "attention");
+  assert.equal(remedyGroup(lesson()), "history");
   assert.equal(remedyGroup(lesson("requested")), "attention");
   assert.equal(remedyGroup(lesson("accepted")), "scheduled");
   assert.equal(remedyGroup(lesson("review_required")), "attention");
@@ -95,4 +96,17 @@ test("deep link retains the exact original session and status filter", () => {
     remedyVisibleLessons(lessons, "scheduled")[0]?.originalSessionId,
     106,
   );
+});
+test("request inbox excludes all unrequested lesson dates, including future dates", () => {
+  const list = [lesson(), { ...lesson("requested"), originalSessionId: 106 }];
+  assert.equal(remedyVisibleLessons(list, "attention").length, 1);
+  assert.equal(remedyVisibleLessons(list, "history").length, 0);
+  assert.equal(remedyVisibleLessons(list, "all").length, 2);
+});
+test("teacher non-delivery cannot be reported before the scheduled end", () => {
+  const value = { ...lesson(), canReportTeacherMissed: true };
+  assert.equal(remedyCanReportTeacher(value, "2026-09-30T04:14:59Z"), false);
+  assert.equal(remedyCanReportTeacher(value, value.endsAt), true);
+  assert.equal(remedyCanReportTeacher(value, "bad date"), false);
+  assert.equal(remedyCanReportTeacher({ ...value, canReportTeacherMissed: false }, value.endsAt), false);
 });

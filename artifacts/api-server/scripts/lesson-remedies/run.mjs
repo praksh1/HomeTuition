@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runFinanceChecks } from "./financeChecks.mjs";
+import { runAutomationChecks } from "./automationChecks.mjs";
 
 const root = fileURLToPath(new URL("../../../../", import.meta.url));
 const requireDb = createRequire(path.join(root, "lib/db/package.json"));
@@ -172,7 +173,7 @@ try {
   check("active financial support hides and refuses a withdrawn re-request", !lessonForCase(await list(blockedReopen), blockedRequest.body.caseId).canRequest && (await request(blockedReopen)).status === 409);
   const overdueRequest = await fixture({ at: Date.now() - 3 * DAY });
   check("elapsed original claim window hides and refuses new requests", !(await list(overdueRequest)).lessons.find(l => l.originalSessionId === overdueRequest.sessionIds[0]).canRequest && (await request(overdueRequest)).status === 409);
-  const short = await fixture({ monthly: false, count: 1 });
+  const short = await fixture({ monthly: false, count: 1, at: Date.now() - HOUR });
   check("one-lesson course has no student courtesy make-up", (await request(short)).status === 409 && (await list(short)).quotas[0].limit === 0);
   const teacherMissed = await request(short, 0, "teacher_missed"); assert.equal(teacherMissed.status, 200, JSON.stringify(teacherMissed));
   check("unverified teacher-missed claim does not grant exempt offer", (await offer(short, teacherMissed.body.caseId)).status === 409);
@@ -237,6 +238,7 @@ try {
     }
   }
   check("active rotated operator retains read-only durable queue while writes paused", (await api("/admin/lesson-remedies", operator.token)).status === 200);
+  await runAutomationChecks({ root, url, q, connect: () => pool.connect(), check, fixture, acceptedPastFixture, DAY, HOUR });
   console.log(`${passed} real PostgreSQL make-up checks passed. No shared database, real payments, emails or media calls were used.`);
 } catch (error) { console.error(log.slice(-5000)); throw error; }
 finally {

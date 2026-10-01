@@ -74,7 +74,8 @@ try {
       const label = width + " " + role;
       async function ready(phase) {
         await page.getByText(expectedEyebrow, { exact: true }).waitFor({ state: "visible" });
-        await page.getByText("Nothing here right now", { exact: true }).waitFor({ state: "visible" });
+        // A deep link opens the original lesson picker; the ordinary route is a request inbox.
+        await page.getByText(new URL(page.url()).searchParams.has("sessionId") ? "Nothing here right now" : "No requests to arrange", { exact: true }).waitFor({ state: "visible" });
         check(new URL(page.url()).pathname === expectedPath, label + " " + phase + " keeps the intended public route");
         check(requests.includes(expectedApi), label + " " + phase + " uses the correct role API");
         check(!requests.includes(role === "admin" ? "/api/lesson-remedies" : "/api/admin/lesson-remedies"), label + " " + phase + " never selects the other role workspace");

@@ -1,5 +1,5 @@
-// The operator desk is a separate web bundle, not a hidden route in the public app.
-// Keep the ordinary iOS/Android and student/teacher web config unchanged by default.
+// A separate route tree and export keep the private desk out of the public app's bundle.
+// Native and participant builds remain unchanged unless explicitly building the desk.
 module.exports = ({ config }) => {
   if (process.env.OPERATOR_BUILD !== "1") return config;
   return {
@@ -7,8 +7,12 @@ module.exports = ({ config }) => {
     name: "Fadko Desk",
     web: { ...config.web, name: "Fadko Desk", shortName: "Fadko Desk" },
     extra: { ...config.extra, router: { ...config.extra?.router, root: "./app-operator" } },
-    plugins: (config.plugins ?? []).map((plugin) =>
-      plugin === "expo-router" ? ["expo-router", { root: "./app-operator" }] : plugin,
-    ),
+    plugins: (config.plugins ?? []).map((plugin) => {
+      if (plugin === "expo-router") return ["expo-router", { root: "./app-operator" }];
+      if (Array.isArray(plugin) && plugin[0] === "expo-router") {
+        return ["expo-router", { ...plugin[1], root: "./app-operator" }];
+      }
+      return plugin;
+    }),
   };
 };

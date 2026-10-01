@@ -62,6 +62,9 @@ try {
     page.on("pageerror", (error) => errors.push(String(error)));
     page.on("dialog", (dialog) => dialog.accept());
     await page.goto(base);
+    await page.getByText("No requests to arrange", { exact: true }).waitFor();
+    check(!(await page.getByRole("button", { name: "Request make-up", exact: true }).count()), `${width}: request inbox is not every purchased lesson`);
+    await page.getByRole("button", { name: /^Choose a lesson/ }).click();
     await page
       .getByRole("button", { name: "Request make-up", exact: true })
       .waitFor();
@@ -84,6 +87,7 @@ try {
     await page
       .getByRole("button", { name: "Request make-up", exact: true })
       .click();
+    check(!(await page.getByRole("button", { name: "The teacher did not teach this lesson", exact: true }).count()), `${width}: future lesson cannot be reported as teacher non-delivery`);
     await page
       .getByRole("button", { name: "Send request", exact: true })
       .click();
@@ -131,6 +135,15 @@ try {
       path: path.join(work, `${width}-requested.png`),
       fullPage: true,
     });
+    await page.goto(`${base}?past`);
+    await page.getByRole("button", { name: /^Choose a lesson/ }).click();
+    await page.getByRole("button", { name: "Request make-up", exact: true }).click();
+    await page.getByRole("button", { name: "The teacher did not teach this lesson", exact: true }).click();
+    await page.getByRole("textbox", { name: "Make-up request details" }).fill("The scheduled lesson ended without the teacher teaching it.");
+    await page.getByRole("button", { name: "Send request", exact: true }).click();
+    await page.getByText("Requested", { exact: true }).waitFor();
+    const reported = await page.evaluate(() => window.requests.find(item => item.method === "POST"));
+    check(reported.path === "/sessions/105/makeup-request" && reported.body.reason === "teacher_missed", `${width}: completed-window report is distinct from a courtesy absence`);
     await page.goto(`${base}?offered&original`);
     await page
       .getByRole("button", { name: "Accept date", exact: true })
@@ -150,6 +163,7 @@ try {
       `${width}: assigned session opens not original/new checkout`,
     );
     await page.goto(`${base}?full-quota`);
+    await page.getByRole("button", { name: /^Choose a lesson/ }).click();
     await page
       .getByText("0 of 2 courtesy make-ups available", { exact: true })
       .waitFor();
@@ -201,7 +215,13 @@ try {
         offered.body.confirmTeacherNonDelivery === true,
       `${width}: Nepal date and confirmation transmitted`,
     );
+    for (const role of ["teacher", "operator"]) {
+      await page.goto(`${base}?${role}&untouched`);
+      await page.getByRole("button", { name: "All cases", exact: true }).click();
+      check(!(await page.getByText("Untouched upcoming lesson", { exact: true }).count()), `${width}: ${role} all cases excludes untouched scheduled lessons`);
+    }
     await page.goto(`${base}?operator&accepted`);
+    await page.getByRole("button", { name: /^Scheduled/ }).click();
     await page
       .getByRole("button", { name: "Review & decide", exact: true })
       .click();
@@ -261,6 +281,7 @@ try {
       `${width}: inactive feature not working-looking`,
     );
     await page.goto(`${base}?disabled&accepted`);
+    await page.getByRole("button", { name: /^Scheduled/ }).click();
     await page
       .getByText("New make-up actions are paused", { exact: true })
       .waitFor();
@@ -281,6 +302,7 @@ try {
       `${width}: failed load not an empty state`,
     );
     await page.goto(`${base}?retry`);
+    await page.getByRole("button", { name: /^Choose a lesson/ }).click();
     await page
       .getByRole("button", { name: "Request make-up", exact: true })
       .click();

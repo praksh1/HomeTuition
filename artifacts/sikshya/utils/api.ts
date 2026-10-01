@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { retryOneTransientRead } from "./readRetry";
 import {
   DEFAULT_API_TIMEOUT_MS,
   RequestTimeoutError,
@@ -105,13 +106,15 @@ async function apiRequest<T>(
       // Storage is part of the deadline too. A browser whose IndexedDB is wedged must not be
       // able to hold the whole app on its launch screen before the network request even starts.
       const headers = await baseHeaders(contentType);
-      const res = await fetch(`${getApiBase()}${path}`, { ...init, headers, signal });
-      const data = await readJson(res);
-      if (!res.ok) {
-        const message = typeof data.error === "string" ? data.error : "Request failed";
-        throw new ApiError(res.status, message, data);
-      }
-      return data as T;
+      return retryOneTransientRead(async () => {
+        const res = await fetch(`${getApiBase()}${path}`, { ...init, headers, signal });
+        const data = await readJson(res);
+        if (!res.ok) {
+          const message = typeof data.error === "string" ? data.error : "Request failed";
+          throw new ApiError(res.status, message, data);
+        }
+        return data as T;
+      }, init.method, signal);
     }, options.timeoutMs ?? DEFAULT_API_TIMEOUT_MS);
   } catch (error) {
     if (error instanceof ApiError) throw error;

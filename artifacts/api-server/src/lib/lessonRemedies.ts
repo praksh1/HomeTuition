@@ -125,6 +125,9 @@ export function assessRemedyRequest(facts: RemedyRequestFacts): RemedyRequestDec
   }
   if (!facts.originalLessonPurchased) throw new LessonRemedyError("not_purchased", "Choose a lesson included in your enrollment.");
   if (facts.originalIsReplacement) throw new LessonRemedyError("replacement_chain", "Get help with the existing make-up request. A replacement cannot create another courtesy allowance.");
+  if (facts.reason === "teacher_missed" && facts.nowMs < facts.originalScheduledEndMs) {
+    throw new LessonRemedyError("lesson_not_finished", "This lesson has not finished yet. You can report that the teacher did not deliver it after its scheduled end.");
+  }
   // Transfers already owed or completed must be reconciled by Support, not reopened by a client.
   if (!["future", "replacement_pending", "delivered_pending", "disputed", "eligible"].includes(facts.allocationState)) {
     throw new LessonRemedyError("financial_review", "Support must review this lesson's payment before arranging a make-up.");

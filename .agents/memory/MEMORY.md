@@ -1,5 +1,7 @@
 # Memory Index
 
+- [Prospective make-up automation safeguards](makeup-automation-prospective-sep30.md) — owner approved 48-hour teacher response, 7-day offer expiry, 30-day replacement limit and prospective 70/30 courtesy absence outcome. Evidence and prior consent are required; shadow code is not active settlement or provider-confirmed cash.
+
 - [Laptop web and installed mobile-app launch](mobile-app-launch-policy.md) — phone browsers remain available for testing before store release; laptop web is a first-class product; installed iOS/Android apps are the intended phone experience, with app-directed access only after the native release is proven.
 
 - [Identity documents and first-use audit](identity-documents-and-first-use-audit.md) — 27 Sep correction: student/parent citizenship is not required or collected in the active product; teacher citizenship and operator approval remain required before bookings. Private retention and incomplete implementation boundaries are recorded here.

@@ -1,5 +1,15 @@
 # Fadko — the whole project, in one document
 
+**30 September reliability and remedy-policy update:** owner approved prospective 48-hour
+teacher response, 7-day offer expiry and 30-day replacements, with verified teacher-fault
+full refunds and explicitly consented 70/30 student/platform courtesy absence outcomes.
+Existing purchases keep frozen terms. Uncertain evidence remains held for human review.
+The v2 engine is shadow-only: no active scheduled settlement or provider-confirmed cash.
+See `.agents/memory/makeup-automation-prospective-sep30.md`, the September 30 reliability
+worklog and October launch-readiness backlog. They supersede older proposal-only policy
+notes, not historical contracts. Production and Preview are scoped paired releases, not
+wholesale merged; newer Preview identity/closure remains isolated.
+
 **11 September commission transition:** the owner approved retiring new teacher-tier sales for
 commission-based classes while keeping existing Monthly homework/chat and purchased contracts.
 Implementation is a separate preview, not part of the approved planning production release.

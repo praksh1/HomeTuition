@@ -167,7 +167,7 @@ export default function AdminTickets() {
           <Text style={[styles.reason, { color: colors.primary }]}>Make-up lessons & payment holds</Text>
           <Feather name="chevron-right" size={16} color={colors.primary} />
         </View>
-        <Text style={[styles.body, { color: colors.mutedForeground }]}>Review original lessons, replacement dates and delivery evidence. No automatic refunds or payout decisions.</Text>
+        <Text style={[styles.body, { color: colors.mutedForeground }]}>Requests, replacement dates and payment holds. Exceptional cases stay with Support.</Text>
       </TouchableOpacity>
 
       {counts && (

@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Modal,
   Platform,
+  Pressable,
   ScrollView,
   Text,
   TextInput,
@@ -31,6 +32,7 @@ import { apiGet, apiPost } from "@/utils/api";
 import { confirm } from "@/utils/alerts";
 import { batchDateValue, lessonDraft } from "@/utils/programBatches";
 import {
+  remedyCanReportTeacher,
   remedyOfferInstant,
   remedyQuotaLabel,
   remedyStatusLabel,
@@ -46,10 +48,10 @@ type Form = {
   reason: "student_missed" | "teacher_missed";
 };
 const filters: Array<{ id: RemedyFilter; label: string }> = [
-  { id: "attention", label: "To arrange" },
+  { id: "attention", label: "Requests" },
   { id: "scheduled", label: "Scheduled" },
-  { id: "history", label: "History" },
-  { id: "all", label: "All" },
+  { id: "history", label: "Resolved" },
+  { id: "all", label: "Choose a lesson" },
 ];
 const outcomes = [
   { value: "replacement_delivered", label: "Confirm replacement delivered" },
@@ -81,7 +83,8 @@ export default function MakeupsWorkspace({
   const [data, setData] = useState<RemedyList | null>(null);
   const [problem, setProblem] = useState("");
   const [notice, setNotice] = useState("");
-  const [filter, setFilter] = useState<RemedyFilter>("all");
+  const [filter, setFilter] = useState<RemedyFilter>(originalId ? "all" : "attention");
+  const [showPolicy, setShowPolicy] = useState(false);
   const [limit, setLimit] = useState(20);
   const [busy, setBusy] = useState(false);
   const running = useRef(false);
@@ -295,10 +298,12 @@ export default function MakeupsWorkspace({
       ? `${dates.format(carrier)} · ${local.time} Nepal time`
       : "Date unavailable";
   };
-  const candidates = data?.lessons ?? [];
-  const visible = remedyVisibleLessons(candidates, filter, originalId);
   const teacher = data?.role === "teacher";
   const operatorMode = operator && data?.role === "admin";
+  // Teachers arrange existing requests; they cannot request a replacement for a student.
+  // The operator's "All cases" must not expand into an entire purchased timetable.
+  const candidates = (data?.lessons ?? []).filter(lesson => !(teacher || operatorMode) || Boolean(lesson.case));
+  const visible = remedyVisibleLessons(candidates, filter, originalId);
   const label =
     form?.mode === "offer"
       ? "Offer a replacement date"
@@ -372,11 +377,13 @@ export default function MakeupsWorkspace({
       {data && (data.enabled || data.lessons.some((lesson) => lesson.case)) ? (
         <>
           <ProgramNotice
-            title="A replacement, not another purchase"
+            title={operatorMode ? "Review the exceptions" : "Keep learning, without paying twice"}
             tone="neutral"
             icon="repeat"
-            body="Each make-up stays linked to the original lesson payment. That lesson's allocation stays on hold while a replacement or review is pending. Confirmed delivery starts a fresh 48-hour review window; it does not promise an immediate payout."
+            body={operatorMode ? "Requests with uncertain evidence need a decision. Each case stays linked to the original lesson and payment." : "Follow your requests here. To plan an absence, choose a lesson or open it from your class schedule."}
           />
+          <ProgramButton label={showPolicy ? "Hide make-up rules" : "How make-ups work"} emphasis="quiet" icon="info" onPress={() => setShowPolicy(value => !value)} />
+          {showPolicy ? <ProgramNotice title="Your original payment stays linked" body="A courtesy make-up is for a lesson you miss. A lesson the teacher did not deliver is a separate issue and does not use your courtesy allowance once confirmed. The affected lesson payment stays on hold while a replacement or review is pending. Confirmed delivery starts a fresh 48-hour review window; it does not promise an immediate payout. Your purchased terms determine the outcome." /> : null}
           {!teacher && !operatorMode && data.quotas.length ? (
             <View style={{ gap: space.sm }}>
               {data.quotas.map((quota) => (
@@ -391,35 +398,29 @@ export default function MakeupsWorkspace({
                     {remedyQuotaLabel(quota)}
                   </Text>
                   <Text style={[t.caption, { color: colors.mutedForeground }]}>
-                    Pending requests reserve a place. Unaccepted requests
-                    release it when closed. Accepted replacements keep their
-                    place. No rollover; confirmed teacher non-delivery does not
-                    use this allowance.
+                    For lessons you miss · No rollover. Teacher non-delivery is separate.
                   </Text>
                 </ProgramCardShell>
               ))}
             </View>
           ) : null}
-          <View
-            style={{ flexDirection: "row", flexWrap: "wrap", gap: space.xs }}
-          >
-            {filters.map((item) => (
-              <ProgramButton
-                key={item.id}
-                label={`${item.label} (${remedyVisibleLessons(candidates, item.id, originalId).length})`}
-                emphasis={filter === item.id ? "primary" : "quiet"}
-                onPress={() => {
-                  setFilter(item.id);
-                  setLimit(20);
-                }}
-              />
-            ))}
+          <View style={{ gap: space.sm }}>
+            <View style={{ flexDirection: "row", backgroundColor: colors.muted, padding: space.xxs, borderRadius: radius.md }}>
+              {filters.filter(item => item.id !== "all").map(item => (
+                <Pressable key={item.id} accessibilityRole="button" accessibilityState={{ selected: filter === item.id }} accessibilityLabel={`${item.label} (${remedyVisibleLessons(candidates, item.id, originalId).length})`} onPress={() => { setFilter(item.id); setLimit(20); }} style={{ flex: 1, minHeight: 44, justifyContent: "center", alignItems: "center", borderRadius: radius.sm, backgroundColor: filter === item.id ? colors.card : "transparent", paddingHorizontal: space.xxs }}>
+                  <Text style={[t.caption, { color: filter === item.id ? colors.primary : colors.mutedForeground }]}>{item.label} ({remedyVisibleLessons(candidates, item.id, originalId).length})</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
+            <ProgramButton label={teacher || operatorMode ? "All cases" : "Choose a lesson"} icon="calendar" emphasis={filter === "all" ? "primary" : "secondary"} onPress={() => { setFilter("all"); setLimit(20); }} />
             <ProgramButton
               label="Refresh"
               icon="refresh-cw"
               onPress={() => void load()}
               disabled={busy}
             />
+            </View>
           </View>
           {originalId ? (
             <ProgramButton
@@ -434,11 +435,11 @@ export default function MakeupsWorkspace({
           ) : null}
           {!visible.length ? (
             <ProgramNotice
-              title="Nothing here right now"
+              title={filter === "attention" ? "No requests to arrange" : "Nothing here right now"}
               body={
                 teacher || operatorMode
                   ? "Requests and assigned replacements appear here with the original lesson and student."
-                  : "Eligible lessons and your requests will appear here. A used allowance does not remove the option to ask Support for a refund review."
+                  : "Need a different date? Select Choose a lesson. If a teacher did not teach a lesson, report it there instead—it is not a courtesy make-up."
               }
               tone="neutral"
             />
@@ -602,24 +603,13 @@ export default function MakeupsWorkspace({
                       gap: space.xs,
                     }}
                   >
-                    {!teacher && !operatorMode && lesson.canRequest ? (
+                    {!teacher && !operatorMode && (lesson.canRequest || remedyCanReportTeacher(lesson, data.serverNow)) ? (
                       <ProgramButton
-                        label="Request make-up"
+                        label={lesson.canRequest ? "Request make-up" : "Report a lesson issue"}
                         emphasis="primary"
                         icon="repeat"
                         disabled={busy}
-                        onPress={() => openForm(lesson, "request")}
-                      />
-                    ) : null}
-                    {!teacher &&
-                    !operatorMode &&
-                    lesson.canReportTeacherMissed ? (
-                      <ProgramButton
-                        label="Teacher missed lesson"
-                        disabled={busy}
-                        onPress={() =>
-                          openForm(lesson, "request", "teacher_missed")
-                        }
+                        onPress={() => openForm(lesson, "request", lesson.canRequest ? "student_missed" : "teacher_missed")}
                       />
                     ) : null}
                     {value?.actions.accept ? (
@@ -770,19 +760,24 @@ export default function MakeupsWorkspace({
               </Text>
             ) : null}
             {form?.mode === "request" ? (
+              <View style={{ gap: space.sm }}>
+                <Text style={[t.bodyStrong, { color: colors.foreground }]}>What do you need help with?</Text>
+                {form.lesson.canRequest ? <ProgramButton label="I will miss or missed this lesson" emphasis={form.reason === "student_missed" ? "primary" : "secondary"} icon="repeat" disabled={busy} onPress={() => setForm({ ...form, reason: "student_missed" })} /> : null}
+                {remedyCanReportTeacher(form.lesson, data!.serverNow) ? <ProgramButton label="The teacher did not teach this lesson" emphasis={form.reason === "teacher_missed" ? "primary" : "secondary"} icon="alert-circle" disabled={busy} onPress={() => setForm({ ...form, reason: "teacher_missed" })} /> : null}
               <ProgramNotice
                 tone="neutral"
                 title={
                   form.reason === "teacher_missed"
-                    ? "Support can review non-delivery"
+                    ? "Report teaching that was not delivered"
                     : remedyQuotaLabel(form.lesson.quota)
                 }
                 body={
                   form.reason === "teacher_missed"
-                    ? "Reporting this does not automatically confirm that the teacher missed the lesson. The original payment stays linked for review; no automatic refund is issued."
+                    ? "We will check the lesson record. Confirmed teacher non-delivery does not use your courtesy allowance. Your report alone is not proof of absence."
                     : "This reserves one courtesy place while your teacher reviews it. Refund review remains available if a replacement is not suitable."
                 }
               />
+              </View>
             ) : null}
             {form?.mode === "offer" ? (
               <>
