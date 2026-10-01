@@ -64,7 +64,11 @@ try {
         send() {} close() {}
       }
       window.WebSocket = BlockedSocket;
-      if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = async () => { throw new Error("Synthetic fixture denies media"); };
+      window.__lessonDropMediaRequests = 0;
+      if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = async () => {
+        window.__lessonDropMediaRequests++;
+        throw new Error("Synthetic fixture denies media");
+      };
     }, { now: NOW });
     if (typeof page.routeWebSocket === "function") await page.routeWebSocket("**", socket => socket.close());
     await page.route("**/*", route => {
@@ -114,12 +118,27 @@ try {
     const body = await page.locator("body").innerText();
     check(errors.length === 0 && !body.includes("Something went wrong") && !body.includes("Reload app"), `${label}: real exported lesson remains rendered without fallback`);
     check(await page.getByTestId("session-start-btn").count() === 1, `${label}: single original Join control survives sparse response`);
-    check(await page.getByTestId("session-start-btn").isEnabled() === scenario.enabled, `${label}: timing and disabled entry are unchanged`);
+    const startControl = page.getByTestId("session-start-btn");
+    // Production's unchanged TouchableOpacity exports a role-less div, whose
+    // explicit aria-disabled is not interpreted by Playwright's isEnabled().
+    // Check the actual native/ARIA contract, then prove a disabled coordinate tap
+    // cannot navigate, request media or reach any classroom/mutation endpoint.
+    const explicitlyDisabled = await startControl.evaluate(element => element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true");
+    check(explicitlyDisabled === !scenario.enabled, `${label}: timing and explicit native/ARIA disabled entry are unchanged`);
     check(await page.getByTestId("session-start-btn").getByText(scenario.label, { exact: true }).count() === 1, `${label}: original entry wording remains correct`);
     check(await page.getByTestId("drop-class-btn").count() === 0, `${label}: viewing a lesson never invents a cancellation action`);
     check(requests.every(row => row.method === "GET"), `${label}: no mutation while opening lesson details`);
     check(!requests.some(row => /\/(room|entry|join)$/.test(row.path)), `${label}: details never start a video call`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${label}: no horizontal overflow`);
+    if (!scenario.enabled) {
+      await startControl.scrollIntoViewIfNeeded();
+      const beforeTapUrl = page.url();
+      const box = await startControl.boundingBox();
+      assert.ok(box, `${label}: disabled entry still has a visible coordinate target`);
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await page.waitForTimeout(150);
+      check(page.url() === beforeTapUrl && requests.every(row => row.method === "GET") && !requests.some(row => /\/(room|entry|join)$/.test(row.path)) && await page.evaluate(() => window.__lessonDropMediaRequests === 0), `${label}: disabled coordinate tap cannot navigate, mutate or request classroom/media`);
+    }
     if (scenario.kind === "linked") {
       const action = page.getByTestId("drop-linked-remedies");
       await action.scrollIntoViewIfNeeded();

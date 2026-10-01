@@ -29,6 +29,7 @@ const check = (ok, label) => { assert.ok(ok, label); passed++; console.log(`PASS
 try {
   for (const role of ["teacher", "student"]) for (const width of [320, 390, 1440]) for (const kind of ["direct", "class"]) {
     const height = width === 1440 ? 900 : 844;
+    if (process.env.MESSAGE_ROUTE_UI_CASE && process.env.MESSAGE_ROUTE_UI_CASE !== `${role} ${width} ${kind}`) continue;
     const userId = role === "teacher" ? 7 : 11, otherId = role === "teacher" ? 11 : 7;
     const rows = Array.from({ length: 250 }, (_, i) => ({
       id: 1000 + i, senderId: i % 2 ? 11 : 7, receiverId: i % 2 ? 7 : 11,
@@ -112,6 +113,16 @@ try {
     };
     check(await visibleLatest(), `${prefix}: actual export lands at newest of 250 messages`);
     check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${prefix}: no horizontal overflow`);
+    // Focus/virtualized row measurement may finish after route navigation at 4× CPU. Wait
+    // for observable formatter quiescence, not an arbitrary pause; then measure typing
+    // separately. Every-character latency remains strict and independent of this wait.
+    await input.focus();
+    await page.evaluate(() => { window.__messageQuiet = { work: "", changedAt: performance.now() }; });
+    await page.waitForFunction(() => {
+      const work = JSON.stringify(window.__messageDateWork);
+      if (window.__messageQuiet.work !== work) window.__messageQuiet = { work, changedAt: performance.now() };
+      return performance.now() - window.__messageQuiet.changedAt >= 600;
+    }, undefined, { timeout: 15_000, polling: 100 });
     await page.evaluate(() => {
       window.__messageDateWork = { constructors: 0, parts: 0 }; window.__typedPaints = [];
       const input = [...document.querySelectorAll("textarea")].find(el => el.getBoundingClientRect().height > 0);
@@ -120,6 +131,7 @@ try {
     await input.pressSequentially("Actual route typing stays responsive", { delay: 5 });
     await page.waitForTimeout(100);
     const metrics = await page.evaluate(() => ({ ...window.__messageDateWork, paints: window.__typedPaints }));
+    console.log(JSON.stringify({ role, width, kind, constructorsDuringTyping: metrics.constructors, partsDuringTyping: metrics.parts }));
     check(await input.inputValue() === "Actual route typing stays responsive", `${prefix}: every keystroke appears`);
     check(metrics.constructors === 0 && metrics.parts === 0, `${prefix}: typing does not repeat timeline date work`);
     check(metrics.paints.length > 0 && Math.max(...metrics.paints) < 250, `${prefix}: four-times-slowed synthetic input paints under 250 ms`);
@@ -141,4 +153,5 @@ try {
     await page.close();
   }
 } finally { await browser.close(); server.close(); }
+assert.ok(passed > 0, "The selected route fixture must execute at least one case");
 console.log(`${passed} actual-export messaging checks passed. Synthetic screenshots: ${screenshots}`);

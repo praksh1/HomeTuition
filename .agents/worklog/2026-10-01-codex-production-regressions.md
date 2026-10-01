@@ -42,6 +42,27 @@ changes. Preview and Production are divergent tracks; only reviewed scoped patch
 
 ## Verification
 
+- Final paired runtime checks: Production 708 app / 886 API pure tests; Preview 735 app /
+  917 API pure tests. Both workspace typechecks and design ratchets passed.
+- Fresh exports validate 129 Production / 130 Preview JavaScript chunks against their
+  respective approved APIs. No loopback or mixed Railway target is deployable.
+- Actual exported lessons: 372 assertions in each track, 40 cases at 320/390/1440/844
+  landscape. Known disabled state and blocked taps are checked without changing timing.
+- Actual exported message routes: 132 checks in each track, teacher/student and Direct/Class
+  at 320/390/1440 with 250 varied messages. Zero timeline Intl work during typing; every
+  character retained. Controlled 4x-CPU input-to-next-frame maximums were Preview 55 ms,
+  Production 74 ms. These are not physical-device INP or universal performance promises.
+- Existing messaging UI 150 plus draft/failure recovery; long-history 32; classroom drawer
+  168 checks per track. Actual make-up role routes 162 and startup recovery seven per track.
+- Preview-only completed Schedule follow-up: 66 actual-export Schedule checks and 1,068
+  actual-export action assertions. Not copied into the divergent Production lesson layout.
+- First non-deploy CI candidate b5a4b3b5 / run 36821392245 passed compilation, pure tests,
+  isolated database checks and bundled browser checks but stopped during Metro export
+  after a generated-CSS warning without a usable exception. It is NOT a passing gate.
+  Renewed CI uses the same bounded worker/heap settings as deploy-web; no checks skipped.
+- Two fixture-only corrections: measured typing begins after bounded renderer quiescence;
+  legacy role-less RNW disabled state is read explicitly and blocked coordinate taps checked.
+  Both corrected exported gates pass locally; candidate runtime/export did not change.
 - The owner's 6:28.93 laptop recording shows Production URLs. Decoded selected local frames;
   no physical iPhone/Android execution or phone-performance score is claimed.
 - Before changes, both public roots and API readiness returned 200. Production entry was

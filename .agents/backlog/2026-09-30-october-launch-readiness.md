@@ -5,6 +5,12 @@ This is a release checklist, not a statement that Fadko is ready or that store a
 
 ## Immediate regression release
 
+October 1 correction is in progress: the owner's Production recording reproduced a real
+linked-lesson crash in the old export. Sparse cancellation data, unbracketed Production
+counts, estimated newest-scroll and classroom-parent typing are repaired locally. Read
+`.agents/worklog/2026-10-01-codex-production-regressions.md` for current gate/release results;
+the September 30 completion below does not certify those later regressions or launch readiness.
+
 Completed September 30 on Production 3934050e and Preview a30e7b99: isolated typing/draft
 work, bounded read recovery, request-first make-up inbox, separate operator Worker exports,
 and exact-source CI/export/live readiness checks. This does not complete automatic
@@ -52,6 +58,11 @@ Required before automatic settlement:
 1. Freeze the approved policy and disclosure at checkout; store explicit acceptance.
 2. Record reliable delivery/non-delivery evidence and observation health. Missing telemetry
    rows alone do not prove absence. A reported issue is not a verified failure.
+   October 1 audit: LiveKit signed-event ingestion is absent; socket failed writes are not
+   retained as gaps. Provider reads cap at 2,000 events and omit provider/connection identity.
+   Add observation-only authenticated ingestion, successful coverage/gap records and complete
+   provider-scoped adapters before finalizing an automated absence. Public readiness checks
+   and the on-demand room-list diagnostic cannot certify a lesson's full observation window.
 3. Persist idempotent original-allocation actions under the same lock as payout selection,
    dispute decisions and refund requests. Holds must exclude that allocation from payout.
 4. Reconcile full and partial provider refunds, failures, retries and reversals with receipts.
