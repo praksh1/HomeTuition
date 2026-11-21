@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - name: Verify installed Node and production ancestry
         run: |
-          node -e "if (Number(process.versions.node.split('.')[0]) < 22) process.exit(1)"
+          node -e "if (typeof require('node:module').registerHooks !== 'function') throw new Error('Installed Node must support module.registerHooks')"
           git rev-parse HEAD
           git merge-base --is-ancestor origin/main HEAD
       - name: Check portable package
@@ -37,3 +37,5 @@ jobs:
           node --check ops/livekit-self-host/preflight.mjs
           node --check ops/livekit-self-host/ordinary-path.mjs
           node --test ops/livekit-self-host/portable.test.mjs
+      - name: Check endpoint integration with synthetic SDK only
+        run: node --experimental-strip-types --test ops/livekit-self-host/endpoint.test.mjs

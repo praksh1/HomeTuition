@@ -27,6 +27,8 @@
  * a length for exactly the same reason.
  */
 
+import { parseLiveKitEndpoint } from "./livekitEndpoint.ts";
+
 export type Verdict = "ok" | "wrong" | "unknown";
 
 export interface Finding {
@@ -81,6 +83,7 @@ export function inspectSettings(env: Env, where: Where = WHERE.deployed): Findin
   const key = env.LIVEKIT_API_KEY?.trim();
   const secret = env.LIVEKIT_API_SECRET?.trim();
   const url = env.LIVEKIT_URL?.trim();
+  const endpoint = parseLiveKitEndpoint(env.LIVEKIT_URL);
   const out: Finding[] = [];
 
   out.push(
@@ -126,17 +129,20 @@ export function inspectSettings(env: Env, where: Where = WHERE.deployed): Findin
       title: "LIVEKIT_URL is missing or empty.",
       fix: `Add it ${where}. It looks like wss://your-project.livekit.cloud`,
     });
-  } else if (!url.startsWith("wss://")) {
+  } else if (!endpoint) {
+    const corrected = /^https:/i.test(url)
+      ? parseLiveKitEndpoint(env.LIVEKIT_URL!.replace(/^(\s*)https:/i, "$1wss:"))
+      : null;
     out.push({
       id: "url",
       verdict: "wrong",
-      title: `LIVEKIT_URL is "${url}", which does not start with wss://`,
-      fix: url.startsWith("https://")
-        ? `Change it ${where} to wss://${url.slice("https://".length)}`
-        : `It must look like wss://your-project.livekit.cloud. Change it ${where}.`,
+      title: "LIVEKIT_URL must be a secure server origin without credentials, a path, a query or a fragment.",
+      fix: corrected
+        ? `Change it ${where} to ${corrected.socketUrl}`
+        : `Set it ${where} to wss://your-livekit-host. Local development may use ws://localhost:7880.`,
     });
   } else {
-    out.push({ id: "url", verdict: "ok", title: `Server address is ${url}` });
+    out.push({ id: "url", verdict: "ok", title: `Server address is ${endpoint.socketUrl}` });
   }
 
   return out;
@@ -162,9 +168,8 @@ export function describeReachFailure(message: string, where: Where = WHERE.deplo
       verdict: "wrong",
       title: "LiveKit refused the key and secret.",
       fix:
-        "They are well-formed but wrong, or they belong to a different project. Create a fresh key " +
-        `in the LiveKit dashboard and replace all three values ${where} — the address too, since a ` +
-        "key only works with its own project.",
+        "They are well-formed but wrong, or they belong to a different server. Use a matching key " +
+        `and secret from the LiveKit Cloud project or self-hosted server and replace all three values ${where}.`,
     };
   }
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(message)) {
@@ -172,22 +177,22 @@ export function describeReachFailure(message: string, where: Where = WHERE.deplo
       id: "reach",
       verdict: "wrong",
       title: "That server address could not be found.",
-      fix: `Check the project name in LIVEKIT_URL ${where} against the LiveKit dashboard.`,
+      fix: `Check LIVEKIT_URL ${where} against the configured LiveKit server's DNS name.`,
     };
   }
   if (/ECONNREFUSED|ETIMEDOUT|ENETUNREACH|fetch failed|allowlist|egress|proxy|\b40[37]\b/i.test(message)) {
     return {
       id: "reach",
       verdict: "unknown",
-      title: "The settings look right, but this server cannot reach livekit.cloud.",
-      fix: "A firewall or network policy is blocking it. The two checks above still passed.",
+      title: "The settings look right, but this server cannot reach the configured LiveKit server.",
+      fix: "Check the LiveKit service, DNS, firewall and network policy.",
     };
   }
   return {
     id: "reach",
     verdict: "wrong",
-    title: `LiveKit answered with something unexpected: ${message}`,
-    fix: "Worth reporting with this line — but remove nothing and add no secret to it.",
+    title: "The LiveKit check failed with an unexpected response.",
+    fix: "Check the LiveKit service and its server-side logs. Keep credentials out of reports and screenshots.",
   };
 }
 
@@ -243,12 +248,12 @@ async function signCheck(
       title: "A token was produced but does not carry the room it should.",
       fix: "This is a bug in the app, not in your settings. Report it.",
     };
-  } catch (err) {
+  } catch {
     return {
       id: "sign",
       verdict: "wrong",
-      title: `A join token could not be signed: ${err instanceof Error ? err.message : String(err)}`,
-      fix: `The key or secret is malformed — copy both again from the LiveKit dashboard and replace them ${where}.`,
+      title: "A join token could not be signed with the configured credentials.",
+      fix: `Check the matching key and secret from the LiveKit Cloud project or self-hosted server ${where}.`,
     };
   }
 }
@@ -320,11 +325,8 @@ export async function diagnoseVideo(env: Env, where: Where = WHERE.deployed): Pr
 
   findings.push(await signCheck(env.LIVEKIT_API_KEY!.trim(), env.LIVEKIT_API_SECRET!.trim(), where, AccessToken as never));
 
-  // The REST API is https, on the same host as the wss address.
-  const httpsHost = env
-    .LIVEKIT_URL!.trim()
-    .replace(/^wss:/, "https:")
-    .replace(/^ws:/, "http:");
+  // inspectSettings already accepted this exact value; both callers use the same origin rule.
+  const httpsHost = parseLiveKitEndpoint(env.LIVEKIT_URL)!.apiOrigin;
 
   try {
     const rooms = new RoomServiceClient(httpsHost, env.LIVEKIT_API_KEY!.trim(), env.LIVEKIT_API_SECRET!.trim());

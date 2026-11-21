@@ -4,10 +4,11 @@ import { AccessToken, RoomServiceClient, TrackSource } from "livekit-server-sdk"
 import { logger } from "../logger";
 import { providerUserId } from "./participantIdentity";
 import { roomNameForSession } from "./roomName";
+import { parseLiveKitEndpoint } from "./livekitEndpoint.ts";
 import type { JoinOptions, MediaStop, ProviderApply, VideoProvider } from "./types";
 
 /**
- * LiveKit Cloud, behind the same interface Daily uses.
+ * LiveKit Cloud or a self-hosted server, behind the same interface Daily uses.
  *
  * Nothing in `lib/daily.ts` is touched by this file existing. Both providers sit behind
  * `lib/video/index.ts`, `VIDEO_PROVIDER` chooses between them, and the default is still `daily`
@@ -89,21 +90,11 @@ function ttlSecondsFor(expiresAt: number | undefined, now: number): number {
   return Math.min(TOKEN_TTL_CEILING_SECONDS, Math.max(TOKEN_TTL_FLOOR_SECONDS, seconds));
 }
 
-/**
- * The REST address, from the `wss://` one the app is given.
- *
- * LiveKit's HTTP API lives on the same host as the signalling socket; the scheme is the only
- * difference. Converted in one place so a second caller cannot invent a slightly different
- * rule — `lib/video/diagnose.ts` does the same conversion for the credentials check.
- */
-function httpsFrom(url: string): string {
-  return url.trim().replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-}
-
 interface LiveKitConfig {
   apiKey: string;
   apiSecret: string;
   url: string;
+  apiOrigin: string;
 }
 
 /**
@@ -115,9 +106,9 @@ interface LiveKitConfig {
 function config(): LiveKitConfig | null {
   const apiKey = process.env.LIVEKIT_API_KEY?.trim();
   const apiSecret = process.env.LIVEKIT_API_SECRET?.trim();
-  const url = process.env.LIVEKIT_URL?.trim();
-  if (!apiKey || !apiSecret || !url) return null;
-  return { apiKey, apiSecret, url };
+  const endpoint = parseLiveKitEndpoint(process.env.LIVEKIT_URL);
+  if (!apiKey || !apiSecret || !endpoint) return null;
+  return { apiKey, apiSecret, url: endpoint.socketUrl, apiOrigin: endpoint.apiOrigin };
 }
 
 /**
@@ -220,7 +211,7 @@ export const livekitProvider: VideoProvider = {
       */
       logger.warn(
         { sessionId },
-        "LIVEKIT_URL/LIVEKIT_API_KEY/LIVEKIT_API_SECRET are not all set; returning an unusable room address",
+        "LiveKit settings are missing or invalid; returning an unusable room address",
       );
       return "";
     }
@@ -354,7 +345,7 @@ export const livekitProvider: VideoProvider = {
     const canPublish = rights.canPublish && sources.length > 0;
 
     try {
-      const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
+      const rooms = new RoomServiceClient(settings.apiOrigin, settings.apiKey, settings.apiSecret);
       await rooms.updateParticipant(roomNameForSession(sessionId), identity, undefined, {
         canSubscribe: true,
         canPublish,
@@ -396,7 +387,7 @@ export const livekitProvider: VideoProvider = {
     }
 
     try {
-      const rooms = new RoomServiceClient(httpsFrom(settings.url), settings.apiKey, settings.apiSecret);
+      const rooms = new RoomServiceClient(settings.apiOrigin, settings.apiKey, settings.apiSecret);
       /*
         The roster answers the absence question on its own.
 
