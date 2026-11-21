@@ -18,7 +18,7 @@ on:
 
 # Two deploys racing would be a coin toss over which one wins.
 concurrency:
-  group: deploy-web
+  group: ${{ github.ref == 'refs/heads/main' && 'deploy-web' || format('deploy-web-disabled-{0}', github.ref) }}
   cancel-in-progress: true
 
 env:
@@ -43,6 +43,7 @@ env:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # The complete production gate now includes every database-backed integration suite,
     # followed by a fresh Metro export and the real-browser checks. On a clean GitHub runner

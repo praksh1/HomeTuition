@@ -1,0 +1,39 @@
+name: LiveKit self-host package checks
+
+on:
+  push:
+    branches: [codex/livekit-self-hosted-production]
+  pull_request:
+    branches: [codex/livekit-self-hosted-production]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: livekit-self-host-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    if: >-
+      github.event.repository.private == false &&
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/codex/livekit-self-hosted-production')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify installed Node and production ancestry
+        run: |
+          node -e "if (Number(process.versions.node.split('.')[0]) < 22) process.exit(1)"
+          git rev-parse HEAD
+          git merge-base --is-ancestor origin/main HEAD
+      - name: Check portable package
+        run: |
+          node --check ops/livekit-self-host/render-config.mjs
+          node --check ops/livekit-self-host/preflight.mjs
+          node --check ops/livekit-self-host/ordinary-path.mjs
+          node --test ops/livekit-self-host/portable.test.mjs

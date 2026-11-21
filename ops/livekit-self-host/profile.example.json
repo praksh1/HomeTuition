@@ -1,0 +1,6 @@
+{
+  "region": "dallas-pilot",
+  "signalingHost": "media-dallas.example.net",
+  "turnHost": "turn-dallas.example.net",
+  "advertisedIpv4": null
+}

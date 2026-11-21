@@ -47,11 +47,12 @@ on:
 
 # One preview at a time. Two racing deploys of the same Worker is a coin toss over which wins.
 concurrency:
-  group: preview-web
+  group: ${{ github.ref == 'refs/heads/codex/livekit-self-hosted-production' && 'preview-web-livekit-disabled' || 'preview-web' }}
   cancel-in-progress: true
 
 jobs:
   preview:
+    if: github.ref != 'refs/heads/codex/livekit-self-hosted-production'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     services:

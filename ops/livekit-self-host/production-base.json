@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "repository": "praksh1/HomeTuition",
+  "productionBranch": "main",
+  "selfHostBranch": "codex/livekit-self-hosted-production",
+  "initialProductionCommit": "f9b0506f3d424e4aeaf0f86366eab4bfa8722432",
+  "initialProductionTree": "112ac0b83bf62fcd6b747840f21bb0a3c62541cb",
+  "productionSourceEvidence": {
+    "apiConfiguredBranch": "main",
+    "latestApiDeployment": "cae610dd-e807-4d97-990e-3f61da39c6ae",
+    "latestApiDeploymentCommit": null,
+    "lastExplicitApiCommit": "f9b0506f3d424e4aeaf0f86366eab4bfa8722432",
+    "servedFrontendCommit": null
+  },
+  "readiness": {
+    "portablePackage": "offline-verified",
+    "applicationIntegration": "pending",
+    "nativeMedia": "pending",
+    "publicMedia": "pending",
+    "productionReady": false
+  }
+}
