@@ -41,3 +41,11 @@ Scope is the new feature branch, portable media configuration, verification and 
 ## Remaining risks / next pickup point
 
 Publish the reviewed branch and record its exact CI result. Automatic approval review twice rejected the separate active 15-minute synchronization heartbeat because that scheduling interval requires explicit owner approval. No heartbeat was created. The direct owner request authorizes synchronization, while its persistent scheduling setup remains pending approval. Then integrate explicit authorized room generations, End and stale-token handling into this Production-based application and qualify web/Android media on the actual candidate. The infrastructure package alone does not implement classroom admission or native LiveKit.
+
+## Published branch and CI follow-up
+
+Commit 00e14808bdacd3de1ae9e68d17949e7473fbbb50 was published through the existing normal Git sign-in. GitHub independently confirmed one commit ahead of main, zero behind, and the exact eleven-file scope. Package CI run 44875209902 passed all seven checks on Ubuntu 24.04, including main ancestry.
+
+The successful run reported a deprecated Node20 runtime in the newly added checkout action. The branch-specific check now pins official actions/checkout v7.0.1 at 3d3c42e5aac5ba805825da76410c181273ba90b1, which uses Node24. The correction requires another exact-head CI result. Main's existing deployment workflow is outside this runtime correction.
+
+Recurring synchronization remains pending explicit schedule approval after automatic review rejected the separate 15-minute heartbeat. No schedule is active for this branch.
